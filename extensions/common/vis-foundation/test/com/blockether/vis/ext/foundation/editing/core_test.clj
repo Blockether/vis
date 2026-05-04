@@ -5,7 +5,7 @@
    strings, prompt fragment) plus behavioral coverage of the
    structured preview/search helpers (`v/cat`, `v/rg`) and the new
    thin babashka.fs wrappers (`v/read-all-lines`, `v/write-lines`,
-   `v/update-file`, `v/list-dir`, `v/glob`, ...).
+   `v/update-file`, `v/glob`, ...).
 
    Tests reach private fns directly through the registry to avoid
    bringing up a full SCI sandbox. Temp files land under
@@ -73,22 +73,32 @@
     (expect (string? editing/editing-prompt))
     (expect (not (string/blank? editing/editing-prompt))))
 
-  (it "pushes search/read/path discovery to v tools instead of bash text slicing"
+  (it "pushes search/read/path discovery to the structured v tool surface"
     (expect (string/includes? editing/editing-prompt
-              "Do not use v/bash for grep/sed/nl/cat/find"))
+              "Use structured tools for discovery and reads"))
     (expect (string/includes? editing/editing-prompt
-              "Use v/rg/v/cat/v/glob"))
+              "`v/glob` and `v/list-dir` both return cwd-relative path strings under `:result`"))
+    (expect (string/includes? editing/editing-prompt
+              "recursive/path-pattern queries"))
+    (expect (string/includes? editing/editing-prompt
+              "immediate children"))
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
                         editing/editing-symbols)]
       (expect (not-any? #(string/includes? % "grep")
                 (:ext.symbol/examples bash-symbol)))))
 
+  (it "registers custom structured renderers for rich tool outputs"
+    (doseq [sym-name '[cat silent! ls rg read-all-lines write-lines update-file create-dirs glob copy move delete delete-if-exists exists? bash]]
+      (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
+                    editing/editing-symbols)]
+        (expect (ifn? (:ext.symbol/render-fn entry))))))
+
   (it "teaches the model that file and shell payloads live under the tool envelope :result"
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
                         editing/editing-symbols)]
-      (expect (string/includes? editing/editing-prompt "(get-in c [:result :lines])"))
-      (expect (string/includes? editing/editing-prompt "never (:lines c) / (:content c)"))
-      (expect (string/includes? editing/editing-prompt "(get-in run [:result :stdout])"))
+      (expect (string/includes? editing/editing-prompt "[:result :lines]"))
+      (expect (string/includes? editing/editing-prompt "(-> (v/rg [\"needle\"] \"src\") :result :hits)"))
+      (expect (string/includes? editing/editing-prompt "[:result :stdout]"))
       (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
       (expect (some #(string/includes? % "[:result :exit]")
                 (:ext.symbol/examples bash-symbol))))))
@@ -182,16 +192,39 @@
                             :nested {:answer "x"}})]
       (expect (extension/tool-result? out))
       (expect (= :vis/silent (:rendering-kind out)))
-      (expect (= :markdown (:journal (extension/presentation out))))
+      (expect (not (contains? out :markdown)))
       (expect (= {:type :map
                   :count 2
                   :keys [:huge :nested]
+                  :key-stats {:sample-size 2
+                              :types [:keyword]
+                              :non-nil-types [:keyword]
+                              :homogeneous-ratio 1.0}
+                  :sample-stats {:sample-size 2
+                                 :nil-count 0
+                                 :types [:vector :map]
+                                 :non-nil-types [:vector :map]
+                                 :homogeneous-ratio 0.5}
                   :shape {:huge {:type :vector
                                  :count 100
-                                 :items {:type :int}}
+                                 :items {:type :int}
+                                 :sample-stats {:sample-size 32
+                                                :nil-count 0
+                                                :types [:int]
+                                                :non-nil-types [:int]
+                                                :homogeneous-ratio 1.0}}
                           :nested {:type :map
                                    :count 1
                                    :keys [:answer]
+                                   :key-stats {:sample-size 1
+                                               :types [:keyword]
+                                               :non-nil-types [:keyword]
+                                               :homogeneous-ratio 1.0}
+                                   :sample-stats {:sample-size 1
+                                                  :nil-count 0
+                                                  :types [:string]
+                                                  :non-nil-types [:string]
+                                                  :homogeneous-ratio 1.0}
                                    :shape {:answer {:type :string
                                                     :chars 1
                                                     :lines 1}}}}}
@@ -251,17 +284,27 @@
                 (update-file path string/upper-case)))
       (expect (= "HELLO" (slurp path)))))
 
-  (it "list-dir and glob return cwd-relative path strings"
-    (let [_        (write-temp! "bbfs/tree/a.clj" "(ns a)")
-          _        (write-temp! "bbfs/tree/b.txt" "b")
-          list-dir (private-fn "list-dir-safe")
-          glob     (private-fn "glob-safe")
-          root     (str (temp-root) "/bbfs/tree")]
+  (it "glob returns cwd-relative path strings for immediate-child patterns"
+    (let [_    (write-temp! "bbfs/tree/a.clj" "(ns a)")
+          _    (write-temp! "bbfs/tree/b.txt" "b")
+          glob (private-fn "glob-safe")
+          root (str (temp-root) "/bbfs/tree")]
       (expect (= #{"target/editing-test/bbfs/tree/a.clj"
                    "target/editing-test/bbfs/tree/b.txt"}
-                (set (list-dir root))))
+                (set (:paths (glob root "*")))))
       (expect (= ["target/editing-test/bbfs/tree/a.clj"]
-                (glob root "*.clj")))))
+                (:paths (glob root "*.clj"))))))
+
+  (it "glob walks descendants for recursive patterns and supports explicit :scope"
+    (let [_    (write-temp! "bbfs/deep/a.clj" "(ns a)")
+          _    (write-temp! "bbfs/deep/nested/b.clj" "(ns b)")
+          glob (private-fn "glob-safe")
+          root (str (temp-root) "/bbfs/deep")]
+      (expect (= #{"target/editing-test/bbfs/deep/a.clj"
+                   "target/editing-test/bbfs/deep/nested/b.clj"}
+                (set (:paths (glob root "**/*.clj")))))
+      (expect (= ["target/editing-test/bbfs/deep/a.clj"]
+                (:paths (glob root "*.clj" {:scope :children}))))))
 
   (it "exists? and delete-if-exists work on cwd-relative paths"
     (let [path             (write-temp! "bbfs/meta/x.txt" "x")
@@ -293,7 +336,7 @@
                 (set (keys out))))
       (expect (true? (:ok? out)))
       (expect (= ["alpha" "beta"] (:result out)))
-      (expect (string? (:markdown (extension/presentation out))))
+      (expect (not (contains? out :markdown)))
       (expect (nil? (:error out)))))
 
   (it "tool failure contract includes structured :error with normalized trace"
@@ -304,4 +347,4 @@
       (expect (= nil (:result out)))
       (expect (= "clojure.lang.ExceptionInfo" (get-in out [:error :type])))
       (expect (vector? (get-in out [:error :trace])))
-      (expect (string? (:markdown (extension/presentation out)))))))
+      (expect (not (contains? out :markdown))))))

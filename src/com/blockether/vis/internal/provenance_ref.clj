@@ -94,8 +94,7 @@
                         (when child-label (str "/" child-label)))]
       {:canonical (format-ref parsed)
        :label     label
-       :short     short
-       :markdown  (str "`" label "`")})))
+       :short     short})))
 
 (defn display-provenance
   "Display helper for a provenance map containing at least `:ref`.

@@ -46,6 +46,20 @@
                   :on-parse-error-fn hook})]
       (expect (= hook (:ext.symbol/on-parse-error-fn s))))))
 
+(defdescribe invoke-symbol-wrapper-log-level-test
+  (it "logs normal invoke lifecycle at debug level"
+    (let [levels (atom [])
+          sym-entry (ext/symbol 'ping (fn [] :pong)
+                      {:doc "Ping." :arglists '([])})
+          extension (ext/extension {:ext/namespace 'test.invoke-log
+                                    :ext/doc "Invoke log fixture."
+                                    :ext/kind "fixture"
+                                    :ext/symbols [sym-entry]})]
+      (with-redefs-fn {#'ext/log-hook! (fn [level & _] (swap! levels conj level))}
+        (fn []
+          (expect (= :pong (#'ext/invoke-symbol-wrapper extension sym-entry [] {})))
+          (expect (= [:debug :debug] @levels)))))))
+
 (defdescribe kind-auto-derivation-test
   (it "derives \"providers\" for extensions exporting :ext/providers"
     (let [e (ext/extension

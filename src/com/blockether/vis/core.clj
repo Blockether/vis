@@ -254,6 +254,7 @@
 (def symbol                              extension/symbol)
 (def value                               extension/value)
 (def render-prompt                       extension/render-prompt)
+(def render-tool-result                  extension/render-tool-result)
 (def register-extension!                 extension/register-extension!)
 (def registered-extensions               extension/registered-extensions)
 (def registered-extension-ids            extension/registered-extension-ids)

@@ -49,7 +49,7 @@
 (s/def ::ok? boolean?)
 (s/def ::result any?)
 (s/def ::result-shape map?)
-(s/def ::markdown (s/and string? #(not (str/blank? %))))
+(s/def ::rendered string?)
 
 (s/def ::op keyword?)
 (s/def ::started-at-ms integer?)
@@ -101,8 +101,7 @@
 (s/def ::error (s/nilable ::error-map))
 
 (s/def ::tool-result-base
-  (s/keys :req-un [::ok? ::result ::result-shape ::provenance ::error]
-    :opt-un [::markdown]))
+  (s/keys :req-un [::ok? ::result ::result-shape ::provenance ::error]))
 
 (s/def ::tool-result
   (s/and
@@ -124,16 +123,6 @@
               :value x
               :explain (s/explain-data ::tool-result x)})))
   x)
-
-(defn with-presentation
-  "Attach runtime-only presentation hints. The CONTRACT lives in the
-   value; metadata is only for render policy."
-  [x presentation]
-  (with-meta x (assoc (meta x) :vis/presentation presentation)))
-
-(defn presentation
-  [x]
-  (:vis/presentation (meta x)))
 
 (defn normalize-provenance
   "Fill the common provenance clock keys when absent.
@@ -169,6 +158,57 @@
                  assert-tool-result!)]
     (with-meta merged meta*)))
 
+(def ^:private collection-shape-sample-limit 32)
+
+(defn- sample-type-tag [v]
+  (cond
+    (nil? v) :nil
+    (string? v) :string
+    (boolean? v) :boolean
+    (integer? v) :int
+    (float? v) :float
+    (keyword? v) :keyword
+    (symbol? v) :symbol
+    (map? v) :map
+    (vector? v) :vector
+    (set? v) :set
+    (sequential? v) :seq
+    :else :object))
+
+(defn- frequency-max [xs]
+  (if (seq xs)
+    (reduce max 0 (vals (frequencies xs)))
+    0))
+
+(defn- map-key-stats [m]
+  (let [sample-keys (vec (take collection-shape-sample-limit (keys m)))
+        key-types   (->> sample-keys (map sample-type-tag) distinct vec)]
+    {:sample-size        (count sample-keys)
+     :types              key-types
+     :non-nil-types      (vec (remove #{:nil} key-types))
+     :homogeneous-ratio  (if (seq sample-keys)
+                           (/ (double (frequency-max (map sample-type-tag sample-keys)))
+                             (count sample-keys))
+                           1.0)}))
+
+(defn- collection-sample-stats
+  [values]
+  (let [sample         (vec (take collection-shape-sample-limit values))
+        tagged         (map sample-type-tag sample)
+        types          (->> tagged distinct vec)
+        non-nil-types  (vec (remove #{:nil} types))
+        homogeneous-ratio (if (seq sample)
+                            (/ (double (frequency-max (remove #{:nil} tagged)))
+                              (max 1 (count (remove nil? sample))))
+                            1.0)]
+    {:sample-size   (count sample)
+     :nil-count     (count (filter nil? sample))
+     :types         types
+     :non-nil-types non-nil-types
+     :homogeneous-ratio homogeneous-ratio}))
+
+(declare simple-shape)
+
 (defn- simple-shape
   [v depth]
   (cond
@@ -183,18 +223,23 @@
     (map? v) {:type :map
               :count (count v)
               :keys (->> (keys v) (take 12) vec)
+              :key-stats (map-key-stats v)
               :shape (into {}
                        (map (fn [[k vv]] [k (simple-shape vv (dec depth))])
-                         (take 8 v)))}
+                         (take 8 v)))
+              :sample-stats (collection-sample-stats (vals v))}
     (vector? v) {:type :vector
                  :count (count v)
-                 :items (when-let [x (first v)] (simple-shape x (dec depth)))}
+                 :items (when-let [x (first v)] (simple-shape x (dec depth)))
+                 :sample-stats (collection-sample-stats v)}
     (set? v) {:type :set
               :count (count v)
-              :items (when-let [x (first (seq v))] (simple-shape x (dec depth)))}
+              :items (when-let [x (first (seq v))] (simple-shape x (dec depth)))
+              :sample-stats (collection-sample-stats v)}
     (sequential? v) {:type :seq
                      :count (count (take 128 v))
-                     :items (when-let [x (first v)] (simple-shape x (dec depth)))}
+                     :items (when-let [x (first v)] (simple-shape x (dec depth)))
+                     :sample-stats (collection-sample-stats v)}
     :else {:type :object
            :class (.getName (class v))}))
 
@@ -313,13 +358,21 @@
 ;; after `:before-fn` / call / `:after-fn` complete.
 (s/def :ext.symbol/result-spec some?)
 
+;; Renderer for this symbol's result. Called by runtime consumers
+;; (journal, transcript, TUI) with a context map, e.g.
+;; `{:surface :journal :tool-result result}`. Every fn-symbol MUST
+;; provide one — either explicitly via `:render-fn` or implicitly via
+;; the `vis/symbol` builder attaching `render-value`.
+(s/def :ext.symbol/render-fn fn?)
+
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
 
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/sym :ext.symbol/fn :ext.symbol/doc
-                :ext.symbol/arglists :ext.symbol/examples]
+                :ext.symbol/arglists :ext.symbol/examples
+                :ext.symbol/render-fn]
     :opt [:ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn
           :ext.symbol/result-spec]))
@@ -553,6 +606,19 @@
 ;; Symbol helpers (builder fns)
 ;; =============================================================================
 
+(defn render-value
+  "Default renderer for plain-value symbols. Returns string representation
+   of the tool result. Attached automatically by `vis/symbol` when no
+   explicit `:render-fn` is provided."
+  [{:keys [tool-result]}]
+  (if (map? tool-result)
+    (if-let [result (:result tool-result)]
+      (pr-str result)
+      (pr-str tool-result))
+    (if (string? tool-result)
+      tool-result
+      (pr-str tool-result))))
+
 (defn- validate-symbol-entry!
   "Assert a symbol entry conforms to ::symbol-entry. Throws on violation."
   [entry]
@@ -575,10 +641,11 @@
 
    Required: :doc, :arglists
    Optional: :examples, :before-fn, :after-fn, :on-error-fn,
-             :on-parse-error-fn, :result-spec
+             :on-parse-error-fn, :result-spec, :render-fn
 
    Defaults:
-     :examples — derived from :arglists when not provided
+     :examples  — derived from :arglists when not provided
+     :render-fn — `render-value` when not provided
 
    See `docs/src/extensions/hooks.md` for hook semantics."
   [sym-name f opts]
@@ -587,8 +654,9 @@
         examples (or (:examples opts)
                    (when arglists (derive-examples sym-name arglists)))]
     (validate-symbol-entry!
-      (cond-> #:ext.symbol{:sym sym-name
-                           :fn  f}
+      (cond-> #:ext.symbol{:sym      sym-name
+                           :fn       f
+                           :render-fn (or (:render-fn opts) render-value)}
         (:doc opts)               (assoc :ext.symbol/doc (:doc opts))
         arglists                  (assoc :ext.symbol/arglists arglists)
         examples                  (assoc :ext.symbol/examples (vec examples))
@@ -596,7 +664,8 @@
         (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))
         (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
         (:on-parse-error-fn opts) (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))
-        (:result-spec opts)       (assoc :ext.symbol/result-spec (:result-spec opts))))))
+        (:result-spec opts)       (assoc :ext.symbol/result-spec (:result-spec opts))
+        (:render-fn opts)         (assoc :ext.symbol/render-fn (:render-fn opts))))))
 
 (defn value
   "Build a value symbol entry - a plain constant/data binding.
@@ -830,14 +899,14 @@
         ext-ns (:ext/namespace ext)
         spec-ref (:ext.symbol/result-spec sym-entry)
         t0     (System/nanoTime)
-        _      (log-hook! :info ::invoke ext-ns sym nil nil nil)
+        _      (log-hook! :debug ::invoke ext-ns sym nil nil nil)
         before-out (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
     (if (contains? before-out :result)
       (let [ms (elapsed-ms t0)
             result (->> (:result before-out)
                      (enrich-tool-result-provenance ext sym-entry)
                      (validate-symbol-result! sym spec-ref))]
-        (log-hook! :info ::invoke-done ext-ns sym nil ms "short-circuited")
+        (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
         result)
       (let [{env  :env
              f    :fn
@@ -865,7 +934,7 @@
                      (enrich-tool-result-provenance ext sym-entry)
                      (validate-symbol-result! sym spec-ref))
             ms (elapsed-ms t0)]
-        (log-hook! :info ::invoke-done ext-ns sym nil ms nil)
+        (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
         result))))
 
 (def ^:private ^:dynamic *log-writer*
@@ -1415,6 +1484,35 @@
 (defn registered-extensions []
   (let [registry @extension-registry]
     (into [] (keep registry) @extension-order)))
+
+(defn- tool-result-symbol-entry
+  [tool-result]
+  (let [ext-ns (get-in tool-result [:provenance :extension :namespace])
+        sym    (get-in tool-result [:provenance :tool :sym])]
+    (when (and ext-ns sym)
+      (some (fn [entry]
+              (when (= sym (:ext.symbol/sym entry))
+                entry))
+        (:ext/symbols (get @extension-registry ext-ns))))))
+
+(defn render-tool-result
+  "Render a structured tool result for one consumer surface.
+
+    Dispatch is extension/symbol-owned: `:ext.symbol/render-fn` receives a
+    context map with `:surface` and `:tool-result`. Every fn-symbol has a
+    render-fn (either custom or the default `render-value`). There is no
+    generic fallback — each symbol owns its presentation."
+  ([surface tool-result]
+   (render-tool-result surface tool-result {}))
+  ([surface tool-result ctx]
+   (let [ctx*     (assoc ctx :surface surface :tool-result tool-result)
+         render-fn (some-> (tool-result-symbol-entry tool-result)
+                     :ext.symbol/render-fn)]
+     (assert render-fn
+       (str "No render-fn for tool result with op "
+         (pr-str (get-in tool-result [:provenance :op]))))
+     (let [rendered (render-fn ctx*)]
+       (if (string? rendered) rendered (pr-str rendered))))))
 
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.

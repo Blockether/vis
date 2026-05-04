@@ -9,7 +9,19 @@ ConversationIntent
       -> Provenance Reference+
 ```
 
-There is no separate proof object. Proof or blocker data lives directly on the gate together with canonical provenance references.
+There is no separate proof object. Proof or blocker data lives directly on the gate together with canonical provenance references. A proof slot is only a named expectation on a gate or plan edge; it is not evidence until it is filled with an observed canonical ref.
+
+## Evidence taxonomy
+
+These names describe roles, not extra architecture layers. See [Evidence, Diagnostics, and Resolution](evidence.md) for the full glossary.
+
+| Role | Examples | Meaning |
+|---|---|---|
+| Evidence producers | eval blocks, tool results, `provider-limits` snapshots, runtime snapshots | Runtime facts persisted as journal blocks with canonical provenance refs. |
+| Diagnostic enrichers | `parse-diagnose`, error classifiers, doctor checks | Explanations attached to evidence. They help decide what happened but do not prove gates by themselves unless their own diagnostic block is cited. |
+| Resolution state | intents, plans, gates, proof slots | Consumes observed provenance refs to decide whether work is done or impeded. It does not create facts from model claims. |
+
+Use **evidence** for observed runtime facts, **diagnostics** for explanations about evidence, and **resolution** for intent/plan/gate state. Avoid calling this a separate "proof layer"; proof is gate state plus cited refs.
 
 ## Scope and focus
 
@@ -23,16 +35,22 @@ There is no separate proof object. Proof or blocker data lives directly on the g
 
 ## Public API
 
+The preferred gate failure verb is **impede**. `v/block-gate!` remains as a legacy alias only.
+
 ```clojure
-(v/issue-intent! {:title "..." :rationale "..."})
-(v/focus-intent! intent-id {:rationale "..."})
+(def intent (v/issue-intent! {:title "..." :rationale "..."}))
+(v/focus-intent! (:id intent) {:rationale "..."})
 (v/relate-intents! {:from-intent-id ... :to-intent-id ... :relation :subintent})
-(v/issue-plan! {:intent-id ... :summary "..." :steps [...]})
-(v/issue-gate! {:plan-id ... :question "..." :required? true})
-(v/prove-gate! gate-id {:summary "..." :refs ["turn/3f2a91c0/iteration/5/block/2"]})
-(v/block-gate! gate-id {:reason "..." :refs ["turn/3f2a91c0/iteration/5/block/2/error"]})
-(v/fulfill-intent! intent-id {:summary "..." :refs ["turn/3f2a91c0/iteration/5/block/2"]})
-(v/abandon-intent! intent-id {:reason "..." :refs ["turn/3f2a91c0/iteration/5/block/2"]})
+
+(def slot (v/proof-slot intent :verification))
+(def plan-graph (v/plan intent {:requires [slot] :steps [{:id :verify}]}))
+(def plan (v/issue-plan! {:intent-id (:id intent) :summary "..." :plan plan-graph}))
+(def gate (v/issue-gate! {:plan-id (:id plan) :proposition "Verification passes." :expected-proof {:slots {slot {:required? true}}}}))
+(v/offer-proof! {:gate-id (:id gate) :slots {slot {:ref "turn/3f2a91c0/iteration/5/block/2"}}})
+(v/prove-gate! gate {:summary "..." :refs ["turn/3f2a91c0/iteration/5/block/2"] :slots {slot {:ref "turn/3f2a91c0/iteration/5/block/2"}}})
+(v/impede-gate! gate {:reason "..." :refs ["turn/3f2a91c0/iteration/5/block/2/error"]})
+(v/fulfill-intent! (:id intent) {:summary "..." :refs ["turn/3f2a91c0/iteration/5/block/2"]})
+(v/abandon-intent! (:id intent) {:reason "..." :refs ["turn/3f2a91c0/iteration/5/block/2"]})
 (v/intents)
 ```
 

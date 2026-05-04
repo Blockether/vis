@@ -33,7 +33,6 @@
                 :started-at-ms 10
                 :finished-at-ms 15
                 :target {:requested "." :kind :dir}}
-   :markdown "Ran bash in `.` — exit `0`, 5 ms."
    :error nil})
 
 (defn- seed!

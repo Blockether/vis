@@ -84,6 +84,9 @@
 ;; (`update :messages conj` only ever appends; finalised assistant
 ;; messages get replaced as a whole map exactly once). Width and
 ;; settings identity capture the cache-busting axes we care about.
+;; Detail expansion state is intentionally NOT in the key: a toggle
+;; remeasures the visible clicked message, while off-screen measured
+;; heights stay sticky so the scrollback does not jump.
 ;;
 ;; Cap is generous (8192) because each entry is just a long height
 ;; — a few KB of overhead total even at 8k entries.
@@ -95,11 +98,10 @@
     (removeEldestEntry [_eldest]
       (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
 
-(defn- height-key [message bubble-w settings detail-expansions]
+(defn- height-key [message bubble-w settings _detail-expansions]
   [(System/identityHashCode message)
    (long bubble-w)
-   (System/identityHashCode settings)
-   (System/identityHashCode detail-expansions)])
+   (System/identityHashCode settings)])
 
 (defn- height-cache-get
   "Peek the sticky height cache. Returns a long or nil."

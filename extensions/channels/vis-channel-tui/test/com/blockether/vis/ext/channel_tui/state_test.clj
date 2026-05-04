@@ -1,8 +1,24 @@
 (ns com.blockether.vis.ext.channel-tui.state-test
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
+
+(defdescribe detail-toggle-test
+  (it "does not cold-clear render and height caches on disclosure click"
+    (let [render-invalidations (atom 0)
+          height-invalidations (atom 0)]
+      (with-redefs [render/invalidate-cache! (fn [] (swap! render-invalidations inc))
+                    virtual/invalidate-heights! (fn [] (swap! height-invalidations inc))]
+        (reset! state/app-db {:detail-expansions {}
+                              :render-version 0})
+        (state/dispatch [:toggle-detail "cid" "answer:t11111111:proofs:d1"])
+        (expect (= {["cid" "answer:t11111111:proofs:d1"] true}
+                  (:detail-expansions @state/app-db)))
+        (expect (zero? @render-invalidations))
+        (expect (zero? @height-invalidations))))))
 
 (defdescribe init-settings-test
   (it "loads the default balanced reasoning level when config has none"

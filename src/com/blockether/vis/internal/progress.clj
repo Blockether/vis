@@ -66,6 +66,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.error :as error]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.prompt :as prompt]))
 
 (defn- empty-iteration-entry [iteration]
@@ -91,14 +92,18 @@
 
 (defn- format-form-result
   "Pre-format a per-form chunk's result for renderer consumption.
-   Errors get the standard `ERROR: …` prefix; successes get
+   Errors get the standard `ERROR: …` prefix; tool results dispatch
+   through extension-owned renderers; ordinary successes get
    `safe-pr-str` (bounded pr-str). Mirrors the formatting the
    pre-streaming bulk chunk used so the TUI render code stays the
    same."
   [chunk]
   (if (:error chunk)
     (error/format-error (:error chunk))
-    (prompt/safe-pr-str (:result chunk))))
+    (let [result (:result chunk)]
+      (if (extension/tool-result? result)
+        (extension/render-tool-result :tui result {:chunk chunk})
+        (prompt/safe-pr-str result)))))
 
 (def ^:private thinking-event-target-chars
   "Target max chars per live thinking event.
@@ -264,14 +269,18 @@
       (write-form-slot entry chunk))
 
     :iteration-final
-    (let [base (assoc entry
+    (let [duplicate-final? (and (:done? entry) (:final entry) (:final chunk))
+          base (assoc entry
                  :thinking (or (:thinking chunk) (:thinking entry))
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
           ;; Collect all form indices to elide: the answer-bearing
           ;; form (if present) and any forms that returned :vis/silent.
-          answer-idx   (when (:final chunk) (:answer-form-idx chunk))
-          silent-idxs  (or (:silent-form-idxs chunk) #{})
+          ;; Duplicate final chunks must not elide again after indices
+          ;; have shifted; keep the already-elided entry stable.
+          answer-idx   (when-not duplicate-final?
+                         (when (:final chunk) (:answer-form-idx chunk)))
+          silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
           elide-idxs   (cond-> silent-idxs
                          (some? answer-idx) (conj answer-idx))]
       (if (seq elide-idxs)

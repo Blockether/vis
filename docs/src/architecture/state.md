@@ -21,3 +21,7 @@ A normal continuation must not silently switch to unrelated work while the curre
 ## Evidence ownership
 
 Evidence is addressed by canonical provenance refs into observed iteration blocks. Writer APIs reject compact aliases and unresolved refs. Display labels may be shown in channels, but copy/export and persistence keep canonical refs.
+
+Evidence itself is run-local because it is emitted by iterations. Intent state is conversation-scoped because the objective can survive forks and retries. Focus is turn-state-scoped because each run decides which conversation intent it is pursuing. Gate proof or impediment bridges those scopes by storing canonical refs on conversation-scoped gates.
+
+See [Evidence, Diagnostics, and Resolution](evidence.md) for the taxonomy and [Conversation Intents, Plans, and Gates](completion-contract.md) for final-answer rules.
