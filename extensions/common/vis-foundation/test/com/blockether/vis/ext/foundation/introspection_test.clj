@@ -6,12 +6,9 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.foundation.introspection :as introspection]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
    [lazytest.core :refer [defdescribe it expect]]))
-
-;; The extension's core ns calls `register-global!` at load time;
-;; required eagerly so the impl fns are interned before tests run.
-(require '[com.blockether.vis.ext.foundation.introspection])
 
 ;; Populate the classpath docs registry once for the whole namespace.
 ;; The (v/extensions ...) / (v/extension-docs ...) / etc. tests
@@ -771,16 +768,21 @@
                                                     :refs [ref]})
         (let [checks ((private-fn "foundation-proof-checks") e)
               gate-check (first (:gates checks))
-              out ((private-fn "foundation-proofs") e checks)]
+              out ((private-fn "foundation-proofs") e checks)
+              event (introspection/foundation-provenance-event e ref)]
+          (expect (= ref (:ref event)))
           (expect (true? (:ok? checks)))
           (expect (= "Verification passes." (:asked gate-check)))
           (expect (= {slot {:ref ref :exit-code 0}} (get-in gate-check [:given :slots])))
           (expect (= [] (:violations checks)))
           (expect (str/includes? out "<proofs>"))
           (expect (str/includes? out "Proofs · OK"))
+          (expect (str/includes? out "- Intent: `"))
+          (expect (str/includes? out "> Ship it"))
           (expect (str/includes? out "- Asked: Verification passes."))
           (expect (str/includes? out "- Expected slots:"))
           (expect (str/includes? out "- Given refs:"))
+          (expect (str/includes? out (str "[`" ref "`](vis-provenance://" ref ")")))
           (expect (str/includes? out "## What happened"))
           (expect (str/includes? out ref))))))
 

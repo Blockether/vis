@@ -37,6 +37,5 @@
   (it "returns display labels without changing the canonical copy form"
     (expect (= {:canonical "turn/3f2a91c0/iteration/4/block/2/tool/bash"
                 :label "T3f2a91c0 · i4.2 · bash"
-                :short "i4.2/bash"
-                :markdown "`T3f2a91c0 · i4.2 · bash`"}
+                :short "i4.2/bash"}
               (prov-ref/display-ref "turn/3f2a91c0/iteration/4/block/2/tool/bash")))))

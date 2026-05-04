@@ -23,6 +23,16 @@ The block map stores machine data:
 
 Markdown is not stored in provenance.
 
+## Evidence flow
+
+Every top-level form is potential evidence for the next iteration. Current-iteration refs are not valid until they appear in the observed journal.
+
+```text
+emit form -> evaluate -> persist block -> observe journal -> cite canonical ref
+```
+
+Diagnostics can enrich the persisted block or appear as their own diagnostic/error block. Intent and gate writers must cite observed refs; they cannot cite compact labels or refs guessed from the current iteration number. See [Evidence, Diagnostics, and Resolution](evidence.md).
+
 ## Turn SYSTEM vars
 
 At turn start, Vis binds read-only SYSTEM vars directly into the SCI sandbox. Model code references them by name, with no `require` and no `def`.
@@ -50,7 +60,7 @@ A running child event is not proof of completion. Gate proof requires an observe
 
 ## Final-answer guard
 
-Before Vis accepts `(answer ...)`, it reads `(v/intents)` / `db-intents` for the current turn-state focus. The answer is rejected unless every focused intent is fulfilled or abandoned.
+Before Vis accepts `(answer ...)`, it reads `(v/intents)` / `db-intents` for the current turn-state focus. The answer is rejected unless every focused intent is fulfilled or abandoned with observed evidence refs.
 
 The guard rejects:
 

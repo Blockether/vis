@@ -358,8 +358,9 @@
   (let [title      (or text "Resource")
         target     (or url "")
         badge      (case kind
-                     :image "image"
-                     :file  "file"
+                     :image      "image"
+                     :file       "file"
+                     :provenance "proof"
                      "link")
         body-w     (max 1 (- inner-w 4))
         target-w   (min 32 (max 0 (- body-w (count title) 10)))
@@ -437,6 +438,50 @@
                           (reset! selected hit))
                       (recur))))
                 :else (recur)))))))))
+
+;;; ── Read-only text viewer dialog ────────────────────────────────────────────
+
+(defn text-view-dialog!
+  "Show read-only lines in a scrollable modal. Returns nil after close."
+  [^TerminalScreen screen title lines]
+  (let [scroll (atom 0)]
+    (loop []
+      (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols    (.getColumns size)
+            rows    (.getRows size)
+            g       (.newTextGraphics screen)
+            bounds  (draw-dialog-chrome! g cols rows title (max 8 (count lines)))
+            {:keys [left inner-w]} bounds
+            text-w  (max 1 (- inner-w 2))
+            wrapped (vec (mapcat (fn [line]
+                                   (if (str/blank? (str line))
+                                     [""]
+                                     (render/wrap-text (str line) text-w)))
+                           (or lines [])))
+            total   (count wrapped)
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
+            visible (min total content-h)
+            max-scroll (max 0 (- total visible))
+            _       (swap! scroll #(clamp % 0 max-scroll))]
+        (dotimes [i visible]
+          (let [idx (+ @scroll i)
+                row (+ content-top i)]
+            (when (< idx total)
+              (p/set-colors! g t/dialog-fg t/dialog-bg)
+              (p/fill-rect! g (inc left) row inner-w 1)
+              (p/put-str! g (+ left 2) row (ellipsize (nth wrapped idx) text-w)))))
+        (draw-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
+        (draw-hint-bar! g left hint-row inner-w [["↑/↓" "scroll"] ["Enter/Esc" "close"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+        (let [key (.readInput screen)]
+          (when key
+            (condp = (.getKeyType key)
+              KeyType/Escape nil
+              KeyType/Enter  nil
+              KeyType/ArrowUp   (do (swap! scroll dec) (recur))
+              KeyType/ArrowDown (do (swap! scroll inc) (recur))
+              (recur))))))))
 
 ;;; ── File picker dialog ──────────────────────────────────────────────────────
 
@@ -993,10 +1038,11 @@
     "unset"))
 
 (defn- settings-option-label
-  [{:keys [key label type choices name]} values]
+  [{:keys [key label type choices]
+    env-name :name} values]
   (case type
-    :choice (str label ": " (name (or (get values key) (first choices))))
-    :env-var (str label ": " (extension-env-status-label (:source (vis/extension-env-status name))))
+    :choice (str label ": " (clojure.core/name (or (get values key) (first choices))))
+    :env-var (str label ": " (extension-env-status-label (:source (vis/extension-env-status env-name))))
     label))
 
 (defn- cycle-choice

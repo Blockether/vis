@@ -52,9 +52,10 @@
       (expect (= '[com.blockether.vis.ext.exa.core] (get-in manifest ['exa :nses])))
       (expect (str/includes? (get-in manifest ['exa :docs "README.md" :content]) "\"url\""))))
 
-  (it "exposes Exa symbols and a compact prompt"
+  (it "exposes Exa symbols, renderers, and a compact prompt"
     (expect (= '[web-search code-context web-search-exa get-code-context-exa]
               (mapv :ext.symbol/sym exa/exa-symbols)))
+    (expect (every? :ext.symbol/render-fn exa/exa-symbols))
     (expect (str/includes? exa/exa-prompt "EXA_API_KEY"))
     (expect (str/includes? exa/exa-prompt "get-in r [:result :content]")))
 

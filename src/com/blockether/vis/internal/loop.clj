@@ -51,6 +51,7 @@
    [taoensso.telemere :as tel])
   (:import
    [com.oakmac.parinfer Parinfer ParinferResult]
+   [java.security MessageDigest]
    [java.util.concurrent ConcurrentHashMap Semaphore]))
 
 ;; ===========================================================================
@@ -841,18 +842,17 @@
     (:error (nth block-results form-idx))))
 
 ;; ---------------------------------------------------------------------------
-;; Answer-position contract (rule b' — "answer is alone after iter 1")
+;; Answer-position contract (latency-aware terminal form)
 ;;
-;; An answer accepted after the first iteration MUST be the only
-;; top-level form of that iteration. Exploration, action, verification,
-;; and evidence-surfacing forms belong in earlier iterations; the host
-;; will loop automatically when `(answer …)` is omitted.
+;; A final answer may be the only top-level form OR the last top-level
+;; form after earlier setup/proof-helper forms. This avoids burning a
+;; recovery iteration when the model already put `(answer …)` last.
 ;;
-;; Iteration 1 is intentionally more permissive for trivial chat: if
-;; the first model response emits setup/title/body construction forms
-;; and then calls `(answer …)` as the LAST top-level form, the answer is
-;; accepted instead of forcing a wasteful recovery iteration. Structural
-;; wrappers — `(let […] (answer …))`, `(do … (answer …))`,
+;; Sibling forms AFTER an answer are still rejected before evaluation:
+;; once the model commits a terminal answer, no later top-level work may
+;; mutate state, run tools, or alter the evidence surface.
+;;
+;; Structural wrappers — `(let […] (answer …))`, `(do … (answer …))`,
 ;; `(answer (build))` — stay legal in every iteration because they are
 ;; still ONE top-level form.
 ;; ---------------------------------------------------------------------------
@@ -866,37 +866,33 @@
 
    Rules:
    - any iteration: one top-level answer-bearing form is accepted;
-   - iteration 1 only: answer may be the last form after earlier setup;
-   - later iterations: answer must be the only top-level form."
+   - any iteration: answer may be the last form after earlier setup;
+   - any iteration: answer with later sibling forms is rejected."
   ([form-idx total-forms]
    (answer-position-violation? form-idx total-forms nil))
-  ([form-idx total-forms iteration-position]
+  ([form-idx total-forms _iteration-position]
    (let [valid-answer-form? (and form-idx
                               (integer? form-idx)
                               (not (neg? form-idx))
                               (pos? total-forms))
-         only-form?         (and (= 1 total-forms)
-                              (zero? (long (or form-idx -1))))
-         first-iter-last?   (and (= 1 iteration-position)
-                              valid-answer-form?
+         last-form?         (and valid-answer-form?
                               (= form-idx (dec total-forms)))]
      (boolean (and valid-answer-form?
-                (not (or only-form?
-                       first-iter-last?)))))))
+                (not last-form?))))))
 
 (defn answer-position-error-message
   "Validation-error string surfaced when `answer-position-violation?`
    fires. Tells the model where its answer call landed and states the
-   hard completion contract: the final answer must be the only
+   hard completion contract: the final answer must be the last
    top-level form of its iteration."
   [form-idx total-forms]
   (let [actual-1 (inc (or form-idx 0))]
-    (str "(answer …) must be the ONLY top-level form of its final iteration. "
+    (str "(answer …) must be the LAST top-level form of its final iteration. "
       "This iteration had " total-forms " top-level forms; answer "
-      "fired from form " actual-1 ". Recovery: keep exploration, action, "
-      "and verification forms in earlier iterations by omitting `(answer …)` "
-      "so the host loops, then emit one final top-level form such as "
-      "`(answer …)` or `(let [...] (answer …))`.")))
+      "fired from form " actual-1 ". Recovery: move any later sibling work "
+      "before the answer or omit `(answer …)` so the host loops, then finish "
+      "with an answer-bearing final form such as `(answer …)` or "
+      "`(let [...] (answer …))`.")))
 
 (defn- answer-call-form?
   [form]
@@ -914,29 +910,29 @@
       false)))
 
 (defn- answer-position-preflight-form-idx
-  "Return the 0-based top-level form index when a post-first iteration
-   mixes an `(answer …)` call with sibling top-level forms. This runs
-   before SCI evaluation so rejected final iterations do not execute
-   any of their forms."
-  [iteration-position code-entries]
-  (when (and (< 1 (long (or iteration-position 0)))
-          (< 1 (count code-entries)))
-    (first (keep-indexed (fn [idx {:keys [expr]}]
-                           (when (form-contains-answer-call? expr)
-                             idx))
-             code-entries))))
+  "Return the 0-based top-level form index when an `(answer …)` call has
+   later sibling top-level forms. This runs before SCI evaluation so
+   rejected final iterations do not execute any of their forms."
+  [_iteration-position code-entries]
+  (when (< 1 (count code-entries))
+    (let [answer-idxs (vec (keep-indexed (fn [idx {:keys [expr]}]
+                                           (when (form-contains-answer-call? expr)
+                                             idx))
+                             code-entries))]
+      (when (and (seq answer-idxs)
+              (not= (peek answer-idxs) (dec (count code-entries))))
+        (first answer-idxs)))))
 
 (defn- answer-position-preflight-error-message
   [form-idx total-forms]
   (let [actual-1 (inc (or form-idx 0))]
     (str "Answer-position preflight rejected this iteration before evaluation: "
-      "(answer …) must be the ONLY top-level form after iteration 1. "
+      "(answer …) must be the LAST top-level form. "
       "This iteration had " total-forms " top-level forms; an answer call "
-      "appears in form " actual-1 ". Do not answer in this iteration. "
-      "If sibling work is still required, emit that work alone and omit "
-      "`(answer …)` so the host loops. If the work is already done, emit "
-      "exactly one top-level answer-bearing form next. Intent resolution may "
-      "be inside that one wrapper only when all cited refs are already observed.")))
+      "appears in form " actual-1 " with later sibling work after it. "
+      "Move any required sibling work before the answer, or omit `(answer …)` "
+      "so the host loops. Intent resolution may be inside the final wrapper "
+      "only when all cited refs are already observed.")))
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
@@ -946,42 +942,134 @@
         "Aborting the whole iteration before eval; remove all " fence
         " fence marker lines from extracted Clojure before retrying."))))
 
-(defn- code-entries-preflight [iteration-position raw-code]
-  (let [raw-code (or raw-code "")
-        raw-fence-error (raw-markdown-fence-leak-error raw-code)
-        [forms parse-error] (if raw-fence-error
-                              [nil (ex-info raw-fence-error
-                                     {:vis/error :raw-markdown-fence-leak})]
-                              (split-top-level-forms raw-code))
-        parsed-code-entries (cond
-                              raw-fence-error
-                              [{:expr "(vis/preflight-error :raw-markdown-fence-leak)"
-                                :preflight-error raw-fence-error}]
+(defn- bytes->hex
+  [bytes]
+  (apply str (map #(format "%02x" (bit-and (int %) 0xff)) bytes)))
 
-                              parse-error
-                              [{:expr (str raw-code) :parse-error parse-error}]
+(defn- sha256-hex
+  [s]
+  (bytes->hex (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (str s) "UTF-8"))))
 
-                              :else
-                              (vec (filter #(not (str/blank? (:expr %)))
-                                     (or forms []))))
-        parsed-total-blocks (count parsed-code-entries)
-        answer-preflight-form-idx (when (and (not raw-fence-error)
-                                          (pos? parsed-total-blocks))
-                                    (answer-position-preflight-form-idx
-                                      iteration-position
-                                      parsed-code-entries))
-        answer-preflight-error (when (some? answer-preflight-form-idx)
-                                 (answer-position-preflight-error-message
-                                   answer-preflight-form-idx
-                                   parsed-total-blocks))]
-    {:code-entries (if answer-preflight-error
-                     (mapv (fn [entry]
-                             (assoc entry :preflight-error answer-preflight-error))
-                       parsed-code-entries)
-                     parsed-code-entries)
-     :answer-preflight-error answer-preflight-error
-     :raw-fence-preflight-error raw-fence-error
-     :original-total-blocks parsed-total-blocks}))
+(defn- normalized-code-source
+  [code-entries]
+  (->> code-entries
+    (map (comp str/trim str :expr))
+    (remove str/blank?)
+    (str/join "\n")))
+
+(defn- block-outcome-hash
+  [blocks]
+  (sha256-hex
+    (pr-str
+      (mapv #(select-keys % [:code :result :error :rendering-kind :stdout :stderr :timeout?])
+        (or blocks [])))))
+
+(defn- repeat-preflight-error-message
+  [{:keys [repeat-count outcome-hash]}]
+  (str "Repeated non-progress operation rejected before evaluation: "
+    "the model emitted executable code already observed " repeat-count
+    " consecutive time(s) with the same outcome hash " outcome-hash ". "
+    "Do not run the same operation again. Read the previous journal result, "
+    "change strategy, ask for missing input, or finish with one final answer."))
+
+(defn- repeat-preflight-error
+  [repeat-state code-hash]
+  (when (and code-hash
+          (= code-hash (:code-hash repeat-state))
+          (<= 2 (long (or (:repeat-count repeat-state) 0))))
+    (repeat-preflight-error-message repeat-state)))
+
+(defn- record-repeat-outcome!
+  [repeat-atom code-hash blocks]
+  (when (and repeat-atom code-hash)
+    (let [outcome-hash (block-outcome-hash blocks)]
+      (swap! repeat-atom
+        (fn [state]
+          (if (and (= code-hash (:code-hash state))
+                (= outcome-hash (:outcome-hash state)))
+            (assoc state
+              :code-hash code-hash
+              :outcome-hash outcome-hash
+              :repeat-count (inc (long (or (:repeat-count state) 1))))
+            {:code-hash code-hash
+             :outcome-hash outcome-hash
+             :repeat-count 1}))))))
+
+(defn- needs-input-call-form?
+  [form]
+  (and (seq? form)
+    (symbol? (first form))
+    (= "needs-input" (name (first form)))))
+
+(defn- form-contains-needs-input-call?
+  [expr]
+  (try
+    (let [form (edamame/parse-string (str expr) edamame-opts)]
+      (boolean (some needs-input-call-form? (tree-seq coll? seq form))))
+    (catch Throwable _
+      false)))
+
+(defn- direct-answer-entry?
+  [{:keys [expr]}]
+  (try
+    (answer-call-form? (edamame/parse-string (str expr) edamame-opts))
+    (catch Throwable _
+      false)))
+
+(defn- code-entries-preflight
+  ([iteration-position raw-code]
+   (code-entries-preflight iteration-position raw-code nil))
+  ([iteration-position raw-code repeat-state]
+   (let [raw-code (or raw-code "")
+         raw-fence-error (raw-markdown-fence-leak-error raw-code)
+         [forms parse-error] (if raw-fence-error
+                               [nil (ex-info raw-fence-error
+                                      {:vis/error :raw-markdown-fence-leak})]
+                               (split-top-level-forms raw-code))
+         parsed-code-entries (cond
+                               raw-fence-error
+                               [{:expr "(vis/preflight-error :raw-markdown-fence-leak)"
+                                 :preflight-error raw-fence-error}]
+
+                               parse-error
+                               [{:expr (str raw-code) :parse-error parse-error}]
+
+                               :else
+                               (vec (filter #(not (str/blank? (:expr %)))
+                                      (or forms []))))
+         parsed-total-blocks (count parsed-code-entries)
+         normalized-code (normalized-code-source parsed-code-entries)
+         code-hash (when-not (str/blank? normalized-code)
+                     (sha256-hex normalized-code))
+         answer-preflight-form-idx (when (and (not raw-fence-error)
+                                           (pos? parsed-total-blocks))
+                                     (answer-position-preflight-form-idx
+                                       iteration-position
+                                       parsed-code-entries))
+         answer-preflight-error (when (some? answer-preflight-form-idx)
+                                  (answer-position-preflight-error-message
+                                    answer-preflight-form-idx
+                                    parsed-total-blocks))
+         repeat-error (when-not (or raw-fence-error parse-error answer-preflight-error)
+                        (repeat-preflight-error repeat-state code-hash))]
+     {:code-entries (cond
+                      answer-preflight-error
+                      (mapv (fn [entry]
+                              (assoc entry :preflight-error answer-preflight-error))
+                        parsed-code-entries)
+
+                      repeat-error
+                      [{:expr "(vis/preflight-error :repeat-non-progress)"
+                        :preflight-error repeat-error}]
+
+                      :else
+                      parsed-code-entries)
+      :answer-preflight-error answer-preflight-error
+      :repeat-preflight-error repeat-error
+      :raw-fence-preflight-error raw-fence-error
+      :normalized-code normalized-code
+      :code-hash code-hash
+      :original-total-blocks parsed-total-blocks})))
 
 (def ^:private evidence-bearing-request-pattern
   (re-pattern
@@ -1015,33 +1103,6 @@
     (and (seq violations)
       (every? #(= :missing-focused-intent (:type %)) violations))))
 
-(defn- first-iteration-position?
-  [iteration]
-  (let [n (long (or iteration 1))]
-    (or (zero? n) (= 1 n))))
-
-(defn- no-persisted-turn-iterations?
-  [db-info turn-id]
-  (try
-    (empty? (persistance/db-list-conversation-turn-iterations db-info turn-id))
-    (catch Throwable _
-      false)))
-
-(defn- non-evidence-answer-block?
-  [block]
-  (let [rendering-kind (:rendering-kind block)
-        code           (some-> (:code block) str str/trim)]
-    (or (= :vis/silent rendering-kind)
-      (= :vis/system rendering-kind)
-      (= :vis/answer rendering-kind)
-      (and code (noop-expr? code)))))
-
-(defn- no-workspace-evidence-yet?
-  [db-info turn-id iteration blocks]
-  (and (first-iteration-position? iteration)
-    (no-persisted-turn-iterations? db-info turn-id)
-    (every? non-evidence-answer-block? (or blocks []))))
-
 (defn final-answer-gate-error
   "Return nil only when focused conversation intents are answer-ready.
    Evidence-bearing requests require a focused conversation intent that is
@@ -1053,12 +1114,11 @@
    they may finish an evidence-bearing request with no focused intent when the
    model is asking the user for missing input required to begin the work.
 
-   Compatibility fallback: a first-iteration plain clarification answer is
-   also accepted when the only violation is `:missing-focused-intent` and no
-   workspace/tool evidence has been produced yet."
+   Evidence-bearing first-iteration plain clarification answers are rejected;
+   use explicit `(v/needs-input …)` when required user material is absent."
   ([environment iteration blocks]
    (final-answer-gate-error environment iteration blocks nil))
-  ([environment iteration blocks answer-value]
+  ([environment _iteration _blocks answer-value]
    (let [db-info (:db-info environment)
          turn-id (some-> (:current-conversation-turn-id-atom environment) deref)]
      (when (and db-info turn-id)
@@ -1071,14 +1131,8 @@
              required? (intent-required? (current-user-request environment))
              missing-focus-only? (ignorable-missing-focused-intent-only? state)
              needs-input? (needs-input-answer? answer-value)
-             plain-clarification? (and (string? answer-value)
-                                    (not (str/blank? answer-value)))
-             clarification-without-evidence? (and plain-clarification?
-                                               (no-workspace-evidence-yet? db-info turn-id iteration blocks))
              missing-focus-allowed? (and missing-focus-only?
-                                      (or (not required?)
-                                        needs-input?
-                                        clarification-without-evidence?))]
+                                      (or (not required?) needs-input?))]
          (when (and (not (:ok? state))
                  (not missing-focus-allowed?))
            (str "Final answer rejected: focused conversation intents are not resolved. "
@@ -1285,14 +1339,32 @@
           ;; Parse it into top-level forms; each form becomes one
           ;; expression_state row.
           raw-code (or (:result ask-result) "")
-          {:keys [code-entries answer-preflight-error]} (code-entries-preflight
-                                                          iteration-position
-                                                          raw-code)
+          repeat-atom (:repeat-preflight-atom environment)
+          {:keys [code-entries answer-preflight-error repeat-preflight-error
+                  code-hash]}
+          (code-entries-preflight iteration-position raw-code (some-> repeat-atom deref))
+          direct-answer-entry (when (= 1 (count code-entries))
+                                (first code-entries))
+          final-answer-preflight-error
+          (when (and direct-answer-entry
+                  (not answer-preflight-error)
+                  (not repeat-preflight-error)
+                  (not (:preflight-error direct-answer-entry))
+                  (direct-answer-entry? direct-answer-entry)
+                  (not (form-contains-needs-input-call? (:expr direct-answer-entry))))
+            (final-answer-gate-error environment iteration-position [] nil))
+          code-entries (if final-answer-preflight-error
+                         [{:expr "(vis/preflight-error :final-answer-gate)"
+                           :preflight-error final-answer-preflight-error}]
+                         code-entries)
+          suppress-form-start? (or answer-preflight-error
+                                 repeat-preflight-error
+                                 final-answer-preflight-error)
           total-blocks (count code-entries)
           executed (mapv (fn [idx {:keys [expr preflight-error parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
-                           (when (and on-chunk (not answer-preflight-error) (not (silent-host-form? expr)))
+                           (when (and on-chunk (not suppress-form-start?) (not (silent-host-form? expr)))
                              (on-chunk {:phase         :form-start
                                         :iteration     iteration-position
                                         :form-idx      idx
@@ -1388,6 +1460,8 @@
                                     :repaired? (:repaired? result)}
                              form-comment (assoc :comment form-comment)))
                      (range) code-blocks block-results block-comments))
+          _ (when-not repeat-preflight-error
+              (record-repeat-outcome! repeat-atom code-hash blocks))
           silent-form-idxs (into #{}
                              (keep-indexed (fn [idx block]
                                              (when (= :vis/silent (:rendering-kind block)) idx)))
@@ -2134,6 +2208,7 @@
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
+    (when-let [a (:repeat-preflight-atom environment)] (reset! a nil))
     (try
       (persistance/db-infer-focus! (:db-info environment) conversation-turn-id
         {:rationale "Turn-start focus inference carried unresolved previous focus."})
@@ -3363,6 +3438,7 @@
         current-iteration-id-atom (atom nil)
         current-conversation-turn-id-atom (atom nil)
         current-user-request-atom (atom nil)
+        repeat-preflight-atom (atom nil)
         ;; Title atom: in-memory cache for the conversation title.
         ;; The DB column on `conversation_state` is the persisted
         ;; truth; this atom is the fast read path for  and
@@ -3461,6 +3537,7 @@
              :current-iteration-id-atom current-iteration-id-atom
              :current-conversation-turn-id-atom current-conversation-turn-id-atom
              :current-user-request-atom current-user-request-atom
+             :repeat-preflight-atom repeat-preflight-atom
              :conversation-title-atom            conversation-title-atom
              :extensions            (atom [])}]
     (reset! environment-atom env)

@@ -207,7 +207,7 @@ vis extensions <cmd> [args…]         # run an extension's exported CLI command
 
 The bundled `extensions/common/vis-foundation` package adds `v/cat`,
 `v/ls`, `v/rg`, `v/bash`, and thin babashka.fs wrappers like
-`v/read-all-lines`, `v/write-lines`, `v/update-file`, `v/list-dir`, and
+`v/read-all-lines`, `v/write-lines`, `v/update-file`, and
 `v/glob` (filesystem tools namespaced under the `v/` alias). It is already
 wired into the root `deps.edn`; add the same `:local/root` entry to a
  downstream consumer's `deps.edn` to enable it:

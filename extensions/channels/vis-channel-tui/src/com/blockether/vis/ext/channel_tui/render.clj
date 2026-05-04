@@ -1694,6 +1694,7 @@
 (def ^:private link-icon-image    "\uD83D\uDCF7")  ; 📷
 (def ^:private link-icon-link     "\uD83D\uDD17")  ; 🔗
 (def ^:private link-icon-file     "\uD83D\uDCC4")  ; 📄
+(def ^:private link-icon-proof    "✓")              ; provenance proof ref
 (def ^:private link-icon-blocked  "\uD83D\uDEAB")  ; 🚫
 (def ^:private resources-icon     "\uD83D\uDCDA")  ; 📚
 
@@ -1740,9 +1741,10 @@
   ^String [{:keys [kind enabled?]}]
   (cond
     (not enabled?) link-icon-blocked
-    (= kind :image) link-icon-image
-    (= kind :file)  link-icon-file
-    :else           link-icon-link))
+    (= kind :image)      link-icon-image
+    (= kind :file)       link-icon-file
+    (= kind :provenance) link-icon-proof
+    :else                link-icon-link))
 
 ;; Inline-style sentinel codepoints emitted by `markdown->inline`
 ;; (BOLD/ITALIC/STRIKE/CODE on/off pairs in the U+E110–U+E117 PUA
@@ -1995,13 +1997,19 @@
             pad-w  (max gap-w (- max-w (p/display-width left) suffix-w))]
         (str left (repeat-str \space pad-w) suffix)))))
 
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-node-id
-  ^String [{:keys [iteration-number block-number details-path section kind]}]
+(defn- detail-node-base-id
+  ^String [{:keys [conversation-turn-id iteration-number block-number section kind]}]
   (str
     (or (some-> section name) "answer")
+    (when conversation-turn-id (str ":t" (short-id-fragment conversation-turn-id)))
     (when iteration-number (str ":i" iteration-number))
     (when block-number (str ":b" block-number))
-    (when kind (str ":" (name kind)))
+    (when kind (str ":" (name kind)))))
+
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-node-id
+  ^String [{:keys [details-path] :as detail-ctx}]
+  (str
+    (detail-node-base-id detail-ctx)
     (when (seq details-path) (str ":d" (str/join "." details-path)))))
 
 (def ^:private proof-summary-icon "✓")
@@ -3597,7 +3605,10 @@
                             :kind detail-kind
                             :proofs? (= :proofs detail-kind)}
               node-id      (detail-node-id detail-ctx)
-              expanded?    (detail-expanded? (:detail-expansions opts) conversation-id node-id true)
+              expanded?    (detail-expanded? (:detail-expansions opts)
+                             conversation-id
+                             node-id
+                             (not= :proofs detail-kind))
               body-entries (vec (render-detail-segments segments max-w mode opts))]
           (vec (concat
                  (when margin-top? [{:line "" :meta nil}])
@@ -3610,6 +3621,42 @@
                                            :node-id node-id))
                  (when expanded? body-entries))))))
     segments))
+
+(defn- relevant-detail-expansions-key
+  "Stable cache key for only the disclosure nodes this Markdown projection
+   can render. A click in one old answer must not bust cached projections for
+   every other visible answer. Scope by conversation + node-id base."
+  [opts]
+  (let [conversation-id (some-> (:conversation-id opts) str)
+        base            (detail-node-base-id opts)
+        prefix          (str base ":")]
+    (->> (:detail-expansions opts)
+      (keep (fn [[[cid node-id] expanded?]]
+              (let [node-id (str node-id)]
+                (when (and (= conversation-id (str cid))
+                        (or (= base node-id)
+                          (str/starts-with? node-id prefix)))
+                  [node-id (boolean expanded?)]))))
+      sort
+      vec)))
+
+(defn- turn-detail-expansions-key
+  "Stable cache key for any disclosure belonging to this rendered assistant
+   turn. Used by the outer trace+answer projection, which may contain thinking,
+   iteration, tool/result, and final-answer disclosures."
+  [opts]
+  (let [conversation-id (some-> (:conversation-id opts) str)
+        turn-fragment   (some-> (:conversation-turn-id opts) short-id-fragment)
+        turn-token      (when turn-fragment (str ":t" turn-fragment))]
+    (->> (:detail-expansions opts)
+      (keep (fn [[[cid node-id] expanded?]]
+              (let [node-id (str node-id)]
+                (when (and (= conversation-id (str cid))
+                        (or (nil? turn-token)
+                          (str/includes? node-id turn-token)))
+                  [node-id (boolean expanded?)]))))
+      sort
+      vec)))
 
 (defn- markdown-entries-cache-key
   [text max-w mode opts]
@@ -3630,7 +3677,7 @@
      (:iteration-number opts)
      (:block-number opts)
      (:section opts)
-     (System/identityHashCode (:detail-expansions opts))]))
+     (relevant-detail-expansions-key opts)]))
 
 (defn markdown->entries
   ([text max-w] (markdown->entries text max-w :answer nil))
@@ -3722,7 +3769,7 @@
              confidence
              (boolean cancelled?)
              (:conversation-turn-id opts)
-             (System/identityHashCode (:detail-expansions opts))]
+             (turn-detail-expansions-key opts)]
      #(format-answer-with-thinking-data* answer trace bubble-w settings confidence cancelled? opts))))
 
 (defn format-answer-with-thinking
@@ -3753,7 +3800,7 @@
              (System/identityHashCode answer)
              (long bubble-w)
              (:conversation-turn-id opts)
-             (System/identityHashCode (:detail-expansions opts))]
+             (relevant-detail-expansions-key opts)]
      #(format-answer-markdown-data* answer bubble-w opts))))
 
 (defn format-answer-markdown

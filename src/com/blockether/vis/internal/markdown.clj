@@ -22,6 +22,382 @@
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.persistance :as persistance]))
 
+;; =============================================================================
+;; Pure Markdown builders
+;; =============================================================================
+
+(defn- ->str
+  "Coerce x to String. nil -> \"\". Sequential collections are rejected so
+   callers do not accidentally stringify lazy seqs into garbage. Splice one
+   level up with `join` / `lines` / the variadic helpers instead."
+  ^String [x]
+  (cond
+    (nil? x)        ""
+    (string? x)     x
+    (sequential? x) (throw (ex-info
+                             (str "markdown helper got a sequential collection where a string was expected. "
+                               "Splice with (join ...) / (lines ...), or build eagerly.")
+                             {:value-class (.getName (class x))
+                              :sample      (->> x (take 3) (mapv #(if (string? %) % (pr-str %))))}))
+    :else           (str x)))
+
+(declare expand-parts)
+
+(defn- compose-text
+  "Variadic-friendly text composer used by inline / heading / block helpers.
+   nil dropped, one-level seq splice, caller-owned whitespace."
+  ^String [parts]
+  (cond
+    (and (= 1 (count parts)) (string? (first parts)))
+    (first parts)
+
+    (and (= 1 (count parts)) (not (sequential? (first parts))))
+    (->str (first parts))
+
+    :else
+    (->> (expand-parts parts)
+      (mapv ->str)
+      (apply str))))
+
+(defn h
+  "Heading at level n (clamped [1, 6])."
+  ^String [n & parts]
+  (let [lvl (max 1 (min 6 (long n)))]
+    (str (apply str (repeat lvl "#")) " " (compose-text parts))))
+
+(defn h1 ^String [& parts] (str "# "      (compose-text parts)))
+(defn h2 ^String [& parts] (str "## "     (compose-text parts)))
+(defn h3 ^String [& parts] (str "### "    (compose-text parts)))
+(defn h4 ^String [& parts] (str "#### "   (compose-text parts)))
+(defn h5 ^String [& parts] (str "##### "  (compose-text parts)))
+(defn h6 ^String [& parts] (str "###### " (compose-text parts)))
+
+(defn p
+  "Paragraph. Joins parts with single spaces. nil dropped, seqs spliced one
+   level deep."
+  ^String [& parts]
+  (let [joined (str/join " " (keep (fn [p] (when-not (str/blank? p) (str/trim p)))
+                               (mapv ->str (expand-parts parts))))]
+    (loop [s joined]
+      (let [next (str/replace s "  " " ")]
+        (if (str/includes? next "  ")
+          (recur next)
+          next)))))
+
+(defn bold        ^String [& parts] (str "**"     (compose-text parts) "**"))
+(def strong bold)
+(defn italic      ^String [& parts] (str "*"      (compose-text parts) "*"))
+(def em italic)
+(defn bold-italic ^String [& parts] (str "***"    (compose-text parts) "***"))
+(defn strike      ^String [& parts] (str "~~"     (compose-text parts) "~~"))
+(defn code        ^String [& parts] (str "`"      (compose-text parts) "`"))
+(defn kbd         ^String [& parts] (str "<kbd>"  (compose-text parts) "</kbd>"))
+
+(defn- escape-title-attr
+  ^String [title]
+  (str/replace (->str title) "\"" "\\\""))
+
+(defn link
+  (^String [text url] (link text url nil))
+  (^String [text url title]
+   (let [t (->str title)]
+     (if (str/blank? t)
+       (str "[" (->str text) "](" (->str url) ")")
+       (str "[" (->str text) "](" (->str url)
+         " \"" (escape-title-attr t) "\")")))))
+
+(defn image
+  (^String [alt url] (image alt url nil))
+  (^String [alt url title]
+   (str "!" (link alt url title))))
+
+(defn file-link
+  (^String [path] (file-link path nil))
+  (^String [path line]
+   (let [p (->str path)]
+     (if line
+       (link (str p ":" line) (str p "#L" line))
+       (link p p)))))
+
+(defn anchor
+  (^String [text] (anchor text nil))
+  (^String [text slug]
+   (let [raw  (->str text)
+         slug (or slug
+                (-> raw
+                  str/lower-case
+                  (str/replace #"[^a-z0-9\s-]" "")
+                  (str/replace #"\s+" "-")
+                  (str/replace #"-+" "-")
+                  (str/replace #"^-|-$" "")))]
+     (link raw (str "#" slug)))))
+
+(defn- fence-lang-str [lang]
+  (let [s (cond
+            (nil? lang) nil
+            (or (keyword? lang) (symbol? lang)) (name lang)
+            :else (->str lang))
+        s (some-> s str/trim)]
+    (when-not (str/blank? s) s)))
+
+(defn code-block
+  (^String [body]
+   (let [body (->str body)
+         body (if (str/ends-with? body "\n") body (str body "\n"))]
+     (str "```\n" body "```")))
+  (^String [lang body]
+   (let [body (->str body)
+         body (if (str/ends-with? body "\n") body (str body "\n"))]
+     (str "```" (fence-lang-str lang) "\n" body "```"))))
+
+(defn blockquote
+  ^String [& parts]
+  (let [text (compose-text parts)]
+    (if (str/blank? text)
+      ">"
+      (->> (str/split-lines text)
+        (map #(if (str/blank? %) ">" (str "> " %)))
+        (str/join "\n")))))
+
+(def hr "---")
+
+(def ^{:doc "Hard line break suffix. Stringifies to two trailing spaces and is also callable as a zero-arg fn."}
+  br
+  (reify
+    CharSequence
+    (toString [_] "  ")
+    clojure.lang.IFn
+    (invoke [_] "  ")
+    (applyTo [_ _] "  ")))
+
+(defn summary
+  ^String [& parts]
+  (str "<summary>" (compose-text parts) "</summary>"))
+
+(defn- summary-tagged? [s]
+  (and (string? s)
+    (str/starts-with? s "<summary>")
+    (str/ends-with? s "</summary>")))
+
+(defn details
+  ^String [& parts]
+  (let [parts (expand-parts parts)
+        strs  (mapv ->str parts)
+        {sums true bodies false} (group-by summary-tagged? strs)
+        sum   (first sums)
+        body  (when (seq bodies) (str/join "\n\n" bodies))]
+    (when (> (count sums) 1)
+      (throw (ex-info
+               (str "details got " (count sums) " <summary>…</summary> parts — at most one is allowed.")
+               {:summary-count (count sums)})))
+    (cond
+      (and sum body) (str "<details>\n" sum "\n\n" body "\n\n</details>")
+      sum            (str "<details>\n" sum "\n\n</details>")
+      body           (str "<details>\n" body "\n\n</details>")
+      :else          "<details>\n\n</details>")))
+
+(defn- normalize-list-items [items]
+  (let [unwrapped (if (and (= 1 (count items)) (sequential? (first items)))
+                    (first items)
+                    items)]
+    (remove nil? unwrapped)))
+
+(defn- item-text [x]
+  (if (sequential? x)
+    (compose-text x)
+    (->str x)))
+
+(defn li [& parts]
+  (str "- " (compose-text parts)))
+
+(defn- unordered-marker? [s]
+  (or (str/starts-with? s "- ")
+    (str/starts-with? s "* ")
+    (str/starts-with? s "+ ")))
+
+(defn- ordered-marker? [s]
+  (boolean (re-find #"^\d+[.)]\s+.*" s)))
+
+(defn- list-marker? [s]
+  (or (unordered-marker? s)
+    (ordered-marker? s)))
+
+(defn- text-lines [text]
+  (str/split text #"\n" -1))
+
+(defn- root-list-block? [text]
+  (let [lines (remove str/blank? (text-lines text))]
+    (and (< 1 (count lines))
+      (every? list-marker? lines))))
+
+(defn- continuation-prefix? [s]
+  (boolean (re-matches #"^(?:\s+|[,;:.)\]}]|[—–-]).*" s)))
+
+(defn- dangling-suffix? [s]
+  (boolean (re-find #"(?:\s|[({\[:;,—–-])$" s)))
+
+(defn- fragmentable-list-item? [x]
+  (and (string? x)
+    (not (list-marker? x))
+    (not (root-list-block? x))))
+
+(defn- attach-inline-fragment? [current x]
+  (and (fragmentable-list-item? current)
+    (fragmentable-list-item? x)
+    (or (dangling-suffix? current)
+      (continuation-prefix? x))))
+
+(defn- coalesce-inline-list-fragments [items]
+  (loop [remaining (seq items)
+         current   nil
+         acc       []]
+    (cond
+      (nil? remaining)
+      (cond-> acc current (conj current))
+
+      (nil? current)
+      (recur (next remaining) (first remaining) acc)
+
+      (attach-inline-fragment? current (first remaining))
+      (recur (next remaining) (str current (first remaining)) acc)
+
+      :else
+      (recur (next remaining) (first remaining) (conj acc current)))))
+
+(defn- indent-lines [indent lines]
+  (let [pad (apply str (repeat indent " "))]
+    (map #(str pad %) lines)))
+
+(defn- render-prefixed-item [prefix text]
+  (let [[head & tail] (text-lines text)]
+    (if (seq tail)
+      (str prefix head "\n" (str/join "\n" (indent-lines (count prefix) tail)))
+      (str prefix head))))
+
+(defn- render-nested-list-block [marker-prefix text]
+  (str (str/trimr marker-prefix)
+    "\n"
+    (str/join "\n" (indent-lines (count marker-prefix) (text-lines text)))))
+
+(defn- render-unordered-item [x]
+  (let [text (item-text x)]
+    (cond
+      (root-list-block? text) (render-nested-list-block "- " text)
+      (unordered-marker? text) (render-prefixed-item "" text)
+      :else (render-prefixed-item "- " text))))
+
+(defn ul [& items]
+  (->> (normalize-list-items items)
+    coalesce-inline-list-fragments
+    (map render-unordered-item)
+    (str/join "\n")))
+
+(defn ol [& items]
+  (->> (normalize-list-items items)
+    coalesce-inline-list-fragments
+    (map-indexed (fn [i x]
+                   (let [marker-prefix (str (inc i) ". ")
+                         text          (item-text x)
+                         text          (if (and (not (root-list-block? text))
+                                             (unordered-marker? text))
+                                         (subs text 2)
+                                         text)]
+                     (if (root-list-block? text)
+                       (render-nested-list-block marker-prefix text)
+                       (render-prefixed-item marker-prefix text)))))
+    (str/join "\n")))
+
+(defn checklist [& items]
+  (->> (normalize-list-items items)
+    (map (fn [it]
+           (let [[t d?] (cond
+                          (map? it)        [(:text it) (:done? it)]
+                          (sequential? it) [(first it) (second it)]
+                          :else            [it false])]
+             (str "- [" (if d? "x" " ") "] " (item-text t)))))
+    (str/join "\n")))
+
+(defn- pipe-escape
+  ^String [s]
+  (-> (->str s)
+    (str/replace "\\" "\\\\")
+    (str/replace "|" "\\|")
+    (str/replace "\n" " ")))
+
+(defn- align-spec
+  ^String [a]
+  (case a
+    :center " :---: "
+    :right  " ---: "
+    :left   " :--- "
+    " --- "))
+
+(defn table
+  (^String [headers rows] (table headers rows nil))
+  (^String [headers rows {:keys [align]}]
+   (let [n       (count headers)
+         pad-row (fn [r]
+                   (let [v (vec r)]
+                     (vec (for [i (range n)] (nth v i nil)))))
+         hdr     (str "| " (str/join " | " (map pipe-escape headers)) " |")
+         sep     (str "|"
+                   (str/join "|" (for [i (range n)] (align-spec (nth (or align []) i :default))))
+                   "|")
+         body    (->> (or rows [])
+                   (map (fn [r]
+                          (str "| " (str/join " | " (map pipe-escape (pad-row r))) " |")))
+                   (str/join "\n"))]
+     (if (str/blank? body)
+       (str hdr "\n" sep)
+       (str hdr "\n" sep "\n" body)))))
+
+(defn expand-parts
+  "Flatten one level of seqs so callers can mix variadic args with seq-producing
+   forms without lazy-seq stringification leaks."
+  [parts]
+  (persistent!
+    (reduce
+      (fn [acc p]
+        (cond
+          (nil? p)        acc
+          (sequential? p) (reduce conj! acc (remove nil? p))
+          :else           (conj! acc p)))
+      (transient [])
+      parts)))
+
+(defn join ^String [& parts]
+  (->> (expand-parts parts)
+    (mapv ->str)
+    (str/join "\n\n")))
+
+(defn lines ^String [& parts]
+  (->> (expand-parts parts)
+    (mapv ->str)
+    (str/join "\n")))
+
+(defn section
+  (^String [title body] (section 2 title body))
+  (^String [level title body]
+   (str (h level title) "\n\n" (->str body))))
+
+(defn escape
+  ^String [s]
+  (str/replace (->str s) #"([\\`*_{}\[\]()#+\-!|>])" "\\\\$1"))
+
+(defn needs-input
+  [ask-or-opts]
+  (let [{:keys [ask missing] :as opts} (if (map? ask-or-opts)
+                                         ask-or-opts
+                                         {:ask ask-or-opts})
+        ask-text (str/trim (->str ask))]
+    (when (str/blank? ask-text)
+      (throw (ex-info "needs-input requires a non-blank :ask"
+               {:opts opts})))
+    (cond-> {:vis/answer-mode :needs-input
+             :answer/text ask-text}
+      (some? missing) (assoc :missing (->str missing))
+      (seq (dissoc opts :ask :missing)) (assoc :metadata (dissoc opts :ask :missing)))))
+
 (def ^:private DEFAULT_OPTS
   "Defaults applied via `merge` over caller `opts`.
 
@@ -252,7 +628,7 @@
     (when (seq parts)
       (str/join " \u00b7 " parts))))
 
-(defn- blockquote
+(defn- export-blockquote
   "Wrap each line of `text` with `> ` so the whole thing renders as a
    Markdown blockquote. Empty input -> nil (caller drops the section)."
   [text]
@@ -286,7 +662,7 @@
    `:include-system?` is on AND the conversation has a stored prompt."
   [conversation]
   (when-let [prompt (:system-prompt conversation)]
-    (str "## System prompt\n\n" (blockquote prompt))))
+    (str "## System prompt\n\n" (export-blockquote prompt))))
 
 (defn- render-turn-body
   "Render one turn as: `## Turn N` heading, blockquoted user request,
@@ -296,7 +672,7 @@
    placeholder so the export stays diff-friendly across re-exports."
   [{:keys [user-label assistant-label include-meta?] :as _opts} index turn]
   (let [meta        (when include-meta? (format-turn-meta turn))
-        user-block  (or (blockquote (:user-request turn)) "> *(empty user request)*")
+        user-block  (or (export-blockquote (:user-request turn)) "> *(empty user request)*")
         answer-text (cond
                       (:answer turn) (normalize-chat-markdown (:answer turn))
                       (= :error (:status turn)) "*(turn errored \u2014 no answer recorded)*"

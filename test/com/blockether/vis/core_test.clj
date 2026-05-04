@@ -108,8 +108,7 @@
   (it "accepts a function result that satisfies :result-spec and stamps extension provenance"
     (let [sym (vis/symbol 'good (fn [& _]
                                   (ext/success {:result true
-                                                :provenance {:op :demo}
-                                                :markdown "ok"}))
+                                                :provenance {:op :demo}}))
                 {:doc "good"
                  :arglists '([])
                  :result-spec ::ext/tool-result})
@@ -136,9 +135,10 @@
     (expect (ifn? vis/provider-limits))
     (expect (ifn? vis/all-provider-limits)))
 
-  (it "re-exports extension provenance helpers from the public vis.core surface"
+  (it "re-exports extension provenance and rendering helpers from the public vis.core surface"
     (expect (ifn? vis/extension-provenance))
-    (expect (ifn? vis/extension-source-markers-of)))
+    (expect (ifn? vis/extension-source-markers-of))
+    (expect (ifn? vis/render-tool-result)))
 
   (it "re-exports the config path on the public vis.core surface"
     (expect (= (str (System/getProperty "user.home") "/.vis/config.edn")
@@ -697,24 +697,24 @@
 ;; -----------------------------------------------------------------------------
 ;; answer-position — rule b' ("answer is alone after iteration 1")
 ;;
-;; `(answer …)` must be the ONLY top-level form after iteration 1.
-;; Iteration 1 allows trivial-chat answers as the last top-level form
-;; so a greeting does not pay a pointless recovery iteration. Wrappers
-;; like `(let [...] (answer ...))` stay legal because they are still one
-;; top-level form. Disallowed mixed answer+work iterations trigger a
-;; position violation, the answer is discarded, and the model gets a
-;; structured nudge to answer alone in the next iteration.
+;; `(answer …)` must be the LAST top-level form. Earlier setup/proof
+;; helper forms are allowed so a ready answer does not pay a pointless
+;; recovery iteration. Wrappers like `(let [...] (answer ...))` stay
+;; legal because they are still one top-level form. Disallowed answer
+;; followed by more work triggers a position violation, the answer is
+;; discarded, and the model gets a structured nudge to move work before
+;; the answer or loop once more.
 ;; -----------------------------------------------------------------------------
 
 (defdescribe answer-position-rule-test
   (it "single top-level form, answer in form 0 — NOT a violation"
     (expect (false? (vis/answer-position-violation? 0 1))))
 
-  (it "two forms, answer in last (form 1) — violation because answer is not alone"
-    (expect (true? (vis/answer-position-violation? 1 2))))
+  (it "two forms, answer in last (form 1) — NOT a violation"
+    (expect (false? (vis/answer-position-violation? 1 2))))
 
-  (it "five forms, answer in last (form 4) — violation because answer is not alone"
-    (expect (true? (vis/answer-position-violation? 4 5))))
+  (it "five forms, answer in last (form 4) — NOT a violation"
+    (expect (false? (vis/answer-position-violation? 4 5))))
 
   (it "two forms, answer in first (form 0) — violation because answer is not alone"
     (expect (true? (vis/answer-position-violation? 0 2))))
@@ -730,9 +730,9 @@
     (expect (true? (vis/answer-position-violation? 0 2 1)))
     (expect (true? (vis/answer-position-violation? 2 5 1))))
 
-  (it "post-first iterations still reject sibling top-level forms"
-    (expect (true? (vis/answer-position-violation? 1 2 2)))
-    (expect (true? (vis/answer-position-violation? 4 5 3))))
+  (it "post-first iterations allow answer as the last top-level form"
+    (expect (false? (vis/answer-position-violation? 1 2 2)))
+    (expect (false? (vis/answer-position-violation? 4 5 3))))
 
   (it "nil form-idx (no answer fired) — never a violation"
     (expect (false? (vis/answer-position-violation? nil 3)))
@@ -742,15 +742,15 @@
     (expect (false? (vis/answer-position-violation? :one 3)))
     (expect (false? (vis/answer-position-violation? "1" 3))))
 
-  (it "position error message tells the model to answer alone"
+  (it "position error message tells the model to answer last"
     (let [msg (vis/answer-position-error-message 0 3)]
       (expect (string? msg))
       ;; 0-based form-idx 0, 1-based 1, total 3.
       (expect (re-find #"3 top-level forms" msg))
       (expect (re-find #"answer fired from form 1" msg))
-      (expect (re-find #"ONLY top-level form" msg))
-      (expect (re-find #"omitting `\(answer …\)`" msg))
-      (expect (re-find #"one final top-level form" msg))
+      (expect (re-find #"LAST top-level form" msg))
+      (expect (re-find #"omit `\(answer …\)`" msg))
+      (expect (re-find #"answer-bearing final form" msg))
       (expect (re-find #"`\(let \[\.\.\.\] \(answer …\)\)`" msg)))))
 
 ;; -----------------------------------------------------------------------------

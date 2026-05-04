@@ -7,7 +7,15 @@
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as loop]
-   [lazytest.core :refer [defdescribe expect it]]))
+   [lazytest.core :refer [defdescribe expect it]]
+   [sci.core :as sci])
+  (:import
+   (java.nio.file Files)
+   (java.nio.file.attribute FileAttribute)))
+
+(defn- make-temp-db-dir
+  [prefix]
+  (str (Files/createTempDirectory prefix (make-array FileAttribute 0))))
 
 (defdescribe normalize-reasoning-level-test
   (it "accepts the UI reasoning vocabulary and OpenAI aliases"
@@ -235,22 +243,24 @@
         (finally
           (vis/db-dispose-connection! s)))))
 
-  (it "accepts first-iteration plain clarification answers before workspace evidence exists"
+  (it "rejects first-iteration plain clarification answers for evidence-bearing work"
     (let [s   (vis/db-create-connection! :memory)
           cid (vis/db-store-conversation! s {:channel :cli})
           tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                   :user-request "Please check the ideas we currently have"
                                                   :status :running})]
       (try
-        (expect (nil? (loop/final-answer-gate-error
-                        {:db-info s
-                         :current-conversation-turn-id-atom (atom tid)
-                         :current-user-request-atom (atom "Please check the ideas we currently have")}
-                        1 [{:code "(conversation-title \"Review ideas\")"
-                            :rendering-kind :vis/silent}
-                           {:code "(answer \"Please paste the ideas.\")"
-                            :rendering-kind :vis/answer}]
-                        "Please paste the ideas.")))
+        (let [error (loop/final-answer-gate-error
+                      {:db-info s
+                       :current-conversation-turn-id-atom (atom tid)
+                       :current-user-request-atom (atom "Please check the ideas we currently have")}
+                      1 [{:code "(conversation-title \"Review ideas\")"
+                          :rendering-kind :vis/silent}
+                         {:code "(answer \"Please paste the ideas.\")"
+                          :rendering-kind :vis/answer}]
+                      "Please paste the ideas.")]
+          (expect (string? error))
+          (expect (re-find #":missing-focused-intent" error)))
         (finally
           (vis/db-dispose-connection! s)))))
 
@@ -484,15 +494,50 @@
                       (:final-result result)))
             (expect (= 2 (count (:blocks result)))))))))
 
-  (it "preflights post-first-iteration final answers mixed with sibling top-level forms"
-    (let [executed (atom [])
-          environment {:router ::router
+  (it "accepts post-first-iteration final answers when answer is the last top-level form"
+    (let [environment {:router ::router
                        :answer-atom (atom nil)
                        :current-form-idx-atom (atom nil)}]
       (with-redefs-fn {#'svar/ask-code! (fn [_ _]
                                           {:raw "```clojure\n(def observed 1)\n(answer \"done\")\n```"
                                            :blocks [{:lang "clojure" :source "(def observed 1)\n(answer \"done\")"}]
                                            :result "(def observed 1)\n(answer \"done\")"
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [env code]
+                                             (if (= "(answer \"done\")" code)
+                                               (do
+                                                 (reset! (:answer-atom env)
+                                                   {:value "done"
+                                                    :form-idx @(:current-form-idx-atom env)})
+                                                 {:result :vis/answer
+                                                  :stdout ""
+                                                  :stderr ""
+                                                  :execution-time-ms 0})
+                                               {:result 1
+                                                :stdout ""
+                                                :stderr ""
+                                                :execution-time-ms 0}))}
+        (fn []
+          (let [result (loop/run-iteration environment
+                         [{:role "user" :content "finish"}]
+                         {:iteration 1
+                          :resolved-model {:provider :test :name "model"}})]
+            (expect (= {:final? true
+                        :answer "done"
+                        :answer-form-idx 1}
+                      (:final-result result)))
+            (expect (= 2 (count (:blocks result)))))))))
+
+  (it "preflights answers that have later sibling top-level forms"
+    (let [executed (atom [])
+          environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw "```clojure\n(answer \"done\")\n(def after 1)\n```"
+                                           :blocks [{:lang "clojure" :source "(answer \"done\")\n(def after 1)"}]
+                                           :result "(answer \"done\")\n(def after 1)"
                                            :tokens {:input 1 :output 1}
                                            :duration-ms 1})
                        #'loop/execute-code (fn [_ code]
@@ -510,8 +555,8 @@
             (expect (nil? (:final-result result)))
             (expect (= 2 (count (:blocks result))))
             (expect (every? :error (:blocks result)))
-            (expect (re-find #"Do not answer in this iteration"
-                      (-> result :blocks second :error))))))))
+            (expect (re-find #"LAST top-level form"
+                      (-> result :blocks first :error))))))))
 
   (it "accepts a wrapper when it is the only top-level answer form"
     (let [environment {:router ::router
@@ -639,6 +684,78 @@
         (finally
           (vis/db-dispose-connection! s))))))
 
+(it "pre-eval rejects direct answers for unresolved evidence work before render helpers run"
+  (let [s   (vis/db-create-connection! :memory)
+        cid (vis/db-store-conversation! s {:channel :cli})
+        tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                :user-request "fix the failing test"
+                                                :status :running})
+        executed (atom [])
+        code "(answer (v/join (v/h2 \"Done\") (v/p \"fixed\")))"
+        environment {:router ::router
+                     :db-info s
+                     :current-conversation-turn-id-atom (atom tid)
+                     :current-user-request-atom (atom "fix the failing test")
+                     :answer-atom (atom nil)
+                     :current-form-idx-atom (atom nil)}]
+    (try
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw (str "```clojure\n" code "\n```")
+                                           :blocks [{:lang "clojure" :source code}]
+                                           :result code
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [_ code]
+                                             (swap! executed conj code)
+                                             {:result :unexpected
+                                              :stdout ""
+                                              :stderr ""
+                                              :execution-time-ms 0})}
+        (fn []
+          (let [result (loop/run-iteration environment
+                         [{:role "user" :content "fix the failing test"}]
+                         {:iteration 0
+                          :resolved-model {:provider :test :name "model"}})]
+            (expect (empty? @executed))
+            (expect (nil? (:final-result result)))
+            (expect (re-find #"Final answer rejected" (-> result :blocks first :error))))))
+      (finally
+        (vis/db-dispose-connection! s)))))
+
+(it "rejects repeated non-progress code before the third identical eval"
+  (let [executed (atom [])
+        code "(+ 1 2)"
+        environment {:router ::router
+                     :answer-atom (atom nil)
+                     :current-form-idx-atom (atom nil)
+                     :repeat-preflight-atom (atom nil)}]
+    (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                        {:raw (str "```clojure\n" code "\n```")
+                                         :blocks [{:lang "clojure" :source code}]
+                                         :result code
+                                         :tokens {:input 1 :output 1}
+                                         :duration-ms 1})
+                     #'loop/execute-code (fn [_ actual-code]
+                                           (swap! executed conj actual-code)
+                                           {:result 3
+                                            :stdout ""
+                                            :stderr ""
+                                            :execution-time-ms 0})}
+      (fn []
+        (loop/run-iteration environment
+          [{:role "user" :content "calc"}]
+          {:iteration 0 :resolved-model {:provider :test :name "model"}})
+        (loop/run-iteration environment
+          [{:role "user" :content "calc"}]
+          {:iteration 1 :resolved-model {:provider :test :name "model"}})
+        (let [third (loop/run-iteration environment
+                      [{:role "user" :content "calc"}]
+                      {:iteration 2 :resolved-model {:provider :test :name "model"}})]
+          (expect (= [code code] @executed))
+          (expect (nil? (:final-result third)))
+          (expect (re-find #"Repeated non-progress operation rejected"
+                    (-> third :blocks first :error))))))))
+
 (defdescribe markdown-fence-guard-test
   (it "rejects multi-line fence-only fragments before SCI eval"
     (let [environment (env/create-sci-context nil)
@@ -712,6 +829,56 @@
                  {:extra-body {:text {:verbosity "high"}}})]
         (expect (= {:text {:verbosity "high"}} (:extra-body ctx)))))))
 
+(defdescribe sandbox-restore-with-glob-test
+  (it "restores the exact persisted value shape for v/glob-derived vars across restart"
+    (let [db-dir (make-temp-db-dir "vis-glob-restore-")
+          db-spec {:backend :sqlite :path db-dir}
+          router (loop/get-router)
+          env-1  (loop/create-environment router {:db db-spec :channel :cli})
+          cid    (:conversation-id env-1)
+          ns-1   (sci/find-ns (:sci-ctx env-1) 'sandbox)]
+      (try
+        (sci/eval-string+ (:sci-ctx env-1)
+          (str "(def raw-glob (v/glob \"extensions\" \"**/*.clj\"))\n"
+            "(def bad-files (->> raw-glob :result (map :path) sort vec))\n"
+            "(def good-files (->> raw-glob :result sort vec))")
+          {:ns ns-1})
+        (expect (= [nil nil nil]
+                  (:val (sci/eval-string+ (:sci-ctx env-1) "(take 3 bad-files)" {:ns ns-1}))))
+        (expect (every? string?
+                  (:val (sci/eval-string+ (:sci-ctx env-1) "(take 3 good-files)" {:ns ns-1}))))
+        (let [bad-files  (:val (sci/eval-string+ (:sci-ctx env-1) "bad-files" {:ns ns-1}))
+              good-files (:val (sci/eval-string+ (:sci-ctx env-1) "good-files" {:ns ns-1}))
+              turn-id    (vis/db-store-conversation-turn! (:db-info env-1)
+                           {:parent-conversation-id cid
+                            :user-request "persist glob-derived vars"
+                            :status :done})]
+          (vis/db-store-iteration! (:db-info env-1)
+            {:conversation-turn-id turn-id
+             :blocks []
+             :duration-ms 0
+             :vars [{:name "bad-files"
+                     :value bad-files
+                     :code "(def bad-files (->> (v/glob \"extensions\" \"**/*.clj\") :result (map :path) sort vec))"}
+                    {:name "good-files"
+                     :value good-files
+                     :code "(def good-files (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec))"}]}))
+        (finally
+          (loop/dispose-environment! env-1)))
+      (let [env-2 (loop/create-environment router {:db db-spec
+                                                   :channel :cli
+                                                   :conversation (str cid)})
+            ns-2  (sci/find-ns (:sci-ctx env-2) 'sandbox)]
+        (try
+          ;; Restart restore is working here: it restores the same wrong `bad-files`
+          ;; value that was persisted, and the same correct `good-files` strings.
+          (expect (= [nil nil nil]
+                    (:val (sci/eval-string+ (:sci-ctx env-2) "(take 3 bad-files)" {:ns ns-2}))))
+          (expect (every? string?
+                    (:val (sci/eval-string+ (:sci-ctx env-2) "(take 3 good-files)" {:ns ns-2}))))
+          (finally
+            (loop/dispose-environment! env-2)))))))
+
 (defdescribe router-provider-resolution-test
   (it "resolves OAuth provider credentials before constructing the router"
     (let [seen-providers (atom nil)
@@ -748,10 +915,10 @@
       (lazytest.core/expect (not (:answer-preflight-error result)))
       (lazytest.core/expect (:parse-error (first (:code-entries result))))))
 
-  (lazytest.core/it "code-entries-preflight collapses answer position violations to one failed entry"
+  (lazytest.core/it "code-entries-preflight flags answer position violations on every entry"
     (let [preflight (var-get (ns-resolve 'com.blockether.vis.internal.loop
                                'code-entries-preflight))
           result (preflight 2 "(def x 1)\n(answer \"bad\")\n(def y 2)\n")]
-      (lazytest.core/expect (= 1 (count (:code-entries result))))
+      (lazytest.core/expect (= 3 (count (:code-entries result))))
       (lazytest.core/expect (:answer-preflight-error result))
-      (lazytest.core/expect (:parse-error (first (:code-entries result)))))))
+      (lazytest.core/expect (every? :preflight-error (:code-entries result))))))

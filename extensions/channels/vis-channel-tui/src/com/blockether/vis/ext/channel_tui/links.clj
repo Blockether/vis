@@ -2,11 +2,12 @@
   "Walk a rendered message's text and pull every clickable reference
    out as a structured vec the renderer can paint as a chrome row.
 
-   Three kinds we recognise:
+   Four kinds we recognise:
 
-     :image  `![alt](url)`                  \u2014 from `(md/image \u2026)`
-     :url    `[text](url)`                  \u2014 from `(md/link \u2026)` / `(md/anchor \u2026)`
-     :file   `[path:line](path#Lline)` etc. \u2014 from `(md/file-link \u2026)`
+     :image      `![alt](url)`                  \u2014 from `(md/image \u2026)`
+     :url        `[text](url)`                  \u2014 from `(md/link \u2026)` / `(md/anchor \u2026)`
+     :file       `[path:line](path#Lline)` etc. \u2014 from `(md/file-link \u2026)`
+     :provenance `[ref](vis-provenance://ref)`  \u2014 internal TUI provenance viewer
 
    `:url` and `:file` are distinguished AFTER the bracket parse:
    when the URL has no scheme prefix and the link text contains the
@@ -71,11 +72,16 @@
   [^String url]
   (boolean (re-matches #"^#.*" url)))
 
+(defn- provenance-url?
+  "True when `url` is a TUI-internal provenance ref link."
+  [^String url]
+  (boolean (re-matches #"^vis-provenance://turn/[^\s]+$" (str url))))
+
 (defn parse-md-refs
   "Return a vec of `{:kind :text :url :line? :scheme :enabled?}`
    entries, one per recognised reference in `s`. Order preserved.
 
-   - `:kind`     :image | :url | :file
+   - `:kind`     :image | :url | :file | :provenance
    - `:text`     visible link text (or alt text for images)
    - `:url`      raw target as the model wrote it
    - `:line`     integer line number (only for :file with `#Lline`),
@@ -94,20 +100,24 @@
               text (.group m 2)
               url  (.group m 3)
               kind (cond
-                     (= bang "!")        :image
-                     (file-shape? text url) :file
-                     :else                :url)
+                     (= bang "!")           :image
+                     (provenance-url? url)   :provenance
+                     (file-shape? text url)  :file
+                     :else                   :url)
               [_ line] (when (= kind :file)
                          (re-matches #"^.+#L(\d+)$" url))
               scheme  (cond
-                        (anchor-only? url) :rejected
-                        :else              (opener/classify-scheme url))
+                        (= :provenance kind) :vis-provenance
+                        (anchor-only? url)   :rejected
+                        :else                (opener/classify-scheme url))
               ;; Compute :enabled? once at extraction time so the
               ;; renderer + click handler agree on the answer
               ;; without having to re-classify on every paint /
               ;; lookup. `safe-target` does the cwd-escape check.
-              enabled? (and (not= scheme :rejected)
-                         (some? (opener/safe-target url)))]
+              enabled? (if (= :provenance kind)
+                         true
+                         (and (not= scheme :rejected)
+                           (some? (opener/safe-target url))))]
           (recur m (conj! out {:kind     kind
                                :text     text
                                :url      url

@@ -314,8 +314,7 @@
       (:command tool-provenance) (assoc :command (:command tool-provenance))
       (:command result)    (assoc :command (:command result))
       (:target tool-provenance) (assoc :target (:target tool-provenance))
-      (:error envelope)    (assoc :error (:error envelope))
-      (:markdown envelope) (assoc :markdown (:markdown envelope)))))
+      (:error envelope)    (assoc :error (:error envelope)))))
 
 (defn- block-by-code
   [iteration]
