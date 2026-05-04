@@ -205,6 +205,12 @@
     (some message-has-image? messages)
     (assoc "Copilot-Vision-Request" "true")))
 
+(defn- svar-copilot-dynamic-headers-var
+  []
+  (or (ns-resolve 'com.blockether.svar.internal.llm 'copilot-dynamic-headers)
+    (throw (ex-info "svar Copilot header helper not found."
+             {:type :vis/svar-copilot-header-helper-missing}))))
+
 (defonce ^:private copilot-header-patch-installed? (atom false))
 
 (defn- install-copilot-header-patch!
@@ -218,7 +224,7 @@
    safer than with-redefs around a long network call."
   []
   (when (compare-and-set! copilot-header-patch-installed? false true)
-    (alter-var-root #'svar-llm/copilot-dynamic-headers
+    (alter-var-root (svar-copilot-dynamic-headers-var)
       (fn [original]
         (with-meta
           (fn [messages]
@@ -2865,10 +2871,10 @@
                          "User request:\n" user-request "\n\n"
                          "Reply with ONE fenced ```text block containing only the title.")
                 _ (install-copilot-header-patch!)
-                resp (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*)
-                               :conversation-id conversation-id
-                               :copilot-initiator "agent"
-                               :internal-call :auto-title]
+                resp (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
+                                                        :conversation-id conversation-id
+                                                        :copilot-initiator "agent"
+                                                        :internal-call :auto-title)]
                        (svar/ask-code! router
                          {:messages           [(svar/user prompt)]
                           :lang               "text"

@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
    [com.blockether.svar.core :as svar]
+   [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.persistance-sqlite.core]
    [com.blockether.vis.internal.config :as config]
@@ -13,6 +14,82 @@
     (expect (= :quick (loop/normalize-reasoning-level :quick)))
     (expect (= :balanced (loop/normalize-reasoning-level "medium")))
     (expect (= :deep (loop/normalize-reasoning-level "HIGH")))))
+
+(defdescribe copilot-billing-guard-test
+  (it "marks first human iteration as user and internal iterations as agent"
+    (expect (= "user" (#'loop/copilot-initiator-for-iteration 0)))
+    (expect (= "agent" (#'loop/copilot-initiator-for-iteration 1))))
+
+  (it "disables reasoning for casual Copilot Claude turns"
+    (expect (nil? (#'loop/copilot-claude-safe-reasoning-level
+                   {:provider :github-copilot :name "claude-sonnet-4.6"}
+                   "siema"
+                   :deep
+                   {}))))
+
+  (it "caps Copilot Claude deep reasoning unless explicitly allowed"
+    (expect (= :balanced
+              (#'loop/copilot-claude-safe-reasoning-level
+               {:provider :github-copilot :name "claude-sonnet-4.6"}
+               "fix this failing test"
+               :deep
+               {})))
+    (expect (= :deep
+              (#'loop/copilot-claude-safe-reasoning-level
+               {:provider :github-copilot :name "claude-sonnet-4.6"}
+               "fix this failing test"
+               :deep
+               {:allow-copilot-claude-deep? true}))))
+
+  (it "leaves non-Copilot-Claude reasoning untouched"
+    (expect (= :deep
+              (#'loop/copilot-claude-safe-reasoning-level
+               {:provider :github-copilot :name "gpt-5.4"}
+               "siema"
+               :deep
+               {}))))
+
+  (it "uses dynamic log-context to override svar Copilot X-Initiator"
+    (#'loop/install-copilot-header-patch!)
+    (binding [svar-llm/*log-context* (assoc svar-llm/*log-context* :copilot-initiator "agent")]
+      (let [headers ((deref (#'loop/svar-copilot-dynamic-headers-var)) [{:role "user" :content "synthetic journal"}])]
+        (expect (= "agent" (get headers "X-Initiator")))
+        (expect (= "conversation-edits" (get headers "Openai-Intent"))))))
+
+  (it "preserves the normal user initiator when no override is bound"
+    (#'loop/install-copilot-header-patch!)
+    (binding [svar-llm/*log-context* (dissoc svar-llm/*log-context* :copilot-initiator)]
+      (expect (= "user"
+                (get ((deref (#'loop/svar-copilot-dynamic-headers-var)) [{:role "user" :content "real prompt"}])
+                  "X-Initiator")))))
+
+  (it "marks auto-title Copilot calls as agent and disables reasoning"
+    (let [s (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          title-atom (atom "")
+          seen (atom nil)]
+      (try
+        (#'loop/install-copilot-header-patch!)
+        (with-redefs-fn {#'svar/ask-code! (fn [_ opts]
+                                            (reset! seen
+                                              {:opts opts
+                                               :headers ((deref (#'loop/svar-copilot-dynamic-headers-var))
+                                                         [{:role "user" :content "title request"}])})
+                                            {:result "Short title"
+                                             :raw "Short title"
+                                             :tokens {:input 1 :output 1}})}
+          (fn []
+            (#'loop/auto-title! {:router ::router
+                                 :db-info s
+                                 :conversation-id cid
+                                 :conversation-title-atom title-atom
+                                 :user-request "hello"})
+            (expect (= "agent" (get-in @seen [:headers "X-Initiator"])))
+            (expect (= "conversation-edits" (get-in @seen [:headers "Openai-Intent"])))
+            (expect (= :off (get-in @seen [:opts :reasoning])))
+            (expect (= "Short title" @title-atom))))
+        (finally
+          (vis/db-dispose-connection! s))))))
 
 (defdescribe iteration-block-spec-test
   (it "rejects iteration blocks without required provenance"
@@ -286,7 +363,35 @@
               (expect (= 1 (:iteration prov)))
               (expect (= 1 (:form-position prov)))
               (expect (= 1 (:form-count prov)))
-              (expect (= "turn/00000000/iteration/1/block/1" (:ref prov))))))))))
+              (expect (= "turn/00000000/iteration/1/block/1" (:ref prov)))))))))
+
+  (it "binds Copilot initiator for svar headers and strips internal extra-body keys"
+    (let [seen (atom nil)
+          environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ opts]
+                                          (reset! seen
+                                            {:opts opts
+                                             :headers ((deref (#'loop/svar-copilot-dynamic-headers-var))
+                                                       [{:role "user" :content "synthetic journal"}])})
+                                          {:raw ""
+                                           :blocks []
+                                           :result ""
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})}
+        (fn []
+          (loop/run-iteration environment
+            [{:role "user" :content "continue"}]
+            {:iteration 1
+             :resolved-model {:provider :github-copilot :name "claude-sonnet-4.6"}
+             :extra-body {:copilot-initiator "agent"
+                          :text {:verbosity "low"}}})
+          (expect (= "agent" (get-in @seen [:headers "X-Initiator"])))
+          (expect (= "conversation-edits" (get-in @seen [:headers "Openai-Intent"])))
+          (expect (= {:text {:verbosity "low"}}
+                    (get-in @seen [:opts :extra-body])))
+          (expect (not (contains? (get-in @seen [:opts :extra-body]) :copilot-initiator))))))))
 
 (defdescribe run-iteration-silent-chunk-test
   (it "does not emit form-start for known :vis/silent host forms"
