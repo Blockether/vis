@@ -343,6 +343,36 @@
           (expect (not (str/includes? out "##### Block 0"))))
         (finally (vis/db-dispose-connection! s)))))
 
+  (it "can render DB-backed system prompt snapshots only"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid  (seed! s)
+              data (transcript/transcript s cid)
+              rows (transcript/prompt-snapshots data)
+              out  (transcript/transcript->md data {:mode :system-prompts})]
+          (expect (= 2 (count rows)))
+          (expect (= "SYS_PROMPT_TEXT_FIXTURE" (:system-prompt (first rows))))
+          (expect (str/includes? out "# System prompt snapshots"))
+          (expect (str/includes? out "SYS_PROMPT_TEXT_FIXTURE"))
+          (expect (str/includes? out "| Turn | Iter | Status | Provider/model | System chars | Messages | Message chars |"))
+          (expect (not (str/includes? out "##### Block 0")))
+          (expect (not (str/includes? out "USER_TURN_TEXT_FIXTURE"))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "can render full provider prompt envelopes including user prompt snapshots"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid  (seed! s)
+              data (transcript/transcript s cid)
+              out  (transcript/transcript->md data {:mode :prompts})]
+          (expect (str/includes? out "# Provider prompt snapshots"))
+          (expect (str/includes? out "_system prompt:_"))
+          (expect (str/includes? out "_message 0 / system"))
+          (expect (str/includes? out "_message 1 / user"))
+          (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
+          (expect (not (str/includes? out "##### Block 0"))))
+        (finally (vis/db-dispose-connection! s)))))
+
   (it "renders header + per-turn block + per-iteration block dump"
     (let [s (vis/db-create-connection! :memory)]
       (try
@@ -390,15 +420,10 @@
           ;; The final answer text renders under a `#### Final answer`
           ;; section after every iteration of its turn.
           (expect (str/includes? out "#### Final answer"))
-          ;; System prompt renders inside a collapsible <details> with
-          ;; a size summary so the file stays scannable.
-          (expect (str/includes? out "<details><summary>System prompt ("))
-          (expect (str/includes? out "SYS_PROMPT_TEXT_FIXTURE"))
-          ;; LLM message envelope ALSO renders collapsible — every
-          ;; `[{:role :content}]` pair the provider saw, with a
-          ;; per-role fenced sub-block.
-          (expect (str/includes? out "<details><summary>LLM messages ("))
-          (expect (str/includes? out "_system:_"))
-          (expect (str/includes? out "_user:_"))
-          (expect (str/includes? out "USER_TURN_TEXT_FIXTURE")))
+          ;; Default forensic report omits prompt bodies; use
+          ;; :system-prompts / :prompts modes for DB-backed prompt
+          ;; snapshots without ballooning every normal report.
+          (expect (not (str/includes? out "SYS_PROMPT_TEXT_FIXTURE")))
+          (expect (not (str/includes? out "<details><summary>LLM messages (")))
+          (expect (not (str/includes? out "USER_TURN_TEXT_FIXTURE"))))
         (finally (vis/db-dispose-connection! s))))))

@@ -5,8 +5,8 @@
 
    1. Structured helpers for preview / tree / search:
 
-        (v/cat path)            ; -> {:path :offset :total-lines :truncated-by :lines}
-        (v/cat path opts)       ; opts is {:offset N :limit M :char-limit C}
+        (v/cat path)            ; -> {:path :offset :total-lines :truncated-by :next-offset :lines ...}
+        (v/cat path opts)       ; opts is {:offset N :limit M :char-limit C}; :max-lines aliases :limit
         (v/ls path)             ; -> nested {:name :path :type :size :children} tree
         (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
         (v/rg patterns path)    ; -> {:hits :truncated-by}; patterns = non-empty vec of literal substrings
@@ -198,24 +198,45 @@
 ;; cat
 ;; =============================================================================
 
+(def ^:private cat-opt-keys #{:offset :limit :char-limit :max-lines})
+
 (defn- coerce-cat-opts [opts]
   (let [validate-positive (fn [k v]
                             (when (and (some? v)
                                     (or (not (integer? v)) (not (pos? v))))
                               (throw (ex-info (str "v/cat " k " must be a positive integer")
                                        {:type :ext.foundation.editing/invalid-cat-opts
-                                        :opt  k :got v}))))]
+                                        :opt  k :got v}))))
+        normalize-map (fn [m]
+                        (let [unknown (seq (remove cat-opt-keys (keys m)))
+                              limit (:limit m)
+                              max-lines (:max-lines m)]
+                          (when unknown
+                            (throw (ex-info (str "Invalid v/cat opts key(s): " (pr-str (vec unknown))
+                                              ". Allowed keys are :offset, :limit, :char-limit. "
+                                              ":max-lines is accepted only as an alias for :limit.")
+                                     {:type :ext.foundation.editing/invalid-cat-opts
+                                      :unknown-keys (vec unknown)
+                                      :allowed-keys (vec (sort-by name cat-opt-keys))
+                                      :opts m})))
+                          (validate-positive :offset (:offset m))
+                          (validate-positive :limit limit)
+                          (validate-positive :max-lines max-lines)
+                          (validate-positive :char-limit (:char-limit m))
+                          (when (and limit max-lines (not= limit max-lines))
+                            (throw (ex-info "v/cat opts cannot specify conflicting :limit and :max-lines values"
+                                     {:type :ext.foundation.editing/invalid-cat-opts
+                                      :limit limit
+                                      :max-lines max-lines
+                                      :opts m})))
+                          {:offset (:offset m)
+                           :limit (or limit max-lines)
+                           :char-limit (or (:char-limit m) default-read-char-limit)}))]
     (cond
       (nil? opts) {:offset nil :limit nil :char-limit default-read-char-limit}
 
       (map? opts)
-      (let [m {:offset     (:offset opts)
-               :limit      (:limit opts)
-               :char-limit (or (:char-limit opts) default-read-char-limit)}]
-        (validate-positive :offset (:offset m))
-        (validate-positive :limit  (:limit m))
-        (validate-positive :char-limit (:char-limit m))
-        m)
+      (normalize-map opts)
 
       (integer? opts)
       (do (validate-positive :offset opts)
@@ -288,11 +309,16 @@
          (cond
            past-eof? [[] :end-of-file]
            :else     (take-lines-under-char-cap capped char-limit limit total offset-0))]
-     {:path         (rel-path f)
-      :offset       offset-1
-      :total-lines  total
-      :truncated-by truncated-by
-      :lines        (vec selected)})))
+     {:path                 (rel-path f)
+      :offset               offset-1
+      :total-lines          total
+      :truncated-by         truncated-by
+      :next-offset          (when (and (seq selected)
+                                    (< (+ offset-0 (count selected)) total))
+                              (+ offset-1 (count selected)))
+      :effective-limit      limit
+      :effective-char-limit char-limit
+      :lines                (vec selected)})))
 
 ;; =============================================================================
 ;; ls
@@ -604,6 +630,23 @@
 ;; Tool-result facades
 ;; =============================================================================
 
+(defn- silent-tool
+  "Evaluate `value` but return only its structural shape as a silent tool
+   result. Useful when prior forms already surfaced the detailed outputs and
+   the final aggregate map would only waste journal/context tokens."
+  [value]
+  (let [shape (extension/result-shape value)]
+    (extension/with-presentation
+      (assoc (extension/success
+               {:result shape
+                :result-shape shape
+                :provenance {:op :v/silent!}})
+        :rendering-kind :vis/silent)
+      {:journal :markdown
+       :markdown (str "Silenced value; shape " (pr-str shape) ".")
+       :var-index :compact
+       :transcript :full})))
+
 (defn- cat-tool
   ([path]
    (cat-tool path nil))
@@ -617,11 +660,17 @@
         :markdown (str "Read `" (:path out) "` — returned "
                     (count (:lines out)) " line(s), offset " (:offset out)
                     ", total " (:total-lines out)
-                    ", truncated-by `" (name (:truncated-by out)) "`.")
+                    ", truncated-by `" (name (:truncated-by out)) "`"
+                    (when-let [n (:next-offset out)]
+                      (str ", next offset " n))
+                    ".")
         :provenance {:lines-returned (count (:lines out))
                      :offset (:offset out)
+                     :next-offset (:next-offset out)
                      :total-lines (:total-lines out)
                      :truncated-by (:truncated-by out)
+                     :effective-limit (:effective-limit out)
+                     :effective-char-limit (:effective-char-limit out)
                      :opts opts}}))))
 
 (defn- ls-tool
@@ -841,13 +890,22 @@
 
 (def cat-symbol
   (vis/symbol 'cat cat-tool
-    {:doc "Preview file slice. Tool result; `:result` = {:path :offset :total-lines :truncated-by :lines}. Use for browse, not whole-file edits."
+    {:doc "Preview file slice. Tool result; `:result` = {:path :offset :total-lines :truncated-by :next-offset :effective-limit :effective-char-limit :lines}. Opts: :offset, :limit, :char-limit; :max-lines is accepted as :limit alias. Unknown opts throw. Use for browse, not whole-file edits."
      :arglists '([path] [path opts])
      :examples ["(:result (v/cat \"src/main.clj\"))"
                 "(get-in (v/cat \"src/main.clj\") [:result :lines])"
-                "(v/cat \"big.log\" {:offset 5000 :limit 200})"]
+                "(v/cat \"big.log\" {:offset 5000 :limit 200})"
+                "(some-> (v/cat \"big.log\" {:offset 5000 :limit 200}) :result :next-offset)"]
      :result-spec tool-result-spec
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
+
+(def silent-symbol
+  (vis/symbol 'silent! silent-tool
+    {:doc "Evaluate a value but return only its structural shape as a silent tool result. Use after detailed vars/tool calls were already shown, instead of echoing a giant aggregate map."
+     :arglists '([value])
+     :examples ["(v/silent! {:status status :calls calls :summary summary})"
+                "(v/silent! big-debug-map)"]
+     :result-spec tool-result-spec}))
 
 (def ls-symbol
   (vis/symbol 'ls ls-tool
@@ -974,6 +1032,7 @@
 
 (def editing-symbols
   [cat-symbol
+   silent-symbol
    ls-symbol
    rg-symbol
    read-all-lines-symbol
@@ -990,6 +1049,6 @@
    bash-symbol])
 
 (def editing-prompt
-  "`v/` files: preview/search with (v/cat path opts?), (v/ls path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?). Edit with (v/read-all-lines path), (v/write-lines path lines opts?), (v/update-file path f & xs). Path ops: (v/create-dirs path), (v/list-dir path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
+  "`v/` files: preview/search with (v/cat path opts?), (v/ls path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?). v/cat opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. Edit with (v/read-all-lines path), (v/write-lines path lines opts?), (v/update-file path f & xs). Path ops: (v/create-dirs path), (v/list-dir path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
 `v/` shell: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
-Tool results are envelopes; payload lives under :result. cat: (def c (v/cat \"IDEAS.md\")) -> (get-in c [:result :lines]); never (:lines c) / (:content c). read-all-lines: (:result (v/read-all-lines \"IDEAS.md\")) -> full line vector. bash: (def run (v/bash \"pwd\")) -> (get-in run [:result :stdout]), :stderr, :exit; never top-level (:stdout run) / (:exit run). For Clojure source edits prefer z/zedit when `z/` is active; use v/read-all-lines + v/write-lines only for trivial line/data changes.")
+Tool results are envelopes; payload lives under :result. cat: (def c (v/cat \"IDEAS.md\" {:offset 1 :limit 120})) -> (get-in c [:result :lines]); never (:lines c) / (:content c). read-all-lines: (:result (v/read-all-lines \"IDEAS.md\")) -> full line vector. bash: (def run (v/bash \"pwd\")) -> (get-in run [:result :stdout]), :stderr, :exit; never top-level (:stdout run) / (:exit run). Use (v/silent! aggregate-map) when constituent tool/var outputs were already shown and the aggregate value would only burn journal tokens; it returns only shape and is elided from live display. For Clojure source edits prefer z/zedit when `z/` is active; use v/read-all-lines + v/write-lines only for trivial line/data changes.")

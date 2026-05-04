@@ -21,6 +21,7 @@
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
            [com.googlecode.lanterna.terminal.ansi UnixTerminal]
+           [java.io PrintWriter StringWriter]
            [java.nio.charset Charset]
            [java.util.concurrent TimeUnit]
            [java.util.concurrent.locks ReentrantLock]))
@@ -107,6 +108,15 @@
     loading?            hint-loading
     (input-empty? input) hint-idle-empty
     :else               hint-idle-typed))
+
+(defn- throwable-log-data
+  [^Throwable t]
+  (let [sw (StringWriter.)]
+    (.printStackTrace t (PrintWriter. sw))
+    {:class   (.getName (class t))
+     :message (or (ex-message t) (str t))
+     :ex-data (ex-data t)
+     :stack   (.toString sw)}))
 
 (defn- submit-input!
   "Submit the current editor buffer, then clear it.
@@ -551,10 +561,10 @@
                   (catch Throwable t
                     ;; Drawing must never crash the thread — a stray
                     ;; resize race or null cell will recover next frame.
-                    (try (require 'taoensso.telemere)
-                      ((resolve 'taoensso.telemere/log!)
-                       :warn (str "render frame failed: " (or (ex-message t) (str t))))
-                      (catch Throwable _ nil))
+                    (tel/log! {:level :warn
+                               :id    ::render-frame-failed
+                               :data  (throwable-log-data t)
+                               :msg   (str "render frame failed: " (or (ex-message t) (str t)))})
                     [false last-cols last-rows last-frame-ms])
                   (finally (.unlock draw-lock))))]
           (when-not rendered?
@@ -782,6 +792,23 @@
     (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
     (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))))
 
+(defn- sweep-orphaned-running-turns!
+  []
+  (try (vis/db-sweep-orphaned-running-turns! (vis/db-info)) (catch Throwable _ nil)))
+
+(defn- pre-resolve-conversation-id!
+  "Sweep interrupted turns before any resume history rebuild. The
+   `--conversation-id` path validates before Lanterna starts; if the sweep
+   happens later, the precomputed history still contains stale `:running`
+   turns with blank answers, which render as empty assistant bubbles."
+  [opts]
+  (sweep-orphaned-running-turns!)
+  (when-let [cid (:conversation-id opts)]
+    (or (chat/resume-conversation cid)
+      (throw (ex-info (format-conversation-not-found cid)
+               {:vis/user-error true
+                :id             cid})))))
+
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
@@ -793,12 +820,9 @@
   ;; used to crash mid-screen-startup with a stack trace; now it
   ;; surfaces as a `:vis/user-error` and `channel-main` prints a
   ;; clean, actionable message + exit code 2 (no trace, no torn-down
-  ;; terminal state).
-   (let [resumed-from-flag (when-let [cid (:conversation-id opts)]
-                             (or (chat/resume-conversation cid)
-                               (throw (ex-info (format-conversation-not-found cid)
-                                        {:vis/user-error true
-                                         :id             cid}))))]
+  ;; terminal state). Sweep first so precomputed resume history never
+  ;; includes orphaned `:running` turns from a killed prior process.
+   (let [resumed-from-flag (pre-resolve-conversation-id! opts)]
      (state/init!)
 
   ;; Subscribe to host notifications so any (vis/notify! …) push
@@ -835,11 +859,6 @@
            (when (not (:dialog-open? @state/app-db))
              (when-let [c (with-dialog-lock #(provider/show-provider-dialog! screen (:config @state/app-db)))]
                (state/dispatch [:set-config c]))))
-
-      ;; Sweep orphaned running turns from previous crashes so the
-      ;; rebuilt history shows resolved rows only — no raw turn text
-      ;; from a half-completed turn.
-         (try (vis/db-sweep-orphaned-running-turns!) (catch Throwable _ nil))
 
       ;; Init conversation: resume if --conversation-id given, else fresh.
       ;; The --conversation-id case was already validated above (before

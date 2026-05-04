@@ -713,7 +713,104 @@
         "\n"
         (apply str (keep render-raw-diagnostic-details rows))))))
 
-(defn- render-iteration-section [iter prev-iter]
+(defn prompt-snapshots
+  "Flatten persisted provider prompt state from transcript data.
+
+   This is the DB-backed forensic surface for prompt investigation:
+   each row corresponds to one iteration and carries the assembled
+   system prompt plus the exact provider message envelope persisted on
+   the iteration row. The last user message in `:messages` is the
+   per-iteration journal/var-index snapshot the model saw."
+  [data]
+  (vec
+    (mapcat (fn [turn]
+              (map (fn [iter]
+                     {:turn-id       (:id turn)
+                      :iteration-id  (:id iter)
+                      :iteration     (:position iter)
+                      :status        (:status iter)
+                      :provider      (:provider iter)
+                      :model         (:model iter)
+                      :system-prompt (:llm-system-prompt iter)
+                      :messages      (vec (:llm-user-prompt iter))})
+                (:iterations turn)))
+      (:turns data))))
+
+(defn- prompt-report-heading
+  [data report-title]
+  (let [{:keys [id channel provider model created-at]} (:conversation data)
+        conv-title (get-in data [:conversation :title])]
+    (str "# " report-title " — conversation `" id "`\n\n"
+      "- **Title:** " (or conv-title "—") "\n"
+      "- **Channel:** " (or (some-> channel name) "—") "\n"
+      "- **Provider/model:** " (or (some-> provider name) "—") "/" (or model "—") "\n"
+      "- **Created:** " (or created-at "—") "\n\n")))
+
+(defn- render-prompt-row-table
+  [rows]
+  (str "| Turn | Iter | Status | Provider/model | System chars | Messages | Message chars |\n"
+    "|---|---:|---|---|---:|---:|---:|\n"
+    (apply str
+      (map (fn [{:keys [turn-id iteration status provider model system-prompt messages]}]
+             (str "| `" turn-id "` | " iteration " | " (or (some-> status name) "—")
+               " | " (or (some-> provider name) "—") "/" (or model "—")
+               " | " (count (str system-prompt))
+               " | " (count messages)
+               " | " (reduce + 0 (map #(count (str (:content %))) messages))
+               " |\n"))
+        rows))
+    "\n"))
+
+(defn- render-system-prompt-snapshot-row
+  [prev-system-prompt {:keys [turn-id iteration system-prompt]}]
+  (let [same? (and prev-system-prompt (= prev-system-prompt system-prompt))]
+    (if same?
+      (render-collapsible
+        (str "System prompt turn " turn-id " / iteration " iteration
+          " (" (count (str system-prompt)) " chars, unchanged)")
+        "_(identical to the previous prompt snapshot)_\n")
+      (render-collapsible
+        (str "System prompt turn " turn-id " / iteration " iteration
+          " (" (count (str system-prompt)) " chars)")
+        (render-fenced "text" system-prompt)))))
+
+(defn- render-system-prompts-report
+  [data]
+  (let [rows (prompt-snapshots data)]
+    (str (prompt-report-heading data "System prompt snapshots")
+      (render-prompt-row-table rows)
+      (first
+        (reduce (fn [[acc prev] row]
+                  [(str acc (render-system-prompt-snapshot-row prev row))
+                   (:system-prompt row)])
+          ["" nil]
+          rows)))))
+
+(defn- render-prompt-message
+  [idx {:keys [role content]}]
+  (str "_message " idx " / " (or role "?") " (" (count (str content)) " chars):_\n"
+    (render-fenced "text" content)
+    "\n"))
+
+(defn- render-provider-prompt-snapshot-row
+  [{:keys [turn-id iteration system-prompt messages]}]
+  (render-collapsible
+    (str "Provider prompt turn " turn-id " / iteration " iteration
+      " (system " (count (str system-prompt)) " chars, "
+      (count messages) " messages)")
+    (str "_system prompt:_\n"
+      (render-fenced "text" system-prompt)
+      "\n"
+      (apply str (map-indexed render-prompt-message messages)))))
+
+(defn- render-provider-prompts-report
+  [data]
+  (let [rows (prompt-snapshots data)]
+    (str (prompt-report-heading data "Provider prompt snapshots")
+      (render-prompt-row-table rows)
+      (apply str (map render-provider-prompt-snapshot-row rows)))))
+
+(defn- render-iteration-section [include-prompts? iter prev-iter]
   (let [pos     (:position iter)
         status  (or (some-> (:status iter) name) "—")
         dur     (or (:duration-ms iter) 0)
@@ -729,10 +826,12 @@
       " (" in "/" out " tokens, " (format-cost-usd cost) ", " (long dur) "ms)\n\n"
       (render-thinking (:thinking iter))
       (render-iter-error (:error iter))
-      (render-system-prompt (:llm-system-prompt iter)
-        (:llm-system-prompt prev-iter)
-        (:position prev-iter))
-      (render-llm-messages (:llm-user-prompt iter))
+      (when include-prompts?
+        (str
+          (render-system-prompt (:llm-system-prompt iter)
+            (:llm-system-prompt prev-iter)
+            (:position prev-iter))
+          (render-llm-messages (:llm-user-prompt iter))))
       (render-vars (:vars iter))
       (cond
         (empty? blocks)
@@ -754,7 +853,8 @@
       (render-fenced "text" answer))))
 
 (defn- render-turn-block
-  [{:keys [id user-request status prior-outcome provider model
+  [include-prompts?
+   {:keys [id user-request status prior-outcome provider model
            iteration-count failure-count
            iterations tokens cost-usd answer]}]
   (str
@@ -773,9 +873,11 @@
     "- **Tokens (in/out):** " (format-tokens tokens) "\n"
     "- **Cost:** " (format-cost-usd cost-usd) "\n"
     ;; Pair each iteration with the previous one in the same turn so
-    ;; the renderer can dedupe an unchanged system prompt instead of
-    ;; emitting the same 8 KB block 16 times.
-    (apply str (map render-iteration-section iterations (cons nil iterations)))
+    ;; prompt-debug mode can dedupe an unchanged system prompt instead
+    ;; of emitting the same block 16 times.
+    (apply str (map (partial render-iteration-section include-prompts?)
+                 iterations
+                 (cons nil iterations)))
     (render-final-answer answer)
     "\n"))
 
@@ -811,26 +913,33 @@
       "_No dialog messages._\n")))
 
 (defn- render-full-md
-  [data]
-  (str (render-header data)
-    (render-raw-diagnostics (:turns data))
-    "## Turn-by-turn breakdown\n\n"
-    (apply str (map render-turn-block (:turns data)))))
+  ([data]
+   (render-full-md data {:include-prompts? false}))
+  ([data {:keys [include-prompts?] :or {include-prompts? false}}]
+   (str (render-header data)
+     (render-raw-diagnostics (:turns data))
+     "## Turn-by-turn breakdown\n\n"
+     (apply str (map (partial render-turn-block include-prompts?) (:turns data))))))
 
 (defn transcript->md
   "Render transcript data as Markdown. Pure transformation over
    `transcript`'s canonical data shape. Returns a string.
 
    Modes:
-   - `:full` / `:debug` — full forensic transcript (default).
-   - `:dialog`          — user/assistant dialog only."
+   - `:full`               — forensic transcript without prompt bodies (default).
+   - `:debug`              — full transcript including prompt bodies.
+   - `:dialog`             — user/assistant dialog only.
+   - `:system-prompts`     — persisted system prompt snapshots only.
+   - `:prompts`            — exact persisted provider prompt envelopes."
   ([data]
    (transcript->md data {:mode :full}))
   ([data {:keys [mode] :or {mode :full}}]
    (case mode
-     :dialog (render-dialog-md data)
-     :full   (render-full-md data)
-     :debug  (render-full-md data)
+     :dialog         (render-dialog-md data)
+     :system-prompts (render-system-prompts-report data)
+     :prompts        (render-provider-prompts-report data)
+     :full           (render-full-md data)
+     :debug          (render-full-md data {:include-prompts? true})
      (render-full-md data))))
 
 (defn transcript-md
@@ -855,15 +964,48 @@
   (.println ^java.io.PrintStream vis/original-stdout s)
   (.flush ^java.io.PrintStream vis/original-stdout))
 
+(def ^:private report-modes
+  {"--dialog" :dialog
+   "--prompts" :prompts
+   "--system-prompts" :system-prompts})
+
+(defn- report-usage! []
+  (println-original! "Usage: vis report [--dialog|--prompts|--system-prompts] <CONVERSATION-ID>")
+  (println-original! "")
+  (println-original! "Modes:")
+  (println-original! "  --dialog          User/assistant dialog only")
+  (println-original! "  --system-prompts  Persisted system prompt snapshots from DB")
+  (println-original! "  --prompts         Full persisted provider prompt envelopes from DB")
+  (println-original! "")
+  (println-original! "List conversations with:  vis conversations"))
+
+(defn- parse-report-residual
+  [residual]
+  (reduce (fn [acc token]
+            (let [s (str token)]
+              (cond
+                (:error acc) acc
+                (contains? report-modes s) (assoc acc :mode (get report-modes s))
+                (str/starts-with? s "--") (assoc acc :error (str "Unknown report flag: " s))
+                (:conversation-id acc) (assoc acc :error (str "Unexpected extra argument: " s))
+                :else (assoc acc :conversation-id (str/trim s)))))
+    {:mode :full}
+    residual))
+
 (defn- cli-report-run!
   [_parsed residual]
   (vis/init-cli!)
-  (let [cid-input (some-> (first residual) str/trim not-empty)]
+  (let [{:keys [conversation-id mode error]} (parse-report-residual residual)
+        cid-input (some-> conversation-id str/trim not-empty)]
     (cond
-      (nil? cid-input)
-      (do (println-original! "Usage: vis report <CONVERSATION-ID>")
+      error
+      (do (println-original! error)
         (println-original! "")
-        (println-original! "List conversations with:  vis conversations")
+        (report-usage!)
+        (System/exit 1))
+
+      (nil? cid-input)
+      (do (report-usage!)
         (System/exit 1))
 
       :else
@@ -873,17 +1015,19 @@
         (if (nil? resolved)
           (do (println-original! (str "Conversation not found: " cid-input))
             (System/exit 1))
-          (do (println-original! (transcript-md d resolved))
+          (do (println-original! (transcript-md d resolved {:mode mode}))
             (System/exit 0)))))))
 
 (defn register-cli! []
   (vis/register-cmd!
     {:cmd/name  "report"
-     :cmd/doc   "Print a forensic Markdown report for a conversation: every turn, every iteration, every executed code block (code, comment, result, stdout, stderr, error, duration), every (def ...) var, plus the LLM reasoning trace and the final answer. Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
-     :cmd/usage "vis report <CONVERSATION-ID>"
+     :cmd/doc   "Print a forensic Markdown report for a conversation. Default mode includes every turn, iteration, executed code block, vars, reasoning trace, final answer, and raw LLM diagnostics. Use --system-prompts for DB-backed system prompt snapshots or --prompts for full provider prompt envelopes (including journal snapshots). Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
+     :cmd/usage "vis report [--dialog|--prompts|--system-prompts] <CONVERSATION-ID>"
      :cmd/args  [{:name "conversation-id" :kind :positional :type :string
                   :doc  "Conversation id (full UUID or unambiguous prefix)."}]
      :cmd/examples ["vis report eeaf9651-06c7-4dda-9e97-877fcef06337"
                     "vis report eeaf9651"
+                    "vis report --system-prompts eeaf9651"
+                    "vis report --prompts eeaf9651 > PROMPTS.md"
                     "vis report eeaf9651 > REPRODUCTION.md"]
      :cmd/run-fn cli-report-run!}))

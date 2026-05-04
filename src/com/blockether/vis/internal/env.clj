@@ -394,14 +394,22 @@
                  :when (and (var? v) (not (:macro (meta v))))]
              [sym @v])))
 
+(def MODERN_CORE_BINDINGS
+  "Clojure core helpers absent from SCI 0.12.51's default `clojure.core`
+   snapshot. Install these into both `sandbox` (unqualified use) and
+   `clojure.core` (qualified use)."
+  {'update-keys update-keys
+   'update-vals update-vals})
+
 (def EXTRA_BINDINGS
   "Extra bindings beyond what SCI provides by default."
-  {'abs abs, 'parse-long parse-long, 'parse-double parse-double,
-   'parse-boolean parse-boolean, 'parse-uuid parse-uuid,
-   'infinite? infinite?, 'NaN? NaN?,
-   'url-encode (fn ^String url-encode [^String s] (java.net.URLEncoder/encode s "UTF-8")),
-   'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8")),
-   'shape shape})
+  (merge MODERN_CORE_BINDINGS
+    {'abs abs, 'parse-long parse-long, 'parse-double parse-double,
+     'parse-boolean parse-boolean, 'parse-uuid parse-uuid,
+     'infinite? infinite?, 'NaN? NaN?,
+     'url-encode (fn ^String url-encode [^String s] (java.net.URLEncoder/encode s "UTF-8")),
+     'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8")),
+     'shape shape}))
 
 (defn create-sci-context
   "Creates the SCI sandbox context with all available bindings.
@@ -453,6 +461,7 @@
                                                                            (list 'let [(first bindings) (second bindings)]
                                                                              (cons 'when (cons (first bindings) body))))
                                                                          {:macro true})})
+                                                    'clojure.core MODERN_CORE_BINDINGS
                                                     'clojure.string str-ns-copied
                                                     'clojure.set (sci/copy-ns clojure.set set-ns)
                                                     'clojure.walk (sci/copy-ns clojure+.walk walk-ns)

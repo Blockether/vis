@@ -1629,6 +1629,31 @@
       vals
       vec)))
 
+(defn- refs-covered?
+  [existing requested]
+  (let [existing-set (set (or existing []))]
+    (every? existing-set (or requested []))))
+
+(defn- proof-slots-covered?
+  [existing-slots requested-slots]
+  (every? (fn [[slot value]]
+            (= value (get existing-slots slot)))
+    (or requested-slots {})))
+
+(defn- proven-gate-request-covered?
+  [gate-row refs slots]
+  (let [proof           (normalize-proof-data (<-blob (:proof gate-row)))
+        requested-slots (normalize-proof-slots slots)]
+    (and (refs-covered? (:refs proof) refs)
+      (proof-slots-covered? (:slots proof) requested-slots))))
+
+(defn- intent-resolution-refs-covered?
+  [db-info intent-id refs role]
+  (let [existing-refs (->> (intent-refs db-info intent-id)
+                        (filter #(= role (:role %)))
+                        (map :ref))]
+    (refs-covered? existing-refs refs)))
+
 (defn db-store-gate!
   [db-info {:keys [plan-id proposition expected-proof candidate-proof required? created-ref metadata]
             legacy-question :question}]
@@ -1704,40 +1729,48 @@
         (throw (ex-info "proven gate requires :summary" {:gate-id gate-id})))
       (sqlite-write-tx! db-info
         (fn [tx-info]
-          (let [gate-row        (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-                plan            (require-row tx-info :conversation_intent_plan (:plan_id gate-row) "conversation_intent_plan not found")
-                soul-id         (intent-conversation-soul-id tx-info (:intent_id plan))
-                now             (now-ms)
-                expected-proof  (normalize-expected-proof (<-blob (:expected_proof gate-row)))
-                candidate-proof (normalize-proof-data (<-blob (:candidate_proof gate-row)))
-                proof-data      (normalize-proof-data
-                                  {:summary summary
-                                   :refs refs-v
-                                   :slots (merge (:slots candidate-proof) (normalize-proof-slots slots))
-                                   :guard (:guard expected-proof)})]
-            (when-not (required-proof-slots-present? expected-proof proof-data)
-              (throw (ex-info "proven gate proof is missing required slots"
-                       {:gate-id gate-id
-                        :required-slots (keys (:slots expected-proof))
-                        :provided-slots (keys (:slots proof-data))})))
-            (when-not (guard-passes? proof-data (:guard expected-proof))
-              (throw (ex-info "proven gate proof did not satisfy expected proof guard"
-                       {:gate-id gate-id
-                        :guard (:guard expected-proof)})))
-            (validate-provenance-refs! tx-info soul-id refs-v :proof)
-            (store-gate-refs! tx-info gate-id (proof-ref-entries proof-data :proof) :proof now)
-            (execute! tx-info
-              {:update :conversation_intent_gate
-               :set    (cond-> {:status          "proven"
-                                :candidate_proof nil
-                                :proof           (->blob proof-data)
-                                :impediment      nil
-                                :resolved_at     now}
-                         metadata     (assoc :metadata (->blob metadata))
-                         resolved-ref (assoc :resolved_ref resolved-ref))
-               :where  [:= :id (->ref gate-id)]})
-            (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-              (gate-refs tx-info gate-id))))))))
+          (let [gate-row (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")]
+            (if (not= "open" (:status gate-row))
+              (if (and (= "proven" (:status gate-row))
+                    (proven-gate-request-covered? gate-row refs-v slots))
+                (row->gate gate-row (gate-refs tx-info gate-id))
+                (throw (ex-info "gate is already resolved"
+                         {:type :vis/gate-already-resolved
+                          :gate-id (->uuid (->ref gate-id))
+                          :status (->kw-back (:status gate-row))})))
+              (let [plan            (require-row tx-info :conversation_intent_plan (:plan_id gate-row) "conversation_intent_plan not found")
+                    soul-id         (intent-conversation-soul-id tx-info (:intent_id plan))
+                    now             (now-ms)
+                    expected-proof  (normalize-expected-proof (<-blob (:expected_proof gate-row)))
+                    candidate-proof (normalize-proof-data (<-blob (:candidate_proof gate-row)))
+                    proof-data      (normalize-proof-data
+                                      {:summary summary
+                                       :refs refs-v
+                                       :slots (merge (:slots candidate-proof) (normalize-proof-slots slots))
+                                       :guard (:guard expected-proof)})]
+                (when-not (required-proof-slots-present? expected-proof proof-data)
+                  (throw (ex-info "proven gate proof is missing required slots"
+                           {:gate-id gate-id
+                            :required-slots (keys (:slots expected-proof))
+                            :provided-slots (keys (:slots proof-data))})))
+                (when-not (guard-passes? proof-data (:guard expected-proof))
+                  (throw (ex-info "proven gate proof did not satisfy expected proof guard"
+                           {:gate-id gate-id
+                            :guard (:guard expected-proof)})))
+                (validate-provenance-refs! tx-info soul-id refs-v :proof)
+                (store-gate-refs! tx-info gate-id (proof-ref-entries proof-data :proof) :proof now)
+                (execute! tx-info
+                  {:update :conversation_intent_gate
+                   :set    (cond-> {:status          "proven"
+                                    :candidate_proof nil
+                                    :proof           (->blob proof-data)
+                                    :impediment      nil
+                                    :resolved_at     now}
+                             metadata     (assoc :metadata (->blob metadata))
+                             resolved-ref (assoc :resolved_ref resolved-ref))
+                   :where  [:= :id (->ref gate-id)]})
+                (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+                  (gate-refs tx-info gate-id))))))))))
 
 (defn db-impede-gate!
   [db-info {:keys [gate-id reason refs slots resolved-ref metadata]}]
@@ -1826,32 +1859,41 @@
         (throw (ex-info "fulfilled intent requires :summary" {:intent-id intent-id})))
       (sqlite-write-tx! db-info
         (fn [tx-info]
-          (let [soul-id (intent-conversation-soul-id tx-info intent-id)
-                plan    (active-plan-for-intent tx-info intent-id)
-                gates   (when plan (required-active-gates tx-info (:id plan)))
-                now     (now-ms)]
-            (when-not plan
-              (throw (ex-info "fulfilled intent requires an active plan" {:intent-id intent-id})))
-            (when (seq (remove #(= "proven" (:status %)) gates))
-              (throw (ex-info "fulfilled intent requires every required gate on the active plan to be proven"
-                       {:intent-id intent-id
-                        :gate-ids (mapv :id (remove #(= "proven" (:status %)) gates))})))
-            (validate-provenance-refs! tx-info soul-id refs-v :proof)
-            (store-intent-resolution-refs! tx-info intent-id refs-v :fulfillment-evidence now)
-            (execute! tx-info
-              {:update :conversation_intent
-               :set (cond-> {:status "fulfilled"
-                             :fulfillment_summary summary
-                             :abandonment_reason nil
-                             :resolved_at now}
-                      conversation-turn-id (assoc :resolved_conversation_turn_id (->ref conversation-turn-id))
-                      resolved-ref (assoc :resolved_ref resolved-ref)
-                      metadata (assoc :metadata (->json metadata)))
-               :where [:= :id (->ref intent-id)]})
-            (row->intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")
-              (intent-refs tx-info intent-id)
-              []
-              [])))))))
+          (let [intent-row (require-row tx-info :conversation_intent intent-id "conversation_intent not found")]
+            (if (not= "active" (:status intent-row))
+              (if (and (= "fulfilled" (:status intent-row))
+                    (intent-resolution-refs-covered? tx-info intent-id refs-v :fulfillment-evidence))
+                (row->intent intent-row (intent-refs tx-info intent-id) [] [])
+                (throw (ex-info "intent is already resolved"
+                         {:type :vis/intent-already-resolved
+                          :intent-id (->uuid (->ref intent-id))
+                          :status (->kw-back (:status intent-row))})))
+              (let [soul-id (intent-conversation-soul-id tx-info intent-id)
+                    plan    (active-plan-for-intent tx-info intent-id)
+                    gates   (when plan (required-active-gates tx-info (:id plan)))
+                    now     (now-ms)]
+                (when-not plan
+                  (throw (ex-info "fulfilled intent requires an active plan" {:intent-id intent-id})))
+                (when (seq (remove #(= "proven" (:status %)) gates))
+                  (throw (ex-info "fulfilled intent requires every required gate on the active plan to be proven"
+                           {:intent-id intent-id
+                            :gate-ids (mapv :id (remove #(= "proven" (:status %)) gates))})))
+                (validate-provenance-refs! tx-info soul-id refs-v :proof)
+                (store-intent-resolution-refs! tx-info intent-id refs-v :fulfillment-evidence now)
+                (execute! tx-info
+                  {:update :conversation_intent
+                   :set (cond-> {:status "fulfilled"
+                                 :fulfillment_summary summary
+                                 :abandonment_reason nil
+                                 :resolved_at now}
+                          conversation-turn-id (assoc :resolved_conversation_turn_id (->ref conversation-turn-id))
+                          resolved-ref (assoc :resolved_ref resolved-ref)
+                          metadata (assoc :metadata (->json metadata)))
+                   :where [:= :id (->ref intent-id)]})
+                (row->intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")
+                  (intent-refs tx-info intent-id)
+                  []
+                  [])))))))))
 
 (defn db-abandon-intent!
   [db-info intent-id {:keys [reason refs resolved-ref metadata conversation-turn-id]}]

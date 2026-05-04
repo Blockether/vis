@@ -110,7 +110,73 @@
       (when (structural-line-marker? ch)
         [(subs line 0 1) (subs line 1)]))))
 
-(defn- wrap-unmarked-line
+(def ^:private inline-style-order [:bold :italic :strike :code])
+
+(def ^:private inline-style->sentinels
+  {:bold   [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF]
+   :italic [p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF]
+   :strike [p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF]
+   :code   [p/INLINE_CODE_ON p/INLINE_CODE_OFF]})
+
+(def ^:private inline-sentinel->transition
+  {p/INLINE_BOLD_ON    [:on :bold]
+   p/INLINE_BOLD_OFF   [:off :bold]
+   p/INLINE_ITALIC_ON  [:on :italic]
+   p/INLINE_ITALIC_OFF [:off :italic]
+   p/INLINE_STRIKE_ON  [:on :strike]
+   p/INLINE_STRIKE_OFF [:off :strike]
+   p/INLINE_CODE_ON    [:on :code]
+   p/INLINE_CODE_OFF   [:off :code]})
+
+(defn- inline-state-after
+  [active ^String line]
+  (loop [idx 0
+         active (vec active)]
+    (if (>= idx (.length line))
+      active
+      (let [token (subs line idx (inc idx))]
+        (if-let [[op style] (inline-sentinel->transition token)]
+          (recur (inc idx)
+            (case op
+              :on  (if (some #{style} active) active (conj active style))
+              :off (vec (remove #{style} active))))
+          (recur (inc idx) active))))))
+
+(defn- active-inline-prefix
+  [active]
+  (let [active-set (set active)]
+    (apply str
+      (keep (fn [style]
+              (when (active-set style)
+                (first (inline-style->sentinels style))))
+        inline-style-order))))
+
+(defn- active-inline-suffix
+  [active]
+  (let [active-set (set active)]
+    (apply str
+      (keep (fn [style]
+              (when (active-set style)
+                (second (inline-style->sentinels style))))
+        (reverse inline-style-order)))))
+
+(defn- rebalance-inline-sentinel-wraps
+  "When a markdown inline span crosses a visual wrap boundary, repeat its
+   zero-width sentinels on each physical row. Otherwise a long inline command
+   like `vis channels tui --conversation-id ...` starts with code styling on
+   row 1, then every continuation paints as plain prose until the final row's
+   CODE_OFF. Added sentinels are zero-width, so wrapping width is unchanged."
+  [lines]
+  (loop [remaining (seq lines)
+         active    []
+         out       []]
+    (if-let [line (first remaining)]
+      (let [active' (inline-state-after active line)
+            line'   (str (active-inline-prefix active) line (active-inline-suffix active'))]
+        (recur (next remaining) active' (conj out line')))
+      out)))
+
+(defn- wrap-unmarked-line-chunks
   [^String line ^long max-width]
   (if (<= (p/display-width line) max-width)
     [line]
@@ -132,6 +198,13 @@
             (recur (subs remaining cut)
               (conj acc chunk))))))))
 
+(defn- wrap-unmarked-line
+  [^String line ^long max-width]
+  (let [lines (wrap-unmarked-line-chunks line max-width)]
+    (if (> (count lines) 1)
+      (rebalance-inline-sentinel-wraps lines)
+      lines)))
+
 (defn- wrap-line-preserving-marker
   [line max-width]
   (if-let [[marker body] (split-structural-line-marker line)]
@@ -139,6 +212,77 @@
       [line]
       (mapv #(str marker %) (wrap-unmarked-line body max-width)))
     (wrap-unmarked-line line max-width)))
+
+(defn- sgr-escape-end
+  ^long [^String s ^long esc-idx]
+  (let [n (.length s)]
+    (if-not (and (< (inc esc-idx) n)
+              (= \[ (.charAt s (inc esc-idx))))
+      -1
+      (let [m-idx (str/index-of s "m" (+ esc-idx 2))]
+        (if (and m-idx
+              (every? #(or (Character/isDigit ^char %)
+                         (= \; %))
+                (subs s (+ esc-idx 2) m-idx)))
+          (long m-idx)
+          -1)))))
+
+(defn- truncate-ansi-cols
+  "Like `p/truncate-cols`, but preserves ANSI SGR escapes as zero-width.
+   Zprint emits ANSI-colored Clojure code; feeding those rows directly to
+   Lanterna's grapheme splitter throws on ESC (0x1b), which can blank the
+   whole TUI before first paint."
+  ^String [s ^long max-cols]
+  (let [s        (str s)
+        max-cols (max 0 (long max-cols))]
+    (cond
+      (zero? max-cols) ""
+      (not (str/includes? s "\u001b")) (p/truncate-cols s max-cols)
+      :else
+      (let [n  (.length s)
+            sb (StringBuilder.)]
+        (loop [i 0 used 0]
+          (cond
+            (>= i n) (.toString sb)
+            (>= used max-cols) (.toString sb)
+            :else
+            (let [esc-idx (or (str/index-of s "\u001b" i) n)]
+              (if (< i esc-idx)
+                (let [chunk (subs s i esc-idx)
+                      w     (p/display-width chunk)]
+                  (if (<= (+ used w) max-cols)
+                    (do (.append sb chunk)
+                      (recur esc-idx (+ used w)))
+                    (do (.append sb (p/truncate-cols chunk (- max-cols used)))
+                      (.toString sb))))
+                (let [m-idx (sgr-escape-end s esc-idx)]
+                  (if (neg? m-idx)
+                    ;; Unknown control escape: never let it reach Lanterna.
+                    ;; Render it visibly as a middle dot and continue.
+                    (let [w 1]
+                      (if (<= (+ used w) max-cols)
+                        (do (.append sb \u00b7)
+                          (recur (inc esc-idx) (+ used w)))
+                        (.toString sb)))
+                    (do (.append sb s esc-idx (inc m-idx))
+                      (recur (inc m-idx) used))))))))))))
+
+(defn- clip-line-preserving-marker
+  "Clip a formatted chat-bubble row to `max-width` display columns.
+
+   Wrapping handles normal text, but formatter-produced/prewrapped rows can
+   still be too wide. Clip at the bubble boundary before any raw terminal
+   paint call sees the row. Structural markers are zero-width style sentinels;
+   preserve them and clip only the visible body."
+  [line max-width]
+  (let [max-width (max 0 (long max-width))]
+    (if-let [[marker body] (split-structural-line-marker line)]
+      (str marker (truncate-ansi-cols body max-width))
+      (truncate-ansi-cols (str line) max-width))))
+
+(defn- clip-lines-preserving-markers
+  [lines max-width]
+  (mapv #(clip-line-preserving-marker % max-width) lines))
 
 (defn wrap-text*
   "Uncached implementation. Prefer `wrap-text` everywhere except inside
@@ -839,9 +983,10 @@
         ;; instead of mashed against it.
         h-pad     2
         content-w (max 1 (- bubble-w (* 2 h-pad)))
-        lines     (or (:prewrapped-lines message)
+        raw-lines (or (:prewrapped-lines message)
                     (and user? (markdown->lines text content-w :answer))
                     (wrap-text text content-w))
+        lines     (clip-lines-preserving-markers raw-lines content-w)
         line-meta (or (:line-meta message)
                     (vec (repeat (count lines) nil)))
         bubble-h  (count lines)

@@ -100,6 +100,7 @@ Use `z/zedit` for non-trivial `.clj` / `.cljc` / `.cljs` / `.edn` form edits.
 
 Rules:
 
+- Do not use `(declare ...)` unless strictly required by mutual recursion or an unavoidable load-order cycle. Prefer sorting defs in dependency order. If a declare is kept, add a nearby comment explaining why sorting cannot remove it.
 - Change forms/symbols/requires/maps/vectors/nested data structurally, not by offsets.
 - If zipper path unclear, rehearse on small string in nREPL: `(z/of-string source {:track-position? true})`.
 - Zipper immutable: every movement/edit returns next zloc; return final zloc.
