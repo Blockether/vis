@@ -48,7 +48,8 @@
    {:lib 'com.blockether/vis-persistance-sqlite     :dir "extensions/persistance/vis-persistance-sqlite"}
    {:lib 'com.blockether/vis-provider-github-copilot :dir "extensions/providers/vis-provider-github-copilot"}
    {:lib 'com.blockether/vis-channel-telegram       :dir "extensions/channels/vis-channel-telegram"}
-   {:lib 'com.blockether/vis-channel-tui            :dir "extensions/channels/vis-channel-tui"}])
+   {:lib 'com.blockether/vis-channel-tui            :dir "extensions/channels/vis-channel-tui"}
+   {:lib 'com.blockether/vis-exa                    :dir "extensions/common/vis-exa"}])
 
 (def ^:private sibling-versions
   "Map of every monorepo lib → mvn coord at the shared version. Passed
@@ -103,7 +104,9 @@
    'com.blockether/vis-channel-tui
    "Lanterna-based TUI channel."
    'com.blockether/vis-channel-telegram
-   "Telegram bot channel."})
+   "Telegram bot channel."
+   'com.blockether/vis-exa
+   "Exa MCP web/code search tools for the Vis SCI sandbox."})
 
 (defn- build-pom-data [lib]
   (into [[:description (or (get package-descriptions lib)

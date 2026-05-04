@@ -1000,9 +1000,18 @@
         (expect (not-any? #(str/includes? % "<proofs") lines))
         (expect (not-any? #(str/includes? % "</proofs>") lines))
         (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
-                         (str/includes? % "🧾 Proofs · OK")) lines))
+                         (str/includes? % "✓ Proofs · OK")) lines))
         (expect (some #(and (= :toggle-details (:kind %)) (:proofs? %)) metas))
         (expect (some #(str/includes? % "body") lines))))
+
+    (it "adds one visible top margin before disclosure summaries"
+      (let [lines (md->lines "Intro\n<details>\n<summary>L</summary>\n\nbody\n\n</details>" 60)
+            summary-idx (first (keep-indexed (fn [idx line]
+                                               (when (= p/MARKER_MD_SUMMARY (marker-of line))
+                                                 idx))
+                                 lines))]
+        (expect (some? summary-idx))
+        (expect (= "" (nth lines (dec summary-idx))))))
 
     (it "body between framing tags renders as normal markdown"
       ;; The whole point of stripping the wrappers is so the inner

@@ -25,4 +25,5 @@
 - [Nudge System](extensions/nudges.md)
 - [vis-foundation extension](extensions/common/vis-foundation.md)
   - [Markdown builders under `v/`](extensions/common/markdown.md)
+- [vis-exa extension](extensions/common/vis-exa.md)
 

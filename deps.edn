@@ -24,6 +24,7 @@
   com.blockether/vis-channel-telegram         {:local/root "extensions/channels/vis-channel-telegram"}
   com.blockether/vis-channel-tui              {:local/root "extensions/channels/vis-channel-tui"}
   com.blockether/vis-foundation               {:local/root "extensions/common/vis-foundation"}
+  com.blockether/vis-exa                      {:local/root "extensions/common/vis-exa"}
   com.blockether/vis-language-clojure         {:local/root "extensions/languages/clojure"}
 
   ;; Core runtime deps. Each one supports a specific surface in this
@@ -51,7 +52,7 @@
   ;;   sqlite-jdbc / HikariCP   → vis-persistance-sqlite
   ;;   honeysql / next.jdbc    → vis-persistance-sqlite
   ;;   nippy                    → vis-persistance-sqlite
-  ;;   org.babashka/http-client → vis-channel-telegram + vis-provider-github-copilot
+  ;;   org.babashka/http-client → vis-channel-telegram + vis-provider-github-copilot + vis-exa
   ;;   re2j                     → vis-foundation
   ;;   rewrite-clj              → vis-language-clojure
   ;;   lanterna                 → vis-channel-tui
@@ -110,12 +111,14 @@
                         "extensions/providers/vis-provider-zai/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/common/vis-foundation/test"
+                        "extensions/common/vis-exa/test"
                         "extensions/languages/clojure/test"]
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                         com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                         com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
                         com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
                         com.blockether/vis-foundation              {:local/root "extensions/common/vis-foundation"}
+                        com.blockether/vis-exa                     {:local/root "extensions/common/vis-exa"}
                         ;; Microbenchmarks. Pulled into `:test` so a
                         ;; `*_bench_test.clj` file can `(require
                         ;; '[criterium.core :refer [quick-benchmark]])`
@@ -133,6 +136,7 @@
                         "--dir" "extensions/providers/vis-provider-zai/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/common/vis-foundation/test"
+                        "--dir" "extensions/common/vis-exa/test"
                         "--dir" "extensions/languages/clojure/test"]}
 
   :bench {:extra-deps {com.blockether/vis-benchmark {:local/root "benchmarks"}}
@@ -174,12 +178,14 @@
                  "extensions/providers/vis-provider-openai-codex/test"
                  "extensions/providers/vis-provider-zai/test"
                  "extensions/channels/vis-channel-tui/test"
-                 "extensions/common/vis-foundation/test"]
+                 "extensions/common/vis-foundation/test"
+                 "extensions/common/vis-exa/test"]
    :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                  com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                  com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
                  com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
                  com.blockether/vis-foundation              {:local/root "extensions/common/vis-foundation"}
+                 com.blockether/vis-exa                     {:local/root "extensions/common/vis-exa"}
                  criterium/criterium                        {:mvn/version "0.4.6"}}}
 
   :build {:deps  {io.github.clojure/tools.build {:mvn/version "0.10.13"}
