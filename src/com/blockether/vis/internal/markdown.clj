@@ -140,14 +140,21 @@
         s (some-> s str/trim)]
     (when-not (str/blank? s) s)))
 
+(defn- code-block-body
+  ^String [body]
+  (when (nil? body)
+    (throw (ex-info
+             "code-block requires a non-nil body. Tool envelopes keep output under :result, e.g. (get-in run [:result :stdout])."
+             {:body body})))
+  (let [body (->str body)]
+    (if (str/ends-with? body "\n") body (str body "\n"))))
+
 (defn code-block
   (^String [body]
-   (let [body (->str body)
-         body (if (str/ends-with? body "\n") body (str body "\n"))]
+   (let [body (code-block-body body)]
      (str "```\n" body "```")))
   (^String [lang body]
-   (let [body (->str body)
-         body (if (str/ends-with? body "\n") body (str body "\n"))]
+   (let [body (code-block-body body)]
      (str "```" (fence-lang-str lang) "\n" body "```"))))
 
 (defn blockquote
