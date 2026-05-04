@@ -1,65 +1,249 @@
-# Vis - Development Guide
+# Vis — Agent Nucleus
 
-## MANDATORY: Agent Rules
+```text
+λ engage(nucleus).
+[phi fractal euler tao pi mu ∃ ∀]
+| [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other]
+| OODA
+Human ⊗ AI ⊗ REPL
 
+λ operate(x). reproduce → inspect(runtime) → change(minimal) → test(regression) → verify
+λ style(x). English only | caveman terse > prose | clarity_exception(misread_risk)
+λ truth(x). runtime > source > docs > assumption
+λ fix(bug). reproduce(minimal) → trace(cause) → fix(structural) → regression_test | ¬repro → ¬diagnosis
+λ sync(f). edit(f) → reread(f) → reload(ns) → verify(relevant)
+λ safety(x). headless_terminal_safe | observable > opaque | signal > suppress | user_data_owned_by_user
+```
 
-### Clojure dev loop — nREPL first
+## S5 — Identity: non-negotiables
 
-Use Clojure like Clojure: long-lived nREPL first, entrypoints second.
+### Reproduce first
 
-- Before starting a dev JVM, check for an existing nREPL with `clj-nrepl-eval --discover-ports`.
-- If a Vis nREPL is already running, reuse that port for REPL/dev checks; do **not** start a second dev nREPL unless the existing one is unusable or belongs to another project.
-- Starting an intentional standalone Vis process (`vis ...`, `bin/vis ...`, child JVM multiprocess tests, or packaged-entrypoint checks) is allowed. Persistent SQLite is multiprocess-capable; do not avoid a standalone process solely because a dev nREPL is open.
-- Start with `bin/dev` or `clojure -M:dev` only when no reusable nREPL is running (default port `7888`; override with `NREPL_PORT=<port>`).
-- Dev launcher writes `.nrepl-port`; do not commit that file.
-- Discover port with `clj-nrepl-eval --discover-ports`.
-- Eval with `clj-nrepl-eval -p <port> "<clojure-code>"`.
-- Always use `:reload` after edits: `clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.dev :as dev] :reload)"`.
-- Prefer nREPL eval over fresh JVM startup for internal behavior checks.
-- Runtime investigation is **nREPL data-first**. Use the running process to exercise the same code paths Vis uses, inspect Clojure data, then turn the finding into a focused repro/test.
-- Bash is for file discovery, process control, and launching `clj-nrepl-eval`; Clojure state and behavior checks belong in nREPL.
-- Run CLI entrypoints through `dev/cli!` when you need REPL control, e.g. `clj-nrepl-eval -p 7888 "(dev/cli! \"providers\" \"list\")"`.
-- Run standalone `vis ...` / `bin/vis ...` when testing the real packaged entrypoint, terminal behavior, process lifecycle, or multiprocess SQLite access.
-- Start a REPL-controllable TUI with `dev/tui!`, e.g. `clj-nrepl-eval -p 7888 "(dev/tui!)"`.
-- `dev/tui!` must open a separate macOS Terminal.app window running `bin/dev terminal-tui`.
-- In that Terminal.app process, nREPL and the TUI must run in the **same JVM/process** so the TUI is controllable from REPL.
-- Do **not** launch TUI as `bin/vis channels tui` from `dev/tui!`; that defeats the REPL-controllable TUI path.
-- It is valid to launch standalone TUI with `vis channels tui` / `bin/vis channels tui` while a dev nREPL is open; this is a separate process using the same persistent SQLite DB.
-- Do **not** run TUI inside the nREPL/stdout tool terminal.
-- Direct shortcut for REPL-controllable TUI: `bin/dev tui` opens Terminal.app running the attached nREPL+TUI JVM.
-- If Clojure delimiters break, do **not** manually rebalance parens. Run `clj-paren-repair <files>`.
-- Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
+- Bug work starts with concrete reproduction. No repro -> no diagnosis -> no fix.
+- Repro through real integration path first, then reduce to smallest seam.
+- Good seams: pure fn, transcript helper, provider config/coercion, svar call, iteration-loop harness, CLI helper, persistence call, pure TUI render/state test.
+- Convert repro into regression test or documented diagnostic helper before done.
 
-### Bug work requires reproduction first — Vis and svar
+### Runtime truth
 
-**Absolute requirement:** every bug investigation starts by finding a concrete reproduction. If there is no reproduction, the bug is not diagnosed and the fix does not count.
+- Runtime state beats files. Use Vis APIs before storage poking.
+- For conversations: start with `com.blockether.vis.ext.foundation.transcript/transcript`.
+- For providers: inspect `vis/active-provider`, `vis/provider-ids`, `vis/registered-providers`, `vis/provider-template`, `vis/->svar-provider`.
+- Missing diagnostic view -> add Clojure helper + test. Do not bypass app.
 
-Applies equally to Vis code, svar behavior, provider integration, TUI state, CLI flows, persistence, tests, and any cross-project seam.
+### English + caveman
 
-Required order:
+- All assistant-facing text is English: chat, commits, PRs, comments, docs, logs.
+- Default response style: caveman terse. Drop filler. Keep technical exactness.
+- Use fuller prose only when brevity risks destructive-action or multi-step misread.
 
-1. Reproduce the failure before changing code.
-2. Capture the smallest reliable reproduction at the closest seam: pure function, transcript helper, provider config/coercion, svar call, iteration-loop harness, CLI helper, persistence call, or pure TUI render/state test.
-3. If the bug is reported from another project or dependency such as svar, reproduce it through the real integration path first, then reduce it to the smallest local or upstream seam.
-4. Only after the reproduction is understood may code be changed.
-5. Convert the reproduction into a regression test or documented diagnostic helper before considering the bug fixed.
+### Headless-safe terminal path
 
-No repro -> no diagnosis. No repro -> no fix. No repro -> work is incomplete.
+- Do not load Swing/AWT from normal terminal/TUI code paths.
+- Swing/AWT is allowed only in explicit graphical/standalone UI namespaces, e.g. `vis channels tui --standalone`.
+- Graphical code must be isolated from terminal startup and must fail clearly when headless.
+- Vis normal terminal mode must work in terminals, CI, SSH, TUI-only envs.
 
-### Runtime investigation strategy — nREPL data-first
+### README stub
 
-Do this:
+Repo-root `README.md` stays tiny:
 
-1. Attach to the live nREPL and reload namespaces before inspection.
-2. Use Vis Clojure APIs, not storage files, to inspect runtime state.
-3. For conversations, start with `com.blockether.vis.ext.foundation.transcript/transcript` and inspect the returned Clojure map.
-4. For providers, inspect `vis/active-provider`, `vis/provider-ids`, `vis/registered-providers`, `vis/provider-template`, and `vis/->svar-provider`.
-5. Reproduce at the smallest app seam: transcript helper, provider config/coercion, iteration-loop harness, or pure TUI render/state test.
-6. If the needed diagnostic view does not exist, add a Clojure helper and a test instead of bypassing the app.
+- one rationale paragraph: what Vis is + why RLM/SCI;
+- link to mdBook under `docs/src/`;
+- nothing else.
 
-Useful snippets:
+Long docs, install, FAQ, architecture, tables -> mdBook via `docs/src/SUMMARY.md`.
+
+## S4 — Intelligence: how agent learns/adapts
+
+### nREPL first, entrypoints second
 
 ```bash
+clj-nrepl-eval --discover-ports
+clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.dev :as dev] :reload)"
+```
+
+Rules:
+
+- Before starting dev JVM, discover nREPL ports.
+- If Vis nREPL already runs, reuse it for REPL/dev checks.
+- Do not start second dev nREPL unless existing one is unusable or wrong project.
+- Starting intentional standalone process is allowed: `vis ...`, `bin/vis ...`, child JVM tests, packaged-entrypoint checks.
+- Persistent SQLite is multiprocess-capable. Do not avoid standalone Vis solely because dev nREPL is open.
+- Start dev only when needed: `bin/dev` or `clojure -M:dev` (`NREPL_PORT=<port>` optional).
+- `.nrepl-port` is generated. Do not commit.
+- Bash = discovery/process launch. Clojure behavior checks = nREPL.
+- After edits: reload with `:reload`.
+
+### CLI/TUI dev paths
+
+```bash
+clj-nrepl-eval -p 7888 "(dev/cli! \"providers\" \"list\")"
+clj-nrepl-eval -p 7888 "(dev/tui!)"
+bin/dev tui
+vis channels tui
+```
+
+Rules:
+
+- Use `dev/cli!` when REPL control matters.
+- Use standalone `vis ...` / `bin/vis ...` for packaged entrypoint, terminal behavior, process lifecycle, multiprocess SQLite.
+- `dev/tui!` opens separate macOS Terminal.app running `bin/dev terminal-tui`.
+- In that Terminal process, nREPL + TUI run in same JVM so TUI is REPL-controllable.
+- Do not launch `bin/vis channels tui` from `dev/tui!`; that defeats controllable-TUI path.
+- Standalone TUI via `vis channels tui` / `bin/vis channels tui` is valid while dev nREPL is open.
+- Do not run TUI inside nREPL/stdout tool terminal.
+
+### Structured Clojure edits
+
+Use `z/zedit` for non-trivial `.clj` / `.cljc` / `.cljs` / `.edn` form edits.
+
+Rules:
+
+- Change forms/symbols/requires/maps/vectors/nested data structurally, not by offsets.
+- If zipper path unclear, rehearse on small string in nREPL: `(z/of-string source {:track-position? true})`.
+- Zipper immutable: every movement/edit returns next zloc; return final zloc.
+- Whole-file symbol search: `(z/find-value zloc z/next 'sym)`. Short form searches siblings only.
+- Verify hit before edit: `(z/sexpr hit)`, `(z/tag hit)`, `(z/position-span hit)`.
+- Normal nav (`z/down`, `z/up`, `z/right`, `z/left`, `z/next`, `z/prev`) skips whitespace/comments but preserves root string.
+- Use `*` nav variants only when editing whitespace/comment nodes.
+- Use `z/subedit->` / `z/subedit->>` for focused nested edits.
+- If delimiters break: do not manually rebalance. Run `clj-paren-repair <files>`.
+- Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
+
+Patterns:
+
+```clojure
+;; Replace symbol everywhere.
+(z/zedit "src/foo.clj"
+  (fn [zl]
+    (loop [zloc zl]
+      (if-let [hit (z/find-value zloc z/next 'old-sym)]
+        (recur (z/replace hit 'new-sym))
+        zloc))))
+
+;; Replace value right of key.
+(z/zedit "src/foo.clj"
+  (fn [zl]
+    (if-let [k (z/find-value zl z/next :some-key)]
+      (-> k z/right (z/replace :new-value))
+      zl)))
+
+;; Add require.
+(z/zedit "src/foo.clj"
+  (fn [zl]
+    (if-let [req (z/find-value zl z/next :require)]
+      (-> req z/up (z/append-child '[clojure.string :as str]))
+      zl)))
+```
+
+## S3 — Control: enforce policy
+
+### Verification cadence
+
+- Docs-only changes, including `AGENTS.md`, do not require `verify.sh`.
+- During code edits: `./verify.sh --quick`.
+- Before commit/commit-ready handoff: full `./verify.sh`.
+
+### Tests for every namespace
+
+Hard rule: every Clojure source namespace needs matching test namespace.
+
+Mapping:
+
+- `src/path/to/foo.clj` -> `test/path/to/foo_test.clj`
+- `src/path/to/foo.cljs` -> `test/path/to/foo_test.cljs`
+- `src/path/to/foo.cljc` -> `test/path/to/foo_test.cljc`
+
+Requirements:
+
+1. New namespace -> create test same iteration.
+2. Modify namespace lacking test -> create test before/with change.
+3. Test file must require namespace under test.
+4. Test file must contain at least one real public-API smoke/regression test.
+5. Empty test namespace fails.
+
+Violation = work incomplete. Fix before other work.
+
+### HoneySQL only
+
+- Every SQL query uses `honey.sql` maps.
+- Forbidden: `next.jdbc.sql` (`sql/insert!`, `sql/find-by-keys`, etc.). It creates namespaced column keys that break SQLite.
+- Forbidden: raw SQL strings in app code.
+- Exception: raw `jdbc/execute!` strings allowed only in `extensions/persistance/vis-persistance-sqlite/src/.../core.clj` for migration DDL + FTS HoneySQL cannot express.
+
+Pattern:
+
+```clojure
+(require '[honey.sql :as sql]
+         '[next.jdbc :as jdbc]
+         '[next.jdbc.result-set :as rs])
+
+(def ^:private jdbc-opts {:builder-fn rs/as-unqualified-lower-maps})
+
+(jdbc/execute! datasource
+  (sql/format {:select [:*]
+               :from   [:my_table]
+               :where  [:= :id id]})
+  jdbc-opts)
+```
+
+### SQLite persistence
+
+Persistent SQLite is multiprocess-capable.
+
+- Do not reintroduce process-exclusive persistent DB lock: no `vis.db.lock`, no `:vis/persistent-db-already-open`.
+- Normal writes rely on SQLite WAL + `busy_timeout` + `transaction_mode=IMMEDIATE` + `sqlite-write-tx!` retry boundary.
+- Schema install/repair is only process-serialized bootstrap path, via short-lived `vis.db.migrate.lock` around Flyway + inline V1 repair.
+- Do not delete/move/unlink/recreate `~/.vis/vis.mdb` or `vis.db` while any Vis process may have it open. Close all Vis processes first.
+- Multiprocess behavior needs real process/JVM regression tests, not same-JVM-only tests.
+
+### SQLite schema changes
+
+Until told otherwise, schema changes are inline:
+
+- Edit `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` directly.
+- Do not add `V2__...sql`, `V3__...sql`, etc.
+- Local dev DB may be deleted/recreated only after all Vis processes using it are closed.
+- If user asks for real migrations/backward-compatible upgrade path, this rule suspends for that task.
+
+### svar spec guarantees
+
+- Vis calls svar through `svar/ask-code!`; old Vis-side JSON-spec `svar/ask!` path retired.
+- Caller-supplied `:spec` may flow inside svar, but Vis owns `ask-code!` surface.
+- Required spec field -> destructure directly. No blank checks. No "missing field" throws.
+- Optional field -> `(when (:field x) ...)` or `(or (:field x) default)`.
+- Shape wrong after spec -> spec is wrong. Fix spec, not consumer noise.
+
+### TUI Ctrl+Y
+
+`Ctrl+Y` sends `SIGTSTP`/`DSUSP`; kernel suspends process before Lanterna sees it.
+
+- Leave `Ctrl+Y` unbound everywhere.
+- Reject bindings in:
+  `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/{input,dialogs,screen}.clj`
+- Clipboard ops: `Ctrl+K` -> Copy, per-message copy buttons, mouse-selection auto-copy.
+
+## S2 — Coordination: parts working together
+
+```text
+λ coordinate(x). REPL(control) ∥ standalone(entrypoint) ∥ SQLite(shared)
+λ db(x). WAL + immediate_tx + retry | migrate_lock(short) | ¬exclusive_process_lock
+λ tui(x). controllable(dev/tui!) ∨ standalone(vis channels tui) | choose_by_task
+λ boundaries(x). io ∨ async ∨ invoke ∨ process ∨ db → explicit_state + observable_failure
+```
+
+- nREPL is preferred control plane, not sole runtime.
+- Standalone processes are valid when testing real process boundaries.
+- SQLite handles cross-process runtime access; migration lock handles schema bootstrap race.
+- Process/file/DB boundaries must be observable and explicit.
+
+## S1 — Operations: concrete commands/snippets
+
+### nREPL/runtime snippets
+
+```bash
+clj-nrepl-eval --discover-ports
 clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.core :as vis] :reload)"
 ```
 
@@ -78,162 +262,14 @@ clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.core :as vis] :reload)"
  :runtime-provider (vis/->svar-provider (vis/active-provider))}
 ```
 
-### Clojure source edits — use `z/` structured editing
+### Common commands
 
-Do this for non-trivial `.clj` / `.cljc` / `.cljs` / `.edn` edits:
-
-1. Use `z/zedit` when changing forms, symbols, requires, map entries, vectors, or nested Clojure data.
-2. Reproduce the edit on a small string in nREPL first when the zipper path is not obvious: `(z/of-string source {:track-position? true})`, find the target, inspect it, then apply the same path in `z/zedit`.
-3. Treat the zipper as immutable: every movement/edit returns the next `zloc`; return the final zipper from the `z/zedit` function.
-4. Find symbols by value with an explicit depth-first move: `(z/find-value zloc z/next 'some-symbol)`. The short form searches right siblings only; do not use it for whole-file scans.
-5. Verify the hit before changing it: inspect `(z/sexpr hit)`, `(z/tag hit)`, and `(z/position-span hit)` when location matters. `z/zedit` creates zippers with position tracking enabled.
-6. Change the current node with `(z/replace hit new-form)` or `(z/edit hit f & args)`.
-7. Move structurally, not by text offsets: `z/down`, `z/up`, `z/right`, `z/left`, `z/next`, `z/prev` skip whitespace/comments and preserve them in output.
-8. Use the `*` variants (`z/right*`, `z/next*`, `z/of-file*`) only when whitespace/comment nodes themselves matter. Normal navigation intentionally skips whitespace/comments while keeping them in `z/root-string`.
-9. Use `z/subedit->` / `z/subedit->>` when editing inside one found form and you want the final location to remain at that form.
-10. If there is no reliable structural target, first add a helper/predicate that finds the right form, then edit through that helper.
-
-Useful patterns:
-
-```clojure
-;; Replace a symbol everywhere.
-(z/zedit "src/foo.clj"
-  (fn [zl]
-    (loop [zloc zl]
-      (if-let [hit (z/find-value zloc z/next 'old-sym)]
-        (recur (z/replace hit 'new-sym))
-        zloc))))
-
-;; Replace the value to the right of a key in a map/vector-ish form.
-(z/zedit "src/foo.clj"
-  (fn [zl]
-    (if-let [k (z/find-value zl z/next :some-key)]
-      (-> k z/right (z/replace :new-value))
-      zl)))
-
-;; Add a require without hand-editing whitespace.
-(z/zedit "src/foo.clj"
-  (fn [zl]
-    (if-let [req (z/find-value zl z/next :require)]
-      (-> req z/up (z/append-child '[clojure.string :as str]))
-      zl)))
-
-;; Edit inside one found form, then return to that form's location.
-(z/zedit "src/foo.clj"
-  (fn [zl]
-    (if-let [let-sym (z/find-value zl z/next 'let)]
-      (-> let-sym
-          z/up
-          (z/subedit->
-            (z/find-value z/next 'old-local)
-            (z/replace 'new-local)))
-      zl)))
+```bash
+./verify.sh --quick
+./verify.sh
+clj-paren-repair <files>
+clj-nrepl-eval -p 7888 "(dev/cli! \"providers\" \"list\")"
+clj-nrepl-eval -p 7888 "(dev/tui!)"
+bin/dev tui
+vis channels tui
 ```
-
-### Verification cadence
-
-Do this:
-
-- Documentation-only changes, including `AGENTS.md`, do not require `verify.sh`.
-- During code edits, use `./verify.sh --quick` for the loop.
-- Run full `./verify.sh` only before committing or handing off a code change as commit-ready.
-
-### Ctrl+Y stays unbound in the TUI
-
-`Ctrl+Y` sends `SIGTSTP` (or `DSUSP` on macOS) -> **suspends entire process**, drops the user to a stopped-job shell prompt. The kernel acts before Lanterna can intercept. **Leave `Ctrl+Y` unbound everywhere** — clipboard, yank, anything else. Reject any PR that introduces a `Ctrl+Y` binding in `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/{input,dialogs,screen}.clj`.
-
-Use the copy dialog (`Ctrl+K` → Copy), per-message copy buttons, or the TUI mouse-selection auto-copy flow for clipboard ops.
-
-### HoneySQL is the only SQL surface
-
-Every SQL query MUST use `honey.sql` data maps. `next.jdbc.sql` (`sql/insert!`, `sql/find-by-keys`, etc.) is forbidden — it produces namespaced column keys that break with SQLite. Raw SQL strings in app code (`["SELECT * FROM ..."]`) are forbidden too.
-
-The ONE pattern:
-```clojure
-(require '[honey.sql :as sql]
-         '[next.jdbc :as jdbc]
-         '[next.jdbc.result-set :as rs])
-
-(def ^:private jdbc-opts {:builder-fn rs/as-unqualified-lower-maps})
-
-(jdbc/execute! datasource (sql/format {:select [:*]
-                                       :from   [:my_table]
-                                       :where  [:= :id id]})
-  jdbc-opts)
-```
-
-Raw `jdbc/execute!` with string SQL is allowed in ONE place: `extensions/persistance/vis-persistance-sqlite/src/.../core.clj`, for migration DDL + FTS queries HoneySQL can't express. Everywhere else: HoneySQL or bust.
-
-### Persistent SQLite is multiprocess-capable
-
-Vis persistent SQLite stores are intentionally usable from multiple JVMs/processes at the same time.
-
-- Do **not** reintroduce a process-exclusive persistent DB lock such as `vis.db.lock` / `:vis/persistent-db-already-open`.
-- Normal runtime writes rely on SQLite WAL, `busy_timeout`, `transaction_mode=IMMEDIATE`, and Vis's `sqlite-write-tx!` retry boundary.
-- Schema install/repair is the only process-serialized persistence bootstrap path; it uses a short-lived migration lock (`vis.db.migrate.lock`) around Flyway + inline V1 repair.
-- Do not delete, move, unlink, or recreate `~/.vis/vis.mdb` / `vis.db` while any Vis process may have it open. Close all Vis processes first.
-- Multiprocess behavior needs real process/JVM regression coverage, not same-JVM-only tests.
-
-### SQLite schema changes are inline until told otherwise
-
-Until explicitly told otherwise, Vis database schema changes are made by editing the canonical SQLite schema inline:
-
-- Edit `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` directly.
-- Do **not** add `V2__...sql`, `V3__...sql`, etc. while this rule is active.
-- It is acceptable to delete/recreate the local development DB during this phase **only after all Vis processes using it are closed**; migration history stability is not the priority yet.
-- If a user explicitly asks for real migrations/backward-compatible upgrade path, this rule is suspended for that task.
-
-### Reply in English
-
-Every assistant-facing response — user-visible chat text, commit messages, PR bodies, code comments, docstrings, log messages — is written in English. The user may write in Polish (or any other language); the agent still replies in English. Single-language responses, no apology paragraphs in the user's language. Overrides any implicit language mirroring.
-
-### Trust svar spec guarantees — destructure directly
-
-svar's spec engine is provider-enforced. A field declared `{::spec/name :foo ::spec/type :spec.type/string ::spec/required true}` -> svar guarantees the parsed result has `:foo` as a non-null string. A consumer that re-runs `(when (map? block) (when-not (str/blank? foo) ...))` and `(throw (ex-info "Code block missing :foo"))` after a spec-validated response = **pure noise** — duplicates what svar already enforced, hides real intent, makes downstream edits riskier.
-
-Rule:
-
-- Required field -> destructure directly. Skip the `(when-not (str/blank? …))`. Skip the throw "missing :foo". Dead code.
-- Optional field -> plain `(when (:field x) …)` or `(or (:field x) default)` — full validators belong in the spec.
-- Need to check shape after spec? The spec is WRONG. Fix the spec; the consumer stays clean.
-
-Applies to every spec the runtime hands to svar. svar loaded it -> shape correct by construction.
-
-> Note: the iteration loop itself runs without a spec — it goes through `(svar/ask-code! …)` which returns plain Clojure source extracted from fenced code blocks. **Every Vis call into svar uses `svar/ask-code!`** (`svar/ask!` was retired with the JSON-spec iteration path). Caller-supplied `:spec` (e.g. `vis run --spec …`) still flows to `svar/ask!` *inside svar*, but Vis owns only the `ask-code!` surface, and the rule above applies to whatever spec the caller hands in.
-
-### Repo-root `README.md` is a stub: rationale + book link only
-
-Repo-root `README.md` stays tiny. Carries:
-
-- one rationale paragraph (what Vis is, why RLM/SCI in one breath),
-- pointer to the book under `docs/src/` (mdBook),
-- nothing else.
-
-Excludes: architecture diagrams, mermaid sequence charts, getting-started instructions, install/auth steps, extension docs, schema tables, channel adapter notes, FAQ, comparison tables, long-form prose. Every one of those belongs in the book (`docs/src/...`), reachable from `docs/src/SUMMARY.md`.
-
-
----
-
-## 🔴 HARD RULE: Every Clojure Namespace Has a Corresponding Test File
-
-**NO EXCEPTIONS. NO EXCUSES.**
-
-For every Clojure namespace `foo.bar.baz` in the source tree, there **MUST** exist a corresponding test file `foo/bar/baz_test.clj` (or `.cljs` / `.cljc` as appropriate) under the test source root.
-
-Specifically:
-
-- `src/path/to/namespace.clj` → **requires** `test/path/to/namespace_test.clj`
-- `src/path/to/namespace.cljs` → **requires** `test/path/to/namespace_test.cljs`
-- `src/path/to/namespace.cljc` → **requires** `test/path/to/namespace_test.cljc`
-
-### Requirements
-
-1. **New Clojure namespace** -> create its test file **in the same commit/iteration**.
-2. **Modify a namespace that currently has no test file** -> create the test file before or alongside your changes.
-3. **The test file** contains at minimum a `deftest` exercising the namespace's public API — even a basic smoke test. An empty test namespace with zero tests fails this rule.
-4. **The test namespace** requires the namespace it tests.
-5. Every namespace ships with a test file. Anything else fails this rule.
-
-### Violation
-
-A namespace without a corresponding test file = work **incomplete**, rectified immediately before any other change.
