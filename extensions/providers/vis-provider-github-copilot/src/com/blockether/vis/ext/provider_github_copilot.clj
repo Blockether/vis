@@ -38,6 +38,7 @@
 (def ^:private DEVICE_CODE_URL  "https://github.com/login/device/code")
 (def ^:private ACCESS_TOKEN_URL "https://github.com/login/oauth/access_token")
 (def ^:private COPILOT_TOKEN_URL "https://api.github.com/copilot_internal/v2/token")
+(def ^:private COPILOT_API_FALLBACK_URL "https://api.individual.githubcopilot.com")
 
 (def ^:private COPILOT_HEADERS
   "Required headers for Copilot API calls."
@@ -254,6 +255,49 @@
 ;; Copilot API Token Exchange + Refresh
 ;; =============================================================================
 
+(def ^:private COPILOT_POLICY_MODELS
+  ["claude-haiku-4.5" "claude-opus-4.5" "claude-opus-4.6" "claude-opus-4.7"
+   "claude-sonnet-4" "claude-sonnet-4.5" "claude-sonnet-4.6"
+   "gpt-5" "gpt-5-mini" "gpt-5.1" "gpt-5.1-codex" "gpt-5.1-codex-max"
+   "gpt-5.1-codex-mini" "gpt-5.2" "gpt-5.2-codex" "gpt-5.3-codex"
+   "gpt-5.4" "gpt-5.4-mini"
+   "gpt-4.1" "gpt-4o" "gemini-2.5-pro" "gemini-3-flash-preview"
+   "gemini-3-pro-preview" "gemini-3.1-pro-preview" "grok-code-fast-1"])
+
+(defn- copilot-base-url-from-token [token]
+  (when-let [[_ proxy-host] (re-find #"(?:^|;)proxy-ep=([^;]+)" (or token ""))]
+    (str "https://" (str/replace proxy-host #"^proxy\." "api."))))
+
+(defn- copilot-api-base-url [token response enterprise-domain]
+  (or (copilot-base-url-from-token token)
+    (get-in response [:endpoints :api])
+    (when-not (str/blank? enterprise-domain)
+      (str "https://copilot-api." enterprise-domain))
+    COPILOT_API_FALLBACK_URL))
+
+(defn- enable-copilot-model! [token api-url model-id]
+  (try
+    (let [^java.net.http.HttpRequest$Builder builder
+          (-> (HttpRequest/newBuilder)
+            (.uri (URI/create (str api-url "/models/" model-id "/policy")))
+            (.timeout (Duration/ofSeconds 30))
+            (.header "Content-Type" "application/json")
+            (.header "Authorization" (str "Bearer " token))
+            (.header "openai-intent" "chat-policy")
+            (.header "x-interaction-type" "chat-policy")
+            (.POST (HttpRequest$BodyPublishers/ofString "{\"state\":\"enabled\"}")))
+          ^java.net.http.HttpRequest$Builder builder
+          (reduce-kv (fn [^java.net.http.HttpRequest$Builder b k v] (.header b k v)) builder COPILOT_HEADERS)
+          resp (.send ^java.net.http.HttpClient @http-client
+                 (.build builder) (HttpResponse$BodyHandlers/ofString))]
+      (<= 200 (.statusCode resp) 299))
+    (catch Throwable _ false)))
+
+(defn- enable-known-copilot-models! [token api-url]
+  (let [results (doall (pmap #(enable-copilot-model! token api-url %) COPILOT_POLICY_MODELS))]
+    {:attempted (count COPILOT_POLICY_MODELS)
+     :enabled   (count (filter true? results))}))
+
 ;; Cached Copilot API token. Shape: {:token str :expires-at-ms long :oauth-token str}
 (defonce ^:private token-cache (atom nil))
 
@@ -268,15 +312,16 @@
     (when-not (:token resp)
       (throw (ex-info "Copilot token exchange failed — no token in response"
                {:response resp :url url})))
-    {:token        (:token resp)
-     :expires-at-ms (* (long (:expires_at resp)) 1000)
-     :api-url      (get-in resp [:endpoints :api] "https://api.githubcopilot.com")
-     :oauth-token  oauth-token}))
+    (let [token (:token resp)]
+      {:token        token
+       :expires-at-ms (* (long (:expires_at resp)) 1000)
+       :api-url      (copilot-api-base-url token resp enterprise-domain)
+       :oauth-token  oauth-token})))
 
 (defn get-copilot-token!
   "Get a valid Copilot API token, refreshing if needed.
    Uses cached token if still valid, otherwise exchanges the OAuth token.
-   Returns {:token str :api-url str} or throws.
+   Returns {:token str :api-url str :llm-headers map} or throws.
 
    Opts:
      :enterprise-domain — for GHE (e.g. \"github.mycompany.com\")"
@@ -288,7 +333,7 @@
            (:token cached)
            (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS)))
        ;; Cached token is still valid
-       {:token (:token cached) :api-url (:api-url cached)}
+       {:token (:token cached) :api-url (:api-url cached) :llm-headers COPILOT_HEADERS}
        ;; Need to refresh
        (let [oauth-token (or (:oauth-token cached)
                            (:oauth-token (detect-oauth-token))
@@ -300,7 +345,7 @@
                     :data {:expires-in-ms (- (:expires-at-ms fresh) now)
                            :api-url (:api-url fresh)}
                     :msg "Copilot API token refreshed"})
-         {:token (:token fresh) :api-url (:api-url fresh)})))))
+         {:token (:token fresh) :api-url (:api-url fresh) :llm-headers COPILOT_HEADERS})))))
 
 ;; =============================================================================
 ;; CLI helpers
@@ -366,7 +411,9 @@
         (print! "")
         (print! "  Waiting for authorization...")
         (poll-for-token! device-code interval expires-in)
-        (get-copilot-token!)
+        (let [{:keys [token api-url]} (get-copilot-token!)
+              {:keys [attempted enabled]} (enable-known-copilot-models! token api-url)]
+          (print! (str "  Enabled " enabled "/" attempted " known Copilot model policies.")))
         (print! "  ✓ Authenticated! GitHub Copilot is ready.")
         :ok))))
 

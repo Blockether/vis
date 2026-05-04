@@ -146,8 +146,11 @@
                                      "deepseek/DeepSeek-R1"
                                      "mistralai/mistral-small-2503"]}
    :github-copilot {:label "GitHub Copilot"
-                    :base-url "https://api.githubcopilot.com"
-                    :default-models ["gpt-4o" "gpt-4o-mini" "o3-mini" "gemini-2.0-flash-001"]}
+                    :base-url "https://api.individual.githubcopilot.com"
+                    :default-models ["claude-sonnet-4-6" "claude-opus-4-6" "claude-haiku-4-5"
+                                     "gpt-5.4" "gpt-5.3-codex" "gpt-5.2-codex" "gpt-5.1-codex"
+                                     "gpt-5.1-codex-mini" "gpt-5.1-codex-max" "gpt-5-mini"
+                                     "gpt-4o" "gpt-4.1" "gemini-3-pro-preview" "grok-code-fast-1"]}
    :openai-codex   {:label "OpenAI Codex (ChatGPT OAuth)"
                     :default-models ["gpt-5.5" "gpt-5.4" "gpt-5.2" "gpt-5.1"
                                      "gpt-5.1-codex-mini" "gpt-5.1-codex-max"

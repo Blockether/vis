@@ -990,10 +990,6 @@
    bash-symbol])
 
 (def editing-prompt
-  "`v/` file + shell tools:
-  browse: (v/cat path opts?) (v/ls path opts?) (v/rg [literals] path opts?) (v/glob root pattern opts?)
-  edit:   (v/read-all-lines path) (v/write-lines path lines opts?) (v/update-file path f & xs)
-  paths:  (v/create-dirs path) (v/list-dir path) (v/copy src dest) (v/move src dest) (v/delete path) (v/delete-if-exists path) (v/exists? path)
-  shell:  (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s})
-  bash result: (def run (v/bash \"pwd\")) then (get-in run [:result :stdout]), (get-in run [:result :stderr]), (get-in run [:result :exit]); never (:stdout run) / (:exit run).
-Use `v/cat` for preview, `v/read-all-lines` for full-file transforms, `v/glob` for paths, `v/rg` for contents. Clojure structure edits: `z/zedit`.")
+  "`v/` files: preview/search with (v/cat path opts?), (v/ls path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?). Edit with (v/read-all-lines path), (v/write-lines path lines opts?), (v/update-file path f & xs). Path ops: (v/create-dirs path), (v/list-dir path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
+`v/` shell: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
+Tool results are envelopes; payload lives under :result. cat: (def c (v/cat \"IDEAS.md\")) -> (get-in c [:result :lines]); never (:lines c) / (:content c). read-all-lines: (:result (v/read-all-lines \"IDEAS.md\")) -> full line vector. bash: (def run (v/bash \"pwd\")) -> (get-in run [:result :stdout]), :stderr, :exit; never top-level (:stdout run) / (:exit run). Use z/zedit for Clojure structure edits.")

@@ -592,6 +592,33 @@
   ^String [s]
   (str/replace (->str s) #"([\\`*_{}\[\]()#+\-!|>])" "\\\\$1"))
 
+(defn needs-input
+  "Mark an answer as an explicit request for missing user input.
+
+   Use inside `(answer ...)` when an evidence-bearing request cannot begin
+   because the user has not supplied the material to inspect:
+
+     (answer
+       (v/needs-input
+         {:missing \"the ideas to review\"
+          :ask \"Please paste the ideas you currently have.\"}))
+
+   Returns a data marker consumed by the Vis answer gate; when rendered as the
+   final answer, only `:ask` becomes visible text. One-arg string form is a
+   shortcut for `{:ask ...}`."
+  [ask-or-opts]
+  (let [{:keys [ask missing] :as opts} (if (map? ask-or-opts)
+                                         ask-or-opts
+                                         {:ask ask-or-opts})
+        ask-text (str/trim (->str ask))]
+    (when (str/blank? ask-text)
+      (throw (ex-info "v/needs-input requires a non-blank :ask"
+               {:opts opts})))
+    (cond-> {:vis/answer-mode :needs-input
+             :answer/text ask-text}
+      (some? missing) (assoc :missing (->str missing))
+      (seq (dissoc opts :ask :missing)) (assoc :metadata (dissoc opts :ask :missing)))))
+
 ;; =============================================================================
 ;; SCI symbol entries
 ;; =============================================================================
@@ -755,6 +782,11 @@
      {:doc "Join blocks with blank lines. Use for `(answer …)`."
       :arglists '([& parts])
       :examples ["(v/join (v/h1 \"x\") (v/p \"y\"))"]})
+   (vis/symbol 'needs-input needs-input
+     {:doc "Explicit answer marker for missing user input. Use as `(answer (v/needs-input ...))` to ask for required material without creating an intent."
+      :arglists '([ask] [{:keys [missing ask]}])
+      :examples ["(answer (v/needs-input \"Please paste the ideas you want reviewed.\"))"
+                 "(answer (v/needs-input {:missing \"the ideas to review\" :ask \"Please paste the ideas you currently have.\"}))"]})
    (vis/symbol 'lines lines
      {:doc "Stitch lines with single newline."
       :arglists '([& parts])
@@ -776,15 +808,9 @@
 (def markdown-prompt
   "Prompt fragment listing the `v/` surface for the iteration prompt."
   (str
-    "`v/` markdown for (answer …):\n"
-    "  headings: (v/h1 …) (v/h2 …) (v/h3 …) (v/h level …)\n"
-    "  inline:   (v/bold …) (v/italic …) (v/code …) (v/kbd …) (v/strike …)\n"
-    "  links:    (v/link text url) (v/image alt url) (v/file-link path line?) (v/anchor text slug?)\n"
-    "  blocks:   (v/p …) (v/code-block code) (v/code-block lang code) (v/blockquote s) v/hr v/br (v/details …)\n"
-    "  lists:    (v/li …) (v/ul items) (v/ol items) (v/checklist items); v/ul adds bullets and also accepts v/li output\n"
-    "  table:    (v/table headers rows opts?)\n"
-    "  compose:  (v/join …blocks) (v/lines …lines) (v/section title body) (v/escape s)\n"
-    "Use `v/join` for block spacing. Cite source with `v/file-link`."))
+    "`v/` answer Markdown: headings (v/h1 …) (v/h2 …) (v/h3 …) (v/h n …); blocks (v/p …) (v/code-block lang? code) (v/blockquote …) v/hr v/br (v/details …); lists (v/ul xs) (v/ol xs) (v/checklist xs); table (v/table headers rows opts?).\n"
+    "Inline/link helpers: (v/bold …) (v/italic …) (v/code …) (v/kbd …) (v/strike …), (v/link text url), (v/image alt url), (v/file-link path line?), (v/anchor text slug?).\n"
+    "Compose answers with (v/join …blocks), (v/lines …lines), (v/section title body), (v/escape s). Cite files with v/file-link. Missing required user material: (answer (v/needs-input ask-or-{:missing :ask}))."))
 
 ;; NOTE: this ns is implementation-only now. The actual sandbox surface
 ;; is registered by `foundation/core.clj`, which re-exports

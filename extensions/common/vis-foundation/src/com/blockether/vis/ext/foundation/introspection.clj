@@ -7,6 +7,7 @@
    - `(v/provenance-timeline [conversation-id])` → ordered eval/tool provenance events
    - `(v/provenance-stats [conversation-id])`    → ops/status/failure/slow summaries
    - `(v/provenance-guards [conversation-id])`   → provenance integrity checks
+   - `(v/latest-provenance-refs [conversation-id])` → observed refs grouped for proof/blocker use
    - `(v/provenance-report [conversation-id])`   → compact Markdown audit trail
    - `(v/issue-intent! opts)` / `(v/focus-intent! id opts)` / `(v/relate-intents! opts)`
      manage conversation-scoped intent focus
@@ -46,7 +47,8 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.transcript :as transcript]
-   [com.blockether.vis.internal.extension :as extension])
+   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.provenance-lifecycle :as prov-life])
   (:import
    [clojure.lang IBlockingDeref IDeref IPending]
    [java.util.concurrent CancellationException ExecutionException Future TimeUnit TimeoutException]))
@@ -891,6 +893,47 @@
       :slowest     (vec (take 5 (sort-by (comp - long #(or % 0) :duration-ms) timeline)))
       :tools       (filterv #(= :tool (:kind %)) timeline)})))
 
+(defn- event-ref
+  [event]
+  (:ref event))
+
+(defn- refs-where
+  [pred events]
+  (mapv event-ref (filter pred events)))
+
+(defn- last-ref-where
+  [pred events]
+  (some->> events (filter pred) last event-ref))
+
+(defn- foundation-latest-provenance-refs
+  "Convenience index of currently observed refs. These are copied from
+   the persisted provenance timeline; current-iteration refs that have
+   not reached the journal are intentionally absent."
+  ([env]
+   (foundation-latest-provenance-refs env (:conversation-id env)))
+  ([env conversation-id]
+   (let [events          (filterv event-ref (foundation-provenance-timeline env conversation-id))
+         done?           #(prov-life/successful? (:status %))
+         terminal?       #(prov-life/terminal? (:status %))
+         blocker?        #(prov-life/blocker? (:status %))
+         error?          #(= :error (:status %))
+         proof-refs      (refs-where done? events)
+         terminal-refs   (refs-where terminal? events)
+         blocker-refs    (refs-where blocker? events)
+         error-refs      (refs-where error? events)
+         all-valid-refs  (mapv event-ref events)]
+     {:latest-ref          (some-> events last event-ref)
+      :latest-done-ref     (last-ref-where done? events)
+      :latest-proof-ref    (last proof-refs)
+      :latest-terminal-ref (last terminal-refs)
+      :latest-error-ref    (last error-refs)
+      :latest-blocker-ref  (last blocker-refs)
+      :proof-refs          proof-refs
+      :terminal-refs       terminal-refs
+      :blocker-refs        blocker-refs
+      :error-refs          error-refs
+      :all-valid-refs      all-valid-refs})))
+
 (defn- provenance-guard-violations [timeline]
   (let [refs       (keep :ref timeline)
         ref-counts (frequencies refs)
@@ -1119,8 +1162,10 @@ _No intents._
 (defn- foundation-abandon-intent!
   [env intent-id opts]
   (vis/db-abandon-intent! (:db-info env) intent-id
-    (assoc opts :conversation-turn-id (or (:conversation-turn-id opts)
-                                        (current-conversation-turn-id env)))))
+    (assoc opts
+      :reason (or (:reason opts) (:summary opts))
+      :conversation-turn-id (or (:conversation-turn-id opts)
+                              (current-conversation-turn-id env)))))
 
 (defn- foundation-audit-report
   ([env]
@@ -1446,6 +1491,15 @@ _No intents._
                  "(:violations (v/provenance-guards))"]
      :before-fn inject-environment}))
 
+(def latest-provenance-refs-symbol
+  (vis/symbol 'latest-provenance-refs foundation-latest-provenance-refs
+    {:doc       "Observed provenance refs grouped by role. Copy these refs; never construct current-iteration refs."
+     :arglists  '([] [conversation-id])
+     :examples  ["(v/latest-provenance-refs)"
+                 "(:latest-proof-ref (v/latest-provenance-refs))"
+                 "(:latest-error-ref (v/latest-provenance-refs))"]
+     :before-fn inject-environment}))
+
 (def provenance-report-symbol
   (vis/symbol 'provenance-report foundation-provenance-report
     {:doc       "Compact Markdown provenance audit trail for answer proof sections."
@@ -1557,9 +1611,10 @@ _No intents._
 
 (def abandon-intent!-symbol
   (vis/symbol 'abandon-intent! foundation-abandon-intent!
-    {:doc       "Resolve an intent as abandoned. Requires :reason and canonical provenance refs."
+    {:doc       "Resolve an intent as abandoned. Requires :reason. Provide canonical provenance refs, or omit refs when required gates on the active plan are already impeded; their impediment refs become abandonment evidence."
      :arglists  '([intent-id {:keys [reason refs resolved-ref metadata]}])
-     :examples  ["(v/abandon-intent! (:id intent) {:reason \"User changed direction.\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})"]
+     :examples  ["(v/abandon-intent! (:id intent) {:reason \"User changed direction.\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})"
+                 "(v/abandon-intent! (:id intent) {:reason \"Cannot continue until required input is available.\"})"]
      :before-fn inject-environment}))
 
 (def audit-report-symbol
@@ -1641,6 +1696,7 @@ _No intents._
    provenance-timeline-symbol
    provenance-stats-symbol
    provenance-guards-symbol
+   latest-provenance-refs-symbol
    provenance-report-symbol
    await-proof!-symbol
    intents-symbol
@@ -1666,35 +1722,10 @@ _No intents._
    symbol-doc-symbol])
 
 (def introspection-prompt
-  (str "`v/` introspection:\n"
-    "  (v/inspect cid?)              conversation data incl. :llm-diagnostics\n"
-    "  (v/report cid?)               Markdown report incl. raw LLM diagnostics\n"
-    "  (v/provenance-timeline cid?)  ordered eval/tool ledger with canonical refs\n"
-    "  (v/provenance-stats cid?)     counts, failures, slowest events, tools\n"
-    "  (v/provenance-guards cid?)    integrity checks before citing provenance\n"
-    "  (v/provenance-report cid?)    compact Markdown audit trail\n"
-    "  (v/await-proof! x opts?)      canonical await for Future/blocking deref proof\n"
-    "  (v/intents turn-id?)          conversation-scoped intents, focus, checks, report\n"
-    "  (v/audit-report cid?)         conversation audit + provenance\n"
-    "  (v/issue-intent! opts)        create and focus an intent\n"
-    "  (v/focus-intent! id opts)     focus existing intent, guarded against unrelated switches\n"
-    "  (v/relate-intents! opts)      relate intents in the same conversation\n"
-    "  (v/proof-slot intent slot)    canonical [intent-id :slot-name] proof slot\n"
-    "  (v/plan intent opts?)         build a plan DSL graph\n"
-    "  (v/issue-plan! opts)          create/supersede active plan for an intent\n"
-    "  (v/issue-gate! opts)          create required open gate proposition for a plan\n"
-    "  (v/offer-proof! opts)         add partial candidate proof slots\n"
-    "  (v/prove-gate! gate opts)     prove a gate with canonical refs + slots\n"
-    "  (v/impede-gate! gate opts)    impede a gate with canonical refs + reason\n"
-    "  (v/block-gate! gate opts)     legacy alias for impede-gate!\n"
-    "  (v/fulfill-intent! id opts)   fulfill focused intent with canonical refs\n"
-    "  (v/abandon-intent! id opts)   abandon intent with canonical refs\n"
-    "  (v/extensions)                loaded extension catalog\n"
-    "  (v/extension-docs ext-ref)    manifest doc summaries\n"
-    "  (v/extension-doc ext-ref)      README descriptor incl. :content\n"
-    "  (v/extension-readme ext-ref)  README text\n"
-    "  (v/namespace-docs ext-ref)    sandbox namespace symbol summaries\n"
-    "  (v/symbol-doc ext-ref sym)    sandbox symbol doc/arglists/examples\n"))
+  (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown; (v/audit-report cid?) -> audit.\n"
+    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
+    "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with (v/prove-gate! gate opts), (v/impede-gate! gate opts), (v/fulfill-intent! id opts), (v/abandon-intent! id opts). Check (v/intents turn-id?) before normal answer.\n"
+    "`v/` docs: (v/extensions), (v/extension-docs ref), (v/extension-doc ref), (v/extension-readme ref), (v/namespace-docs ref), (v/symbol-doc ref sym).\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

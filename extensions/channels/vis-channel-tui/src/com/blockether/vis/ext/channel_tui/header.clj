@@ -86,6 +86,14 @@
       [t false]
       [placeholder-title true])))
 
+(defn- ellipsize
+  [text max-chars]
+  (let [text (str text)]
+    (cond
+      (<= max-chars 0) ""
+      (<= (count text) max-chars) text
+      :else (str (subs text 0 (max 0 (dec max-chars))) "…"))))
+
 (defn- latest-notification
   "Most-recently-pushed active notification, or nil. We display ONE
    at a time in the header — the LEFT slot is a single row. If
@@ -181,15 +189,12 @@
                          :else (str (subs notif-text 0 (max 0 (dec left-cap))) "…")))
         left-w       (or (some-> left-trim count) 0)
         gap          2
-        [title placeholder?] (title-text db)
         title-max    (max 0 (- cols (* 2 edge-pad) right-w left-w
                               (if (pos? right-w) gap 0)
                               (if (pos? left-w) gap 0)))
-        title-trim   (cond
-                       (zero? title-max)            ""
-                       (<= (count title) title-max) title
-                       :else (str (subs title 0 (max 0 (dec title-max))) "…"))
-        title-w      (count title-trim)
+        [title placeholder?] (title-text db)
+        title-trim   (ellipsize title title-max)
+        title-w      (p/display-width title-trim)
         title-col-raw (max edge-pad (quot (- cols title-w) 2))
         title-col    (cond
                        (and right-col
@@ -217,7 +222,8 @@
       (p/put-str! g edge-pad content-row left-trim)
       (p/clear-styles! g))
 
-    ;; CENTER — title or placeholder.
+    ;; CENTER — current conversation title only. Conversation switching lives
+    ;; in the Alt+Shift+↑/↓ picker, not as persistent header tabs.
     (when (pos? title-w)
       (p/clear-styles! g)
       (if placeholder?

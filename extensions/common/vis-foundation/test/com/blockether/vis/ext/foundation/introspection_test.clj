@@ -507,6 +507,7 @@
       (expect (contains? symbols 'provenance-timeline))
       (expect (contains? symbols 'provenance-stats))
       (expect (contains? symbols 'provenance-guards))
+      (expect (contains? symbols 'latest-provenance-refs))
       (expect (contains? symbols 'provenance-report))
       (expect (contains? symbols 'await-proof!))
       (expect (contains? symbols 'issue-intent!))
@@ -609,6 +610,43 @@
         (expect (= {:error 1} (:by-status stats)))
         (expect (= ref (:ref (first (:failures stats))))))))
 
+  (it "returns latest observed refs grouped by evidence role"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          base-ref (fn [iteration block]
+                     (str "turn/" (subs (str conversation-turn-id) 0 8)
+                       "/iteration/" iteration "/block/" block))
+          done-ref (base-ref 1 1)
+          error-ref (base-ref 2 1)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(+ 1 2)"
+                   :result 3
+                   :stdout ""
+                   :stderr ""
+                   :error nil
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 1 1 1)}]})
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(missing)"
+                   :result nil
+                   :stdout ""
+                   :stderr ""
+                   :error "Unable to resolve symbol: missing"
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 2 1 1)}]})
+      (let [refs ((private-fn "foundation-latest-provenance-refs") (env s conversation-id))]
+        (expect (= error-ref (:latest-ref refs)))
+        (expect (= done-ref (:latest-done-ref refs)))
+        (expect (= done-ref (:latest-proof-ref refs)))
+        (expect (= error-ref (:latest-terminal-ref refs)))
+        (expect (= error-ref (:latest-error-ref refs)))
+        (expect (= error-ref (:latest-blocker-ref refs)))
+        (expect (= [done-ref] (:proof-refs refs)))
+        (expect (= [error-ref] (:blocker-refs refs)))
+        (expect (= [done-ref error-ref] (:all-valid-refs refs))))))
+
   (it "guards injected block provenance as valid"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
@@ -700,6 +738,27 @@
         (let [checks ((private-fn "foundation-intents") e)]
           (expect (true? (:ok? checks)))
           (expect (str/includes? (:report checks) ref))))))
+
+  (it "accepts :summary as an abandon-intent! reason alias at the foundation boundary"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          e (assoc (env s conversation-id)
+              :current-conversation-turn-id-atom (atom conversation-turn-id))
+          ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1")]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(v/needs-input \"Paste the ideas to review.\")"
+                   :result :vis/system
+                   :execution-time-ms 1
+                   :rendering-kind :vis/system}]})
+      (let [intent ((private-fn "foundation-issue-intent!") e {:title "Review ideas"
+                                                               :rationale "User asked."})
+            abandoned ((private-fn "foundation-abandon-intent!") e (:id intent)
+                                                                 {:summary "Cannot review ideas until user provides them."
+                                                                  :refs [ref]})]
+        (expect (= :abandoned (:status abandoned)))
+        (expect (= "Cannot review ideas until user provides them."
+                  (:abandonment-reason abandoned))))))
 
   (it "rejects compact refs for gate proof"
     (let [s (h/store)

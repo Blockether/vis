@@ -51,6 +51,12 @@
 (def ^:private input-selectable-ranges
   (deref #'screen/input-selectable-ranges))
 
+(def ^:private conversation-summary
+  (deref #'screen/conversation-summary))
+
+(def ^:private latest-modified-first
+  (deref #'screen/latest-modified-first))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
    the contract the channel entry point relies on to print a clean
@@ -75,6 +81,25 @@
       (expect (not (re-find #"Ctrl\+R reasoning" typed-hint)))
       (expect (not (re-find #"Ctrl\+L verbosity" typed-hint)))
       (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
+
+(defdescribe conversation-switcher-data-test
+  (it "uses latest turn creation time as modification time and sorts newest first"
+    (with-redefs [vis/db-list-conversation-turns (fn [_db-info conversation-id]
+                                                   (case conversation-id
+                                                     "old" [{:created-at #inst "2024-01-04T00:00:00.000-00:00"}]
+                                                     "new" [{:created-at #inst "2024-01-02T00:00:00.000-00:00"}
+                                                            {:created-at #inst "2024-01-08T00:00:00.000-00:00"}]
+                                                     []))]
+      (let [old-summary (conversation-summary :db {:id "old"
+                                                   :created-at #inst "2024-01-01T00:00:00.000-00:00"})
+            new-summary (conversation-summary :db {:id "new"
+                                                   :created-at #inst "2024-01-03T00:00:00.000-00:00"})]
+        (expect (= 1 (:turn-count old-summary)))
+        (expect (= 2 (:turn-count new-summary)))
+        (expect (= #inst "2024-01-08T00:00:00.000-00:00"
+                  (:modified-at new-summary)))
+        (expect (= ["new" "old"]
+                  (mapv :id (latest-modified-first [old-summary new-summary]))))))))
 
 (defdescribe submit-input-test
   (it "dispatches send before reset so paste placeholders can expand"

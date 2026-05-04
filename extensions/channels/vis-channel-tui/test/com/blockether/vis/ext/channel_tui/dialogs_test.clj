@@ -89,7 +89,8 @@
   (let [apply-settings-option (var-get #'dlg/apply-settings-option)
         settings-option-label (var-get #'dlg/settings-option-label)
         settings-rows         (var-get #'dlg/settings-rows)
-        palette-commands      (var-get #'dlg/palette-commands)]
+        palette-commands      (var-get #'dlg/palette-commands)
+        conversation-items     dlg/conversation-dialog-items]
     (testing "toggle rows flip booleans"
       (is (= {:show-thinking false}
             (apply-settings-option {:show-thinking true}
@@ -128,7 +129,37 @@
       (is (some #(= :differentiate-turns (:key %)) (settings-rows)))
       (is (some #(= :mouse-selection-copy (:key %)) (settings-rows))))
 
-    (testing "command palette exposes Providers outside Settings"
-      (is (= ["Providers"
+    (testing "conversation picker formats only switchable conversation table rows"
+      (let [rows (conversation-items [{:id "123e4567-e89b-12d3-a456-426614174000"
+                                       :title "Title"
+                                       :turn-count 2
+                                       :modified-at #inst "2024-01-03T04:05:00.000-00:00"
+                                       :created-at #inst "2024-01-01T01:02:00.000-00:00"}
+                                      {:id "abcdef00-e89b-12d3-a456-426614174000"
+                                       :title ""
+                                       :turn-count 0
+                                       :modified-at nil
+                                       :created-at #inst "2024-01-02T01:02:00.000-00:00"}]
+                   "123e4567-e89b-12d3-a456-426614174000"
+                   96)
+            active-label (:label (first rows))
+            inactive-label (:label (second rows))]
+        (is (= 2 (count rows)))
+        (is (every? #(= :switch (:action %)) rows))
+        (is (str/includes? active-label "● 123e4567"))
+        (is (str/includes? active-label "    2"))
+        (is (str/includes? active-label "2024-01-03 04:05"))
+        (is (str/includes? active-label "2024-01-01 01:02"))
+        (is (str/includes? active-label "Title"))
+        (is (str/includes? inactive-label "  abcdef00"))
+        (is (str/includes? inactive-label "    0"))
+        (is (str/includes? inactive-label "—"))
+        (is (str/includes? inactive-label "Untitled conversation"))))
+
+    (testing "command palette exposes conversation actions before Providers and Settings"
+      (is (= ["New Conversation"
+              "Fork Conversation"
+              "Switch Conversation"
+              "Configure Providers"
               "Settings"]
             (mapv :label palette-commands))))))

@@ -14,6 +14,7 @@
   (:require [clojure.java.io :as io]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
+            [com.blockether.vis.internal.crac-bootstrap :as crac-bootstrap]
             [com.blockether.vis.internal.main :as binary]
             [nrepl.server :as nrepl]))
 
@@ -206,6 +207,7 @@
   @(promise))
 
 (defn -main [& args]
+  (crac-bootstrap/pre-extension-bootstrap! {:phase :dev})
   (let [[cmd & more] args]
     (case cmd
       (nil "nrepl")

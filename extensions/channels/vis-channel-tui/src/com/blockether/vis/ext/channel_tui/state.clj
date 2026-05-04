@@ -469,10 +469,19 @@
                          (mapv :text))]
       (assoc db
         :conversation conversation
+        :title nil
         :messages (or history [])
+        :messages-scroll nil
+        :input (input/empty-input)
         :input-history user-history
         :input-history-index nil
         :input-history-draft nil
+        :pastes {}
+        :paste-counter 0
+        :loading? false
+        :cancel-token nil
+        :cancelling? false
+        :progress nil
         :detail-expansions {}))))
 
 (reg-event-db :set-title

@@ -88,8 +88,8 @@
 ;; Removed from idle: `Enter send` (universally obvious). PageUp/PageDown
 ;; remain available for transcript scrolling. Model/reasoning/verbosity
 ;; shortcuts live in the footer next to the values they change.
-(def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Ctrl+K menu ")
-(def ^:private hint-idle-typed " Ctrl+K menu ")
+(def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Ctrl+G conversations · Ctrl+K menu ")
+(def ^:private hint-idle-typed " Ctrl+G conversations · Ctrl+K menu ")
 (def ^:private hint-loading    " Esc cancel · Ctrl+C quit ")
 (def ^:private hint-cancelling " Cancelling… please wait · Ctrl+C quit ")
 
@@ -646,18 +646,23 @@
           "\n\nUse the 8-char prefix or full UUID with --conversation-id.")
         "\n\nNo :tui conversations exist yet — run `vis channels tui` without --conversation-id first."))))
 
+(defn- current-conversation-id
+  []
+  (some-> @state/app-db :conversation :id str))
+
 (defn- register-conversation-shutdown-hook!
   "Register a JVM shutdown hook that prints the TUI resume command for
-   the conversation the user was on. TUI-local: the printed string is
-   a `vis channels tui …` sub-command, so this hook lives next to the
+   the active conversation. TUI-local: the printed string is a
+   `vis channels tui …` sub-command, so this hook lives next to the
    only consumer instead of in vis-runtime or vis-cli."
-  [conversation-id]
+  []
   (let [hook (Thread. (fn []
-                        (let [^java.io.PrintStream out vis/original-stdout]
-                          (.println out "")
-                          (.println out (str "  vis channels tui --conversation-id " conversation-id))
-                          (.println out "")
-                          (.flush out))))]
+                        (when-let [conversation-id (current-conversation-id)]
+                          (let [^java.io.PrintStream out vis/original-stdout]
+                            (.println out "")
+                            (.println out (str "  vis channels tui --conversation-id " conversation-id))
+                            (.println out "")
+                            (.flush out)))))]
     (.addShutdownHook (Runtime/getRuntime) hook)
     hook))
 
@@ -678,17 +683,74 @@
   "Wire `(conversation-title \"...\")` calls inside this conversation's iteration
    loop to the TUI header: every change dispatches `[:set-title]`
    into app-db so the next render frame paints the new title without
-   polling. Returns the listener fn so the caller can deregister it.
-   Also installs a JVM shutdown hook that drops the listener —
-   long-running TUI sessions should not leak entries in the global
-   `title-listeners` registry across hot reloads."
+   polling. Returns a zero-arg cleanup fn.
+
+   The listener is scoped to the currently-active conversation. That
+   matters once the TUI can switch tabs: a stale background listener must
+   never overwrite the title of the tab the user is looking at now."
   [conversation-id]
-  (let [listener (vis/add-title-listener! conversation-id
+  (let [conversation-id (str conversation-id)
+        listener (vis/add-title-listener! conversation-id
                    (fn [new-title]
-                     (state/dispatch [:set-title (or new-title "")])))]
-    (register-shutdown-hook!
-      #(vis/remove-title-listener! conversation-id listener))
-    listener))
+                     (when (= conversation-id (current-conversation-id))
+                       (state/dispatch [:set-title (or new-title "")]))))
+        cleanup  #(vis/remove-title-listener! conversation-id listener)]
+    (register-shutdown-hook! cleanup)
+    cleanup))
+
+(defn- date->millis
+  [v]
+  (cond
+    (instance? java.util.Date v) (.getTime ^java.util.Date v)
+    (instance? java.time.Instant v) (.toEpochMilli ^java.time.Instant v)
+    (number? v) (long v)
+    :else nil))
+
+(defn- latest-turn-created-at
+  [turns]
+  (->> turns
+    (keep :created-at)
+    (sort-by #(or (date->millis %) 0))
+    last))
+
+(defn- conversation-summary
+  [db-info conversation]
+  (let [turns       (try (vec (vis/db-list-conversation-turns db-info (:id conversation)))
+                      (catch Throwable _ []))
+        modified-at (or (latest-turn-created-at turns) (:created-at conversation))]
+    (assoc conversation
+      :turn-count (count turns)
+      :modified-at modified-at)))
+
+(defn- latest-modified-first
+  [conversations]
+  (sort-by #(or (date->millis (:modified-at %)) 0) > conversations))
+
+(defn- tui-conversation-summaries
+  []
+  (try
+    (let [db-info (vis/db-info)]
+      (->> (vis/by-channel :tui)
+        (map #(conversation-summary db-info %))
+        latest-modified-first
+        vec))
+    (catch Throwable _ [])))
+
+(defn- conversation-db-title
+  [conversation-id]
+  (when-let [conversation (try (vis/by-id conversation-id) (catch Throwable _ nil))]
+    (let [title (:title conversation)]
+      (when-not (str/blank? (str title))
+        (str title)))))
+
+(defn- init-visible-conversation!
+  "Install a conversation into app-db and repaint the tab strip. Returns the
+   cleanup fn for that conversation's title listener."
+  [{:keys [id history]}]
+  (state/dispatch [:init-conversation {:id id} history])
+  (when-let [title (conversation-db-title id)]
+    (state/dispatch [:set-title title]))
+  (subscribe-title-listener! id))
 
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
@@ -744,6 +806,7 @@
         ;; clause can join it. (Locals from the `try` body aren't in
         ;; scope inside `finally`.)
            render-thread (volatile! nil)
+           title-listener-cleanup (volatile! nil)
            ;; Daemon thread that pre-formats every assistant bubble
            ;; in the background so the FIRST scroll-up doesn't pay
            ;; ~500 ms / big-trace-bubble on the render thread.
@@ -776,18 +839,9 @@
                        (or (chat/resume-conversation (:id latest))
                          (chat/make-conversation config))
                        (chat/make-conversation config))
-                     (chat/make-conversation config)))
-              ;; Set title from DB when present — the DB row is the source of truth.
-              ;; Synthesizing from messages stays out of the TUI; auto-title runs
-              ;; from the runtime loop after the first turn completes.
-                 conversation-info (when-let [c (vis/by-id id)] c)
-                 title     (when-let [t (some-> conversation-info :title)]
-                             (when-not (str/blank? t) t))]
-             (state/dispatch [:init-conversation {:id id} history])
-             (when title
-               (state/dispatch [:set-title title]))
-             (subscribe-title-listener! id)
-             (register-conversation-shutdown-hook! id)
+                     (chat/make-conversation config)))]
+             (vreset! title-listener-cleanup (init-visible-conversation! {:id id :history history}))
+             (register-conversation-shutdown-hook!)
              ;; Kick off background pre-warm of the LRU. Walks the
              ;; history bottom-up calling project + bubble-height,
              ;; so by the time the user scrolls UP the cache is
@@ -876,7 +930,79 @@
                ;; `KeyType/Enter` -> send mid-paste. The buffer is
                ;; kept in a StringBuilder so accumulation stays
                ;; allocation-cheap even for kilobyte pastes.
-               paste-buffer          (volatile! nil)]
+               paste-buffer          (volatile! nil)
+               prewarm-conversation! (fn [{:keys [id history]}]
+                                       (virtual/stop-pre-warm! @prewarm-thread)
+                                       (vreset! prewarm-thread nil)
+                                       (when (seq history)
+                                         (let [size     (screen-size screen)
+                                               cols     (.getColumns size)
+                                               bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
+                                               settings (or (:settings @state/app-db) {})]
+                                           (vreset! prewarm-thread
+                                             (virtual/pre-warm! history bubble-w settings
+                                               {:conversation-id    id
+                                                :detail-expansions (:detail-expansions @state/app-db)})))))
+               install-conversation! (fn [{:keys [id] :as conversation-result} notify?]
+                                       (when (and id conversation-result)
+                                         (when-let [cleanup @title-listener-cleanup]
+                                           (try (cleanup) (catch Throwable _ nil)))
+                                         (vreset! title-listener-cleanup nil)
+                                         (when-let [old-conversation (:conversation @state/app-db)]
+                                           (when-not (= (str (:id old-conversation)) (str id))
+                                             (chat/dispose! old-conversation)))
+                                         (render/invalidate-cache!)
+                                         (virtual/invalidate-heights!)
+                                         (vreset! title-listener-cleanup
+                                           (init-visible-conversation! conversation-result))
+                                         (prewarm-conversation! conversation-result)
+                                         (when notify?
+                                           (vis/notify! "Switched conversation"
+                                             :level :success :ttl-ms copy-success-ttl-ms))))
+               switch-conversation!  (fn [choice]
+                                       (cond
+                                         (:loading? @state/app-db)
+                                         (vis/notify! "Finish or cancel the running turn before switching conversations"
+                                           :level :warn :ttl-ms copy-success-ttl-ms)
+
+                                         (= :new (:action choice))
+                                         (when-let [config (:config @state/app-db)]
+                                           (install-conversation! (chat/make-conversation config) true))
+
+                                         (= :fork (:action choice))
+                                         (if-let [current-id (current-conversation-id)]
+                                           (let [fork-state-id (try (vis/db-fork-conversation! (vis/db-info) current-id {})
+                                                                 (catch Throwable _ nil))]
+                                             (if fork-state-id
+                                               (do
+                                                 (when-let [old-conversation (:conversation @state/app-db)]
+                                                   (chat/dispose! old-conversation))
+                                                 (if-let [conversation-result (chat/resume-conversation current-id)]
+                                                   (do
+                                                     (install-conversation! conversation-result false)
+                                                     (vis/notify! "Forked current conversation"
+                                                       :level :success :ttl-ms copy-success-ttl-ms))
+                                                   (vis/notify! "Forked, but failed to reload conversation"
+                                                     :level :warn :ttl-ms copy-success-ttl-ms)))
+                                               (vis/notify! "Could not fork current conversation"
+                                                 :level :warn :ttl-ms copy-success-ttl-ms)))
+                                           (vis/notify! "No current conversation to fork"
+                                             :level :warn :ttl-ms copy-success-ttl-ms))
+
+                                         (= :switch (:action choice))
+                                         (let [target-id (:id choice)]
+                                           (when-not (= (str target-id) (current-conversation-id))
+                                             (if-let [conversation-result (chat/resume-conversation target-id)]
+                                               (install-conversation! conversation-result true)
+                                               (vis/notify! "Conversation no longer exists"
+                                                 :level :warn :ttl-ms copy-success-ttl-ms))))))
+               show-conversations!   (fn []
+                                       (when-not (:dialog-open? @state/app-db)
+                                         (let [conversations (tui-conversation-summaries)]
+                                           (when-let [choice (with-dialog-lock
+                                                               #(dlg/conversation-picker-dialog! screen conversations
+                                                                  (current-conversation-id)))]
+                                             (switch-conversation! choice)))))]
            (loop []
            ;; Layout fields are populated by the render thread after
            ;; the first paint. Until then, scroll handlers fall back
@@ -1164,6 +1290,9 @@
                                :copy-as-markdown
                                (copy-conversation-as-markdown! (:text hit))
 
+                               :switch-conversation
+                               (switch-conversation! {:action :switch :id (:text hit)})
+
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
 
@@ -1221,6 +1350,9 @@
 
                                :copy-as-markdown
                                (copy-conversation-as-markdown! (:text hit))
+
+                               :switch-conversation
+                               (switch-conversation! {:action :switch :id (:text hit)})
 
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
@@ -1319,6 +1451,15 @@
                          (fn [cmd]
                            (when-not (:dialog-open? @state/app-db)
                              (case cmd
+                               :new-conversation
+                               (switch-conversation! {:action :new})
+
+                               :fork-conversation
+                               (switch-conversation! {:action :fork})
+
+                               :switch-conversation
+                               (show-conversations!)
+
                                :providers
                                (when-let [c (with-dialog-lock
                                               #(provider/show-provider-dialog! screen (:config @state/app-db)))]
@@ -1373,6 +1514,10 @@
 
                        :cycle-model
                        (do (state/dispatch [:cycle-model])
+                         (recur))
+
+                       :show-conversations
+                       (do (show-conversations!)
                          (recur))
 
                        :pick-file
@@ -1434,6 +1579,8 @@
              (try (.join ^Thread t 500) (catch Throwable _ nil)))
            (when-let [t @provider-limits-thread]
              (try (.join ^Thread t 500) (catch Throwable _ nil)))
+           (when-let [cleanup @title-listener-cleanup]
+             (try (cleanup) (catch Throwable _ nil)))
            (when-let [conversation (:conversation @state/app-db)]
              (chat/dispose! conversation))
            (.stopScreen screen)))))))

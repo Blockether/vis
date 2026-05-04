@@ -52,7 +52,12 @@
 (defdescribe answer-str-test
   (it "repairs glued fence boundaries before the answer leaves the loop"
     (expect (= "Here's the top-level directory structure of this repo:\n```text\n\n```\nSo: I'm a language model."
-              (loop/answer-str "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model.")))))
+              (loop/answer-str "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model."))))
+
+  (it "renders explicit needs-input payloads as their ask text"
+    (expect (= "Please paste the ideas you want reviewed."
+              (loop/answer-str {:vis/answer-mode :needs-input
+                                :answer/text "Please paste the ideas you want reviewed."})))))
 
 (defdescribe intent-required-test
   (it "requires intents for pasted-content inspection and terminal demonstrations"
@@ -109,6 +114,63 @@
                        :current-conversation-turn-id-atom (atom tid)
                        :current-user-request-atom (atom "fix the failing test")}
                       0 [])]
+          (expect (string? error))
+          (expect (re-find #":missing-focused-intent" error)))
+        (finally
+          (vis/db-dispose-connection! s)))))
+
+  (it "accepts explicit needs-input answers for evidence-bearing requests with no focused intent"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "Please check the ideas we currently have"
+                                                  :status :running})]
+      (try
+        (expect (nil? (loop/final-answer-gate-error
+                        {:db-info s
+                         :current-conversation-turn-id-atom (atom tid)
+                         :current-user-request-atom (atom "Please check the ideas we currently have")}
+                        0 []
+                        {:vis/answer-mode :needs-input
+                         :answer/text "Please paste the ideas you currently have."})))
+        (finally
+          (vis/db-dispose-connection! s)))))
+
+  (it "accepts first-iteration plain clarification answers before workspace evidence exists"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "Please check the ideas we currently have"
+                                                  :status :running})]
+      (try
+        (expect (nil? (loop/final-answer-gate-error
+                        {:db-info s
+                         :current-conversation-turn-id-atom (atom tid)
+                         :current-user-request-atom (atom "Please check the ideas we currently have")}
+                        1 [{:code "(conversation-title \"Review ideas\")"
+                            :rendering-kind :vis/silent}
+                           {:code "(answer \"Please paste the ideas.\")"
+                            :rendering-kind :vis/answer}]
+                        "Please paste the ideas.")))
+        (finally
+          (vis/db-dispose-connection! s)))))
+
+  (it "rejects plain clarification answers after workspace evidence exists"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "Please check the ideas we currently have"
+                                                  :status :running})]
+      (try
+        (let [error (loop/final-answer-gate-error
+                      {:db-info s
+                       :current-conversation-turn-id-atom (atom tid)
+                       :current-user-request-atom (atom "Please check the ideas we currently have")}
+                      1 [{:code "(v/cat \"IDEAS.md\")"
+                          :rendering-kind :vis/tool}
+                         {:code "(answer \"Please paste the ideas.\")"
+                          :rendering-kind :vis/answer}]
+                      "Please paste the ideas.")]
           (expect (string? error))
           (expect (re-find #":missing-focused-intent" error)))
         (finally
@@ -268,8 +330,9 @@
                       (:final-result result)))
             (expect (= 2 (count (:blocks result)))))))))
 
-  (it "rejects post-first-iteration final answers mixed with sibling top-level forms"
-    (let [environment {:router ::router
+  (it "preflights post-first-iteration final answers mixed with sibling top-level forms"
+    (let [executed (atom [])
+          environment {:router ::router
                        :answer-atom (atom nil)
                        :current-form-idx-atom (atom nil)}]
       (with-redefs-fn {#'svar/ask-code! (fn [_ _]
@@ -278,28 +341,22 @@
                                            :result "(def observed 1)\n(answer \"done\")"
                                            :tokens {:input 1 :output 1}
                                            :duration-ms 1})
-                       #'loop/execute-code (fn [env code]
-                                             (if (= "(answer \"done\")" code)
-                                               (do
-                                                 (reset! (:answer-atom env)
-                                                   {:value "done"
-                                                    :form-idx @(:current-form-idx-atom env)})
-                                                 {:result :vis/answer
-                                                  :stdout ""
-                                                  :stderr ""
-                                                  :execution-time-ms 0})
-                                               {:result 1
-                                                :stdout ""
-                                                :stderr ""
-                                                :execution-time-ms 0}))}
+                       #'loop/execute-code (fn [_ code]
+                                             (swap! executed conj code)
+                                             {:result :unexpected
+                                              :stdout ""
+                                              :stderr ""
+                                              :execution-time-ms 0})}
         (fn []
           (let [result (loop/run-iteration environment
                          [{:role "user" :content "finish"}]
                          {:iteration 1
                           :resolved-model {:provider :test :name "model"}})]
+            (expect (empty? @executed))
             (expect (nil? (:final-result result)))
             (expect (= 2 (count (:blocks result))))
-            (expect (re-find #"ONLY top-level form"
+            (expect (every? :error (:blocks result)))
+            (expect (re-find #"Do not answer in this iteration"
                       (-> result :blocks second :error))))))))
 
   (it "accepts a wrapper when it is the only top-level answer form"
@@ -328,7 +385,47 @@
             (expect (= {:final? true
                         :answer "done"
                         :answer-form-idx 0}
-                      (:final-result result)))))))))
+                      (:final-result result))))))))
+
+  (it "accepts needs-input answer payloads without creating an intent"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "Please check the ideas we currently have"
+                                                  :status :running})
+          environment {:router ::router
+                       :db-info s
+                       :current-conversation-turn-id-atom (atom tid)
+                       :current-user-request-atom (atom "Please check the ideas we currently have")
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (try
+        (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                            {:raw "```clojure\n(answer (v/needs-input \"Please paste the ideas you currently have.\"))\n```"
+                                             :blocks [{:lang "clojure" :source "(answer (v/needs-input \"Please paste the ideas you currently have.\"))"}]
+                                             :result "(answer (v/needs-input \"Please paste the ideas you currently have.\"))"
+                                             :tokens {:input 1 :output 1}
+                                             :duration-ms 1})
+                         #'loop/execute-code (fn [env _]
+                                               (reset! (:answer-atom env)
+                                                 {:value {:vis/answer-mode :needs-input
+                                                          :answer/text "Please paste the ideas you currently have."}
+                                                  :form-idx @(:current-form-idx-atom env)})
+                                               {:result :vis/answer
+                                                :stdout ""
+                                                :stderr ""
+                                                :execution-time-ms 0})}
+          (fn []
+            (let [result (loop/run-iteration environment
+                           [{:role "user" :content "Please check the ideas we currently have"}]
+                           {:iteration 0
+                            :resolved-model {:provider :test :name "model"}})]
+              (expect (= {:final? true
+                          :answer "Please paste the ideas you currently have."
+                          :answer-form-idx 0}
+                        (:final-result result))))))
+        (finally
+          (vis/db-dispose-connection! s))))))
 
 (defdescribe markdown-fence-guard-test
   (it "rejects multi-line fence-only fragments before SCI eval"

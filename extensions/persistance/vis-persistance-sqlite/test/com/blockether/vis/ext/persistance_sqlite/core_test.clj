@@ -16,9 +16,13 @@
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
+   [honey.sql :as sql]
    [lazytest.core :refer [defdescribe it expect]]
    [next.jdbc :as jdbc]
-   [sci.core :as sci]))
+   [sci.core :as sci])
+  (:import
+   (java.io File RandomAccessFile)
+   (java.util.concurrent CountDownLatch TimeUnit)))
 
 ;; ─── from db_test.clj ───
 
@@ -36,6 +40,154 @@
                  "DROP TABLE IF EXISTS conversation_intent_ref"
                  "DROP TABLE IF EXISTS conversation_intent"]]
       (jdbc/execute! ds [ddl]))))
+
+(defn- private-core-fn [name]
+  (deref (resolve (symbol "com.blockether.vis.ext.persistance-sqlite.core" name))))
+
+(defdescribe persistent-db-process-lock-test
+  (it "rejects a persistent DB open when another process holds the lock"
+    (let [dir       (fs/create-temp-dir {:prefix "vis-db-lock-"})
+          lock-file (File. (str dir) "vis.db.lock")
+          raf       (RandomAccessFile. lock-file "rw")
+          channel   (.getChannel raf)
+          lock      (.lock channel)]
+      (try
+        (let [thrown? (try
+                        (vis/db-create-connection! (str dir))
+                        false
+                        (catch clojure.lang.ExceptionInfo e
+                          (str/includes? (ex-message e) "already open by another process")))]
+          (expect (true? thrown?)))
+        (finally
+          (.release lock)
+          (.close channel)
+          (.close raf)
+          (fs/delete-tree dir)))))
+
+  (it "releases the persistent DB lock on dispose"
+    (let [dir (fs/create-temp-dir {:prefix "vis-db-lock-release-"})]
+      (try
+        (let [s (vis/db-create-connection! (str dir))]
+          (vis/db-dispose-connection! s))
+        (let [lock-file (File. (str dir) "vis.db.lock")
+              raf       (RandomAccessFile. lock-file "rw")
+              channel   (.getChannel raf)
+              lock      (.tryLock channel)]
+          (try
+            (expect (some? lock))
+            (finally
+              (when lock (.release lock))
+              (.close channel)
+              (.close raf))))
+        (finally
+          (fs/delete-tree dir))))))
+
+(defdescribe sqlite-transaction-mode-test
+  (it "reproduces SQLITE_BUSY_SNAPSHOT with a stale deferred read transaction"
+    (let [db-file (File/createTempFile "vis-busy-snapshot" ".db")
+          url     (str "jdbc:sqlite:" (.getAbsolutePath db-file))
+          c1      (java.sql.DriverManager/getConnection url)
+          c2      (java.sql.DriverManager/getConnection url)]
+      (try
+        (jdbc/execute! c1 ["PRAGMA journal_mode=WAL"])
+        (jdbc/execute! c1 (sql/format {:create-table [:snapshot_probe :if-not-exists]
+                                       :with-columns [[:id :integer :primary-key]
+                                                      [:v :integer]]}))
+        (jdbc/execute! c1 (sql/format {:insert-into :snapshot_probe
+                                       :values [{:id 1 :v 0}]}))
+        (.setAutoCommit c1 false)
+        (jdbc/execute! c1 (sql/format {:select [:*]
+                                       :from   [:snapshot_probe]
+                                       :where  [:= :id 1]}))
+        (jdbc/execute! c2 (sql/format {:update :snapshot_probe
+                                       :set    {:v 1}
+                                       :where  [:= :id 1]}))
+        (let [thrown (try
+                       (jdbc/execute! c1 (sql/format {:update :snapshot_probe
+                                                      :set    {:v 2}
+                                                      :where  [:= :id 1]}))
+                       nil
+                       (catch Throwable t t))]
+          (expect (some? thrown))
+          (expect (str/includes? (.getMessage thrown) "SQLITE_BUSY_SNAPSHOT")))
+        (finally
+          (.close c1)
+          (.close c2)
+          (fs/delete-if-exists db-file)))))
+
+  (it "uses immediate transactions so read-then-write transactions survive concurrent telemetry writes"
+    (let [dir (fs/create-temp-dir {:prefix "vis-snapshot-lock-"})]
+      (try
+        (let [s       (vis/db-create-connection! (str dir))
+              cid     (vis/db-store-conversation! s {:channel :cli :title "old"})
+              started (CountDownLatch. 1)
+              worker  (future
+                        (try
+                          (jdbc/with-transaction [tx (:datasource s)]
+                            (jdbc/execute! tx
+                              (sql/format {:select [:id]
+                                           :from   [:conversation_soul]
+                                           :where  [:= :id (str cid)]}))
+                            (.countDown started)
+                            (Thread/sleep 100)
+                            (jdbc/execute! tx
+                              (sql/format {:update :conversation_state
+                                           :set    {:title "new"}
+                                           :where  [:= :conversation_soul_id (str cid)]})))
+                          nil
+                          (catch Throwable t t)))]
+          (try
+            (expect (true? (.await started 1 TimeUnit/SECONDS)))
+            (vis/db-log! s {:level :info :event :snapshot-test})
+            (expect (nil? @worker))
+            (expect (= "new" (:title (vis/db-get-conversation s cid))))
+            (finally
+              (vis/db-dispose-connection! s))))
+        (finally
+          (fs/delete-tree dir)))))
+
+  (it "serializes Vis write APIs while concurrent db-log! calls contend"
+    (let [s       (h/store)
+          cid     (vis/db-store-conversation! s {:channel :cli})
+          tid     (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                      :user-request "stress"
+                                                      :status :running})
+          started (CountDownLatch. 1)
+          done    (CountDownLatch. 1)
+          worker  (future
+                    (.countDown started)
+                    (.await done 1 TimeUnit/SECONDS)
+                    (try
+                      (vis/db-store-iteration! s {:conversation-turn-id tid
+                                                  :blocks [{:code "(+ 1 2)" :result 3}]})
+                      nil
+                      (catch Throwable t t)))
+          logs    (do
+                    (expect (true? (.await started 1 TimeUnit/SECONDS)))
+                    (vec (doall (map (fn [i]
+                                       (future
+                                         (try
+                                           (vis/db-log! s {:level :info :event (str "stress." i)})
+                                           nil
+                                           (catch Throwable t t))))
+                                  (range 20)))))]
+      (.countDown done)
+      (expect (nil? @worker))
+      (doseq [f logs]
+        (expect (nil? @f)))
+      (expect (= 20 (raw-count s :log)))
+      (expect (= 1 (count (vis/db-list-conversation-turn-iterations s tid))))))
+
+  (it "retries a whole SQLite write operation after a busy snapshot failure"
+    (let [attempts (atom 0)
+          retry!   (private-core-fn "sqlite-write-tx!")
+          result   (retry! (h/store)
+                     (fn [_]
+                       (if (= 1 (swap! attempts inc))
+                         (throw (RuntimeException. "[SQLITE_BUSY_SNAPSHOT] stale snapshot"))
+                         :ok)))]
+      (expect (= :ok result))
+      (expect (= 2 @attempts)))))
 
 (defdescribe inline-v1-schema-repair-test
   (it "repairs existing V1 developer databases that predate conversation-scoped intents"
@@ -333,9 +485,45 @@
       (expect (= "Verification passes." (:proposition gate)))
       (expect (= ref (get-in proven [:proof :slots slot :ref])))
       (expect (= :fulfilled (:status fulfilled)))
+      (expect (= ref (-> fulfilled :refs first :ref)))
+      (expect (= :fulfillment-evidence (-> fulfilled :refs first :role)))
       (expect (= true (:ok? state)))
       (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
       (expect (= :vis/sci (get-in (vis/db-list-iteration-blocks s iid) [0 :rendering-kind])))))
+
+  (it "derives abandonment refs from required impeded gates when refs are omitted"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "review ideas"
+                                                     :status :running})
+          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(v/needs-input \"Paste ideas.\")"
+                                                       :result :vis/system
+                                                       :rendering-kind :vis/system}]})
+          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Review ideas"
+                                          :rationale "User asked."})
+          plan   (vis/db-store-plan! s {:intent-id (:id intent)
+                                        :summary "Need user input."})
+          gate   (vis/db-store-gate! s {:plan-id (:id plan)
+                                        :proposition "Ideas are available."
+                                        :required? true})]
+      (vis/db-impede-gate! s {:gate-id (:id gate)
+                              :reason "User has not provided ideas."
+                              :refs [ref]})
+      (let [abandoned (vis/db-abandon-intent! s (:id intent)
+                        {:reason "Cannot review ideas until user provides them."})
+            state     (vis/db-intents s {:conversation-turn-id tid})]
+        (expect (= :abandoned (:status abandoned)))
+        (expect (= "Cannot review ideas until user provides them."
+                  (:abandonment-reason abandoned)))
+        (expect (= ref (-> abandoned :refs first :ref)))
+        (expect (= :abandonment-evidence (-> abandoned :refs first :role)))
+        (expect (= true (:ok? state)))
+        (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
+        (expect (= 1 (raw-count s :conversation_intent_ref))))))
 
   (it "rejects compact provenance refs"
     (let [s      (h/store)
@@ -358,6 +546,38 @@
                      (catch Exception e e))]
         (expect (some? thrown))
         (expect (str/includes? (ex-message thrown) "canonical")))))
+
+  (it "explains canonical refs that are not observed yet and suggests nearest observed refs"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "ship it"
+                                                     :status :running})
+          _iid   (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(+ 1 2)"
+                                                       :result 3}]})
+          observed-ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          future-ref   (str "turn/" (subs (str tid) 0 8) "/iteration/2/block/1")
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Ship it"
+                                          :rationale "User asked for it."})
+          plan   (vis/db-store-plan! s {:intent-id (:id intent)
+                                        :summary "Plan"})
+          gate   (vis/db-store-gate! s {:plan-id (:id plan)
+                                        :question "Verified?"})
+          thrown (try
+                   (vis/db-prove-gate! s {:gate-id (:id gate)
+                                          :summary "Future ref guessed."
+                                          :refs [future-ref]})
+                   nil
+                   (catch Exception e e))]
+      (expect (some? thrown))
+      (expect (str/includes? (ex-message thrown) "syntactically valid but is not observed yet"))
+      (expect (str/includes? (ex-message thrown) "Current iteration refs are not valid until the next iteration"))
+      (expect (str/includes? (ex-message thrown) "(v/latest-provenance-refs)"))
+      (expect (str/includes? (ex-message thrown) observed-ref))
+      (expect (= :not-observed-yet (:reason (ex-data thrown))))
+      (expect (= observed-ref (-> thrown ex-data :nearest-observed first :ref)))))
 
   (it "supersedes the previous active plan for an intent"
     (let [s      (h/store)

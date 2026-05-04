@@ -34,11 +34,15 @@
    [taoensso.nippy :as nippy])
   (:import
    (com.zaxxer.hikari HikariConfig HikariDataSource)
+   (java.io File RandomAccessFile)
+   (java.lang ProcessHandle)
+   (java.nio.channels FileLock OverlappingFileLockException)
    (java.security MessageDigest)
-   (java.util UUID)
+   (java.sql SQLException)
    (java.util.concurrent.atomic AtomicLong)
    (javax.sql DataSource)
-   (org.sqlite SQLiteConfig SQLiteConfig$JournalMode SQLiteConfig$SynchronousMode SQLiteDataSource)))
+   (org.sqlite SQLiteConfig SQLiteConfig$JournalMode SQLiteConfig$SynchronousMode
+     SQLiteConfig$TransactionMode SQLiteDataSource)))
 
 ;; =============================================================================
 ;; Helpers
@@ -52,6 +56,12 @@
 (def ->kw    vis/->kw)
 (def ->kw-back vis/->kw-back)
 (def ->date  vis/->date)
+
+(defn- new-uuid []
+  (->uuid (str (java.util.UUID/randomUUID))))
+
+(defn- new-id []
+  (->id (new-uuid)))
 
 (defn query!
   "Run a HoneySQL map and return rows with unqualified lower-case keys."
@@ -372,8 +382,9 @@
 (defn- raw-sqlite-datasource
   "Build a configured xerial `SQLiteDataSource` (the plain non-pooled
    one). All pragmas (`journal_mode=WAL`, `synchronous=NORMAL`,
-   `foreign_keys=ON`, `busy_timeout=30000`) are set on the
-   `SQLiteConfig` so every Hikari-handed connection inherits them.
+   `transaction_mode=IMMEDIATE`, `foreign_keys=ON`,
+   `busy_timeout=30000`) are set on the `SQLiteConfig` so every
+   Hikari-handed connection inherits them.
 
    The returned object is what we hand to Hikari as its underlying
    DataSource; callers should NOT call `getConnection` on this directly."
@@ -381,6 +392,7 @@
   (let [cfg (doto (SQLiteConfig.)
               (.setJournalMode SQLiteConfig$JournalMode/WAL)
               (.setSynchronous SQLiteConfig$SynchronousMode/NORMAL)
+              (.setTransactionMode SQLiteConfig$TransactionMode/IMMEDIATE)
               (.enforceForeignKeys true)
               (.setBusyTimeout 30000))
         ds  (SQLiteDataSource. cfg)]
@@ -425,14 +437,101 @@
   ;; distinct pool names (and thread names) instead of colliding.
   (AtomicLong.))
 
+(def ^:private ^String DB_LOCK_FILENAME "vis.db.lock")
+
+(defonce ^:private persistent-db-locks
+  ;; Process-local token-counted locks keyed by canonical DB directory.
+  ;; SQLite serializes writers, but Vis has process-level mutable runtime
+  ;; state (open Hikari pools, WAL handles, migrations, telemetry writes).
+  ;; A second JVM writing the same persistent store can leave one process
+  ;; talking to an unlinked old inode after local DB reset/recreation.
+  (atom {}))
+
+(defn- current-pid-str []
+  (try
+    (str (.pid (ProcessHandle/current)))
+    (catch Throwable _
+      "unknown")))
+
+(defn- close-lock-resources!
+  [{:keys [^FileLock lock ^java.nio.channels.FileChannel channel ^RandomAccessFile raf]}]
+  (doseq [close! [#(when lock (.release lock))
+                  #(when channel (.close channel))
+                  #(when raf (.close raf))]]
+    (try (close!) (catch Throwable _ nil))))
+
+(defn- lock-owner [^File lock-file]
+  (try
+    (some-> (slurp lock-file) str/trim not-empty)
+    (catch Throwable _ nil)))
+
+(defn- persistent-db-lock-error [canonical-dir ^File lock-file]
+  (ex-info
+    (str "Vis persistent DB is already open by another process: " canonical-dir
+      ". Close the other Vis process or route work through its nREPL/dev CLI."
+      (when-let [owner (lock-owner lock-file)]
+        (str " Lock owner PID: " owner ".")))
+    {:type :vis/persistent-db-already-open
+     :path canonical-dir
+     :lock-file (.getAbsolutePath lock-file)
+     :owner-pid (lock-owner lock-file)}))
+
+(defn- acquire-persistent-db-lock! [^String dir]
+  (let [canonical-dir (.getCanonicalPath (File. dir))
+        token         (Object.)]
+    (.mkdirs (File. canonical-dir))
+    (locking persistent-db-locks
+      (if-let [_held (get @persistent-db-locks canonical-dir)]
+        (do
+          (swap! persistent-db-locks update-in [canonical-dir :tokens] conj token)
+          {:path canonical-dir :token token})
+        (let [lock-file (File. canonical-dir DB_LOCK_FILENAME)
+              raf       (RandomAccessFile. lock-file "rw")
+              channel   (.getChannel raf)
+              lock      (try
+                          (.tryLock channel)
+                          (catch OverlappingFileLockException _ nil)
+                          (catch Throwable t
+                            (close-lock-resources! {:channel channel :raf raf})
+                            (throw t)))]
+          (if lock
+            (do
+              (.setLength raf 0)
+              (.write raf (.getBytes (str (current-pid-str) "\n") "UTF-8"))
+              (let [entry {:lock lock :channel channel :raf raf :tokens #{token}
+                           :lock-file (.getAbsolutePath lock-file)}]
+                (swap! persistent-db-locks assoc canonical-dir entry)
+                {:path canonical-dir :token token}))
+            (do
+              (close-lock-resources! {:channel channel :raf raf})
+              (throw (persistent-db-lock-error canonical-dir lock-file)))))))))
+
+(defn- release-persistent-db-lock! [db-info]
+  (when-let [lock-key (:lock-key db-info)]
+    (when-let [token (:lock-token db-info)]
+      (locking persistent-db-locks
+        (when-let [held (get @persistent-db-locks lock-key)]
+          (when (contains? (:tokens held) token)
+            (let [next-tokens (disj (:tokens held) token)]
+              (if (seq next-tokens)
+                (swap! persistent-db-locks assoc-in [lock-key :tokens] next-tokens)
+                (do
+                  (swap! persistent-db-locks dissoc lock-key)
+                  (close-lock-resources! held))))))))))
+
 (defn- open-sqlite-at-dir [^String dir]
-  (.mkdirs (java.io.File. dir))
-  (let [file   (str dir "/" DB_FILENAME)
-        raw    (raw-sqlite-datasource (str "jdbc:sqlite:" file))
-        pool   (pooled-datasource raw
-                 (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
-    (install-schema! pool)
-    {:datasource pool :conn pool :path dir :db-file file :backend :sqlite}))
+  (let [{:keys [path token]} (acquire-persistent-db-lock! dir)]
+    (try
+      (let [file   (str path "/" DB_FILENAME)
+            raw    (raw-sqlite-datasource (str "jdbc:sqlite:" file))
+            pool   (pooled-datasource raw
+                     (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
+        (install-schema! pool)
+        {:datasource pool :conn pool :path path :db-file file :backend :sqlite
+         :lock-key path :lock-token token})
+      (catch Throwable t
+        (release-persistent-db-lock! {:lock-key path :lock-token token})
+        (throw t)))))
 
 (def ^:private ^AtomicLong mem-counter
   (AtomicLong.))
@@ -482,11 +581,82 @@
    `:external` mode (caller-supplied DataSource) it's a no-op — the
    caller still owns the handle they passed in."
   [store]
-  (when (and store (:owned? store))
-    (let [^Object ds (:datasource store)]
-      (when (instance? java.io.Closeable ds)
-        (try (.close ^java.io.Closeable ds) (catch Throwable _ nil)))))
+  (try
+    (when (and store (:owned? store))
+      (let [^Object ds (:datasource store)]
+        (when (instance? java.io.Closeable ds)
+          (try (.close ^java.io.Closeable ds) (catch Throwable _ nil)))))
+    (finally
+      (release-persistent-db-lock! store)))
   nil)
+
+;; =============================================================================
+;; SQLite write policy
+;; =============================================================================
+
+(def ^:private sqlite-write-retry-delays-ms
+  [5 10 20 40 80 160])
+
+(defonce ^:private sqlite-write-lock
+  (Object.))
+
+(defn- sqlite-busy-cause?
+  [^Throwable t]
+  (let [message (some-> (.getMessage t) str/lower-case)
+        code    (when (instance? SQLException t)
+                  (.getErrorCode ^SQLException t))]
+    (or (contains? #{5 6 517} code)
+      (and message
+        (or (str/includes? message "sqlite_busy")
+          (str/includes? message "busy_snapshot")
+          (str/includes? message "database is locked")
+          (str/includes? message "database table is locked"))))))
+
+(defn- sqlite-busy?
+  [^Throwable t]
+  (loop [cause t]
+    (cond
+      (nil? cause) false
+      (sqlite-busy-cause? cause) true
+      :else (recur (.getCause cause)))))
+
+(defn- sqlite-write-attempt!
+  "Run one immediate write transaction attempt. The xerial connection config
+   sets `transaction_mode=IMMEDIATE`, so next.jdbc's transaction start acquires
+   the SQLite writer reservation before any read can become a stale WAL
+   snapshot. Nested calls reuse the caller's tx-info."
+  [db-info f]
+  (if (:sqlite-write-tx? db-info)
+    (f db-info)
+    (jdbc/with-transaction [tx (ds db-info)]
+      (f (assoc db-info
+           :datasource tx
+           :conn tx
+           :sqlite-write-tx? true)))))
+
+(defn- sqlite-write-tx!
+  "Central SQLite write boundary. Serializes Vis writes inside this JVM,
+   starts an immediate SQLite transaction, and retries the whole operation on
+   stale WAL snapshots / busy lock failures. Retry must happen outside the
+   transaction because SQLITE_BUSY_SNAPSHOT poisons the current transaction's
+   snapshot."
+  [db-info f]
+  (if (:sqlite-write-tx? db-info)
+    (f db-info)
+    (locking sqlite-write-lock
+      (loop [attempt 0 delays sqlite-write-retry-delays-ms]
+        (let [result (try
+                       {:ok? true :value (sqlite-write-attempt! db-info f)}
+                       (catch Throwable t
+                         {:ok? false :throwable t}))]
+          (if (:ok? result)
+            (:value result)
+            (let [t (:throwable result)]
+              (if (and (sqlite-busy? t) (seq delays))
+                (do
+                  (Thread/sleep (long (first delays)))
+                  (recur (inc attempt) (rest delays)))
+                (throw t)))))))))
 
 ;; =============================================================================
 ;; Logging — log table
@@ -494,20 +664,22 @@
 
 (defn db-log! [db-info entry]
   (when (ds db-info)
-    (execute! db-info
-      {:insert-into :log
-       :values [(cond-> {:id         (str (UUID/randomUUID))
-                         :level      (->kw (:level entry))
-                         :event      (str (:event entry))
-                         :created_at (now-ms)}
-                  (:data entry)                  (assoc :data (:data entry))
-                  (:conversation-soul-id entry)  (assoc :conversation_soul_id (->id (:conversation-soul-id entry)))
-                  (:conversation-state-id entry) (assoc :conversation_state_id (->id (:conversation-state-id entry)))
-                  (:conversation-turn-soul-id entry)         (assoc :conversation_turn_soul_id (->id (:conversation-turn-soul-id entry)))
-                  (:conversation-turn-state-id entry)        (assoc :conversation_turn_state_id (->id (:conversation-turn-state-id entry)))
-                  (:iteration-id entry)          (assoc :iteration_id (->id (:iteration-id entry)))
-                  (:expression-soul-id entry)    (assoc :expression_soul_id (->id (:expression-soul-id entry)))
-                  (:expression-state-id entry)   (assoc :expression_state_id (->id (:expression-state-id entry))))]})))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (execute! tx-info
+          {:insert-into :log
+           :values [(cond-> {:id         (new-id)
+                             :level      (->kw (:level entry))
+                             :event      (str (:event entry))
+                             :created_at (now-ms)}
+                      (:data entry)                  (assoc :data (:data entry))
+                      (:conversation-soul-id entry)  (assoc :conversation_soul_id (->id (:conversation-soul-id entry)))
+                      (:conversation-state-id entry) (assoc :conversation_state_id (->id (:conversation-state-id entry)))
+                      (:conversation-turn-soul-id entry)         (assoc :conversation_turn_soul_id (->id (:conversation-turn-soul-id entry)))
+                      (:conversation-turn-state-id entry)        (assoc :conversation_turn_state_id (->id (:conversation-turn-state-id entry)))
+                      (:iteration-id entry)          (assoc :iteration_id (->id (:iteration-id entry)))
+                      (:expression-soul-id entry)    (assoc :expression_soul_id (->id (:expression-soul-id entry)))
+                      (:expression-state-id entry)   (assoc :expression_state_id (->id (:expression-state-id entry))))]})))))
 
 ;; =============================================================================
 ;; Conversation — conversation_soul + conversation_state
@@ -528,26 +700,28 @@
    reader (`db-get-conversation`) re-keywordizes it on the way back."
   [db-info {:keys [channel external-id title system-prompt provider model]}]
   (when (ds db-info)
-    (let [soul-id  (UUID/randomUUID)
-          state-id (UUID/randomUUID)
-          now      (now-ms)]
-      (execute! db-info
-        {:insert-into :conversation_soul
-         :values [{:id         (str soul-id)
-                   :metadata   (->json {:channel     (->kw (or channel :tui))
-                                        :external-id external-id})
-                   :created_at now}]})
-      (execute! db-info
-        {:insert-into :conversation_state
-         :values [{:id                   (str state-id)
-                   :conversation_soul_id (str soul-id)
-                   :title                title
-                   :version              0
-                   :metadata             (->json (cond-> {:system-prompt (or system-prompt "")
-                                                          :model         (or model "")}
-                                                   provider (assoc :provider (->kw provider))))
-                   :created_at           now}]})
-      soul-id)))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [soul-id  (new-uuid)
+              state-id (new-uuid)
+              now      (now-ms)]
+          (execute! tx-info
+            {:insert-into :conversation_soul
+             :values [{:id         (str soul-id)
+                       :metadata   (->json {:channel     (->kw (or channel :tui))
+                                            :external-id external-id})
+                       :created_at now}]})
+          (execute! tx-info
+            {:insert-into :conversation_state
+             :values [{:id                   (str state-id)
+                       :conversation_soul_id (str soul-id)
+                       :title                title
+                       :version              0
+                       :metadata             (->json (cond-> {:system-prompt (or system-prompt "")
+                                                              :model         (or model "")}
+                                                       provider (assoc :provider (->kw provider))))
+                       :created_at           now}]})
+          soul-id)))))
 
 (defn- latest-state-for [db-info soul-id-s]
   (query-one! db-info
@@ -644,18 +818,22 @@
 
 (defn db-update-conversation-title! [db-info conversation-id title]
   (when (and (ds db-info) conversation-id)
-    (let [soul-id-s (->ref conversation-id)]
-      (when-let [state (latest-state-for db-info soul-id-s)]
-        (execute! db-info
-          {:update :conversation_state
-           :set    {:title title}
-           :where  [:= :id (:id state)]})))))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [soul-id-s (->ref conversation-id)]
+          (when-let [state (latest-state-for tx-info soul-id-s)]
+            (execute! tx-info
+              {:update :conversation_state
+               :set    {:title title}
+               :where  [:= :id (:id state)]})))))))
 
 (defn db-delete-conversation-tree! [db-info conversation-soul-id]
   (when (and (ds db-info) conversation-soul-id)
-    (execute! db-info
-      {:delete-from :conversation_soul
-       :where [:= :id (->id conversation-soul-id)]})))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (execute! tx-info
+          {:delete-from :conversation_soul
+           :where [:= :id (->id conversation-soul-id)]})))))
 
 ;; =============================================================================
 ;; Fork — branch a conversation at a point
@@ -751,26 +929,28 @@
    Returns the new state UUID."
   [db-info conversation-id {:keys [system-prompt provider model title]}]
   (when (ds db-info)
-    (let [soul-id-s (->ref conversation-id)
-          current   (latest-state-for db-info soul-id-s)
-          new-id    (UUID/randomUUID)
-          now       (now-ms)
-          cur-meta  (when current (<-json (:metadata current)))]
-      (when current
-        (execute! db-info
-          {:insert-into :conversation_state
-           :values [{:id                   (str new-id)
-                     :conversation_soul_id soul-id-s
-                     :parent_state_id      (:id current)
-                     :title                (or title (:title current))
-                     :version              (inc (:version current))
-                     :metadata             (->json
-                                             (cond-> (or cur-meta {})
-                                               system-prompt (assoc :system-prompt system-prompt)
-                                               provider      (assoc :provider (->kw provider))
-                                               model         (assoc :model model)))
-                     :created_at           now}]})
-        new-id))))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [soul-id-s (->ref conversation-id)
+              current   (latest-state-for tx-info soul-id-s)
+              new-id    (new-uuid)
+              now       (now-ms)
+              cur-meta  (when current (<-json (:metadata current)))]
+          (when current
+            (execute! tx-info
+              {:insert-into :conversation_state
+               :values [{:id                   (str new-id)
+                         :conversation_soul_id soul-id-s
+                         :parent_state_id      (:id current)
+                         :title                (or title (:title current))
+                         :version              (inc (:version current))
+                         :metadata             (->json
+                                                 (cond-> (or cur-meta {})
+                                                   system-prompt (assoc :system-prompt system-prompt)
+                                                   provider      (assoc :provider (->kw provider))
+                                                   model         (assoc :model model)))
+                         :created_at           now}]})
+            new-id))))))
 
 ;; =============================================================================
 ;; State resolution
@@ -790,35 +970,37 @@
    Returns the conversation-turn-soul UUID."
   [db-info {:keys [parent-conversation-id user-request messages status]}]
   (when (ds db-info)
-    (let [soul-id        (UUID/randomUUID)
-          state-id       (UUID/randomUUID)
-          now            (now-ms)
-          state-id-s     (latest-state-id db-info parent-conversation-id)
-          turn-position  (or (:next_position
-                              (query-one! db-info
-                                {:select [[[:coalesce [:+ [:max :position] 1] 1]
-                                           :next_position]]
-                                 :from   :conversation_turn_soul
-                                 :where  [:= :conversation_state_id state-id-s]}))
-                           1)
-          user-request-s (or user-request "")]
-      (execute! db-info
-        {:insert-into :conversation_turn_soul
-         :values [{:id                    (str soul-id)
-                   :conversation_state_id state-id-s
-                   :position              turn-position
-                   :title                 (subs user-request-s 0 (min (count user-request-s) 100))
-                   :user_request          user-request-s
-                   :created_at            now}]})
-      (execute! db-info
-        {:insert-into :conversation_turn_state
-         :values [{:id            (str state-id)
-                   :conversation_turn_soul_id (str soul-id)
-                   :version       0
-                   :status        (normalize-status (or status :running))
-                   :metadata      (->json (when messages {:messages messages}))
-                   :created_at    now}]})
-      soul-id)))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [soul-id        (new-uuid)
+              state-id       (new-uuid)
+              now            (now-ms)
+              state-id-s     (latest-state-id tx-info parent-conversation-id)
+              turn-position  (or (:next_position
+                                  (query-one! tx-info
+                                    {:select [[[:coalesce [:+ [:max :position] 1] 1]
+                                               :next_position]]
+                                     :from   :conversation_turn_soul
+                                     :where  [:= :conversation_state_id state-id-s]}))
+                               1)
+              user-request-s (or user-request "")]
+          (execute! tx-info
+            {:insert-into :conversation_turn_soul
+             :values [{:id                    (str soul-id)
+                       :conversation_state_id state-id-s
+                       :position              turn-position
+                       :title                 (subs user-request-s 0 (min (count user-request-s) 100))
+                       :user_request          user-request-s
+                       :created_at            now}]})
+          (execute! tx-info
+            {:insert-into :conversation_turn_state
+             :values [{:id            (str state-id)
+                       :conversation_turn_soul_id (str soul-id)
+                       :version       0
+                       :status        (normalize-status (or status :running))
+                       :metadata      (->json (when messages {:messages messages}))
+                       :created_at    now}]})
+          soul-id)))))
 
 (defn- latest-conversation-turn-state [db-info conversation-turn-soul-id-s]
   (query-one! db-info
@@ -837,22 +1019,24 @@
    Returns the new conversation-turn-state UUID."
   [db-info conversation-turn-soul-id {:keys [status provider model]}]
   (when (ds db-info)
-    (let [soul-id-s (->ref conversation-turn-soul-id)
-          current   (latest-conversation-turn-state db-info soul-id-s)
-          new-id    (UUID/randomUUID)
-          now       (now-ms)]
-      (when current
-        (execute! db-info
-          {:insert-into :conversation_turn_state
-           :values [(cond-> {:id                         (str new-id)
-                             :conversation_turn_soul_id              soul-id-s
-                             :forked_from_conversation_turn_state_id (:id current)
-                             :version                    (inc (:version current))
-                             :status                     (normalize-status (or status :running))
-                             :llm_root_model             model
-                             :created_at                 now}
-                      provider (assoc :llm_root_provider (name (->kw provider))))]})
-        new-id))))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [soul-id-s (->ref conversation-turn-soul-id)
+              current   (latest-conversation-turn-state tx-info soul-id-s)
+              new-id    (new-uuid)
+              now       (now-ms)]
+          (when current
+            (execute! tx-info
+              {:insert-into :conversation_turn_state
+               :values [(cond-> {:id                         (str new-id)
+                                 :conversation_turn_soul_id              soul-id-s
+                                 :forked_from_conversation_turn_state_id (:id current)
+                                 :version                    (inc (:version current))
+                                 :status                     (normalize-status (or status :running))
+                                 :llm_root_model             model
+                                 :created_at                 now}
+                          provider (assoc :llm_root_provider (name (->kw provider))))]})
+            new-id))))))
 
 (defn db-update-conversation-turn!
   "Update the latest conversation_turn_state with final outcome.
@@ -865,28 +1049,30 @@
   [db-info conversation-turn-id {:keys [answer iteration-count duration-ms
                                         status tokens cost prior-outcome]}]
   (when (and (ds db-info) conversation-turn-id)
-    (let [soul-id-s (->ref conversation-turn-id)
-          state     (latest-conversation-turn-state db-info soul-id-s)]
-      (when state
-        (execute! db-info
-          {:update :conversation_turn_state
-           :set    (cond-> {:status (normalize-status (or status :done))
-                            :metadata (->json
-                                        (merge (<-json (:metadata state))
-                                          (cond-> {:answer          (or answer "")
-                                                   :iteration-count (or iteration-count 0)
-                                                   :duration-ms     (or duration-ms 0)}
-                                            (:input tokens)     (assoc :input-tokens     (long (:input tokens)))
-                                            (:output tokens)    (assoc :output-tokens    (long (:output tokens)))
-                                            (:reasoning tokens) (assoc :reasoning-tokens (long (:reasoning tokens)))
-                                            (:cached tokens)    (assoc :cached-tokens    (long (:cached tokens)))
-                                            (:total-cost cost)  (assoc :total-cost       (double (:total-cost cost)))
-                                            (:provider cost)    (assoc :provider         (->kw (:provider cost)))
-                                            (:model cost)       (assoc :model            (str (:model cost))))))}
-                     (:model cost)    (assoc :llm_root_model (str (:model cost)))
-                     (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
-                     prior-outcome    (assoc :prior_outcome (name prior-outcome)))
-           :where  [:= :id (:id state)]})))))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [soul-id-s (->ref conversation-turn-id)
+              state     (latest-conversation-turn-state tx-info soul-id-s)]
+          (when state
+            (execute! tx-info
+              {:update :conversation_turn_state
+               :set    (cond-> {:status (normalize-status (or status :done))
+                                :metadata (->json
+                                            (merge (<-json (:metadata state))
+                                              (cond-> {:answer          (or answer "")
+                                                       :iteration-count (or iteration-count 0)
+                                                       :duration-ms     (or duration-ms 0)}
+                                                (:input tokens)     (assoc :input-tokens     (long (:input tokens)))
+                                                (:output tokens)    (assoc :output-tokens    (long (:output tokens)))
+                                                (:reasoning tokens) (assoc :reasoning-tokens (long (:reasoning tokens)))
+                                                (:cached tokens)    (assoc :cached-tokens    (long (:cached tokens)))
+                                                (:total-cost cost)  (assoc :total-cost       (double (:total-cost cost)))
+                                                (:provider cost)    (assoc :provider         (->kw (:provider cost)))
+                                                (:model cost)       (assoc :model            (str (:model cost))))))}
+                         (:model cost)    (assoc :llm_root_model (str (:model cost)))
+                         (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
+                         prior-outcome    (assoc :prior_outcome (name prior-outcome)))
+               :where  [:= :id (:id state)]})))))))
 
  ;; =============================================================================
 ;; Conversation-scoped intent -> plan -> blocking gate
@@ -1082,6 +1268,72 @@
               (= canonical-ref (get-in block-map [:provenance :ref]))
               block-map)))))))
 
+(defn- event-summary
+  [iteration event]
+  (let [provenance (:provenance event)]
+    (cond-> {:ref       (:ref provenance)
+             :status    (:status provenance)
+             :op        (:op provenance)
+             :iteration iteration}
+      (:rendering-kind event) (assoc :rendering-kind (:rendering-kind event))
+      (:parent-ref provenance) (assoc :parent-ref (:parent-ref provenance)))))
+
+(defn- observed-event-summaries
+  [db-info conversation-soul-id]
+  (->> (query! db-info
+         {:select [[:ct.id :turn_id]
+                   [:it.position :iteration]
+                   [:it.blocks :blocks]]
+          :from [[:iteration :it]]
+          :join [[:conversation_turn_state :cts] [:= :cts.id :it.conversation_turn_state_id]
+                 [:conversation_turn_soul :ct] [:= :ct.id :cts.conversation_turn_soul_id]
+                 [:conversation_state :cs] [:= :cs.id :ct.conversation_state_id]]
+          :where [:= :cs.conversation_soul_id (->ref conversation-soul-id)]
+          :order-by [[:ct.created_at :asc] [:it.position :asc]]})
+    (mapcat (fn [{:keys [blocks iteration]}]
+              (mapcat (fn [block]
+                        (let [base-event (event-summary iteration block)
+                              child-events (map #(event-summary iteration %) (:events block))]
+                          (cond-> [base-event]
+                            (seq child-events) (into child-events))))
+                (or (<-blob blocks) []))))
+    (filter :ref)
+    vec))
+
+(defn- nearest-observed-refs
+  [db-info conversation-soul-id canonical-ref]
+  (let [parsed      (prov-ref/parse-ref canonical-ref)
+        turn-prefix (:turn-prefix parsed)
+        events      (observed-event-summaries db-info conversation-soul-id)
+        same-turn   (when turn-prefix
+                      (filterv #(str/starts-with? (:ref %) (str "turn/" turn-prefix "/")) events))
+        candidates  (if (seq same-turn) same-turn events)]
+    (->> candidates reverse (take 5) vec)))
+
+(defn- not-observed-reason
+  [nearest canonical-ref]
+  (let [parsed (prov-ref/parse-ref canonical-ref)]
+    (cond
+      (empty? nearest) :no-observed-refs
+      (and (:iteration parsed)
+        (let [latest-observed-iteration (reduce max 0 (keep :iteration nearest))]
+          (> (:iteration parsed) latest-observed-iteration))) :not-observed-yet
+      :else :not-observed)))
+
+(defn- not-observed-message
+  [canonical nearest]
+  (str "Provenance ref is syntactically valid but is not observed yet: " canonical "\n"
+    "Only refs from previous persisted journal entries are valid evidence.\n"
+    "Current iteration refs are not valid until the next iteration.\n"
+    "Do not construct refs from the current iteration number.\n"
+    "Run `(v/latest-provenance-refs)` or `(v/provenance-timeline)` and cite one of its refs."
+    (when (seq nearest)
+      (str "\nNearest observed refs:\n"
+        (str/join "\n"
+          (map (fn [{:keys [ref status op]}]
+                 (str "- " ref " " (pr-str status) " " (pr-str op)))
+            nearest))))))
+
 (defn- validate-provenance-refs!
   [db-info conversation-soul-id refs role]
   (doseq [ref refs]
@@ -1089,8 +1341,13 @@
           canonical (canonical-ref-or-throw! (str ref-value))
           event     (observed-event-at-canonical-ref db-info conversation-soul-id canonical)]
       (when-not event
-        (throw (ex-info "provenance ref does not resolve to an observed lifecycle event"
-                 {:ref canonical :conversation-soul-id conversation-soul-id})))
+        (let [nearest (nearest-observed-refs db-info conversation-soul-id canonical)]
+          (throw (ex-info (not-observed-message canonical nearest)
+                   {:ref canonical
+                    :conversation-soul-id conversation-soul-id
+                    :reason (not-observed-reason nearest canonical)
+                    :hint "Run `(v/latest-provenance-refs)` or `(v/provenance-timeline)` and cite an observed ref."
+                    :nearest-observed nearest}))))
       (when (and (= :proof role) (not (prov-life/proof-compatible? event)))
         (throw (ex-info "proof provenance must cite a completed successful lifecycle event"
                  {:ref canonical
@@ -1139,23 +1396,25 @@
   (when (ds db-info)
     (when-not (seq (str rationale))
       (throw (ex-info "focus-intent requires :rationale" {:intent-id intent-id})))
-    (let [turn-state-id (or (some-> conversation-turn-state-id ->ref)
-                          (:id (require-latest-turn-state db-info conversation-turn-id)))
-          now           (now-ms)]
-      (enforce-focus-switch! db-info turn-state-id intent-id)
-      (execute! db-info
-        {:insert-into :conversation_intent_focus
-         :values [{:id (str (UUID/randomUUID))
-                   :conversation_turn_state_id turn-state-id
-                   :intent_id (->ref intent-id)
-                   :source (->kw (or source :touched))
-                   :metadata (->json (assoc (or metadata {}) :rationale rationale))
-                   :created_at now}]
-         :on-conflict [:conversation_turn_state_id :intent_id]
-         :do-update-set {:source (->kw (or source :touched))
-                         :metadata (->json (assoc (or metadata {}) :rationale rationale))
-                         :created_at now}})
-      (row->intent (require-row db-info :conversation_intent intent-id "conversation_intent not found")))))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [turn-state-id (or (some-> conversation-turn-state-id ->ref)
+                              (:id (require-latest-turn-state tx-info conversation-turn-id)))
+              now           (now-ms)]
+          (enforce-focus-switch! tx-info turn-state-id intent-id)
+          (execute! tx-info
+            {:insert-into :conversation_intent_focus
+             :values [{:id (new-id)
+                       :conversation_turn_state_id turn-state-id
+                       :intent_id (->ref intent-id)
+                       :source (->kw (or source :touched))
+                       :metadata (->json (assoc (or metadata {}) :rationale rationale))
+                       :created_at now}]
+             :on-conflict [:conversation_turn_state_id :intent_id]
+             :do-update-set {:source (->kw (or source :touched))
+                             :metadata (->json (assoc (or metadata {}) :rationale rationale))
+                             :created_at now}})
+          (row->intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")))))))
 
 (defn- previous-unresolved-focused-intent-ids
   [db-info conversation-turn-state-id]
@@ -1186,23 +1445,25 @@
                                  :or {rationale "Inherited unresolved focus from previous turn."
                                       source :inferred}}]
   (when (and (ds db-info) conversation-turn-id)
-    (let [ctx (turn-state-context db-info conversation-turn-id)
-          turn-state-id (:conversation_turn_state_id ctx)
-          now (now-ms)
-          ids (previous-unresolved-focused-intent-ids db-info turn-state-id)]
-      (doseq [intent-id ids]
-        (execute! db-info
-          {:insert-into :conversation_intent_focus
-           :values [{:id (str (UUID/randomUUID))
-                     :conversation_turn_state_id turn-state-id
-                     :intent_id intent-id
-                     :source (->kw source)
-                     :metadata (->json (assoc (or metadata {}) :rationale rationale))
-                     :created_at now}]
-           :on-conflict [:conversation_turn_state_id :intent_id]
-           :do-nothing true}))
-      {:conversation-turn-state-id (->uuid turn-state-id)
-       :focused-intent-ids (mapv ->uuid ids)})))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [ctx (turn-state-context tx-info conversation-turn-id)
+              turn-state-id (:conversation_turn_state_id ctx)
+              now (now-ms)
+              ids (previous-unresolved-focused-intent-ids tx-info turn-state-id)]
+          (doseq [intent-id ids]
+            (execute! tx-info
+              {:insert-into :conversation_intent_focus
+               :values [{:id (new-id)
+                         :conversation_turn_state_id turn-state-id
+                         :intent_id intent-id
+                         :source (->kw source)
+                         :metadata (->json (assoc (or metadata {}) :rationale rationale))
+                         :created_at now}]
+               :on-conflict [:conversation_turn_state_id :intent_id]
+               :do-nothing true}))
+          {:conversation-turn-state-id (->uuid turn-state-id)
+           :focused-intent-ids (mapv ->uuid ids)})))))
 
 (defn db-store-intent!
   [db-info {:keys [conversation-id conversation-turn-id title rationale created-ref metadata]}]
@@ -1212,13 +1473,13 @@
     (when-not (seq (str rationale))
       (throw (ex-info "issue-intent requires :rationale" {})))
     (when created-ref (canonical-ref-or-throw! created-ref))
-    (let [ctx (when conversation-turn-id (turn-state-context db-info conversation-turn-id))
-          conversation-soul-id (or (:conversation_soul_id ctx)
-                                 (conversation-soul-id-for-conversation db-info conversation-id))
-          id  (str (UUID/randomUUID))
-          now (now-ms)]
-      (jdbc/with-transaction [tx (ds db-info)]
-        (let [tx-info (assoc db-info :datasource tx)]
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [ctx (when conversation-turn-id (turn-state-context tx-info conversation-turn-id))
+              conversation-soul-id (or (:conversation_soul_id ctx)
+                                     (conversation-soul-id-for-conversation tx-info conversation-id))
+              id  (new-id)
+              now (now-ms)]
           (execute! tx-info
             {:insert-into :conversation_intent
              :values [(cond-> {:id id
@@ -1233,45 +1494,49 @@
           (when (:conversation_turn_state_id ctx)
             (db-focus-intent! tx-info id {:conversation-turn-state-id (:conversation_turn_state_id ctx)
                                           :rationale rationale
-                                          :source :created}))))
-      (row->intent (require-row db-info :conversation_intent id "conversation_intent not found")))))
+                                          :source :created}))
+          (row->intent (require-row tx-info :conversation_intent id "conversation_intent not found")))))))
 
 (defn db-store-intent-ref!
   [db-info intent-id {:keys [ref role metadata]}]
   (when (ds db-info)
     (canonical-ref-or-throw! ref)
-    (let [conversation-soul-id (intent-conversation-soul-id db-info intent-id)]
-      (validate-provenance-refs! db-info conversation-soul-id [ref] :context))
-    (execute! db-info
-      {:insert-into :conversation_intent_ref
-       :values [{:id (str (UUID/randomUUID))
-                 :intent_id (->ref intent-id)
-                 :ref ref
-                 :role (->kw (or role :context))
-                 :metadata (->json metadata)
-                 :created_at (now-ms)}]})
-    {:intent-id (->uuid (->ref intent-id)) :ref ref :role (or role :context)}))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [conversation-soul-id (intent-conversation-soul-id tx-info intent-id)]
+          (validate-provenance-refs! tx-info conversation-soul-id [ref] :context))
+        (execute! tx-info
+          {:insert-into :conversation_intent_ref
+           :values [{:id (new-id)
+                     :intent_id (->ref intent-id)
+                     :ref ref
+                     :role (->kw (or role :context))
+                     :metadata (->json metadata)
+                     :created_at (now-ms)}]})
+        {:intent-id (->uuid (->ref intent-id)) :ref ref :role (or role :context)}))))
 
 (defn db-relate-intents!
   [db-info {:keys [from-intent-id to-intent-id relation rationale metadata]}]
   (when (ds db-info)
     (when (= (->ref from-intent-id) (->ref to-intent-id))
       (throw (ex-info "intent relation cannot target itself" {:intent-id from-intent-id})))
-    (let [id (str (UUID/randomUUID))]
-      (execute! db-info
-        {:insert-into :conversation_intent_relation
-         :values [{:id id
-                   :from_intent_id (->ref from-intent-id)
-                   :to_intent_id (->ref to-intent-id)
-                   :relation (->kw relation)
-                   :rationale rationale
-                   :metadata (->json metadata)
-                   :created_at (now-ms)}]})
-      {:id (->uuid id)
-       :from-intent-id (->uuid (->ref from-intent-id))
-       :to-intent-id (->uuid (->ref to-intent-id))
-       :relation relation
-       :rationale rationale})))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [id (new-id)]
+          (execute! tx-info
+            {:insert-into :conversation_intent_relation
+             :values [{:id id
+                       :from_intent_id (->ref from-intent-id)
+                       :to_intent_id (->ref to-intent-id)
+                       :relation (->kw relation)
+                       :rationale rationale
+                       :metadata (->json metadata)
+                       :created_at (now-ms)}]})
+          {:id (->uuid id)
+           :from-intent-id (->uuid (->ref from-intent-id))
+           :to-intent-id (->uuid (->ref to-intent-id))
+           :relation relation
+           :rationale rationale})))))
 
 (defn- default-plan-dsl
   [intent-id steps]
@@ -1286,33 +1551,33 @@
     (when-not (seq (str summary))
       (throw (ex-info "issue-plan requires :summary" {:intent-id intent-id})))
     (when created-ref (canonical-ref-or-throw! created-ref))
-    (jdbc/with-transaction [tx (ds db-info)]
-      (let [tx-info (assoc db-info :datasource tx)
-            _intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")
-            previous (:id (query-one! tx-info {:select [:id]
-                                               :from :conversation_intent_plan
-                                               :where [:and [:= :intent_id (->ref intent-id)] [:= :status "active"]]}))
-            id (str (UUID/randomUUID))
-            plan-dsl (or plan (default-plan-dsl intent-id steps))
-            now (now-ms)]
-        (when previous
-          (execute! tx-info {:update :conversation_intent_plan
-                             :set {:status "superseded"}
-                             :where [:= :id previous]}))
-        (execute! tx-info
-          {:insert-into :conversation_intent_plan
-           :values [(cond-> {:id id
-                             :intent_id (->ref intent-id)
-                             :status "active"
-                             :summary summary
-                             :plan_dsl (->blob plan-dsl)
-                             :steps (->blob (when steps (vec steps)))
-                             :supersedes_plan_id previous
-                             :metadata (->blob metadata)
-                             :created_at now}
-                      conversation-turn-id (assoc :created_conversation_turn_id (->ref conversation-turn-id))
-                      created-ref (assoc :created_ref created-ref))]})
-        (row->plan (require-row tx-info :conversation_intent_plan id "conversation_intent_plan not found"))))))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [_intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")
+              previous (:id (query-one! tx-info {:select [:id]
+                                                 :from :conversation_intent_plan
+                                                 :where [:and [:= :intent_id (->ref intent-id)] [:= :status "active"]]}))
+              id (new-id)
+              plan-dsl (or plan (default-plan-dsl intent-id steps))
+              now (now-ms)]
+          (when previous
+            (execute! tx-info {:update :conversation_intent_plan
+                               :set {:status "superseded"}
+                               :where [:= :id previous]}))
+          (execute! tx-info
+            {:insert-into :conversation_intent_plan
+             :values [(cond-> {:id id
+                               :intent_id (->ref intent-id)
+                               :status "active"
+                               :summary summary
+                               :plan_dsl (->blob plan-dsl)
+                               :steps (->blob (when steps (vec steps)))
+                               :supersedes_plan_id previous
+                               :metadata (->blob metadata)
+                               :created_at now}
+                        conversation-turn-id (assoc :created_conversation_turn_id (->ref conversation-turn-id))
+                        created-ref (assoc :created_ref created-ref))]})
+          (row->plan (require-row tx-info :conversation_intent_plan id "conversation_intent_plan not found")))))))
 
 (defn- normalize-proof-slot-id
   [slot]
@@ -1432,23 +1697,25 @@
       (when-not (seq (str proposition))
         (throw (ex-info "issue-gate requires :proposition" {:plan-id plan-id})))
       (when created-ref (canonical-ref-or-throw! created-ref))
-      (let [_plan (require-row db-info :conversation_intent_plan plan-id "conversation_intent_plan not found")
-            id (str (UUID/randomUUID))
-            expected-proof (normalize-expected-proof expected-proof)
-            candidate-proof (normalize-proof-data candidate-proof)]
-        (execute! db-info
-          {:insert-into :conversation_intent_gate
-           :values [(cond-> {:id id
-                             :plan_id (->ref plan-id)
-                             :status "open"
-                             :required (if (false? required?) 0 1)
-                             :proposition proposition
-                             :expected_proof (->blob expected-proof)
-                             :candidate_proof (->blob candidate-proof)
-                             :metadata (->blob metadata)
-                             :created_at (now-ms)}
-                      created-ref (assoc :created_ref created-ref))]})
-        (row->gate (require-row db-info :conversation_intent_gate id "conversation_intent_gate not found"))))))
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (let [_plan (require-row tx-info :conversation_intent_plan plan-id "conversation_intent_plan not found")
+                id (new-id)
+                expected-proof (normalize-expected-proof expected-proof)
+                candidate-proof (normalize-proof-data candidate-proof)]
+            (execute! tx-info
+              {:insert-into :conversation_intent_gate
+               :values [(cond-> {:id id
+                                 :plan_id (->ref plan-id)
+                                 :status "open"
+                                 :required (if (false? required?) 0 1)
+                                 :proposition proposition
+                                 :expected_proof (->blob expected-proof)
+                                 :candidate_proof (->blob candidate-proof)
+                                 :metadata (->blob metadata)
+                                 :created_at (now-ms)}
+                          created-ref (assoc :created_ref created-ref))]})
+            (row->gate (require-row tx-info :conversation_intent_gate id "conversation_intent_gate not found"))))))))
 
 (defn- normalize-ref-entry [role ref]
   (let [{ref-value :ref ref-role :role ref-metadata :metadata slot :slot} (if (map? ref) ref {:ref ref})]
@@ -1460,7 +1727,7 @@
   (doseq [{:keys [ref role metadata slot]} (map #(normalize-ref-entry role %) refs)]
     (execute! db-info
       {:insert-into :conversation_intent_gate_ref
-       :values [(cond-> {:id         (str (UUID/randomUUID))
+       :values [(cond-> {:id         (new-id)
                          :gate_id    (->ref gate-id)
                          :ref        ref
                          :role       (->kw role)
@@ -1473,19 +1740,19 @@
   [db-info {:keys [gate-id slots refs metadata]}]
   (when (ds db-info)
     (let [candidate-update (normalize-proof-data {:slots slots :refs refs})]
-      (jdbc/with-transaction [tx (ds db-info)]
-        (let [tx-info (assoc db-info :datasource tx)
-              gate    (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-              previous (normalize-proof-data (<-blob (:candidate_proof gate)))
-              candidate {:slots (merge (:slots previous) (:slots candidate-update))
-                         :refs  (vec (distinct (concat (:refs previous) (:refs candidate-update))))}]
-          (execute! tx-info
-            {:update :conversation_intent_gate
-             :set    (cond-> {:candidate_proof (->blob candidate)}
-                       metadata (assoc :metadata (->blob metadata)))
-             :where  [:= :id (->ref gate-id)]})
-          (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-            (gate-refs tx-info gate-id)))))))
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (let [gate    (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+                previous (normalize-proof-data (<-blob (:candidate_proof gate)))
+                candidate {:slots (merge (:slots previous) (:slots candidate-update))
+                           :refs  (vec (distinct (concat (:refs previous) (:refs candidate-update))))}]
+            (execute! tx-info
+              {:update :conversation_intent_gate
+               :set    (cond-> {:candidate_proof (->blob candidate)}
+                         metadata (assoc :metadata (->blob metadata)))
+               :where  [:= :id (->ref gate-id)]})
+            (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+              (gate-refs tx-info gate-id))))))))
 
 (defn db-prove-gate!
   [db-info {:keys [gate-id summary refs slots resolved-ref metadata]}]
@@ -1495,42 +1762,42 @@
         (throw (ex-info "proven gate requires at least one proof ref" {:gate-id gate-id})))
       (when-not (seq (str summary))
         (throw (ex-info "proven gate requires :summary" {:gate-id gate-id})))
-      (jdbc/with-transaction [tx (ds db-info)]
-        (let [tx-info (assoc db-info :datasource tx)
-              gate-row (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-              plan    (require-row tx-info :conversation_intent_plan (:plan_id gate-row) "conversation_intent_plan not found")
-              soul-id (intent-conversation-soul-id tx-info (:intent_id plan))
-              now     (now-ms)
-              expected-proof (normalize-expected-proof (<-blob (:expected_proof gate-row)))
-              candidate-proof (normalize-proof-data (<-blob (:candidate_proof gate-row)))
-              proof-data (normalize-proof-data
-                           {:summary summary
-                            :refs refs-v
-                            :slots (merge (:slots candidate-proof) (normalize-proof-slots slots))
-                            :guard (:guard expected-proof)})]
-          (when-not (required-proof-slots-present? expected-proof proof-data)
-            (throw (ex-info "proven gate proof is missing required slots"
-                     {:gate-id gate-id
-                      :required-slots (keys (:slots expected-proof))
-                      :provided-slots (keys (:slots proof-data))})))
-          (when-not (guard-passes? proof-data (:guard expected-proof))
-            (throw (ex-info "proven gate proof did not satisfy expected proof guard"
-                     {:gate-id gate-id
-                      :guard (:guard expected-proof)})))
-          (validate-provenance-refs! tx-info soul-id refs-v :proof)
-          (store-gate-refs! tx-info gate-id (proof-ref-entries proof-data :proof) :proof now)
-          (execute! tx-info
-            {:update :conversation_intent_gate
-             :set    (cond-> {:status          "proven"
-                              :candidate_proof nil
-                              :proof           (->blob proof-data)
-                              :impediment      nil
-                              :resolved_at     now}
-                       metadata     (assoc :metadata (->blob metadata))
-                       resolved-ref (assoc :resolved_ref resolved-ref))
-             :where  [:= :id (->ref gate-id)]})
-          (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-            (gate-refs tx-info gate-id)))))))
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (let [gate-row        (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+                plan            (require-row tx-info :conversation_intent_plan (:plan_id gate-row) "conversation_intent_plan not found")
+                soul-id         (intent-conversation-soul-id tx-info (:intent_id plan))
+                now             (now-ms)
+                expected-proof  (normalize-expected-proof (<-blob (:expected_proof gate-row)))
+                candidate-proof (normalize-proof-data (<-blob (:candidate_proof gate-row)))
+                proof-data      (normalize-proof-data
+                                  {:summary summary
+                                   :refs refs-v
+                                   :slots (merge (:slots candidate-proof) (normalize-proof-slots slots))
+                                   :guard (:guard expected-proof)})]
+            (when-not (required-proof-slots-present? expected-proof proof-data)
+              (throw (ex-info "proven gate proof is missing required slots"
+                       {:gate-id gate-id
+                        :required-slots (keys (:slots expected-proof))
+                        :provided-slots (keys (:slots proof-data))})))
+            (when-not (guard-passes? proof-data (:guard expected-proof))
+              (throw (ex-info "proven gate proof did not satisfy expected proof guard"
+                       {:gate-id gate-id
+                        :guard (:guard expected-proof)})))
+            (validate-provenance-refs! tx-info soul-id refs-v :proof)
+            (store-gate-refs! tx-info gate-id (proof-ref-entries proof-data :proof) :proof now)
+            (execute! tx-info
+              {:update :conversation_intent_gate
+               :set    (cond-> {:status          "proven"
+                                :candidate_proof nil
+                                :proof           (->blob proof-data)
+                                :impediment      nil
+                                :resolved_at     now}
+                         metadata     (assoc :metadata (->blob metadata))
+                         resolved-ref (assoc :resolved_ref resolved-ref))
+               :where  [:= :id (->ref gate-id)]})
+            (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+              (gate-refs tx-info gate-id))))))))
 
 (defn db-impede-gate!
   [db-info {:keys [gate-id reason refs slots resolved-ref metadata]}]
@@ -1540,31 +1807,31 @@
         (throw (ex-info "impeded gate requires at least one impediment ref" {:gate-id gate-id})))
       (when-not (seq (str reason))
         (throw (ex-info "impeded gate requires :reason" {:gate-id gate-id})))
-      (jdbc/with-transaction [tx (ds db-info)]
-        (let [tx-info (assoc db-info :datasource tx)
-              gate-row (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-              plan    (require-row tx-info :conversation_intent_plan (:plan_id gate-row) "conversation_intent_plan not found")
-              soul-id (intent-conversation-soul-id tx-info (:intent_id plan))
-              now     (now-ms)
-              candidate-proof (normalize-proof-data (<-blob (:candidate_proof gate-row)))
-              impediment-data (normalize-proof-data
-                                {:reason reason
-                                 :refs refs-v
-                                 :slots (merge (:slots candidate-proof) (normalize-proof-slots slots))})]
-          (validate-provenance-refs! tx-info soul-id refs-v :blocker)
-          (store-gate-refs! tx-info gate-id (proof-ref-entries impediment-data :impediment) :impediment now)
-          (execute! tx-info
-            {:update :conversation_intent_gate
-             :set    (cond-> {:status          "impeded"
-                              :candidate_proof nil
-                              :proof           nil
-                              :impediment      (->blob impediment-data)
-                              :resolved_at     now}
-                       metadata     (assoc :metadata (->blob metadata))
-                       resolved-ref (assoc :resolved_ref resolved-ref))
-             :where  [:= :id (->ref gate-id)]})
-          (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
-            (gate-refs tx-info gate-id)))))))
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (let [gate-row        (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+                plan            (require-row tx-info :conversation_intent_plan (:plan_id gate-row) "conversation_intent_plan not found")
+                soul-id         (intent-conversation-soul-id tx-info (:intent_id plan))
+                now             (now-ms)
+                candidate-proof (normalize-proof-data (<-blob (:candidate_proof gate-row)))
+                impediment-data (normalize-proof-data
+                                  {:reason reason
+                                   :refs refs-v
+                                   :slots (merge (:slots candidate-proof) (normalize-proof-slots slots))})]
+            (validate-provenance-refs! tx-info soul-id refs-v :blocker)
+            (store-gate-refs! tx-info gate-id (proof-ref-entries impediment-data :impediment) :impediment now)
+            (execute! tx-info
+              {:update :conversation_intent_gate
+               :set    (cond-> {:status          "impeded"
+                                :candidate_proof nil
+                                :proof           nil
+                                :impediment      (->blob impediment-data)
+                                :resolved_at     now}
+                         metadata     (assoc :metadata (->blob metadata))
+                         resolved-ref (assoc :resolved_ref resolved-ref))
+               :where  [:= :id (->ref gate-id)]})
+            (row->gate (require-row tx-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+              (gate-refs tx-info gate-id))))))))
 
 (defn db-block-gate!
   [db-info opts]
@@ -1580,12 +1847,29 @@
                    :from :conversation_intent_gate
                    :where [:and [:= :plan_id (->ref plan-id)] [:= :required 1]]}))
 
+(defn- impeded-required-gate-refs
+  "Return blocker refs already proven by required impeded gates on the
+   intent's active plan. Used as abandonment evidence when callers omit refs:
+   the gate graph already carries the blocking observation, so the model should
+   not have to rediscover and copy those refs by hand."
+  [db-info intent-id]
+  (if-let [plan (active-plan-for-intent db-info intent-id)]
+    (->> (required-active-gates db-info (:id plan))
+      (filter #(= "impeded" (:status %)))
+      (mapcat #(gate-refs db-info (:id %)))
+      (filter #(= :impediment (:role %)))
+      (map :ref)
+      (remove str/blank?)
+      distinct
+      vec)
+    []))
+
 (defn- store-intent-resolution-refs!
   [db-info intent-id refs role now]
   (doseq [{:keys [ref role metadata]} (map #(normalize-ref-entry role %) refs)]
     (execute! db-info
       {:insert-into :conversation_intent_ref
-       :values [{:id (str (UUID/randomUUID))
+       :values [{:id (new-id)
                  :intent_id (->ref intent-id)
                  :ref ref
                  :role (->kw role)
@@ -1600,44 +1884,50 @@
         (throw (ex-info "fulfilled intent requires at least one evidence ref" {:intent-id intent-id})))
       (when-not (seq (str summary))
         (throw (ex-info "fulfilled intent requires :summary" {:intent-id intent-id})))
-      (jdbc/with-transaction [tx (ds db-info)]
-        (let [tx-info (assoc db-info :datasource tx)
-              soul-id (intent-conversation-soul-id tx-info intent-id)
-              plan    (active-plan-for-intent tx-info intent-id)
-              gates   (when plan (required-active-gates tx-info (:id plan)))
-              now     (now-ms)]
-          (when-not plan
-            (throw (ex-info "fulfilled intent requires an active plan" {:intent-id intent-id})))
-          (when (seq (remove #(= "proven" (:status %)) gates))
-            (throw (ex-info "fulfilled intent requires every required gate on the active plan to be proven"
-                     {:intent-id intent-id
-                      :gate-ids (mapv :id (remove #(= "proven" (:status %)) gates))})))
-          (validate-provenance-refs! tx-info soul-id refs-v :proof)
-          (store-intent-resolution-refs! tx-info intent-id refs-v :fulfillment-evidence now)
-          (execute! tx-info
-            {:update :conversation_intent
-             :set (cond-> {:status "fulfilled"
-                           :fulfillment_summary summary
-                           :abandonment_reason nil
-                           :resolved_at now}
-                    conversation-turn-id (assoc :resolved_conversation_turn_id (->ref conversation-turn-id))
-                    resolved-ref (assoc :resolved_ref resolved-ref)
-                    metadata (assoc :metadata (->json metadata)))
-             :where [:= :id (->ref intent-id)]})
-          (row->intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")))))))
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (let [soul-id (intent-conversation-soul-id tx-info intent-id)
+                plan    (active-plan-for-intent tx-info intent-id)
+                gates   (when plan (required-active-gates tx-info (:id plan)))
+                now     (now-ms)]
+            (when-not plan
+              (throw (ex-info "fulfilled intent requires an active plan" {:intent-id intent-id})))
+            (when (seq (remove #(= "proven" (:status %)) gates))
+              (throw (ex-info "fulfilled intent requires every required gate on the active plan to be proven"
+                       {:intent-id intent-id
+                        :gate-ids (mapv :id (remove #(= "proven" (:status %)) gates))})))
+            (validate-provenance-refs! tx-info soul-id refs-v :proof)
+            (store-intent-resolution-refs! tx-info intent-id refs-v :fulfillment-evidence now)
+            (execute! tx-info
+              {:update :conversation_intent
+               :set (cond-> {:status "fulfilled"
+                             :fulfillment_summary summary
+                             :abandonment_reason nil
+                             :resolved_at now}
+                      conversation-turn-id (assoc :resolved_conversation_turn_id (->ref conversation-turn-id))
+                      resolved-ref (assoc :resolved_ref resolved-ref)
+                      metadata (assoc :metadata (->json metadata)))
+               :where [:= :id (->ref intent-id)]})
+            (row->intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")
+              (intent-refs tx-info intent-id)
+              []
+              [])))))))
 
 (defn db-abandon-intent!
   [db-info intent-id {:keys [reason refs resolved-ref metadata conversation-turn-id]}]
   (when (ds db-info)
-    (let [refs-v (vec refs)]
-      (when-not (seq refs-v)
-        (throw (ex-info "abandoned intent requires at least one evidence ref" {:intent-id intent-id})))
-      (when-not (seq (str reason))
-        (throw (ex-info "abandoned intent requires :reason" {:intent-id intent-id})))
-      (jdbc/with-transaction [tx (ds db-info)]
-        (let [tx-info (assoc db-info :datasource tx)
+    (when-not (seq (str reason))
+      (throw (ex-info "abandoned intent requires :reason" {:intent-id intent-id})))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [explicit-refs (vec refs)
+              refs-v (if (seq explicit-refs)
+                       explicit-refs
+                       (impeded-required-gate-refs tx-info intent-id))
               soul-id (intent-conversation-soul-id tx-info intent-id)
               now     (now-ms)]
+          (when-not (seq refs-v)
+            (throw (ex-info "abandoned intent requires at least one evidence ref" {:intent-id intent-id})))
           (validate-provenance-refs! tx-info soul-id refs-v :blocker)
           (store-intent-resolution-refs! tx-info intent-id refs-v :abandonment-evidence now)
           (execute! tx-info
@@ -1650,7 +1940,10 @@
                     resolved-ref (assoc :resolved_ref resolved-ref)
                     metadata (assoc :metadata (->json metadata)))
              :where [:= :id (->ref intent-id)]})
-          (row->intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")))))))
+          (row->intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")
+            (intent-refs tx-info intent-id)
+            []
+            []))))))
 
 (defn- rows-by [k rows]
   (group-by k rows))
@@ -2053,125 +2346,127 @@
                    llm-messages llm-provider llm-model llm-raw-response llm-executable-code
                    llm-executable-blocks tokens cost-usd]}]
   (when (ds db-info)
-    (let [iteration-id   (UUID/randomUUID)
-          iteration-id-s (str iteration-id)
-          now       (now-ms)
-          conversation-turn-soul-id-s (when conversation-turn-id (->ref conversation-turn-id))
-          ;; Need conversation_turn_state_id (iteration FK points to conversation_turn_state)
-          conversation-turn-state (when conversation-turn-soul-id-s
-                                    (latest-conversation-turn-state db-info conversation-turn-soul-id-s))
-          conversation-turn-state-id-s (:id conversation-turn-state)
-          ;; Need conversation_state_id for expression_soul
-          conversation-state-id (when conversation-turn-state
-                                  (:conversation_state_id
-                                   (query-one! db-info
-                                     {:select [:conversation_state_id]
-                                      :from   :conversation_turn_soul
-                                      :where  [:= :id conversation-turn-soul-id-s]})))
-          ;; Compute position (1-indexed within this conversation_turn_state)
-          ;; Next position is `MAX(position)+1` (monotonic and survives
-          ;; row deletions), aliased as `:next_position` so the SQL
-          ;; column name and the Clojure key line up. HoneySQL renders
-          ;; `:row-count` as the SQL identifier `row_count`, and
-          ;; `as-unqualified-lower-maps` returns `:row_count` in the
-          ;; row map; reading via `:row-count` (with hyphen) was always
-          ;; `nil` and pinned every iteration to the first position, which
-          ;; collided with the `UNIQUE (conversation_turn_state_id, position)`
-          ;; constraint on the second iteration of every turn.
-          position  (or (:next_position
-                         (query-one! db-info
-                           {:select [[[:coalesce [:+ [:max :position] 1] 1]
-                                      :next_position]]
-                            :from   :iteration
-                            :where  [:= :conversation_turn_state_id conversation-turn-state-id-s]}))
-                      1)
-          raw-response-s (some-> llm-raw-response str)]
-      ;; 1. Iteration row — includes the full block log inline as
-      ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Per-form
-      ;;    observations live here; expression_soul/expression_state
-      ;;    are only for named vars.
-      (let [blocks-vec (prepare-blocks-blob conversation-turn-soul-id-s position blocks)]
-        (execute! db-info
-          {:insert-into :iteration
-           :values [(cond-> {:id                   iteration-id-s
-                             :conversation_turn_state_id       conversation-turn-state-id-s
-                             :position             position
-                             :status               (normalize-status (cond answer :done error :error :else :done))
-                             :llm_system_prompt    (when (seq llm-messages)
-                                                     (:content (first (filter #(= "system" (:role %)) llm-messages))))
-                             :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
-                             :llm_provider         (when llm-provider (name (->kw llm-provider)))
-                             :llm_model            llm-model
-                             :llm_thinking         (or thinking "")
-                             :llm_full_duration_ms (or duration-ms 0)
-                             :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
-                             :llm_returned_empty_blocks (if (empty? blocks) 1 0)
-                             :metadata             (when metadata (->json metadata))
-                             :blocks               (->blob blocks-vec)
-                             :llm_executable_code (some-> llm-executable-code str)
-                             :llm_executable_blocks (when (some? llm-executable-blocks)
-                                                      (->json (vec llm-executable-blocks)))
-                             :created_at           now
-                             :finished_at          now}
-                      (some? answer-form-idx)
-                      (assoc :answer_form_idx answer-form-idx)
-                      raw-response-s
-                      (assoc :llm_raw_response         raw-response-s
-                        :llm_raw_response_preview (raw-response-preview raw-response-s)
-                        :llm_raw_response_length  (count raw-response-s)
-                        :llm_raw_response_sha256  (sha256-hex raw-response-s))
-                      ;; Token / cost columns — omitted when nil so the
-                      ;; row keeps NULL (the schema marks them nullable
-                      ;; for exactly this reason: an LLM call that
-                      ;; failed before returning usage produces no
-                      ;; tokens, no cost, no fake zeros).
-                      (some? (:input tokens))     (assoc :llm_input_tokens     (long (:input tokens)))
-                      (some? (:output tokens))    (assoc :llm_output_tokens    (long (:output tokens)))
-                      (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
-                      (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
-                      (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]}))
-      ;; 3. Vars → expression_soul (kind=var, stateful) + expression_state (versioned)
-      (when conversation-state-id
-        (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
-          (when name
-            (let [name-s (str name)
-                  ;; Find-or-create: partial unique index can't use ON CONFLICT
-                  existing (:id (query-one! db-info
-                                  {:select [:id]
-                                   :from   :expression_soul
-                                   :where  [:and
-                                            [:= :conversation_state_id conversation-state-id]
-                                            [:= :name name-s]]}))
-                  soul-id (or existing
-                            (let [new-id (str (UUID/randomUUID))]
-                              (execute! db-info
-                                {:insert-into :expression_soul
-                                 :values [{:id                    new-id
-                                           :conversation_state_id conversation-state-id
-                                           :kind                  "var"
-                                           :state_mode            "stateful"
-                                           :name                  name-s
-                                           :created_at            now}]})
-                              new-id))
-                  max-ver (or (:v (query-one! db-info
-                                    {:select [[[:max :version] :v]]
-                                     :from   :expression_state
-                                     :where  [:= :expression_soul_id soul-id]}))
-                            -1)]
-              (execute! db-info
-                {:insert-into :expression_state
-                 :values [{:id                 (str (UUID/randomUUID))
-                           :expression_soul_id soul-id
-                           :iteration_id       iteration-id-s
-                           :version            (inc max-ver)
-                           :success            1
-                           :expr               code
-                           :result             (->blob (freeze-safe value))
-                           :metadata           (->json (cond-> {}
-                                                         time-ms  (assoc :time-ms time-ms)
-                                                         metadata (assoc :metadata metadata)))
-                           :created_at         now}]})))))
-      iteration-id)))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [iteration-id   (new-uuid)
+              iteration-id-s (str iteration-id)
+              now            (now-ms)
+              conversation-turn-soul-id-s (when conversation-turn-id (->ref conversation-turn-id))
+              ;; Need conversation_turn_state_id (iteration FK points to conversation_turn_state)
+              conversation-turn-state (when conversation-turn-soul-id-s
+                                        (latest-conversation-turn-state tx-info conversation-turn-soul-id-s))
+              conversation-turn-state-id-s (:id conversation-turn-state)
+              ;; Need conversation_state_id for expression_soul
+              conversation-state-id (when conversation-turn-state
+                                      (:conversation_state_id
+                                       (query-one! tx-info
+                                         {:select [:conversation_state_id]
+                                          :from   :conversation_turn_soul
+                                          :where  [:= :id conversation-turn-soul-id-s]})))
+              ;; Compute position (1-indexed within this conversation_turn_state)
+              ;; Next position is `MAX(position)+1` (monotonic and survives
+              ;; row deletions), aliased as `:next_position` so the SQL
+              ;; column name and the Clojure key line up. HoneySQL renders
+              ;; `:row-count` as the SQL identifier `row_count`, and
+              ;; `as-unqualified-lower-maps` returns `:row_count` in the
+              ;; row map; reading via `:row-count` (with hyphen) was always
+              ;; `nil` and pinned every iteration to the first position, which
+              ;; collided with the `UNIQUE (conversation_turn_state_id, position)`
+              ;; constraint on the second iteration of every turn.
+              position  (or (:next_position
+                             (query-one! tx-info
+                               {:select [[[:coalesce [:+ [:max :position] 1] 1]
+                                          :next_position]]
+                                :from   :iteration
+                                :where  [:= :conversation_turn_state_id conversation-turn-state-id-s]}))
+                          1)
+              raw-response-s (some-> llm-raw-response str)]
+          ;; 1. Iteration row — includes the full block log inline as
+          ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Per-form
+          ;;    observations live here; expression_soul/expression_state
+          ;;    are only for named vars.
+          (let [blocks-vec (prepare-blocks-blob conversation-turn-soul-id-s position blocks)]
+            (execute! tx-info
+              {:insert-into :iteration
+               :values [(cond-> {:id                   iteration-id-s
+                                 :conversation_turn_state_id       conversation-turn-state-id-s
+                                 :position             position
+                                 :status               (normalize-status (cond answer :done error :error :else :done))
+                                 :llm_system_prompt    (when (seq llm-messages)
+                                                         (:content (first (filter #(= "system" (:role %)) llm-messages))))
+                                 :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
+                                 :llm_provider         (when llm-provider (name (->kw llm-provider)))
+                                 :llm_model            llm-model
+                                 :llm_thinking         (or thinking "")
+                                 :llm_full_duration_ms (or duration-ms 0)
+                                 :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
+                                 :llm_returned_empty_blocks (if (empty? blocks) 1 0)
+                                 :metadata             (when metadata (->json metadata))
+                                 :blocks               (->blob blocks-vec)
+                                 :llm_executable_code (some-> llm-executable-code str)
+                                 :llm_executable_blocks (when (some? llm-executable-blocks)
+                                                          (->json (vec llm-executable-blocks)))
+                                 :created_at           now
+                                 :finished_at          now}
+                          (some? answer-form-idx)
+                          (assoc :answer_form_idx answer-form-idx)
+                          raw-response-s
+                          (assoc :llm_raw_response         raw-response-s
+                            :llm_raw_response_preview (raw-response-preview raw-response-s)
+                            :llm_raw_response_length  (count raw-response-s)
+                            :llm_raw_response_sha256  (sha256-hex raw-response-s))
+                          ;; Token / cost columns — omitted when nil so the
+                          ;; row keeps NULL (the schema marks them nullable
+                          ;; for exactly this reason: an LLM call that
+                          ;; failed before returning usage produces no
+                          ;; tokens, no cost, no fake zeros).
+                          (some? (:input tokens))     (assoc :llm_input_tokens     (long (:input tokens)))
+                          (some? (:output tokens))    (assoc :llm_output_tokens    (long (:output tokens)))
+                          (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
+                          (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
+                          (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]}))
+          ;; 3. Vars → expression_soul (kind=var, stateful) + expression_state (versioned)
+          (when conversation-state-id
+            (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
+              (when name
+                (let [name-s (str name)
+                      ;; Find-or-create: partial unique index can't use ON CONFLICT
+                      existing (:id (query-one! tx-info
+                                      {:select [:id]
+                                       :from   :expression_soul
+                                       :where  [:and
+                                                [:= :conversation_state_id conversation-state-id]
+                                                [:= :name name-s]]}))
+                      soul-id (or existing
+                                (let [new-id (new-id)]
+                                  (execute! tx-info
+                                    {:insert-into :expression_soul
+                                     :values [{:id                    new-id
+                                               :conversation_state_id conversation-state-id
+                                               :kind                  "var"
+                                               :state_mode            "stateful"
+                                               :name                  name-s
+                                               :created_at            now}]})
+                                  new-id))
+                      max-ver (or (:v (query-one! tx-info
+                                        {:select [[[:max :version] :v]]
+                                         :from   :expression_state
+                                         :where  [:= :expression_soul_id soul-id]}))
+                                -1)]
+                  (execute! tx-info
+                    {:insert-into :expression_state
+                     :values [{:id                 (new-id)
+                               :expression_soul_id soul-id
+                               :iteration_id       iteration-id-s
+                               :version            (inc max-ver)
+                               :success            1
+                               :expr               code
+                               :result             (->blob (freeze-safe value))
+                               :metadata           (->json (cond-> {}
+                                                             time-ms  (assoc :time-ms time-ms)
+                                                             metadata (assoc :metadata metadata)))
+                               :created_at         now}]})))))
+          iteration-id)))))
 
 ;; =============================================================================
 ;; Read helpers
@@ -2541,15 +2836,17 @@
    Both must be expression_souls in the same conversation_state."
   [db-info {:keys [conversation-state-id downstream-soul-id upstream-soul-id]}]
   (when (ds db-info)
-    (let [id (str (UUID/randomUUID))]
-      (execute! db-info
-        {:insert-into :expression_dependency
-         :values [{:id                            id
-                   :conversation_state_id         (->id conversation-state-id)
-                   :downstream_expression_soul_id (->id downstream-soul-id)
-                   :upstream_expression_soul_id   (->id upstream-soul-id)
-                   :created_at                    (now-ms)}]})
-      id)))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [id (new-id)]
+          (execute! tx-info
+            {:insert-into :expression_dependency
+             :values [{:id                            id
+                       :conversation_state_id         (->id conversation-state-id)
+                       :downstream_expression_soul_id (->id downstream-soul-id)
+                       :upstream_expression_soul_id   (->id upstream-soul-id)
+                       :created_at                    (now-ms)}]})
+          id)))))
 
 (defn db-list-dependencies
   "List all dependency edges for a conversation_state."
