@@ -226,17 +226,16 @@
     ;; in the Alt+Shift+↑/↓ picker, not as persistent header tabs.
     (when (pos? title-w)
       (p/clear-styles! g)
+      (p/set-colors! g t/header-fg t/terminal-bg)
       (if placeholder?
-        (do (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-          (p/enable! g p/ITALIC))
-        (do (p/set-colors! g t/footer-fg-strong t/terminal-bg)
-          (p/enable! g p/BOLD)))
+        (p/enable! g p/ITALIC)
+        (p/enable! g p/BOLD))
       (p/put-str! g title-col content-row title-trim)
       (p/clear-styles! g))
 
     ;; RIGHT — copy conversation ID block + Markdown transcript export label.
     ;; Visual hover feedback: when either clickable region is hovered,
-    ;; that exact affordance brightens and gains BOLD. Terminal emulators
+    ;; that exact affordance shifts to header-hover-fg and gains BOLD. Terminal emulators
     ;; don't allow applications to control the mouse cursor shape, so this
     ;; is the strongest affordance we can offer.
     (when (pos? right-w)
@@ -246,20 +245,17 @@
             id-hovered?      (and hovered-row? (= :copy-id hovered-kind))
             markdown-hovered? (and hovered-row? (= :copy-as-markdown hovered-kind))]
         (p/clear-styles! g)
-        (if id-hovered?
-          (do (p/set-colors! g t/footer-fg-strong t/terminal-bg)
-            (p/enable! g p/BOLD))
-          (p/set-colors! g t/footer-fg-muted t/terminal-bg))
+        (p/set-colors! g (if id-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+        (when id-hovered?
+          (p/enable! g p/BOLD))
         (p/put-str! g right-col content-row id-copy-text)
         (p/clear-styles! g)
-        (p/set-colors! g t/footer-fg-strong t/terminal-bg)
-        (p/enable! g p/BOLD)
+        (p/set-colors! g t/header-fg t/terminal-bg)
         (p/put-str! g (+ right-col id-copy-w) content-row right-block-separator)
         (p/clear-styles! g)
-        (if markdown-hovered?
-          (do (p/set-colors! g t/footer-fg-strong t/terminal-bg)
-            (p/enable! g p/BOLD))
-          (p/set-colors! g t/footer-fg-muted t/terminal-bg))
+        (p/set-colors! g (if markdown-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+        (when markdown-hovered?
+          (p/enable! g p/BOLD))
         (p/put-str! g md-copy-col content-row md-copy-text)
         (p/clear-styles! g)
         (when full-uuid

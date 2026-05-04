@@ -49,7 +49,7 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 15 (count editing/editing-symbols)))
+    (expect (= 16 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'read-all-lines}
@@ -57,6 +57,8 @@
     (expect (some #{'update-file}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'bash}
+              (map :ext.symbol/sym editing/editing-symbols)))
+    (expect (some #{'silent!}
               (map :ext.symbol/sym editing/editing-symbols))))
 
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
@@ -82,18 +84,22 @@
                 (:ext.symbol/examples bash-symbol))))))
 
 (defdescribe vis-cat-structured-shape-test
-  (it "returns a 5-key map: :path :offset :total-lines :truncated-by :lines"
+  (it "returns structured pagination metadata plus raw :lines"
     (let [path (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      (expect (= #{:path :offset :total-lines :truncated-by :lines}
+      (expect (= #{:path :offset :total-lines :truncated-by :next-offset
+                   :effective-limit :effective-char-limit :lines}
                 (set (keys out))))
       (expect (string? (:path out)))
       (expect (= 1 (:offset out)))
       ;; str/split-lines drops the trailing empty after final \n.
       (expect (= 3 (:total-lines out)))
       (expect (= ["alpha" "beta" "gamma"] (:lines out)))
-      (expect (= :end-of-file (:truncated-by out)))))
+      (expect (= :end-of-file (:truncated-by out)))
+      (expect (nil? (:next-offset out)))
+      (expect (nil? (:effective-limit out)))
+      (expect (= 6000 (:effective-char-limit out)))))
 
   (it ":lines carries raw strings — no leading line-number prefix"
     (let [path (write-temp! "raw.txt" "   indented\nplain\n")
@@ -113,7 +119,9 @@
       (expect (= 10 (:total-lines out)))
       (expect (= ["line3" "line4" "line5" "line6"] (:lines out)))
       ;; Took 4 of remaining 8 lines — limit hit, more file remains.
-      (expect (= :line-limit (:truncated-by out)))))
+      (expect (= :line-limit (:truncated-by out)))
+      (expect (= 7 (:next-offset out)))
+      (expect (= 4 (:effective-limit out)))))
 
   (it ":truncated-by :char-limit when the slice overflows :char-limit"
     (let [;; 10 lines * (line<n>=6 chars + \n) ~= 70 chars total. A
@@ -136,11 +144,48 @@
       (expect (= 2 (:total-lines out)))
       (expect (= :end-of-file (:truncated-by out)))))
 
-  (it "rejects non-positive :offset / :limit / :char-limit"
+  (it "accepts :max-lines as a compatibility alias for :limit"
+    (let [path (write-temp! "max-lines-alias.txt" "a\nb\nc\nd\n")
+          read-file (private-fn "read-file")
+          out (read-file path {:offset 2 :max-lines 2})]
+      (expect (= ["b" "c"] (:lines out)))
+      (expect (= 2 (:effective-limit out)))
+      (expect (= 4 (:next-offset out)))
+      (expect (= :line-limit (:truncated-by out)))))
+
+  (it "rejects unknown, non-positive, and conflicting v/cat opts"
     (let [path (write-temp! "validate.txt" "x\n")
           read-file (private-fn "read-file")]
-      (doseq [bad-opts [{:offset 0} {:offset -1} {:limit 0} {:char-limit 0}]]
+      (doseq [bad-opts [{:offset 0}
+                        {:offset -1}
+                        {:limit 0}
+                        {:char-limit 0}
+                        {:max-lines 0}
+                        {:max-line 2}
+                        {:max-lines 2 :limit 3}]]
         (expect (throws? clojure.lang.ExceptionInfo #(read-file path bad-opts)))))))
+
+(defdescribe vis-silent-tool-test
+  (it "returns only shape and marks the result silent"
+    (let [silent-tool (private-fn "silent-tool")
+          out (silent-tool {:huge (vec (range 100))
+                            :nested {:answer "x"}})]
+      (expect (extension/tool-result? out))
+      (expect (= :vis/silent (:rendering-kind out)))
+      (expect (= :markdown (:journal (extension/presentation out))))
+      (expect (= {:type :map
+                  :count 2
+                  :keys [:huge :nested]
+                  :shape {:huge {:type :vector
+                                  :count 100
+                                  :items {:type :int}}
+                          :nested {:type :map
+                                   :count 1
+                                   :keys [:answer]
+                                   :shape {:answer {:type :string
+                                                    :chars 1
+                                                    :lines 1}}}}}
+                (:result out))))))
 
 (defdescribe vis-rg-structured-shape-test
   (it "returns a 2-key map: :hits + :truncated-by"

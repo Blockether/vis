@@ -18,6 +18,7 @@
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
 (def ^:private format-clojure-ansi @#'render/format-clojure-ansi)
 (def ^:private input-more-hint @#'render/input-more-hint)
+(def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
 
 (defn- run-concurrently!
   [thunks]
@@ -120,7 +121,19 @@
 
     (it "does not invent markers for plain wrapped prose"
       (let [lines (render/wrap-text "alpha beta gamma" 8)]
-        (expect (= ["alpha" "beta" "gamma"] lines))))))
+        (expect (= ["alpha" "beta" "gamma"] lines))))
+
+    (it "keeps inline code styling active across wrapped command continuations"
+      (let [lines        (md->lines "Run `vis channels tui --conversation-id abcdef0123456789 --resume` now" 18 :answer)
+            command-rows (filter #(or (str/includes? % "channels")
+                                    (str/includes? % "conversation")
+                                    (str/includes? % "abcdef")
+                                    (str/includes? % "resume"))
+                           lines)]
+        (expect (seq command-rows))
+        (expect (every? #(<= (p/display-width %) 18) lines))
+        (expect (every? #(str/includes? % p/INLINE_CODE_ON) command-rows))
+        (expect (every? #(str/includes? % p/INLINE_CODE_OFF) command-rows))))))
 
 (defdescribe markdown-headings-test
   (describe "ATX headings 1-3 each carry their own marker"
@@ -1983,3 +1996,24 @@
       (expect (= 5 height))
       (expect (= 3 (:h bubble-fill)))
       (expect (= bubble-last-row (dec gap-row))))))
+
+(defdescribe bubble-row-clipping-test
+  (it "clips prewrapped formatter rows at bubble content width"
+    (let [plain   (apply str (repeat 80 "x"))
+          marked  (str p/MARKER_CODE_OK (apply str (repeat 80 "y")))
+          clipped (clip-lines-preserving-markers [plain marked] 17)]
+      (expect (= 2 (count clipped)))
+      (expect (= (subs plain 0 17) (first clipped)))
+      (expect (= p/MARKER_CODE_OK (marker-of (second clipped))))
+      (expect (<= (p/display-width (first clipped)) 17))
+      (expect (<= (p/display-width (body-of (second clipped))) 17))))
+
+  (it "clips ANSI-colored Clojure formatter rows without handing ESC to Lanterna"
+    (let [ansi-line (str p/MARKER_CODE_OK
+                      "\u001b[32m(\u001b[0m\u001b[34mdef\u001b[0m "
+                      "\u001b[30mrequest-classification\u001b[0m "
+                      "\u001b[35m:evidence-bearing-code-change\u001b[0m")
+          clipped   (first (clip-lines-preserving-markers [ansi-line] 12))]
+      (expect (= p/MARKER_CODE_OK (marker-of clipped)))
+      (expect (str/includes? clipped "\u001b[32m"))
+      (expect (<= (p/display-width (strip-ansi (body-of clipped))) 12)))))

@@ -22,6 +22,24 @@
       (expect (= [{:name "beta"} {:name "alpha"} {:name "gamma"}]
                 (move-model-to-front [{:name "alpha"} {:name "beta"} {:name "gamma"}] 1))))))
 
+(defdescribe provider-card-scroll-test
+  (it "keeps selected model cards inside a visible scroll window"
+    (let [card-visible-count @#'provider/card-visible-count
+          card-window-start  @#'provider/card-window-start]
+      (expect (= 2 (card-visible-count 7)))
+      (expect (= 3 (card-visible-count 8)))
+      (expect (= 0 (card-window-start 0 0 8 20)))
+      (expect (= 10 (card-window-start 12 0 8 20)))
+      (expect (= 17 (card-window-start 19 10 8 20)))))
+
+  (it "shows a scrollbar thumb for overflowing model/provider card lists"
+    (let [card-scrollbar-geometry @#'provider/card-scrollbar-geometry]
+      (expect (= {:track-h 8 :thumb-h 1 :thumb-top 0}
+                (card-scrollbar-geometry 8 20 0)))
+      (expect (= {:track-h 8 :thumb-h 1 :thumb-top 7}
+                (card-scrollbar-geometry 8 20 17)))
+      (expect (nil? (card-scrollbar-geometry 8 3 0))))))
+
 (defdescribe persisted-provider-config-test
   (it "persists the dialog provider without runtime adapter coercion"
     (let [persisted-provider-config @#'provider/persisted-provider-config

@@ -101,6 +101,27 @@
       (expect (str/includes? out ":op :sci/eval"))
       (expect (str/includes? out ":status :done"))))
 
+  (it "caps whole journal rendering by token budget and keeps newest evidence"
+    (let [blocks (mapv (fn [idx]
+                         {:code (str "(probe " idx ")")
+                          :result (apply str (repeat (* 2 prompt/MAX_RESULT_DISPLAY_CHARS) \x))
+                          :provenance {:ref (str "turn/3f2a91c0/iteration/1/block/" idx)
+                                       :op :sci/eval
+                                       :status :done}})
+                   (range 1 120))
+          out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")}
+                {:active-extensions   NO_EXTENSIONS
+                 :blocks-by-iteration [[1 {:thinking nil :blocks blocks}]]
+                 :iteration           1})]
+      (expect (string? out))
+      ;; nil model uses the conservative 32k context fallback; journal
+      ;; budget is 50% of that and token count falls back to chars/4.
+      (expect (< (count out) 70000))
+      (expect (str/includes? out "older journal lines omitted"))
+      (expect (str/includes? out "50% of model context"))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/119"))))
+
   ;; Helpers ------------------------------------------------------------------
   ;;
   ;; New `:blocks-by-iteration` shape is `[[pos {:thinking :blocks}]]`

@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest testing is]]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
+            [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [com.googlecode.lanterna.input MouseActionType]))
 
@@ -129,9 +130,10 @@
       (is (some #(= :differentiate-turns (:key %)) (settings-rows)))
       (is (some #(= :mouse-selection-copy (:key %)) (settings-rows))))
 
-    (testing "conversation picker formats only switchable conversation table rows"
-      (let [rows (conversation-items [{:id "123e4567-e89b-12d3-a456-426614174000"
-                                       :title "Title"
+    (testing "conversation picker formats command rows and column-aligned conversation table rows"
+      (let [body-w 96
+            rows (conversation-items [{:id "123e4567-e89b-12d3-a456-426614174000"
+                                       :title (str "Title " (apply str (repeat 80 "汉")))
                                        :turn-count 2
                                        :modified-at #inst "2024-01-03T04:05:00.000-00:00"
                                        :created-at #inst "2024-01-01T01:02:00.000-00:00"}
@@ -141,16 +143,23 @@
                                        :modified-at nil
                                        :created-at #inst "2024-01-02T01:02:00.000-00:00"}]
                    "123e4567-e89b-12d3-a456-426614174000"
-                   96)
-            active-label (:label (first rows))
-            inactive-label (:label (second rows))]
-        (is (= 2 (count rows)))
-        (is (every? #(= :switch (:action %)) rows))
+                   body-w)
+            action-labels (mapv :label (take 2 rows))
+            active-label (:label (nth rows 2))
+            inactive-label (:label (nth rows 3))]
+        (is (= [:new :fork :switch :switch] (mapv :action rows)))
+        (is (= [body-w body-w body-w body-w]
+              (mapv (comp p/display-width :label) rows)))
+        (is (every? #(= body-w (p/display-width %))
+              [(dlg/conversation-dialog-header body-w)]))
+        (is (str/includes? (first action-labels) "new"))
+        (is (str/includes? (second action-labels) "fork"))
         (is (str/includes? active-label "● 123e4567"))
         (is (str/includes? active-label "    2"))
         (is (str/includes? active-label "2024-01-03 04:05"))
         (is (str/includes? active-label "2024-01-01 01:02"))
         (is (str/includes? active-label "Title"))
+        (is (str/includes? active-label "…"))
         (is (str/includes? inactive-label "  abcdef00"))
         (is (str/includes? inactive-label "    0"))
         (is (str/includes? inactive-label "—"))

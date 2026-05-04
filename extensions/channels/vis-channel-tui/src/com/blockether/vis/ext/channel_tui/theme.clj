@@ -7,6 +7,10 @@
 (def terminal-bg    (TextColor$RGB. 255 255 255))  ;; pure white
 (def text-fg        (TextColor$RGB. 30 30 30))     ;; near-black
 
+;; Header
+(def header-fg       text-fg)                 ;; same near-black as body text
+(def header-hover-fg (TextColor$RGB. 70 70 70)) ;; subtle hover contrast, not dimmed
+
 ;; Boxes (messages + input)
 (def box-bg         (TextColor$RGB. 255 255 255))  ;; white
 (def box-fg         (TextColor$RGB. 30 30 30))     ;; near-black
