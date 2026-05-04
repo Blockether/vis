@@ -35,8 +35,7 @@
   (:import
    (com.zaxxer.hikari HikariConfig HikariDataSource)
    (java.io File RandomAccessFile)
-   (java.lang ProcessHandle)
-   (java.nio.channels FileLock OverlappingFileLockException)
+   (java.nio.channels FileLock)
    (java.security MessageDigest)
    (java.sql SQLException)
    (java.util.concurrent.atomic AtomicLong)
@@ -437,21 +436,7 @@
   ;; distinct pool names (and thread names) instead of colliding.
   (AtomicLong.))
 
-(def ^:private ^String DB_LOCK_FILENAME "vis.db.lock")
-
-(defonce ^:private persistent-db-locks
-  ;; Process-local token-counted locks keyed by canonical DB directory.
-  ;; SQLite serializes writers, but Vis has process-level mutable runtime
-  ;; state (open Hikari pools, WAL handles, migrations, telemetry writes).
-  ;; A second JVM writing the same persistent store can leave one process
-  ;; talking to an unlinked old inode after local DB reset/recreation.
-  (atom {}))
-
-(defn- current-pid-str []
-  (try
-    (str (.pid (ProcessHandle/current)))
-    (catch Throwable _
-      "unknown")))
+(def ^:private ^String DB_MIGRATION_LOCK_FILENAME "vis.db.migrate.lock")
 
 (defn- close-lock-resources!
   [{:keys [^FileLock lock ^java.nio.channels.FileChannel channel ^RandomAccessFile raf]}]
@@ -460,78 +445,36 @@
                   #(when raf (.close raf))]]
     (try (close!) (catch Throwable _ nil))))
 
-(defn- lock-owner [^File lock-file]
-  (try
-    (some-> (slurp lock-file) str/trim not-empty)
-    (catch Throwable _ nil)))
-
-(defn- persistent-db-lock-error [canonical-dir ^File lock-file]
-  (ex-info
-    (str "Vis persistent DB is already open by another process: " canonical-dir
-      ". Close the other Vis process or route work through its nREPL/dev CLI."
-      (when-let [owner (lock-owner lock-file)]
-        (str " Lock owner PID: " owner ".")))
-    {:type :vis/persistent-db-already-open
-     :path canonical-dir
-     :lock-file (.getAbsolutePath lock-file)
-     :owner-pid (lock-owner lock-file)}))
-
-(defn- acquire-persistent-db-lock! [^String dir]
-  (let [canonical-dir (.getCanonicalPath (File. dir))
-        token         (Object.)]
-    (.mkdirs (File. canonical-dir))
-    (locking persistent-db-locks
-      (if-let [_held (get @persistent-db-locks canonical-dir)]
-        (do
-          (swap! persistent-db-locks update-in [canonical-dir :tokens] conj token)
-          {:path canonical-dir :token token})
-        (let [lock-file (File. canonical-dir DB_LOCK_FILENAME)
-              raf       (RandomAccessFile. lock-file "rw")
-              channel   (.getChannel raf)
-              lock      (try
-                          (.tryLock channel)
-                          (catch OverlappingFileLockException _ nil)
-                          (catch Throwable t
-                            (close-lock-resources! {:channel channel :raf raf})
-                            (throw t)))]
-          (if lock
-            (do
-              (.setLength raf 0)
-              (.write raf (.getBytes (str (current-pid-str) "\n") "UTF-8"))
-              (let [entry {:lock lock :channel channel :raf raf :tokens #{token}
-                           :lock-file (.getAbsolutePath lock-file)}]
-                (swap! persistent-db-locks assoc canonical-dir entry)
-                {:path canonical-dir :token token}))
-            (do
-              (close-lock-resources! {:channel channel :raf raf})
-              (throw (persistent-db-lock-error canonical-dir lock-file)))))))))
-
-(defn- release-persistent-db-lock! [db-info]
-  (when-let [lock-key (:lock-key db-info)]
-    (when-let [token (:lock-token db-info)]
-      (locking persistent-db-locks
-        (when-let [held (get @persistent-db-locks lock-key)]
-          (when (contains? (:tokens held) token)
-            (let [next-tokens (disj (:tokens held) token)]
-              (if (seq next-tokens)
-                (swap! persistent-db-locks assoc-in [lock-key :tokens] next-tokens)
-                (do
-                  (swap! persistent-db-locks dissoc lock-key)
-                  (close-lock-resources! held))))))))))
+(defn- with-migration-lock!
+  "Serialize Flyway and inline V1 repair across JVMs while allowing the
+   database itself to stay multiprocess-open for normal SQLite WAL writes."
+  [^String canonical-dir f]
+  (let [lock-file (File. canonical-dir DB_MIGRATION_LOCK_FILENAME)
+        raf       (RandomAccessFile. lock-file "rw")
+        channel   (.getChannel raf)
+        lock      (try
+                    (.lock channel)
+                    (catch Throwable t
+                      (close-lock-resources! {:channel channel :raf raf})
+                      (throw t)))]
+    (try
+      (f)
+      (finally
+        (close-lock-resources! {:lock lock :channel channel :raf raf})))))
 
 (defn- open-sqlite-at-dir [^String dir]
-  (let [{:keys [path token]} (acquire-persistent-db-lock! dir)]
-    (try
-      (let [file   (str path "/" DB_FILENAME)
-            raw    (raw-sqlite-datasource (str "jdbc:sqlite:" file))
-            pool   (pooled-datasource raw
-                     (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
-        (install-schema! pool)
-        {:datasource pool :conn pool :path path :db-file file :backend :sqlite
-         :lock-key path :lock-token token})
-      (catch Throwable t
-        (release-persistent-db-lock! {:lock-key path :lock-token token})
-        (throw t)))))
+  (let [path (.getCanonicalPath (File. dir))]
+    (.mkdirs (File. path))
+    (let [file (str path "/" DB_FILENAME)
+          raw  (raw-sqlite-datasource (str "jdbc:sqlite:" file))
+          pool (pooled-datasource raw
+                 (str "vis-rlm-disk-" (.incrementAndGet pool-counter)))]
+      (try
+        (with-migration-lock! path #(install-schema! pool))
+        {:datasource pool :conn pool :path path :db-file file :backend :sqlite}
+        (catch Throwable t
+          (try (.close ^HikariDataSource pool) (catch Throwable _ nil))
+          (throw t))))))
 
 (def ^:private ^AtomicLong mem-counter
   (AtomicLong.))
@@ -581,13 +524,10 @@
    `:external` mode (caller-supplied DataSource) it's a no-op — the
    caller still owns the handle they passed in."
   [store]
-  (try
-    (when (and store (:owned? store))
-      (let [^Object ds (:datasource store)]
-        (when (instance? java.io.Closeable ds)
-          (try (.close ^java.io.Closeable ds) (catch Throwable _ nil)))))
-    (finally
-      (release-persistent-db-lock! store)))
+  (when (and store (:owned? store))
+    (let [^Object ds (:datasource store)]
+      (when (instance? java.io.Closeable ds)
+        (try (.close ^java.io.Closeable ds) (catch Throwable _ nil)))))
   nil)
 
 ;; =============================================================================

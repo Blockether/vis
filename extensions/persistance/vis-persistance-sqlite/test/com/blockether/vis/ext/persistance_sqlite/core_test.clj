@@ -21,7 +21,7 @@
    [next.jdbc :as jdbc]
    [sci.core :as sci])
   (:import
-   (java.io File RandomAccessFile)
+   (java.io File)
    (java.util.concurrent CountDownLatch TimeUnit)))
 
 ;; ─── from db_test.clj ───
@@ -44,41 +44,99 @@
 (defn- private-core-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.persistance-sqlite.core" name))))
 
-(defdescribe persistent-db-process-lock-test
-  (it "rejects a persistent DB open when another process holds the lock"
-    (let [dir       (fs/create-temp-dir {:prefix "vis-db-lock-"})
-          lock-file (File. (str dir) "vis.db.lock")
-          raf       (RandomAccessFile. lock-file "rw")
-          channel   (.getChannel raf)
-          lock      (.lock channel)]
+(def ^:private multiprocess-child-code
+  "(require '[com.blockether.vis.core :as vis])
+   (let [dir    (System/getProperty \"vis.test.db-dir\")
+         marker (some-> (System/getProperty \"vis.test.marker\") not-empty)
+         title  (or (System/getProperty \"vis.test.title\") \"child\")
+         s      (vis/db-create-connection! dir)]
+     (try
+       (when marker (spit marker \"ready\"))
+       (Thread/sleep 250)
+       (vis/db-store-conversation! s {:channel :child :title title})
+       (println \"CHILD-DONE\" title)
+       (finally
+         (vis/db-dispose-connection! s))))")
+
+(defn- java-command []
+  (str (fs/file (System/getProperty "java.home") "bin" "java")))
+
+(defn- start-multiprocess-writer!
+  ([dir marker]
+   (start-multiprocess-writer! dir marker "child"))
+  ([dir marker title]
+   (let [pb (ProcessBuilder.
+              ^java.util.List
+              [(java-command)
+               "-cp" (System/getProperty "java.class.path")
+               (str "-Dvis.test.db-dir=" dir)
+               (str "-Dvis.test.marker=" (or marker ""))
+               (str "-Dvis.test.title=" title)
+               "clojure.main"
+               "-e" multiprocess-child-code])]
+     (.redirectErrorStream pb true)
+     (.start pb))))
+
+(defn- wait-for-file
+  [path timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (cond
+        (fs/exists? path) true
+        (>= (System/currentTimeMillis) deadline) false
+        :else (do
+                (Thread/sleep 25)
+                (recur))))))
+
+(defn- expect-child-success!
+  [^Process child]
+  (expect (true? (.waitFor child 10 TimeUnit/SECONDS)))
+  (let [output (slurp (.getInputStream child))]
+    (expect (= 0 (.exitValue child)))
+    (expect (str/includes? output "CHILD-DONE"))))
+
+(defdescribe sqlite-multiprocess-write-test
+  (it "allows two JVMs to open the same persistent store and write while both are alive"
+    (let [dir    (fs/create-temp-dir {:prefix "vis-db-multiprocess-"})
+          marker (fs/file dir "child-opened")]
       (try
-        (let [thrown? (try
-                        (vis/db-create-connection! (str dir))
-                        false
-                        (catch clojure.lang.ExceptionInfo e
-                          (str/includes? (ex-message e) "already open by another process")))]
-          (expect (true? thrown?)))
+        (let [parent (vis/db-create-connection! (str dir))
+              child  (start-multiprocess-writer! (str dir) (str marker))]
+          (try
+            (expect (true? (wait-for-file marker 10000)))
+            (vis/db-store-conversation! parent {:channel :parent :title "parent"})
+            (expect-child-success! child)
+            (expect (= #{"child" "parent"}
+                      (set (map :title
+                             (raw-query parent {:select [:title]
+                                                :from   [:conversation_state]})))))
+            (finally
+              (when (.isAlive child)
+                (.destroyForcibly child))
+              (vis/db-dispose-connection! parent))))
         (finally
-          (.release lock)
-          (.close channel)
-          (.close raf)
           (fs/delete-tree dir)))))
 
-  (it "releases the persistent DB lock on dispose"
-    (let [dir (fs/create-temp-dir {:prefix "vis-db-lock-release-"})]
+  (it "serializes first-open migrations across JVMs"
+    (let [dir (fs/create-temp-dir {:prefix "vis-db-multiprocess-migrate-"})]
       (try
-        (let [s (vis/db-create-connection! (str dir))]
-          (vis/db-dispose-connection! s))
-        (let [lock-file (File. (str dir) "vis.db.lock")
-              raf       (RandomAccessFile. lock-file "rw")
-              channel   (.getChannel raf)
-              lock      (.tryLock channel)]
+        (let [child-a (start-multiprocess-writer! (str dir) nil "child-a")
+              child-b (start-multiprocess-writer! (str dir) nil "child-b")]
           (try
-            (expect (some? lock))
+            (expect-child-success! child-a)
+            (expect-child-success! child-b)
+            (let [s (vis/db-create-connection! (str dir))]
+              (try
+                (expect (= #{"child-a" "child-b"}
+                          (set (map :title
+                                 (raw-query s {:select [:title]
+                                               :from   [:conversation_state]})))))
+                (finally
+                  (vis/db-dispose-connection! s))))
             (finally
-              (when lock (.release lock))
-              (.close channel)
-              (.close raf))))
+              (doseq [child [child-a child-b]]
+                (when (.isAlive child)
+                  (.destroyForcibly child))))))
         (finally
           (fs/delete-tree dir))))))
 

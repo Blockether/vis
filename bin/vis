@@ -30,6 +30,59 @@ repo_root="$(cd -P "$bin_dir/.." && pwd)"
 
 cd "$repo_root"
 
+measure_enabled() {
+  case "${VIS_MEASURE:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+measure_now_ms() {
+  perl -MTime::HiRes=time -e 'printf "%.3f", time() * 1000'
+}
+
+measure_log_since() {
+  local label="$1"
+  local start_ms="$2"
+  if measure_enabled; then
+    local end_ms elapsed_ms
+    end_ms="$(measure_now_ms)"
+    elapsed_ms="$(awk -v end="$end_ms" -v start="$start_ms" 'BEGIN { printf "%.1f", end - start }')"
+    printf '[vis measure] shell:%s %s ms\n' "$label" "$elapsed_ms" >&2
+  fi
+}
+
+measure_log() {
+  if measure_enabled; then
+    printf '[vis measure] shell:%s\n' "$1" >&2
+  fi
+}
+
+run_measured_or_exec() {
+  local label="$1"
+  shift
+  if measure_enabled; then
+    local start_ms code
+    start_ms="$(measure_now_ms)"
+    "$@"
+    code=$?
+    measure_log_since "$label exit=$code" "$start_ms"
+    exit "$code"
+  else
+    exec "$@"
+  fi
+}
+
+args=()
+for arg in "$@"; do
+  if [[ "$arg" == "--measure" ]]; then
+    export VIS_MEASURE=1
+  else
+    args+=("$arg")
+  fi
+done
+set -- "${args[@]}"
+
 crac_disabled() {
   case "${VIS_CRAC:-auto}" in
     0|false|FALSE|no|NO|off|OFF|disable|disabled) return 0 ;;
@@ -46,7 +99,7 @@ crac_forced() {
 
 crac_supported() {
   crac_forced && return 0
-  java -XX:+PrintFlagsFinal -version 2>&1 | grep -Eq 'CRaC(CheckpointTo|RestoreFrom)'
+  "${JAVA_CMD:-java}" -XX:+PrintFlagsFinal -version 2>&1 | grep -Eq 'CRaC(CheckpointTo|RestoreFrom)'
 }
 
 crac_rebuild_requested() {
@@ -93,25 +146,55 @@ crac_fingerprint() {
   } | crac_sha256
 }
 
-if ! crac_disabled && crac_supported; then
-  image_dir="${VIS_CRAC_IMAGE_DIR:-$HOME/.vis/crac/bin-vis}"
-  stamp_file="${image_dir%/}.fingerprint"
-  fingerprint="$(crac_fingerprint)"
-  if crac_rebuild_requested || ! crac_image_has_entries "$image_dir" || [[ ! -f "$stamp_file" ]] || [[ "$(<"$stamp_file")" != "$fingerprint" ]]; then
-    rm -rf "$image_dir"
-    mkdir -p "$image_dir"
-    echo "vis: building CRaC image at $image_dir" >&2
-    if ! clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCCheckpointTo="$image_dir" -M:vis-crac-bootstrap; then
-      echo "vis: CRaC bootstrap failed; falling back to cold Clojure startup. Set VIS_CRAC=0 to disable." >&2
-      exec clojure -M:vis "$@"
+if crac_disabled; then
+  measure_log "crac disabled by VIS_CRAC=$VIS_CRAC"
+else
+  crac_probe_start_ms="$(measure_now_ms)"
+  if crac_supported; then
+    measure_log_since "crac support probe: supported" "$crac_probe_start_ms"
+    image_dir="${VIS_CRAC_IMAGE_DIR:-$HOME/.vis/crac/bin-vis}"
+    stamp_file="${image_dir%/}.fingerprint"
+    fingerprint_start_ms="$(measure_now_ms)"
+    fingerprint="$(crac_fingerprint)"
+    measure_log_since "crac fingerprint" "$fingerprint_start_ms"
+    rebuild_reason=""
+    if crac_rebuild_requested; then
+      rebuild_reason="VIS_CRAC_REBUILD=1"
+    elif ! crac_image_has_entries "$image_dir"; then
+      rebuild_reason="missing image"
+    elif [[ ! -f "$stamp_file" ]]; then
+      rebuild_reason="missing fingerprint"
+    elif [[ "$(<"$stamp_file")" != "$fingerprint" ]]; then
+      rebuild_reason="stale fingerprint"
     fi
-    if ! crac_image_has_entries "$image_dir"; then
-      echo "vis: CRaC bootstrap produced no image; falling back to cold Clojure startup." >&2
-      exec clojure -M:vis "$@"
+    if [[ -n "$rebuild_reason" ]]; then
+      rm -rf "$image_dir"
+      mkdir -p "$image_dir"
+      echo "vis: building CRaC image at $image_dir ($rebuild_reason)" >&2
+      checkpoint_start_ms="$(measure_now_ms)"
+      if ! clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCCheckpointTo="$image_dir" -M:vis-crac-bootstrap; then
+        measure_log_since "crac checkpoint failed" "$checkpoint_start_ms"
+        echo "vis: CRaC bootstrap failed; falling back to cold Clojure startup. Set VIS_CRAC=0 to disable." >&2
+        run_measured_or_exec "process cold clojure -M:vis" clojure -M:vis "$@"
+      fi
+      measure_log_since "crac checkpoint" "$checkpoint_start_ms"
+      if ! crac_image_has_entries "$image_dir"; then
+        echo "vis: CRaC bootstrap produced no image; falling back to cold Clojure startup." >&2
+        run_measured_or_exec "process cold clojure -M:vis" clojure -M:vis "$@"
+      fi
+      printf '%s\n' "$fingerprint" > "$stamp_file"
+    else
+      measure_log "crac image fresh: $image_dir"
     fi
-    printf '%s\n' "$fingerprint" > "$stamp_file"
+    measure_log "exec crac restore: $image_dir"
+    run_measured_or_exec "process crac restore" clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCRestoreFrom="$image_dir" -M:vis "$@"
+  else
+    measure_log_since "crac support probe: unsupported" "$crac_probe_start_ms"
+    if crac_rebuild_requested || crac_forced; then
+      echo "vis: CRaC unavailable on this JVM; falling back to cold Clojure startup. Install/use a CRaC JDK or set VIS_CRAC=0 to silence this." >&2
+    fi
   fi
-  exec clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCRestoreFrom="$image_dir" -M:vis "$@"
 fi
 
-exec clojure -M:vis "$@"
+measure_log "exec cold clojure -M:vis"
+run_measured_or_exec "process cold clojure -M:vis" clojure -M:vis "$@"
