@@ -150,14 +150,18 @@
               (md/code-block "clojure" "(println :ok)")))
     (expect (= "```\nplain\n```"
               (md/code-block "plain")))
-    (it "accepts keyword and symbol language identifiers"
-      (expect (= "```clojure\n(println :ok)\n```"
-                (md/code-block :clojure "(println :ok)")))
-      (expect (= "```edn\n{:ok true}\n```"
-                (md/code-block 'edn "{:ok true}"))))
-    (it "preserves embedded newline runs"
-      (expect (= "```\na\nb\n```"
-                (md/code-block "a\nb")))))
+    (expect (= "```clojure\n(println :ok)\n```"
+              (md/code-block :clojure "(println :ok)")))
+    (expect (= "```edn\n{:ok true}\n```"
+              (md/code-block 'edn "{:ok true}")))
+    (expect (= "```\na\nb\n```"
+              (md/code-block "a\nb"))))
+
+  (it "code-block rejects nil body so missing tool envelope access fails loudly"
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/code-block nil)))
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/code-block "text" nil))))
 
   (it "blockquote prefixes every line"
     (expect (= "> a\n> b" (md/blockquote "a\nb")))
