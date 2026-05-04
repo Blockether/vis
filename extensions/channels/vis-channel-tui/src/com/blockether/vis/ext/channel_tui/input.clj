@@ -11,8 +11,9 @@
    Clipboard read/write therefore goes through OS shell helpers
    only: `pbcopy` / `pbpaste` on macOS (always present since 10.0),
    `wl-copy` / `wl-paste` on Wayland, `xclip` / `xsel` on X11. AWT
-   is gone for good - not a fallback, not a comment, not an
-   import."
+   remains absent from this namespace so clipboard helpers are safe in
+   native terminal sessions. The optional standalone TUI backend isolates
+   its Swing/AWT usage in `channel-tui.standalone`."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [taoensso.telemere :as tel])
@@ -359,14 +360,13 @@
 
 ;;; ── Clipboard (shell helpers, AWT-free) ─────────────────────────────────────
 ;;
-;; Why no AWT, anywhere: importing `java.awt.Toolkit` on a macOS JVM
-;; is enough to register a Dock icon and steal focus from the user's
-;; terminal the first time the AWT subsystem initialises. We saw it
-;; on a normal `verify.sh` run - a single class-load triggered the
-;; Cocoa bridge and yanked the foreground app away. Even guarding
-;; the call sites isn't enough; the side effect is at the JVM /
-;; class-init layer, well below our control. The only safe choice
-;; is to keep `java.awt.*` out of the codebase entirely.
+;; Why no AWT here: importing `java.awt.Toolkit` on a macOS JVM is enough
+;; to register a Dock icon and steal focus from the user's terminal the
+;; first time the AWT subsystem initialises. We saw it on a normal
+;; `verify.sh` run - a single class-load triggered the Cocoa bridge and
+;; yanked the foreground app away. The optional standalone backend may
+;; use Swing/AWT, but this native-terminal input/clipboard namespace stays
+;; AWT-free by construction.
 ;;
 ;; Two shell candidate lists, one per direction. Ordered most-likely
 ;; first per platform but every entry is tried in turn, so a macOS

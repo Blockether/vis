@@ -20,6 +20,17 @@
 (def ^:private terminal-width          #'main/terminal-width)
 (def ^:private print-table!            #'main/print-table!)
 (def ^:private conversation-rows       #'main/conversation-rows)
+(def ^:private strip-global-args       #'main/strip-global-args)
+(def ^:private startup-measure?        #'main/startup-measure?)
+
+(defdescribe global-measure-flag-test
+  (it "strips --measure before command dispatch"
+    (expect (= ["help"] (strip-global-args ["--measure" "help"])))
+    (expect (= ["providers" "list"]
+              (strip-global-args ["providers" "--measure" "list"]))))
+
+  (it "enables startup measurement from the global flag"
+    (expect (startup-measure? ["--measure" "help"]))))
 
 (defdescribe short-ext-ns-test
   (it "rewrites the canonical extension package as `v/`"

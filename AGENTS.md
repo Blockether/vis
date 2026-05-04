@@ -8,22 +8,25 @@
 Use Clojure like Clojure: long-lived nREPL first, entrypoints second.
 
 - Before starting a dev JVM, check for an existing nREPL with `clj-nrepl-eval --discover-ports`.
-- If a Vis nREPL is already running, reuse that port; do **not** start a second nREPL/JVM unless the existing one is unusable or belongs to another project.
+- If a Vis nREPL is already running, reuse that port for REPL/dev checks; do **not** start a second dev nREPL unless the existing one is unusable or belongs to another project.
+- Starting an intentional standalone Vis process (`vis ...`, `bin/vis ...`, child JVM multiprocess tests, or packaged-entrypoint checks) is allowed. Persistent SQLite is multiprocess-capable; do not avoid a standalone process solely because a dev nREPL is open.
 - Start with `bin/dev` or `clojure -M:dev` only when no reusable nREPL is running (default port `7888`; override with `NREPL_PORT=<port>`).
 - Dev launcher writes `.nrepl-port`; do not commit that file.
 - Discover port with `clj-nrepl-eval --discover-ports`.
 - Eval with `clj-nrepl-eval -p <port> "<clojure-code>"`.
 - Always use `:reload` after edits: `clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.dev :as dev] :reload)"`.
-- Prefer nREPL eval over fresh JVM startup for checks.
+- Prefer nREPL eval over fresh JVM startup for internal behavior checks.
 - Runtime investigation is **nREPL data-first**. Use the running process to exercise the same code paths Vis uses, inspect Clojure data, then turn the finding into a focused repro/test.
 - Bash is for file discovery, process control, and launching `clj-nrepl-eval`; Clojure state and behavior checks belong in nREPL.
-- Run CLI entrypoints with `dev/cli!`, e.g. `clj-nrepl-eval -p 7888 "(dev/cli! \"providers\" \"list\")"`.
-- Start TUI with `dev/tui!`, e.g. `clj-nrepl-eval -p 7888 "(dev/tui!)"`.
+- Run CLI entrypoints through `dev/cli!` when you need REPL control, e.g. `clj-nrepl-eval -p 7888 "(dev/cli! \"providers\" \"list\")"`.
+- Run standalone `vis ...` / `bin/vis ...` when testing the real packaged entrypoint, terminal behavior, process lifecycle, or multiprocess SQLite access.
+- Start a REPL-controllable TUI with `dev/tui!`, e.g. `clj-nrepl-eval -p 7888 "(dev/tui!)"`.
 - `dev/tui!` must open a separate macOS Terminal.app window running `bin/dev terminal-tui`.
-- In that Terminal.app process, nREPL and `vis channels tui` must run in the **same JVM/process** so the TUI is controllable from REPL.
-- Do **not** launch TUI as `bin/vis channels tui` from `dev/tui!`; that creates an uncontrolled separate Java process.
+- In that Terminal.app process, nREPL and the TUI must run in the **same JVM/process** so the TUI is controllable from REPL.
+- Do **not** launch TUI as `bin/vis channels tui` from `dev/tui!`; that defeats the REPL-controllable TUI path.
+- It is valid to launch standalone TUI with `vis channels tui` / `bin/vis channels tui` while a dev nREPL is open; this is a separate process using the same persistent SQLite DB.
 - Do **not** run TUI inside the nREPL/stdout tool terminal.
-- Direct shortcut: `bin/dev tui` opens Terminal.app running the attached nREPL+TUI JVM.
+- Direct shortcut for REPL-controllable TUI: `bin/dev tui` opens Terminal.app running the attached nREPL+TUI JVM.
 - If Clojure delimiters break, do **not** manually rebalance parens. Run `clj-paren-repair <files>`.
 - Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
 
@@ -141,10 +144,6 @@ Do this:
 
 Use the copy dialog (`Ctrl+K` → Copy), per-message copy buttons, or the TUI mouse-selection auto-copy flow for clipboard ops.
 
-### Avoid AWT entirely
-
-Do **not** introduce AWT usage in Vis code. Avoid `java.awt.*`, `javax.swing.*`, desktop integrations, system tray APIs, clipboard access through AWT, and anything that requires a graphical JVM. Vis must stay safe in headless terminals, CI, SSH sessions, and TUI-only environments. If a feature appears to need AWT, design a non-AWT terminal/OS-specific adapter instead.
-
 ### HoneySQL is the only SQL surface
 
 Every SQL query MUST use `honey.sql` data maps. `next.jdbc.sql` (`sql/insert!`, `sql/find-by-keys`, etc.) is forbidden — it produces namespaced column keys that break with SQLite. Raw SQL strings in app code (`["SELECT * FROM ..."]`) are forbidden too.
@@ -165,13 +164,23 @@ The ONE pattern:
 
 Raw `jdbc/execute!` with string SQL is allowed in ONE place: `extensions/persistance/vis-persistance-sqlite/src/.../core.clj`, for migration DDL + FTS queries HoneySQL can't express. Everywhere else: HoneySQL or bust.
 
+### Persistent SQLite is multiprocess-capable
+
+Vis persistent SQLite stores are intentionally usable from multiple JVMs/processes at the same time.
+
+- Do **not** reintroduce a process-exclusive persistent DB lock such as `vis.db.lock` / `:vis/persistent-db-already-open`.
+- Normal runtime writes rely on SQLite WAL, `busy_timeout`, `transaction_mode=IMMEDIATE`, and Vis's `sqlite-write-tx!` retry boundary.
+- Schema install/repair is the only process-serialized persistence bootstrap path; it uses a short-lived migration lock (`vis.db.migrate.lock`) around Flyway + inline V1 repair.
+- Do not delete, move, unlink, or recreate `~/.vis/vis.mdb` / `vis.db` while any Vis process may have it open. Close all Vis processes first.
+- Multiprocess behavior needs real process/JVM regression coverage, not same-JVM-only tests.
+
 ### SQLite schema changes are inline until told otherwise
 
 Until explicitly told otherwise, Vis database schema changes are made by editing the canonical SQLite schema inline:
 
 - Edit `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` directly.
 - Do **not** add `V2__...sql`, `V3__...sql`, etc. while this rule is active.
-- It is acceptable to delete/recreate the local development DB during this phase; migration history stability is not the priority yet.
+- It is acceptable to delete/recreate the local development DB during this phase **only after all Vis processes using it are closed**; migration history stability is not the priority yet.
 - If a user explicitly asks for real migrations/backward-compatible upgrade path, this rule is suspended for that task.
 
 ### Reply in English

@@ -307,6 +307,25 @@
   (it "--resume sets :resume true"
     (expect (= {:resume true} (parse-args ["--resume"]))))
 
+  (it "--standalone selects the Swing backend conditionally"
+    (expect (= {:standalone true} (parse-args ["--standalone"]))))
+
+  (it "standalone font and sizing flags are parsed without starting Swing"
+    (expect (= {:standalone true
+                :font-size 18
+                :font-bundle :code-nf
+                :font-family "Cascadia Mono PL, Menlo, Monospaced"
+                :font-path "/tmp/CascadiaMonoPL.ttf"
+                :columns 140
+                :rows 42}
+              (parse-args ["--standalone"
+                           "--font-size" "18"
+                           "--font-bundle" "code-nf"
+                           "--font-family" "Cascadia Mono PL, Menlo, Monospaced"
+                           "--font-path" "/tmp/CascadiaMonoPL.ttf"
+                           "--standalone-cols" "140"
+                           "--standalone-rows" "42"]))))
+
   (it "--conversation-id captures the next token as the id"
     (expect (= {:conversation-id "abc123"}
               (parse-args ["--conversation-id" "abc123"]))))
@@ -337,6 +356,15 @@
     ;; Catches the case where the user types `--conversation-id --resume`
     ;; and `--resume` would otherwise be silently treated as the id.
     (expect (user-error? #(parse-args ["--conversation-id" "--resume"]))))
+
+  (it "standalone integer flags reject invalid values"
+    (expect (user-error? #(parse-args ["--standalone" "--font-size" "zero"])))
+    (expect (user-error? #(parse-args ["--standalone" "--standalone-cols" "0"]))))
+
+  (it "standalone value flags reject missing values"
+    (expect (user-error? #(parse-args ["--standalone" "--font-bundle"])))
+    (expect (user-error? #(parse-args ["--standalone" "--font-family"])))
+    (expect (user-error? #(parse-args ["--standalone" "--font-path" "--resume"]))))
 
   (it "non-flag positional arg also errors (no positional API today)"
     (expect (user-error? #(parse-args ["stray-positional"])))))

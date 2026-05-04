@@ -120,6 +120,27 @@
 (defonce ^:private cached-manifests (atom nil))
 (defonce ^:private discovered? (atom false))
 
+(defn- truthy-value? [v]
+  (contains? #{"1" "true" "yes" "on"} (str/lower-case (str v))))
+
+(defn- measure-enabled? []
+  (or (truthy-value? (System/getenv "VIS_MEASURE"))
+    (truthy-value? (System/getProperty "vis.measure"))))
+
+(defn- elapsed-ms [started-ns]
+  (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
+
+(defn- format-ms [ms]
+  (String/format java.util.Locale/ROOT "%.1f ms" (object-array [(double ms)])))
+
+(defn- measure-line! [label & kvs]
+  (when (measure-enabled?)
+    (binding [*out* *err*]
+      (println
+        (str "[vis measure] jvm:manifest " label
+          (when (seq kvs)
+            (str " " (str/join " " (map str kvs)))))))))
+
 (defonce ^:private load-failures-atom
   ;; ::ext-load-failure entries collected during the most recent
   ;; classpath scan. Each entry: {:source :reason :path :extension-id
@@ -151,7 +172,8 @@
    reset to `[]` on entry so consecutive scans don't compound stale
    warnings."
   []
-  (let [urls   (try
+  (let [scan-started (System/nanoTime)
+        urls   (try
                  (enumeration-seq
                    (.getResources
                      (.getContextClassLoader (Thread/currentThread))
@@ -159,57 +181,73 @@
                  (catch Exception _ nil))
         merged (atom {})
         seen   (atom #{})]
+    (measure-line! "resources" (str "count=" (count urls)))
     (reset! load-failures-atom [])
     (doseq [^java.net.URL url urls]
-      (try
-        (let [content    (slurp url)
-              parsed     (edn/read-string {:readers {} :default (fn [_ form] form)} content)
-              normalized (normalize-vis-edn parsed)]
-          (doseq [[id entry] normalized]
-            (swap! merged update id merge-manifest-entry entry)
-            (doseq [ns-sym (:nses entry)]
-              (when (not (@seen ns-sym))
-                (swap! seen conj ns-sym)
-                (try
-                  (require ns-sym)
-                  (tel/log! {:level :info :id ::discover-extension
-                             :data  {:extension-id id
-                                     :extension-ns ns-sym
-                                     :source (str url)}
-                             :msg   (str "Auto-discovered extension ns '"
-                                      ns-sym "' (id " id ") from " url)})
-                  (catch Throwable t
-                    (let [msg (or (ex-message t) (str t))]
-                      (swap! load-failures-atom conj
-                        {:source       :extension-load
-                         :extension-id id
-                         :extension-ns ns-sym
-                         :path         (str url)
-                         :class        (.getName (class t))
-                         :reason       (str "require '" ns-sym "' threw "
-                                         (.getSimpleName (class t)) ": " msg)})
-                      (tel/log! {:level :error :id ::discover-extension-failed
+      (let [url-started (System/nanoTime)]
+        (try
+          (let [content    (slurp url)
+                parsed     (edn/read-string {:readers {} :default (fn [_ form] form)} content)
+                normalized (normalize-vis-edn parsed)]
+            (measure-line! "resource parsed"
+              (format-ms (elapsed-ms url-started))
+              (str "url=" url)
+              (str "extensions=" (count normalized)))
+            (doseq [[id entry] normalized]
+              (swap! merged update id merge-manifest-entry entry)
+              (doseq [ns-sym (:nses entry)]
+                (when (not (@seen ns-sym))
+                  (swap! seen conj ns-sym)
+                  (let [require-started (System/nanoTime)]
+                    (try
+                      (require ns-sym)
+                      (tel/log! {:level :info :id ::discover-extension
                                  :data  {:extension-id id
                                          :extension-ns ns-sym
-                                         :source (str url)
-                                         :class (.getName (class t))
-                                         :message msg}
-                                 :msg   (str "Failed to load extension ns '"
-                                          ns-sym "': " msg)})))))))
-          (when (empty? normalized)
-            (tel/log! {:level :warn :id ::discover-extension-empty
-                       :data {:source (str url)}
-                       :msg  (str url " parsed but declared no extensions")})))
-        (catch Throwable t
-          (let [msg (or (ex-message t) (str t))]
-            (swap! load-failures-atom conj
-              {:source :extension-load
-               :path   (str url)
-               :class  (.getName (class t))
-               :reason (str "vis.edn parse failed: " msg)})
-            (tel/log! {:level :error :id ::discover-extension-parse-failed
-                       :data  {:source (str url) :message msg}
-                       :msg   (str "Failed to parse " url ": " msg)})))))
+                                         :source (str url)}
+                                 :msg   (str "Auto-discovered extension ns '"
+                                          ns-sym "' (id " id ") from " url)})
+                      (catch Throwable t
+                        (let [msg (or (ex-message t) (str t))]
+                          (swap! load-failures-atom conj
+                            {:source       :extension-load
+                             :extension-id id
+                             :extension-ns ns-sym
+                             :path         (str url)
+                             :class        (.getName (class t))
+                             :reason       (str "require '" ns-sym "' threw "
+                                             (.getSimpleName (class t)) ": " msg)})
+                          (tel/log! {:level :error :id ::discover-extension-failed
+                                     :data  {:extension-id id
+                                             :extension-ns ns-sym
+                                             :source (str url)
+                                             :class (.getName (class t))
+                                             :message msg}
+                                     :msg   (str "Failed to load extension ns '"
+                                              ns-sym "': " msg)})))
+                      (finally
+                        (measure-line! "require"
+                          (format-ms (elapsed-ms require-started))
+                          (str "id=" id)
+                          (str "ns=" ns-sym))))))))
+            (when (empty? normalized)
+              (tel/log! {:level :warn :id ::discover-extension-empty
+                         :data {:source (str url)}
+                         :msg  (str url " parsed but declared no extensions")})))
+          (catch Throwable t
+            (let [msg (or (ex-message t) (str t))]
+              (swap! load-failures-atom conj
+                {:source :extension-load
+                 :path   (str url)
+                 :class  (.getName (class t))
+                 :reason (str "vis.edn parse failed: " msg)})
+              (tel/log! {:level :error :id ::discover-extension-parse-failed
+                         :data  {:source (str url) :message msg}
+                         :msg   (str "Failed to parse " url ": " msg)}))))))
+    (measure-line! "scan total"
+      (format-ms (elapsed-ms scan-started))
+      (str "extensions=" (count @merged))
+      (str "namespaces=" (count @seen)))
     @merged))
 
 (defn scan-extensions!
@@ -227,7 +265,9 @@
    on first connect) can call this directly and skip the docs work."
   []
   (if @discovered?
-    @cached-manifests
+    (do
+      (measure-line! "scan cached" (str "extensions=" (count @cached-manifests)))
+      @cached-manifests)
     (let [manifests (scan!)]
       (reset! cached-manifests manifests)
       (reset! discovered? true)

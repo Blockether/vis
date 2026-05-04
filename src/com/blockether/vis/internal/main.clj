@@ -1111,7 +1111,12 @@
 
       :else
       (try
-        ((:provider/auth-fn provider) stdout!)
+        (let [account-type (if (get parsed "provider")
+                             (first residual)
+                             (second residual))]
+          (if (and (= provider-id :github-copilot) account-type)
+            ((:provider/auth-fn provider) stdout! {:account-type account-type})
+            ((:provider/auth-fn provider) stdout!)))
         (catch Exception e
           (stdout! (error/format-error (str "Authentication failed: " (ex-message e))))))))
   (shutdown-agents))
@@ -1256,10 +1261,11 @@
          {:cmd/name   "auth"
           :cmd/parent ["providers"]
           :cmd/doc    "Run a provider's interactive authentication flow."
-          :cmd/usage  "vis providers auth <provider>"
+          :cmd/usage  "vis providers auth <provider> [account-type]"
           :cmd/args   [{:name "provider" :kind :positional :type :string
                         :doc  "Registered provider id (for example: github-copilot or openai-codex)."}]
-          :cmd/examples ["vis providers auth github-copilot"
+          :cmd/examples ["vis providers auth github-copilot business"
+                         "vis providers auth github-copilot enterprise"
                          "vis providers auth openai-codex"]
           :cmd/run-fn cli-providers-auth!}
          {:cmd/name   "logout"
@@ -1461,6 +1467,68 @@
   (shutdown-agents)
   (System/exit 1))
 
+(defn- truthy-value? [v]
+  (contains? #{"1" "true" "yes" "on"} (str/lower-case (str v))))
+
+(defn- measure-arg? [arg]
+  (= "--measure" arg))
+
+(defn- strip-global-args [args]
+  (vec (remove measure-arg? args)))
+
+(defn- startup-measure? [args]
+  (or (some measure-arg? args)
+    (truthy-value? (System/getenv "VIS_MEASURE"))
+    (truthy-value? (System/getProperty "vis.measure"))))
+
+(defn- elapsed-ms [started-ns]
+  (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
+
+(defn- format-ms [ms]
+  (String/format java.util.Locale/ROOT "%.1f ms" (object-array [(double ms)])))
+
+(defn- startup-measure-line! [label & kvs]
+  (binding [*out* *err*]
+    (println
+      (str "[vis measure] jvm:" label
+        (when (seq kvs)
+          (str " " (str/join " " (map str kvs))))))))
+
+(defn- timed-startup! [measure? label f]
+  (if measure?
+    (let [started (System/nanoTime)]
+      (try
+        (f)
+        (finally
+          (startup-measure-line! label (format-ms (elapsed-ms started))))))
+    (f)))
+
+(defn- summarize-startup-registries! []
+  (let [extensions (extension/registered-extensions)
+        channels   (registry/registered-channels)
+        providers  (registry/registered-providers)
+        commands   (registry/registered-commands)]
+    (startup-measure-line! "registry totals"
+      (str "extensions=" (count extensions))
+      (str "channels=" (count channels))
+      (str "providers=" (count providers))
+      (str "commands=" (count commands)))
+    (doseq [ext extensions]
+      (startup-measure-line! "extension"
+        (str "ns=" (:ext/namespace ext))
+        (str "kind=" (or (:ext/kind ext) "uncategorized"))
+        (str "channels=" (str/join "," (map :channel/cmd (:ext/channels ext))))
+        (str "providers=" (str/join "," (map (comp name :provider/id) (:ext/providers ext))))))
+    (doseq [channel channels]
+      (startup-measure-line! "channel"
+        (str "id=" (:channel/id channel))
+        (str "cmd=" (:channel/cmd channel))
+        (str "owns-tty=" (boolean (:channel/owns-tty? channel)))))
+    (doseq [provider providers]
+      (startup-measure-line! "provider"
+        (str "id=" (:provider/id provider))
+        (str "label=" (pr-str (:provider/label provider)))))))
+
 (defn -main
   "Discover extensions, walk the command tree, dispatch.
 
@@ -1474,35 +1542,46 @@
    is a pure command tree. Anyone who wants the old single-arg
    ergonomics can register a `:cmd/run-fn` on the root via a custom
    extension."
-  [& args]
-  (try
-    (crac-bootstrap/pre-extension-bootstrap! {:phase :cli})
-    ;; Quiet stdout BEFORE any extension load triggers Telemere registration
-    ;; spam — the user only sees logs when they pass --debug / --verbose / -v
-    ;; (or set VIS_DEBUG=1).
-    (configure-logging! args)
-    (discover-all!)
-    (pre-redirect-stderr! args)
-    (let [root      (root-command)
-          full-args (cons "vis" args)]
-      (cond
-        (empty? args)
-        (println (commandline/render-tree root))
+  [& raw-args]
+  (let [main-started (System/nanoTime)
+        measure?     (startup-measure? raw-args)
+        args         (strip-global-args raw-args)]
+    (when measure?
+      (System/setProperty "vis.measure" "1"))
+    (try
+      (timed-startup! measure? "pre-extension-bootstrap"
+        #(crac-bootstrap/pre-extension-bootstrap! {:phase :cli}))
+      ;; Quiet stdout BEFORE any extension load triggers Telemere registration
+      ;; spam — the user only sees logs when they pass --debug / --verbose / -v
+      ;; (or set VIS_DEBUG=1).
+      (timed-startup! measure? "configure-logging"
+        #(configure-logging! args))
+      (timed-startup! measure? "discover-all+extensions"
+        #(discover-all!))
+      (when measure?
+        (summarize-startup-registries!))
+      (timed-startup! measure? "pre-redirect-stderr"
+        #(pre-redirect-stderr! args))
+      (let [root      (root-command)
+            full-args (cons "vis" args)]
+        (cond
+          (empty? args)
+          (println (commandline/render-tree root))
 
         ;; `vis help` is a universal synonym for `vis --help`. Without
         ;; this branch the dispatcher would treat `help` as an unknown
         ;; command, print the tree, AND tag it with "Unknown command:
         ;; help" + exit 1 -- which surprised everyone who tried it.
-        (= ["help"] (vec args))
-        (println (commandline/render-tree root))
+          (= ["help"] (vec args))
+          (println (commandline/render-tree root))
 
-        (unknown-command? root args)
-        (do (println (commandline/render-tree root))
-          (println)
-          (println (str "Unknown command: " (str/join " " args)))
-          (System/exit 1))
+          (unknown-command? root args)
+          (do (println (commandline/render-tree root))
+            (println)
+            (println (str "Unknown command: " (str/join " " args)))
+            (System/exit 1))
 
-        :else
+          :else
         ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match …}`.
         ;; `:error` covers spec-validation failures (missing required
         ;; args, unknown flags). Without an explicit `System/exit 1` here
@@ -1512,11 +1591,15 @@
         ;; exit code 2 (POSIX convention for usage errors); `:no-match`
         ;; can't actually fire here because `unknown-command?` above
         ;; already short-circuited that case.
-        (let [{:keys [status]} (commandline/dispatch! root full-args)]
-          (case status
-            :error (System/exit 2)
-            nil))))
-    (catch Throwable t
-      (if (:vis/user-error (ex-data t))
-        (exit-with-user-error! t)
-        (exit-with-fatal-error! t)))))
+          (let [{:keys [status]} (timed-startup! measure? "dispatch"
+                                   #(commandline/dispatch! root full-args))]
+            (case status
+              :error (System/exit 2)
+              nil))))
+      (catch Throwable t
+        (if (:vis/user-error (ex-data t))
+          (exit-with-user-error! t)
+          (exit-with-fatal-error! t)))
+      (finally
+        (when measure?
+          (startup-measure-line! "main total" (format-ms (elapsed-ms main-started))))))))
