@@ -159,6 +159,79 @@
     (= 1 (long consecutive-errors)) (if (= base :quick) :balanced :deep)
     :else :deep))
 
+(defn- github-copilot-claude-model?
+  [resolved-model]
+  (and (= :github-copilot (:provider resolved-model))
+    (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
+
+(def ^:private casual-request-pattern
+  #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋|ping)[\s!.?,]*\s*$")
+
+(defn- casual-user-request?
+  [s]
+  (let [text (some-> s str str/trim)]
+    (boolean
+      (and text
+        (<= (count text) 80)
+        (re-find casual-request-pattern text)))))
+
+(defn- copilot-claude-safe-reasoning-level
+  "Return the reasoning level Vis is willing to send to GitHub Copilot Claude.
+
+   Copilot bills by interaction class, not just visible response text. Deep
+   reasoning on Claude can burn multiple premium interactions for a trivial
+   prompt. Default policy:
+   - casual chat gets no reasoning parameter;
+   - :deep is capped to :balanced unless the caller opts in with
+     :allow-copilot-claude-deep? true;
+   - non-Copilot/non-Claude models are untouched."
+  [resolved-model user-request reasoning-level {:keys [allow-copilot-claude-deep?]}]
+  (cond
+    (not (github-copilot-claude-model? resolved-model)) reasoning-level
+    (casual-user-request? user-request) nil
+    (and (= :deep reasoning-level) (not allow-copilot-claude-deep?)) :balanced
+    :else reasoning-level))
+
+(defn- message-has-image?
+  [message]
+  (some (fn [block]
+          (= "image_url" (:type block)))
+    (when (sequential? (:content message)) (:content message))))
+
+(defn- copilot-dynamic-headers
+  [initiator messages]
+  (cond-> {"X-Initiator" (if (= "agent" initiator) "agent" "user")
+           "Openai-Intent" "conversation-edits"}
+    (some message-has-image? messages)
+    (assoc "Copilot-Vision-Request" "true")))
+
+(defonce ^:private copilot-header-patch-installed? (atom false))
+
+(defn- install-copilot-header-patch!
+  "Patch svar's private Copilot header helper once so Vis can classify
+   user-vs-agent initiated calls through svar-llm/*log-context*.
+
+   Why here: svar 0.4.3 infers X-Initiator from the final API message role.
+   Vis appends synthetic user-role journal/context messages on internal
+   iterations, so role-only inference bills autonomous follow-up/tool-loop
+   calls as fresh user prompts. Dynamic log context is thread-local, so it is
+   safer than with-redefs around a long network call."
+  []
+  (when (compare-and-set! copilot-header-patch-installed? false true)
+    (alter-var-root #'svar-llm/copilot-dynamic-headers
+      (fn [original]
+        (with-meta
+          (fn [messages]
+            (let [ctx-initiator (:copilot-initiator svar-llm/*log-context*)]
+              (if (#{"user" "agent"} ctx-initiator)
+                (copilot-dynamic-headers ctx-initiator messages)
+                (original messages))))
+          {:vis/copilot-header-patch true})))))
+
+(defn- copilot-initiator-for-iteration
+  [iteration]
+  (if (zero? (long (or iteration 0))) "user" "agent"))
+
 (defn needs-input-answer?
   "True for explicit clarification/needs-input answer payloads.
 
@@ -186,6 +259,49 @@
   (let [v (:result answer answer)
         s (answer-value-string v)]
     (markdown/normalize-chat-markdown s)))
+
+(defn- contains-proof-appendix?
+  [answer-text]
+  (boolean
+    (and (string? answer-text)
+      (re-find #"(?is)<proofs(?:\s[^>]*)?>.*</proofs>" answer-text))))
+
+(defn- runtime-proof-appendix
+  "Optional runtime proof appendix supplied by vis-foundation when present.
+
+   Core must not statically require foundation: foundation is an extension and
+   already requires core. Dynamic resolution keeps the dependency optional while
+   still letting accepted answers get the canonical proof projection appended by
+   the runtime instead of by model-authored boilerplate."
+  [environment]
+  (try
+    (let [proof-checks-fn (requiring-resolve
+                            'com.blockether.vis.ext.foundation.introspection/foundation-proof-checks)
+          proofs-fn       (requiring-resolve
+                            'com.blockether.vis.ext.foundation.introspection/foundation-proofs)
+          checks          (when proof-checks-fn (proof-checks-fn environment))]
+      (when (and proofs-fn (:ok? checks))
+        (let [appendix (proofs-fn environment checks)]
+          (when (and (string? appendix) (not (str/blank? appendix)))
+            appendix))))
+    (catch Throwable _
+      nil)))
+
+(defn append-runtime-proofs
+  "Append proof disclosure to accepted final answers.
+
+   Skips explicit needs-input answers and answers that already contain a
+   `<proofs>` block. If proof checks are not available or not ok, returns the
+   original answer text; answer rejection remains owned by the final-answer
+   gate."
+  [environment answer-text answer-value]
+  (let [answer-text (str answer-text)]
+    (if (or (needs-input-answer? answer-value)
+          (contains-proof-appendix? answer-text))
+      answer-text
+      (if-let [appendix (runtime-proof-appendix environment)]
+        (str answer-text "\n\n" appendix)
+        answer-text))))
 
 (def edamame-opts
   {:all true
@@ -821,7 +937,7 @@
         lines (str/split-lines (or code ""))]
     (when (some #(str/starts-with? (str/triml %) fence) lines)
       (str "Raw Markdown fence leaked into extracted :code before evaluation. "
-        "Rejecting whole iteration before eval; remove all " fence
+        "Aborting the whole iteration before eval; remove all " fence
         " fence marker lines from extracted Clojure before retrying."))))
 
 (defn- code-entries-preflight [iteration-position raw-code]
@@ -834,7 +950,7 @@
         parsed-code-entries (cond
                               raw-fence-error
                               [{:expr "(vis/preflight-error :raw-markdown-fence-leak)"
-                                :parse-error parse-error}]
+                                :preflight-error raw-fence-error}]
 
                               parse-error
                               [{:expr (str raw-code) :parse-error parse-error}]
@@ -851,16 +967,11 @@
         answer-preflight-error (when (some? answer-preflight-form-idx)
                                  (answer-position-preflight-error-message
                                    answer-preflight-form-idx
-                                   parsed-total-blocks))
-        answer-preflight-entry (when (some? answer-preflight-form-idx)
-                                 (nth parsed-code-entries
-                                   answer-preflight-form-idx
-                                   nil))]
+                                   parsed-total-blocks))]
     {:code-entries (if answer-preflight-error
-                     [{:expr (or (:expr answer-preflight-entry)
-                               "(vis/preflight-error :answer-position)")
-                       :parse-error (ex-info answer-preflight-error
-                                      {:vis/error :answer-position-preflight})}]
+                     (mapv (fn [entry]
+                             (assoc entry :preflight-error answer-preflight-error))
+                       parsed-code-entries)
                      parsed-code-entries)
      :answer-preflight-error answer-preflight-error
      :raw-fence-preflight-error raw-fence-error
@@ -1139,7 +1250,13 @@
                                         :iteration iteration-position
                                         :thinking  (some-> reasoning str)
                                         :done?     (boolean done?)}))))
-          ask-result (binding [svar-llm/*log-context* {:conversation-turn-id (:environment-id environment) :iteration iteration-position}]
+          _ (install-copilot-header-patch!)
+          copilot-initiator (or (:copilot-initiator extra-body)
+                              (copilot-initiator-for-iteration iteration))
+          ask-result (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
+                                                        :conversation-turn-id (:environment-id environment)
+                                                        :iteration iteration-position
+                                                        :copilot-initiator copilot-initiator)]
                        (svar/ask-code! (:router environment)
                          (cond-> {:lang     "clojure"
                                   :messages messages
@@ -1147,7 +1264,7 @@
                                   :check-context? false}
                            effective-reasoning (assoc :reasoning effective-reasoning)
                            streaming-fn        (assoc :on-chunk streaming-fn)
-                           extra-body          (assoc :extra-body extra-body))))
+                           extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
           _ (log-stage! :llm-response iteration
@@ -1356,25 +1473,26 @@
              :llm-raw-response (:raw ask-result)
              :llm-executable-code (:result ask-result)
              :llm-executable-blocks (:blocks ask-result)}
-            {:thinking thinking
-             :blocks (strip-noop-blocks blocks)
-             :final-result {:final?           true
-                            :answer           final-answer
-                            ;; Index of the form that called
+            (let [final-answer* (append-runtime-proofs environment final-answer value)]
+              {:thinking thinking
+               :blocks (strip-noop-blocks blocks)
+               :final-result {:final?           true
+                              :answer           final-answer*
+                              ;; Index of the form that called
                             ;; `(answer …)`. Channels use this to
                             ;; ELIDE the answer-bearing form from the
                             ;; per-iteration code trace (the channel
                             ;; renders the answer text below; showing
                             ;; `(answer "...")` above it is
-                            ;; redundant prose-as-code).
-                            :answer-form-idx  form-idx}
-             :api-usage api-usage
-             :duration-ms (or (:duration-ms ask-result) 0)
-             :silent-form-idxs silent-form-idxs
-             :llm-messages messages :llm-provider provider :llm-model model-name
-             :llm-raw-response (:raw ask-result)
-             :llm-executable-code (:result ask-result)
-             :llm-executable-blocks (:blocks ask-result)}))
+                              ;; redundant prose-as-code).
+                              :answer-form-idx  form-idx}
+               :api-usage api-usage
+               :duration-ms (or (:duration-ms ask-result) 0)
+               :silent-form-idxs silent-form-idxs
+               :llm-messages messages :llm-provider provider :llm-model model-name
+               :llm-raw-response (:raw ask-result)
+               :llm-executable-code (:result ask-result)
+               :llm-executable-blocks (:blocks ask-result)})))
           ;; Normal path
         {:thinking thinking
          :blocks (strip-noop-blocks blocks)
@@ -1815,6 +1933,11 @@
 ;; Iteration loop + run-turn! (inlined from former base)
 ;; -----------------------------------------------------------------------------
 
+;; Defined in environment lifecycle section. `iteration-loop` calls it at turn
+;; start after computing active extensions; sorting would require moving the
+;; environment-install helpers above the loop engine.
+(declare sync-active-extension-symbols!)
+
 (def ^:private FRESH_ITER_CARRY
   ;; `:journal-iters` is a vec of `[iteration-position {:thinking :blocks}]`
   ;; pairs (oldest-first). The prompt renderer trims the rendered
@@ -1837,7 +1960,7 @@
            conversation-turn-id history-messages
            max-consecutive-errors max-restarts
            hooks cancel-atom current-iteration-atom
-           reasoning-default routing extra-body]}]
+           reasoning-default routing extra-body allow-copilot-claude-deep?]}]
   (let [;; Tightened from 5 to 3. Three consecutive failures is enough
         ;; signal that the current approach is wrong; the nudge fires
         ;; at CONSECUTIVE_ERROR_NUDGE_AT (= 2) so the model gets a
@@ -1853,6 +1976,7 @@
         ;; system-prompt assembler (cacheable prefix) and the per-iteration
         ;; ext nudge collector — activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
+        _             (sync-active-extension-symbols! environment active-exts)
         system-prompt (prompt/assemble-system-prompt environment
                         {:system-prompt            system-prompt
                          :active-extensions        active-exts
@@ -2110,9 +2234,14 @@
                                            :restarts restarts}}))
                     result))
 
-                (let [reasoning-level (when has-reasoning?
-                                        (reasoning-level-for-errors base-reasoning-level consecutive-errors))
-                      _ (log-stage! :iteration-start iteration {:message-count (count messages) :reasoning reasoning-level})
+                (let [raw-reasoning-level (when has-reasoning?
+                                            (reasoning-level-for-errors base-reasoning-level consecutive-errors))
+                      reasoning-level (copilot-claude-safe-reasoning-level
+                                        resolved-model user-request raw-reasoning-level
+                                        {:allow-copilot-claude-deep? allow-copilot-claude-deep?})
+                      _ (log-stage! :iteration-start iteration {:message-count (count messages)
+                                                                :reasoning reasoning-level
+                                                                :requested-reasoning raw-reasoning-level})
                       ;; Lifecycle :iteration-start — fired BEFORE
                       ;; svar/ask-code! is invoked. Listeners can
                       ;; stamp a per-iteration timer or pre-flight
@@ -2142,7 +2271,9 @@
                                             :routing effective-routing
                                             :resolved-model resolved-model
                                             :on-chunk on-chunk
-                                            :extra-body extra-body})
+                                            :extra-body (assoc (or extra-body {})
+                                                          :copilot-initiator
+                                                          (copilot-initiator-for-iteration iteration))})
                                          (catch Exception e
                                            (handle-iteration-exception! e
                                              {:iteration iteration :messages effective-messages
@@ -2733,11 +2864,16 @@
                          auto-title-max-words " words, plain text only, no quotes, no period.\n\n"
                          "User request:\n" user-request "\n\n"
                          "Reply with ONE fenced ```text block containing only the title.")
-                resp (svar/ask-code! router
-                       {:messages           [(svar/user prompt)]
-                        :lang               "text"
-                        :reasoning          :off
-                        :code-tail-pointer? true})
+                _ (install-copilot-header-patch!)
+                resp (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*)
+                               :conversation-id conversation-id
+                               :copilot-initiator "agent"
+                               :internal-call :auto-title]
+                       (svar/ask-code! router
+                         {:messages           [(svar/user prompt)]
+                          :lang               "text"
+                          :reasoning          :off
+                          :code-tail-pointer? true}))
                 raw  (or (some-> resp :result str/trim not-empty)
                        (some-> resp :raw str/trim not-empty))
                 title (clean-auto-title raw)]
@@ -3035,6 +3171,86 @@
       (seq events) (filter #(contains? (set events) (:event %)))
       true vec)))
 
+(defn- extension-aliases
+  [exts]
+  (->> (or exts [])
+    (keep :ext/ns-alias)
+    (distinct)
+    vec))
+
+(defn- require-extension-alias!
+  [sci-ctx ext ns-sym alias-sym]
+  (try
+    (sci/eval-string+ sci-ctx
+      (str "(require '[" ns-sym " :as " alias-sym "])")
+      {:ns (sci/find-ns sci-ctx 'sandbox)})
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::ext-alias-require-failed
+                 :data (assoc (format-exception-short t)
+                         :ext (:ext/namespace ext)
+                         :alias alias-sym)}
+        (str "Auto-require of alias '" alias-sym "' failed")))))
+
+(defn- extension-namespace-bindings
+  [environment ns-sym alias-sym active-exts]
+  (let [ext-ns (sci/create-ns ns-sym)]
+    (loop [remaining active-exts
+           bindings  {}
+           owners    {}]
+      (if-let [ext (first remaining)]
+        (let [wrapped (extension/wrap-extension ext environment)
+              ns-bindings (into {}
+                            (map (fn [[sym val]]
+                                   [sym (sci/new-var sym val {:ns ext-ns})]))
+                            wrapped)
+              collisions (vec (filter #(contains? bindings %) (keys ns-bindings)))]
+          (when (seq collisions)
+            (tel/log! {:level :warn :id ::ext-symbol-collision
+                       :data  {:ext       (:ext/namespace ext)
+                               :ns        ns-sym
+                               :alias     alias-sym
+                               :symbols   collisions
+                               :previous  (select-keys owners collisions)}
+                       :msg   (str "Extension '" (:ext/namespace ext)
+                                "' shadowed " (count collisions)
+                                " active symbol(s) under alias '" alias-sym
+                                "': " (str/join ", " collisions))}))
+          (recur (next remaining)
+            (merge bindings ns-bindings)
+            (merge owners (zipmap (keys ns-bindings)
+                            (repeat (:ext/namespace ext))))))
+        bindings))))
+
+(defn sync-active-extension-symbols!
+  "Make SCI alias namespaces match active extension state.
+
+   `install-extension!` keeps every extension row in `:extensions`, but only
+   active extensions contribute callable alias symbols. Called after per-env
+   installation and again at turn start so `:ext/activation-fn` changes become
+   real tool availability, not just prompt visibility."
+  ([environment]
+   (sync-active-extension-symbols! environment (prompt/active-extensions environment)))
+  ([environment active-extensions]
+   (when-let [sci-ctx (:sci-ctx environment)]
+     (let [installed (vec (or (some-> (:extensions environment) deref) []))
+           active-set (set (map :ext/namespace active-extensions))]
+       (doseq [{ns-sym :ns alias-sym :alias :as alias} (extension-aliases installed)]
+         (let [active-for-alias (filterv (fn [ext]
+                                           (and (contains? active-set (:ext/namespace ext))
+                                             (= alias (:ext/ns-alias ext))))
+                                  installed)]
+           (if (seq active-for-alias)
+             (let [bindings (extension-namespace-bindings environment ns-sym alias-sym active-for-alias)]
+               (swap! (:env sci-ctx) assoc-in [:namespaces ns-sym] bindings)
+               (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym)
+               (require-extension-alias! sci-ctx (last active-for-alias) ns-sym alias-sym))
+             (swap! (:env sci-ctx)
+               (fn [sci-env]
+                 (-> sci-env
+                   (update :namespaces dissoc ns-sym)
+                   (update :ns-aliases dissoc alias-sym)))))))))
+   environment))
+
 (defn install-extension!
   "Register a validated extension into `environment` (per-env registration,
    distinct from the global-registry `register-extension!` defined earlier
@@ -3071,57 +3287,16 @@
       (let [ns-sym  (:ext/namespace ext)
             without (vec (remove #(= (:ext/namespace %) ns-sym) exts))]
         (conj without ext))))
-  ;; Bind extension symbols ONLY into the aliased namespace — never
-  ;; into sandbox. The LLM must always use the alias form
-  ;; `(alias/symbol ...)`, not `(vis/symbol ...)`.
-  ;;
-  ;; Multi-extension MERGE: two extensions can share an `:ext/ns-alias`
-  ;; (e.g. one ext registers `v/cat`/`v/ls`, another adds
-  ;; `v/diff` under the same `vis` alias). The bindings are MERGED
-  ;; into the existing namespace map; same-name symbols get last-write-
-  ;; wins (matching how `install-extension!` already replaces an
-  ;; extension with the same `:ext/namespace`). A telemere warn line
-  ;; fires on collisions so reviewers see which extension shadowed
-  ;; whose symbol.
-  (let [wrapped (extension/wrap-extension ext environment)
-        sci-ctx (:sci-ctx environment)]
-    (when-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
-      (let [ext-ns      (sci/create-ns ns-sym)
-            ns-bindings (into {} (map (fn [[sym val]]
-                                        [sym (sci/new-var sym val {:ns ext-ns})]))
-                          wrapped)
-            existing    (get-in @(:env sci-ctx) [:namespaces ns-sym])
-            collisions  (when (seq existing)
-                          (vec (filter #(contains? existing %) (keys ns-bindings))))]
-        (when (seq collisions)
-          (tel/log! {:level :warn :id ::ext-symbol-collision
-                     :data  {:ext       (:ext/namespace ext)
-                             :ns        ns-sym
-                             :alias     alias-sym
-                             :symbols   collisions}
-                     :msg   (str "Extension '" (:ext/namespace ext)
-                              "' shadowed " (count collisions)
-                              " existing symbol(s) under alias '" alias-sym
-                              "': " (str/join ", " collisions))}))
-        (swap! (:env sci-ctx) update-in [:namespaces ns-sym] merge ns-bindings)
-        (swap! (:env sci-ctx) update :ns-aliases assoc alias-sym ns-sym))
-      ;; Auto-require the alias in sandbox so the LLM never has to call
-      ;; `(require ...)` manually.
-      (try
-        (sci/eval-string+ sci-ctx
-          (str "(require '[" ns-sym " :as " alias-sym "])")
-          {:ns (sci/find-ns sci-ctx 'sandbox)})
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::ext-alias-require-failed
-                     :data (assoc (format-exception-short t)
-                             :ext (:ext/namespace ext)
-                             :alias alias-sym)}
-            (str "Auto-require of alias '" alias-sym "' failed")))))
-    ;; Inject extension-declared Java classes and imports.
+  ;; Extension rows stay installed even when inactive, but callable symbol
+  ;; bindings are activation-aware. Java classes/imports remain available once
+  ;; an extension is installed because they are passive SCI configuration, not
+  ;; model-visible tool affordances.
+  (let [sci-ctx (:sci-ctx environment)]
     (when-let [classes (seq (:ext/classes ext))]
       (swap! (:env sci-ctx) update :classes merge (into {} classes)))
     (when-let [imports (seq (:ext/imports ext))]
       (swap! (:env sci-ctx) update :imports merge (into {} imports))))
+  (sync-active-extension-symbols! environment)
   environment)
 
 ;; =============================================================================

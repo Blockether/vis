@@ -1,10 +1,9 @@
 (ns com.blockether.vis.ext.provider-openai-codex-test
   (:require [charred.api :as json]
-            [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
+            [com.blockether.vis.ext.provider-openai-codex.limits :as codex-limits]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.provider-limits.codex :as codex-limits]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- jwt [payload]
@@ -183,15 +182,4 @@
       (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
       (expect (ifn? (:provider/get-token-fn provider)))
       (expect (ifn? (:provider/limits-fn provider)))
-      (expect (ifn? (:provider/prompt-fn provider)))))
-
-  (it "registers a concise provider overlay without prompt attribution"
-    (let [provider (vis/provider-by-id :openai-codex)
-          prompt   ((:provider/prompt-fn provider) {:provider {:id :openai-codex}})]
-      (expect (str/includes? prompt "Codex provider overlay"))
-      (expect (str/includes? prompt "core Vis Nucleus/VSM center"))
-      (expect (str/includes? prompt "λ codex(goal, workspace)."))
-      (expect (str/includes? prompt "higher_priority_rules > provider_overlay"))
-      (expect (str/includes? prompt "preserve_dirty_worktree"))
-      (expect (not (str/includes? prompt "Michael Whitford")))
-      (expect (not (str/includes? prompt "github.com/michaelwhitford/nucleus"))))))
+      (expect (nil? (:provider/prompt-fn provider))))))

@@ -78,13 +78,12 @@
         (is (str/includes? line "modified"))
         (is (not (str/includes? line "[M]")))))
 
-    (testing "picker body has a constant height and visible scrollbar geometry"
+    (testing "picker body has a constant height and hides unused scrollbar geometry"
       (is (= 20 (content-lines)))
       (is (= 10 (body-height 50)))
       (is (= {:track-h 10 :thumb-h 5 :thumb-top 2}
             (scrollbar-geom 10 20 5)))
-      (is (= {:track-h 10 :thumb-h 10 :thumb-top 0}
-            (scrollbar-geom 10 3 0))))))
+      (is (nil? (scrollbar-geom 10 3 0))))))
 
 (deftest apply-settings-option-test
   (let [apply-settings-option (var-get #'dlg/apply-settings-option)
@@ -130,8 +129,9 @@
       (is (some #(= :differentiate-turns (:key %)) (settings-rows)))
       (is (some #(= :mouse-selection-copy (:key %)) (settings-rows))))
 
-    (testing "conversation picker formats command rows and column-aligned conversation table rows"
+    (testing "conversation picker keeps new/fork out of the table and renders justified cells"
       (let [body-w 96
+            header (dlg/conversation-dialog-header body-w)
             rows (conversation-items [{:id "123e4567-e89b-12d3-a456-426614174000"
                                        :title (str "Title " (apply str (repeat 80 "汉")))
                                        :turn-count 2
@@ -144,24 +144,25 @@
                                        :created-at #inst "2024-01-02T01:02:00.000-00:00"}]
                    "123e4567-e89b-12d3-a456-426614174000"
                    body-w)
-            action-labels (mapv :label (take 2 rows))
-            active-label (:label (nth rows 2))
-            inactive-label (:label (nth rows 3))]
-        (is (= [:new :fork :switch :switch] (mapv :action rows)))
-        (is (= [body-w body-w body-w body-w]
-              (mapv (comp p/display-width :label) rows)))
-        (is (every? #(= body-w (p/display-width %))
-              [(dlg/conversation-dialog-header body-w)]))
-        (is (str/includes? (first action-labels) "new"))
-        (is (str/includes? (second action-labels) "fork"))
-        (is (str/includes? active-label "● 123e4567"))
-        (is (str/includes? active-label "    2"))
+            active-label (:label (nth rows 0))
+            inactive-label (:label (nth rows 1))]
+        (is (= [:switch :switch] (mapv :action rows)))
+        (is (not-any? #{:new :fork} (map :action rows)))
+        (is (= [] (conversation-items [] nil body-w)))
+        (is (= [body-w body-w body-w]
+              (mapv p/display-width [header active-label inactive-label])))
+        (is (every? #(str/includes? % "│") [header active-label inactive-label]))
+        (is (str/includes? header "ID"))
+        (is (str/includes? header "Turns"))
+        (is (str/includes? active-label "●"))
+        (is (str/includes? active-label "│ 123e4567 │"))
+        (is (str/includes? active-label "│     2 │"))
         (is (str/includes? active-label "2024-01-03 04:05"))
         (is (str/includes? active-label "2024-01-01 01:02"))
         (is (str/includes? active-label "Title"))
         (is (str/includes? active-label "…"))
-        (is (str/includes? inactive-label "  abcdef00"))
-        (is (str/includes? inactive-label "    0"))
+        (is (str/includes? inactive-label "│ abcdef00 │"))
+        (is (str/includes? inactive-label "│     0 │"))
         (is (str/includes? inactive-label "—"))
         (is (str/includes? inactive-label "Untitled conversation"))))
 
@@ -171,4 +172,8 @@
               "Switch Conversation"
               "Configure Providers"
               "Settings"]
-            (mapv :label palette-commands))))))
+            (mapv :label palette-commands))))
+
+    (testing "command palette content fits the default dialog without an unused scrollbar"
+      (let [scrollbar-geom (var-get #'dlg/scrollbar-geometry)]
+        (is (nil? (scrollbar-geom 10 (count palette-commands) 0)))))))

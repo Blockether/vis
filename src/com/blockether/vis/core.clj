@@ -359,6 +359,7 @@
 (def create-environment           lp/create-environment)
 (def dispose-environment!         lp/dispose-environment!)
 (def install-extension!           lp/install-extension!)
+(def sync-active-extension-symbols! lp/sync-active-extension-symbols!)
 
 ;; Auto-archive
 (def auto-archive-candidates       lp/auto-archive-candidates)
