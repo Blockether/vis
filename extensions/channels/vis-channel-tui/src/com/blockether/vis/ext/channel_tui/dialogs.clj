@@ -4,6 +4,7 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.file-picker :as picker])
   (:import [com.googlecode.lanterna TextColor$RGB]
@@ -942,19 +943,60 @@
                  :label "Mouse selection auto-copy"
                  :description "Drag-select visible text; copied automatically on mouse release"}]})
 
-(defn- settings-rows
+(defn- extension-env-declarations
   []
-  (->> settings-sections
-    (mapcat (fn [{:keys [id label]}]
-              (into [{:type :section
-                      :label label}]
-                (get settings-options-by-section id []))))
+  (->> (vis/registered-extensions)
+    (mapcat (fn [ext]
+              (let [ext-label (or (some-> (get-in ext [:ext/ns-alias :alias]) name)
+                                (some-> (:ext/namespace ext) str))]
+                (for [decl (:ext/env ext)
+                      :let [name (some-> (:name decl) str str/trim)]
+                      :when (not (str/blank? name))]
+                  (assoc decl
+                    :name name
+                    :extension-label ext-label)))))
+    (sort-by (juxt :extension-label :name))
     vec))
 
+(defn- extension-env-rows
+  []
+  (mapv (fn [{:keys [name label description extension-label secret? required?]}]
+          {:type :env-var
+           :id [:environment name]
+           :name name
+           :label (or label name)
+           :extension-label extension-label
+           :description (str (when extension-label (str extension-label " — "))
+                          (or description "Extension environment override"))
+           :secret? (boolean secret?)
+           :required? (boolean required?)})
+    (extension-env-declarations)))
+
+(defn- settings-rows
+  ([] (settings-rows (extension-env-rows)))
+  ([env-rows]
+   (->> settings-sections
+     (mapcat (fn [{:keys [id label]}]
+               (let [options (cond-> (vec (get settings-options-by-section id []))
+                               (= id :extensions) (into env-rows))]
+                 (into [{:type :section
+                         :label label}]
+                   options))))
+     vec)))
+
+(defn- extension-env-status-label
+  [source]
+  (case source
+    :config "set in Vis config"
+    :env    "set in environment"
+    :unset  "unset"
+    "unset"))
+
 (defn- settings-option-label
-  [{:keys [key label type choices]} values]
+  [{:keys [key label type choices name]} values]
   (case type
     :choice (str label ": " (name (or (get values key) (first choices))))
+    :env-var (str label ": " (extension-env-status-label (:source (vis/extension-env-status name))))
     label))
 
 (defn- cycle-choice
@@ -972,7 +1014,7 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action} type))
+  (contains? #{:toggle :choice :action :env-var} type))
 
 (defn- first-selectable-index
   [rows]
@@ -992,11 +1034,26 @@
         (and (pos? delta) (= idx (dec n))) selected
         :else (recur (clamp (+ idx delta) 0 (max 0 (dec n))))))))
 
+(defn- edit-extension-env-var!
+  [^TerminalScreen screen {:keys [name label description secret?]}]
+  (let [{:keys [source value]} (vis/extension-env-status name)
+        raw (text-input-dialog! screen
+              "Extension Environment"
+              (str name ":")
+              :mask (when secret? \*)
+              :initial (if secret? "" (or value ""))
+              :body [(str label " — " (extension-env-status-label source))
+                     (or description "")
+                     "Blank input clears the Vis config override; OS env still applies."])]
+    (when (some? raw)
+      (vis/save-extension-env-var! name raw))))
+
 (defn- activate-settings-row!
-  [values callbacks row]
+  [screen values callbacks row]
   (case (:type row)
     :action (when-let [f (get callbacks (:id row))]
               (f @values))
+    :env-var (edit-extension-env-var! screen row)
     (swap! values apply-settings-option row)))
 
 (defn- settings-section-text
@@ -1046,6 +1103,7 @@
                  state-mark (case type
                               :section "    "
                               :action  "[↗] "
+                              :env-var "[↗] "
                               :choice  "[→] "
                               (if (get @values key true) "[✓] " "[ ] "))
                  label-pad  (str label
@@ -1100,13 +1158,13 @@
                (let [c (.getCharacter key)]
                  (if (= c \space)
                    (do
-                     (activate-settings-row! values callbacks selected-row)
+                     (activate-settings-row! screen values callbacks selected-row)
                      (recur))
                    (recur)))
 
                KeyType/Enter
                (do
-                 (activate-settings-row! values callbacks selected-row)
+                 (activate-settings-row! screen values callbacks selected-row)
                  (recur))
 
                (recur)))))))))

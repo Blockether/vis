@@ -4,7 +4,10 @@
    envelope behavior. No live Exa calls run in the default suite."
   (:require
    [charred.api :as json]
+   [clojure.edn :as edn]
+   [clojure.java.io :as io]
    [clojure.string :as str]
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.exa.core :as exa]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it]]))
@@ -15,6 +18,12 @@
    :body (json/write-json-str {:jsonrpc "2.0"
                                :id id
                                :result result})})
+
+(defn- exa-manifest-file []
+  (let [repo-root-file (io/file "extensions/common/vis-exa/resources/META-INF/vis-extension/vis.edn")]
+    (if (.exists repo-root-file)
+      repo-root-file
+      (io/file "resources/META-INF/vis-extension/vis.edn"))))
 
 (defn- fake-mcp-send [seen]
   (fn [{:keys [body] :as req}]
@@ -37,6 +46,12 @@
         {:status 500 :headers {"content-type" "text/plain"} :body method}))))
 
 (defdescribe exa-extension-loads-test
+  (it "ships a parseable vis.edn manifest"
+    (let [manifest (edn/read-string {:readers {} :default (fn [_ form] form)}
+                     (slurp (exa-manifest-file)))]
+      (expect (= '[com.blockether.vis.ext.exa.core] (get-in manifest ['exa :nses])))
+      (expect (str/includes? (get-in manifest ['exa :docs "README.md" :content]) "\"url\""))))
+
   (it "exposes Exa symbols and a compact prompt"
     (expect (= '[web-search code-context web-search-exa get-code-context-exa]
               (mapv :ext.symbol/sym exa/exa-symbols)))
@@ -46,9 +61,16 @@
   (it "exports a valid Vis extension"
     (expect (= 'com.blockether.vis.ext.exa.core (:ext/namespace exa/vis-extension)))
     (expect (= {:ns 'vis.ext.exa :alias 'exa} (:ext/ns-alias exa/vis-extension)))
+    (expect (= "EXA_API_KEY" (-> exa/vis-extension :ext/env first :name)))
     (expect (= 4 (count (:ext/symbols exa/vis-extension))))))
 
 (defdescribe exa-config-test
+  (it "resolves env through Vis config-backed extension overrides"
+    (with-redefs-fn {#'vis/extension-env-value (fn [k]
+                                                 (get {"EXA_API_KEY" "configured-key"} k))
+                     #'exa/config-from-file (constantly nil)}
+      #(expect (= "configured-key" (:api-key (exa/effective-config))))))
+
   (it "merges config file, env overrides, and env-token values"
     (with-redefs-fn {#'exa/config-from-file
                      (fn [] {:url "env:EXA_URL"

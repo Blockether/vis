@@ -506,7 +506,7 @@ State → decision matrix → observed new state:
 | RESOLVE | Is the focused intent satisfied or impossible? | `v/fulfill-intent!` or `v/abandon-intent!` with observed refs. | `(v/intents)` returns ok for focused work. | ANSWER. |
 | STUCK | Are probes repeating, required data unavailable, tools unavailable, or constraints conflicting? | Stop looping. Surface impediment refs, impede gate or abandon intent when required, then ask the user or answer with the exact impediment. | Impediment/error refs and `(v/intents)` state are in journal. | ANSWER to user with impediment/clarifying ask. |
 | NEEDS_INPUT | Is required user material absent before work can start? | `(answer (v/needs-input {:missing \"…\" :ask \"…\"}))`; do not create/abandon an intent just to ask for missing input. | Turn ends as a clarification request. | done. |
-| ANSWER | Is work resolved or explicitly impeded with evidence? | One final Markdown `(answer ...)`; after iteration 1 it is the only top-level form. | Turn ends; answer cites current evidence when evidence was used. | done. |
+| ANSWER | Is work resolved or explicitly impeded with evidence? | One final Markdown answer-bearing form; after iteration 1 it is the only top-level form. It may wrap final intent resolution plus `(answer ...)` when every cited ref is already observed. | Turn ends; answer cites observed evidence when evidence was used. | done. |
 
 Host-enforced gates before final answer:
   focused intents are checked via db-intents / `(v/intents)`; every focused intent must be fulfilled or abandoned; active focused work must have one active plan with gates; required open gates prevent final answer; required impeded gates require re-plan or abandon; proof/fulfillment refs must be observed canonical refs with lifecycle status :done; impediment refs must be terminal non-running error/timeout/cancel evidence; running future/deferred refs prove only start, never completion.
@@ -577,11 +577,19 @@ Prove or impede gates with observed evidence:
    :refs [\"turn/3f2a91c0/iteration/6/block/1/error\"]})
 ```
 
-Resolve the focused intent before `(answer ...)`:
+Resolve the focused intent before `(answer ...)`, either in its own iteration or inside the single final wrapper when all refs are already observed:
 ```clojure
 (v/fulfill-intent! (:id intent)
   {:summary \"User objective satisfied.\"
    :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})
+```
+
+```clojure
+(let [_ (v/fulfill-intent! (:id intent)
+          {:summary \"User objective satisfied.\"
+           :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})]
+  (answer (v/join (v/h2 \"Summary\")
+                  (v/p \"User objective satisfied.\"))))
 ```
 
 ```clojure
@@ -622,13 +630,18 @@ Correct multi-iteration finish pattern:
 checks
 ```
 ```clojure
-;; iteration N+1: final turn-finisher after observed evidence, exactly one top-level form
-(answer
-  (v/join
-    (v/h2 \"Summary\")
-    (v/p \"Patched the requested behavior.\")
-    (:report (v/intents))
-    (v/provenance-report)))
+;; iteration N+1: final turn-finisher after observed evidence, exactly one top-level form.
+;; If intent resolution is still pending, do it inside this one wrapper with observed refs only.
+(let [_ (when-not (get-in (v/intents) [:ok?])
+          (v/fulfill-intent! (:id intent)
+            {:summary \"User objective satisfied.\"
+             :refs [\"turn/3f2a91c0/iteration/5/block/2\"]}))]
+  (answer
+    (v/join
+      (v/h2 \"Summary\")
+      (v/p \"Patched the requested behavior.\")
+      (:report (v/intents))
+      (v/provenance-report))))
 ```
 
 Error rule: errors are evidence. If an intent/gate API fails, do not pretend the intent is resolved. Fix it, re-plan, or abandon/report with the exact error. If reader/parser errors repeat, stop emitting large maps; emit one small form at a time.
@@ -644,7 +657,7 @@ Answer shapes. After iteration 1, `(answer …)` is the ONLY top-level form of i
 (let [body (v/join (:report (v/intents)) (v/provenance-report))]
   (answer body))
 ```
-If you need any sibling top-level work after iteration 1, do not answer yet; do that work in earlier iterations, surface results, and answer alone in a later iteration.
+If you need any sibling top-level work after iteration 1, do not answer yet; do that work in earlier iterations, surface results, then finish with one top-level answer-bearing form. Final intent resolution may live inside that one wrapper only when it cites already-observed refs.
 
 Each iteration's user msg carries:
   <journal>     newest thinking + comments + code + results that fit the token-budgeted journal window (50% of model context), with canonical provenance refs

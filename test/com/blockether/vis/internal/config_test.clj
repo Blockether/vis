@@ -24,6 +24,21 @@
       (expect (nil? (:default-models ollama)))
       (expect (= "http://localhost:1234/v1" (:base-url lmstudio))))))
 
+(defdescribe extension-env-config-test
+  (it "persists extension env overrides and clears blank values"
+    (let [dir (.toString (Files/createTempDirectory "vis-extension-env-test" (make-array java.nio.file.attribute.FileAttribute 0)))
+          path (str dir "/config.edn")]
+      (with-redefs [config/config-dir dir
+                    config/config-path path]
+        (expect (= :unset (:source (config/extension-env-status "EXA_API_KEY"))))
+        (config/save-extension-env-var! "EXA_API_KEY" " secret ")
+        (expect (= {:name "EXA_API_KEY" :source :config :value "secret"}
+                  (config/extension-env-status "EXA_API_KEY")))
+        (expect (= "secret" (get-in (config/load-config-raw) [:environment "EXA_API_KEY"])))
+        (config/save-extension-env-var! "EXA_API_KEY" "")
+        (expect (= :unset (:source (config/extension-env-status "EXA_API_KEY"))))
+        (expect (nil? (:environment (config/load-config-raw))))))))
+
 (defdescribe load-config-test
   (it "adds catalog metadata without rewriting provider-specific fields"
     (with-redefs [config/load-config-raw (fn [] {:providers [{:id :openai-codex

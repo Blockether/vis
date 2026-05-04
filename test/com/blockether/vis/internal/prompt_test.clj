@@ -246,8 +246,8 @@
   (it "centers Vis on Nucleus plus a state/decision/observed-state matrix"
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "λ engage(nucleus)."))
-      (expect (str/includes? p "Nucleus := Human ⊗ Vis ⊗ Workspace"))
-      (expect (str/includes? p "OODA ⊗ RGR ⊗ REPL"))
+      (expect (str/includes? p "Human ⊗ Vis ⊗ Workspace ⊗ REPL"))
+      (expect (str/includes? p "| OODA"))
       (expect (str/includes? p "State → decision matrix → observed new state"))
       (expect (str/includes? p "| State | Decision | Emit / do | New state in `<journal>` / `<var_index>` | Next state |"))
       (expect (str/includes? p "| STUCK |"))
@@ -296,6 +296,7 @@
       (expect (str/includes? p "verification-slot"))
       (expect (str/includes? p "v/intents"))
       (expect (str/includes? p "v/fulfill-intent!"))
+      (expect (str/includes? p "inside the single final wrapper when all refs are already observed"))
       (expect (str/includes? p "Every observed top-level form becomes a journal block"))
       (expect (str/includes? p "turn/<turn8>/iteration/<n>/block/<k>"))
       (expect (str/includes? p "v/await-proof!"))
@@ -311,6 +312,8 @@
       (expect (str/includes? p "Correct multi-iteration finish pattern"))
       (expect (str/includes? p "iteration N: verify and surface final evidence, no answer yet"))
       (expect (str/includes? p "iteration N+1: final turn-finisher after observed evidence, exactly one top-level form"))
+      (expect (str/includes? p "If intent resolution is still pending, do it inside this one wrapper with observed refs only"))
+      (expect (str/includes? p "Final intent resolution may live inside that one wrapper only when it cites already-observed refs"))
       (expect (not (str/includes? p "(answer \"scanned\") ; BAD")))
       (expect (not (str/includes? p "last 2 iters")))))
 

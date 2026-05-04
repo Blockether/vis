@@ -13,6 +13,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as ext]
+   [honey.sql :as sql]
    [lazytest.core :refer [defdescribe expect it throws?]]
    [sci.core :as sci]))
 
@@ -2084,16 +2085,36 @@
                       (:env opts))]
     (apply sh/sh (concat [vis-bin] args [:env env]))))
 
+(defn- execute-formatted!
+  [conn formatted]
+  (let [[statement & params] formatted]
+    (with-open [stmt (.prepareStatement conn statement)]
+      (doseq [[idx param] (map-indexed vector params)]
+        (.setObject stmt (inc idx) param))
+      (.execute stmt))))
+
 (defn- seed-bad-flyway-db!
   [^java.io.File dir]
   (Class/forName "org.sqlite.JDBC")
   (with-open [conn (java.sql.DriverManager/getConnection
                      (str "jdbc:sqlite:" (io/file dir "vis.db")))]
-    (doseq [sql ["CREATE TABLE flyway_schema_history (installed_rank INT NOT NULL PRIMARY KEY, version VARCHAR(50), description VARCHAR(200) NOT NULL, type VARCHAR(20) NOT NULL, script VARCHAR(1000) NOT NULL, checksum INT, installed_by VARCHAR(100) NOT NULL, installed_on TEXT NOT NULL, execution_time INT NOT NULL, success BOOLEAN NOT NULL)"
-                 "CREATE INDEX flyway_schema_history_s_idx ON flyway_schema_history (success)"
-                 "INSERT INTO flyway_schema_history (installed_rank, version, description, type, script, checksum, installed_by, installed_on, execution_time, success) VALUES (1, '1', 'schema', 'SQL', 'V1__schema.sql', 1, 'test', '2026-01-01 00:00:00.000', 1, 1)"]]
-      (with-open [stmt (.createStatement conn)]
-        (.execute stmt sql)))))
+    (doseq [q [{:create-table :flyway_schema_history
+                :with-columns [[:installed_rank :int [:not nil] :primary-key]
+                               [:version [:varchar 50]]
+                               [:description [:varchar 200] [:not nil]]
+                               [:type [:varchar 20] [:not nil]]
+                               [:script [:varchar 1000] [:not nil]]
+                               [:checksum :int]
+                               [:installed_by [:varchar 100] [:not nil]]
+                               [:installed_on :text [:not nil]]
+                               [:execution_time :int [:not nil]]
+                               [:success :boolean [:not nil]]]}
+               {:insert-into :flyway_schema_history
+                :columns [:installed_rank :version :description :type :script :checksum
+                          :installed_by :installed_on :execution_time :success]
+                :values [[1 "1" "schema" "SQL" "V1__schema.sql" 1
+                          "test" "2026-01-01 00:00:00.000" 1 1]]}]]
+      (execute-formatted! conn (sql/format q)))))
 
 (defn- contains-all? [s substrs]
   (every? #(str/includes? s %) substrs))

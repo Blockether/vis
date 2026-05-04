@@ -541,6 +541,64 @@
                         :answer-form-idx 0}
                       (:final-result result))))))))
 
+  (it "accepts a post-first wrapper that resolves intent with observed refs then answers"
+    (let [s   (vis/db-create-connection! :memory)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "fix it"
+                                                  :status :running})
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Fix it"
+                                          :rationale "User asked."})
+          plan   (vis/db-store-plan! s {:intent-id (:id intent)
+                                        :summary "Plan"})
+          gate   (vis/db-store-gate! s {:plan-id (:id plan)
+                                        :question "Verified?"})
+          _iid   (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(+ 1 2)"
+                                                       :result 3
+                                                       :execution-time-ms 1}]})
+          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          code   "(let [_ (v/fulfill-intent! (:id intent) {:summary \"Done.\" :refs [ref]})] (answer \"done\"))"
+          environment {:router ::router
+                       :db-info s
+                       :current-conversation-turn-id-atom (atom tid)
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (try
+        (vis/db-prove-gate! s {:gate-id (:id gate)
+                               :summary "Verified."
+                               :refs [ref]})
+        (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                            {:raw (str "```clojure\n" code "\n```")
+                                             :blocks [{:lang "clojure" :source code}]
+                                             :result code
+                                             :tokens {:input 1 :output 1}
+                                             :duration-ms 1})
+                         #'loop/execute-code (fn [env actual-code]
+                                               (expect (= code actual-code))
+                                               (vis/db-fulfill-intent! s (:id intent)
+                                                 {:summary "Done."
+                                                  :refs [ref]})
+                                               (reset! (:answer-atom env)
+                                                 {:value "done"
+                                                  :form-idx @(:current-form-idx-atom env)})
+                                               {:result :vis/answer
+                                                :stdout ""
+                                                :stderr ""
+                                                :execution-time-ms 0})}
+          (fn []
+            (let [result (loop/run-iteration environment
+                           [{:role "user" :content "fix it"}]
+                           {:iteration 1
+                            :resolved-model {:provider :test :name "model"}})]
+              (expect (= {:final? true
+                          :answer "done"
+                          :answer-form-idx 0}
+                        (:final-result result))))))
+        (finally
+          (vis/db-dispose-connection! s)))))
+
   (it "accepts needs-input answer payloads without creating an intent"
     (let [s   (vis/db-create-connection! :memory)
           cid (vis/db-store-conversation! s {:channel :cli})

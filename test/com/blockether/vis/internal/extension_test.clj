@@ -90,7 +90,21 @@
                :ext/doc       "Channel ext with custom kind."
                :ext/kind      "custom-bucket"
                :ext/channels  [base-channel]})]
-      (expect (= "custom-bucket" (:ext/kind e))))))
+      (expect (= "custom-bucket" (:ext/kind e)))))
+
+  (it "accepts extension-declared environment variables"
+    (let [e (ext/extension
+              {:ext/namespace 'test.env
+               :ext/doc       "Extension with config-backed env declarations."
+               :ext/env       [{:name "TEST_API_KEY"
+                                :label "Test API key"
+                                :description "Secret test token."
+                                :secret? true}]})]
+      (expect (= [{:name "TEST_API_KEY"
+                   :label "Test API key"
+                   :description "Secret test token."
+                   :secret? true}]
+                (:ext/env e))))))
 
 (defdescribe owner-field-test
   (it "accepts :ext/owner as a non-blank string and round-trips it"
