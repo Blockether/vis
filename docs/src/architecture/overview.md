@@ -43,3 +43,15 @@ count. The system prompt is built by `loop-core/assemble-system-prompt`
 **Persistence** — single SQLite DB for everything. Every `(def ...)`,
 every iteration, every thinking step persisted as versioned snapshots.
 Full provenance for post-mortem and conversation resume.
+
+## Evidence and completion model
+
+Runtime work follows one dataflow:
+
+```text
+evidence producers -> journal refs -> diagnostics -> intent/plan/gate resolution -> final answer guard
+```
+
+Evidence producers include SCI eval blocks, tool results, `provider-limits` reports, and runtime snapshots. Diagnostic enrichers such as parse diagnosis and doctor checks explain evidence. Resolution state — intents, plans, gates, and proof slots — consumes observed canonical refs to decide done or impeded.
+
+Do not model this as a separate proof layer. Proof is gate state plus cited provenance refs. See [Evidence, Diagnostics, and Resolution](evidence.md) and [Conversation Intents, Plans, and Gates](completion-contract.md).

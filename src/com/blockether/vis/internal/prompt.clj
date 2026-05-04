@@ -118,12 +118,7 @@
 
 (defn- tool-result-journal-text
   [v]
-  (let [presentation (extension/presentation v)]
-    (cond
-      (= :hide (:journal presentation)) "<tool result hidden>"
-      (:markdown presentation) (:markdown presentation)
-      (:markdown v) (:markdown v)
-      :else (str "<tool result " (pr-str (select-keys v [:ok? :result-shape :error])) ">"))))
+  (extension/render-tool-result :journal v))
 
 (defn- provenance-journal-suffix
   "Compact block-level provenance for the model-facing journal. Keep
@@ -510,6 +505,9 @@ State → decision matrix → observed new state:
 
 Host-enforced gates before final answer:
   focused intents are checked via db-intents / `(v/intents)`; every focused intent must be fulfilled or abandoned; active focused work must have one active plan with gates; required open gates prevent final answer; required impeded gates require re-plan or abandon; proof/fulfillment refs must be observed canonical refs with lifecycle status :done; impediment refs must be terminal non-running error/timeout/cancel evidence; running future/deferred refs prove only start, never completion.
+
+Evidence taxonomy:
+  evidence producers create observed journal facts with canonical refs: eval results, tool results, `provider-limits`, runtime snapshots. Diagnostic enrichers explain evidence: `parse-diagnose`, error classifiers, doctor checks; they are not proof unless their own observed diagnostic ref is cited. Resolution state consumes refs: intents, plans, gates, proof slots. A proof slot is a gate/plan expectation, not a separate proof object and not evidence until filled with an observed ref. Do not call this a standalone proof layer.
 
 Model discipline:
   run `(v/latest-provenance-refs)` / `(v/provenance-guards)` before citing provenance; inspect before edit; do not guess; use VSM only as compact attention: S5 identity/rules, S4 learn/probe, S3 plans/gates/resources, S2 coordinate journal+vars+tools+intent graph, S1 operate forms.

@@ -18,7 +18,6 @@
         (v/write-lines path lines)
         (v/update-file path f & xs)
         (v/create-dirs path)
-        (v/list-dir path)
         (v/glob root pattern)
         (v/copy src dest)
         (v/move src dest)
@@ -44,7 +43,8 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.extension :as extension])
+   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.markdown :as md])
   (:import
    (com.google.re2j Pattern)
    (java.io File InputStream Reader Writer)
@@ -55,7 +55,7 @@
 ;; Tunables
 ;; =============================================================================
 
-(def ^:private default-grep-limit 200)
+(def ^:private default-grep-limit 50)
 (def ^:private default-read-char-limit 6000)
 (def ^:private default-list-depth 5)
 (def ^:private default-bash-timeout-ms 30000)
@@ -133,47 +133,31 @@
        :kind      kind})))
 
 (defn- tool-success
-  [{:keys [op path kind result markdown provenance]}]
+  [{:keys [op path kind result provenance]}]
   (let [t (now-ms)]
-    (extension/with-presentation
-      (extension/success
-        {:result     result
-         :provenance (merge {:op             op
-                             :target         (path->target path kind)
-                             :started-at-ms  t
-                             :finished-at-ms t
-                             :duration-ms    0}
-                       provenance)})
-      {:journal :markdown
-       :markdown markdown
-       :var-index :compact
-       :transcript :full})))
-
-(defn- default-error-markdown
-  [op path err _target]
-  (str "`" (name op) "` failed for `" (or path "<nil>") "` — `"
-    (.getName (class err)) "`: " (or (ex-message err) "")))
+    (extension/success
+      {:result     result
+       :provenance (merge {:op             op
+                           :target         (path->target path kind)
+                           :started-at-ms  t
+                           :finished-at-ms t
+                           :duration-ms    0}
+                     provenance)})))
 
 (defn- tool-failure-on-error
-  [op kind markdown-fn]
+  [op kind _render-fn]
   (fn [err _env _f args]
     (let [path (first args)
           target (path->target path kind)
-          t (now-ms)
-          markdown ((or markdown-fn default-error-markdown) op path err target)]
-      {:result (extension/with-presentation
-                 (extension/failure
-                   {:result     nil
-                    :provenance {:op             op
-                                 :target         target
-                                 :started-at-ms  t
-                                 :finished-at-ms t
-                                 :duration-ms    0}
-                    :throwable  err})
-                 {:journal :markdown
-                  :markdown markdown
-                  :var-index :compact
-                  :transcript :full})})))
+          t (now-ms)]
+      {:result (extension/failure
+                 {:result     nil
+                  :provenance {:op             op
+                               :target         target
+                               :started-at-ms  t
+                               :finished-at-ms t
+                               :duration-ms    0}
+                  :throwable  err})})))
 
 ;; =============================================================================
 ;; .gitignore (cheap, lazy)
@@ -491,17 +475,80 @@
     (fs/create-dirs f)
     (rel-path f)))
 
-(defn- list-dir-safe
-  ([path]
-   (mapv display-path (fs/list-dir (safe-path path))))
-  ([path glob-or-accept]
-   (mapv display-path (fs/list-dir (safe-path path) glob-or-accept))))
+(defn- glob-matcher
+  [pattern]
+  (.getPathMatcher (java.nio.file.FileSystems/getDefault)
+    (str "glob:" pattern)))
+
+(defn- glob-matchers
+  [pattern scope]
+  (cond-> [(glob-matcher pattern)]
+    (and (= scope :recursive)
+      (str/starts-with? pattern "**/"))
+    (conj (glob-matcher (subs pattern 3)))))
+
+(defn- glob-scope
+  [pattern opts]
+  (let [scope (:scope opts)]
+    (cond
+      (nil? scope)
+      (if (or (str/includes? pattern "/")
+            (str/includes? pattern "**"))
+        :recursive
+        :children)
+
+      (#{:children :recursive} scope)
+      scope
+
+      :else
+      (throw (ex-info "v/glob :scope must be :children or :recursive"
+               {:type :ext.foundation.editing/invalid-glob-opts
+                :scope scope
+                :opts opts})))))
+
+(defn- visible-path?
+  [^File f {:keys [hidden? respect-gitignore? ignore-node root]}]
+  (and (or hidden? (not (.isHidden f)))
+    (or (not respect-gitignore?)
+      (not (ignored? ignore-node f root)))))
+
+(defn- visible-descendants
+  [^File root opts]
+  (letfn [(walk [^File f]
+            (when (visible-path? f opts)
+              (if (.isDirectory f)
+                (let [kids (sort-by (juxt #(if (.isDirectory %) 0 1) #(.getName %))
+                             (or (.listFiles f) []))]
+                  (into [] (mapcat walk) kids))
+                [f])))]
+    (vec (mapcat walk (sort-by (juxt #(if (.isDirectory %) 0 1) #(.getName %))
+                        (or (.listFiles root) []))))))
 
 (defn- glob-safe
   ([root pattern]
    (glob-safe root pattern nil))
   ([root pattern opts]
-   (mapv display-path (fs/glob (safe-path root) pattern (or opts {})))))
+   (let [root-file (ensure-existing-dir! (safe-path root))
+         {:keys [hidden? respect-gitignore?]
+          :or {hidden? false respect-gitignore? true}} (or opts {})
+         scope    (glob-scope pattern opts)
+         opts*    {:hidden? hidden?
+                   :respect-gitignore? respect-gitignore?
+                   :ignore-node (when respect-gitignore? (load-ignore-node root-file))
+                   :root root-file}
+         matchers (glob-matchers pattern scope)
+         rel*     (fn [^File f]
+                    (str (.relativize (.toPath root-file) (.toPath f))))
+         matches? (fn [^File f]
+                    (let [p (java.nio.file.Paths/get (rel* f) (make-array String 0))]
+                      (some #(.matches ^java.nio.file.PathMatcher % p) matchers)))
+         candidates (case scope
+                      :children (visible-children root-file opts*)
+                      :recursive (visible-descendants root-file opts*))]
+     {:paths (->> candidates
+               (filter matches?)
+               (mapv display-path))
+      :scope scope})))
 
 (defn- copy-safe
   ([src dest]
@@ -636,16 +683,11 @@
    the final aggregate map would only waste journal/context tokens."
   [value]
   (let [shape (extension/result-shape value)]
-    (extension/with-presentation
-      (assoc (extension/success
-               {:result shape
-                :result-shape shape
-                :provenance {:op :v/silent!}})
-        :rendering-kind :vis/silent)
-      {:journal :markdown
-       :markdown (str "Silenced value; shape " (pr-str shape) ".")
-       :var-index :compact
-       :transcript :full})))
+    (assoc (extension/success
+             {:result shape
+              :result-shape shape
+              :provenance {:op :v/silent!}})
+      :rendering-kind :vis/silent)))
 
 (defn- cat-tool
   ([path]
@@ -657,13 +699,6 @@
         :path path
         :kind :file
         :result out
-        :markdown (str "Read `" (:path out) "` — returned "
-                    (count (:lines out)) " line(s), offset " (:offset out)
-                    ", total " (:total-lines out)
-                    ", truncated-by `" (name (:truncated-by out)) "`"
-                    (when-let [n (:next-offset out)]
-                      (str ", next offset " n))
-                    ".")
         :provenance {:lines-returned (count (:lines out))
                      :offset (:offset out)
                      :next-offset (:next-offset out)
@@ -683,7 +718,6 @@
         :path path
         :kind :dir
         :result out
-        :markdown (str "Listed `" (:path out) "` as a " (name (:type out)) " tree.")
         :provenance {:depth (:depth opts)
                      :hidden? (:hidden? opts)
                      :respect-gitignore? (get opts :respect-gitignore? true)}}))))
@@ -698,8 +732,6 @@
         :path path
         :kind :dir
         :result out
-        :markdown (str "Searched `" path "` for " (count patterns) " literal pattern(s) — "
-                    (count (:hits out)) " hit(s), truncated-by `" (name (:truncated-by out)) "`.")
         :provenance {:patterns patterns
                      :hit-count (count (:hits out))
                      :truncated-by (:truncated-by out)
@@ -715,7 +747,6 @@
         :path path
         :kind :file
         :result lines
-        :markdown (str "Read `" path "` fully — " (count lines) " line(s).")
         :provenance {:lines (count lines)
                      :opts opts}}))))
 
@@ -731,7 +762,6 @@
         :path path
         :kind :file
         :result out
-        :markdown (str "Wrote `" out "` — " (count lines) " line(s), changed? `" (not= before after) "`.")
         :provenance {:changed? (not= before after)
                      :lines-before (count (str/split-lines (or before "")))
                      :lines-after (count (str/split-lines after))
@@ -746,8 +776,6 @@
        :path path
        :kind :file
        :result after
-       :markdown (str "Updated `" path "` — changed? `" (not= before after) "`, "
-                   (count (str/split-lines before)) " -> " (count (str/split-lines after)) " line(s).")
        :provenance {:changed? (not= before after)
                     :lines-before (count (str/split-lines before))
                     :lines-after (count (str/split-lines after))}})))
@@ -761,39 +789,22 @@
        :path path
        :kind :dir
        :result out
-       :markdown (str "Ensured directory `" out "` exists — created? `" (not before) "`.")
        :provenance {:created? (not before)
                     :already-existed? before}})))
-
-(defn- list-dir-tool
-  ([path]
-   (list-dir-tool path nil))
-  ([path glob-or-accept]
-   (let [out (if (some? glob-or-accept)
-               (list-dir-safe path glob-or-accept)
-               (list-dir-safe path))]
-     (tool-success
-       {:op :v/list-dir
-        :path path
-        :kind :dir
-        :result out
-        :markdown (str "Listed directory `" path "` — " (count out) " entr" (if (= 1 (count out)) "y" "ies") ".")
-        :provenance {:entry-count (count out)
-                     :filter glob-or-accept}}))))
 
 (defn- glob-tool
   ([root pattern]
    (glob-tool root pattern nil))
   ([root pattern opts]
-   (let [out (glob-safe root pattern opts)]
+   (let [{:keys [paths scope]} (glob-safe root pattern opts)]
      (tool-success
        {:op :v/glob
         :path root
         :kind :dir
-        :result out
-        :markdown (str "Globbed `" root "` with `" pattern "` — " (count out) " match(es).")
+        :result paths
         :provenance {:pattern pattern
-                     :match-count (count out)
+                     :scope scope
+                     :match-count (count paths)
                      :opts opts}}))))
 
 (defn- copy-tool
@@ -806,7 +817,6 @@
         :path dest
         :kind :path
         :result out
-        :markdown (str "Copied `" src "` to `" out "`.")
         :provenance {:src (path->target src :path)
                      :dest (path->target dest :path)
                      :opts opts}}))))
@@ -821,7 +831,6 @@
         :path dest
         :kind :path
         :result out
-        :markdown (str "Moved `" src "` to `" out "`.")
         :provenance {:src (path->target src :path)
                      :dest (path->target dest :path)
                      :opts opts}}))))
@@ -834,7 +843,6 @@
      :path path
      :kind :path
      :result nil
-     :markdown (str "Deleted `" path "`.")
      :provenance {:deleted? true}}))
 
 (defn- delete-if-exists-tool
@@ -845,9 +853,6 @@
        :path path
        :kind :path
        :result deleted?
-       :markdown (if deleted?
-                   (str "Deleted `" path "`.")
-                   (str "`" path "` was already absent."))
        :provenance {:deleted? deleted?}})))
 
 (defn- exists-tool
@@ -858,9 +863,6 @@
        :path path
        :kind :path
        :result exists?
-       :markdown (if exists?
-                   (str "`" path "` exists.")
-                   (str "`" path "` does not exist."))
        :provenance {:exists? exists?}})))
 
 (defn- bash-tool
@@ -873,9 +875,6 @@
         :path (:cwd out)
         :kind :dir
         :result out
-        :markdown (str "Ran bash in `" (:cwd out) "` — exit `" (:exit out) "`, "
-                    (:duration-ms out) " ms"
-                    (when (:timed-out? out) ", timed out") ".")
         :provenance {:command command
                      :cwd (:cwd out)
                      :exit (:exit out)
@@ -883,6 +882,196 @@
                      :stdout-truncated? (:stdout-truncated? out)
                      :stderr-truncated? (:stderr-truncated? out)
                      :opts (dissoc opts :stdin)}}))))
+
+;; =============================================================================
+;; Structured renderers
+;; =============================================================================
+
+(def ^:private journal-preview-chars 3000)
+(def ^:private rg-journal-hit-limit 12)
+
+(defn- preview-text
+  [s]
+  (let [s (str s)]
+    (if (> (count s) journal-preview-chars)
+      (str (subs s 0 journal-preview-chars)
+        "\n…<+" (- (count s) journal-preview-chars) " chars>")
+      s)))
+
+(defn- tool-error-text
+  [tool-result]
+  (let [op   (get-in tool-result [:provenance :op])
+        path (get-in tool-result [:provenance :target :requested])
+        err  (:error tool-result)]
+    (md/p "Tool" (md/code op) "failed"
+      (when path (str "for " (md/code path)))
+      ":"
+      (or (:message err) (pr-str err)))))
+
+(defn- render-silent
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (md/p "Silent." "Shape elided.")))
+
+(defn- render-ls
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [out (:result tool-result)]
+      (md/p "Directory tree of" (md/code (:path out)) "-"
+        (count (:children out)) "top-level entries."))))
+
+(defn- render-read-all-lines
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [path (get-in tool-result [:provenance :target :requested])
+          lines (:result tool-result)]
+      (md/p "Read" (md/code path) "-" (count lines) "line(s)."))))
+
+(defn- render-write-lines
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [path (get-in tool-result [:provenance :target :requested])
+          changed? (get-in tool-result [:provenance :changed?])]
+      (md/p "Wrote" (md/code path)
+        (when (false? changed?) "(no change)") "."))))
+
+(defn- render-update-file
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [path (get-in tool-result [:provenance :target :requested])
+          changed? (get-in tool-result [:provenance :changed?])]
+      (md/p "Updated" (md/code path)
+        (when (false? changed?) "(no change)") "."))))
+
+(defn- render-create-dirs
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [path (:result tool-result)]
+      (md/p "Ensured dir" (md/code path) "."))))
+
+(defn- render-glob
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [pattern (get-in tool-result [:provenance :pattern])
+          root (get-in tool-result [:provenance :target :requested])
+          scope (get-in tool-result [:provenance :scope])
+          matches (:result tool-result)]
+      (md/join
+        (md/p "Glob" (md/code pattern) "in" (md/code root) "-" (count matches) "match(es)"
+          (when scope (str "(" (md/code (name scope)) " scope)"))
+          ".")
+        (when (seq matches)
+          (md/code-block "text" (preview-text (str/join "\n" matches))))))))
+
+(defn- render-copy
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [src (get-in tool-result [:provenance :src :requested])
+          dest (:result tool-result)]
+      (md/p "Copied" (md/code src) "->" (md/code dest) "."))))
+
+(defn- render-move
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [src (get-in tool-result [:provenance :src :requested])
+          dest (:result tool-result)]
+      (md/p "Moved" (md/code src) "->" (md/code dest) "."))))
+
+(defn- render-delete
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [path (get-in tool-result [:provenance :target :requested])]
+      (md/p "Deleted" (md/code path) "."))))
+
+(defn- render-delete-if-exists
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [path (get-in tool-result [:provenance :target :requested])
+          deleted? (:result tool-result)]
+      (if deleted?
+        (md/p "Deleted" (md/code path) ".")
+        (md/p "Already absent" (md/code path) ".")))))
+
+(defn- render-exists?
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [path (get-in tool-result [:provenance :target :requested])
+          exists? (:result tool-result)]
+      (md/p "Exists?" (md/code path) "->" (pr-str exists?)))))
+
+(defn- render-cat
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [out      (:result tool-result)
+          numbered (->> (:lines out)
+                     (map-indexed (fn [idx line]
+                                    (str (+ (long (:offset out)) idx) ": " line)))
+                     (str/join "\n"))
+          body     (if (str/blank? numbered) "<no lines returned>" numbered)]
+      (md/join
+        (md/p "Read" (md/code (:path out)) "- returned"
+          (count (:lines out)) "line(s), offset" (:offset out)
+          ", total" (:total-lines out)
+          ", truncated-by" (md/code (name (:truncated-by out)))
+          (when-let [n (:next-offset out)]
+            (str ", next offset " n))
+          ".")
+        (md/code-block "text" (preview-text body))))))
+
+(defn- render-rg
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [out       (:result tool-result)
+          patterns  (get-in tool-result [:provenance :patterns])
+          target    (get-in tool-result [:provenance :target :requested])
+          hits      (:hits out)
+          shown     (take rg-journal-hit-limit hits)
+          hit-lines (->> shown
+                      (map (fn [{:keys [path line text]}]
+                             (str "- `" path ":" line "` " text)))
+                      (str/join "\n"))]
+      (md/join
+        (md/p "Searched" (md/code target) "for" (md/code (pr-str patterns)) "-"
+          (count hits) "hit(s), truncated-by" (md/code (name (:truncated-by out))) ".")
+        (if (seq shown)
+          (md/lines
+            (preview-text hit-lines)
+            (when (> (count hits) (count shown))
+              (str "... " (- (count hits) (count shown)) " more hit(s) omitted from journal preview.")))
+          "No hits.")))))
+
+(defn- render-bash
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [{:keys [command cwd exit timed-out? duration-ms stdout stderr
+                  stdout-truncated? stderr-truncated?]} (:result tool-result)
+          out (cond-> []
+                (not (str/blank? stdout))
+                (conj (md/join "stdout:" (md/code-block "text" (preview-text stdout))))
+                (not (str/blank? stderr))
+                (conj (md/join "stderr:" (md/code-block "text" (preview-text stderr)))))]
+      (md/join
+        (md/p "Ran bash in" (md/code cwd) "- exit" (md/code exit) "," duration-ms "ms"
+          (when timed-out? ", timed out")
+          (when (or stdout-truncated? stderr-truncated?) ", output truncated")
+          ".")
+        (md/p "Command:" (md/code command))
+        (when (seq out) (apply md/join out))))))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -897,6 +1086,7 @@
                 "(v/cat \"big.log\" {:offset 5000 :limit 200})"
                 "(some-> (v/cat \"big.log\" {:offset 5000 :limit 200}) :result :next-offset)"]
      :result-spec tool-result-spec
+     :render-fn render-cat
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
 
 (def silent-symbol
@@ -905,7 +1095,8 @@
      :arglists '([value])
      :examples ["(v/silent! {:status status :calls calls :summary summary})"
                 "(v/silent! big-debug-map)"]
-     :result-spec tool-result-spec}))
+     :result-spec tool-result-spec
+     :render-fn render-silent}))
 
 (def ls-symbol
   (vis/symbol 'ls ls-tool
@@ -914,16 +1105,18 @@
      :examples ["(:result (v/ls \".\"))"
                 "(v/ls \"src\" {:depth 3})"]
      :result-spec tool-result-spec
+     :render-fn render-ls
      :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
 
 (def rg-symbol
   (vis/symbol 'rg rg-tool
-    {:doc "Search file contents for literal substrings. Tool result. For path search use `v/glob`."
+    {:doc "Search file contents for literal substrings. Tool result; `:result` = {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
      :arglists '([patterns path] [patterns path opts])
      :examples ["(:result (v/rg [\"defn render\"] \"src\"))"
                 "(get-in (v/rg [\"defn render\"] \"src\") [:result :hits])"
                 "(v/rg [\"border-top\" \"draw-border\"] \"src\" {:limit 50})"]
      :result-spec tool-result-spec
+     :render-fn render-rg
      :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
 
 (def read-all-lines-symbol
@@ -933,6 +1126,7 @@
      :examples ["(:result (v/read-all-lines \"src/main.clj\"))"
                 "(str/join \"\\n\" (:result (v/read-all-lines \"src/main.clj\")))"]
      :result-spec tool-result-spec
+     :render-fn render-read-all-lines
      :on-error-fn (tool-failure-on-error :v/read-all-lines :file nil)}))
 
 (def write-lines-symbol
@@ -942,6 +1136,7 @@
      :examples ["(v/write-lines \"notes.txt\" [\"alpha\" \"beta\"])"
                 "(v/write-lines \"src/main.clj\" (:result (v/read-all-lines \"src/main.clj\")))"]
      :result-spec tool-result-spec
+     :render-fn render-write-lines
      :on-error-fn (tool-failure-on-error :v/write-lines :file nil)}))
 
 (def update-file-symbol
@@ -951,6 +1146,7 @@
      :examples ["(v/update-file \"README.md\" #(str % \"\\nnew line\\n\"))"
                 "(v/update-file \"x.txt\" str/upper-case)"]
      :result-spec tool-result-spec
+     :render-fn render-update-file
      :on-error-fn (tool-failure-on-error :v/update-file :file nil)}))
 
 (def create-dirs-symbol
@@ -959,24 +1155,18 @@
      :arglists '([path])
      :examples ["(v/create-dirs \"target/tmp/cache\")"]
      :result-spec tool-result-spec
+     :render-fn render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
-
-(def list-dir-symbol
-  (vis/symbol 'list-dir list-dir-tool
-    {:doc "Flat directory listing. Tool result; `:result` = cwd-relative paths."
-     :arglists '([path] [path glob-or-accept])
-     :examples ["(:result (v/list-dir \"src\"))"
-                "(v/list-dir \"src\" \"*.clj\")"]
-     :result-spec tool-result-spec
-     :on-error-fn (tool-failure-on-error :v/list-dir :dir nil)}))
 
 (def glob-symbol
   (vis/symbol 'glob glob-tool
-    {:doc "Search paths, not contents. Tool result; `:result` = matching paths."
+    {:doc "Path matching. Tool result; `:result` = matching cwd-relative path strings. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Opts may include `:scope :children|:recursive`, `:hidden?`, and `:respect-gitignore?`."
      :arglists '([root pattern] [root pattern opts])
-     :examples ["(:result (v/glob \"src\" \"**.clj\"))"
-                "(v/glob \"resources\" \"**.edn\" {:hidden true})"]
+     :examples ["(:result (v/glob \"src\" \"*.clj\"))"
+                "(:result (v/glob \"src\" \"**/*.clj\"))"
+                "(v/glob \"resources\" \"*.edn\" {:scope :children :hidden? true})"]
      :result-spec tool-result-spec
+     :render-fn render-glob
      :on-error-fn (tool-failure-on-error :v/glob :dir nil)}))
 
 (def copy-symbol
@@ -985,6 +1175,7 @@
      :arglists '([src dest] [src dest opts])
      :examples ["(v/copy \"a.txt\" \"backup/a.txt\")"]
      :result-spec tool-result-spec
+     :render-fn render-copy
      :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
 
 (def move-symbol
@@ -993,6 +1184,7 @@
      :arglists '([src dest] [src dest opts])
      :examples ["(v/move \"tmp.txt\" \"archive/tmp.txt\")"]
      :result-spec tool-result-spec
+     :render-fn render-move
      :on-error-fn (tool-failure-on-error :v/move :path nil)}))
 
 (def delete-symbol
@@ -1001,6 +1193,7 @@
      :arglists '([path])
      :examples ["(v/delete \"tmp.txt\")"]
      :result-spec tool-result-spec
+     :render-fn render-delete
      :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
 
 (def delete-if-exists-symbol
@@ -1009,6 +1202,7 @@
      :arglists '([path])
      :examples ["(v/delete-if-exists \"tmp.txt\")"]
      :result-spec tool-result-spec
+     :render-fn render-delete-if-exists
      :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
 
 (def exists?-symbol
@@ -1017,6 +1211,7 @@
      :arglists '([path])
      :examples ["(:result (v/exists? \"src/main.clj\"))"]
      :result-spec tool-result-spec
+     :render-fn render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
 
 (def bash-symbol
@@ -1028,6 +1223,7 @@
                 "(get-in run [:result :exit])"
                 "(v/bash \"git status --short\" {:timeout-ms 10000 :max-output-chars 8000})"]
      :result-spec tool-result-spec
+     :render-fn render-bash
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
 
 (def editing-symbols
@@ -1039,7 +1235,6 @@
    write-lines-symbol
    update-file-symbol
    create-dirs-symbol
-   list-dir-symbol
    glob-symbol
    copy-symbol
    move-symbol
@@ -1049,6 +1244,6 @@
    bash-symbol])
 
 (def editing-prompt
-  "`v/` files: Use v/rg/v/cat/v/glob for search/read/path discovery: (v/cat path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?), (v/ls path opts?). v/cat opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. Edit with (v/read-all-lines path), (v/write-lines path lines opts?), (v/update-file path f & xs). Path ops: (v/create-dirs path), (v/list-dir path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
-`v/` shell: Do not use v/bash for grep/sed/nl/cat/find; use v/rg/v/cat/v/glob instead. Use v/bash only for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
-Tool results are envelopes; payload lives under :result. cat: (def c (v/cat \"IDEAS.md\" {:offset 1 :limit 120})) -> (get-in c [:result :lines]); never (:lines c) / (:content c). read-all-lines: (:result (v/read-all-lines \"IDEAS.md\")) -> full line vector. bash: (def run (v/bash \"pwd\")) -> (get-in run [:result :stdout]), :stderr, :exit; never top-level (:stdout run) / (:exit run). Use (v/silent! aggregate-map) when constituent tool/var outputs were already shown and the aggregate value would only burn journal tokens; it returns only shape and is elided from live display. For Clojure source edits prefer z/zedit when `z/` is active; use v/read-all-lines + v/write-lines only for trivial line/data changes.")
+  "`v/` files: Use structured tools for discovery and reads: (v/cat path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?), (v/ls path opts?). `v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. `v/cat` opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. Edit with (v/read-all-lines path), (v/write-lines path lines opts?), (v/update-file path f & xs). Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
+`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
+Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\" {:offset 1 :limit 120}) [:result :lines]), (:result (v/read-all-lines \"IDEAS.md\")), (get-in (v/bash \"pwd\") [:result :stdout]), (-> (v/rg [\"needle\"] \"src\") :result :hits). Use (v/silent! aggregate-map) when constituent tool/var outputs were already shown and the aggregate value would only burn journal tokens; it returns only shape and is elided from live display. For Clojure source edits prefer z/zedit when `z/` is active; use v/read-all-lines + v/write-lines only for trivial line/data changes.")

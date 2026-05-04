@@ -939,7 +939,7 @@
         body  (if (extension/tool-result? val)
                 (bounded-pr-str {:tool-result  true
                                  :ok?          (:ok? val)
-                                 :markdown     (:markdown val)
+                                 :op           (get-in val [:provenance :op])
                                  :result-shape (:result-shape val)})
                 (case type
                   ;; Scalars: pr-str output is bounded by the type. A

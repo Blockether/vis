@@ -16,7 +16,8 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.extension :as extension])
+   [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.markdown :as md])
   (:import
    (java.net URI URLDecoder URLEncoder)
    (java.nio.charset StandardCharsets)
@@ -440,16 +441,23 @@
      :max-lines (min (positive-long (or (:pi-max-lines opts) (:piMaxLines opts)) (:max-lines cfg))
                   (:max-lines cfg))}))
 
-(defn- success-markdown
-  [label query content truncated? temp-file]
-  (str label ": `" query "`"
-    "\n\n"
-    content
-    (when truncated?
-      (str "\n\n_Output truncated; full output saved to `" temp-file "`._"))))
+(defn- render-exa-result
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (let [op    (get-in tool-result [:provenance :op])
+          query (get-in tool-result [:result :query])]
+      (md/p "Exa" (md/code op) "failed for" (md/code query) ":"
+        (or (get-in tool-result [:error :message]) (pr-str (:error tool-result)))))
+    (let [{:keys [query content truncated? temp-file]} (:result tool-result)
+          op (get-in tool-result [:provenance :op])]
+      (md/join
+        (md/p "Exa" (md/code op) ":" (md/code query))
+        content
+        (when truncated?
+          (md/p "Output truncated; full output saved to" (md/code temp-file) "."))))))
 
 (defn- tool-success
-  [{:keys [tool-name op label query args mcp endpoint limits]}]
+  [{:keys [tool-name op query args mcp endpoint limits]}]
   (let [raw       (mcp-result->text mcp)
         trunc     (truncate-text raw limits)
         temp-file (when (:truncated? trunc) (temp-output-file! tool-name raw))
@@ -462,36 +470,26 @@
                    :truncated? (:truncated? trunc)
                    :truncation (dissoc trunc :content)}
         result    (cond-> result temp-file (assoc :temp-file temp-file))]
-    (extension/with-presentation
-      (extension/success
-        {:result result
-         :provenance {:op op
-                      :target {:kind :exa-mcp
-                               :tool tool-name
-                               :query query
-                               :endpoint (redact-endpoint endpoint)}}})
-      {:journal :markdown
-       :markdown (success-markdown label query (:content trunc) (:truncated? trunc) temp-file)
-       :var-index :compact
-       :transcript :full})))
-
-(defn- tool-failure
-  [op tool-name query endpoint throwable]
-  (extension/with-presentation
-    (extension/failure
-      {:result {:tool tool-name
-                :query query
-                :endpoint (when endpoint (redact-endpoint endpoint))}
+    (extension/success
+      {:result result
        :provenance {:op op
                     :target {:kind :exa-mcp
                              :tool tool-name
                              :query query
-                             :endpoint (when endpoint (redact-endpoint endpoint))}}
-       :throwable throwable})
-    {:journal :markdown
-     :markdown (str "Exa MCP `" tool-name "` failed for `" query "`: " (ex-message throwable))
-     :var-index :compact
-     :transcript :full}))
+                             :endpoint (redact-endpoint endpoint)}}})))
+
+(defn- tool-failure
+  [op tool-name query endpoint throwable]
+  (extension/failure
+    {:result {:tool tool-name
+              :query query
+              :endpoint (when endpoint (redact-endpoint endpoint))}
+     :provenance {:op op
+                  :target {:kind :exa-mcp
+                           :tool tool-name
+                           :query query
+                           :endpoint (when endpoint (redact-endpoint endpoint))}}
+     :throwable throwable}))
 
 (defn- kw-get
   [m & ks]
@@ -573,7 +571,8 @@
      :arglists '([query] [query opts])
      :examples ["(def r (exa/web-search \"latest Clojure release\" {:num-results 5}))"
                 "(get-in r [:result :content])"]
-     :result-spec tool-result-spec}))
+     :result-spec tool-result-spec
+     :render-fn render-exa-result}))
 
 (def code-context-symbol
   (vis/symbol 'code-context code-context
@@ -581,21 +580,24 @@
      :arglists '([query] [query opts])
      :examples ["(def c (exa/code-context \"rewrite-clj z/find-value examples\" {:tokens-num 12000}))"
                 "(get-in c [:result :content])"]
-     :result-spec tool-result-spec}))
+     :result-spec tool-result-spec
+     :render-fn render-exa-result}))
 
 (def web-search-exa-symbol
   (vis/symbol 'web-search-exa web-search-exa
     {:doc "PI-compatible alias for exa/web-search."
      :arglists '([query] [query opts])
      :examples ["(exa/web-search-exa \"latest React features\")"]
-     :result-spec tool-result-spec}))
+     :result-spec tool-result-spec
+     :render-fn render-exa-result}))
 
 (def get-code-context-exa-symbol
   (vis/symbol 'get-code-context-exa get-code-context-exa
     {:doc "PI-compatible alias for exa/code-context."
      :arglists '([query] [query opts])
      :examples ["(exa/get-code-context-exa \"Rust error handling examples\")"]
-     :result-spec tool-result-spec}))
+     :result-spec tool-result-spec
+     :render-fn render-exa-result}))
 
 (def exa-symbols
   [web-search-symbol

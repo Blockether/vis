@@ -10,6 +10,7 @@
 - [Overview](architecture/overview.md)
 - [Packages](architecture/packages.md)
 - [Iteration Flow](architecture/iteration-flow.md)
+- [Evidence, Diagnostics, and Resolution](architecture/evidence.md)
 - [RLM Memory](architecture/rlm-memory.md)
 - [Conversation Intents, Plans, and Gates](architecture/completion-contract.md)
 - [State Ownership](architecture/state.md)

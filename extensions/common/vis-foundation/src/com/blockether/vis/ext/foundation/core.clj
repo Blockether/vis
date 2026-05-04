@@ -24,7 +24,7 @@
    The separate `fs/` alias was dropped, but the useful babashka.fs
    surface is now inlined under `v/` as thin cwd-safe wrappers
    (`v/read-all-lines`, `v/write-lines`, `v/update-file`, `v/glob`,
-   `v/list-dir`, ...). The markdown builders were merged too, so the
+   ...). The markdown builders were merged too, so the
    model now uses `(answer (v/join ...))`, `(v/h1 ...)`,
    `(v/file-link ...)`, etc. through the same `v/` prefix. One short
    alias, normal Clojure code, no bespoke edit DSLs, no alias

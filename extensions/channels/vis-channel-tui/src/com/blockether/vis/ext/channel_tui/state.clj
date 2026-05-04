@@ -5,8 +5,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
-            [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.ext.channel-tui.virtual :as virtual]))
+            [com.blockether.vis.ext.channel-tui.render :as render]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -420,8 +419,6 @@
 
 (reg-event-db :toggle-detail
   (fn [db [_ conversation-id node-id]]
-    (render/invalidate-cache!)
-    (virtual/invalidate-heights!)
     (let [k [(str conversation-id) (str node-id)]]
       (update db :detail-expansions
         (fn [m]

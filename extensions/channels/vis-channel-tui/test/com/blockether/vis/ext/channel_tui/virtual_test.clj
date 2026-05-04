@@ -273,6 +273,18 @@
         ;; The cache must now contain at least one real height.
         (expect (pos? (virtual/height-cache-size)))))
 
+    (it "detail toggles do not create a second height-cache universe"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [msgs [(plain-assistant-msg "<details>\n<summary>D</summary>\n\nbody\n\n</details>")]]
+        (virtual/layout msgs bubble-w settings nil 20 {}
+          {:conversation-id "cid" :detail-expansions {}})
+        (expect (= 1 (virtual/height-cache-size)))
+        (virtual/layout msgs bubble-w settings nil 20 {}
+          {:conversation-id "cid"
+           :detail-expansions {["cid" "answer:d1"] true}})
+        (expect (= 1 (virtual/height-cache-size)))))
+
     (it "`invalidate-heights!` drops the cache cleanly"
       (virtual/invalidate-heights!)
       (expect (zero? (virtual/height-cache-size)))

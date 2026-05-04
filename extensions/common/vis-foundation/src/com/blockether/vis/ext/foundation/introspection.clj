@@ -48,6 +48,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.transcript :as transcript]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.markdown :as md]
    [com.blockether.vis.internal.provenance-lifecycle :as prov-life]
    [com.blockether.vis.internal.provenance-ref :as prov-ref])
   (:import
@@ -879,6 +880,40 @@
                      (:iterations turn)))
            (:turns data)))))))
 
+(defn- id-prefix-match?
+  [id prefix]
+  (and id prefix (str/starts-with? (str/lower-case (str id)) (str/lower-case (str prefix)))))
+
+(defn- fast-provenance-event
+  [env conversation-id ref]
+  (when-let [{:keys [turn-prefix iteration block]} (prov-ref/parse-ref ref)]
+    (let [db-info (:db-info env)
+          turn    (some #(when (id-prefix-match? (:id %) turn-prefix) %)
+                    (safe-call #(vis/db-list-conversation-turns db-info conversation-id) []))
+          iter    (when turn
+                    (some #(when (= (long iteration) (long (:position %))) %)
+                      (safe-call #(vis/db-list-conversation-turn-iterations db-info (:id turn)) [])))
+          blocks  (when iter (safe-call #(vis/db-list-iteration-blocks db-info (:id iter)) []))
+          blk     (some #(when (= (str ref) (get-in % [:provenance :ref])) %)
+                    blocks)
+          blk     (or blk (nth (vec blocks) (dec (long block)) nil))]
+      (when blk
+        (let [events (mapv #(lifecycle-event conversation-id turn iter blk %) (:events blk))
+              tool   (when (empty? events) (tool-event conversation-id turn iter blk))
+              all    (cond-> (into [(eval-event conversation-id turn iter blk)] events)
+                       tool (conj tool))]
+          (some #(when (= (str ref) (str (:ref %))) %) all))))))
+
+(defn foundation-provenance-event
+  "Return one provenance timeline event by canonical ref, or nil. Uses a direct
+   DB lookup first so TUI ref clicks do not rebuild the whole transcript."
+  ([env ref]
+   (foundation-provenance-event env (:conversation-id env) ref))
+  ([env conversation-id ref]
+   (or (fast-provenance-event env conversation-id ref)
+     (some #(when (= (str ref) (str (:ref %))) %)
+       (foundation-provenance-timeline env conversation-id)))))
+
 (defn- foundation-provenance-stats
   "Roll up a provenance timeline into counts and audit-focused slices."
   ([env]
@@ -1493,12 +1528,24 @@ _No intents._
                      slots))
     "  - none"))
 
+(defn- provenance-link
+  [ref]
+  (if (str/blank? (str ref))
+    (code-ish ref)
+    (str "[" (code-ish ref) "](vis-provenance://" ref ")")))
+
+(defn- quote-md
+  [s]
+  (->> (str/split-lines (str (or s "")))
+    (map #(str "> " %))
+    (str/join "\n")))
+
 (defn- render-proof-refs
   [ref-checks]
   (if (seq ref-checks)
     (str/join "\n"
       (map (fn [{:keys [ref role event ok?]}]
-             (str "  - " (code-ish ref) " — " (code-ish (pr-str role))
+             (str "  - " (provenance-link ref) " — " (code-ish (pr-str role))
                (if event
                  (str ", " (code-ish (pr-str (:op event))) " → " (code-ish (pr-str (:status event)))
                    ", " (or (:duration-ms event) 0) "ms")
@@ -1510,7 +1557,8 @@ _No intents._
 (defn- render-proof-gate
   [gate-check]
   (str "### Gate " (code-ish (:gate-handle gate-check)) " — " (name (:status gate-check)) "\n\n"
-    "- Intent: " (code-ish (:intent-handle gate-check)) " — " (:intent-title gate-check) "\n"
+    "- Intent: " (code-ish (:intent-handle gate-check)) "\n\n"
+    (quote-md (:intent-title gate-check)) "\n"
     "- Plan: " (code-ish (:plan-handle gate-check)) " — " (:plan-summary gate-check) "\n"
     "- Asked: " (:asked gate-check) "\n"
     "- Required: " (:required? gate-check) "\n"
@@ -1525,7 +1573,7 @@ _No intents._
 
 (defn- render-evidence-event
   [{:keys [ref parent-ref kind op status duration-ms error]}]
-  (str "- " (code-ish ref) " " (name kind) " " (code-ish (pr-str op))
+  (str "- " (provenance-link ref) " " (name kind) " " (code-ish (pr-str op))
     (when parent-ref (str " parent " (code-ish parent-ref)))
     " → " (code-ish (pr-str status)) ", " (or duration-ms 0) "ms"
     (when error (str " — " (preview (error-text error) 180)))))
@@ -1826,6 +1874,15 @@ _No intents._
       (extension/success {:result result :provenance provenance})
       (extension/failure {:result result :provenance provenance :throwable throwable}))))
 
+(defn- render-await-proof!
+  [{:keys [tool-result]}]
+  (let [status (get-in tool-result [:provenance :status])
+        duration-ms (get-in tool-result [:provenance :duration-ms])]
+    (if (:ok? tool-result)
+      (md/p "Awaited proof - status" (md/code status) "," duration-ms "ms.")
+      (md/p "Await-proof failed - status" (md/code status) "," duration-ms "ms:"
+        (or (get-in tool-result [:error :message]) (pr-str (:error tool-result)))))))
+
 (defn- foundation-await-proof!
   "Wait for a Future/blocking deref and return a tool-result envelope with
    terminal provenance. Use this instead of plain deref when the awaited
@@ -1879,6 +1936,14 @@ _No intents._
      :examples  ["(v/provenance-timeline)"
                  "(filter #(= :error (:status %)) (v/provenance-timeline))"
                  "(map (juxt :ref :kind :op :status) (v/provenance-timeline))"]
+     :before-fn inject-environment}))
+
+(def provenance-event-symbol
+  (vis/symbol 'provenance-event foundation-provenance-event
+    {:doc       "Resolve one canonical provenance ref to its observed timeline event, or nil."
+     :arglists  '([ref] [conversation-id ref])
+     :examples  ["(v/provenance-event \"turn/3f2a91c0/iteration/4/block/2\")"
+                 "(select-keys (v/provenance-event ref) [:ref :kind :op :status :code])"]
      :before-fn inject-environment}))
 
 (def provenance-stats-symbol
@@ -1937,7 +2002,8 @@ _No intents._
     {:doc       "Canonical await for Future/blocking deref values when the awaited result will be used as proof. Returns a terminal tool-result envelope; cite the observed await block, not the start ref."
      :arglists  '([future-or-deref] [future-or-deref {:keys [timeout-ms]}])
      :examples  ["(def result (v/await-proof! f {:timeout-ms 30000}))"
-                 "result"]}))
+                 "result"]
+     :render-fn render-await-proof!}))
 
 (def intents-symbol
   (vis/symbol 'intents foundation-intents
@@ -2118,6 +2184,7 @@ _No intents._
   [inspect-symbol
    report-symbol
    provenance-timeline-symbol
+   provenance-event-symbol
    provenance-stats-symbol
    provenance-guards-symbol
    latest-provenance-refs-symbol
@@ -2149,7 +2216,7 @@ _No intents._
 
 (def introspection-prompt
   (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown; (v/audit-report cid?) -> audit.\n"
-    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/proof-checks cid?) checks gates/slots/refs deterministically; (v/proofs checks-or-cid?) renders clickable proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
+    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/provenance-event ref) resolves one ref; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/proof-checks cid?) checks gates/slots/refs deterministically; (v/proofs checks-or-cid?) renders clickable proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
     "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with (v/prove-gate! gate opts), (v/impede-gate! gate opts), (v/fulfill-intent! id opts), (v/abandon-intent! id opts). Check (v/intents turn-id?) and (v/proof-checks) before normal answer.\n"
     "`v/` docs: (v/extensions), (v/extension-docs ref), (v/extension-doc ref), (v/extension-readme ref), (v/namespace-docs ref), (v/symbol-doc ref sym).\n"))
 

@@ -40,6 +40,12 @@
 (def ^:private open-click-target!
   (deref #'screen/open-click-target!))
 
+(def ^:private provenance-ref-from-url
+  (deref #'screen/provenance-ref-from-url))
+
+(def ^:private provenance-dialog-lines
+  (deref #'screen/provenance-dialog-lines))
+
 (def ^:private bubble-selectable-ranges
   (deref #'screen/bubble-selectable-ranges))
 
@@ -69,6 +75,28 @@
   (try (f) false
     (catch clojure.lang.ExceptionInfo e
       (true? (:vis/user-error (ex-data e))))))
+
+(defdescribe provenance-click-test
+  (it "extracts the canonical ref from a TUI-internal provenance URL"
+    (expect (= "turn/8fc00e9d/iteration/6/block/4"
+              (provenance-ref-from-url "vis-provenance://turn/8fc00e9d/iteration/6/block/4"))))
+
+  (it "formats a provenance event for the internal viewer"
+    (let [lines (provenance-dialog-lines
+                  "cid"
+                  "turn/8fc00e9d/iteration/6/block/4"
+                  {:ref "turn/8fc00e9d/iteration/6/block/4"
+                   :status :done
+                   :kind :eval
+                   :op :sci/eval
+                   :duration-ms 5
+                   :turn-id "turn-id"
+                   :iteration 6
+                   :form-position 4
+                   :code "(+ 1 1)"})]
+      (expect (some #(= "Ref: turn/8fc00e9d/iteration/6/block/4" %) lines))
+      (expect (some #(= "Status: :done" %) lines))
+      (expect (some #(= "Code: (+ 1 1)" %) lines)))))
 
 (defdescribe hint-test
   (it "empty input advertises arrow-key history instead of removed Ctrl+P/N chords"

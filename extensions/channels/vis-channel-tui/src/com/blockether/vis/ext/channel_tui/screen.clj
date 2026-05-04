@@ -357,19 +357,72 @@
     (finally
       (.unlock draw-lock))))
 
+(def ^:private provenance-url-prefix "vis-provenance://")
+
+(defn- provenance-ref-from-url
+  [url]
+  (when (and (string? url) (str/starts-with? url provenance-url-prefix))
+    (subs url (count provenance-url-prefix))))
+
+(defn- preview-line
+  [x max-n]
+  (let [s (str/replace (str (or x "")) #"\s+" " ")]
+    (if (> (count s) max-n)
+      (str (subs s 0 max-n) "…")
+      s)))
+
+(defn- resolve-provenance-event
+  [conversation-id ref]
+  (try
+    (when-let [f (requiring-resolve 'com.blockether.vis.ext.foundation.introspection/foundation-provenance-event)]
+      (f (vis/env-for conversation-id) conversation-id ref))
+    (catch Throwable _ nil)))
+
+(defn- provenance-dialog-lines
+  [conversation-id ref event]
+  (if event
+    (cond-> [(str "Ref: " ref)
+             (str "Status: " (:status event))
+             (str "Kind: " (:kind event))
+             (str "Op: " (:op event))
+             (str "Duration: " (or (:duration-ms event) 0) "ms")
+             (str "Turn: " (:turn-id event))
+             (str "Iteration: " (:iteration event))
+             (str "Form: " (:form-position event))]
+      (:parent-ref event) (conj (str "Parent: " (:parent-ref event)))
+      (:code event)       (conj "" (str "Code: " (preview-line (:code event) 220)))
+      (:error event)      (conj "" (str "Error: " (preview-line (pr-str (:error event)) 220))))
+    [(str "Ref: " ref)
+     ""
+     "No observed event found in the current conversation."
+     (str "Conversation: " conversation-id)]))
+
+(defn- open-provenance-popup!
+  [^TerminalScreen screen url]
+  (let [conversation-id (get-in @state/app-db [:conversation :id])
+        ref             (provenance-ref-from-url url)
+        event           (when (and conversation-id ref)
+                          (resolve-provenance-event conversation-id ref))]
+    (with-dialog-lock
+      #(dlg/text-view-dialog! screen "Provenance" (provenance-dialog-lines conversation-id ref event)))))
+
 (defn- open-click-target!
-  [{:keys [kind url]}]
-  (future
-    (try
-      (if (= :file kind)
-        (opener/open-file-in-editor! url)
-        (opener/open! url))
-      (catch Throwable _ nil))))
+  ([{:keys [kind url]}]
+   (future
+     (try
+       (if (= :file kind)
+         (opener/open-file-in-editor! url)
+         (opener/open! url))
+       (catch Throwable _ nil))))
+  ([^TerminalScreen screen {:keys [kind url] :as ref}]
+   (if (= :provenance kind)
+     (open-provenance-popup! screen url)
+     (open-click-target! ref))))
 
 (defn- open-resources-popup!
   [^TerminalScreen screen refs]
   (when-let [ref (with-dialog-lock #(dlg/resources-dialog! screen refs))]
-    (open-click-target! ref)))
+    (open-click-target! screen ref)))
 
 (defn- screen-size
   "Lanterna size + lazy resize handling. MUST be called with `draw-lock`
@@ -1334,7 +1387,7 @@
                                :resources
                                (open-resources-popup! screen (:refs hit))
 
-                               (open-click-target! hit))
+                               (open-click-target! screen hit))
                              (when-let [bubble-hit (bubble-copy-hit
                                                      (selection/point mx my)
                                                      transcript-bubble-copy-regions)]
@@ -1400,7 +1453,7 @@
                              ;; the OS opener on a side thread —
                              ;; a slow `xdg-open` cannot freeze the
                              ;; input loop's redraw cadence.
-                               (open-click-target! hit)))
+                               (open-click-target! screen hit)))
                            (when selection-copy?
                              (let [screen-anchor (selection/point mx my)
                                    source        (selection/source-at-point

@@ -122,6 +122,15 @@
                                     :label "OpenAI Codex verbosity"}
               {:openai-codex-verbosity :high}))))
 
+    (testing "choice labels do not crash when row also carries a nil name field"
+      (is (= "Reasoning effort: quick"
+            (settings-option-label {:key :reasoning-level
+                                    :type :choice
+                                    :choices [:quick :balanced :deep]
+                                    :label "Reasoning effort"
+                                    :name nil}
+              {}))))
+
     (testing "settings rows are grouped under Extensions / UI"
       (is (= ["Extensions" "UI"]
             (->> (settings-rows)

@@ -990,7 +990,7 @@
         (expect (not-any? #(str/includes? % "<details") lines))
         (expect (not-any? #(str/includes? % "</details>") lines))))
 
-    (it "`<proofs>` renders as a clickable proof badge with icon metadata"
+    (it "`<proofs>` renders as a clickable proof badge collapsed by default"
       (let [payload (render/format-answer-markdown-data
                       "<proofs>\n<summary>Proofs · OK</summary>\n\nbody\n\n</proofs>"
                       60
@@ -1000,9 +1000,37 @@
         (expect (not-any? #(str/includes? % "<proofs") lines))
         (expect (not-any? #(str/includes? % "</proofs>") lines))
         (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
-                         (str/includes? % "✓ Proofs · OK")) lines))
+                         (str/includes? % "▸ ✓ Proofs · OK")) lines))
         (expect (some #(and (= :toggle-details (:kind %)) (:proofs? %)) metas))
+        (expect (not-any? #(str/includes? % "body") lines))))
+
+    (it "`<proofs>` body appears after clicking its badge"
+      (let [payload (render/format-answer-markdown-data
+                      "<proofs>\n<summary>Proofs · OK</summary>\n\nbody\n\n</proofs>"
+                      60
+                      {:conversation-id "cid"
+                       :detail-expansions {["cid" "answer:proofs:d1"] true}})
+            lines   (:lines payload)]
+        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
+                         (str/includes? % "▾ ✓ Proofs · OK")) lines))
         (expect (some #(str/includes? % "body") lines))))
+
+    (it "answer disclosure node ids are scoped by conversation turn"
+      (let [text "<proofs>\n<summary>Proofs · OK</summary>\n\nbody\n\n</proofs>"
+            expanded (render/format-answer-markdown-data
+                       text
+                       60
+                       {:conversation-id "cid"
+                        :conversation-turn-id "11111111-1111-1111-1111-111111111111"
+                        :detail-expansions {["cid" "answer:t11111111:proofs:d1"] true}})
+            collapsed (render/format-answer-markdown-data
+                        text
+                        60
+                        {:conversation-id "cid"
+                         :conversation-turn-id "22222222-2222-2222-2222-222222222222"
+                         :detail-expansions {["cid" "answer:t11111111:proofs:d1"] true}})]
+        (expect (some #(str/includes? % "body") (:lines expanded)))
+        (expect (not-any? #(str/includes? % "body") (:lines collapsed)))))
 
     (it "adds one visible top margin before disclosure summaries"
       (let [lines (md->lines "Intro\n<details>\n<summary>L</summary>\n\nbody\n\n</details>" 60)
@@ -1706,7 +1734,7 @@
     (render/invalidate-cache!)
     (let [cid      "conversation"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
-          node-id  "thinking:i1:reasoning"
+          node-id  "thinking:t123e4567:i1:reasoning"
           thinking (str/join "\n" (map #(format "line-%02d" %) (range 1 51)))
           payload  (render/format-answer-with-thinking-data
                      "done" [{:thinking thinking}]
@@ -1772,7 +1800,7 @@
                        nil false opts))
           collapsed (payload opts)
           expanded  (payload (assoc opts :detail-expansions
-                               {["conversation" "thinking:i1:reasoning"] true}))
+                               {["conversation" "thinking:tturn-1:i1:reasoning"] true}))
           line-idx  (fn [lines needle]
                       (first (keep-indexed
                                (fn [idx line]

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.progress-test
   (:require [clojure.test :refer [deftest is testing]]
+            [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.progress :as progress]))
 
 (deftest make-progress-tracker-test
@@ -55,6 +56,27 @@
         (is (= ["(+ 1 2)"] (:code entry)))
         (is (= ["3"] (:results entry)))))))
 
+(deftest on-chunk-tool-result-render-test
+  (testing ":form-result renders tool envelopes through extension renderer"
+    (let [tracker (progress/make-progress-tracker)
+          result  (extension/merge-provenance
+                    (extension/success {:result {:lines ["x"]}
+                                        :provenance {:op :demo}})
+                    {:tool {:sym 'cat
+                            :call "v/cat"}
+                     :extension {:namespace 'com.acme.ext.fs}
+                     :source {:paths ["/tmp/ext.clj"]
+                              :mtime-max 1
+                              :hash-sha256 nil}})]
+      ((:on-chunk tracker) {:phase :form-result :iteration 1 :form-idx 0
+                            :code "(demo)" :result result
+                            :stdout "" :stderr "" :execution-time-ms 5})
+      (let [entry (first (:get-timeline tracker))]
+        (is (= [(str "Tool `:demo` ok — result shape {:type :map, :count 1, :keys (:lines), :shape {:lines {:type :vector, :count 1, :items {:type :string, :chars 1, :lines 1}}}}"
+                  "; result {:lines [\"x\"]}"
+                  "; provenance {:tool {:sym cat, :call \"v/cat\"}, :extension {:namespace com.acme.ext.fs}, :source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}}.")]
+              (:results entry)))))))
+
 (deftest on-chunk-iteration-final-test
   (testing ":iteration-final marks iteration as done"
     (let [tracker (progress/make-progress-tracker)]
@@ -62,7 +84,24 @@
                             :final {:answer "done"} :done? true})
       (let [entry (first (:get-timeline tracker))]
         (is (:done? entry))
-        (is (= {:answer "done"} (:final entry)))))))
+        (is (= {:answer "done"} (:final entry))))))
+  (testing "duplicate final chunks do not elide shifted form slots twice"
+    (let [tracker (progress/make-progress-tracker)
+          form-result (fn [idx code]
+                        {:phase :form-result :iteration 1 :form-idx idx
+                         :code code :result (str idx)
+                         :stdout "" :stderr "" :execution-time-ms 1})
+          final-chunk {:phase :iteration-final :iteration 1
+                       :final {:answer "done"}
+                       :answer-form-idx 0
+                       :done? true}]
+      ((:on-chunk tracker) (form-result 0 "(answer \"done\")"))
+      ((:on-chunk tracker) (form-result 1 "(+ 1 2)"))
+      ((:on-chunk tracker) final-chunk)
+      ((:on-chunk tracker) final-chunk)
+      (let [entry (first (:get-timeline tracker))]
+        (is (= ["(+ 1 2)"] (:code entry)))
+        (is (= ["1"] (:results entry)))))))
 
 (deftest on-chunk-iteration-error-test
   (testing ":iteration-error records the error"
