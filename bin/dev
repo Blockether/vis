@@ -87,9 +87,39 @@ crac_forced() {
   esac
 }
 
+crac_sim_allowed() {
+  case "${VIS_CRAC_SIM:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 crac_supported() {
   crac_forced && return 0
+  if [[ "$(uname -s)" != "Linux" ]] && ! crac_sim_allowed; then
+    return 1
+  fi
   "${JAVA_CMD:-java}" -XX:+PrintFlagsFinal -version 2>&1 | grep -Eq 'CRaC(CheckpointTo|RestoreFrom)'
+}
+
+crac_downloaded_java_hint() {
+  find "$HOME/.vis/jdks" -path '*crac*/bin/java' -type f -print -quit 2>/dev/null || true
+}
+
+print_crac_unavailable_hint() {
+  local detected_java
+  detected_java="$(crac_downloaded_java_hint)"
+  echo "vis dev: CRaC unavailable on this JVM; falling back to cold Clojure startup." >&2
+  echo "vis dev: CRaC can make startup faster, but you must run Vis with a CRaC-capable JDK." >&2
+  if [[ -n "$detected_java" ]]; then
+    echo "vis dev: detected a downloaded CRaC JDK:" >&2
+    echo "     $detected_java" >&2
+    echo "vis dev: on macOS this is simulation-only; use VIS_CRAC_SIM=1 only to validate hooks, not for speed." >&2
+  else
+    echo "vis dev: install Azul Zulu CRaC JDK. SDKMAN may not list CRaC builds; Azul's direct tarballs do." >&2
+  fi
+  echo "vis dev: note: macOS/Windows CRaC builds are simulation engines for validation; real checkpoint/restore speedup requires Linux x64/aarch64." >&2
+  echo "vis dev: set VIS_CRAC=0 to silence this hint." >&2
 }
 
 crac_rebuild_requested() {
@@ -180,8 +210,8 @@ else
     run_measured_or_exec "process crac restore" clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCRestoreFrom="$image_dir" -M:dev "$@"
   else
     measure_log_since "crac support probe: unsupported" "$crac_probe_start_ms"
-    if crac_rebuild_requested || crac_forced; then
-      echo "vis dev: CRaC unavailable on this JVM; falling back to cold Clojure startup. Install/use a CRaC JDK or set VIS_CRAC=0 to silence this." >&2
+    if crac_rebuild_requested || crac_forced || measure_enabled; then
+      print_crac_unavailable_hint
     fi
   fi
 fi

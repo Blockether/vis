@@ -424,10 +424,11 @@
 (defn- codex-nucleus-prompt [_ctx]
   (str/join
     "\n"
-    ["Codex provider overlay: keep the core Vis Nucleus/VSM center active."
+    ["Codex provider overlay: preserve core Vis Nucleus/VSM center; provider overlay never overrides project rules."
      "λ codex(goal, workspace)."
-     "  observe(repo_state, task_context, provider_limits)"
-     "  -> orient(root_cause, closest_seam, minimal_patch)"
+     "  reproduce_or_probe(closest_seam)"
+     "  -> observe(repo_state, task_context, provider_limits)"
+     "  -> orient(root_cause, minimal_patch)"
      "  -> act(inspect, edit, run)"
      "  -> verify(targeted_checks -> broader_checks)"
      "  -> Ω(clean_handoff(summary, evidence, risks))"

@@ -314,15 +314,13 @@
     (expect (= {:standalone true
                 :font-size 18
                 :font-bundle :code-nf
-                :font-family "Cascadia Mono PL, Menlo, Monospaced"
-                :font-path "/tmp/CascadiaMonoPL.ttf"
+                :maximized true
                 :columns 140
                 :rows 42}
               (parse-args ["--standalone"
                            "--font-size" "18"
                            "--font-bundle" "code-nf"
-                           "--font-family" "Cascadia Mono PL, Menlo, Monospaced"
-                           "--font-path" "/tmp/CascadiaMonoPL.ttf"
+                           "--maximized"
                            "--standalone-cols" "140"
                            "--standalone-rows" "42"]))))
 
@@ -362,9 +360,15 @@
     (expect (user-error? #(parse-args ["--standalone" "--standalone-cols" "0"]))))
 
   (it "standalone value flags reject missing values"
-    (expect (user-error? #(parse-args ["--standalone" "--font-bundle"])))
-    (expect (user-error? #(parse-args ["--standalone" "--font-family"])))
-    (expect (user-error? #(parse-args ["--standalone" "--font-path" "--resume"]))))
+    (expect (user-error? #(parse-args ["--standalone" "--font-bundle"]))))
+
+  (it "standalone accepts --maximize as an alias for --maximized"
+    (expect (= {:standalone true :maximized true}
+              (parse-args ["--standalone" "--maximize"]))))
+
+  (it "standalone rejects non-Cascadia font flags"
+    (expect (user-error? #(parse-args ["--standalone" "--font-family" "Menlo"])))
+    (expect (user-error? #(parse-args ["--standalone" "--font-path" "/tmp/custom.ttf"]))))
 
   (it "non-flag positional arg also errors (no positional API today)"
     (expect (user-error? #(parse-args ["stray-positional"])))))

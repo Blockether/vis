@@ -1598,7 +1598,7 @@
 
 (def ^:private tui-usage
   (str "vis channels tui [--conversation-id ID | --resume] [--standalone] "
-    "[--font-size N] [--font-bundle NAME] [--font-family FAMILY] [--font-path PATH] "
+    "[--font-size N] [--font-bundle NAME] [--maximized] "
     "[--standalone-cols N] [--standalone-rows N]"))
 
 (defn- missing-value?
@@ -1635,8 +1635,7 @@
      --standalone           Use Lanterna's Swing backend instead of /dev/tty
      --font-size N          Standalone Swing font size, default 16
      --font-bundle NAME     Bundled Cascadia variant: code, code-pl, code-nf, mono, mono-pl, mono-nf
-     --font-family FAMILY   Standalone Swing system font stack
-     --font-path PATH       Standalone Swing TTF/OTF file
+     --maximized            Request OS/window-manager maximization on startup
      --standalone-cols N    Standalone initial columns, default 120
      --standalone-rows N    Standalone initial rows, default 36
 
@@ -1668,13 +1667,11 @@
           (let [v (flag-value arg more)]
             (recur (next more) (assoc opts :font-bundle (keyword v))))
 
-          "--font-family"
-          (let [v (flag-value arg more)]
-            (recur (next more) (assoc opts :font-family v)))
+          "--maximized"
+          (recur more (assoc opts :maximized true))
 
-          "--font-path"
-          (let [v (flag-value arg more)]
-            (recur (next more) (assoc opts :font-path v)))
+          "--maximize"
+          (recur more (assoc opts :maximized true))
 
           "--standalone-cols"
           (let [v (flag-value arg more)]

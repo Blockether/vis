@@ -42,7 +42,7 @@ Most useful publics:
   scope:   z/subedit-> z/subedit->>
   render:  z/root-string
 
-If `(v/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/1.2.54/doc/user-guide.
+If `(v/extension-readme 'clj)` doesn't list a fn, see https://cljdoc.org/d/rewrite-clj/rewrite-clj/1.2.50/doc/user-guide.
 
 ## Strategy
 
@@ -114,9 +114,9 @@ Edit inside one found form:
     :links
     [{:to-id vis :to-doc "README.md"
       :context "Generic filesystem surface — v/cat, v/read-all-lines, v/write-lines, v/update-file, v/rg"}
-     {:file "extensions/languages/clojure/src/com/blockether/v/ext/lang_clojure/zedit.clj"
+     {:file "extensions/languages/clojure/src/com/blockether/vis/ext/lang_clojure/zedit.clj"
       :context "Source: z/zedit"}
-     {:file "extensions/languages/clojure/src/com/blockether/v/ext/lang_clojure/core.clj"
+     {:file "extensions/languages/clojure/src/com/blockether/vis/ext/lang_clojure/core.clj"
       :context "Aggregator publishing rewrite-clj.zip publics under z/"}
      {:url "https://cljdoc.org/d/rewrite-clj/rewrite-clj/"
       :context "rewrite-clj zipper API reference"}]}}}}
