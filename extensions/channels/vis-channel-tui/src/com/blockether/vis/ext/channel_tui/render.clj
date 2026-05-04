@@ -1359,8 +1359,15 @@
                   (let [abs-row (+ (long viewport-top) y)
                         hovered? (and (= :toggle-details (:kind meta))
                                    (= abs-row (:row (:bounds (cr/hovered)))))
-                        bg       (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
-                        fg       (if hovered? t/link-chrome-hover-fg t/md-summary-fg)]
+                        proof?   (:proofs? meta)
+                        bg       (cond
+                                   hovered? t/link-chrome-hover-bg
+                                   proof?   t/proof-summary-bg
+                                   :else    t/md-summary-bg)
+                        fg       (cond
+                                   hovered? t/link-chrome-hover-fg
+                                   proof?   t/proof-summary-fg
+                                   :else    t/md-summary-fg)]
                     (p/set-colors! g fg bg)
                     (p/fill-rect! g fbx y iw 1)
                     (p/styled g [p/BOLD]
@@ -1373,7 +1380,8 @@
                          :kind :toggle-details
                          :conversation-id (:conversation-id meta)
                          :node-id (:node-id meta)
-                         :collapsed? (:collapsed? meta)})))
+                         :collapsed? (:collapsed? meta)
+                         :proofs? (:proofs? meta)})))
 
                   (str/starts-with? line md-code-marker)
                   (do (p/set-colors! g t/code-block-fg t/code-block-bg)
@@ -1496,8 +1504,15 @@
                   (let [abs-row (+ (long viewport-top) y)
                         hovered? (and (= :toggle-details (:kind meta))
                                    (= abs-row (:row (:bounds (cr/hovered)))))
-                        bg       (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
-                        fg       (if hovered? t/link-chrome-hover-fg t/th-md-summary-fg)]
+                        proof?   (:proofs? meta)
+                        bg       (cond
+                                   hovered? t/link-chrome-hover-bg
+                                   proof?   t/th-proof-summary-bg
+                                   :else    t/th-md-summary-bg)
+                        fg       (cond
+                                   hovered? t/link-chrome-hover-fg
+                                   proof?   t/th-proof-summary-fg
+                                   :else    t/th-md-summary-fg)]
                     (p/set-colors! g fg bg)
                     (p/fill-rect! g fbx y iw 1)
                     (p/styled g [p/BOLD p/ITALIC]
@@ -1510,7 +1525,8 @@
                          :kind :toggle-details
                          :conversation-id (:conversation-id meta)
                          :node-id (:node-id meta)
-                         :collapsed? (:collapsed? meta)})))
+                         :collapsed? (:collapsed? meta)
+                         :proofs? (:proofs? meta)})))
 
               ;; Thinking fenced code: visible code-block bg, italic dim text.
               ;; Clojure/EDN fences can carry zprint ANSI syntax color;
@@ -1988,20 +2004,31 @@
     (when kind (str ":" (name kind)))
     (when (seq details-path) (str ":d" (str/join "." details-path)))))
 
+(def ^:private proof-summary-icon "🧾")
+
+(defn- proof-summary-label
+  [summary]
+  (let [summary (or summary "Proofs")]
+    (if (str/includes? summary proof-summary-icon)
+      summary
+      (str proof-summary-icon " " summary))))
+
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
-  [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id]
+  [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id proofs?]
     :as detail-ctx}]
   (let [suffix    (detail-id-suffix detail-ctx)
         hint      (when collapsed? (str " · " (hidden-size-hint hidden-entries)))
+        summary   (if proofs? (proof-summary-label summary) (or summary "Details"))
         left      (str (if collapsed? "▸ " "▾ ")
-                    (or summary "Details")
+                    summary
                     (or hint ""))
         visible   (format-detail-summary-line left suffix (max 1 max-w))
         wrapped   (wrap-text (markdown->inline visible) (max 1 max-w))
         meta      {:kind :toggle-details
                    :conversation-id (str conversation-id)
                    :node-id (str node-id)
-                   :collapsed? collapsed?}]
+                   :collapsed? collapsed?
+                   :proofs? (boolean proofs?)}]
     (mapv (fn [line] {:line (str marker line) :meta meta}) wrapped)))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} auto-collapse-needed?
@@ -3187,7 +3214,7 @@
       (re-matches #"^([-*_])\1{2,}$" t)         ;; horizontal rule
       (re-matches #"^>\s?.*" t)                 ;; blockquote
       (re-matches #"^\|.*\|$" t)                ;; pipe-table row
-      (re-matches #"^</?details(\s[^>]*)?>$" t) ;; details / /details
+      (re-matches #"^</?(?:details|proofs)(\s[^>]*)?>$" t) ;; details/proofs framing tags
       (re-matches #"^<summary>.*</summary>$" t) ;; summary tag
       (top-level-bold-paragraph-line? t))))      ;; **prefix:** value
 
@@ -3410,7 +3437,7 @@
                (let [[tbl tail] (consume-table lines max-w m)]
                  (recur (seq tail) false (into acc tbl)))
 
-               (re-matches #"^\s*</?details(\s[^>]*)?>\s*$" line)
+               (re-matches #"^\s*</?(?:details|proofs)(\s[^>]*)?>\s*$" line)
                (recur rst false acc)
 
                (re-matches #"^\s*<summary>.*</summary>\s*$" line)
@@ -3490,13 +3517,17 @@
                  (recur rst false
                    (into acc (mapv emit-plain (wrap-text decorated max-w)))))))))))))
 
+(defn- detail-open-kind [line]
+  (when-let [[_ tag] (and (string? line)
+                       (re-matches #"^\s*<(details|proofs)(?:\s[^>]*)?>\s*$" line))]
+    (keyword tag)))
+
 (defn- details-open-line? [line]
-  (boolean (and (string? line)
-             (re-matches #"^\s*<details(\s[^>]*)?>\s*$" line))))
+  (boolean (detail-open-kind line)))
 
 (defn- details-close-line? [line]
   (boolean (and (string? line)
-             (re-matches #"^\s*</details>\s*$" line))))
+             (re-matches #"^\s*</(?:details|proofs)>\s*$" line))))
 
 (defn- summary-content [line]
   (when-let [[_ inner] (and (string? line)
@@ -3518,14 +3549,16 @@
                 [(cond-> segs (seq plain) (conj {:type :plain :lines plain})) remaining]
 
                 (details-open-line? (first remaining))
-                (let [segs      (cond-> segs (seq plain) (conj {:type :plain :lines plain}))
-                      path'     (conj path next-idx)
-                      after-open (next remaining)
-                      summary    (or (some-> (first after-open) summary-content) "Details")
-                      body-start (if (summary-content (first after-open)) (next after-open) after-open)
-                      [body rem] (consume* body-start path')
-                      rem'       (if (and rem (details-close-line? (first rem))) (next rem) rem)
-                      seg        {:type :detail :summary summary :path path' :segments body}]
+                (let [segs        (cond-> segs (seq plain) (conj {:type :plain :lines plain}))
+                      detail-kind (detail-open-kind (first remaining))
+                      path'       (conj path next-idx)
+                      after-open  (next remaining)
+                      summary     (or (some-> (first after-open) summary-content)
+                                    (if (= :proofs detail-kind) "Proofs" "Details"))
+                      body-start  (if (summary-content (first after-open)) (next after-open) after-open)
+                      [body rem]  (consume* body-start path')
+                      rem'        (if (and rem (details-close-line? (first rem))) (next rem) rem)
+                      seg         {:type :detail :detail-kind detail-kind :summary summary :path path' :segments body}]
                   (recur rem' [] (conj segs seg) (inc next-idx)))
 
                 :else
@@ -3535,7 +3568,7 @@
 (defn- render-detail-segments
   [segments max-w mode opts]
   (mapcat
-    (fn [{:keys [type lines summary path segments]}]
+    (fn [{:keys [type lines summary path segments detail-kind]}]
       (case type
         :plain
         (mapv (fn [line] {:line line :meta nil})
@@ -3553,7 +3586,9 @@
                             :iteration-number iteration-number
                             :block-number (:block-number opts)
                             :details-path path
-                            :section section}
+                            :section section
+                            :kind detail-kind
+                            :proofs? (= :proofs detail-kind)}
               node-id      (detail-node-id detail-ctx)
               expanded?    (detail-expanded? (:detail-expansions opts) conversation-id node-id true)
               body-entries (vec (render-detail-segments segments max-w mode opts))]

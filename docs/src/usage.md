@@ -95,9 +95,10 @@ present, DB writable, providers reachable).
 
 ### One-shot CLI agent
 
-Best for scripts, CI, and quick one-liners. `vis run` creates a fresh
-conversation in the `:cli` channel namespace, runs a single turn,
-prints the answer, exits.
+Best for scripts, CI, and quick one-liners. `vis run` is ephemeral by
+default: it uses an in-memory store, runs a single turn, prints the
+answer, exits, and leaves no `:cli` conversation on disk. Pass
+`--persist` when you want the run saved.
 
 ```bash
 vis run "What is 2+2?"
@@ -106,11 +107,11 @@ vis run --json "Summarize foo.clj"            # machine-readable output
 vis run --edn  "Summarize foo.clj"            # EDN output
 vis run --trace "Refactor utils.clj"          # include the iteration trace in output
 vis run --debug "..."                         # verbose logging on stderr
-vis run --name reviewer "Review src/auth.clj" # name the agent (shows in conversations list)
-vis run --db /tmp/scratch.db "..."            # use a non-default DB path
+vis run --name reviewer "Review src/auth.clj" # name the agent
+vis run --persist "Keep this conversation"    # save under the :cli channel
 ```
 
-Past CLI runs are browsable later:
+Persisted CLI runs are browsable later:
 
 ```bash
 vis conversations cli

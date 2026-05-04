@@ -45,7 +45,8 @@ Provenance is machine data. Markdown and labels are derived by renderers, not st
 ## File I/O and tools
 
 ```clojure
-(v/cat path)
+(v/cat path {:offset 1 :limit 120 :char-limit 12000}) ; opts are checked; :max-lines aliases :limit
+(v/silent! aggregate-map) ; returns only shape, elides noisy aggregate output
 (v/ls path)
 (v/rg [\"literal\"] path)
 (v/bash command)

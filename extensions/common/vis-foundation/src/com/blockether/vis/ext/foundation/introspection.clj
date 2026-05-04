@@ -48,7 +48,8 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.transcript :as transcript]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.provenance-lifecycle :as prov-life])
+   [com.blockether.vis.internal.provenance-lifecycle :as prov-life]
+   [com.blockether.vis.internal.provenance-ref :as prov-ref])
   (:import
    [clojure.lang IBlockingDeref IDeref IPending]
    [java.util.concurrent CancellationException ExecutionException Future TimeUnit TimeoutException]))
@@ -1167,6 +1168,412 @@ _No intents._
       :conversation-turn-id (or (:conversation-turn-id opts)
                               (current-conversation-turn-id env)))))
 
+;; ---------------------------------------------------------------------------
+;; Proof checks + <proofs> Markdown projection.
+;;
+;; Policy lives in data checks. Markdown is only a clickable human projection.
+;; ---------------------------------------------------------------------------
+
+(defn- ref-value
+  [x]
+  (cond
+    (map? x) (:ref x)
+    (nil? x) nil
+    :else (str x)))
+
+(defn- code-ish
+  [x]
+  (str "`" x "`"))
+
+(defn- proof-data
+  [m]
+  {:refs  (vec (or (:refs m) []))
+   :slots (or (:slots m) {})})
+
+(defn- proof-ref-entries
+  [data role]
+  (let [data     (proof-data data)
+        explicit (map #(if (map? %) (assoc % :role role) {:ref % :role role}) (:refs data))
+        slotted  (keep (fn [[slot value]]
+                         (when-let [ref (:ref value)]
+                           {:ref ref :role role :slot slot}))
+                   (:slots data))]
+    (vec (concat explicit slotted))))
+
+(defn- selector-value
+  [data selector]
+  (cond
+    (= selector [:refs]) (:refs data)
+
+    (and (vector? selector) (= :slot (first selector)))
+    (get-in (:slots data) (into [(second selector)] (drop 2 selector)))
+
+    :else selector))
+
+(defn- guard-value
+  [data x]
+  (if (and (vector? x) (#{:slot :refs} (first x)))
+    (selector-value data x)
+    x))
+
+(defn- guard-passes?
+  [data guard]
+  (letfn [(eval-guard [expr]
+            (try
+              (if-not (vector? expr)
+                (boolean expr)
+                (let [op   (first expr)
+                      args (rest expr)]
+                  (case op
+                    :and (every? eval-guard args)
+                    :or  (boolean (some eval-guard args))
+                    :not (not (eval-guard (first args)))
+                    :=   (= (guard-value data (first args)) (guard-value data (second args)))
+                    :!=  (not= (guard-value data (first args)) (guard-value data (second args)))
+                    :<   (< (guard-value data (first args)) (guard-value data (second args)))
+                    :<=  (<= (guard-value data (first args)) (guard-value data (second args)))
+                    :>   (> (guard-value data (first args)) (guard-value data (second args)))
+                    :>=  (>= (guard-value data (first args)) (guard-value data (second args)))
+                    :exists (some? (guard-value data (first args)))
+                    :contains (let [haystack (guard-value data (first args))
+                                    needle   (guard-value data (second args))]
+                                (cond
+                                  (string? haystack) (str/includes? haystack (str needle))
+                                  (coll? haystack)   (contains? (set haystack) needle)
+                                  :else false))
+                    :matches (boolean (re-find (re-pattern (str (guard-value data (second args))))
+                                        (str (guard-value data (first args)))))
+                    (boolean (guard-value data expr)))))
+              (catch Throwable _
+                false)))]
+    (if guard (eval-guard guard) true)))
+
+(defn- ref-compatible?
+  [role status]
+  (case role
+    (:proof :fulfillment-evidence) (prov-life/successful? status)
+    (:impediment :abandonment-evidence) (prov-life/terminal? status)
+    (:candidate :context) (prov-life/terminal? status)
+    (prov-life/terminal? status)))
+
+(defn- ref-incompatibility-type
+  [role]
+  (case role
+    (:proof :fulfillment-evidence) :proof-ref-not-successful
+    (:impediment :abandonment-evidence) :blocker-ref-not-terminal
+    :candidate :candidate-ref-not-terminal
+    :ref-not-terminal))
+
+(defn- check-ref-entry
+  [event-by-ref owner entry]
+  (let [ref        (ref-value entry)
+        role       (:role entry)
+        canonical? (boolean (and ref (prov-ref/canonical-ref? ref)))
+        event      (when canonical? (get event-by-ref ref))
+        status     (:status event)
+        observed?  (some? event)
+        compatible? (and observed? (ref-compatible? role status))
+        ok?        (and canonical? observed? compatible?)
+        violation  (cond
+                     (not canonical?) {:type :non-canonical-ref
+                                       :blocking? true
+                                       :ref ref
+                                       :role role
+                                       :owner owner
+                                       :message (str "Reference is not canonical: " (pr-str ref))}
+                     (not observed?)  {:type :unobserved-ref
+                                       :blocking? true
+                                       :ref ref
+                                       :role role
+                                       :owner owner
+                                       :message (str "Reference is canonical but not observed in provenance timeline: " ref)}
+                     (not compatible?) {:type (ref-incompatibility-type role)
+                                        :blocking? true
+                                        :ref ref
+                                        :role role
+                                        :status status
+                                        :owner owner
+                                        :message (str "Reference " ref " has status " (pr-str status)
+                                                   " and is not compatible with role " (pr-str role) ".")})]
+    (cond-> {:ref ref
+             :role role
+             :owner owner
+             :canonical? canonical?
+             :observed? observed?
+             :compatible? compatible?
+             :ok? ok?}
+      (:slot entry) (assoc :slot (:slot entry))
+      event (assoc :event event)
+      violation (assoc :violation violation))))
+
+(defn- required-slots-missing
+  [expected-slots given-slots]
+  (vec
+    (keep (fn [[slot {:keys [required?]}]]
+            (when (and (not (false? required?))
+                    (not (contains? given-slots slot)))
+              slot))
+      expected-slots)))
+
+(defn- gate-given-proof
+  [gate]
+  (case (:status gate)
+    :proven (:proof gate)
+    :impeded (:impediment gate)
+    (:candidate-proof gate)))
+
+(defn- gate-ref-entries
+  [gate]
+  (vec
+    (concat
+      (proof-ref-entries (:candidate-proof gate) :candidate)
+      (proof-ref-entries (:proof gate) :proof)
+      (proof-ref-entries (:impediment gate) :impediment))))
+
+(defn- check-gate-proof
+  [event-by-ref intent plan gate]
+  (let [expected       (:expected-proof gate)
+        expected-slots (:slots expected)
+        guard          (:guard expected)
+        given          (proof-data (gate-given-proof gate))
+        missing-slots  (required-slots-missing expected-slots (:slots given))
+        guard-ok?      (guard-passes? given guard)
+        ref-checks     (mapv #(check-ref-entry event-by-ref
+                                {:kind :gate
+                                 :intent-id (:id intent)
+                                 :plan-id (:id plan)
+                                 :gate-id (:id gate)}
+                                %)
+                         (gate-ref-entries gate))
+        status-violations (vec
+                            (concat
+                              (when (and (:required? gate) (= :open (:status gate)))
+                                [{:type :required-open-gate
+                                  :blocking? true
+                                  :intent-id (:id intent)
+                                  :plan-id (:id plan)
+                                  :gate-id (:id gate)
+                                  :message (str "Required gate is open: " (:proposition gate))}])
+                              (when (and (= :proven (:status gate)) (seq missing-slots))
+                                [{:type :proof-missing-required-slots
+                                  :blocking? true
+                                  :intent-id (:id intent)
+                                  :plan-id (:id plan)
+                                  :gate-id (:id gate)
+                                  :missing-slots missing-slots
+                                  :message (str "Proven gate is missing required proof slot(s): "
+                                             (str/join ", " (map pr-str missing-slots)))}])
+                              (when (and (= :proven (:status gate)) (not guard-ok?))
+                                [{:type :proof-guard-failed
+                                  :blocking? true
+                                  :intent-id (:id intent)
+                                  :plan-id (:id plan)
+                                  :gate-id (:id gate)
+                                  :guard guard
+                                  :message (str "Proven gate proof does not satisfy guard: " (pr-str guard))}])))]
+    {:intent-id (:id intent)
+     :intent-handle (:handle intent)
+     :intent-title (:title intent)
+     :plan-id (:id plan)
+     :plan-handle (:handle plan)
+     :plan-summary (:summary plan)
+     :gate-id (:id gate)
+     :gate-handle (:handle gate)
+     :status (:status gate)
+     :required? (:required? gate)
+     :asked (:proposition gate)
+     :expected {:slots expected-slots
+                :guard guard}
+     :given {:candidate-proof (:candidate-proof gate)
+             :proof (:proof gate)
+             :impediment (:impediment gate)
+             :slots (:slots given)
+             :refs (:refs given)}
+     :checks {:required-slots-ok? (empty? missing-slots)
+              :missing-slots missing-slots
+              :guard-ok? guard-ok?
+              :refs-ok? (every? :ok? ref-checks)}
+     :ref-checks ref-checks
+     :violations (vec (concat status-violations (keep :violation ref-checks)))}))
+
+(defn- intent-ref-role
+  [intent-ref intent]
+  (or (:role intent-ref)
+    (case (:status intent)
+      :fulfilled :fulfillment-evidence
+      :abandoned :abandonment-evidence
+      :context)))
+
+(defn- check-intent-ref
+  [event-by-ref intent intent-ref]
+  (check-ref-entry event-by-ref
+    {:kind :intent :intent-id (:id intent)}
+    (assoc intent-ref :role (intent-ref-role intent-ref intent))))
+
+(defn- check-intent-resolution
+  [event-by-ref intent]
+  (let [refs       (mapv #(if (map? %) % {:ref %}) (:refs intent))
+        ref-checks (mapv #(check-intent-ref event-by-ref intent %) refs)
+        missing?   (and (#{:fulfilled :abandoned} (:status intent)) (empty? refs))]
+    {:intent-id (:id intent)
+     :intent-handle (:handle intent)
+     :status (:status intent)
+     :title (:title intent)
+     :ref-checks ref-checks
+     :violations (vec
+                   (concat
+                     (when missing?
+                       [{:type :resolved-intent-without-refs
+                         :blocking? true
+                         :intent-id (:id intent)
+                         :message (str "Resolved intent has no evidence refs: " (:title intent))}])
+                     (keep :violation ref-checks)))}))
+
+(defn- all-gates
+  [intent-state]
+  (for [intent (:intents intent-state)
+        plan   (:plans intent)
+        gate   (:gates plan)]
+    [intent plan gate]))
+
+(defn foundation-proof-checks
+  "Deterministic proof validation over one DB snapshot.
+
+   Checks more than provenance syntax: focused intent readiness, every gate's
+   asked proposition, expected slots/guard, given candidate/proof/impediment
+   data, canonical observed refs, lifecycle compatibility, and fulfillment or
+   abandonment evidence refs. Same DB snapshot => same report."
+  ([env]
+   (foundation-proof-checks env (:conversation-id env)))
+  ([env conversation-id]
+   (let [timeline       (foundation-provenance-timeline env conversation-id)
+         event-by-ref   (into {} (map (juxt :ref identity)) timeline)
+         provenance     (foundation-provenance-guards env conversation-id)
+         latest-refs    (foundation-latest-provenance-refs env conversation-id)
+         intent-state   (foundation-intents env)
+         gate-checks    (mapv (fn [[intent plan gate]]
+                                (check-gate-proof event-by-ref intent plan gate))
+                          (all-gates intent-state))
+         intent-checks  (mapv #(check-intent-resolution event-by-ref %) (:intents intent-state))
+         violations     (vec
+                          (concat
+                            (map #(assoc % :source :provenance) (:violations provenance))
+                            (map #(assoc % :source :intents) (:violations intent-state))
+                            (mapcat #(map (fn [v] (assoc v :source :gate-proof)) (:violations %)) gate-checks)
+                            (mapcat #(map (fn [v] (assoc v :source :intent-resolution)) (:violations %)) intent-checks)))
+         used-refs      (->> (concat (mapcat :ref-checks gate-checks)
+                               (mapcat :ref-checks intent-checks))
+                          (keep :ref)
+                          distinct
+                          vec)
+         evidence       (vec (keep event-by-ref used-refs))]
+     {:ok? (and (:ok? provenance) (:ok? intent-state) (empty? violations))
+      :summary {:events (count timeline)
+                :intents (count (:intents intent-state))
+                :focused-intents (count (:focused-intent-ids intent-state))
+                :gates (count gate-checks)
+                :proven-gates (count (filter #(= :proven (:status %)) gate-checks))
+                :refs (count used-refs)
+                :violations (count violations)}
+      :provenance provenance
+      :latest-refs latest-refs
+      :intents (select-keys intent-state [:ok? :scope :conversation-id :turn-state-id
+                                          :focused-intent-ids :unfocused-active-intent-ids
+                                          :checks :violations :report])
+      :gates gate-checks
+      :intent-resolutions intent-checks
+      :evidence-events evidence
+      :violations violations})))
+
+(defn- render-proof-slots
+  [slots]
+  (if (seq slots)
+    (str/join "\n" (map (fn [[slot value]]
+                          (str "  - " (code-ish (pr-str slot)) ": " (code-ish (pr-str value))))
+                     slots))
+    "  - none"))
+
+(defn- render-proof-refs
+  [ref-checks]
+  (if (seq ref-checks)
+    (str/join "\n"
+      (map (fn [{:keys [ref role event ok?]}]
+             (str "  - " (code-ish ref) " — " (code-ish (pr-str role))
+               (if event
+                 (str ", " (code-ish (pr-str (:op event))) " → " (code-ish (pr-str (:status event)))
+                   ", " (or (:duration-ms event) 0) "ms")
+                 ", not observed")
+               (when-not ok? " ⚠")))
+        ref-checks))
+    "  - none"))
+
+(defn- render-proof-gate
+  [gate-check]
+  (str "### Gate " (code-ish (:gate-handle gate-check)) " — " (name (:status gate-check)) "\n\n"
+    "- Intent: " (code-ish (:intent-handle gate-check)) " — " (:intent-title gate-check) "\n"
+    "- Plan: " (code-ish (:plan-handle gate-check)) " — " (:plan-summary gate-check) "\n"
+    "- Asked: " (:asked gate-check) "\n"
+    "- Required: " (:required? gate-check) "\n"
+    "- Expected guard: " (code-ish (pr-str (get-in gate-check [:expected :guard]))) "\n"
+    "- Expected slots:\n" (render-proof-slots (get-in gate-check [:expected :slots])) "\n"
+    "- Given slots:\n" (render-proof-slots (get-in gate-check [:given :slots])) "\n"
+    "- Given refs:\n" (render-proof-refs (:ref-checks gate-check)) "\n"
+    "- Deterministic checks:\n"
+    "  - required slots: " (if (get-in gate-check [:checks :required-slots-ok?]) "ok" "failed") "\n"
+    "  - guard: " (if (get-in gate-check [:checks :guard-ok?]) "ok" "failed") "\n"
+    "  - refs: " (if (get-in gate-check [:checks :refs-ok?]) "ok" "failed") "\n"))
+
+(defn- render-evidence-event
+  [{:keys [ref parent-ref kind op status duration-ms error]}]
+  (str "- " (code-ish ref) " " (name kind) " " (code-ish (pr-str op))
+    (when parent-ref (str " parent " (code-ish parent-ref)))
+    " → " (code-ish (pr-str status)) ", " (or duration-ms 0) "ms"
+    (when error (str " — " (preview (error-text error) 180)))))
+
+(defn- render-proof-violations
+  [violations]
+  (if (seq violations)
+    (str/join "\n" (map #(str "- " (:message %) " " (code-ish (pr-str (:type %)))) violations))
+    "- none"))
+
+(defn foundation-proofs
+  "Render proof-checks as a clickable `<proofs>` disclosure Markdown block.
+
+   The block is a human projection only. Truth remains in `v/proof-checks`,
+   intents/gates, and the provenance timeline. TUI renders `<proofs>` like a
+   special disclosure; other Markdown surfaces can degrade to normal text."
+  ([env]
+   (foundation-proofs env (foundation-proof-checks env)))
+  ([env checks-or-conversation-id]
+   (let [checks (if (map? checks-or-conversation-id)
+                  checks-or-conversation-id
+                  (foundation-proof-checks env checks-or-conversation-id))
+         summary (:summary checks)]
+     (str "<proofs>\n"
+       "<summary>Proofs · " (if (:ok? checks) "OK" "NEEDS WORK")
+       " · " (:proven-gates summary) "/" (:gates summary) " gates"
+       " · " (:refs summary) " refs"
+       " · " (:violations summary) " violations</summary>\n\n"
+       "## Proof status\n\n"
+       "- Overall: " (if (:ok? checks) "ok" "needs work") "\n"
+       "- Intents: " (if (get-in checks [:intents :ok?]) "ok" "needs resolution") "\n"
+       "- Provenance guards: " (if (get-in checks [:provenance :ok?]) "ok" "failed") "\n"
+       "- Events checked: " (get-in checks [:summary :events]) "\n"
+       "- Focused intents: " (get-in checks [:summary :focused-intents]) "\n"
+       "- Gates: " (get-in checks [:summary :proven-gates]) "/" (get-in checks [:summary :gates]) " proven\n"
+       "- Evidence refs: " (get-in checks [:summary :refs]) "\n\n"
+       "## Gate proof details\n\n"
+       (if (seq (:gates checks))
+         (str/join "\n" (map render-proof-gate (:gates checks)))
+         "_No gates._\n")
+       "\n## What happened\n\n"
+       (if (seq (:evidence-events checks))
+         (str/join "\n" (map render-evidence-event (:evidence-events checks)))
+         "_No evidence refs cited._")
+       "\n\n## Violations\n\n"
+       (render-proof-violations (:violations checks))
+       "\n\n</proofs>"))))
+
 (defn- foundation-audit-report
   ([env]
    (foundation-audit-report env (:conversation-id env)))
@@ -1508,6 +1915,23 @@ _No intents._
                  "(answer (v/provenance-report))"]
      :before-fn inject-environment}))
 
+(def proof-checks-symbol
+  (vis/symbol 'proof-checks foundation-proof-checks
+    {:doc       "Deterministic proof validation: intents, gates, expected slots/guards, given proof/impediment data, observed refs, lifecycle compatibility, and provenance guards."
+     :arglists  '([] [conversation-id])
+     :examples  ["(v/proof-checks)"
+                 "(:violations (v/proof-checks))"
+                 "(every? :ok? (mapcat :ref-checks (:gates (v/proof-checks))))"]
+     :before-fn inject-environment}))
+
+(def proofs-symbol
+  (vis/symbol 'proofs foundation-proofs
+    {:doc       "Clickable `<proofs>` Markdown disclosure for human proof consumption. Projection only; validate with v/proof-checks."
+     :arglists  '([] [conversation-id-or-checks])
+     :examples  ["(answer (v/proofs))"
+                 "(let [checks (v/proof-checks)] (answer (v/proofs checks)))"]
+     :before-fn inject-environment}))
+
 (def await-proof!-symbol
   (vis/symbol 'await-proof! foundation-await-proof!
     {:doc       "Canonical await for Future/blocking deref values when the awaited result will be used as proof. Returns a terminal tool-result envelope; cite the observed await block, not the start ref."
@@ -1698,6 +2122,8 @@ _No intents._
    provenance-guards-symbol
    latest-provenance-refs-symbol
    provenance-report-symbol
+   proof-checks-symbol
+   proofs-symbol
    await-proof!-symbol
    intents-symbol
    issue-intent!-symbol
@@ -1723,8 +2149,8 @@ _No intents._
 
 (def introspection-prompt
   (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown; (v/audit-report cid?) -> audit.\n"
-    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
-    "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with (v/prove-gate! gate opts), (v/impede-gate! gate opts), (v/fulfill-intent! id opts), (v/abandon-intent! id opts). Check (v/intents turn-id?) before normal answer.\n"
+    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/proof-checks cid?) checks gates/slots/refs deterministically; (v/proofs checks-or-cid?) renders clickable proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
+    "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with (v/prove-gate! gate opts), (v/impede-gate! gate opts), (v/fulfill-intent! id opts), (v/abandon-intent! id opts). Check (v/intents turn-id?) and (v/proof-checks) before normal answer.\n"
     "`v/` docs: (v/extensions), (v/extension-docs ref), (v/extension-doc ref), (v/extension-readme ref), (v/namespace-docs ref), (v/symbol-doc ref sym).\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built

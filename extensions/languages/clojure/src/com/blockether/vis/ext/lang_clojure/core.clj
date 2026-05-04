@@ -12,9 +12,55 @@
    `unresolved-symbol` failure class we kept seeing in post-mortems.
    ONE alias, ONE surface."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.lang-clojure.zedit :as zedit]
-   [rewrite-clj.zip]))
+   [rewrite-clj.zip])
+  (:import
+   (java.io File)))
+
+(def ^:private clojure-marker-files
+  #{"deps.edn" "bb.edn" "project.clj" "build.boot" "shadow-cljs.edn"})
+
+(def ^:private clojure-source-exts
+  #{"clj" "cljc" "cljs" "edn"})
+
+(def ^:private ignored-scan-dirs
+  #{".git" ".hg" ".svn" "target" "node_modules" ".cpcache" ".clj-kondo"})
+
+(def ^:private activation-scan-limit 2000)
+
+(defn- extension [^File f]
+  (when-let [n (some-> f .getName)]
+    (when-let [idx (str/last-index-of n ".")]
+      (subs n (inc idx)))))
+
+(defn- clojure-source-file? [^File f]
+  (and (.isFile f)
+    (contains? clojure-source-exts (extension f))))
+
+(defn- scan-children [^File dir]
+  (->> (or (seq (.listFiles dir)) [])
+    (remove (fn [^File f]
+              (and (.isDirectory f)
+                (contains? ignored-scan-dirs (.getName f)))))))
+
+(defn- clojure-project?
+  "True when `root` looks like a Clojure project. Kept local to the language
+   extension so activation does not depend on foundation's environment scan."
+  ([] (clojure-project? (File. ".")))
+  ([^File root]
+   (let [root (.getCanonicalFile root)]
+     (or (some (fn [name] (.exists (File. root name))) clojure-marker-files)
+       (loop [stack (seq (scan-children root))
+              seen  0]
+         (cond
+           (or (nil? stack) (>= seen activation-scan-limit)) false
+           (clojure-source-file? (first stack)) true
+           (.isDirectory ^File (first stack))
+           (recur (concat (scan-children (first stack)) (next stack)) (inc seen))
+           :else
+           (recur (next stack) (inc seen))))))))
 
 (defn- var->symbol-entry
   "Convert a `rewrite-clj.zip` public var into an SDK symbol entry.
@@ -64,6 +110,7 @@
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.clj :alias 'z}
      :ext/kind      "languages"
+     :ext/activation-fn (fn [_] (clojure-project?))
      :ext/prompt    zedit/z-prompt
      :ext/symbols   (into [zedit/zedit-symbol] rewrite-clj-zip-symbols)}))
 

@@ -19,6 +19,7 @@
    token-refresh policy stays inside each provider implementation
    instead of leaking up here."
   (:require
+   [babashka.http-client :as http]
    [clojure+.error]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
@@ -28,10 +29,7 @@
    [com.blockether.vis.internal.registry :as registry]
    [taoensso.telemere :as tel])
   (:import
-   (java.io FileInputStream FileOutputStream)
-   (java.net URI)
-   (java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers)
-   (java.time Duration)))
+   (java.io FileInputStream FileOutputStream)))
 
 (def config-dir  (str (System/getProperty "user.home") "/.vis"))
 (def config-path (str config-dir "/config.edn"))
@@ -44,11 +42,6 @@
 (def tty-out (delay ^java.io.OutputStream (FileOutputStream. "/dev/tty")))
 
 (def ^java.io.PrintStream original-stdout System/out)
-
-(def provider-status-http-client
-  (-> (HttpClient/newBuilder)
-    (.connectTimeout (Duration/ofSeconds 2))
-    (.build)))
 
 (defn init!
   "Redirect System/out and System/err to the log file. Lanterna uses
@@ -147,7 +140,7 @@
                                      "mistralai/mistral-small-2503"]}
    :github-copilot {:label "GitHub Copilot"
                     :base-url "https://api.individual.githubcopilot.com"
-                    :default-models ["claude-sonnet-4-6" "claude-opus-4-6" "claude-haiku-4-5"
+                    :default-models ["claude-sonnet-4.6" "claude-haiku-4.5"
                                      "gpt-5.4" "gpt-5.4-mini" "gpt-5.3-codex"
                                      "gemini-3-pro-preview" "grok-code-fast-1"]}
    :openai-codex   {:label "OpenAI Codex (ChatGPT OAuth)"
@@ -208,6 +201,25 @@
   [s]
   (str/replace (or s "") #"/+$" ""))
 
+(defn- catalog-base-url?
+  "True when `url` is just Vis/svar catalog metadata for `provider-id`,
+   not a caller-owned custom endpoint. OAuth providers may receive a
+   fresher LLM endpoint from token exchange (for Copilot, the proxy host),
+   and catalog defaults must not pin traffic to the stale bootstrap host."
+  [provider-id url]
+  (= (some-> url trim-trailing-slashes)
+    (some-> (known-provider-base-url provider-id) trim-trailing-slashes)))
+
+(defn- provider-token-base-url
+  [provider-id explicit-url api-url]
+  (cond
+    (and api-url (or (nil? explicit-url)
+                   (catalog-base-url? provider-id explicit-url)))
+    api-url
+
+    explicit-url explicit-url
+    :else api-url))
+
 (defn- local-provider-models-url
   [provider-id]
   (str (trim-trailing-slashes (:base-url (provider-template provider-id))) "/models"))
@@ -240,15 +252,9 @@
   (let [base-url (:base-url (provider-template provider-id))
         url      (local-provider-models-url provider-id)]
     (try
-      (let [request (-> (HttpRequest/newBuilder)
-                      (.uri (URI. url))
-                      (.timeout (Duration/ofSeconds 3))
-                      (.GET)
-                      (.build))
-            resp    (.send ^HttpClient provider-status-http-client request
-                      (HttpResponse$BodyHandlers/ofString))
-            code    (.statusCode resp)
-            models  (parse-model-list-body provider-id (.body resp))]
+      (let [resp   (http/get url {:timeout 3000 :throw false})
+            code   (:status resp)
+            models (parse-model-list-body provider-id (:body resp))]
         (cond-> {:authenticated? (<= 200 code 299)
                  :provider-id    provider-id
                  :source         :local
@@ -280,11 +286,37 @@
     (map? model)    (:name model)
     :else           nil))
 
+(def ^:private github-copilot-legacy-model-aliases
+  {"claude-sonnet-4-6" "claude-sonnet-4.6"
+   "claude-sonnet-4-5" "claude-sonnet-4.5"
+   "claude-haiku-4-5"  "claude-haiku-4.5"
+   "claude-opus-4-7"   "claude-opus-4.7"
+   "claude-opus-4-6"   "claude-opus-4.6"
+   "claude-opus-4-5"   "claude-opus-4.5"})
+
+(defn- github-copilot-claude-model?
+  [model-name]
+  (boolean (re-find #"^claude-(opus|sonnet|haiku)-4(?:\.\d+)?$" model-name)))
+
+(defn- provider-model-name
+  [provider-id name]
+  (if (= :github-copilot provider-id)
+    (get github-copilot-legacy-model-aliases name name)
+    name))
+
 (defn ->svar-model
   "Coerce a model representation to svar-native `{:name str}`."
-  [model]
-  (when-let [n (some-> (model-name model) str str/trim not-empty)]
-    {:name n}))
+  ([model]
+   (->svar-model nil model))
+  ([provider-id model]
+   (when-let [n (some-> (model-name model) str str/trim not-empty)]
+     (let [n (provider-model-name provider-id n)]
+       (cond-> {:name n}
+         (and (= :github-copilot provider-id)
+           (github-copilot-claude-model? n))
+         (assoc :api-style :openai-compatible-chat
+           :reasoning? true
+           :reasoning-style :openai-effort))))))
 
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
@@ -309,7 +341,7 @@
   (let [pid                   (:id provider)
         template              (provider-template pid)
         api-key               (:api-key provider)
-        models                (->> (:models provider) (keep ->svar-model) vec)
+        models                (->> (:models provider) (keep #(->svar-model pid %)) vec)
         explicit-url          (:base-url provider)
         explicit-api-style    (or (:api-style provider) (:api-style template))
         explicit-headers      (:llm-headers provider)
@@ -318,7 +350,7 @@
                                 (some-> (registry/provider-by-id pid) :provider/get-token-fn))]
     (if get-token-fn
       (let [{:keys [token api-url llm-headers responses-path]} (get-token-fn)
-            url             (or explicit-url api-url)
+            url             (provider-token-base-url pid explicit-url api-url)
             merged-headers  (or explicit-headers llm-headers)
             merged-response (or explicit-responses responses-path)]
         (cond-> {:id pid :models models :api-key token}

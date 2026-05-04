@@ -6,6 +6,16 @@
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defn- eventually
+  [pred]
+  (loop [attempts 50]
+    (cond
+      (pred) true
+      (pos? attempts) (do
+                        (Thread/sleep 20)
+                        (recur (dec attempts)))
+      :else false)))
+
 (defdescribe provider-dialog-namespace-test
   (it "loads the provider dialog namespace"
     (expect (some? (find-ns 'com.blockether.vis.ext.channel-tui.provider)))))
@@ -70,6 +80,56 @@
                   :model-count 3}
                 (select-keys (@#'provider/configured-provider-status {:id :ollama})
                   [:authenticated? :source :model-count]))))))
+
+(defdescribe provider-dialog-async-diagnostics-test
+  (it "seeds provider diagnostics without running blocking provider probes"
+    (let [status-called? (atom false)
+          limits-called? (atom false)]
+      (with-redefs [vis/provider-by-id (constantly {:provider/status-fn (fn []
+                                                                          (reset! status-called? true)
+                                                                          {:authenticated? true})})
+                    vis/provider-limits (fn [_]
+                                          (reset! limits-called? true)
+                                          {:status :ok})]
+        (expect (= {:authenticated? nil
+                    :loading? true}
+                  (@#'provider/initial-provider-status {:id :slow})))
+        (expect (= {:provider-id :slow
+                    :status :loading
+                    :static {}
+                    :dynamic {:limits []}}
+                  (@#'provider/initial-provider-limits {:id :slow})))
+        (expect (= false @status-called?))
+        (expect (= false @limits-called?)))))
+
+  (it "refreshes provider diagnostics in the background after loading state is visible"
+    (let [status-entered (promise)
+          limits-entered (promise)
+          release        (promise)
+          statuses       (atom {})
+          limits         (atom {})]
+      (with-redefs [vis/provider-by-id (constantly {:provider/status-fn (fn []
+                                                                          (deliver status-entered true)
+                                                                          @release
+                                                                          {:authenticated? true
+                                                                           :source :test})})
+                    vis/provider-limits (fn [provider-id]
+                                          (deliver limits-entered provider-id)
+                                          @release
+                                          {:provider-id provider-id
+                                           :status :ok
+                                           :static {:rpm 1}
+                                           :dynamic {:limits []}})]
+        (@#'provider/refresh-provider-diagnostics! {:id :slow} statuses limits)
+        (expect (= true (get-in @statuses [:slow :loading?])))
+        (expect (= :loading (get-in @limits [:slow :status])))
+        (expect (= true (deref status-entered 500 false)))
+        (expect (= :slow (deref limits-entered 500 nil)))
+        (expect (= true (@#'provider/provider-diagnostics-loading? @statuses @limits)))
+        (deliver release true)
+        (expect (eventually #(= true (get-in @statuses [:slow :authenticated?]))))
+        (expect (eventually #(= :ok (get-in @limits [:slow :status]))))
+        (expect (= false (@#'provider/provider-diagnostics-loading? @statuses @limits)))))))
 
 (defdescribe provider-action-items-test
   (it "offers auth actions for remote providers and only status for local providers"
@@ -142,7 +202,29 @@
         (expect (str/includes? text "Catalog RPM: 500"))
         (expect (str/includes? text "Catalog TPM: 2000000"))
         (expect (str/includes? text "Catalog RPM / TPM come from the provider catalog, not live account quota usage."))
-        (expect (str/includes? text "Note: Static-only for now."))))))
+        (expect (str/includes? text "Note: Static-only for now.")))))
+
+  (it "renders cached loading diagnostics without live provider probes"
+    (let [provider-probed? (atom false)
+          limits-probed?   (atom false)]
+      (with-redefs [vis/provider-by-id (fn [_]
+                                         (reset! provider-probed? true)
+                                         nil)
+                    vis/provider-limits (fn [_]
+                                          (reset! limits-probed? true)
+                                          {:status :ok})]
+        (let [text (@#'provider/provider-status-text
+                    {:id :slow}
+                    {:authenticated? nil :loading? true}
+                    {:provider-id :slow
+                     :status :loading
+                     :static {}
+                     :dynamic {:limits []}})]
+          (expect (str/includes? text "Authenticated: no"))
+          (expect (str/includes? text "Loading?: true"))
+          (expect (str/includes? text "Status: loading"))
+          (expect (= false @provider-probed?))
+          (expect (= false @limits-probed?)))))))
 
 (defdescribe codex-oauth-ready-test
   (it "returns true immediately when Codex credentials already exist"

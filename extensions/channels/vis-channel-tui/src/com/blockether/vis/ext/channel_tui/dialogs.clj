@@ -280,6 +280,8 @@
 
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
 
+(declare draw-scrollbar!)
+
 (defn select-dialog!
   "Show a selection list dialog. Returns selected item map or nil on Esc.
    `items` is a vec of {:label str, ...} maps."
@@ -479,9 +481,21 @@
         [status-w file-w size-w modified-w]))))
 
 (defn- fit-table-cell
-  [value width]
-  (let [text (ellipsize (or value "") width)]
-    (str text (apply str (repeat (max 0 (- width (count text))) \space)))))
+  ([value width]
+   (fit-table-cell value width :left))
+  ([value width align]
+   (let [text (ellipsize (or value "") width)]
+     (case align
+       :right (p/pad-left text width)
+       (p/pad-right text width)))))
+
+(defn- table-row-line
+  ([widths cells]
+   (table-row-line widths cells (repeat :left)))
+  ([widths cells aligns]
+   (str " "
+     (str/join " │ " (map fit-table-cell cells widths aligns))
+     " ")))
 
 (defn- file-picker-table-cells
   [{:keys [status-label path size-label age-label]}]
@@ -489,9 +503,7 @@
 
 (defn- file-picker-table-row-line
   [widths cells]
-  (str " "
-    (str/join " │ " (map fit-table-cell cells widths))
-    " "))
+  (table-row-line widths cells))
 
 (defn- file-picker-table-border-line
   [widths kind]
@@ -511,16 +523,11 @@
 
 (defn scrollbar-geometry
   [height total scroll]
-  (when (pos? height)
-    (let [scrollable? (> total height)
-          thumb-h     (if scrollable?
-                        (max 1 (int (* height (/ (double height) total))))
-                        height)
-          max-scroll  (max 1 (- total height))
-          thumb-top   (if scrollable?
-                        (int (* (- height thumb-h)
-                               (/ (double (clamp scroll 0 max-scroll)) max-scroll)))
-                        0)]
+  (when (and (pos? height) (> total height))
+    (let [thumb-h    (max 1 (int (* height (/ (double height) total))))
+          max-scroll (max 1 (- total height))
+          thumb-top  (int (* (- height thumb-h)
+                            (/ (double (clamp scroll 0 max-scroll)) max-scroll)))]
       {:track-h height
        :thumb-h thumb-h
        :thumb-top thumb-top})))
@@ -536,7 +543,7 @@
       (p/set-colors! g t/dialog-hint-key t/dialog-bg)
       (p/set-char! g col (+ top thumb-top r) \█))))
 
-(defn- file-picker-scrollbar-geometry
+(defn file-picker-scrollbar-geometry
   [height total scroll]
   (scrollbar-geometry height total scroll))
 
@@ -1142,55 +1149,72 @@
       (.format fmt date))
     "—"))
 
+(def ^:private conversation-table-headers
+  ["" "ID" "Turns" "Modified" "Created" "Title"])
+
+(def ^:private conversation-table-aligns
+  [:left :left :right :left :left :left])
+
+(defn- conversation-table-widths
+  "Column widths for the conversation table. Total rendered row width equals
+   `table-w`, including inter-cell separators and one outer space each side."
+  [table-w]
+  (let [n         (count conversation-table-headers)
+        overhead  (dec (* 3 n))
+        available (max n (- table-w overhead))]
+    (if (>= available 56)
+      (let [active-w   1
+            id-w       8
+            turns-w    5
+            modified-w 16
+            created-w  16
+            title-w    (max 1 (- available active-w id-w turns-w modified-w created-w))]
+        [active-w id-w turns-w modified-w created-w title-w])
+      (let [active-w   1
+            id-w       (max 1 (min 8 (quot available 6)))
+            turns-w    (max 1 (min 5 (quot available 6)))
+            modified-w (max 1 (min 10 (quot available 4)))
+            created-w  (max 1 (min 10 (quot available 4)))
+            title-w    (max 1 (- available active-w id-w turns-w modified-w created-w))]
+        [active-w id-w turns-w modified-w created-w title-w]))))
+
 (defn- conversation-table-row-label
-  "Format one fixed-width conversation table row. Width math is terminal
-   columns, not Java chars, so CJK/emoji titles cannot shift later rows."
-  [prefix id-label turns-label modified-label created-label title-label body-w]
-  (let [fixed   (str (p/pad-right prefix 1) " "
-                  (p/pad-right id-label 8) " "
-                  (p/pad-left turns-label 5) "  "
-                  (p/pad-right modified-label 16) "  "
-                  (p/pad-right created-label 16) "  ")
-        title-w (max 1 (- (long body-w) (p/display-width fixed)))]
-    (p/pad-right (str fixed (ellipsize title-label title-w)) body-w)))
+  "Format one fixed-width conversation table row with real cell separators.
+   Width math is terminal columns, not Java chars, so CJK/emoji titles cannot
+   shift later rows."
+  [cells body-w]
+  (table-row-line (conversation-table-widths body-w) cells conversation-table-aligns))
 
 (defn conversation-dialog-label
   "Format one fixed-width conversation table row. Columns are intentionally
    stable so the picker reads as a table inside the shared dialog chrome."
-  [{:keys [id title turn-count modified-at created-at]} active-id body-w]
+  [{:keys [id title turn-count modified-at created-at] :as conversation} active-id body-w]
   (let [active? (= (str id) (some-> active-id str))]
     (conversation-table-row-label
-      (if active? "●" " ")
-      (short-conversation-id {:id id})
-      (str (long (or turn-count 0)))
-      (format-conversation-date modified-at)
-      (format-conversation-date created-at)
-      (conversation-title {:title title :id id})
+      [(if active? "●" "")
+       (short-conversation-id conversation)
+       (str (long (or turn-count 0)))
+       (format-conversation-date modified-at)
+       (format-conversation-date created-at)
+       (conversation-title {:title title :id id})]
       body-w)))
 
 (defn conversation-dialog-header
   [body-w]
-  (conversation-table-row-label " " "ID" "Turns" "Modified" "Created" "Title" body-w))
-
-(defn- conversation-dialog-command-items
-  [body-w]
-  [{:action :new
-    :label  (conversation-table-row-label " " "new" "—" "—" "—" "Create new conversation" body-w)}
-   {:action :fork
-    :label  (conversation-table-row-label " " "fork" "—" "—" "—" "Fork current conversation" body-w)}])
+  (conversation-table-row-label conversation-table-headers body-w))
 
 (defn conversation-dialog-items
-  "Build rows for the conversation switcher. `conversations` are already
-   sorted by the caller by latest modification date. New/fork commands are
-   first-class rows so Ctrl+G exposes the full conversation workflow."
+  "Build table rows for existing conversations only. New/fork stay dialog
+   options via the N/F shortcuts and command palette; they are not fake table
+   data rows. `conversations` are already sorted by the caller by latest
+   modification date."
   ([conversations active-id]
    (conversation-dialog-items conversations active-id conversation-dialog-content-w))
   ([conversations active-id body-w]
-   (into (conversation-dialog-command-items body-w)
-     (map (fn [conversation]
-            {:action :switch
-             :id     (str (:id conversation))
-             :label  (conversation-dialog-label conversation active-id body-w)}))
+   (mapv (fn [conversation]
+           {:action :switch
+            :id     (str (:id conversation))
+            :label  (conversation-dialog-label conversation active-id body-w)})
      conversations)))
 
 (defn- draw-conversation-row!
@@ -1209,7 +1233,7 @@
    `{:action :new}`, `{:action :fork}`, `{:action :switch :id <conversation-id>}`,
    or nil on Esc."
   [^TerminalScreen screen conversations active-id]
-  (let [selected (atom (if (seq conversations) 2 0))
+  (let [selected (atom 0)
         scroll   (atom 0)]
     (loop []
       (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
@@ -1237,7 +1261,8 @@
         (p/clear-styles! g)
         (p/set-colors! g t/dialog-border t/dialog-bg)
         (p/fill-rect! g (inc left) (inc header-row) inner-w 1)
-        (p/put-str! g (+ left 2) (inc header-row) (apply str (repeat body-w \─)))
+        (p/put-str! g (+ left 2) (inc header-row)
+          (file-picker-table-border-line (conversation-table-widths body-w) :middle))
 
         (dotimes [i visible]
           (let [idx (+ @scroll i)

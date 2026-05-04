@@ -20,6 +20,7 @@
                                 :account-type :individual
                                 :api-url "https://api.individual.githubcopilot.com"})
     (let [token (sut/get-copilot-token!)]
+      (expect (= "https://api.individual.githubcopilot.com" (:api-url token)))
       (expect (= "GitHubCopilotChat/0.26.7" (get-in token [:llm-headers "User-Agent"])))
       (expect (= "vscode-chat" (get-in token [:llm-headers "Copilot-Integration-Id"]))))))
 
@@ -28,8 +29,8 @@
     (expect (= "https://proxy.individual.githubcopilot.com"
               (#'sut/copilot-base-url-from-token "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"))))
 
-  (it "prefers business proxy endpoint from token exchange response"
-    (expect (= "https://proxy.business.githubcopilot.com"
+  (it "ignores token proxy endpoints for chat and uses the account API host"
+    (expect (= "https://api.business.githubcopilot.com"
               (#'sut/copilot-api-base-url "tid=x;exp=1" {:proxy-ep "proxy.business.githubcopilot.com"} nil
                                           {:account-type :business}))))
 
