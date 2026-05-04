@@ -2004,7 +2004,7 @@
     (when kind (str ":" (name kind)))
     (when (seq details-path) (str ":d" (str/join "." details-path)))))
 
-(def ^:private proof-summary-icon "🧾")
+(def ^:private proof-summary-icon "✓")
 
 (defn- proof-summary-label
   [summary]
@@ -3534,6 +3534,10 @@
                          (re-matches #"^\s*<summary>(.*)</summary>\s*$" line))]
     inner))
 
+(defn- trim-trailing-blank-lines
+  [lines]
+  (vec (reverse (drop-while str/blank? (reverse (or lines []))))))
+
 (defn- parse-detail-segments
   [lines]
   (letfn [(consume* [lines path]
@@ -3549,16 +3553,19 @@
                 [(cond-> segs (seq plain) (conj {:type :plain :lines plain})) remaining]
 
                 (details-open-line? (first remaining))
-                (let [segs        (cond-> segs (seq plain) (conj {:type :plain :lines plain}))
-                      detail-kind (detail-open-kind (first remaining))
-                      path'       (conj path next-idx)
-                      after-open  (next remaining)
-                      summary     (or (some-> (first after-open) summary-content)
-                                    (if (= :proofs detail-kind) "Proofs" "Details"))
-                      body-start  (if (summary-content (first after-open)) (next after-open) after-open)
-                      [body rem]  (consume* body-start path')
-                      rem'        (if (and rem (details-close-line? (first rem))) (next rem) rem)
-                      seg         {:type :detail :detail-kind detail-kind :summary summary :path path' :segments body}]
+                (let [plain'           (trim-trailing-blank-lines plain)
+                      margin-top?      (boolean (or (seq segs) (seq plain')))
+                      segs             (cond-> segs (seq plain') (conj {:type :plain :lines plain'}))
+                      detail-kind      (detail-open-kind (first remaining))
+                      path'            (conj path next-idx)
+                      after-open       (next remaining)
+                      explicit-summary (summary-content (first after-open))
+                      summary          (or explicit-summary
+                                         (if (= :proofs detail-kind) "Proofs" "Details"))
+                      body-start       (if explicit-summary (next after-open) after-open)
+                      [body rem]       (consume* body-start path')
+                      rem'             (if (and rem (details-close-line? (first rem))) (next rem) rem)
+                      seg              {:type :detail :detail-kind detail-kind :summary summary :path path' :segments body :margin-top? margin-top?}]
                   (recur rem' [] (conj segs seg) (inc next-idx)))
 
                 :else
@@ -3568,7 +3575,7 @@
 (defn- render-detail-segments
   [segments max-w mode opts]
   (mapcat
-    (fn [{:keys [type lines summary path segments detail-kind]}]
+    (fn [{:keys [type lines summary path segments detail-kind margin-top?]}]
       (case type
         :plain
         (mapv (fn [line] {:line line :meta nil})
@@ -3593,6 +3600,7 @@
               expanded?    (detail-expanded? (:detail-expansions opts) conversation-id node-id true)
               body-entries (vec (render-detail-segments segments max-w mode opts))]
           (vec (concat
+                 (when margin-top? [{:line "" :meta nil}])
                  (detail-summary-entries (assoc detail-ctx
                                            :marker marker
                                            :max-w max-w
