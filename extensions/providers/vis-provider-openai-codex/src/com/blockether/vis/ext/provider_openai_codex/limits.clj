@@ -1,14 +1,12 @@
-(ns com.blockether.vis.internal.provider-limits.codex
+(ns com.blockether.vis.ext.provider-openai-codex.limits
   "OpenAI Codex dynamic quota checker.
 
    Fetches `https://chatgpt.com/backend-api/wham/usage`, selects the
    regular Codex bucket (or the nested Codex Spark bucket), then exposes
    the 5h and 7d percentage windows as normalized Vis limit rows."
-  (:require [charred.api :as json]
-            [clojure.string :as str])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpClient$Redirect HttpRequest HttpResponse$BodyHandlers]
-           [java.time Duration]))
+  (:require [babashka.http-client :as http]
+            [charred.api :as json]
+            [clojure.string :as str]))
 
 (def ^:private usage-url
   "https://chatgpt.com/backend-api/wham/usage")
@@ -30,13 +28,6 @@
     :label      "Codex 7d quota (%)"
     :unit       :day
     :size       7}])
-
-(def ^:private http-client
-  (delay
-    (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 15))
-      (.followRedirects HttpClient$Redirect/NORMAL)
-      (.build))))
 
 (defn- object-map
   [value]
@@ -163,17 +154,14 @@
   "Fetch raw ChatGPT/Codex usage JSON from
    `https://chatgpt.com/backend-api/wham/usage`."
   [access-token account-id]
-  (let [request  (-> (HttpRequest/newBuilder)
-                   (.uri (URI/create usage-url))
-                   (.timeout (Duration/ofSeconds 30))
-                   (.header "Accept" "*/*")
-                   (.header "Authorization" (str "Bearer " access-token))
-                   (.header "chatgpt-account-id" account-id)
-                   (.GET)
-                   (.build))
-        response (.send ^HttpClient @http-client request (HttpResponse$BodyHandlers/ofString))
-        status   (.statusCode response)
-        body     (.body response)]
+  (let [response (http/get usage-url
+                   {:headers {"Accept" "*/*"
+                              "Authorization" (str "Bearer " access-token)
+                              "chatgpt-account-id" account-id}
+                    :timeout 30000
+                    :throw   false})
+        status   (:status response)
+        body     (:body response)]
     (if (<= 200 status 299)
       (json/read-json body :key-fn keyword)
       (throw (ex-info (str "OpenAI Codex usage request failed: HTTP " status)

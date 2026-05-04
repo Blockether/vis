@@ -13,7 +13,7 @@
   com.blockether/vis         {:local/root ".."}
   ;; Structured LLM I/O (also a transitive dep of vis, but listed
   ;; explicitly because the bench harness uses svar/router directly)
-  com.blockether/svar        {:mvn/version "0.4.2"}
+  com.blockether/svar        {:mvn/version "0.4.3"}
   ;; JSON dataset parsing
   com.cnuernber/charred      {:mvn/version "1.038"}
   ;; Filesystem helpers

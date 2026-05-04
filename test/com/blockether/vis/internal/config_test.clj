@@ -69,7 +69,31 @@
         (expect (= "tok" (:api-key provider)))
         (expect (= "https://chatgpt.com/backend-api" (:base-url provider)))
         (expect (= :openai-compatible-responses (:api-style provider)))
-        (expect (= {"chatgpt-account-id" "acct_123"} (:llm-headers provider)))))))
+        (expect (= {"chatgpt-account-id" "acct_123"} (:llm-headers provider))))))
+
+  (it "prefers OAuth token API URL over catalog Copilot base URL"
+    (with-redefs [registry/provider-by-id (fn [pid]
+                                            (when (= pid :github-copilot)
+                                              {:provider/get-token-fn (fn []
+                                                                        {:token "tok"
+                                                                         :api-url "https://proxy.individual.githubcopilot.com"})}))]
+      (let [provider (config/->svar-provider {:id :github-copilot
+                                              :base-url "https://api.individual.githubcopilot.com"
+                                              :models [{:name "claude-opus-4-6"}]})]
+        (expect (= "tok" (:api-key provider)))
+        (expect (= "https://proxy.individual.githubcopilot.com" (:base-url provider))))))
+
+  (it "preserves custom provider URLs over OAuth token API URLs"
+    (with-redefs [registry/provider-by-id (fn [pid]
+                                            (when (= pid :github-copilot)
+                                              {:provider/get-token-fn (fn []
+                                                                        {:token "tok"
+                                                                         :api-url "https://proxy.individual.githubcopilot.com"})}))]
+      (let [provider (config/->svar-provider {:id :github-copilot
+                                              :base-url "http://localhost:4141/v1"
+                                              :models [{:name "claude-opus-4-6"}]})]
+        (expect (= "tok" (:api-key provider)))
+        (expect (= "http://localhost:4141/v1" (:base-url provider)))))))
 
 (defdescribe internal-local-provider-registration-test
   (it "registers internal Ollama and LM Studio status providers"

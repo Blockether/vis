@@ -59,6 +59,28 @@
               (loop/answer-str {:vis/answer-mode :needs-input
                                 :answer/text "Please paste the ideas you want reviewed."})))))
 
+(defdescribe runtime-proof-appendix-test
+  (it "appends proofs to accepted normal answers in the runtime, not model boilerplate"
+    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "<proofs>ok</proofs>")}
+      (fn []
+        (expect (= "Done.\n\n<proofs>ok</proofs>"
+                  (loop/append-runtime-proofs {} "Done." "Done."))))))
+
+  (it "does not duplicate an existing proofs block"
+    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "<proofs>new</proofs>")}
+      (fn []
+        (expect (= "Done.\n\n<proofs>old</proofs>"
+                  (loop/append-runtime-proofs {} "Done.\n\n<proofs>old</proofs>" "Done."))))))
+
+  (it "does not append proofs to needs-input clarification answers"
+    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "<proofs>ok</proofs>")}
+      (fn []
+        (expect (= "Please paste the ideas."
+                  (loop/append-runtime-proofs {}
+                    "Please paste the ideas."
+                    {:vis/answer-mode :needs-input
+                     :answer/text "Please paste the ideas."})))))))
+
 (defdescribe intent-required-test
   (it "requires intents for pasted-content inspection and terminal demonstrations"
     (expect (true? (#'loop/intent-required? "What did I send to you right now?! # Introduction")))
@@ -292,7 +314,7 @@
              :on-chunk (fn [chunk] (swap! chunks conj chunk))})
           (expect (= [:form-result]
                     (mapv :phase @chunks)))
-          (expect (= :vis/silent (:result (first @chunks)))))))))
+          (expect (= :vis/silent (:result (first @chunks))))))))
 
   (it "does not emit form-start for v/silent! aggregate-shape forms"
     (let [chunks (atom [])

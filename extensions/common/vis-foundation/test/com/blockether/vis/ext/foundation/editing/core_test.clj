@@ -73,6 +73,16 @@
     (expect (string? editing/editing-prompt))
     (expect (not (string/blank? editing/editing-prompt))))
 
+  (it "pushes search/read/path discovery to v tools instead of bash text slicing"
+    (expect (string/includes? editing/editing-prompt
+              "Do not use v/bash for grep/sed/nl/cat/find"))
+    (expect (string/includes? editing/editing-prompt
+              "Use v/rg/v/cat/v/glob"))
+    (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
+                        editing/editing-symbols)]
+      (expect (not-any? #(string/includes? % "grep")
+                (:ext.symbol/examples bash-symbol)))))
+
   (it "teaches the model that file and shell payloads live under the tool envelope :result"
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
                         editing/editing-symbols)]
@@ -177,8 +187,8 @@
                   :count 2
                   :keys [:huge :nested]
                   :shape {:huge {:type :vector
-                                  :count 100
-                                  :items {:type :int}}
+                                 :count 100
+                                 :items {:type :int}}
                           :nested {:type :map
                                    :count 1
                                    :keys [:answer]

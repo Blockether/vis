@@ -5,8 +5,10 @@
    `vis extensions list`: namespace shortener and word-wrapper."
   (:require
    [clojure.string :as str]
+   [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.main :as main]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
@@ -19,9 +21,58 @@
 (def ^:private table-width             #'main/table-width)
 (def ^:private terminal-width          #'main/terminal-width)
 (def ^:private print-table!            #'main/print-table!)
+(def ^:private parse-run-args          #'main/parse-run-args)
 (def ^:private conversation-rows       #'main/conversation-rows)
 (def ^:private strip-global-args       #'main/strip-global-args)
 (def ^:private startup-measure?        #'main/startup-measure?)
+
+(defdescribe cli-run-persistence-test
+  (it "defaults `vis run` to ephemeral execution and requires --persist for disk writes"
+    (expect (= {:prompt "throwaway probe"}
+              (parse-run-args ["throwaway" "probe"])))
+    (expect (= {:persist? true :prompt "keep this"}
+              (parse-run-args ["--persist" "keep" "this"]))))
+
+  (it "run! uses an in-memory environment unless persistence is explicitly requested"
+    (let [events (atom [])]
+      (with-redefs [lp/get-router (fn [] :router)
+                    lp/create-environment (fn [router opts]
+                                            (swap! events conj [:create-environment router opts])
+                                            :env)
+                    lp/turn! (fn [env messages opts]
+                               (swap! events conj [:turn env messages opts])
+                               {:answer "ok" :iteration-count 1 :duration-ms 2})
+                    lp/dispose-environment! (fn [env]
+                                              (swap! events conj [:dispose env]))
+                    lp/create! (fn [& _]
+                                 (throw (ex-info "persistent create must not run by default" {})))
+                    lp/send! (fn [& _]
+                               (throw (ex-info "persistent send must not run by default" {})))]
+        (let [result (main/run! (main/agent {:name "cli"}) "hi")]
+          (expect (= nil (:conversation-id result)))
+          (expect (= "ok" (:answer result)))
+          (expect (= [[:create-environment :router {:db :memory}]
+                      [:turn :env [(svar/user "hi")] {}]
+                      [:dispose :env]]
+                    @events))))))
+
+  (it "run! persists only when :persist? is true"
+    (let [cid    (java.util.UUID/randomUUID)
+          events (atom [])]
+      (with-redefs [lp/create! (fn [channel opts]
+                                 (swap! events conj [:create channel opts])
+                                 {:id cid})
+                    lp/send! (fn [conversation-id messages opts]
+                               (swap! events conj [:send conversation-id messages opts])
+                               {:answer "saved" :iteration-count 1 :duration-ms 2})
+                    lp/create-environment (fn [& _]
+                                            (throw (ex-info "ephemeral env must not run when persisted" {})))]
+        (let [result (main/run! (main/agent {:name "cli"}) "save me" {:persist? true})]
+          (expect (= cid (:conversation-id result)))
+          (expect (= "saved" (:answer result)))
+          (expect (= [[:create :cli {:title "save me"}]
+                      [:send cid [(svar/user "save me")] {}]]
+                    @events)))))))
 
 (defdescribe global-measure-flag-test
   (it "strips --measure before command dispatch"

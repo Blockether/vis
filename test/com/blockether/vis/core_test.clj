@@ -1090,6 +1090,35 @@
       (let [registered (set (map :ext/namespace @(:extensions env)))]
         (expect (= #{'test.merge.a 'test.merge.b} registered)))))
 
+  (it "symbol bindings follow extension activation state"
+    (let [env (bare-env-for-install-test)
+          active? (atom false)
+          ext (vis/extension
+                {:ext/namespace 'test.activation.x
+                 :ext/doc       "activation gated"
+                 :ext/version   "0.0.1"
+                 :ext/kind      "activation-test"
+                 :ext/activation-fn (fn [_] @active?)
+                 :ext/ns-alias  {:ns 'test.activation.ns :alias 'act}
+                 :ext/symbols   [(vis/symbol 'active-fn (constantly :active)
+                                   {:doc "active" :arglists '([])})]})]
+      (vis/install-extension! env ext)
+      (expect (contains? (set (map :ext/namespace @(:extensions env)))
+                'test.activation.x))
+      (expect (not (contains? (ns-keys-in-sci (:sci-ctx env) 'test.activation.ns)
+                     'active-fn)))
+      (reset! active? true)
+      (vis/sync-active-extension-symbols! env)
+      (expect (contains? (ns-keys-in-sci (:sci-ctx env) 'test.activation.ns)
+                'active-fn))
+      (expect (= :active
+                (:val (sci/eval-string+ (:sci-ctx env) "(act/active-fn)"
+                        {:ns (:sandbox-ns env)}))))
+      (reset! active? false)
+      (vis/sync-active-extension-symbols! env)
+      (expect (not (contains? (ns-keys-in-sci (:sci-ctx env) 'test.activation.ns)
+                     'active-fn)))))
+
   (it "installing the SAME extension twice replaces it (no duplication)"
     ;; Pre-existing contract — pin it so the merge change doesn't
     ;; accidentally break re-install hot-swap semantics.

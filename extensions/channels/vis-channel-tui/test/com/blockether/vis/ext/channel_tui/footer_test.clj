@@ -58,7 +58,43 @@
                        first
                        :text)]
             (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
-            (expect (re-find #"7d 85% left ↺3d18h @" text)))))))
+            (expect (re-find #"Codex 7d 85% left ↺3d18h @" text)))))))
+
+  (it "shows GitHub Copilot premium interaction utilization on the second footer line"
+    (let [build-limits-segments @#'footer/build-limits-segments
+          now-ms                1000000000000
+          report                {:provider-id :github-copilot
+                                 :dynamic {:limits [{:id :chat
+                                                     :label "Chat"
+                                                     :used 0.0
+                                                     :limit 0.0
+                                                     :remaining 0.0
+                                                     :unlimited? false}
+                                                    {:id :completions
+                                                     :label "Completions"
+                                                     :used 0.0
+                                                     :limit 0.0
+                                                     :remaining 0.0
+                                                     :unlimited? false}
+                                                    {:id :premium_interactions
+                                                     :label "Premium interactions"
+                                                     :used 60.0
+                                                     :limit 300.0
+                                                     :remaining 240.0
+                                                     :unlimited? false
+                                                     :window {:resets-at-ms (+ now-ms (* 2 24 60 60 1000))}}]}}]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "claude-opus-4-6"
+                                                          :provider :github-copilot})}
+        (fn []
+          (let [text (->> (build-limits-segments {:messages []
+                                                  :settings {}
+                                                  :provider-limits {:provider-id :github-copilot
+                                                                    :report report}}
+                            now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
+            (expect (re-find #"Premium interactions 60/300 used \(240 left\) ↺2d0h" text)))))))
 
   (it "shows git repository state on the first footer line right side"
     (let [build-segments @#'footer/build-segments]

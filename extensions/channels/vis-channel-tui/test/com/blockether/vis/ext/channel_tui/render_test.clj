@@ -990,6 +990,20 @@
         (expect (not-any? #(str/includes? % "<details") lines))
         (expect (not-any? #(str/includes? % "</details>") lines))))
 
+    (it "`<proofs>` renders as a clickable proof badge with icon metadata"
+      (let [payload (render/format-answer-markdown-data
+                      "<proofs>\n<summary>Proofs · OK</summary>\n\nbody\n\n</proofs>"
+                      60
+                      {:conversation-id "cid" :detail-expansions {}})
+            lines   (:lines payload)
+            metas   (:line-meta payload)]
+        (expect (not-any? #(str/includes? % "<proofs") lines))
+        (expect (not-any? #(str/includes? % "</proofs>") lines))
+        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
+                         (str/includes? % "🧾 Proofs · OK")) lines))
+        (expect (some #(and (= :toggle-details (:kind %)) (:proofs? %)) metas))
+        (expect (some #(str/includes? % "body") lines))))
+
     (it "body between framing tags renders as normal markdown"
       ;; The whole point of stripping the wrappers is so the inner
       ;; markdown still flows through the existing pipeline. A bullet

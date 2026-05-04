@@ -1,5 +1,5 @@
-(ns com.blockether.vis.internal.provider-limits.codex-test
-  (:require [com.blockether.vis.internal.provider-limits.codex :as codex]
+(ns com.blockether.vis.ext.provider-openai-codex.limits-test
+  (:require [com.blockether.vis.ext.provider-openai-codex.limits :as codex]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe usage->dynamic-limits-test

@@ -17,14 +17,11 @@
 
    Works with both Individual and Business/Enterprise plans.
    Enterprise users can pass `:enterprise-domain` for GHE."
-  (:require [charred.api :as json]
+  (:require [babashka.http-client :as http]
+            [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
-            [taoensso.telemere :as tel])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.time Duration]))
+            [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Constants
@@ -66,57 +63,46 @@
 ;; HTTP helpers
 ;; =============================================================================
 
-(def ^:private http-client
-  (delay
-    (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 15))
-      (.followRedirects java.net.http.HttpClient$Redirect/NORMAL)
-      (.build))))
+(defn- json-body
+  [body]
+  (json/read-json (or body "") :key-fn keyword))
 
 (defn- post-form
-  "POST application/x-www-form-urlencoded, return parsed JSON map."
+  "POST application/x-www-form-urlencoded through babashka.http-client;
+   return parsed JSON map on HTTP 2xx, nil otherwise."
   [url params & [extra-headers]]
-  (let [body (str/join "&"
-               (map (fn [[k v]] (str (java.net.URLEncoder/encode (str k) "UTF-8")
-                                  "="
-                                  (java.net.URLEncoder/encode (str v) "UTF-8")))
-                 params))
-        ^java.net.http.HttpRequest$Builder builder
-        (-> (HttpRequest/newBuilder)
-          (.uri (URI/create url))
-          (.timeout (Duration/ofSeconds 30))
-          (.header "Accept" "application/json")
-          (.header "Content-Type" "application/x-www-form-urlencoded")
-          (.POST (HttpRequest$BodyPublishers/ofString body)))
-        ^java.net.http.HttpRequest$Builder builder
-        (reduce-kv (fn [^java.net.http.HttpRequest$Builder b k v] (.header b k v)) builder
-          (merge COPILOT_HEADERS (or extra-headers {})))
-        resp    (.send ^java.net.http.HttpClient @http-client
-                  (.build builder) (HttpResponse$BodyHandlers/ofString))
-        status  (.statusCode resp)]
+  (let [body   (str/join "&"
+                 (map (fn [[k v]] (str (java.net.URLEncoder/encode (str k) "UTF-8")
+                                    "="
+                                    (java.net.URLEncoder/encode (str v) "UTF-8")))
+                   params))
+        resp   (http/post url
+                 {:headers (merge COPILOT_HEADERS
+                             {"Accept" "application/json"
+                              "Content-Type" "application/x-www-form-urlencoded"}
+                             (or extra-headers {}))
+                  :body    body
+                  :timeout 30000
+                  :throw   false})
+        status (:status resp)]
     (when (<= 200 status 299)
-      (json/read-json (.body resp) :key-fn keyword))))
+      (json-body (:body resp)))))
 
 (defn- get-json
-  "GET with Bearer auth, return parsed JSON map."
+  "GET with Bearer auth through babashka.http-client, return parsed JSON map."
   [url bearer-token]
-  (let [^java.net.http.HttpRequest$Builder builder
-        (-> (HttpRequest/newBuilder)
-          (.uri (URI/create url))
-          (.timeout (Duration/ofSeconds 30))
-          (.header "Accept" "application/json")
-          (.header "Authorization" (str "Bearer " bearer-token))
-          (.GET))
-        ^java.net.http.HttpRequest$Builder builder
-        (reduce-kv (fn [^java.net.http.HttpRequest$Builder b k v] (.header b k v)) builder COPILOT_HEADERS)
-        resp    (.send ^java.net.http.HttpClient @http-client
-                  (.build builder) (HttpResponse$BodyHandlers/ofString))
-        status  (.statusCode resp)]
+  (let [resp   (http/get url
+                 {:headers (merge COPILOT_HEADERS
+                             {"Accept" "application/json"
+                              "Authorization" (str "Bearer " bearer-token)})
+                  :timeout 30000
+                  :throw   false})
+        status (:status resp)]
     (if (<= 200 status 299)
-      (json/read-json (.body resp) :key-fn keyword)
+      (json-body (:body resp))
       (throw (ex-info (str "GitHub API returned " status)
                {:status status
-                :body   (.body resp)
+                :body   (:body resp)
                 :url    url})))))
 
 ;; =============================================================================
@@ -290,8 +276,8 @@
 ;; =============================================================================
 
 (def ^:private COPILOT_POLICY_MODELS
-  ["claude-haiku-4.5" "claude-opus-4.5" "claude-opus-4.6" "claude-opus-4.7"
-   "claude-sonnet-4" "claude-sonnet-4.5" "claude-sonnet-4.6"
+  ["claude-haiku-4.5" "claude-sonnet-4" "claude-sonnet-4.5" "claude-sonnet-4.6"
+   "claude-opus-4.5" "claude-opus-4.6" "claude-opus-4.7"
    "gpt-5" "gpt-5-mini" "gpt-5.1" "gpt-5.1-codex" "gpt-5.1-codex-max"
    "gpt-5.1-codex-mini" "gpt-5.2" "gpt-5.2-codex" "gpt-5.3-codex"
    "gpt-5.4" "gpt-5.4-mini"
@@ -315,11 +301,13 @@
   (or (get-in response [:endpoints :api])
     (get-in response ["endpoints" "api"])))
 
+#_{:clj-kondo/ignore [:unused-private-var]}
 (defn- proxy-endpoint [response]
   (or (response-field response :proxy-ep)
     (response-field response :proxy_ep)
     (response-field response :proxyEndpoint)))
 
+#_{:clj-kondo/ignore [:unused-private-var]}
 (defn- copilot-base-url-from-token [token]
   (when-let [[_ proxy-host] (re-find #"(?:^|;)proxy-ep=([^;]+)" (or token ""))]
     (host-url proxy-host)))
@@ -327,11 +315,11 @@
 (defn- copilot-api-base-url
   ([token response enterprise-domain]
    (copilot-api-base-url token response enterprise-domain nil))
-  ([token response enterprise-domain opts]
+  ([_token response enterprise-domain opts]
    (let [account-type (configured-account-type opts)]
-     (or (host-url (proxy-endpoint response))
-       (copilot-base-url-from-token token)
-       (endpoint-api-url response)
+     ;; Token `proxy-ep` is NES/inline-completion traffic. Chat models use
+     ;; account API host; `/messages` and proxy chat return 404/model-missing.
+     (or (endpoint-api-url response)
        (when-not (str/blank? enterprise-domain)
          (str "https://copilot-api." enterprise-domain))
        (get COPILOT_ACCOUNT_BASE_URLS account-type)
@@ -339,20 +327,16 @@
 
 (defn- enable-copilot-model! [token api-url model-id]
   (try
-    (let [^java.net.http.HttpRequest$Builder builder
-          (-> (HttpRequest/newBuilder)
-            (.uri (URI/create (str api-url "/models/" model-id "/policy")))
-            (.timeout (Duration/ofSeconds 30))
-            (.header "Content-Type" "application/json")
-            (.header "Authorization" (str "Bearer " token))
-            (.header "openai-intent" "chat-policy")
-            (.header "x-interaction-type" "chat-policy")
-            (.POST (HttpRequest$BodyPublishers/ofString "{\"state\":\"enabled\"}")))
-          ^java.net.http.HttpRequest$Builder builder
-          (reduce-kv (fn [^java.net.http.HttpRequest$Builder b k v] (.header b k v)) builder COPILOT_HEADERS)
-          resp (.send ^java.net.http.HttpClient @http-client
-                 (.build builder) (HttpResponse$BodyHandlers/ofString))]
-      (<= 200 (.statusCode resp) 299))
+    (let [resp (http/post (str api-url "/models/" model-id "/policy")
+                 {:headers (merge COPILOT_HEADERS
+                             {"Content-Type" "application/json"
+                              "Authorization" (str "Bearer " token)
+                              "openai-intent" "chat-policy"
+                              "x-interaction-type" "chat-policy"})
+                  :body    "{\"state\":\"enabled\"}"
+                  :timeout 30000
+                  :throw   false})]
+      (<= 200 (:status resp) 299))
     (catch Throwable _ false)))
 
 (defn- enable-known-copilot-models! [token api-url]
@@ -399,8 +383,12 @@
            (:token cached)
            (> (:expires-at-ms cached) (+ now REFRESH_MARGIN_MS))
            (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
-       ;; Cached token is still valid
-       {:token (:token cached) :api-url (:api-url cached) :account-type account-type :llm-headers COPILOT_HEADERS}
+       ;; Cached token is still valid. Recompute chat API host so older
+       ;; caches carrying token `proxy-ep` do not keep routing chat there.
+       {:token (:token cached)
+        :api-url (copilot-api-base-url (:token cached) {} nil {:account-type account-type})
+        :account-type account-type
+        :llm-headers COPILOT_HEADERS}
        ;; Need to refresh
        (let [oauth-token (or (:oauth-token cached)
                            (:oauth-token (detect-oauth-token))
@@ -509,22 +497,17 @@
       [])))
 
 (defn- fetch-user-usage! [oauth-token]
-  (let [^java.net.http.HttpRequest$Builder builder
-        (-> (HttpRequest/newBuilder)
-          (.uri (URI/create "https://api.github.com/copilot_internal/user"))
-          (.timeout (Duration/ofSeconds 30))
-          (.header "Accept" "application/json")
-          (.header "Authorization" (str "Bearer " oauth-token))
-          (.header "X-GitHub-Api-Version" "2025-04-01")
-          (.GET))
-        ^java.net.http.HttpRequest$Builder builder
-        (reduce-kv (fn [^java.net.http.HttpRequest$Builder b k v] (.header b k v)) builder COPILOT_HEADERS)
-        resp   (.send ^java.net.http.HttpClient @http-client
-                 (.build builder) (HttpResponse$BodyHandlers/ofString))
-        status (.statusCode resp)
-        body   (.body resp)]
+  (let [resp   (http/get "https://api.github.com/copilot_internal/user"
+                 {:headers (merge COPILOT_HEADERS
+                             {"Accept" "application/json"
+                              "Authorization" (str "Bearer " oauth-token)
+                              "X-GitHub-Api-Version" "2025-04-01"})
+                  :timeout 30000
+                  :throw   false})
+        status (:status resp)
+        body   (:body resp)]
     (if (<= 200 status 299)
-      (json/read-json body :key-fn keyword)
+      (json-body body)
       (throw (ex-info (str "GitHub Copilot usage request failed: HTTP " status)
                {:type :provider/github-copilot-usage-error
                 :status status

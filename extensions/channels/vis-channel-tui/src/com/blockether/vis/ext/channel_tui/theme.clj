@@ -128,6 +128,14 @@
 (def th-md-summary-bg  (TextColor$RGB. 218 214 236))  ;; visible cool lavender inside reasoning
 (def th-md-summary-fg  (TextColor$RGB. 70 55 125))     ;; muted violet on the dim band
 
+;; <proofs> proof disclosure badge. Warmer green/teal tint than generic
+;; details so runtime proof appendices read as verified evidence, not just
+;; another collapsed prose section. WCAG ratio fg/bg > 7 on light theme.
+(def proof-summary-bg     (TextColor$RGB. 218 244 232)) ;; soft proof green band
+(def proof-summary-fg     (TextColor$RGB. 20 105 75))   ;; deep teal proof text
+(def th-proof-summary-bg  (TextColor$RGB. 206 232 224)) ;; dim proof band in thinking
+(def th-proof-summary-fg  (TextColor$RGB. 45 105 90))   ;; muted teal in thinking
+
 ;; Clickable link / image / file-link chrome painted at the foot of
 ;; an assistant bubble. Three states:
 ;;

@@ -17,8 +17,8 @@
             [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.vis.ext.provider-openai-codex.limits :as codex-limits]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.provider-limits.codex :as codex-limits]
             [taoensso.telemere :as tel])
   (:import [java.net URLDecoder URLEncoder]
            [java.security MessageDigest SecureRandom]

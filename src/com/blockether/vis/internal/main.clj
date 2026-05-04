@@ -357,10 +357,12 @@
 (defn run!
   "Execute a one-shot agent turn.
 
-   Creates a conversation → runs the turn → returns result.
+   Runs one turn. Default is ephemeral: in-memory SQLite only, no
+   `:cli` conversation written to disk.
 
    Returns map with:
-   - :conversation-id — Conversation ID (UUID string)
+   - :conversation-id — Conversation ID (UUID string) when persisted;
+                        nil for default ephemeral runs
    - :answer       — The agent's response
    - :iteration-count — Number of iterations executed
    - :duration-ms  — Total wall-clock time
@@ -377,19 +379,20 @@
    - :on-chunk    — Streaming callback fn
    - :debug?      — Enable debug logging (default false)
    - :config      — Provider config override (skips ~/.vis/config.edn)
-   - :no-persist? — Run without writing anything to disk. Spins up an
-                    ephemeral environment backed by an in-memory SQLite
-                    DB (`:db :memory`), runs the turn, disposes the
-                    env (which vaporizes the DB). Result has
-                    `:conversation-id nil`. Useful for CI, scripting,
-                    sensitive prompts.
+   - :persist?    — Write the run to ~/.vis/vis.mdb as a `:cli`
+                    conversation. Default false.
+   - :no-persist? — Backward-compatible override; when true, forces
+                    ephemeral execution even if `:persist?` is true.
 
-   Each persistent call creates a fresh conversation in the `:cli`
-   channel. Past runs are browsable via
-   `(conversations/by-channel :cli)`. Ephemeral (`:no-persist?`) calls
-   leave no trace."
+   Ephemeral runs use an in-memory SQLite DB (`:db :memory`), run the
+   turn, then dispose the env (which vaporizes the DB). Result has
+   `:conversation-id nil`. Useful for CI, scripting, sensitive prompts.
+
+   Persistent calls (`:persist? true`) create a fresh conversation in
+   the `:cli` channel. Past runs are browsable via
+   `(conversations/by-channel :cli)`."
   [agent-def prompt & [{:keys [spec model on-chunk
-                               debug? config no-persist?]
+                               debug? config persist? no-persist?]
                         :as _opts}]]
   (let [_cfg      (config/resolve-config config)
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
@@ -404,8 +407,9 @@
                     mdl       (assoc :model mdl)
                     on-chunk* (assoc :hooks {:on-chunk on-chunk*})
                     debug?    (assoc :debug? true))
-        messages  (if (string? prompt) [(svar/user prompt)] prompt)]
-    (if no-persist?
+        messages  (if (string? prompt) [(svar/user prompt)] prompt)
+        persistent? (and persist? (not no-persist?))]
+    (if-not persistent?
       ;; Ephemeral path: build a fresh env on a `:memory` SQLite DB so
       ;; nothing touches `~/.vis/vis.mdb`. Disposing the env tears the
       ;; in-memory DB down with it. Bypasses `lp/create!`/`lp/send!`
@@ -651,7 +655,7 @@
           "--model"          (recur (next more) (assoc opts :model (first more)) prompt-parts)
           "--name"           (recur (next more) (assoc opts :agent-name (first more)) prompt-parts)
           "--db"             (recur (next more) (assoc opts :db (first more)) prompt-parts)
-          "--no-persist"     (recur more (assoc opts :no-persist? true) prompt-parts)
+          "--persist"        (recur more (assoc opts :persist? true) prompt-parts)
           (recur more opts (conj prompt-parts arg)))))))
 
 (defn- print-run-usage! []
@@ -665,14 +669,14 @@
   (stdout! "  --model NAME      Override the configured model.")
   (stdout! "  --name NAME       Set the agent name (default: cli).")
   (stdout! "  --db PATH|:memory Override the SQLite path (or :memory).")
-  (stdout! "  --no-persist      Skip writes to ~/.vis/vis.mdb.")
-  (stdout! "                    Runs in an ephemeral env; no row in the")
-  (stdout! "                    `:cli` channel, no resume, no trace on disk.")
+  (stdout! "  --persist         Write this run to ~/.vis/vis.mdb as a")
+  (stdout! "                    `:cli` conversation. Default is ephemeral:")
+  (stdout! "                    no resume, no conversation row on disk.")
   (stdout! "")
   (stdout! "Examples:")
-  (stdout! "  vis run \"What is 2+2?\"")
+  (stdout! "  vis run \"Throwaway one-shot probe\"")
   (stdout! "  vis run --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis run --no-persist \"Throwaway one-shot probe\""))
+  (stdout! "  vis run --persist \"Keep this conversation\""))
 
 (defn- cli-run!
   "`vis run` handler. `_parsed` is unused — we re-parse the residual
@@ -1200,10 +1204,10 @@
                       {:name "model"      :kind :flag :type :string  :doc "Override the LLM model."}
                       {:name "name"       :kind :flag :type :string  :doc "Agent name."}
                       {:name "db"         :kind :flag :type :string  :doc "DB target: PATH or :memory."}
-                      {:name "no-persist" :kind :flag :type :boolean :doc "Run ephemerally; never write to ~/.vis/vis.mdb."}]
-          :cmd/examples ["vis run \"What is 2+2?\""
+                      {:name "persist"    :kind :flag :type :boolean :doc "Persist this run to ~/.vis/vis.mdb as a :cli conversation."}]
+          :cmd/examples ["vis run \"Throwaway one-shot probe\""
                          "vis run --json --model gpt-4o \"Explain the auth flow\""
-                         "vis run --no-persist \"Throwaway one-shot probe\""]
+                         "vis run --persist \"Keep this conversation\""]
           :cmd/run-fn cli-run!}
 
          {:cmd/name  "providers"

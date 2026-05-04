@@ -1023,10 +1023,10 @@
   (vis/symbol 'bash bash-tool
     {:doc "Run bounded `/usr/bin/env bash -lc` in worktree. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run) or (:exit run)."
      :arglists '([command] [command opts])
-     :examples ["(def run (v/bash \"pwd && ls\"))"
+     :examples ["(def run (v/bash \"./verify.sh --quick\"))"
                 "(get-in run [:result :stdout])"
                 "(get-in run [:result :exit])"
-                "(v/bash \"grep -R needle src\" {:timeout-ms 10000 :max-output-chars 8000})"]
+                "(v/bash \"git status --short\" {:timeout-ms 10000 :max-output-chars 8000})"]
      :result-spec tool-result-spec
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
 
@@ -1049,6 +1049,6 @@
    bash-symbol])
 
 (def editing-prompt
-  "`v/` files: preview/search with (v/cat path opts?), (v/ls path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?). v/cat opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. Edit with (v/read-all-lines path), (v/write-lines path lines opts?), (v/update-file path f & xs). Path ops: (v/create-dirs path), (v/list-dir path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
-`v/` shell: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
+  "`v/` files: Use v/rg/v/cat/v/glob for search/read/path discovery: (v/cat path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?), (v/ls path opts?). v/cat opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. Edit with (v/read-all-lines path), (v/write-lines path lines opts?), (v/update-file path f & xs). Path ops: (v/create-dirs path), (v/list-dir path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
+`v/` shell: Do not use v/bash for grep/sed/nl/cat/find; use v/rg/v/cat/v/glob instead. Use v/bash only for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
 Tool results are envelopes; payload lives under :result. cat: (def c (v/cat \"IDEAS.md\" {:offset 1 :limit 120})) -> (get-in c [:result :lines]); never (:lines c) / (:content c). read-all-lines: (:result (v/read-all-lines \"IDEAS.md\")) -> full line vector. bash: (def run (v/bash \"pwd\")) -> (get-in run [:result :stdout]), :stderr, :exit; never top-level (:stdout run) / (:exit run). Use (v/silent! aggregate-map) when constituent tool/var outputs were already shown and the aggregate value would only burn journal tokens; it returns only shape and is elided from live display. For Clojure source edits prefer z/zedit when `z/` is active; use v/read-all-lines + v/write-lines only for trivial line/data changes.")

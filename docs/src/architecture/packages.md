@@ -82,7 +82,8 @@ Every plug-in ships exactly one classpath manifest at
 > are grouped under. Registered channels use the same keyword for both
 > senses. The CLI agent (`vis run`) is the lone exception: it does not
 > register a channel descriptor — the `vis` dispatcher itself is its
-> surface — but it writes its conversations under `:cli`.
+> surface — and only writes conversations under `:cli` when invoked with
+> `--persist`.
 
 ## Auto-discovery
 
