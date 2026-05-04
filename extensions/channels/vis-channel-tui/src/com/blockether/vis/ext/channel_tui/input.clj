@@ -822,6 +822,13 @@
 
           (and ctrl (= c \k)) {:action :show-palette :state state}
 
+          ;; Ctrl+O is NOT safe here: on macOS/BSD terminals it is the
+          ;; VDISCARD line-discipline char, so the kernel may swallow it
+          ;; before Lanterna sees a KeyStroke. Ctrl+G is not a POSIX special
+          ;; char and survives Lanterna's UnixTerminal stty setup.
+          (and ctrl (= (Character/toLowerCase c) \g))
+          {:action :show-conversations :state state}
+
           (and ctrl (= (Character/toLowerCase c) \r))
           {:action :cycle-reasoning :state state}
 
@@ -848,9 +855,13 @@
       KeyType/Backspace  {:action :continue :state (delete-backward state)}
       KeyType/ArrowLeft  {:action :continue :state (move-left state)}
       KeyType/ArrowRight {:action :continue :state (move-right state)}
-      ;; Arrow Up/Down - input history
-      KeyType/ArrowUp    {:action :history-up :state state}
-      KeyType/ArrowDown  {:action :history-down :state state}
+      ;; Arrow Up/Down - input history, or Alt+Shift+↑/↓ conversation switcher
+      KeyType/ArrowUp    (if (and (.isAltDown key) (.isShiftDown key))
+                           {:action :show-conversations :state state}
+                           {:action :history-up :state state})
+      KeyType/ArrowDown  (if (and (.isAltDown key) (.isShiftDown key))
+                           {:action :show-conversations :state state}
+                           {:action :history-down :state state})
       KeyType/PageUp     {:action :scroll-up :state state}
       KeyType/PageDown   {:action :scroll-down :state state}
 

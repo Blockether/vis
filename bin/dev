@@ -2,7 +2,9 @@
 # Vis development launcher.
 #
 # Starts the project dev nREPL (`clojure -M:dev`) and optionally launches
-# development entry points. See `clojure -M:dev --help`.
+# development entry points. Uses the same automatic CRaC pre-extension
+# bootstrap as `bin/vis` when the current JVM supports CRaC.
+# See `clojure -M:dev --help`.
 
 set -euo pipefail
 
@@ -17,4 +19,89 @@ bin_dir="$(cd -P "$(dirname "$src")" && pwd)"
 repo_root="$(cd -P "$bin_dir/.." && pwd)"
 
 cd "$repo_root"
+
+crac_disabled() {
+  case "${VIS_CRAC:-auto}" in
+    0|false|FALSE|no|NO|off|OFF|disable|disabled) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+crac_forced() {
+  case "${VIS_CRAC:-auto}" in
+    1|true|TRUE|yes|YES|on|ON|force|FORCE) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+crac_supported() {
+  crac_forced && return 0
+  java -XX:+PrintFlagsFinal -version 2>&1 | grep -Eq 'CRaC(CheckpointTo|RestoreFrom)'
+}
+
+crac_rebuild_requested() {
+  case "${VIS_CRAC_REBUILD:-0}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+crac_image_has_entries() {
+  local dir="$1"
+  [[ -d "$dir" ]] && [[ -n "$(find "$dir" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]
+}
+
+crac_stat_file() {
+  local path="$1"
+  if stat -f '%N|%z|%m' "$path" >/dev/null 2>&1; then
+    stat -f '%N|%z|%m' "$path"
+  else
+    stat -c '%n|%s|%Y' "$path"
+  fi
+}
+
+crac_sha256() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 | awk '{print $1}'
+  else
+    sha256sum | awk '{print $1}'
+  fi
+}
+
+crac_fingerprint() {
+  {
+    for path in deps.edn VERSION bin/dev bin/vis; do
+      [[ -f "$path" ]] && crac_stat_file "$path"
+    done
+    find src dev test extensions \
+      -path '*/target' -prune -o \
+      -path '*/.cpcache' -prune -o \
+      -type f \( -name '*.clj' -o -name '*.cljc' -o -name '*.cljs' -o -name '*.edn' -o -name '*.sql' \) \
+      -print 2>/dev/null | sort | while IFS= read -r path; do
+        crac_stat_file "$path"
+      done
+  } | crac_sha256
+}
+
+if ! crac_disabled && crac_supported; then
+  image_dir="${VIS_CRAC_DEV_IMAGE_DIR:-${VIS_CRAC_IMAGE_DIR:-$HOME/.vis/crac/bin-dev}}"
+  stamp_file="${image_dir%/}.fingerprint"
+  fingerprint="$(crac_fingerprint)"
+  if crac_rebuild_requested || ! crac_image_has_entries "$image_dir" || [[ ! -f "$stamp_file" ]] || [[ "$(<"$stamp_file")" != "$fingerprint" ]]; then
+    rm -rf "$image_dir"
+    mkdir -p "$image_dir"
+    echo "vis dev: building CRaC image at $image_dir" >&2
+    if ! clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCCheckpointTo="$image_dir" -M:dev-crac-bootstrap; then
+      echo "vis dev: CRaC bootstrap failed; falling back to cold Clojure startup. Set VIS_CRAC=0 to disable." >&2
+      exec clojure -M:dev "$@"
+    fi
+    if ! crac_image_has_entries "$image_dir"; then
+      echo "vis dev: CRaC bootstrap produced no image; falling back to cold Clojure startup." >&2
+      exec clojure -M:dev "$@"
+    fi
+    printf '%s\n' "$fingerprint" > "$stamp_file"
+  fi
+  exec clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCRestoreFrom="$image_dir" -M:dev "$@"
+fi
+
 exec clojure -M:dev "$@"

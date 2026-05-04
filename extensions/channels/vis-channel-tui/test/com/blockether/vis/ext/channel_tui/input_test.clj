@@ -94,6 +94,9 @@
 (defn- special-key [ktype]
   (KeyStroke. ktype false false))
 
+(defn- alt-shift-special-key [ktype]
+  (KeyStroke. ktype false true true))
+
 (defdescribe handle-key-test
   (it "Arrow Up/Down cycle input history"
     (let [state (input/empty-input)]
@@ -108,6 +111,24 @@
                 (:action (input/handle-key (special-key KeyType/PageUp) state))))
       (expect (= :scroll-down
                 (:action (input/handle-key (special-key KeyType/PageDown) state))))))
+
+  (it "Ctrl+G and Alt+Shift+Up/Down open the conversation switcher"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "draft"))]
+      (expect (= {:action :show-conversations :state state}
+                (input/handle-key (ctrl-key (Character. \g)) state)))
+      (expect (= {:action :show-conversations :state state}
+                (input/handle-key (ctrl-key (Character. \G)) state)))
+      (expect (= {:action :show-conversations :state state}
+                (input/handle-key (alt-shift-special-key KeyType/ArrowUp) state)))
+      (expect (= {:action :show-conversations :state state}
+                (input/handle-key (alt-shift-special-key KeyType/ArrowDown) state)))))
+
+  (it "Ctrl+O stays unbound because BSD/macOS terminals reserve it as VDISCARD"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "draft"))]
+      (expect (= {:action :continue :state state}
+                (input/handle-key (ctrl-key (Character. \o)) state)))))
 
   (it "Ctrl+C and Escape clear non-empty input instead of exiting"
     (let [state (-> (input/empty-input)

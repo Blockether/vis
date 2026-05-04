@@ -260,9 +260,9 @@
    prompt text — see
    `com.blockether.vis.internal.prompt/render-extension-prompt-block`
    for the rationale."
-  (str "`v/` env: (v/snapshot) (v/git) (v/languages) (v/monorepo) (v/render) (v/refresh!)"
-    " | guidance/skills: (v/main-agent-instructions) (v/load-skill \"name\") (v/scan-warnings)"
-    " | reload: (v/reload-instructions!) (v/reload-skills!) (v/reload-extensions!)"))
+  (str "`v/` env: (v/snapshot) full map; shortcuts (v/git) (v/languages) (v/monorepo); (v/render) prints env block; (v/refresh!) refreshes cache. "
+    "Guidance/skills: (v/main-agent-instructions), (v/load-skill \"name\"), (v/scan-warnings). "
+    "Reload: (v/reload-instructions!), (v/reload-skills!), (v/reload-extensions!)."))
 
 (defn environment-prompt
   "Renders the live foundation block: <project-guidance> (when

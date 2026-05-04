@@ -24,7 +24,7 @@
    («Vis is thinking (iter 3)… 4.1s · Esc to cancel»).
 
    The first footer row carries repository context on the right:
-   repo/branch, modified/created/deleted counts, and ahead/behind counts
+   repo/branch, compact created/modified/deleted counts, and ahead/behind counts
    when an upstream is configured. The second footer row carries provider
    budgets and cumulative usage under that git context. Git status is
    cached briefly so repainting the TUI does not run JGit on every frame.
@@ -86,16 +86,16 @@
         deleted  (long (or deleted 0))]
     (if (zero? (+ modified created deleted))
       "files: clean"
-      (String/format Locale/ROOT "files: %d modified, %d created, %d deleted"
-        (into-array Object [modified created deleted])))))
+      (String/format Locale/ROOT "%d C, %d M, %d D"
+        (into-array Object [created modified deleted])))))
 
 (defn- git-sync-label
   [{:keys [upstream? ahead behind]}]
   (let [ahead  (long (or ahead 0))
         behind (long (or behind 0))]
     (cond
-      (not upstream?) "commits: no upstream"
-      (zero? (+ ahead behind)) "commits: up to date"
+      (not upstream?) "(no upstream)"
+      (zero? (+ ahead behind)) "(up to date)"
       :else (str "commits:"
               (when (pos? ahead) (str " ⇡" ahead))
               (when (pos? behind) (str " ⇣" behind))))))

@@ -196,9 +196,32 @@
     (= 1 (long consecutive-errors)) (if (= base :quick) :balanced :deep)
     :else :deep))
 
+(defn needs-input-answer?
+  "True for explicit clarification/needs-input answer payloads.
+
+   Foundation exposes this through `(v/needs-input ...)`; the loop
+   keeps the predicate data-shaped instead of depending on foundation
+   namespaces so the core runtime has no extension cycle. A needs-input
+   answer may finish an evidence-bearing request only when the only
+   intent violation is missing focus — i.e. the model is asking the user
+   for the evidence needed to start work, not bypassing unresolved work."
+  [v]
+  (and (map? v)
+    (= :needs-input (:vis/answer-mode v))
+    (string? (:answer/text v))
+    (not (str/blank? (:answer/text v)))))
+
+(defn answer-value-string
+  "Render the raw value passed to `(answer ...)` into persisted answer text."
+  [v]
+  (cond
+    (needs-input-answer? v) (:answer/text v)
+    (string? v) v
+    :else (str v)))
+
 (defn answer-str [answer]
   (let [v (:result answer answer)
-        s (if (string? v) v (str v))]
+        s (answer-value-string v)]
     (markdown/normalize-chat-markdown s)))
 
 (def edamame-opts
@@ -790,6 +813,46 @@
       "so the host loops, then emit one final top-level form such as "
       "`(answer …)` or `(let [...] (answer …))`.")))
 
+(defn- answer-call-form?
+  [form]
+  (and (seq? form)
+    (symbol? (first form))
+    (= "answer" (name (first form)))
+    (nil? (namespace (first form)))))
+
+(defn- form-contains-answer-call?
+  [expr]
+  (try
+    (let [form (edamame/parse-string (str expr) edamame-opts)]
+      (boolean (some answer-call-form? (tree-seq coll? seq form))))
+    (catch Throwable _
+      false)))
+
+(defn- answer-position-preflight-form-idx
+  "Return the 0-based top-level form index when a post-first iteration
+   mixes an `(answer …)` call with sibling top-level forms. This runs
+   before SCI evaluation so rejected final iterations do not execute
+   any of their forms."
+  [iteration-position code-entries]
+  (when (and (< 1 (long (or iteration-position 0)))
+          (< 1 (count code-entries)))
+    (first (keep-indexed (fn [idx {:keys [expr]}]
+                           (when (form-contains-answer-call? expr)
+                             idx))
+             code-entries))))
+
+(defn- answer-position-preflight-error-message
+  [form-idx total-forms]
+  (let [actual-1 (inc (or form-idx 0))]
+    (str "Answer-position preflight rejected this iteration before evaluation: "
+      "(answer …) must be the ONLY top-level form after iteration 1. "
+      "This iteration had " total-forms " top-level forms; an answer call "
+      "appears in form " actual-1 ". Do not answer in this iteration. "
+      "If sibling work is still required, emit that work alone and omit "
+      "`(answer …)` so the host loops. If the work is already done, emit "
+      "exactly one top-level `(answer …)` form next. No defs, no checks, "
+      "no intent calls.")))
+
 (def ^:private evidence-bearing-request-pattern
   (re-pattern
     (str "(?i)\\b("
@@ -822,32 +885,79 @@
     (and (seq violations)
       (every? #(= :missing-focused-intent (:type %)) violations))))
 
+(defn- first-iteration-position?
+  [iteration]
+  (let [n (long (or iteration 1))]
+    (or (zero? n) (= 1 n))))
+
+(defn- no-persisted-turn-iterations?
+  [db-info turn-id]
+  (try
+    (empty? (persistance/db-list-conversation-turn-iterations db-info turn-id))
+    (catch Throwable _
+      false)))
+
+(defn- non-evidence-answer-block?
+  [block]
+  (let [rendering-kind (:rendering-kind block)
+        code           (some-> (:code block) str str/trim)]
+    (or (= :vis/silent rendering-kind)
+      (= :vis/system rendering-kind)
+      (= :vis/answer rendering-kind)
+      (and code (noop-expr? code)))))
+
+(defn- no-workspace-evidence-yet?
+  [db-info turn-id iteration blocks]
+  (and (first-iteration-position? iteration)
+    (no-persisted-turn-iterations? db-info turn-id)
+    (every? non-evidence-answer-block? (or blocks []))))
+
 (defn final-answer-gate-error
   "Return nil only when focused conversation intents are answer-ready.
    Evidence-bearing requests require a focused conversation intent that is
    fulfilled or abandoned before `(answer …)`. Trivial chat/conceptual answers
    may finish without creating an intent, unless focused work already exists and
-   is unresolved."
-  [environment _iteration _blocks]
-  (let [db-info (:db-info environment)
-        turn-id (some-> (:current-conversation-turn-id-atom environment) deref)]
-    (when (and db-info turn-id)
-      (let [state (try (persistance/db-intents db-info {:conversation-turn-id turn-id})
-                    (catch Throwable e
-                      {:ok? false
-                       :violations [{:type :intent-check-error
-                                     :blocking? true
-                                     :message (ex-message e)}]}))
-            required? (intent-required? (current-user-request environment))]
-        (when (and (not (:ok? state))
-                (or required?
-                  (not (ignorable-missing-focused-intent-only? state))))
-          (str "Final answer rejected: focused conversation intents are not resolved. "
-            "Run `(v/intents)`, prove/block gates with canonical provenance refs, "
-            "then fulfill or abandon every focused intent before `(answer …)`. "
-            "For trivial chat/conceptual answers with no workspace evidence, no intent is required. "
-            "For unrelated parallel work, fork the conversation. "
-            "Violations: " (pr-str (:violations state))))))))
+   is unresolved.
+
+   Explicit `(answer (v/needs-input ...))` payloads are the third path:
+   they may finish an evidence-bearing request with no focused intent when the
+   model is asking the user for missing input required to begin the work.
+
+   Compatibility fallback: a first-iteration plain clarification answer is
+   also accepted when the only violation is `:missing-focused-intent` and no
+   workspace/tool evidence has been produced yet."
+  ([environment iteration blocks]
+   (final-answer-gate-error environment iteration blocks nil))
+  ([environment iteration blocks answer-value]
+   (let [db-info (:db-info environment)
+         turn-id (some-> (:current-conversation-turn-id-atom environment) deref)]
+     (when (and db-info turn-id)
+       (let [state (try (persistance/db-intents db-info {:conversation-turn-id turn-id})
+                     (catch Throwable e
+                       {:ok? false
+                        :violations [{:type :intent-check-error
+                                      :blocking? true
+                                      :message (ex-message e)}]}))
+             required? (intent-required? (current-user-request environment))
+             missing-focus-only? (ignorable-missing-focused-intent-only? state)
+             needs-input? (needs-input-answer? answer-value)
+             plain-clarification? (and (string? answer-value)
+                                    (not (str/blank? answer-value)))
+             clarification-without-evidence? (and plain-clarification?
+                                               (no-workspace-evidence-yet? db-info turn-id iteration blocks))
+             missing-focus-allowed? (and missing-focus-only?
+                                      (or (not required?)
+                                        needs-input?
+                                        clarification-without-evidence?))]
+         (when (and (not (:ok? state))
+                 (not missing-focus-allowed?))
+           (str "Final answer rejected: focused conversation intents are not resolved. "
+             "Run `(v/intents)`, prove/block gates with canonical provenance refs, "
+             "then fulfill or abandon every focused intent before `(answer …)`. "
+             "For missing input needed to begin work, answer with `(v/needs-input …)`. "
+             "For trivial chat/conceptual answers with no workspace evidence, no intent is required. "
+             "For unrelated parallel work, fork the conversation. "
+             "Violations: " (pr-str (:violations state)))))))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -859,13 +969,31 @@
       prefix
       "00000000")))
 
+(defn- eval-rendering-kind
+  "Rendering kind for the outer lifecycle event. Host primitives still return
+   legacy sentinel values from SCI; translate them once here, then downstream
+   code reads `:rendering-kind`, not raw `:result`."
+  [result]
+  (cond
+    (:error result) :vis/error
+    (= :vis/silent (:rendering-kind result)) :vis/silent
+    (= true (:vis/silent result)) :vis/silent
+    (= :vis/system (:rendering-kind result)) :vis/system
+    (= :vis/tool (:rendering-kind result)) :vis/tool
+    (= :vis/answer (:rendering-kind result)) :vis/answer
+    (= :vis/diagnostic (:rendering-kind result)) :vis/diagnostic
+    (keyword? (:rendering-kind result)) (:rendering-kind result)
+    (= :vis/silent (:result result)) :vis/silent
+    (= :vis/answer (:result result)) :vis/answer
+    :else :vis/sci))
+
 (defn- eval-provenance
   "Generic canonical provenance for every top-level form that passes
    through the Vis eval pipeline. Tool calls can add nested provenance
    inside their returned envelope; this records the outer regular form
    evaluation so plain calls and tool calls share a common block-level
    trace."
-  [turn-prefix iteration form-idx form-count result]
+  [turn-prefix iteration form-idx form-count result rendering-kind]
   (let [finished      (long (or (:execution-finished-at-ms result)
                               (System/currentTimeMillis)))
         duration      (long (or (:execution-time-ms result) 0))
@@ -873,7 +1001,11 @@
                               (max 0 (- finished duration))))
         form-position (inc (long form-idx))]
     (extension/normalize-provenance
-      {:op             (or (:op result) :sci/eval)
+      {:op             (or (:op result)
+                         (case rendering-kind
+                           :vis/system :vis/system
+                           :vis/answer :vis/answer
+                           :sci/eval))
        :started-at-ms  started
        :finished-at-ms finished
        :duration-ms    duration
@@ -902,7 +1034,7 @@
 (s/def ::block-provenance
   (s/and
     ::extension/provenance
-    #(contains? #{:sci/eval :edamame/parse :vis/guard} (:op %))
+    #(contains? #{:sci/eval :edamame/parse :vis/guard :vis/system :vis/answer} (:op %))
     #(contains? #{:done :error :timeout} (:status %))
     #(pos-int? (:iteration %))
     #(pos-int? (:form-position %))
@@ -1024,10 +1156,15 @@
                          [{:expr (str raw-code) :parse-error parse-error}]
                          (vec (filter #(not (str/blank? (:expr %))) (or forms []))))
           total-blocks (count code-entries)
+          answer-preflight-form-idx (answer-position-preflight-form-idx iteration-position code-entries)
+          answer-preflight-error (when (some? answer-preflight-form-idx)
+                                   (answer-position-preflight-error-message
+                                     answer-preflight-form-idx
+                                     total-blocks))
           executed (mapv (fn [idx {:keys [expr parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
-                           (when (and on-chunk (not (silent-host-form? expr)))
+                           (when (and on-chunk (not answer-preflight-error) (not (silent-host-form? expr)))
                              (on-chunk {:phase         :form-start
                                         :iteration     iteration-position
                                         :form-idx      idx
@@ -1043,6 +1180,10 @@
                            (reset! current-form-idx-atom idx)
                            (let [iteration-id (form-ref idx)
                                  raw-result (cond
+                                              answer-preflight-error
+                                              {:result nil :error answer-preflight-error
+                                               :stdout "" :stderr "" :execution-time-ms 0
+                                               :op :vis/guard}
                                               parse-error
                                               {:result nil :error (str "Parse error: " parse-error)
                                                :stdout "" :stderr "" :execution-time-ms 0
@@ -1065,8 +1206,11 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true))
-                                 provenance (eval-provenance turn-prefix iteration-position idx total-blocks result)
-                                 result* (assoc result :provenance provenance)]
+                                 rendering-kind (eval-rendering-kind result)
+                                 provenance (eval-provenance turn-prefix iteration-position idx total-blocks result rendering-kind)
+                                 result* (assoc result
+                                           :provenance provenance
+                                           :rendering-kind rendering-kind)]
                              ;; Per-form streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; form lands so the channel can render
@@ -1089,6 +1233,7 @@
                                           :stderr            (:stderr result*)
                                           :execution-time-ms (:execution-time-ms result*)
                                           :provenance        (:provenance result*)
+                                          :rendering-kind    (:rendering-kind result*)
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))}))
                              {:block expr :result result* :form-comment form-comment}))
@@ -1106,13 +1251,15 @@
                                     :error (:error result)
                                     :execution-time-ms (:execution-time-ms result)
                                     :provenance (:provenance result)
+                                    :rendering-kind (:rendering-kind result)
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)}
                              form-comment (assoc :comment form-comment)))
                      (range) code-blocks block-results block-comments))
           silent-form-idxs (into #{}
-                             (keep-indexed (fn [idx r] (when (= :vis/silent (:result r)) idx)))
-                             block-results)]
+                             (keep-indexed (fn [idx block]
+                                             (when (= :vis/silent (:rendering-kind block)) idx)))
+                             blocks)]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. Two
@@ -1137,13 +1284,13 @@
           ;; resolved-model)` would land a stringified map in
           ;; `iteration.llm_model`; surface `:name` and `:provider`
           ;; separately so both columns get clean values.
-        (let [final-answer    (str value)
+        (let [final-answer    (answer-value-string value)
               total-forms     (count code-entries)
               position-bad?   (answer-position-violation? form-idx total-forms iteration-position)
               own-form-error  (when-not position-bad?
                                 (answer-form-error block-results form-idx))
               gate-error      (when (and (not position-bad?) (nil? own-form-error))
-                                (final-answer-gate-error environment iteration-position blocks))
+                                (final-answer-gate-error environment iteration-position blocks value))
               validation-error (cond
                                  position-bad?
                                  (answer-position-error-message form-idx total-forms)
@@ -1182,6 +1329,7 @@
                                :stderr            (:stderr b)
                                :execution-time-ms (:execution-time-ms b)
                                :provenance        (:provenance b)
+                               :rendering-kind    (:rendering-kind b)
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))
               model-name       (some-> (:name resolved-model) str)

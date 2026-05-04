@@ -9,7 +9,9 @@
   (:import [com.googlecode.lanterna TextColor$RGB]
            [com.googlecode.lanterna Symbols]
            [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
-           [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]))
+           [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
+           [java.text SimpleDateFormat]
+           [java.util Locale TimeZone]))
 
 ;;; ── Shared dialog chrome & components ───────────────────────────────────────
 
@@ -1092,6 +1094,138 @@
 
                (recur)))))))))
 
+;;; ── Conversation picker ─────────────────────────────────────────────────────
+
+(defn- short-conversation-id
+  [conversation]
+  (let [id (str (:id conversation))]
+    (subs id 0 (min 8 (count id)))))
+
+(defn- conversation-title
+  [conversation]
+  (let [title (:title conversation)]
+    (if (and (string? title) (not (str/blank? title)))
+      title
+      "Untitled conversation")))
+
+(def ^:private conversation-dialog-content-w 96)
+(def ^:private conversation-dialog-content-h 14)
+
+(defn- date->millis
+  [v]
+  (cond
+    (instance? java.util.Date v) (.getTime ^java.util.Date v)
+    (instance? java.time.Instant v) (.toEpochMilli ^java.time.Instant v)
+    (number? v) (long v)
+    :else nil))
+
+(defn- date-value
+  [v]
+  (when-let [ms (date->millis v)]
+    (java.util.Date. ms)))
+
+(defn- format-conversation-date
+  [v]
+  (if-let [date (date-value v)]
+    (let [fmt (SimpleDateFormat. "yyyy-MM-dd HH:mm" Locale/ROOT)]
+      (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
+      (.format fmt date))
+    "—"))
+
+(defn conversation-dialog-label
+  "Format one fixed-width conversation table row. Columns are intentionally
+   stable so the picker reads as a table inside the shared dialog chrome."
+  [{:keys [id title turn-count modified-at created-at]} active-id body-w]
+  (let [active? (= (str id) (some-> active-id str))
+        prefix  (if active? "●" " ")
+        id8     (short-conversation-id {:id id})
+        turns   (str (long (or turn-count 0)))
+        mod     (format-conversation-date modified-at)
+        created (format-conversation-date created-at)
+        fixed   (String/format Locale/ROOT "%s %-8s %5s  %-16s  %-16s  "
+                  (into-array Object [prefix id8 turns mod created]))
+        title-w (max 1 (- body-w (count fixed)))]
+    (str fixed (ellipsize (conversation-title {:title title :id id}) title-w))))
+
+(defn conversation-dialog-header
+  [body-w]
+  (let [fixed   (String/format Locale/ROOT "%s %-8s %5s  %-16s  %-16s  "
+                  (into-array Object [" " "ID" "Turns" "Modified" "Created"]))
+        title-w (max 1 (- body-w (count fixed)))]
+    (str fixed (ellipsize "Title" title-w))))
+
+(defn conversation-dialog-items
+  "Build rows for the conversation switcher. `conversations` are already
+   sorted by the caller by latest modification date; this function only
+   formats the fixed-width table labels. New/fork actions live in Ctrl+K."
+  ([conversations active-id]
+   (conversation-dialog-items conversations active-id conversation-dialog-content-w))
+  ([conversations active-id body-w]
+   (mapv (fn [conversation]
+           {:action :switch
+            :id     (str (:id conversation))
+            :label  (conversation-dialog-label conversation active-id body-w)})
+     conversations)))
+
+(defn- draw-conversation-row!
+  [g left row inner-w selected? label]
+  (draw-list-item! g left row inner-w selected? label))
+
+(defn conversation-picker-dialog!
+  "Show recent TUI conversations in a fixed-size table. Returns
+   `{:action :switch :id <conversation-id>}` or nil on Esc. New/fork
+   actions live in Ctrl+K, not in this table."
+  [^TerminalScreen screen conversations active-id]
+  (let [selected (atom 0)
+        scroll   (atom 0)]
+    (loop []
+      (let [size    (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+            cols    (.getColumns size)
+            rows    (.getRows size)
+            g       (.newTextGraphics screen)
+            bounds  (draw-dialog-chrome! g cols rows "Conversations"
+                      conversation-dialog-content-w conversation-dialog-content-h)
+            {:keys [left inner-w]} bounds
+            body-w  (max 1 (- inner-w 4))
+            items   (conversation-dialog-items conversations active-id body-w)
+            total   (count items)
+            {:keys [content-top content-h hint-row]} (dialog-layout bounds)
+            header-row content-top
+            body-top   (+ content-top 2)
+            body-h     (max 1 (- content-h 2))
+            visible    (min total body-h)
+            _       (swap! selected #(clamp % 0 (max 0 (dec total))))
+            _       (swap! scroll #(visible-window-start @selected % body-h total))]
+
+        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+        (p/enable! g p/BOLD)
+        (p/fill-rect! g (inc left) header-row inner-w 1)
+        (p/put-str! g (+ left 2) header-row (conversation-dialog-header body-w))
+        (p/clear-styles! g)
+        (p/set-colors! g t/dialog-border t/dialog-bg)
+        (p/fill-rect! g (inc left) (inc header-row) inner-w 1)
+        (p/put-str! g (+ left 2) (inc header-row) (apply str (repeat body-w \─)))
+
+        (dotimes [i visible]
+          (let [idx (+ @scroll i)
+                row (+ body-top i)]
+            (when (< idx total)
+              (draw-conversation-row! g left row inner-w (= idx @selected)
+                (:label (nth items idx))))))
+
+        (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter" "switch"] ["Esc" "cancel"]])
+        (.setCursorPosition screen (p/cursor-pos 0 0))
+        (.refresh screen Screen$RefreshType/DELTA)
+
+        (let [key (.readInput screen)]
+          (when key
+            (condp = (.getKeyType key)
+              KeyType/Escape    nil
+              KeyType/ArrowUp   (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+              KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+              KeyType/Enter     (when (pos? total) (select-keys (nth items @selected) [:action :id]))
+              (recur))))))))
+
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
 (def palette-commands
@@ -1103,8 +1237,11 @@
 
    Whole-conversation Markdown copy lives in the header as an icon,
    not in Ctrl+K."
-  [{:id :providers :label "Providers"}
-   {:id :settings  :label "Settings"}])
+  [{:id :new-conversation    :label "New Conversation"}
+   {:id :fork-conversation   :label "Fork Conversation"}
+   {:id :switch-conversation :label "Switch Conversation"}
+   {:id :providers           :label "Configure Providers"}
+   {:id :settings            :label "Settings"}])
 
 (defn command-palette!
   "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc.

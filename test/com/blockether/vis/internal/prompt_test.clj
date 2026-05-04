@@ -234,7 +234,7 @@
       (expect (str/includes? p "ANSWER to user with impediment/clarifying ask"))
       (expect (str/includes? p "Host-enforced gates before final answer"))
       (expect (str/includes? p "Model discipline"))
-      (expect (str/includes? p "run `(v/provenance-guards)` before citing provenance"))
+      (expect (str/includes? p "run `(v/latest-provenance-refs)` / `(v/provenance-guards)` before citing provenance"))
       (expect (str/includes? p "S5 identity/rules"))
       (expect (str/includes? p "S3 plans/gates/resources"))
       (expect (str/includes? p "S2 coordinate journal+vars+tools+intent graph"))

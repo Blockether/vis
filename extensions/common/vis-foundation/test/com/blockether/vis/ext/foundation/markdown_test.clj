@@ -398,6 +398,21 @@
     (let [out (md/table ["a"] [])]
       (expect (= "| a |\n| --- |" out)))))
 
+(defdescribe needs-input-test
+  (it "returns a host-visible marker with ask text"
+    (expect (= {:vis/answer-mode :needs-input
+                :answer/text "Please paste the ideas you want reviewed."}
+              (md/needs-input "Please paste the ideas you want reviewed.")))
+    (expect (= {:vis/answer-mode :needs-input
+                :answer/text "Please paste the ideas you currently have."
+                :missing "the ideas to review"}
+              (md/needs-input {:missing "the ideas to review"
+                               :ask "Please paste the ideas you currently have."}))))
+
+  (it "is registered as a sandbox symbol"
+    (let [by-sym (into {} (map (juxt :ext.symbol/sym identity)) md/markdown-symbols)]
+      (expect (= md/needs-input (get-in by-sym ['needs-input :ext.symbol/fn]))))))
+
 (defdescribe compose-test
   (it "join uses blank lines between parts"
     (expect (= "a\n\nb\n\nc" (md/join "a" "b" "c"))))
@@ -482,7 +497,7 @@
                   'code-block 'blockquote 'quote 'hr 'br 'details 'summary
                   'li 'ul 'ol 'checklist
                   'table
-                  'join 'lines 'section 'escape}]
+                  'join 'lines 'section 'escape 'needs-input}]
       (expect (= names syms))))
 
   (it "system prompt deliberately stays silent on v/summary"

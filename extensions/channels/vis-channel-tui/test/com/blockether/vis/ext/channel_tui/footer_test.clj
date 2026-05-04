@@ -74,7 +74,7 @@
                                                              :ahead 4
                                                              :behind 0})}
         (fn []
-          (expect (= [" ~/vis (main)" "files: 2 modified, 3 created, 1 deleted" "commits: ⇡4"]
+          (expect (= [" ~/vis (main)" "3 C, 2 M, 1 D" "commits: ⇡4"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))
@@ -105,7 +105,7 @@
                                                              :ahead 0
                                                              :behind 0})}
         (fn []
-          (expect (= [" ~/vis (main)" "files: clean" "commits: up to date"]
+          (expect (= [" ~/vis (main)" "files: clean" "(up to date)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))
@@ -124,7 +124,7 @@
                                                              :ahead 0
                                                              :behind 0})}
         (fn []
-          (expect (= [" ~/vis (main)" "files: clean" "commits: no upstream"]
+          (expect (= [" ~/vis (main)" "files: clean" "(no upstream)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))

@@ -34,6 +34,7 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.commandline :as commandline]
    [com.blockether.vis.internal.config :as config]
+   [com.blockether.vis.internal.crac-bootstrap :as crac-bootstrap]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
@@ -1475,6 +1476,7 @@
    extension."
   [& args]
   (try
+    (crac-bootstrap/pre-extension-bootstrap! {:phase :cli})
     ;; Quiet stdout BEFORE any extension load triggers Telemere registration
     ;; spam — the user only sees logs when they pass --debug / --verbose / -v
     ;; (or set VIS_DEBUG=1).
