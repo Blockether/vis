@@ -151,9 +151,7 @@
                                      "gpt-5.4" "gpt-5.4-mini" "gpt-5.3-codex"
                                      "gemini-3-pro-preview" "grok-code-fast-1"]}
    :openai-codex   {:label "OpenAI Codex (ChatGPT OAuth)"
-                    :default-models ["gpt-5.5" "gpt-5.4" "gpt-5.2" "gpt-5.1"
-                                     "gpt-5.1-codex-mini" "gpt-5.1-codex-max"
-                                     "gpt-5.2-codex" "gpt-5.3-codex"]}})
+                    :default-models ["gpt-5.5" "gpt-5.4" "gpt-5.3-codex"]}})
 
 (def ^:private PRESET_ORDER
   "Stable display order in the 'Add Provider' picker. Most-likely-used
@@ -214,11 +212,28 @@
   [provider-id]
   (str (trim-trailing-slashes (:base-url (provider-template provider-id))) "/models"))
 
+(defn provider-model-visible?
+  "True when svar's provider-scoped model filters allow this model id."
+  [provider-id model-id]
+  (if-let [visible? (ns-resolve 'com.blockether.svar.internal.router 'provider-model-visible?)]
+    (boolean (visible? provider-id model-id))
+    true))
+
+(defn- model-list-id [model]
+  (cond
+    (string? model) model
+    (map? model)    (or (:id model) (:name model) (get model "id") (get model "name"))
+    :else           (str model)))
+
+(defn- filter-provider-model-list [provider-id models]
+  (filterv #(provider-model-visible? provider-id (model-list-id %)) models))
+
 (defn- parse-model-list-body
-  [body]
+  [provider-id body]
   (let [parsed (try (svar/str->data body) (catch Throwable _ nil))
-        value  (or (:value parsed) parsed)]
-    (or (:data value) (:models value) [])))
+        value  (or (:value parsed) parsed)
+        models (or (:data value) (:models value) [])]
+    (filter-provider-model-list provider-id models)))
 
 (defn local-provider-status
   [provider-id]
@@ -233,7 +248,7 @@
             resp    (.send ^HttpClient provider-status-http-client request
                       (HttpResponse$BodyHandlers/ofString))
             code    (.statusCode resp)
-            models  (parse-model-list-body (.body resp))]
+            models  (parse-model-list-body provider-id (.body resp))]
         (cond-> {:authenticated? (<= 200 code 299)
                  :provider-id    provider-id
                  :source         :local

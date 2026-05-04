@@ -12,7 +12,10 @@
       (expect (= "https://chatgpt.com/backend-api" (:base-url preset)))
       (expect (= :openai-compatible-responses (:api-style preset)))
       (expect (= "gpt-5.5" (first (:default-models preset))))
-      (expect (some #{"gpt-5.1"} (:default-models preset)))))
+      (expect (= ["gpt-5.5" "gpt-5.4" "gpt-5.3-codex"] (:default-models preset)))
+      (expect (config/provider-model-visible? :openai-codex "gpt-5.3-codex"))
+      (expect (not (config/provider-model-visible? :openai-codex "gpt-5.2-codex")))
+      (expect (not (config/provider-model-visible? :github-copilot "gpt-4o")))))
 
   (it "keeps local provider base URLs while letting Ollama discover models dynamically"
     (let [ollama   (config/provider-template :ollama)
