@@ -20,6 +20,7 @@
   (:require
    [com.blockether.vis.internal.manifest :as manifest])
   (:import
+   (java.nio.file Files LinkOption Paths)
    (java.time Instant)
    (java.util Date UUID)))
 
@@ -419,6 +420,36 @@
 
 (defonce ^:private shared-conn (atom nil))
 
+(defn- stable-db-file-key
+  "Best-effort stable identity for the current SQLite file behind a store.
+   Used to detect when the pathname stayed the same but the file was
+   replaced underneath a long-lived JVM (common in dev when `~/.vis/vis.mdb`
+   gets recreated while nREPL survives)."
+  [store]
+  (when-let [db-file (:db-file store)]
+    (try
+      (let [attrs (Files/readAttributes (Paths/get db-file (make-array String 0))
+                    "basic:fileKey,lastModifiedTime,size"
+                    (make-array LinkOption 0))]
+        {:db-file db-file
+         :file-key (get attrs "fileKey")
+         :last-modified (some-> (get attrs "lastModifiedTime") str)
+         :size (get attrs "size")})
+      (catch Throwable _
+        {:db-file db-file :missing? true}))))
+
+(defn- shared-conn-stale?
+  [store db-spec]
+  (let [normalized (normalize-spec db-spec)]
+    (and store
+      (= :persistent (:mode store))
+      (or (and (string? normalized)
+            (not= normalized (:path store)))
+        (and (map? normalized)
+          (:path normalized)
+          (not= (:path normalized) (:path store)))
+        (not= (stable-db-file-key store) (:file-key-snapshot store))))))
+
 (defn db-shared-connection!
   "Return the process-wide shared persistence connection for `db-spec`,
    opening it on first call and caching the handle for the lifetime of
@@ -426,10 +457,21 @@
    the `db-spec` argument — the singleton intentionally pins to the
    first spec it saw.
 
-   Pair with `db-dispose-shared-connection!` on process shutdown."
+  Pair with `db-dispose-shared-connection!` on process shutdown."
   [db-spec]
-  (or @shared-conn
-    (swap! shared-conn (fn [cur] (or cur (db-create-connection! db-spec))))))
+  (or (when-let [cur @shared-conn]
+        (when-not (shared-conn-stale? cur db-spec)
+          cur))
+    (swap! shared-conn
+      (fn [cur]
+        (if (and cur (not (shared-conn-stale? cur db-spec)))
+          cur
+          (do
+            (when cur
+              (try (db-dispose-connection! cur) (catch Exception _ nil)))
+            (let [fresh (db-create-connection! db-spec)]
+              (cond-> fresh
+                (map? fresh) (assoc :file-key-snapshot (stable-db-file-key fresh))))))))))
 
 (defn db-dispose-shared-connection!
   "Close the shared connection if one is open. Idempotent."

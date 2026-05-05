@@ -41,6 +41,41 @@
                               :sample      (->> x (take 3) (mapv #(if (string? %) % (pr-str %))))}))
     :else           (str x)))
 
+(defn- require-present
+  [helper arg-name value]
+  (letfn [(tool-result-like? [x]
+            (and (map? x)
+              (contains? x :ok?)
+              (contains? x :result)
+              (contains? x :provenance)))
+          (tool-payload-hint [x]
+            (case (get-in x [:provenance :op])
+              :v/bash "Use (get-in run [:result :stdout]), [:result :stderr], or [:result :exit]."
+              :v/cat  "Use (get-in out [:result :lines]) for file contents."
+              :v/rg   "Use (get-in hits [:result :hits]) for matches."
+              :exa/web-search  "Use (get-in r [:result :content]) for Exa content."
+              :exa/code-context "Use (get-in r [:result :content]) for Exa content."
+              "Tool envelopes keep payload under [:result ...]."))]
+    (cond
+      (nil? value)
+      (throw (ex-info
+               (str helper " requires non-nil " arg-name ". Tool envelopes keep payload under [:result ...].")
+               {:helper helper
+                :arg-name arg-name
+                :value value}))
+
+      (tool-result-like? value)
+      (throw (ex-info
+               (str helper " got a tool-result envelope where raw " arg-name " was expected. "
+                 (tool-payload-hint value))
+               {:helper helper
+                :arg-name arg-name
+                :tool-op (get-in value [:provenance :op])
+                :value value}))
+
+      :else
+      value)))
+
 (declare expand-parts)
 
 (defn- compose-text
@@ -100,21 +135,23 @@
 (defn link
   (^String [text url] (link text url nil))
   (^String [text url title]
-   (let [t (->str title)]
+   (let [text (->str (require-present "link" "text" text))
+         url  (->str (require-present "link" "url" url))
+         t    (->str title)]
      (if (str/blank? t)
-       (str "[" (->str text) "](" (->str url) ")")
-       (str "[" (->str text) "](" (->str url)
+       (str "[" text "](" url ")")
+       (str "[" text "](" url
          " \"" (escape-title-attr t) "\")")))))
 
 (defn image
   (^String [alt url] (image alt url nil))
   (^String [alt url title]
-   (str "!" (link alt url title))))
+   (str "!" (link alt (require-present "image" "url" url) title))))
 
 (defn file-link
   (^String [path] (file-link path nil))
   (^String [path line]
-   (let [p (->str path)]
+   (let [p (->str (require-present "file-link" "path" path))]
      (if line
        (link (str p ":" line) (str p "#L" line))
        (link p p)))))
@@ -122,7 +159,7 @@
 (defn anchor
   (^String [text] (anchor text nil))
   (^String [text slug]
-   (let [raw  (->str text)
+   (let [raw  (->str (require-present "anchor" "text" text))
          slug (or slug
                 (-> raw
                   str/lower-case
@@ -342,7 +379,8 @@
 (defn table
   (^String [headers rows] (table headers rows nil))
   (^String [headers rows {:keys [align]}]
-   (let [n       (count headers)
+   (let [headers (require-present "table" "headers" headers)
+         n       (count headers)
          pad-row (fn [r]
                    (let [v (vec r)]
                      (vec (for [i (range n)] (nth v i nil)))))
@@ -385,7 +423,9 @@
 (defn section
   (^String [title body] (section 2 title body))
   (^String [level title body]
-   (str (h level title) "\n\n" (->str body))))
+   (str (h level (require-present "section" "title" title))
+     "\n\n"
+     (->str (require-present "section" "body" body)))))
 
 (defn escape
   ^String [s]

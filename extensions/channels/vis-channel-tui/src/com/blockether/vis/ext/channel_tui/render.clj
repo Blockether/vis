@@ -36,6 +36,7 @@
 ;; clear-the-whole-thing strategy.
 
 (def ^:private ^:const fmt-cache-cap 4096)
+(def ^:private ^:const max-link-ref-text-chars 24000)
 
 (defn- make-fmt-cache ^LinkedHashMap []
   (proxy [LinkedHashMap] [64 0.75 true] ;; true = access-order (LRU)
@@ -1809,7 +1810,8 @@
    `bubble-height` uses to dodge re-walking immutable message bodies
    on every paint."
   [{:keys [text hide-links?]} max-w]
-  (if hide-links?
+  (if (or hide-links?
+        (> (count (or text "")) max-link-ref-text-chars))
     []
     (cached* [::refs (System/identityHashCode text) (long max-w)]
       #(extract-link-refs* (or text "") max-w))))
