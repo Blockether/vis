@@ -179,11 +179,7 @@
 
 (defn- code-block-body
   ^String [body]
-  (when (nil? body)
-    (throw (ex-info
-             "code-block requires a non-nil body. Tool envelopes keep output under :result, e.g. (get-in run [:result :stdout])."
-             {:body body})))
-  (let [body (->str body)]
+  (let [body (->str (require-present "code-block" "body" body))]
     (if (str/ends-with? body "\n") body (str body "\n"))))
 
 (defn code-block
@@ -203,7 +199,14 @@
         (map #(if (str/blank? %) ">" (str "> " %)))
         (str/join "\n")))))
 
-(def hr "---")
+(def ^{:doc "Horizontal rule marker. Stringifies to `---` and is also callable as a zero-arg fn."}
+  hr
+  (reify
+    CharSequence
+    (toString [_] "---")
+    clojure.lang.IFn
+    (invoke [_] "---")
+    (applyTo [_ _] "---")))
 
 (def ^{:doc "Hard line break suffix. Stringifies to two trailing spaces and is also callable as a zero-arg fn."}
   br
