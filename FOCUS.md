@@ -281,7 +281,7 @@ This checklist is the single detailed plan for the context contract. `TASKS.md` 
 - [x] `<specific_provider_model_prompt>` wrapper.
 - [x] `<user_turn_request_main_goal>` wrapper.
 - [x] `<extensions><active_skills>` for loaded skill bodies.
-- [x] Wrap system nudges in `<system_nudges>` with spec-checked `<system_nudge importance="low|normal|high|critical">` entries instead of loose `[system_nudge]` lines.
+- [x] Wrap system nudges in `<system_nudges>` with spec-checked `<system_nudge importance="low|normal|high|critical">` entries.
 - [ ] Decide whether previous reasoning needs its own `<reasoning>` block or stays only in `<journal>` + `ITERATION_PREVIOUS_REASONING`.
 
 ### B. Preview/full contract

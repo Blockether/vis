@@ -1,21 +1,19 @@
 (ns com.blockether.vis.ext.lang-clojure.core
   "Aggregator for the `vis-language-clojure` extension.
 
-   Single extension under the `z/` alias, carrying:
-     - `z/zedit` (the structured-edit entry point), AND
-     - every public var of `rewrite-clj.zip` (so `zfn` callbacks can
-       call `z/find-value`, `z/replace`, `z/right`, `z/sexpr`, ...).
+   Single extension under the `z/` alias:
+     - `z/patch`, `z/locators`, `z/symbols` from Vis, and
+     - the rewrite-clj zipper API, including SCI-callable macro helpers
+       `z/edit->`, `z/edit->>`, `z/subedit->`, `z/subedit->>`.
 
-   Earlier revision split this into two registrations (`clj/zedit`
-   plus `z/<rewrite-clj publics>`), which forced the model to mentally
-   toggle between two namespaces for one editing flow and produced the
-   `unresolved-symbol` failure class we kept seeing in post-mortems.
-   ONE alias, ONE surface."
+   `z/patch` keeps the v/patch-shaped map but uses rewrite-clj zipper
+   locators internally."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.lang-clojure.zedit :as zedit]
-   [rewrite-clj.zip])
+   [com.blockether.vis.ext.lang-clojure.patch :as patch]
+   [rewrite-clj.zip]
+   [rewrite-clj.zip.subedit])
   (:import
    (java.io File)))
 
@@ -62,24 +60,43 @@
            :else
            (recur (next stack) (inc seen))))))))
 
-(defn- var->symbol-entry
-  "Convert a `rewrite-clj.zip` public var into an SDK symbol entry.
+(defn- thread-macro
+  [helper-sym thread-sym]
+  (fn [_form _env zloc & body]
+    (let [g (gensym "zloc__")]
+      (list helper-sym
+        zloc
+        (list 'fn* [g]
+          (apply list thread-sym g body))))))
 
-   - Functions (non-macro, non-special-form) get `vis/symbol` with
-     arglists/doc lifted from var metadata.
-   - Macros are skipped: SCI cannot eval host-defined macros from a
-     bare var binding, and rewrite-clj.zip publishes a handful of
-     them. The model can read the doc and `(z/<macro> ...)` would
-     just blow up.
-   - Plain values get `vis/value`."
+(def ^:private macro-symbols
+  {'edit->     (thread-macro 'vis.ext.clj/edit-node 'clojure.core/->)
+   'edit->>    (thread-macro 'vis.ext.clj/edit-node 'clojure.core/->>)
+   'subedit->  (thread-macro 'vis.ext.clj/subedit-node 'clojure.core/->)
+   'subedit->> (thread-macro 'vis.ext.clj/subedit-node 'clojure.core/->>)})
+
+(defn- macro-entry
+  [sym macro-fn doc arglists]
+  (vis/value sym {:vis.sci/macro-fn macro-fn}
+    {:doc (or doc (str "SCI-callable rewrite-clj.zip macro " sym))
+     :arglists arglists}))
+
+(defn- var->symbol-entry
+  "Convert a rewrite-clj.zip public var into an SDK symbol entry.
+
+   Functions/values are direct bindings. Four threading helpers are macros;
+   expose SCI-local macro shims that expand to same-namespace helper calls so
+   `(z/subedit-> ...)` works inside the sandbox."
   [sym v]
-  (let [m         (meta v)
-        macro?    (:macro m)
-        arglists  (some-> (:arglists m) vec)
-        doc       (or (:doc m) (str "rewrite-clj.zip/" sym))
-        target    @v]
+  (let [m        (meta v)
+        arglists (some-> (:arglists m) vec)
+        doc      (or (:doc m) (str "rewrite-clj.zip/" sym))
+        target   @v]
     (cond
-      macro?
+      (contains? macro-symbols sym)
+      (macro-entry sym (get macro-symbols sym) doc arglists)
+
+      (:macro m)
       nil
 
       (fn? target)
@@ -92,9 +109,6 @@
       (vis/value sym target {:doc doc}))))
 
 (def ^:private rewrite-clj-zip-symbols
-  "Every public var of `rewrite-clj.zip`, exposed under the `z/` alias
-   inside the SCI sandbox. Built once at extension-load time so any
-   future rewrite-clj release lights up automatically."
   (->> (ns-publics 'rewrite-clj.zip)
     (sort-by key)
     (keep (fn [[sym v]] (var->symbol-entry sym v)))
@@ -103,15 +117,16 @@
 (def clojure-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core
-     :ext/doc       "Clojure structured editing under the `z/` alias: z/zedit entry + the full rewrite-clj.zip API."
-     :ext/version   "0.6.0"
+     :ext/doc       "Clojure/EDN editing under the `z/` alias: z/patch zipper edits, z/locators/z/symbols discovery, and rewrite-clj zipper API."
+     :ext/version   "0.7.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/ns-alias  {:ns 'vis.ext.clj :alias 'z}
      :ext/kind      "languages"
      :ext/activation-fn (fn [_] (clojure-project?))
-     :ext/prompt    zedit/z-prompt
-     :ext/symbols   (into [zedit/zedit-symbol] rewrite-clj-zip-symbols)}))
+     :ext/prompt    patch/z-prompt
+     :ext/symbols   (into [patch/patch-symbol patch/locators-symbol patch/symbols-symbol]
+                      rewrite-clj-zip-symbols)}))
 
 (vis/register-extension! clojure-extension)

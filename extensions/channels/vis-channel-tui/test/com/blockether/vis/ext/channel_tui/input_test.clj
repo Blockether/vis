@@ -292,8 +292,8 @@
 (defdescribe clipboard-copy-test
   (it "clipboard-copy! returns a boolean (smoke)"
     ;; We can't reliably test that the SYSTEM clipboard now contains
-    ;; the bytes — that would require either AWT to be available or
-    ;; a `pbcopy`/`xclip` helper on $PATH on the CI box. The contract
+    ;; the bytes — that would require a `pbcopy`/`xclip` helper on
+    ;; $PATH on the CI box. The contract
     ;; we DO guarantee is that the function returns truthy on success
     ;; and falsy on total failure, never throws, and never blocks
     ;; longer than the per-helper 1s cap.

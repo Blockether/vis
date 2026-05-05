@@ -199,9 +199,11 @@
 (s/def ::stderr string?)
 (s/def ::execution-time-ms nat-int?)
 
+(s/def ::previews vector?)
+
 (s/def ::executed-block
   (s/keys :req-un [::idx ::code ::provenance ::rendering-kind]
-    :opt-un [::result ::error ::stdout ::stderr ::execution-time-ms]))
+    :opt-un [::result ::previews ::error ::stdout ::stderr ::execution-time-ms]))
 
 ;; -----------------------------------------------------------------------------
 ;; Aggregate read/report shape

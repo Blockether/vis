@@ -86,12 +86,24 @@
             (scrollbar-geom 10 20 5)))
       (is (nil? (scrollbar-geom 10 3 0))))))
 
+(deftest settings-dialog-footprint-and-indent-test
+  (let [settings-content-width  (var-get #'dlg/settings-content-width)
+        settings-content-height (var-get #'dlg/settings-content-height)
+        settings-subsection-text (var-get #'dlg/settings-subsection-text)]
+    (testing "shared dialogs use the same footprint as settings"
+      (is (= (dlg/default-content-width 160) (settings-content-width 160)))
+      (is (= (dlg/default-content-height 50) (settings-content-height 50)))
+      (is (<= (+ (dlg/default-content-width 60) 4) 60))
+      (is (<= (+ (dlg/default-content-height 16) 6) 16)))
+    (testing "extension headings are flush; options are indented by renderer"
+      (is (= "◆ Exa" (settings-subsection-text "Exa" 80))))))
+
 (deftest apply-settings-option-test
-  (let [apply-settings-option (var-get #'dlg/apply-settings-option)
-        settings-option-label (var-get #'dlg/settings-option-label)
-        settings-rows         (var-get #'dlg/settings-rows)
-        palette-commands      (var-get #'dlg/palette-commands)
-        conversation-items     dlg/conversation-dialog-items]
+  (let [apply-settings-option  (var-get #'dlg/apply-settings-option)
+        settings-option-label  (var-get #'dlg/settings-option-label)
+        settings-rows          (var-get #'dlg/settings-rows)
+        palette-commands       (var-get #'dlg/palette-commands)
+        conversation-items      dlg/conversation-dialog-items]
     (testing "toggle rows flip booleans"
       (is (= {:show-thinking false}
             (apply-settings-option {:show-thinking true}
@@ -131,16 +143,42 @@
                                     :name nil}
               {}))))
 
-    (testing "settings rows are grouped under Extensions / UI"
-      (is (= ["Extensions" "UI"]
-            (->> (settings-rows)
-              (filter #(= :section (:type %)))
-              (mapv :label))))
-      (is (some #(= :differentiate-turns (:key %)) (settings-rows)))
-      (is (some #(= :mouse-selection-copy (:key %)) (settings-rows))))
+    (testing "settings rows separate channel, provider, and extension-owned settings"
+      (with-redefs [vis/registered-extensions (constantly [])
+                    vis/get-router (constantly nil)]
+        (is (= ["Terminal UI"]
+              (->> (settings-rows :channels)
+                (filter #(= :section (:type %)))
+                (mapv :label))))
+        (is (= ["Models"]
+              (->> (settings-rows :providers)
+                (filter #(= :section (:type %)))
+                (mapv :label))))
+        (is (= ["Extensions"]
+              (->> (settings-rows :extensions)
+                (filter #(= :section (:type %)))
+                (mapv :label))))
+        (is (some #(= :theme-name (:key %)) (settings-rows :channels)))
+        (is (= [:vis-light]
+              (:choices (first (filter #(= :theme-name (:key %)) (settings-rows :channels))))))
+        (is (some #(= :differentiate-turns (:key %)) (settings-rows :channels)))
+        (is (some #(= :mouse-selection-copy (:key %)) (settings-rows :channels)))
+        (is (some #(= :reasoning-level (:key %)) (settings-rows :providers)))
+        (is (not-any? #(= :providers (:id %)) (settings-rows :providers)))
+        (is (some #(= :info (:type %)) (settings-rows :extensions)))))
 
-    (testing "extension-declared env vars render as editable extension rows without UNKNOWN labels"
-      (with-redefs [vis/registered-extensions (fn [] [{:ext/namespace 'test.ext
+    (testing "extension-declared themes appear in the channel Theme setting"
+      (with-redefs [vis/get-router (constantly nil)
+                    vis/registered-extensions (fn [] [{:ext/namespace 'test.theme
+                                                       :ext/theme {"THEME_NAME" {"PADDING" "0px"}}}])]
+        (let [row (first (filter #(= :theme-name (:key %)) (settings-rows :channels)))]
+          (is (= [:THEME_NAME :vis-light] (:choices row)))
+          (is (= "Theme: THEME_NAME"
+                (settings-option-label row {:theme-name :THEME_NAME}))))))
+
+    (testing "extension-declared env vars render under Extensions / Exa without UNKNOWN labels"
+      (with-redefs [vis/get-router (constantly nil)
+                    vis/registered-extensions (fn [] [{:ext/namespace 'test.ext
                                                        :ext/ns-alias {:alias 'exa}
                                                        :ext/env [{:name "EXA_API_KEY"
                                                                   :label "Exa API key"
@@ -148,12 +186,96 @@
                                                                   :secret? true}]}])
                     vis/extension-env-status (fn [name]
                                                {:name name :source :config :value "secret"})]
-        (let [rows (settings-rows)
+        (let [rows (settings-rows :extensions)
               row  (first (filter #(= [:environment "EXA_API_KEY"] (:id %)) rows))]
+          (is (= ["Extensions"]
+                (->> rows
+                  (filter #(= :section (:type %)))
+                  (mapv :label))))
+          (is (= ["Exa"]
+                (->> rows
+                  (filter #(= :subsection (:type %)))
+                  (mapv :label))))
           (is (= :env-var (:type row)))
           (is (= "Exa API key: set in Vis config"
                 (settings-option-label row {})))
           (is (not (str/includes? (settings-option-label row {}) "UNKNOWN"))))))
+
+    (testing "provider-declared settings render under Providers & Models, not Extensions"
+      (with-redefs [vis/get-router (constantly nil)
+                    vis/registered-extensions (fn [] [{:ext/namespace 'com.blockether.vis.ext.provider-openai-codex
+                                                       :ext/providers [{:provider/id :openai-codex
+                                                                        :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
+                                                       :ext/settings [{:key :openai-codex-verbosity
+                                                                       :type :choice
+                                                                       :choices [:low :medium :high]
+                                                                       :label "Codex verbosity"
+                                                                       :description "Output detail."}]}])]
+        (let [provider-rows (settings-rows :providers)
+              extension-rows (settings-rows :extensions)
+              row  (first (filter #(= [:extension-setting 'com.blockether.vis.ext.provider-openai-codex :openai-codex-verbosity]
+                                     (:id %))
+                            provider-rows))]
+          (is (= ["Models" "Provider Settings"]
+                (->> provider-rows
+                  (filter #(= :section (:type %)))
+                  (mapv :label))))
+          (is (= ["OpenAI Codex"]
+                (->> provider-rows
+                  (filter #(= :subsection (:type %)))
+                  (mapv :label))))
+          (is (nil? (first (filter #(= [:extension-setting 'com.blockether.vis.ext.provider-openai-codex :openai-codex-verbosity]
+                                      (:id %))
+                             extension-rows))))
+          (is (= :choice (:type row)))
+          (is (= "Codex verbosity: high"
+                (settings-option-label row {:openai-codex-verbosity :high}))))))
+
+    (testing "active Z.ai hides reasoning effort and Codex-only provider settings"
+      (with-redefs [vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :zai
+                                                         :name "glm-4.7"
+                                                         :reasoning? true
+                                                         :reasoning-style :zai-thinking
+                                                         :reasoning-effort? false})
+                    vis/registered-extensions (fn [] [{:ext/namespace 'com.blockether.vis.ext.provider-openai-codex
+                                                       :ext/providers [{:provider/id :openai-codex
+                                                                        :provider/label "OpenAI Codex (ChatGPT OAuth)"}]
+                                                       :ext/settings [{:key :openai-codex-verbosity
+                                                                       :type :choice
+                                                                       :choices [:low :medium :high]
+                                                                       :label "Codex verbosity"
+                                                                       :description "Output detail."}]}])]
+        (let [provider-rows (settings-rows :providers)]
+          (is (not-any? #(= :reasoning-level (:key %)) provider-rows))
+          (is (some #(= "Reasoning effort unavailable" (:label %)) provider-rows))
+          (is (not-any? #(= :openai-codex-verbosity (:key %)) provider-rows)))))
+
+    (testing "channel-declared settings render under Channels, not provider or extension tabs"
+      (with-redefs [vis/get-router (constantly nil)
+                    vis/registered-extensions (fn [] [{:ext/namespace 'com.blockether.vis.ext.channel-telegram.bot
+                                                       :ext/channels [{:channel/id :telegram
+                                                                       :channel/cmd "telegram"}]
+                                                       :ext/settings [{:key :telegram-notify
+                                                                       :type :toggle
+                                                                       :label "Telegram notifications"
+                                                                       :description "Send channel notifications."}]}])]
+        (let [channel-rows (settings-rows :channels)
+              provider-rows (settings-rows :providers)
+              extension-rows (settings-rows :extensions)
+              row-id [:extension-setting 'com.blockether.vis.ext.channel-telegram.bot :telegram-notify]
+              row (first (filter #(= row-id (:id %)) channel-rows))]
+          (is (= ["Terminal UI" "Channel Settings"]
+                (->> channel-rows
+                  (filter #(= :section (:type %)))
+                  (mapv :label))))
+          (is (= ["Telegram"]
+                (->> channel-rows
+                  (filter #(= :subsection (:type %)))
+                  (mapv :label))))
+          (is (= :toggle (:type row)))
+          (is (nil? (first (filter #(= row-id (:id %)) provider-rows))))
+          (is (nil? (first (filter #(= row-id (:id %)) extension-rows)))))))
 
     (testing "conversation picker keeps new/fork out of the table and renders justified cells"
       (let [body-w 96
@@ -194,7 +316,7 @@
         (is (str/includes? inactive-label "—"))
         (is (str/includes? inactive-label "Untitled conversation"))))
 
-    (testing "command palette exposes conversation actions before Providers and Settings"
+    (testing "command palette keeps Configure Providers separate from Settings"
       (is (= ["New Conversation"
               "Fork Conversation"
               "Switch Conversation"

@@ -34,7 +34,7 @@
       (expect (= "acct_123" (codex/account-id token))))))
 
 (defdescribe browser-open-test
-  (it "uses Vis's shared external opener instead of java.awt Desktop"
+  (it "uses Vis's shared external opener"
     (let [seen (atom nil)]
       (with-redefs [opener/open! (fn [url]
                                    (reset! seen url)
@@ -183,3 +183,15 @@
       (expect (ifn? (:provider/get-token-fn provider)))
       (expect (ifn? (:provider/limits-fn provider)))
       (expect (nil? (:provider/prompt-fn provider))))))
+
+(defdescribe codex-extension-settings-test
+  (it "owns its TUI settings metadata"
+    (let [ext (first (filter #(= 'com.blockether.vis.ext.provider-openai-codex
+                                (:ext/namespace %))
+                       (vis/registered-extensions)))]
+      (expect (= [{:key :openai-codex-verbosity
+                   :type :choice
+                   :choices [:low :medium :high]
+                   :label "Codex verbosity"
+                   :description "Output detail for OpenAI Codex responses: low / medium / high"}]
+                (:ext/settings ext))))))

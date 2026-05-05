@@ -1577,7 +1577,7 @@
             second-bullet
             (md/join (md/bold "Turn 3+ — footer % left removal:")
               " 2 failed "
-              (md/code "z/zedit")
+              (md/code "z/patch")
               " calls (f3, f4) due to "
               (md/code "\"Unmatched delimiter: ]\"")
               " at line 148 — the file was left in a broken state by a prior "
@@ -1629,7 +1629,7 @@
           (let [[_ s2] openers
                 b2 (flatten-bullet (subvec bvec s2))]
             (expect (str/includes? b2 "Turn 3+ — footer % left removal:"))
-            (expect (str/includes? b2 "z/zedit"))
+            (expect (str/includes? b2 "z/patch"))
             (expect (str/includes? b2 "\"Unmatched delimiter: ]\""))
             (expect (str/includes? b2 "v/edit"))))
 

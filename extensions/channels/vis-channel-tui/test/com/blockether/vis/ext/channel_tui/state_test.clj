@@ -28,6 +28,8 @@
                 (get-in @state/app-db [:settings :reasoning-level])))
       (expect (= :low
                 (get-in @state/app-db [:settings :openai-codex-verbosity])))
+      (expect (= :vis-light
+                (get-in @state/app-db [:settings :theme-name])))
       (expect (true?
                 (get-in @state/app-db [:settings :differentiate-turns])))
       (expect (true?
@@ -60,6 +62,10 @@
           notified (atom nil)]
       (with-redefs [vis/load-config-raw (fn [] {:kept true})
                     vis/save-config! (fn [config] (reset! saved config))
+                    vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :openai
+                                                         :name "gpt-5"
+                                                         :reasoning? true})
                     vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
         (reset! state/app-db {:settings {:reasoning-level :quick
                                          :openai-codex-verbosity :low}
@@ -68,7 +74,8 @@
         (expect (= :balanced
                   (get-in @state/app-db [:settings :reasoning-level])))
         (expect (= {:kept true
-                    :tui-settings {:show-thinking true
+                    :tui-settings {:theme-name :vis-light
+                                   :show-thinking true
                                    :show-iterations true
                                    :reasoning-level :balanced
                                    :openai-codex-verbosity :low
@@ -82,6 +89,10 @@
   (it "commits shortcut settings before notification watchers dispatch render bumps"
     (with-redefs [vis/load-config-raw (fn [] {})
                   vis/save-config! (fn [_])
+                  vis/get-router (constantly :router)
+                  vis/resolve-effective-model (fn [_] {:provider :openai
+                                                       :name "gpt-5"
+                                                       :reasoning? true})
                   vis/notify! (fn [& _]
                                 (state/dispatch [:bump-render-version]))]
       (reset! state/app-db {:settings {:reasoning-level :deep
@@ -97,6 +108,10 @@
   (it "wraps reasoning level from deep back to quick"
     (with-redefs [vis/load-config-raw (fn [] {})
                   vis/save-config! (fn [_])
+                  vis/get-router (constantly :router)
+                  vis/resolve-effective-model (fn [_] {:provider :openai
+                                                       :name "gpt-5"
+                                                       :reasoning? true})
                   vis/notify! (fn [& _])]
       (reset! state/app-db {:settings {:reasoning-level :deep
                                        :openai-codex-verbosity :low}
@@ -105,9 +120,46 @@
       (expect (= :quick
                 (get-in @state/app-db [:settings :reasoning-level])))))
 
+  (it "leaves reasoning unchanged for fixed-thinking Z.ai models"
+    (let [notified (atom nil)]
+      (with-redefs [vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :zai
+                                                         :name "glm-4.7"
+                                                         :reasoning? true
+                                                         :reasoning-style :zai-thinking
+                                                         :reasoning-effort? false})
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:settings {:reasoning-level :deep
+                                         :openai-codex-verbosity :low}
+                              :render-version 0})
+        (state/dispatch [:cycle-reasoning-level])
+        (expect (= :deep
+                  (get-in @state/app-db [:settings :reasoning-level])))
+        (expect (= ["Reasoning effort is not configurable for this model" [:level :warn :ttl-ms 1500]]
+                  @notified)))))
+
+  (it "leaves Codex verbosity unchanged for non-Codex providers"
+    (let [notified (atom nil)]
+      (with-redefs [vis/get-router (constantly :router)
+                    vis/resolve-effective-model (fn [_] {:provider :zai
+                                                         :name "glm-4.7"})
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:settings {:reasoning-level :balanced
+                                         :openai-codex-verbosity :high}
+                              :render-version 0})
+        (state/dispatch [:cycle-codex-verbosity])
+        (expect (= :high
+                  (get-in @state/app-db [:settings :openai-codex-verbosity])))
+        (expect (= ["Codex verbosity is only available for OpenAI Codex" [:level :warn :ttl-ms 1500]]
+                  @notified)))))
+
   (it "cycles Codex verbosity low -> medium -> high -> low"
     (with-redefs [vis/load-config-raw (fn [] {})
                   vis/save-config! (fn [_])
+                  vis/get-router (constantly :router)
+                  vis/resolve-effective-model (fn [_] {:provider :openai-codex
+                                                       :name "gpt-5.5"
+                                                       :reasoning? true})
                   vis/notify! (fn [& _])]
       (reset! state/app-db {:settings {:reasoning-level :balanced
                                        :openai-codex-verbosity :low}
@@ -227,7 +279,8 @@
                     input/expand-file-mentions (fn [text] (str text " +file"))
                     vis/cancellation-token (fn [] :token)
                     vis/get-router (fn [] :router)
-                    vis/resolve-effective-model (fn [_] {:provider :openai-codex})]
+                    vis/resolve-effective-model (fn [_] {:provider :openai-codex
+                                                         :reasoning? true})]
         (let [{:keys [db fx]} (send-message-fn db [:send-message "see @src/core.clj"])]
           (expect (= "see @src/core.clj +paste"
                     (-> db :messages first :text)))
@@ -239,6 +292,27 @@
                        :balanced
                        {:text {:verbosity "high"}}]]
                     fx))))))
+
+  (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
+    (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
+          db              {:conversation {:id "c1"}
+                           :messages []
+                           :messages-scroll 0
+                           :input-history []
+                           :settings {:reasoning-level :deep
+                                      :openai-codex-verbosity :high}
+                           :pastes {}}]
+      (with-redefs [input/expand-paste-placeholders (fn [text _] text)
+                    input/expand-file-mentions identity
+                    vis/cancellation-token (fn [] :token)
+                    vis/get-router (fn [] :router)
+                    vis/resolve-effective-model (fn [_] {:provider :zai
+                                                         :name "glm-4.7"
+                                                         :reasoning? true
+                                                         :reasoning-style :zai-thinking
+                                                         :reasoning-effort? false})]
+        (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])]
+          (expect (= [[:rlm-turn {:id "c1"} "hello" :token nil nil]] fx))))))
 
   (it "restores a cancelled prompt to the input instead of rendering a cancelled answer"
     (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)
