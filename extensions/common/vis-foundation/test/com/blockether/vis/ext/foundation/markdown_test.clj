@@ -87,15 +87,15 @@
 
   (it "link/image/file-link/anchor reject missing required targets loudly"
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/link nil "https://example.com")))
+              #(md/link nil "https://example.com")))
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/link "docs" nil)))
+              #(md/link "docs" nil)))
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/image "alt" nil)))
+              #(md/image "alt" nil)))
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/file-link nil)))
+              #(md/file-link nil)))
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/anchor nil))))
+              #(md/anchor nil))))
 
   (it "required target helpers reject tool-result envelopes with targeted hints"
     (let [cat-result {:ok? true
@@ -189,9 +189,9 @@
 
   (it "code-block rejects nil body so missing tool envelope access fails loudly"
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/code-block nil)))
+              #(md/code-block nil)))
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/code-block "text" nil))))
+              #(md/code-block "text" nil))))
 
   (it "code-block rejects tool-result envelopes with targeted payload hint"
     (let [bash-result {:ok? true
@@ -222,8 +222,9 @@
       (expect (some? entry))
       (expect (= md/blockquote (:ext.symbol/fn entry)))))
 
-  (it "hr / br are constants"
-    (expect (= "---" md/hr))
+  (it "hr / br stringify as constants and are callable as zero-arg fns"
+    (expect (= "---" (str md/hr)))
+    (expect (= "---" (md/hr)))
     (expect (= "  "  (str md/br)))
     (expect (= "  "  (md/br))))
 
@@ -444,7 +445,7 @@
 
   (it "table rejects nil headers loudly"
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/table nil [])))))
+              #(md/table nil [])))))
 
 (defdescribe needs-input-test
   (it "returns a host-visible marker with ask text"
@@ -516,9 +517,9 @@
 
   (it "section rejects nil title/body loudly"
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/section nil "body")))
+              #(md/section nil "body")))
     (expect (throws? clojure.lang.ExceptionInfo
-              (md/section "Title" nil))))
+              #(md/section "Title" nil))))
 
   (it "escape backslash-escapes commonmark specials"
     (expect (= "a\\*b\\_c"   (md/escape "a*b_c")))

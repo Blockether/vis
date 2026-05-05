@@ -49,7 +49,7 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 16 (count editing/editing-symbols)))
+    (expect (= 15 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'read-all-lines}
@@ -77,9 +77,9 @@
     (expect (string/includes? editing/editing-prompt
               "Use structured tools for discovery and reads"))
     (expect (string/includes? editing/editing-prompt
-              "`v/glob` and `v/list-dir` both return cwd-relative path strings under `:result`"))
+              "`v/glob` returns cwd-relative path strings under `:result`"))
     (expect (string/includes? editing/editing-prompt
-              "recursive/path-pattern queries"))
+              "recursive patterns like `**/*.clj` walk descendants"))
     (expect (string/includes? editing/editing-prompt
               "immediate children"))
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
@@ -102,6 +102,34 @@
       (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
       (expect (some #(string/includes? % "[:result :exit]")
                 (:ext.symbol/examples bash-symbol))))))
+
+(it "requires read-back verification after exact writes instead of trusting write success alone"
+  (let [write-lines-symbol (some #(when (= 'write-lines (:ext.symbol/sym %)) %)
+                             editing/editing-symbols)
+        update-file-symbol (some #(when (= 'update-file (:ext.symbol/sym %)) %)
+                             editing/editing-symbols)]
+    (expect (string/includes? editing/editing-prompt
+              "After exact writes, attachment transcription, or generated-file output, immediately read the file back and verify it"))
+    (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
+              "A successful write only proves I/O succeeded"))
+    (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
+              ":start-line"))
+    (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
+              ":insert-at"))
+    (expect (string/includes? (:ext.symbol/doc update-file-symbol)
+              "the tool succeeding is not enough"))
+    (expect (string/includes? editing/editing-prompt
+              "{:start-line a :end-line b}"))
+    (expect (string/includes? editing/editing-prompt
+              "{:insert-at n}"))
+    (expect (some #(string/includes? % "(:result (v/read-all-lines path))")
+              (:ext.symbol/examples write-lines-symbol)))
+    (expect (some #(string/includes? % "{:insert-at 3}")
+              (:ext.symbol/examples write-lines-symbol)))
+    (expect (some #(string/includes? % "{:start-line 4 :end-line 6}")
+              (:ext.symbol/examples write-lines-symbol)))
+    (expect (some #(string/includes? % "(:result (v/read-all-lines path))")
+              (:ext.symbol/examples update-file-symbol)))))
 
 (defdescribe vis-cat-structured-shape-test
   (it "returns structured pagination metadata plus raw :lines"
@@ -277,6 +305,33 @@
       (expect (= "a\nb\n"
                 (slurp rooted-path)))))
 
+  (it "write-lines can replace an inclusive line range"
+    (let [path        (write-temp! "bbfs/write/range.txt" "a\nb\nc\nd\n")
+          write-lines (private-fn "write-lines-safe")]
+      (expect (= path
+                (write-lines path ["B" "C"] {:start-line 2 :end-line 3})))
+      (expect (= "a\nB\nC\nd\n"
+                (slurp path)))))
+
+  (it "write-lines can insert lines at a line boundary"
+    (let [path        (write-temp! "bbfs/write/insert.txt" "a\nb\nc\n")
+          write-lines (private-fn "write-lines-safe")]
+      (expect (= path
+                (write-lines path ["x" "y"] {:insert-at 2})))
+      (expect (= "a\nx\ny\nb\nc\n"
+                (slurp path)))))
+
+  (it "write-lines rejects invalid partial-edit opts"
+    (let [path        (write-temp! "bbfs/write/invalid.txt" "a\nb\nc\n")
+          write-lines (private-fn "write-lines-safe")]
+      (doseq [bad-opts [{:start-line 2}
+                        {:end-line 2}
+                        {:start-line 3 :end-line 2}
+                        {:insert-at 2 :start-line 1 :end-line 1}
+                        {:insert-at 99}
+                        {:start-line 9 :end-line 10}]]
+        (expect (throws? clojure.lang.ExceptionInfo #(write-lines path ["x"] bad-opts))))))
+
   (it "update-file mutates existing text and returns the new contents"
     (let [path        (write-temp! "bbfs/update.txt" "hello")
           update-file (private-fn "update-file-safe")]
@@ -326,6 +381,32 @@
   (it "bash validates cwd through the same safe path guard"
     (let [run-bash (private-fn "run-bash-safe")]
       (expect (throws? clojure.lang.ExceptionInfo #(run-bash "pwd" {:cwd ".."}))))))
+
+(defdescribe editing-renderer-guidance-test
+  (it "write and update renderers tell the model to verify exact persisted contents"
+    (let [render-write-lines (private-fn "render-write-lines")
+          render-update-file (private-fn "render-update-file")
+          tool-result        {:ok? true
+                              :result "target/editing-test/out.txt"
+                              :provenance {:target {:requested "target/editing-test/out.txt"}}}]
+      (expect (string/includes? (render-write-lines {:tool-result tool-result})
+                "Read back the file when exact contents matter"))
+      (expect (string/includes? (render-update-file {:tool-result tool-result})
+                "Read back the file when exact contents matter"))))
+
+  (it "write renderer shows a fenced diff block for changes"
+    (let [render-write-lines (private-fn "render-write-lines")
+          rendered (render-write-lines
+                     {:tool-result {:ok? true
+                                    :result "target/editing-test/out.txt"
+                                    :provenance {:target {:requested "target/editing-test/out.txt"}
+                                                 :changed? true
+                                                 :before "alpha\nbeta\n"
+                                                 :after "alpha\ngamma\n"}}})]
+      (expect (string/includes? rendered "```diff"))
+      (expect (string/includes? rendered "--- a/target/editing-test/out.txt"))
+      (expect (string/includes? rendered "-beta"))
+      (expect (string/includes? rendered "+gamma")))))
 
 (defdescribe tool-envelope-test
   (it "tool wrappers return the required contract keys"

@@ -41,22 +41,31 @@ Provenance is the core trust mechanism. If proofs look like noise, the agent can
 ### Code Locations
 
 - `src/com/blockether/vis/internal/provenance_lifecycle.clj` - lifecycle state machine
-- `src/com/blockether/vis/internal/provenance_ref.clj` - ref shape + canonicalisation
-- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj` - TUI render pipeline
-- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj` - markdown answer builders
 
-### Acceptance Criteria
+### Source Excerpt Preserved
 
-- Gates render with color-coded status: proven (green), impeded (red), pending (yellow)
-- Proof refs are clickable / inspectable in TUI
-- `v/provenance-report` renders as a structured collapsible section, not raw text
-- Slot fill states visible per gate in the TUI timeline
+```clojure
+(answer
+    (v/join
+      (v/h1 "Vis Architectural Task Analysis - 22 Items")
+      (v/p
+        "Pareto score = Impact(1-10) × Ease(1-10). Higher = do first. Based on probing: 82 ext .clj, 28 src .clj, 32 test .clj, V")
+      (v/hr)
+      ;; TASK 1
+      (v/h2 "T1 - Fix Proof Rendering")
+      (v/h3 "Problem Statement")
+      (v/p
+        "Proofs render anemically - provenance timeline and proof trail don't show enough useful information in the TUI. The `(v/")
+      (v/h3 "Rationale")
+      (v/p
+        "Provenance is the core trust mechanism. If proofs look like noise, the agent can't verify its own work and the user can't")
+      (v/h3 "Code Locations")
+      (v/ul
+        ["src/com/blockether/vis/internal/provenance_lifecycle.clj - lifecycle state machine"])
+```
 
 ## Merge Notes
 
 - `A-T1` is tracked in `OPEN` because the architectural draft marks it as active work.
-- `T12` moved to `DONE`: diagnostics/timeline single-function work is complete.
-- `T15` moved to `DONE`: details collapsible rendering investigated and fixed.
-- `T16a` moved to `DONE`: `@` file selection fixed.
-- `T16b` remains `OPEN`: `/` commands binding decision still pending.
+- The rest of the architectural 22-item list was not present in the pasted excerpt, so only the visible item is merged here.
 - Existing tracker items remain segregated into `OPEN` and `DONE` above.
