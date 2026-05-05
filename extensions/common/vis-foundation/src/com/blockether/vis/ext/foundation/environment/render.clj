@@ -38,6 +38,55 @@
                   (str (name kind) ": " n))]
       (str shape " — " (string/join ", " parts)))))
 
+(defn- yes-no [v]
+  (cond
+    (true? v)  "yes"
+    (false? v) "no"
+    :else      "unknown"))
+
+(defn- git-change-bits [{:keys [modified added changed removed missing untracked conflicting]}]
+  (cond-> []
+    (pos? (long (or modified 0)))    (conj (str modified " modified"))
+    (pos? (long (or added 0)))       (conj (str added " added"))
+    (pos? (long (or changed 0)))     (conj (str changed " changed"))
+    (pos? (long (or removed 0)))     (conj (str removed " removed"))
+    (pos? (long (or missing 0)))     (conj (str missing " missing"))
+    (pos? (long (or untracked 0)))   (conj (str untracked " untracked"))
+    (pos? (long (or conflicting 0))) (conj (str conflicting " conflicting"))))
+
+(defn- git-status-line [git]
+  (when (and git (not (:status-unavailable? git)))
+    (if (:clean? git)
+      "clean"
+      (let [bits (git-change-bits git)]
+        (if (seq bits)
+          (str "dirty (" (string/join ", " bits) ")")
+          "clean")))))
+
+(defn- git-summary-line [{:keys [dirty? changes? stale? stash-count ahead behind upstream status-unavailable?]}]
+  (let [stash-count (long (or stash-count 0))]
+    (str "stale: " (yes-no stale?)
+      (when (or ahead behind upstream)
+        (str " (upstream: " (or upstream "?")
+          ", ahead: " (long (or ahead 0))
+          ", behind: " (long (or behind 0)) ")"))
+      " | changes: " (if status-unavailable? "unknown" (yes-no changes?))
+      " | dirty: " (if status-unavailable? "unknown" (yes-no dirty?))
+      " | stash: " (if (pos? stash-count) "yes" "no") " (" stash-count ")")))
+
+(defn- repository-line [{:keys [path branch detached? detached-sha] :as repo}]
+  (let [branch-part (cond
+                      detached? (str "detached @ " detached-sha)
+                      branch    branch
+                      :else     "unknown")]
+    (str "  - " path ": " branch-part "; " (git-summary-line repo))))
+
+(defn- repositories-lines [{:keys [count repositories truncated?]}]
+  (when (> (long (or count 0)) 1)
+    (concat [(str "  repositories: " count " git repos"
+               (when truncated? " (truncated)"))]
+      (map repository-line repositories))))
+
 (defn- relativize-cwd
   "Return how the JVM's `cwd` relates to the git working tree:
    `:root` (cwd == repo root), or a relative subpath, or nil."
@@ -56,7 +105,7 @@
       :git        <com.blockether.vis.ext.foundation.environment.git/snapshot or nil>
       :languages  <com.blockether.vis.ext.foundation.environment.languages/scan>
       :monorepo   <com.blockether.vis.ext.foundation.environment.monorepo/snapshot or nil>}"
-  [{:keys [host git languages monorepo]}]
+  [{:keys [host git languages monorepo repositories]}]
   (let [{:keys [cwd user home shell os-name os-arch os-version locale jvm]} host
         cwd-vs-root      (relativize-cwd cwd (:root git))
         cwd-line         (cond
@@ -72,26 +121,14 @@
                              (:detached?     git) (str "detached @ " (:detached-sha git))
                              (:branch        git) (:branch git)
                              :else                "(unknown)"))
-        git-status-line  (when (and git (not (:status-unavailable? git)))
-                           (cond
-                             (:clean? git) "clean"
-                             :else
-                             (let [bits (cond-> []
-                                          (pos? (long (or (:modified git) 0)))    (conj (str (:modified git) " modified"))
-                                          (pos? (long (or (:added git) 0)))       (conj (str (:added git) " added"))
-                                          (pos? (long (or (:changed git) 0)))     (conj (str (:changed git) " changed"))
-                                          (pos? (long (or (:removed git) 0)))     (conj (str (:removed git) " removed"))
-                                          (pos? (long (or (:missing git) 0)))     (conj (str (:missing git) " missing"))
-                                          (pos? (long (or (:untracked git) 0)))   (conj (str (:untracked git) " untracked"))
-                                          (pos? (long (or (:conflicting git) 0))) (conj (str (:conflicting git) " conflicting")))]
-                               (if (seq bits)
-                                 (str "dirty (" (string/join ", " bits) ")")
-                                 "clean"))))
+        git-status-line* (git-status-line git)
+        git-summary      (when git (git-summary-line git))
         flags-line       (when git
                            (str "submodules: " (boolean (:submodules? git))
                              " | worktree: " (boolean (:worktree? git))))
         languages-line   (top-languages-line languages 5)
         monorepo-line*   (monorepo-line monorepo)
+        repositories*    (repositories-lines repositories)
         scan-suffix      (when languages
                            (str " (scanned " (:total-files languages) " files, "
                              (format-bytes (long (or (:total-bytes languages) 0)))
@@ -103,10 +140,13 @@
                        (str "  platform: " platform-line)
                        (str "  jvm: " jvm)]
 
-                git              (conj (str "  git.root: " (:root git)))
-                git-branch-line  (conj (str "  git.branch: " git-branch-line))
-                git-status-line  (conj (str "  git.status: " git-status-line))
-                flags-line       (conj (str "  git: " flags-line))
+                git               (conj (str "  git.root: " (:root git)))
+                git-branch-line   (conj (str "  git.branch: " git-branch-line))
+                git-status-line*  (conj (str "  git.status: " git-status-line*))
+                git-summary       (conj (str "  git.summary: " git-summary))
+                flags-line        (conj (str "  git: " flags-line))
+
+                repositories*     (into repositories*)
 
                 (and languages (seq (:languages languages)))
                 (conj (str "  languages: " languages-line scan-suffix))
@@ -114,7 +154,7 @@
                 (and languages (:primary languages))
                 (conj (str "  primary-language: " (:primary languages)))
 
-                monorepo-line*   (conj (str "  monorepo: " monorepo-line*)))]
+                monorepo-line*    (conj (str "  monorepo: " monorepo-line*)))]
     (str (string/join "\n" (conj lines "</environment>")) "\n")))
 
 ;; ---------------------------------------------------------------------------

@@ -407,9 +407,14 @@
 ;; Default: (constantly true).
 (s/def :ext/activation-fn fn?)
 
-;; Optional extra LLM-facing documentation appended AFTER the canonical
-;; symbol-derived prompt block when the extension is active.
+;; Optional extra LLM-facing documentation appended when the extension is active.
 (s/def :ext/prompt fn?)
+
+;; Optional system-prompt environment-info contributor. Called once at
+;; system-prompt assembly with the live environment. Any active extension
+;; can add repo/runtime/project facts here without taking over the whole
+;; `:ext/prompt` fragment.
+(s/def :ext/environment-info-fn fn?)
 
 ;; Optional per-iteration nudge composer.
 (s/def :ext/nudge-fn fn?)
@@ -592,7 +597,7 @@
     (s/keys :req [:ext/namespace :ext/doc]
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
-            :ext/ns-alias :ext/prompt :ext/nudge-fn
+            :ext/ns-alias :ext/prompt :ext/environment-info-fn :ext/nudge-fn
             :ext/on-parse-error-fn :ext/env :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance

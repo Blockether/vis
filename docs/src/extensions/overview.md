@@ -29,7 +29,7 @@ slot to its matching sub-registry as a side effect.
 
 Alongside those surfaces, every extension may also:
 
-- **Inject prompt context** — LLM-facing docs in the system prompt (`:ext/prompt`, derived from `:ext/symbols` metadata).
+- **Inject prompt context** — static LLM-facing docs via `:ext/prompt` and live environment facts via `:ext/environment-info-fn`.
 - **Emit per-iteration nudges** — situational hints (budget, errors, …) via `:ext/nudge-fn`.
 - **Expose Java classes** — enable `(LocalDate/now)` style interop via `:ext/classes` / `:ext/imports`.
 - **Guard activation** — conditionally enable/disable based on env state via `:ext/activation-fn`.
@@ -156,8 +156,8 @@ From classpath jar to live tool call:
 2. **sdk/register-extension!** — add to the process-level registry; slot dispatcher fans every populated `:ext/<slot>` out to its sub-registry
 3. **Topo-sort** — order by `:ext/requires` dependencies (throws `missing-dependencies` if a required extension is absent)
 4. **Install** — bind symbols into the aliased SCI namespace; auto-require the alias in `sandbox`
-5. **Prompt** — auto-render canonical symbol docs, prepend `[namespace: alias → ns]`, then append the optional `:ext/prompt` tail
-6. **Activation (per turn)** — `:ext/activation-fn` check; when falsy, symbols stay unbound and `nudge-fn` is skipped for the whole turn
+5. **Prompt** — collect active `:ext/environment-info-fn` sections, then append each active extension's optional `:ext/prompt` block under `[namespace: alias → ns]`
+6. **Activation (per turn)** — `:ext/activation-fn` check; when falsy, symbols stay unbound and prompt/nudge hooks are skipped for the whole turn
 7. **Nudge (per iteration)** — active extensions' `:ext/nudge-fn` is invoked
 8. **Hooks (per call)** — `:before-fn` → `:fn` → `:after-fn`, with `:on-error-fn` catching `:fn` errors
 
@@ -202,28 +202,27 @@ exposes `java.time.LocalDate`.
 
 ## Prompt injection
 
-Every active extension contributes a prompt block to the **system
-prompt** at the start of each turn. This is how the LLM knows which
-tools are available in the sandbox.
+Every active extension can contribute two system-prompt surfaces at
+turn start:
 
-The canonical tool section is rendered automatically inside the loop
-from the extension's `:ext/doc`, `:ext/ns-alias`, and `:ext/symbols`
-metadata. `:ext/prompt` is only the optional extra tail appended after
-that canonical block.
-
-Use `ext/render-prompt` when you want to preview how the canonical
-block will look.
+- `:ext/environment-info-fn` — live facts rendered inside the shared
+  `<environment-info>` block. Use this for cwd, repository state,
+  runtime flags, external service status, or other changing context.
+- `:ext/prompt` — static or semi-static tool guidance rendered as an
+  extension prompt block. The runtime does **not** auto-render every
+  `:ext/symbols` entry; extensions that want a tool list call
+  `ext/render-prompt` inside their own `:ext/prompt`.
 
 `loop-core/assemble-system-prompt` is the **single function** that
 builds the complete system message. It:
 
-1. Builds the core system prompt (`CORE_SYSTEM_PROMPT` + date +
-   environment block + optional caller instructions)
-2. Collects extension prompts: for each extension where
-   `(:ext/activation-fn ext) environment` is truthy, it renders the
-   canonical symbol-derived block and then evaluates `(:ext/prompt ext)`
+1. Builds the core system prompt (`CORE_SYSTEM_PROMPT` + optional
+   caller instructions)
+2. Collects environment-info sections from active extensions and wraps
+   them in `<environment-info>`
+3. Collects active extension prompt blocks by evaluating `(:ext/prompt ext)`
    when present
-3. Joins all active prompt blocks with `\n\n` and appends to the core prompt
+4. Joins all active prompt blocks with `\n\n` and appends to the core prompt
 
 All iteration loop paths call this same function — zero duplication, zero drift.
 

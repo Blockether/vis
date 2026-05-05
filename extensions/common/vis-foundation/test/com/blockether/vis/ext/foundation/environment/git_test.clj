@@ -58,6 +58,9 @@
           (expect (false? (:worktree? snap)))
           (expect (false? (:submodules? snap)))
           (expect (true? (:clean? snap)))
+          (expect (false? (:dirty? snap)))
+          (expect (false? (:changes? snap)))
+          (expect (= 0 (long (:stash-count snap))))
           (expect (= 0 (long (:modified snap))))
           (expect (= 0 (long (:untracked snap)))))
         (finally (cleanup root)))))
@@ -70,6 +73,8 @@
         (spit-rel root "README.md"     "# changed")
         (let [snap (git/snapshot root)]
           (expect (false? (:clean? snap)))
+          (expect (true? (:dirty? snap)))
+          (expect (true? (:changes? snap)))
           (expect (>= (long (:modified snap)) 1))
           (expect (>= (long (:untracked snap)) 1)))
         (finally (cleanup root)))))
@@ -82,6 +87,39 @@
           "[submodule \"foo\"]\n  path = foo\n  url = ./foo")
         (let [snap (git/snapshot root)]
           (expect (true? (:submodules? snap))))
+        (finally (cleanup root)))))
+
+  (it "reports stash count"
+    (let [root (make-tmp-dir)]
+      (try
+        (init-repo! root)
+        (spit-rel root "README.md" "# stashed")
+        (with-open [g (Git/open root)]
+          (.. g (stashCreate) (setWorkingDirectoryMessage "test stash") (call)))
+        (let [snap (git/snapshot root)]
+          (expect (= 1 (long (:stash-count snap)))))
+        (finally (cleanup root)))))
+
+  (it "marks a branch stale when its configured upstream is ahead"
+    (let [root (make-tmp-dir)]
+      (try
+        (let [branch (init-repo! root)]
+          (with-open [g (Git/open root)]
+            (.. g (branchCreate) (setName "base") (call))
+            (.. g (checkout) (setName "base") (call))
+            (spit-rel root "base.txt" "base")
+            (-> g .add (.addFilepattern "base.txt") .call)
+            (-> g .commit (.setMessage "base commit") .call)
+            (.. g (checkout) (setName branch) (call))
+            (let [config (.. g getRepository getConfig)]
+              (.setString config "branch" branch "remote" ".")
+              (.setString config "branch" branch "merge" "refs/heads/base")
+              (.save config)))
+          (let [snap (git/snapshot root)]
+            (expect (= "base" (:upstream snap)))
+            (expect (= 0 (long (:ahead snap))))
+            (expect (= 1 (long (:behind snap))))
+            (expect (true? (:stale? snap)))))
         (finally (cleanup root)))))
 
   (it "honors the :status? false escape hatch"

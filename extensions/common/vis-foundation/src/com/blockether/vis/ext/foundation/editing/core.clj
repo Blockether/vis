@@ -546,31 +546,69 @@
                   (vec new-lines)
                   (subvec current-lines (dec insert-at))])))
 
-(defn- write-lines-safe
+(defn- lines->file-text
+  [lines]
+  (if (seq lines)
+    (str (str/join "\n" lines) "\n")
+    ""))
+
+(defn- write-lines-plan
+  [path lines opts]
+  (let [f (safe-path path)
+        {:keys [mode start-line end-line insert-at fs-opts]} (coerce-write-lines-opts opts)
+        before (when (.exists f)
+                 (slurp (ensure-existing-file! f)))
+        current-lines (if before (vec (str/split-lines before)) [])
+        final-lines (case mode
+                      :replace-all (vec lines)
+                      :replace-range (replace-line-range current-lines start-line end-line lines)
+                      :insert-at (insert-lines-at current-lines insert-at lines))
+        after-text (if (:append fs-opts)
+                     (str (or before "") (lines->file-text final-lines))
+                     (lines->file-text final-lines))]
+    {:file f
+     :path (rel-path f)
+     :before before
+     :after after-text
+     :final-lines final-lines
+     :fs-opts fs-opts}))
+
+(defn write-lines-safe
   ([path lines]
    (write-lines-safe path lines nil))
   ([path lines opts]
-   (let [f (safe-path path)
-         {:keys [mode start-line end-line insert-at fs-opts]} (coerce-write-lines-opts opts)
-         current-lines (if (.exists f)
-                         (vec (fs/read-all-lines (ensure-existing-file! f)))
-                         [])
-         final-lines (case mode
-                       :replace-all (vec lines)
-                       :replace-range (replace-line-range current-lines start-line end-line lines)
-                       :insert-at (insert-lines-at current-lines insert-at lines))]
-     (ensure-parent-dirs! f)
-     (fs/write-lines f final-lines fs-opts)
-     (rel-path f))))
+   (let [{:keys [file path final-lines fs-opts]} (write-lines-plan path lines opts)]
+     (ensure-parent-dirs! file)
+     (fs/write-lines file final-lines fs-opts)
+     path)))
 
-(defn- update-file-safe
+(defn- update-file-plan
+  [path more]
+  (let [file (ensure-existing-file! (safe-path path))
+        [opts f xs] (if (map? (first more))
+                      [(first more) (second more) (nnext more)]
+                      [nil (first more) (next more)])
+        before (if opts
+                 (apply slurp file (apply concat opts))
+                 (slurp file))
+        _ (when-not (ifn? f)
+            (throw (ex-info "v/update-file requires a function"
+                     {:type :ext.foundation.editing/invalid-update-file-args
+                      :got  (type f)})))
+        after (str (apply f before xs))]
+    {:file file
+     :path (rel-path file)
+     :before before
+     :after after}))
+
+(defn update-file-safe
   [path & more]
-  (let [file (ensure-existing-file! (safe-path path))]
-    (if (map? (first more))
-      (let [[opts f & xs] more]
-        (apply fs/update-file file (or opts {}) f xs))
-      (let [[f & xs] more]
-        (apply fs/update-file file f xs)))))
+  (let [{:keys [file after]} (update-file-plan path more)
+        opts (when (map? (first more)) (first more))]
+    (if opts
+      (apply spit file after (apply concat opts))
+      (spit file after))
+    after))
 
 (defn- create-dirs-safe [path]
   (let [f (safe-path path)]
@@ -856,14 +894,14 @@
   ([path lines]
    (write-lines-tool path lines nil))
   ([path lines opts]
-   (let [before (when (fs/exists? (safe-path path)) (slurp (safe-path path)))
-         out    (write-lines-safe path lines opts)
-         after  (slurp (safe-path path))]
+   (let [{:keys [file path before after final-lines fs-opts]} (write-lines-plan path lines opts)]
+     (ensure-parent-dirs! file)
+     (fs/write-lines file final-lines fs-opts)
      (tool-success
        {:op :v/write-lines
         :path path
         :kind :file
-        :result out
+        :result path
         :provenance {:changed? (not= before after)
                      :before before
                      :after after
@@ -873,8 +911,11 @@
 
 (defn- update-file-tool
   [path & more]
-  (let [before (slurp (safe-path path))
-        after  (apply update-file-safe path more)]
+  (let [{:keys [file path before after]} (update-file-plan path more)
+        opts (when (map? (first more)) (first more))]
+    (if opts
+      (apply spit file after (apply concat opts))
+      (spit file after))
     (tool-success
       {:op :v/update-file
        :path path
@@ -1107,8 +1148,12 @@
   (if-not (:ok? tool-result)
     (tool-error-text tool-result)
     (let [path (get-in tool-result [:provenance :target :requested])
-          lines (:result tool-result)]
-      (md/p "Read" (md/code path) "-" (count lines) "line(s)."))))
+          lines (:result tool-result)
+          preview (preview-text (str/join "\n" lines))]
+      (md/join
+        (md/p "Read" (md/code path) "-" (count lines) "line(s). Full lines are in the tool result; journal shows preview only.")
+        (when-not (str/blank? preview)
+          (md/code-block "text" preview))))))
 
 (defn- render-write-lines
   [{:keys [tool-result]}]
@@ -1122,7 +1167,7 @@
       (md/join
         (md/p "Wrote" (md/code path)
           (when (false? changed?) "(no change)")
-          ". Read back the file when exact contents matter; successful write I/O does not prove the file matches intent.")
+          ". Diff computed from one pre-write read plus intended new text. Read back only when exact persisted bytes matter or external writers may interfere.")
         (when diff-txt
           (md/code-block "diff" diff-txt))))))
 
@@ -1138,7 +1183,7 @@
       (md/join
         (md/p "Updated" (md/code path)
           (when (false? changed?) "(no change)")
-          ". Read back the file when exact contents matter; successful write I/O does not prove the file matches intent.")
+          ". Diff computed from one pre-write read plus intended new text. Read back only when exact persisted bytes matter or external writers may interfere.")
         (when diff-txt
           (md/code-block "diff" diff-txt))))))
 
@@ -1325,7 +1370,7 @@
 
 (def write-lines-symbol
   (vis/symbol 'write-lines write-lines-tool
-    {:doc "Replace/create whole file, replace a line range, or insert lines at a line boundary. Tool result. Default behavior replaces the whole file. Opts may include `:start-line` + `:end-line` to replace an inclusive 1-based line range, or `:insert-at` to insert before a 1-based line boundary. After exact writes, attachment transcription, or generated-file output, immediately read the file back with `v/read-all-lines` or `v/cat` and verify the bytes/lines you intended actually landed. A successful write only proves I/O succeeded."
+    {:doc "Replace/create whole file, replace a line range, or insert lines at a line boundary. Tool result. Default behavior replaces the whole file. Opts may include `:start-line` + `:end-line` to replace an inclusive 1-based line range, or `:insert-at` to insert before a 1-based line boundary. The tool computes the diff from one pre-write read plus intended new text; read back only when exact persisted bytes matter or an external writer may interfere. A successful write only proves I/O completed."
      :arglists '([path lines] [path lines opts])
      :examples ["(v/write-lines \"notes.txt\" [\"alpha\" \"beta\"])"
                 "(v/write-lines \"notes.txt\" [\"inserted\"] {:insert-at 3})"
@@ -1338,7 +1383,7 @@
 
 (def update-file-symbol
   (vis/symbol 'update-file update-file-tool
-    {:doc "Read-modify-write text file. Tool result; `:result` = new contents. After exact edits, read the file back with `v/read-all-lines` or `v/cat` to confirm the persisted text matches intent; the tool succeeding is not enough."
+    {:doc "Read-modify-write text file. Tool result; `:result` = new contents. The tool reads once, applies the function, writes the new text, and previews the diff. Read back only when exact persisted bytes matter or an external writer may interfere."
      :arglists '([path f & xs] [path opts f & xs])
      :examples ["(v/update-file \"README.md\" #(str % \"\\nnew line\\n\"))"
                 "(let [path \"x.txt\"]\n  (v/update-file path str/upper-case)\n  (:result (v/read-all-lines path)))"]
@@ -1441,6 +1486,6 @@
    bash-symbol])
 
 (def editing-prompt
-  "`v/` files: Use structured tools for discovery and reads: (v/cat path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?), (v/ls path opts?). `v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. `v/cat` opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. Edit with (v/read-all-lines path), (v/write-lines path lines opts?), (v/update-file path f & xs). `v/write-lines` defaults to whole-file replacement; use `{:start-line a :end-line b}` for inclusive range replacement or `{:insert-at n}` to insert before line boundary `n`. After exact writes, attachment transcription, or generated-file output, immediately read the file back and verify it; successful write I/O only proves the write completed, not that the persisted content matches intent. Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
+  "`v/` files: Use structured tools for discovery and reads: (v/cat path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?), (v/ls path opts?). `v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. `v/cat` opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. For full-file work, bind once: (def lines (:result (v/read-all-lines path))). Journal shows preview only; reuse the var instead of rereading unless file changed or you need persisted-byte verification. Edit with (v/write-lines path lines opts?), (v/update-file path f & xs). `v/write-lines` defaults to whole-file replacement; use `{:start-line a :end-line b}` for inclusive range replacement or `{:insert-at n}` to insert before line boundary `n`. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
 `v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
 Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\" {:offset 1 :limit 120}) [:result :lines]), (:result (v/read-all-lines \"IDEAS.md\")), (get-in (v/bash \"pwd\") [:result :stdout]), (-> (v/rg [\"needle\"] \"src\") :result :hits). Use (v/silent! aggregate-map) when constituent tool/var outputs were already shown and the aggregate value would only burn journal tokens; it returns only shape and is elided from live display. For Clojure source edits prefer z/zedit when `z/` is active; use v/read-all-lines + v/write-lines only for trivial line/data changes.")

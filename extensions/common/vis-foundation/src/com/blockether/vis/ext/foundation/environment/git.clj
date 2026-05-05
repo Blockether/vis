@@ -12,12 +12,14 @@
    the deadline trips, the snapshot drops the dirty-status fields
    instead of stalling the system-prompt build."
   (:require
-   [clojure.java.io :as io])
+   [clojure.java.io :as io]
+   [clojure.string :as str])
   (:import
    (java.io File)
    (java.util.concurrent ExecutionException Future TimeUnit TimeoutException)
    (org.eclipse.jgit.api Git Status)
    (org.eclipse.jgit.lib Repository)
+   (org.eclipse.jgit.revwalk RevWalk RevWalkUtils)
    (org.eclipse.jgit.storage.file FileRepositoryBuilder)))
 
 (set! *warn-on-reflection* true)
@@ -91,15 +93,26 @@
     (try
       (let [^Future fut (.submit executor ^java.util.concurrent.Callable task)]
         (try
-          (let [^Status status (.get fut timeout-ms TimeUnit/MILLISECONDS)]
+          (let [^Status status (.get fut timeout-ms TimeUnit/MILLISECONDS)
+                modified       (safe-count (.getModified status))
+                untracked      (safe-count (.getUntracked status))
+                added          (safe-count (.getAdded status))
+                changed        (safe-count (.getChanged status))
+                missing        (safe-count (.getMissing status))
+                removed        (safe-count (.getRemoved status))
+                conflicting    (safe-count (.getConflicting status))
+                changes?       (boolean (some pos? [modified untracked added changed
+                                                    missing removed conflicting]))]
             {:clean?      (.isClean status)
-             :modified    (safe-count (.getModified status))
-             :untracked   (safe-count (.getUntracked status))
-             :added       (safe-count (.getAdded status))
-             :changed     (safe-count (.getChanged status))
-             :missing     (safe-count (.getMissing status))
-             :removed     (safe-count (.getRemoved status))
-             :conflicting (safe-count (.getConflicting status))})
+             :dirty?      (not (.isClean status))
+             :changes?    changes?
+             :modified    modified
+             :untracked   untracked
+             :added       added
+             :changed     changed
+             :missing     missing
+             :removed     removed
+             :conflicting conflicting})
           (catch TimeoutException _
             (.cancel fut true)
             nil)
@@ -107,6 +120,52 @@
           (catch InterruptedException _ nil)))
       (finally
         (.shutdownNow executor)))))
+
+(defn- stash-count
+  [^Repository repo]
+  (try
+    (let [^Git git (Git/wrap repo)]
+      (count (.. git (stashList) (call))))
+    (catch Throwable _ 0)))
+
+(defn- upstream-info
+  [^Repository repo branch]
+  (try
+    (when branch
+      (let [cfg    (.getConfig repo)
+            remote (.getString cfg "branch" branch "remote")
+            merge  (.getString cfg "branch" branch "merge")]
+        (when merge
+          (let [branch-name (last (str/split merge #"/"))]
+            {:upstream     (cond
+                             (nil? remote) branch-name
+                             (= "." remote) branch-name
+                             :else (str remote "/" branch-name))
+             :upstream-ref (if (= "." remote)
+                             merge
+                             (str "refs/remotes/" (or remote "origin") "/" branch-name))}))))
+    (catch Throwable _ nil)))
+
+(defn- revwalk-count
+  [^Repository repo from-id to-id]
+  (with-open [walk (RevWalk. repo)]
+    (let [from-commit (.parseCommit walk from-id)
+          to-commit   (.parseCommit walk to-id)]
+      (RevWalkUtils/count walk from-commit to-commit))))
+
+(defn- ahead-behind
+  [^Repository repo upstream-ref]
+  (try
+    (let [head     (.resolve repo "HEAD")
+          upstream (or (when upstream-ref (.resolve repo ^String upstream-ref))
+                     (.resolve repo "@{upstream}"))]
+      (when (and head upstream)
+        (let [ahead  (revwalk-count repo head upstream)
+              behind (revwalk-count repo upstream head)]
+          {:ahead  ahead
+           :behind behind
+           :stale? (pos? (long behind))})))
+    (catch Throwable _ nil)))
 
 (defn snapshot
   "Inspect the repository that contains `start-file`. Returns a map
@@ -130,15 +189,21 @@
              short-sha     (short-head repo)
              status-map    (when status?
                              (collect-status repo (long status-timeout-ms)))
-             base          {:root         (try (.getCanonicalPath worktree-root)
-                                            (catch Throwable _ (.getAbsolutePath worktree-root)))
-                            :git-dir      (try (.getCanonicalPath git-dir)
-                                            (catch Throwable _ (.getAbsolutePath git-dir)))
-                            :branch       (when-not detached? branch)
-                            :detached?    detached?
-                            :detached-sha (when detached? short-sha)
-                            :worktree?    (worktree? worktree-root)
-                            :submodules?  (submodules-present? worktree-root)}]
+             upstream-map  (when-not detached? (upstream-info repo branch))
+             sync-map      (when-not detached? (ahead-behind repo (:upstream-ref upstream-map)))
+             upstream      (:upstream upstream-map)
+             base          (cond-> {:root         (try (.getCanonicalPath worktree-root)
+                                                    (catch Throwable _ (.getAbsolutePath worktree-root)))
+                                    :git-dir      (try (.getCanonicalPath git-dir)
+                                                    (catch Throwable _ (.getAbsolutePath git-dir)))
+                                    :branch       (when-not detached? branch)
+                                    :detached?    detached?
+                                    :detached-sha (when detached? short-sha)
+                                    :worktree?    (worktree? worktree-root)
+                                    :submodules?  (submodules-present? worktree-root)
+                                    :stash-count  (stash-count repo)}
+                             upstream (assoc :upstream upstream)
+                             sync-map (merge sync-map))]
          (if status-map
            (merge base status-map)
            (assoc base :status-unavailable? true)))

@@ -794,6 +794,7 @@
      :title        (or (:title c) "—")
      :last-channel channel-name
      :turns        (count turns)
+     :forks        (long (or (:fork-count c) 0))
      :last-turn-at (:created-at last-turn)
      :last-turn    (or (some-> last-turn :created-at fmt/format-date) "—")
      :created-at   (:created-at c)
@@ -833,6 +834,7 @@
            {:key :title        :label "Title"        :width 24 :align :left :grow? true}
            {:key :last-channel :label "Last Channel" :width 12 :align :left}
            {:key :turns        :label "Turns"        :width 5  :align :right}
+           {:key :forks        :label "Forks"        :width 5  :align :right}
            {:key :last-turn    :label "Last Turn"    :width 16 :align :left}
            {:key :created      :label "Created"      :width 16 :align :left}]
           rows)

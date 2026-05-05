@@ -9,6 +9,7 @@
     (let [syms (set (map :ext.symbol/sym env-core/environment-symbols))]
       (expect (contains? syms 'snapshot))
       (expect (contains? syms 'git))
+      (expect (contains? syms 'repositories))
       (expect (contains? syms 'languages))
       (expect (contains? syms 'monorepo))
       (expect (contains? syms 'refresh!))
@@ -26,4 +27,10 @@
       (expect (str/includes? prompt "(v/snapshot)"))
       (expect (str/includes? prompt "(v/load-skill \"name\")"))
       (expect (str/includes? prompt "(v/reload-extensions!)"))
-      (expect (not (str/includes? prompt "md/"))))))
+      (expect (not (str/includes? prompt "md/")))))
+
+  (it "renders foundation environment info separately from prompt extras"
+    (let [info (env-core/environment-info {})]
+      (expect (string? info))
+      (expect (str/includes? info "<environment>"))
+      (expect (str/includes? info "git.summary")))))

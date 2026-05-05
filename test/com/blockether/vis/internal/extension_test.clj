@@ -119,7 +119,15 @@
                    :label "Test API key"
                    :description "Secret test token."
                    :secret? true}]
-                (:ext/env e))))))
+                (:ext/env e)))))
+
+  (it "accepts dedicated environment-info prompt contributors"
+    (let [f (fn [_env] "extra environment facts")
+          e (ext/extension
+              {:ext/namespace 'test.environment-info
+               :ext/doc       "Extension with environment-info contribution."
+               :ext/environment-info-fn f})]
+      (expect (identical? f (:ext/environment-info-fn e))))))
 
 (defdescribe owner-field-test
   (it "accepts :ext/owner as a non-blank string and round-trips it"
