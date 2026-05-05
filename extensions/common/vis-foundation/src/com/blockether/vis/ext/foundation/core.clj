@@ -18,8 +18,8 @@
                                  v/render,
                                  v/refresh!)
 
-   Plus a live `<environment>` block in the system prompt, owned by
-   `environment/core.clj`'s `environment-prompt`.
+   Plus a live `<environment>` block in the system prompt, contributed
+   through `environment/core.clj`'s `environment-info` hook.
 
    The separate `fs/` alias was dropped, but the useful babashka.fs
    surface is now inlined under `v/` as thin cwd-safe wrappers
@@ -62,6 +62,7 @@
      :ext/license        "Apache-2.0"
      :ext/ns-alias       {:ns 'vis.ext.v :alias 'v}
      :ext/kind           "foundation"
+     :ext/environment-info-fn environment/environment-info
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols
                                 editing/editing-symbols

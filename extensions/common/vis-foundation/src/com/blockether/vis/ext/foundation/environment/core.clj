@@ -31,6 +31,7 @@
    [com.blockether.vis.ext.foundation.environment.languages :as languages]
    [com.blockether.vis.ext.foundation.environment.monorepo :as monorepo]
    [com.blockether.vis.ext.foundation.environment.render :as render]
+   [com.blockether.vis.ext.foundation.environment.repositories :as repositories]
    [com.blockether.vis.ext.foundation.environment.skills :as skills]
    [taoensso.telemere :as tel]))
 
@@ -82,11 +83,17 @@
                      (catch Throwable t
                        (tel/log! {:level :warn :id ::monorepo-failed
                                   :data  {:error (ex-message t)}})
+                       nil))
+        repos-map  (try (repositories/snapshot scan-root)
+                     (catch Throwable t
+                       (tel/log! {:level :warn :id ::repositories-failed
+                                  :data  {:error (ex-message t)}})
                        nil))]
-    {:host      host-map
-     :git       git-map
-     :languages langs-map
-     :monorepo  mono-map}))
+    {:host         host-map
+     :git          git-map
+     :languages    langs-map
+     :monorepo     mono-map
+     :repositories repos-map}))
 
 (defn snapshot
   "Return the cached snapshot, computing it on first access or after
@@ -129,10 +136,17 @@
 
 (def snapshot-symbol
   (vis/symbol 'snapshot snapshot
-    {:doc      "Full environment snapshot as a map: {:host :git :languages :monorepo}. Cached per cwd."
+    {:doc      "Full environment snapshot as a map: {:host :git :languages :monorepo :repositories}. Cached per cwd."
      :arglists '([])
      :examples ["(v/snapshot)"
                 "(get-in (v/snapshot) [:git :branch])"]}))
+
+(def repositories-symbol
+  (vis/symbol 'repositories #(:repositories (snapshot))
+    {:doc      "Multirepo Git snapshot: {:count :repositories [{:path :branch :dirty? :changes? :stale? :stash-count ...}]}."
+     :arglists '([])
+     :examples ["(v/repositories)"
+                "(map :path (:repositories (v/repositories)))"]}))
 
 (def git-symbol
   (vis/symbol 'git #(:git (snapshot))
@@ -246,7 +260,7 @@
                 "(v/reload-extensions! {:reload/timeout-ms 5000})"]}))
 
 (def environment-symbols
-  [snapshot-symbol git-symbol languages-symbol monorepo-symbol
+  [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol
    main-agent-instructions-symbol load-skill-symbol
    scan-warnings-symbol
@@ -260,28 +274,37 @@
    prompt text — see
    `com.blockether.vis.internal.prompt/render-extension-prompt-block`
    for the rationale."
-  (str "`v/` env: (v/snapshot) full map; shortcuts (v/git) (v/languages) (v/monorepo); (v/render) prints env block; (v/refresh!) refreshes cache. "
+  (str "`v/` env: (v/snapshot) full map; shortcuts (v/repositories) (v/git) (v/languages) (v/monorepo); (v/render) prints env block; (v/refresh!) refreshes cache. "
     "Guidance/skills: (v/main-agent-instructions), (v/load-skill \"name\"), (v/scan-warnings). "
     "Reload: (v/reload-instructions!), (v/reload-skills!), (v/reload-extensions!)."))
 
+(defn environment-info
+  "Render the foundation-owned environment-info contribution. The
+   internal prompt assembler owns placement; this function owns the
+   host/git/language/monorepo/multirepo snapshot text."
+  [_environment]
+  (try
+    (render/render (snapshot))
+    (catch Throwable t
+      (tel/log! {:level :error :id ::environment-info-render-failed
+                 :data  {:error (ex-message t)}})
+      "")))
+
 (defn environment-prompt
-  "Renders the live foundation block: <project-guidance> (when
-   present) → <environment> → <scan-warnings> (when issues exist)
-   → <skills> (when populated) → FN_INDEX. Each XML block is
-   conditionally rendered; absent sources contribute nothing.
-   Called by the system-prompt assembler each time the prompt is
-   built."
+  "Renders the live foundation prompt extras: <project-guidance> (when
+   present) → <scan-warnings> (when issues exist) → <skills> (when
+   populated) → FN_INDEX. The <environment> block now flows through
+   `:ext/environment-info-fn` so other extensions can add sibling
+   environment-info sections without owning the whole prompt fragment."
   [_environment]
   (try
     (let [pg-block       (render/format-project-guidance-block (agents/instructions))
-          env-block      (render/render (snapshot))
           warnings       (combined-scan-warnings)
           warnings-block (render/format-scan-warnings-block warnings)
           skills-list    (skills/list-all)
           skills-block   (render/format-skills-block skills-list)
           parts          (cond-> []
                            pg-block       (conj pg-block)
-                           true           (conj env-block)
                            warnings-block (conj warnings-block)
                            skills-block   (conj skills-block)
                            true           (conj FN_INDEX))]

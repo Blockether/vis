@@ -46,7 +46,8 @@ Two conditional rules apply on top of the spec:
 | `:ext/doc`               | ✓              | —                    | Extension-level description. |
 | `:ext/kind`              | conditional     | auto                 | Top-level *kind* of surface this extension contributes — used for prompt rendering AND as the section heading in `vis extensions list`. **Required when `:ext/symbols` is non-empty.** Auto-derived for the categorical cases when not set: extensions contributing `:ext/providers` get `"providers"`, `:ext/channels` get `"channels"`, `:ext/persistance` get `"persistance"`. Explicit `:ext/kind` always wins. |
 | `:ext/activation-fn`     | ✗              | `(constantly true)`  | `(fn [env] → bool)` — when falsy, all symbols are unbound and `:ext/nudge-fn` is skipped. |
-| `:ext/prompt`            | ✗              | —                    | Optional extra string or `(fn [env] → string)` appended after the auto-rendered symbol prompt. Strings are normalized to `(constantly s)`. |
+| `:ext/prompt`            | ✗              | —                    | Optional extra string or `(fn [env] → string)` appended as an extension prompt block. Strings are normalized to `(constantly s)`. |
+| `:ext/environment-info-fn` | ✗            | —                    | `(fn [env] → string\|seq\|map\|nil)` — live environment-info contribution rendered inside the system prompt's `<environment-info>` block. Use for cwd/repo/runtime facts; any active extension can add a sibling section. |
 | `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)). |
 | `:ext/on-parse-error-fn` | ✗              | —                    | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
 | `:ext/requires`          | ✗              | `[]`                  | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.foundation.editing.core]`. |
@@ -267,7 +268,8 @@ Called internally by `extension`; safe to call standalone.
 
 > **Note:** `:ext/prompt` accepts `string` or `fn?`. Both `extension`
 > and `validate!` normalize strings to `(constantly s)` before
-> validation.
+> validation. `:ext/environment-info-fn` is always a function; return
+> `nil` or blank text when the extension has no facts to add.
 
 ## Full example
 
@@ -306,6 +308,10 @@ Called internally by `extension`; safe to call standalone.
      :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
      :ext/requires      ['com.blockether.vis.ext.foundation.editing.core]
      :ext/prompt        "Prefer narrow searches before broad scans."
+     :ext/environment-info-fn
+     (fn [env]
+       (when-let [root (:docs/root env)]
+         (str "docs.root: " root)))
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
      :ext/nudge-fn      (fn [{:keys [environment iteration previous-blocks]}]
                           (when (and (> iteration 5)

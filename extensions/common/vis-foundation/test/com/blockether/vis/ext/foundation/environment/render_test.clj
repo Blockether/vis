@@ -30,6 +30,7 @@
   (it "annotates cwd as `(= git root)` when cwd matches the repo root"
     (let [git {:root "/tmp/x" :branch "main" :detached? false
                :worktree? false :submodules? false :clean? true
+               :dirty? false :changes? false
                :modified 0 :untracked 0 :added 0 :changed 0
                :missing 0 :removed 0 :conflicting 0}
           out (render/render {:host base-host :git git
@@ -37,6 +38,7 @@
       (expect (string/includes? out "cwd: /tmp/x (= git root)"))
       (expect (string/includes? out "git.branch: main"))
       (expect (string/includes? out "git.status: clean"))
+      (expect (string/includes? out "git.summary: stale: unknown | changes: no | dirty: no | stash: no (0)"))
       (expect (string/includes? out "submodules: false"))
       (expect (string/includes? out "worktree: false"))))
 
@@ -66,7 +68,23 @@
                :missing 0 :removed 0 :conflicting 0}
           out (render/render {:host base-host :git git
                               :languages nil :monorepo nil})]
-      (expect (string/includes? out "dirty (3 modified, 2 untracked)"))))
+      (expect (string/includes? out "dirty (3 modified, 2 untracked)"))
+      (expect (string/includes? out "changes: unknown | dirty: unknown | stash: no (0)"))))
+
+  (it "renders multirepo paths with Git summaries"
+    (let [repositories {:count 2
+                        :repositories [{:path "." :branch "main" :clean? true
+                                        :dirty? false :changes? false :stale? false
+                                        :stash-count 0}
+                                       {:path "services/api" :branch "feature"
+                                        :clean? false :dirty? true :changes? true
+                                        :stale? true :upstream "origin/main"
+                                        :ahead 0 :behind 2 :stash-count 1}]}
+          out (render/render {:host base-host :git nil :languages nil
+                              :monorepo nil :repositories repositories})]
+      (expect (string/includes? out "repositories: 2 git repos"))
+      (expect (string/includes? out "- .: main; stale: no | changes: no | dirty: no | stash: no (0)"))
+      (expect (string/includes? out "- services/api: feature; stale: yes (upstream: origin/main, ahead: 0, behind: 2) | changes: yes | dirty: yes | stash: yes (1)"))))
 
   (it "renders top languages with bytes-percentage and a primary line"
     (let [languages {:total-files 100 :total-bytes 100000

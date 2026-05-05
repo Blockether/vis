@@ -86,6 +86,7 @@
 
 (defn- ->json [m] (when m (json/write-json-str m)))
 (defn- <-json [s] (when s (json/read-json s :key-fn keyword)))
+(defn- json-extract [column path] [:json_extract column path])
 
 (defn- ->blob
   "Serialize a Clojure value to a Nippy byte array for BLOB columns."
@@ -472,8 +473,8 @@
 (defn db-list-conversations [db-info channel]
   (when (ds db-info)
     (let [ch (->kw channel)]
-      ;; conversation_soul.metadata contains channel — we need to filter by it.
-      ;; SQLite json_extract works on the metadata column.
+      ;; conversation_soul.metadata contains channel — filter through SQLite JSON1,
+      ;; expressed with HoneySQL so predicates/subqueries stay structured.
       (mapv (fn [row]
               (let [soul-meta (<-json (:soul_metadata row))]
                 {:id          (->uuid (:id row))
@@ -481,30 +482,41 @@
                  :external-id (:external-id soul-meta)
                  :title       (or (:state_title row) (:title soul-meta))
                  :version     (:version row)
+                 :fork-count  (or (:fork_count row) 0)
                  :created-at  (->date (:created_at row))}))
-        (jdbc/execute! (ds db-info)
-          [(str "SELECT cs.id, cs.metadata AS soul_metadata, cs.created_at,"
-             " s.title AS state_title, s.version, s.metadata AS state_metadata"
-             " FROM conversation_soul cs"
-             " JOIN conversation_state s ON s.conversation_soul_id = cs.id"
-             " WHERE json_extract(cs.metadata, '$.channel') = ?"
-             " AND s.version = (SELECT MAX(s2.version) FROM conversation_state s2"
-             "   WHERE s2.conversation_soul_id = cs.id)"
-             " ORDER BY cs.created_at DESC")
-           ch]
-          {:builder-fn rs/as-unqualified-lower-maps})))))
+        (query! db-info
+          {:select [:cs.id
+                    [:cs.metadata :soul_metadata]
+                    :cs.created_at
+                    [:s.title :state_title]
+                    :s.version
+                    [{:select [[[:count :*]]]
+                      :from   [[:conversation_state :child]]
+                      :where  [:and
+                               [:= :child.conversation_soul_id :cs.id]
+                               [:not= :child.parent_state_id nil]]}
+                     :fork_count]]
+           :from   [[:conversation_soul :cs]]
+           :join   [[:conversation_state :s]
+                    [:= :s.conversation_soul_id :cs.id]]
+           :where  [:and
+                    [:= (json-extract :cs.metadata "$.channel") ch]
+                    [:= :s.version
+                     {:select [[[:max :s2.version]]]
+                      :from   [[:conversation_state :s2]]
+                      :where  [:= :s2.conversation_soul_id :cs.id]}]]
+           :order-by [[:cs.created_at :desc]]})))))
 
 (defn db-find-conversation-by-external [db-info channel external-id]
   (when (and (ds db-info) external-id)
-    (let [ch (->kw channel)
+    (let [ch  (->kw channel)
           ext (str external-id)]
-      (when-let [row (first
-                       (jdbc/execute! (ds db-info)
-                         [(str "SELECT id FROM conversation_soul"
-                            " WHERE json_extract(metadata, '$.channel') = ?"
-                            " AND json_extract(metadata, '$.\"external-id\"') = ?")
-                          ch ext]
-                         {:builder-fn rs/as-unqualified-lower-maps}))]
+      (when-let [row (query-one! db-info
+                       {:select [:id]
+                        :from   :conversation_soul
+                        :where  [:and
+                                 [:= (json-extract :metadata "$.channel") ch]
+                                 [:= (json-extract :metadata "$.\"external-id\"") ext]]})]
         (->uuid (:id row))))))
 
 (defn db-latest-conversation-state-id
@@ -629,31 +641,42 @@
 (defn db-fork-conversation!
   "Fork a conversation. Creates a new conversation_state with
    parent_state_id pointing to the current latest state.
+   The forked state gets a '(fork)' suffix when no title is supplied.
+   The parent state gets a '[forked]' suffix to mark the divergence point.
    Returns the new state UUID."
   [db-info conversation-id {:keys [system-prompt provider model title]}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
       (fn [tx-info]
-        (let [soul-id-s (->ref conversation-id)
-              current   (latest-state-for tx-info soul-id-s)
-              new-id    (new-uuid)
-              now       (now-ms)
-              cur-meta  (when current (<-json (:metadata current)))]
-          (when current
-            (execute! tx-info
-              {:insert-into :conversation_state
-               :values [{:id                   (str new-id)
-                         :conversation_soul_id soul-id-s
-                         :parent_state_id      (:id current)
-                         :title                (or title (:title current))
-                         :version              (inc (:version current))
-                         :metadata             (->json
-                                                 (cond-> (or cur-meta {})
-                                                   system-prompt (assoc :system-prompt system-prompt)
-                                                   provider      (assoc :provider (->kw provider))
-                                                   model         (assoc :model model)))
-                         :created_at           now}]})
-            new-id))))))
+        (let [soul-id-s (->ref conversation-id)]
+          (when-let [current (latest-state-for tx-info soul-id-s)]
+            (let [new-id       (new-uuid)
+                  now          (now-ms)
+                  cur-meta     (<-json (:metadata current))
+                  parent-title (:title current)
+                  fork-title   (or title (str parent-title " (fork)"))
+                  new-version  (inc (:version current))]
+              (execute! tx-info
+                {:insert-into :conversation_state
+                 :values [{:id                   (str new-id)
+                           :conversation_soul_id soul-id-s
+                           :parent_state_id      (:id current)
+                           :title                fork-title
+                           :version              new-version
+                           :metadata             (->json
+                                                   (cond-> (or cur-meta {})
+                                                     system-prompt (assoc :system-prompt system-prompt)
+                                                     provider      (assoc :provider (->kw provider))
+                                                     model         (assoc :model model)))
+                           :created_at           now}]})
+              ;; Mark parent state as forked (idempotent)
+              (when (and parent-title
+                      (not (str/includes? parent-title "[forked]")))
+                (execute! tx-info
+                  {:update :conversation_state
+                   :set    {:title (str parent-title " [forked]")}
+                   :where  [:= :id (:id current)]}))
+              new-id)))))))
 
 ;; =============================================================================
 ;; State resolution
