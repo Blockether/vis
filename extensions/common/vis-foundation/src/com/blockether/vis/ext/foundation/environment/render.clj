@@ -183,10 +183,22 @@
    marker when truncated."
   8192)
 
-(defn- skill-line
-  "One-line skill entry: `name [source]: description`."
-  [{:keys [name source description]}]
-  (str "  " name " [" (clojure.core/name (or source :unknown)) "]: " description))
+(defn- attr-str
+  [v]
+  (-> (str v)
+    (string/replace "&" "&amp;")
+    (string/replace "\"" "&quot;")
+    (string/replace "<" "&lt;")
+    (string/replace ">" "&gt;")))
+
+(defn- skill-entry
+  "XML-ish skill preview. The skill name lives in an attribute (not as a
+   dynamic tag name, because skill names may contain non-XML-name chars).
+   The body is only the prompt preview/description, not source/path/body."
+  [{:keys [name description]}]
+  (str "  <skill name=\"" (attr-str name) "\">\n"
+    "    <prompt_preview>" (attr-str description) "</prompt_preview>\n"
+    "  </skill>"))
 
 (defn format-skills-block
   "Render the `<skills>` block. Skills come pre-sorted from
@@ -207,7 +219,7 @@
                              remain skills]
                         (if (empty? remain)
                           [acc 0]
-                          (let [line  (skill-line (first remain))
+                          (let [line  (skill-entry (first remain))
                                 size  (inc (count line))]
                             (if (and (seq acc) (> (+ used size) SKILLS_PROMPT_BUDGET_BYTES))
                               [acc (count remain)]
