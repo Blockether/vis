@@ -205,12 +205,20 @@
 ;; `(v/load-skill "name")` for activation (loads body),
 ;; `(v/reload-skills!)` for the cache-bust after editing on disk.
 
+(defn- remember-active-skill!
+  [environment _f _args result]
+  (when (and (:found? result) (string? (:name result)))
+    (when-let [active-skills-atom (:active-skills-atom environment)]
+      (swap! active-skills-atom assoc (:name result) result)))
+  {:result result})
+
 (def load-skill-symbol
   (vis/symbol 'load-skill skills/lookup
-    {:doc      "Load skill body by name. Returns {:found? true :body ...} or {:found? false}."
+    {:doc      "Load skill body by name. Returns {:found? true :body ...} or {:found? false}. Loaded skills appear in <active_skills> with full body on the next iteration."
      :arglists '([skill-name])
      :examples ["(v/load-skill \"diagnose\")"
-                "(:body (v/load-skill \"caveman\"))"]}))
+                "(:body (v/load-skill \"caveman\"))"]
+     :after-fn remember-active-skill!}))
 
 (defn- combined-scan-warnings []
   ;; Three sources, all `{:source :reason :path}` shaped so the

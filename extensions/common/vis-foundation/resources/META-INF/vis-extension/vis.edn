@@ -12,6 +12,8 @@ Pkg: `com.blockether/vis-foundation`. Src: `extensions/common/vis-foundation/`.
 
 ONE alias `v/` bundles the model-facing host surface.
 
+Normal source installs keep the Vis checkout at `~/.vis/sourcecode`. When an agent needs to inspect Vis itself, that is the expected local source path.
+
 ## Conversation intents
 
 ```clojure

@@ -33,4 +33,16 @@
     (let [info (env-core/environment-info {})]
       (expect (string? info))
       (expect (str/includes? info "<environment>"))
-      (expect (str/includes? info "git.summary")))))
+      (expect (str/includes? info "git.summary"))))
+
+  (it "tracks loaded skills for the <active_skills> prompt block"
+    (let [active-skills (atom {})
+          load-skill (some #(when (= 'load-skill (:ext.symbol/sym %)) %)
+                       env-core/environment-symbols)
+          after-fn (:ext.symbol/after-fn load-skill)
+          result {:found? true
+                  :name "diagnose"
+                  :description "Debug loop."
+                  :body "Full body."}]
+      (after-fn {:active-skills-atom active-skills} nil ["diagnose"] result)
+      (expect (= result (get @active-skills "diagnose"))))))

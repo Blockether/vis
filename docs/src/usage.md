@@ -10,9 +10,44 @@ for the package layout, [Packages](architecture/packages.md).
 
 ## Install and run from source
 
+The bootstrap scripts check for Java, the official Clojure CLI
+(`clojure -Sdescribe`), and git before cloning anything. If Clojure is
+missing, install it from the [official Clojure install guide](https://clojure.org/guides/install_clojure)
+and rerun the script.
+
+macOS, Linux, and WSL:
+
 ```bash
-git clone https://github.com/Blockether/vis.git
-cd vis
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+~/.local/bin/vis help
+```
+
+Native Windows PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 | iex
+~\.local\bin\vis.cmd help
+```
+
+Both installers clone or update Vis under `~/.vis/sourcecode`; Unix-like
+systems symlink `~/.local/bin/vis`, and native Windows writes
+`~/.local/bin/vis.cmd`.
+
+From an existing checkout you can run the same scripts directly:
+
+```bash
+bin/install-source
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bin\install-source.ps1
+```
+
+Manual path:
+
+```bash
+git clone https://github.com/Blockether/vis.git ~/.vis/sourcecode
+cd ~/.vis/sourcecode
 
 # One-time: drop the mdbook-mermaid JS into docs/ (only needed for docs build)
 mdbook-mermaid install docs
@@ -23,8 +58,9 @@ clojure -M:vis help       # same
 ```
 
 `bin/vis` is a checked-in wrapper that just `exec`s `clojure -M:vis`
-from the repo root. Add `bin/` to your `PATH` and every example below
-works with `vis` instead of `clojure -M:vis`.
+from the repo root. The installer links it as `~/.local/bin/vis`; make
+sure `~/.local/bin` is on `PATH`, and every example below works with
+`vis` instead of `clojure -M:vis`.
 
 ## Development nREPL path
 

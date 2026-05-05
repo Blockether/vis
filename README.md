@@ -16,4 +16,4 @@ results flow back as a compact journal. State lives in named vars and
 a SQLite DB, not in the token budget. No compaction, no sliding
 windows, no "summarize the last 50 messages".
 
-[Visit the book to learn more.](https://blockether.github.io/vis/)
+[Visit the book to learn more, including source install from `~/.vis/sourcecode`.](https://blockether.github.io/vis/usage.html)

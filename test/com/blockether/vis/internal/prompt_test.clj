@@ -206,7 +206,39 @@
                    :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
                    :iteration           period})]
         (expect (str/includes? out "[system_nudge]"))
-        (expect (str/includes? out (str "You're " period " iterations")))))))
+        (expect (str/includes? out (str "You're " period " iterations"))))))
+
+  (it "renders loaded skill bodies under <extensions>/<active_skills>"
+    (let [out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "already set")
+                 :active-skills-atom (atom {"diagnose" {:name "diagnose"
+                                                        :description "Debug loop."
+                                                        :source :repo
+                                                        :path "/repo/.agents/skills/diagnose/SKILL.md"
+                                                        :body "# Full skill body\nDo repro first."}})}
+                {:active-extensions NO_EXTENSIONS
+                 :iteration 0})]
+      (expect (str/includes? out "<extensions>\n<active_skills count=\"1\">"))
+      (expect (str/includes? out "<skill name=\"diagnose\""))
+      (expect (str/includes? out "# Full skill body\nDo repro first."))))
+
+  (it "budgets <var_index> by tokens and keeps newest entries"
+    (let [entry (fn [n]
+                  (str ";; v=" n " scope=live n=8000\n"
+                    "(def v" n " \"" (apply str (repeat 8000 \x)) "\")"))
+          big-index (str/join "\n" (map entry (range 1 20)))
+          read-var-index-var (resolve 'com.blockether.vis.internal.prompt/read-var-index-str)]
+      (with-redefs-fn {read-var-index-var (constantly big-index)}
+        (fn []
+          (let [out (prompt/build-iteration-context
+                      {:conversation-title-atom (atom "already set")}
+                      {:active-extensions NO_EXTENSIONS
+                       :iteration 0
+                       :context-limit 2000})]
+            (expect (str/includes? out "<var_index>"))
+            (expect (str/includes? out "(def v1"))
+            (expect (str/includes? out "older <var_index> entries omitted"))
+            (expect (not (str/includes? out "(def v19")))))))))
 
 (defdescribe extensions-snapshot-test
   (it "includes full extension provenance plus symbols/docs"
@@ -360,7 +392,47 @@
           out (prompt/assemble-system-prompt
                 {}
                 {:active-extensions [ext]})]
-      (expect (not (str/includes? out "<environment-info>"))))))
+      (expect (not (str/includes? out "<environment-info>")))))
+
+  (it "never char-caps string environment-info fragments"
+    (let [huge (apply str (repeat 100000 \e))
+          ext (extension/extension
+                {:ext/namespace 'test.env-info.huge
+                 :ext/doc       "Huge environment facts."
+                 :ext/environment-info-fn (constantly huge)})
+          out (prompt/assemble-system-prompt
+                {}
+                {:active-extensions [ext]})]
+      (expect (str/includes? out huge))
+      (expect (not (str/includes? out "…<+")))))
+
+  (it "renders invalid non-string environment-info returns as visible errors, not truncated data"
+    (let [ext (extension/extension
+                {:ext/namespace 'test.env-info.invalid
+                 :ext/doc       "Invalid environment facts."
+                 :ext/environment-info-fn (constantly {:not :valid})})
+          out (prompt/assemble-system-prompt
+                {}
+                {:active-extensions [ext]})]
+      (expect (str/includes? out "<environment-info-error>"))
+      (expect (str/includes? out "clojure.lang.PersistentArrayMap")))))
+
+(defdescribe extension-prompt-test
+  (it "wraps extension prompt fragments under <extensions>"
+    (let [ext (extension/extension
+                {:ext/namespace 'test.ext.prompt
+                 :ext/doc "Prompt extension."
+                 :ext/ns-alias '{:alias v :ns test.ext.prompt}
+                 :ext/prompt (constantly "Use v/foo for foo.")})
+          out (prompt/assemble-system-prompt
+                {}
+                {:active-extensions [ext]})]
+      (expect (str/includes? out "<system_prompt>"))
+      (expect (str/includes? out "</system_prompt>"))
+      (expect (str/includes? out "<extensions>"))
+      (expect (str/includes? out "<extension namespace=\"test.ext.prompt\" alias=\"v\" target-namespace=\"test.ext.prompt\">"))
+      (expect (str/includes? out "Use v/foo for foo."))
+      (expect (str/includes? out "</extensions>")))))
 
 (defdescribe provider-prompt-test
   (it "appends active provider prompt blocks without replacing the core prompt"
@@ -378,7 +450,7 @@
                                                      (reset! seen ctx)
                                                      "Provider-specific addendum.")}}})]
       (expect (str/includes? out "recursive language model (RLM)"))
-      (expect (str/includes? out "[provider: codex-test]"))
+      (expect (str/includes? out "<specific_provider_model_prompt provider=\"codex-test\" model=\"m\">"))
       (expect (str/includes? out "Provider-specific addendum."))
       (expect (= :codex-test (get-in @seen [:provider :id])))))
 
@@ -391,27 +463,18 @@
                   :descriptor {:provider/id :blank-provider
                                :provider/label "Blank"
                                :provider/prompt-fn (constantly "")}}})]
-      (expect (not (str/includes? out "[provider: blank-provider]"))))))
+      (expect (not (str/includes? out "<specific_provider_model_prompt"))))))
 
 (defdescribe assemble-initial-messages-test
-  (it "places system, history, and trailing user content in order"
+  (it "places only system and current user content in order"
     (let [msgs (prompt/assemble-initial-messages
                  {:system-prompt        "SYS"
-                  :history-messages     [{:role "user" :content "old"}]
                   :initial-user-content "now"})]
       (expect (= [{:role "system" :content "SYS"}
-                  {:role "user" :content "old"}
-                  {:role "user" :content "now"}]
+                  {:role "user" :content "<user_turn_request_main_goal>\nnow\n</user_turn_request_main_goal>"}]
                 msgs))))
 
   (it "omits the system slot when no system prompt is supplied"
     (let [msgs (prompt/assemble-initial-messages
                  {:initial-user-content "hi"})]
-      (expect (= [{:role "user" :content "hi"}] msgs)))))
-
-(defdescribe trim-to-initial-history-test
-  (it "keeps exactly the prefix of length n"
-    (let [msgs [:a :b :c :d]]
-      (expect (= [:a :b] (prompt/trim-to-initial-history msgs 2)))
-      (expect (= []      (prompt/trim-to-initial-history msgs 0)))
-      (expect (= [:a :b :c :d] (prompt/trim-to-initial-history msgs 4))))))
+      (expect (= [{:role "user" :content "<user_turn_request_main_goal>\nhi\n</user_turn_request_main_goal>"}] msgs)))))
