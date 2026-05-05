@@ -219,8 +219,9 @@
                 {:active-extensions NO_EXTENSIONS
                  :iteration 0})]
       (expect (str/includes? out "<extensions>\n<active_skills count=\"1\">"))
-      (expect (str/includes? out "<skill name=\"diagnose\""))
-      (expect (str/includes? out "# Full skill body\nDo repro first."))))
+      (expect (str/includes? out "<skill name=\"diagnose\">\n# Full skill body\nDo repro first.\n</skill>"))
+      (expect (not (str/includes? out "Debug loop.")))
+      (expect (not (str/includes? out "/repo/.agents/skills/diagnose/SKILL.md")))))
 
   (it "budgets <var_index> by tokens and keeps newest entries"
     (let [entry (fn [n]
