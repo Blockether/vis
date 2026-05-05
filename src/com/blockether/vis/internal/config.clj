@@ -19,12 +19,10 @@
    token-refresh policy stays inside each provider implementation
    instead of leaking up here."
   (:require
-   [babashka.http-client :as http]
    [clojure+.error]
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.svar.core :as svar]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.internal.registry :as registry]
    [taoensso.telemere :as tel])
@@ -96,104 +94,69 @@
   []
   (tel/stop-handlers!))
 
-;;; ── Provider catalog overlay ──────────────────────────────────────────────
+;;; ── Provider presets ──────────────────────────────────────────────────────
 
-(def ^:private VIS_PROVIDER_METADATA
-  "Vis-side provider metadata layered on top of svar's KNOWN_PROVIDERS.
-   Slots:
-     :label          — human display name (svar tracks no strings).
-     :default-models — curated short list for the TUI model-picker.
-                       Optional; when missing the picker queries the
-                       provider's `/v1/models` directly.
-     :base-url       — ONLY for vis-only providers svar doesn't know
-                       (`:github-models`, `:github-copilot`). Every
-                       other id leaves base-url to svar's catalog.
-     :api-style      — Optional vis override when svar's catalog does not
-                       already provide the transport metadata.
-
-   Adding a new provider svar already knows: list it here with
-   `:label` (and optionally `:default-models`). Do NOT re-list its
-   `:base-url` — svar owns that."
-  {:openai         {:label "OpenAI"
-                    :default-models ["gpt-5" "gpt-5-mini" "gpt-4o" "gpt-4o-mini" "o3-mini"]}
-   :anthropic      {:label "Anthropic"
-                    :default-models ["claude-opus-4-6" "claude-sonnet-4-6" "claude-haiku-4-5"]}
-   :zai            {:label "Z.ai (Pass)"
-                    :default-models ["glm-5-turbo" "glm-5.1" "glm-4.7" "glm-4.6v"]}
-   :zai-coding     {:label "Z.ai (Coding Plan)"
-                    :default-models ["glm-5-turbo" "glm-4.7" "glm-5.1"]}
-   :openrouter     {:label "OpenRouter"
-                    :default-models ["openai/gpt-4o" "google/gemini-2.5-pro"
-                                     "anthropic/claude-sonnet-4-5"
-                                     "meta-llama/llama-3.1-70b-instruct"]}
-   :ollama         {:label "Ollama"}
-   :lmstudio       {:label "LM Studio"}
-   :blockether     {:label "Blockether"
-                    :default-models ["glm-5-turbo" "glm-5.1" "gpt-5-mini" "gpt-4o"
-                                     "minimax-m2.5" "gemini-2.5-pro"]}
-   ;; ── vis-owned provider metadata (vis-only + UI overlays) ───────────────
-   :github-models  {:label "GitHub Models"
-                    :base-url "https://models.github.ai/inference"
-                    :default-models ["openai/gpt-4o" "openai/gpt-4o-mini" "openai/o3-mini"
-                                     "meta/llama-4-scout-17b-16e-instruct"
-                                     "deepseek/DeepSeek-R1"
-                                     "mistralai/mistral-small-2503"]}
-   :github-copilot {:label "GitHub Copilot"
-                    :base-url "https://api.individual.githubcopilot.com"
-                    :default-models ["claude-sonnet-4.6" "claude-haiku-4.5"
-                                     "gpt-5.4" "gpt-5.4-mini" "gpt-5.3-codex"
-                                     "gemini-3-pro-preview" "grok-code-fast-1"]}
-   :openai-codex   {:label "OpenAI Codex (ChatGPT OAuth)"
-                    :default-models ["gpt-5.5" "gpt-5.4" "gpt-5.3-codex"]}})
+(def ^:private removed-provider-ids
+  #{:blockether :openrouter :github-models :github-copilot})
 
 (def ^:private PRESET_ORDER
   "Stable display order in the 'Add Provider' picker. Most-likely-used
    first. Anything not in this vec lands at the end."
-  [:openai :anthropic :openai-codex :openrouter :github-copilot :github-models
-   :zai :zai-coding :blockether :ollama :lmstudio])
+  [:openai :anthropic :openai-codex
+   :github-copilot-business :github-copilot-individual
+   :zai :zai-coding :ollama :lmstudio])
 
-(defn- blockether-env-api-key []
-  (System/getenv "BLOCKETHER_OPENAI_API_KEY"))
+(defn- registered-provider-metadata
+  "Provider-owned preset metadata. First-party provider extensions put
+   labels, base URLs, default models, and transport overrides here so
+   internal config stays provider-agnostic."
+  [pid]
+  (when-let [provider (registry/provider-by-id pid)]
+    (merge (:provider/preset provider)
+      (when-let [label (:provider/label provider)]
+        {:label label}))))
 
 (defn- known-provider-base-url
-  "Base URL for a provider id, vis override first, svar table second."
+  "Base URL for a provider id: provider extension first, svar table last."
   [pid]
-  (or (:base-url (get VIS_PROVIDER_METADATA pid))
+  (or (:base-url (registered-provider-metadata pid))
     (:base-url (get svar-router/KNOWN_PROVIDERS pid))))
 
 (defn provider-template
-  "Preset descriptor for a provider id, merged from svar's catalog
-   and vis's overlay. Returns nil for unknown ids."
+  "Preset descriptor for a provider id, merged from a provider
+   extension's metadata and svar's catalog. Returns nil for unknown or
+   intentionally removed ids."
   [pid]
-  (let [vis-md  (get VIS_PROVIDER_METADATA pid)
-        svar-md (get svar-router/KNOWN_PROVIDERS pid)]
-    (when (or vis-md svar-md)
-      (cond-> {:id pid}
-        (:label vis-md)                   (assoc :label (:label vis-md))
-        (known-provider-base-url pid)     (assoc :base-url (known-provider-base-url pid))
-        (or (:api-style vis-md)
-          (:api-style svar-md))           (assoc :api-style (or (:api-style vis-md)
-                                                              (:api-style svar-md)))
-        (:default-models vis-md)          (assoc :default-models (:default-models vis-md))))))
+  (when-not (contains? removed-provider-ids pid)
+    (let [provider-md (registered-provider-metadata pid)
+          svar-md     (get svar-router/KNOWN_PROVIDERS pid)]
+      (when (or provider-md svar-md (registry/provider-by-id pid))
+        (cond-> {:id pid}
+          (:label provider-md)             (assoc :label (:label provider-md))
+          (known-provider-base-url pid)    (assoc :base-url (known-provider-base-url pid))
+          (or (:api-style provider-md)
+            (:api-style svar-md))          (assoc :api-style (or (:api-style provider-md)
+                                                               (:api-style svar-md)))
+          (:default-models provider-md)    (assoc :default-models (:default-models provider-md))
+          (:hidden? provider-md)           (assoc :hidden? true))))))
 
 (defn provider-presets
-  "All known provider presets, sorted for the 'Add Provider' picker.
-   `:blockether` is hidden when no `BLOCKETHER_OPENAI_API_KEY` env
-   var is present so the row doesn't show up empty for users without
-   it."
+  "All known provider presets, sorted for the 'Add Provider' picker."
   []
   (let [order-rank (zipmap PRESET_ORDER (range))
-        ids        (cond-> (into #{} (concat (keys svar-router/KNOWN_PROVIDERS)
-                                       (keys VIS_PROVIDER_METADATA)))
-                     (not (blockether-env-api-key)) (disj :blockether))]
+        ids        (into #{} (concat (keys svar-router/KNOWN_PROVIDERS)
+                               (map :provider/id (registry/registered-providers))))]
     (->> ids
-      (sort-by #(or (order-rank %) Long/MAX_VALUE))
-      (mapv provider-template))))
+      (remove removed-provider-ids)
+      (keep provider-template)
+      (remove :hidden?)
+      (sort-by #(or (order-rank (:id %)) Long/MAX_VALUE))
+      vec)))
 
 (defn display-label
   "Human-readable label for a provider id. Never persisted."
   [pid]
-  (or (:label (get VIS_PROVIDER_METADATA pid))
+  (or (:label (registered-provider-metadata pid))
     (some-> pid name str/capitalize)
     "Provider"))
 
@@ -220,55 +183,18 @@
     explicit-url explicit-url
     :else api-url))
 
-(defn- local-provider-models-url
-  [provider-id]
-  (str (trim-trailing-slashes (:base-url (provider-template provider-id))) "/models"))
+(defn- github-copilot-provider-id? [provider-id]
+  (contains? #{:github-copilot-individual :github-copilot-business} provider-id))
 
 (defn provider-model-visible?
   "True when svar's provider-scoped model filters allow this model id."
   [provider-id model-id]
-  (if-let [visible? (ns-resolve 'com.blockether.svar.internal.router 'provider-model-visible?)]
-    (boolean (visible? provider-id model-id))
-    true))
-
-(defn- model-list-id [model]
-  (cond
-    (string? model) model
-    (map? model)    (or (:id model) (:name model) (get model "id") (get model "name"))
-    :else           (str model)))
-
-(defn- filter-provider-model-list [provider-id models]
-  (filterv #(provider-model-visible? provider-id (model-list-id %)) models))
-
-(defn- parse-model-list-body
-  [provider-id body]
-  (let [parsed (try (svar/str->data body) (catch Throwable _ nil))
-        value  (or (:value parsed) parsed)
-        models (or (:data value) (:models value) [])]
-    (filter-provider-model-list provider-id models)))
-
-(defn local-provider-status
-  [provider-id]
-  (let [base-url (:base-url (provider-template provider-id))
-        url      (local-provider-models-url provider-id)]
-    (try
-      (let [resp   (http/get url {:timeout 3000 :throw false})
-            code   (:status resp)
-            models (parse-model-list-body provider-id (:body resp))]
-        (cond-> {:authenticated? (<= 200 code 299)
-                 :provider-id    provider-id
-                 :source         :local
-                 :base-url       base-url
-                 :status-code    code}
-          (seq models) (assoc :model-count (count models))
-          (not (<= 200 code 299))
-          (assoc :error (str "HTTP " code " from " url))))
-      (catch Throwable t
-        {:authenticated? false
-         :provider-id    provider-id
-         :source         :local
-         :base-url       base-url
-         :error          (or (.getMessage t) (str t))}))))
+  (let [catalog-id (if (github-copilot-provider-id? provider-id)
+                     :github-copilot
+                     provider-id)]
+    (if-let [visible? (ns-resolve 'com.blockether.svar.internal.router 'provider-model-visible?)]
+      (boolean (visible? catalog-id model-id))
+      true)))
 
 (defn provider-base-url
   "Resolve base-url for a provider: explicit field on the provider
@@ -298,9 +224,17 @@
   [model-name]
   (boolean (re-find #"^claude-(opus|sonnet|haiku)-4(?:\.\d+)?$" model-name)))
 
+(defn- zai-provider-id?
+  [provider-id]
+  (contains? #{:zai :zai-coding} provider-id))
+
+(defn- zai-thinking-model?
+  [model-name]
+  (boolean (re-find #"(?i)^glm-(?:5(?:[.-].*)?|4\.[5-9].*)$" (or model-name ""))))
+
 (defn- provider-model-name
   [provider-id name]
-  (if (= :github-copilot provider-id)
+  (if (github-copilot-provider-id? provider-id)
     (get github-copilot-legacy-model-aliases name name)
     name))
 
@@ -312,11 +246,16 @@
    (when-let [n (some-> (model-name model) str str/trim not-empty)]
      (let [n (provider-model-name provider-id n)]
        (cond-> {:name n}
-         (and (= :github-copilot provider-id)
+         (and (github-copilot-provider-id? provider-id)
            (github-copilot-claude-model? n))
          (assoc :api-style :openai-compatible-chat
            :reasoning? true
-           :reasoning-style :openai-effort))))))
+           :reasoning-style :openai-effort)
+
+         (and (zai-provider-id? provider-id)
+           (zai-thinking-model? n))
+         (assoc :reasoning? true
+           :reasoning-style :zai-thinking))))))
 
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,
@@ -367,23 +306,6 @@
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
-(defn- blockether-env-config
-  "Bootstrap a `:blockether` provider config from `BLOCKETHER_*` env
-   vars. The base URL comes from svar's provider catalog. Models seed
-   from the curated `:default-models` so first-boot UX has a working
-   list without a config edit."
-  []
-  (when-let [api-key (blockether-env-api-key)]
-    (let [be  (provider-template :blockether)
-          url (:base-url be)]
-      (when url
-        {:providers [(cond-> {:id       :blockether
-                              :api-key  api-key
-                              :base-url url}
-                       (:default-models be)
-                       (assoc :models (mapv (fn [m] {:name m})
-                                        (:default-models be))))]}))))
-
 (defn load-config-raw
   "Load raw `config.edn` map (or nil on read/parse error)."
   []
@@ -410,13 +332,11 @@
   (update config :providers #(mapv apply-provider-metadata %)))
 
 (defn load-config
-  "Load provider config in svar-native syntax. `~/.vis/config.edn`
-   takes priority, falling back to BLOCKETHER_* env vars."
+  "Load provider config in svar-native syntax from `~/.vis/config.edn`."
   []
-  (or (some-> (load-config-raw)
-        ((fn [raw] (when (seq (:providers raw)) raw)))
-        apply-config-metadata)
-    (blockether-env-config)))
+  (some-> (load-config-raw)
+    ((fn [raw] (when (seq (:providers raw)) raw)))
+    apply-config-metadata))
 
 (defn- active-provider-entry [config]
   (first (:providers config)))
@@ -464,14 +384,13 @@
                                  :source            source})))))
 
 (defn resolve-config
-  "Resolve provider config: explicit → `~/.vis/config.edn` → BLOCKETHER_* env.
+  "Resolve provider config: explicit → `~/.vis/config.edn`.
    Throws when nothing is available."
   ([] (resolve-config nil))
   ([explicit-config]
    (or explicit-config
      (load-config)
-     (throw (ex-info (str "No provider config. Create ~/.vis/config.edn "
-                       "or set BLOCKETHER_OPENAI_API_KEY env var.")
+     (throw (ex-info "No provider config. Create ~/.vis/config.edn or add one through the provider dialog."
               {})))))
 
 (def ^:private extension-env-config-key :environment)
@@ -586,9 +505,3 @@
 (defn reload-config! []
   (reset! active-config (load-config)))
 
-(doseq [[provider-id label] [[:ollama "Ollama"]
-                             [:lmstudio "LM Studio"]]]
-  (registry/register-provider!
-    {:provider/id        provider-id
-     :provider/label     label
-     :provider/status-fn #(local-provider-status provider-id)}))

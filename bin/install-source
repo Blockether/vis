@@ -8,11 +8,18 @@ repo_url="${VIS_REPO_URL:-https://github.com/Blockether/vis.git}"
 dest="${VIS_SOURCE_DIR:-$HOME/.vis/sourcecode}"
 branch="${VIS_REPO_BRANCH:-}"
 local_bin_dir="${VIS_LOCAL_BIN_DIR:-$HOME/.local/bin}"
+fork_mode="${VIS_FORK:-false}"
+fork_source="${VIS_FORK_SOURCE:-Blockether/vis}"
+fork_owner="${VIS_FORK_OWNER:-}"
+fork_name="${VIS_FORK_NAME:-}"
+upstream_url=""
 vis_link="$local_bin_dir/vis"
 
 usage() {
   cat <<EOF
 Usage: bin/install-source [--dest PATH] [--repo URL] [--branch NAME]
+                          [--fork] [--fork-source OWNER/REPO]
+                          [--fork-owner OWNER_OR_ORG] [--fork-name NAME]
 
 Checks for Java, Clojure CLI, and git, then clones Vis to:
   $dest
@@ -25,6 +32,10 @@ Environment overrides:
   VIS_LOCAL_BIN_DIR  symlink dir (default: ~/.local/bin)
   VIS_REPO_URL       git remote (default: $repo_url)
   VIS_REPO_BRANCH    branch/tag to clone or update
+  VIS_FORK           true to create/clone a GitHub fork with gh
+  VIS_FORK_SOURCE    source repo for --fork (default: Blockether/vis)
+  VIS_FORK_OWNER     fork owner/org for --fork (default: authenticated user)
+  VIS_FORK_NAME      fork repo name for --fork (default: source repo name)
 EOF
 }
 
@@ -45,6 +56,25 @@ while [[ $# -gt 0 ]]; do
       branch="$2"
       shift 2
       ;;
+    --fork)
+      fork_mode="true"
+      shift
+      ;;
+    --fork-source)
+      [[ $# -ge 2 ]] || { echo "vis install: --fork-source requires OWNER/REPO" >&2; exit 2; }
+      fork_source="$2"
+      shift 2
+      ;;
+    --fork-owner)
+      [[ $# -ge 2 ]] || { echo "vis install: --fork-owner requires an owner or org" >&2; exit 2; }
+      fork_owner="$2"
+      shift 2
+      ;;
+    --fork-name)
+      [[ $# -ge 2 ]] || { echo "vis install: --fork-name requires a repo name" >&2; exit 2; }
+      fork_name="$2"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -57,8 +87,70 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+is_fork_mode() {
+  [[ "$fork_mode" == "true" || "$fork_mode" == "1" || "$fork_mode" == "yes" ]]
+}
+
+normalize_github_slug() {
+  local raw="$1"
+  raw="${raw#https://github.com/}"
+  raw="${raw#http://github.com/}"
+  raw="${raw#git@github.com:}"
+  raw="${raw%.git}"
+  raw="${raw#/}"
+  if [[ "$raw" != */* || "$raw" == */*/* ]]; then
+    echo "vis install: expected a GitHub repo as OWNER/REPO, got: $1" >&2
+    exit 2
+  fi
+  printf '%s' "$raw"
+}
+
+github_repo_url() {
+  local slug="$1"
+  local protocol="${VIS_GH_PROTOCOL:-}"
+  if [[ -z "$protocol" ]]; then
+    protocol="$(gh config get git_protocol -h github.com 2>/dev/null || true)"
+  fi
+  if [[ "$protocol" == "ssh" ]]; then
+    printf 'git@github.com:%s.git' "$slug"
+  else
+    printf 'https://github.com/%s.git' "$slug"
+  fi
+}
+
+ensure_github_fork() {
+  gh auth status -h github.com >/dev/null 2>&1 || {
+    echo "vis install: GitHub CLI is not authenticated. Run: gh auth login" >&2
+    exit 1
+  }
+
+  local source_slug login owner name fork_slug
+  source_slug="$(normalize_github_slug "$fork_source")"
+  login="$(gh api user --jq .login)"
+  owner="${fork_owner:-$login}"
+  name="${fork_name:-${source_slug##*/}}"
+  fork_slug="$owner/$name"
+
+  if gh repo view "$fork_slug" >/dev/null 2>&1; then
+    echo "vis install: using existing GitHub fork: $fork_slug"
+  else
+    echo "vis install: creating GitHub fork: $source_slug -> $fork_slug"
+    local args=(repo fork "$source_slug")
+    [[ -n "$fork_name" ]] && args+=(--fork-name "$fork_name")
+    [[ -n "$fork_owner" && "$fork_owner" != "$login" ]] && args+=(--org "$fork_owner")
+    gh "${args[@]}"
+  fi
+
+  repo_url="$(github_repo_url "$fork_slug")"
+  upstream_url="$(github_repo_url "$source_slug")"
+}
+
 missing=()
-for cmd in java clojure git; do
+required=(java clojure git)
+if is_fork_mode; then
+  required+=(gh)
+fi
+for cmd in "${required[@]}"; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     missing+=("$cmd")
   fi
@@ -67,9 +159,9 @@ done
 if [[ ${#missing[@]} -gt 0 ]]; then
   echo "vis install: missing required command(s): ${missing[*]}" >&2
   echo "" >&2
-  echo "Install Java 21+ and the Clojure CLI, then rerun this script." >&2
+  echo "Install Java 21+, the Clojure CLI, git, and gh when using --fork; then rerun this script." >&2
   echo "macOS/Homebrew example:" >&2
-  echo "  brew install openjdk clojure/tools/clojure git" >&2
+  echo "  brew install zulu clojure/tools/clojure git gh" >&2
   echo "" >&2
   echo "Linux packages vary by distro; verify with:" >&2
   echo "  java -version" >&2
@@ -86,6 +178,10 @@ if ! clojure -Sdescribe >/dev/null 2>&1; then
   echo "vis install: clojure exists but failed to run: clojure -Sdescribe" >&2
   echo "vis install: install the official Clojure CLI, not only a standalone clojure.jar." >&2
   exit 1
+fi
+
+if is_fork_mode; then
+  ensure_github_fork
 fi
 
 mkdir -p "$(dirname "$dest")"
@@ -118,6 +214,15 @@ else
       echo "vis install: checkout is detached; fetched origin but did not switch branches." >&2
     fi
   fi
+fi
+
+if [[ -n "$upstream_url" ]]; then
+  if git -C "$dest" remote get-url upstream >/dev/null 2>&1; then
+    git -C "$dest" remote set-url upstream "$upstream_url"
+  else
+    git -C "$dest" remote add upstream "$upstream_url"
+  fi
+  echo "vis install: upstream remote -> $upstream_url"
 fi
 
 mkdir -p "$local_bin_dir"

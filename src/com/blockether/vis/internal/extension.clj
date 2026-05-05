@@ -417,6 +417,37 @@
 (s/def :ext/environment-info-fn fn?)
 
 ;; Optional per-iteration nudge composer.
+;; Return value is checked at runtime because specs cannot validate a fn's
+;; output from the extension map alone. Valid returns:
+;;   nil
+;;   "nudge text"
+;;   {:importance :low|:normal|:high|:critical :text "nudge text"}
+;; `:message` or `:body` are accepted aliases for `:text`.
+(def system-nudge-importances #{:low :normal :high :critical})
+
+(defn- system-nudge-map?
+  [x]
+  (and (map? x)
+    (every? #{:importance :text :message :body} (keys x))
+    (or (nil? (:importance x))
+      (contains? system-nudge-importances (:importance x)))
+    (some non-blank-string? [(:text x) (:message x) (:body x)])))
+
+(s/def ::system-nudge-result
+  (s/nilable
+    (s/or :text non-blank-string?
+      :map system-nudge-map?)))
+
+(defn system-nudge-result?
+  "True when an extension :ext/nudge-fn return value conforms to the
+   supported nudge contract. Used at runtime after calling the nudge fn."
+  [x]
+  (s/valid? ::system-nudge-result x))
+
+(defn explain-system-nudge-result
+  [x]
+  (s/explain-data ::system-nudge-result x))
+
 (s/def :ext/nudge-fn fn?)
 
 ;; Optional source-code rewriter for SCI/edamame parse errors.

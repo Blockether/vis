@@ -191,13 +191,18 @@
     (string/replace "<" "&lt;")
     (string/replace ">" "&gt;")))
 
+(defn- attr-name
+  [v]
+  (attr-str (if (keyword? v) (name v) v)))
+
 (defn- skill-entry
   "XML-ish skill preview. The skill name lives in an attribute (not as a
    dynamic tag name, because skill names may contain non-XML-name chars).
-   The body is only the prompt preview/description, not source/path/body."
-  [{:keys [name description]}]
-  (str "  <skill name=\"" (attr-str name) "\">\n"
-    "    <prompt_preview>" (attr-str description) "</prompt_preview>\n"
+   Source is metadata. The body is only the prompt preview/description,
+   not path/full SKILL.md body."
+  [{:keys [name source description]}]
+  (str "  <skill name=\"" (attr-str name) "\" source=\"" (attr-name (or source :unknown)) "\">\n"
+    "    <activation_trigger>" (attr-str description) "</activation_trigger>\n"
     "  </skill>"))
 
 (defn format-skills-block

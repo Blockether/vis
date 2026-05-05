@@ -21,6 +21,7 @@
   com.blockether/vis-provider-github-copilot  {:local/root "extensions/providers/vis-provider-github-copilot"}
   com.blockether/vis-provider-openai-codex    {:local/root "extensions/providers/vis-provider-openai-codex"}
   com.blockether/vis-provider-zai             {:local/root "extensions/providers/vis-provider-zai"}
+  com.blockether/vis-provider-standard        {:local/root "extensions/providers/vis-provider-standard"}
   com.blockether/vis-channel-telegram         {:local/root "extensions/channels/vis-channel-telegram"}
   com.blockether/vis-channel-tui              {:local/root "extensions/channels/vis-channel-tui"}
   com.blockether/vis-foundation               {:local/root "extensions/common/vis-foundation"}
@@ -109,6 +110,7 @@
                         "extensions/providers/vis-provider-github-copilot/test"
                         "extensions/providers/vis-provider-openai-codex/test"
                         "extensions/providers/vis-provider-zai/test"
+                        "extensions/providers/vis-provider-standard/test"
                         "extensions/channels/vis-channel-tui/test"
                         "extensions/common/vis-foundation/test"
                         "extensions/common/vis-exa/test"
@@ -116,6 +118,7 @@
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                         com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                         com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
+                        com.blockether/vis-provider-standard       {:local/root "extensions/providers/vis-provider-standard"}
                         com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
                         com.blockether/vis-foundation              {:local/root "extensions/common/vis-foundation"}
                         com.blockether/vis-exa                     {:local/root "extensions/common/vis-exa"}
@@ -134,6 +137,7 @@
                         "--dir" "extensions/providers/vis-provider-github-copilot/test"
                         "--dir" "extensions/providers/vis-provider-openai-codex/test"
                         "--dir" "extensions/providers/vis-provider-zai/test"
+                        "--dir" "extensions/providers/vis-provider-standard/test"
                         "--dir" "extensions/channels/vis-channel-tui/test"
                         "--dir" "extensions/common/vis-foundation/test"
                         "--dir" "extensions/common/vis-exa/test"
@@ -177,12 +181,14 @@
                  "extensions/persistance/vis-persistance-sqlite/test"
                  "extensions/providers/vis-provider-openai-codex/test"
                  "extensions/providers/vis-provider-zai/test"
+                 "extensions/providers/vis-provider-standard/test"
                  "extensions/channels/vis-channel-tui/test"
                  "extensions/common/vis-foundation/test"
                  "extensions/common/vis-exa/test"]
    :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                  com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
                  com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
+                 com.blockether/vis-provider-standard       {:local/root "extensions/providers/vis-provider-standard"}
                  com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
                  com.blockether/vis-foundation              {:local/root "extensions/common/vis-foundation"}
                  com.blockether/vis-exa                     {:local/root "extensions/common/vis-exa"}

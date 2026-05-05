@@ -35,7 +35,9 @@
 
   (it "run! uses an in-memory environment unless persistence is explicitly requested"
     (let [events (atom [])]
-      (with-redefs [lp/get-router (fn [] :router)
+      (with-redefs [config/resolve-config (fn ([] {:providers [{:id :openai :models [{:name "gpt-5"}]}]})
+                                            ([_] {:providers [{:id :openai :models [{:name "gpt-5"}]}]}))
+                    lp/get-router (fn [] :router)
                     lp/create-environment (fn [router opts]
                                             (swap! events conj [:create-environment router opts])
                                             :env)
@@ -59,7 +61,9 @@
   (it "run! persists only when :persist? is true"
     (let [cid    (java.util.UUID/randomUUID)
           events (atom [])]
-      (with-redefs [lp/create! (fn [channel opts]
+      (with-redefs [config/resolve-config (fn ([] {:providers [{:id :openai :models [{:name "gpt-5"}]}]})
+                                            ([_] {:providers [{:id :openai :models [{:name "gpt-5"}]}]}))
+                    lp/create! (fn [channel opts]
                                  (swap! events conj [:create channel opts])
                                  {:id cid})
                     lp/send! (fn [conversation-id messages opts]

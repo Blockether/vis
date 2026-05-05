@@ -53,17 +53,19 @@
       (expect (str/includes? (get-in manifest ['exa :docs "README.md" :content]) "\"url\""))))
 
   (it "exposes Exa symbols, renderers, and a compact prompt"
-    (expect (= '[web-search code-context web-search-exa get-code-context-exa]
+    (expect (= '[web-search code-context]
               (mapv :ext.symbol/sym exa/exa-symbols)))
     (expect (every? :ext.symbol/render-fn exa/exa-symbols))
     (expect (str/includes? exa/exa-prompt "EXA_API_KEY"))
+    (expect (str/includes? exa/exa-prompt ":max-bytes"))
+    (expect (not (str/includes? exa/exa-prompt (str ":" (apply str [\p \i]) "-max"))))
     (expect (str/includes? exa/exa-prompt "get-in r [:result :content]")))
 
   (it "exports a valid Vis extension"
     (expect (= 'com.blockether.vis.ext.exa.core (:ext/namespace exa/vis-extension)))
     (expect (= {:ns 'vis.ext.exa :alias 'exa} (:ext/ns-alias exa/vis-extension)))
     (expect (= "EXA_API_KEY" (-> exa/vis-extension :ext/env first :name)))
-    (expect (= 4 (count (:ext/symbols exa/vis-extension))))))
+    (expect (= 2 (count (:ext/symbols exa/vis-extension))))))
 
 (defdescribe exa-config-test
   (it "resolves env through Vis config-backed extension overrides"
@@ -108,8 +110,8 @@
                        #'exa/env (constantly nil)
                        #'exa/*http-send-fn* (fake-mcp-send seen)}
         #(let [out (exa/web-search "latest Clojure" {:num-results 2
-                                                     :pi-max-bytes 1000
-                                                     :pi-max-lines 20})
+                                                     :max-bytes 1000
+                                                     :max-lines 20})
                requests @seen
                payloads (mapv (fn [request]
                                 (json/read-json (:body request) :key-fn keyword))
@@ -143,4 +145,13 @@
     (let [trunc (exa/truncate-text "a\nb\nc" {:max-lines 2 :max-bytes 100})]
       (expect (= "a\nb" (:content trunc)))
       (expect (true? (:truncated? trunc)))
-      (expect (= :lines (:truncated-by trunc))))))
+      (expect (= :lines (:truncated-by trunc)))))
+
+  (it "uses Vis-native output-bound option names"
+    (let [seen (atom [])]
+      (with-redefs-fn {#'exa/config-from-file (constantly nil)
+                       #'exa/env (constantly nil)
+                       #'exa/*http-send-fn* (fake-mcp-send seen)}
+        #(let [out (exa/web-search "latest Clojure" {:max-lines 1})]
+           (expect (= "Result 1" (get-in out [:result :content])))
+           (expect (= :lines (get-in out [:result :truncation :truncated-by]))))))))

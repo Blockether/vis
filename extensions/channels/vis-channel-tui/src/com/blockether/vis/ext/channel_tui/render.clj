@@ -536,7 +536,7 @@
 (defn- input-more-hint
   "Left-edge label for the input top border when the editor has more
    visual rows than the visible input body can show. The count is the
-   number of hidden visual rows, matching pi's compact `N more` cue."
+   number of hidden visual rows, rendered as a compact `N more` cue."
   [total-visual-rows text-rows]
   (let [hidden (max 0 (- (long total-visual-rows) (long text-rows)))]
     (when (pos? hidden)
@@ -2716,8 +2716,7 @@
    the spinner row text so the user can tell whether Vis is calling
    the provider, thinking, executing, retrying, or cancelling.
 
-   Anthropomorphic `Vis is …` phrasing matches what other agent CLIs
-   (pi, Claude Code, Codex) converged on; reads as a status sentence
+   Anthropomorphic `Vis is …` phrasing reads as a status sentence
    instead of a system log line. No elapsed-time-driven escalation —
    wall-clock is already shown right next to this string in the
    spinner row, the user can read the seconds themselves."

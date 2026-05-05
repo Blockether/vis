@@ -1,5 +1,11 @@
 (ns com.blockether.vis.internal.config-test
-  (:require [com.blockether.vis.internal.config :as config]
+  (:require [com.blockether.vis.ext.provider-github-copilot]
+            [com.blockether.vis.ext.provider-lmstudio]
+            [com.blockether.vis.ext.provider-ollama]
+            [com.blockether.vis.ext.provider-openai]
+            [com.blockether.vis.ext.provider-openai-codex]
+            [com.blockether.vis.ext.provider-zai]
+            [com.blockether.vis.internal.config :as config]
             [com.blockether.vis.internal.registry :as registry]
             [lazytest.core :refer [defdescribe expect it]])
   (:import
@@ -15,7 +21,16 @@
       (expect (= ["gpt-5.5" "gpt-5.4" "gpt-5.3-codex"] (:default-models preset)))
       (expect (config/provider-model-visible? :openai-codex "gpt-5.3-codex"))
       (expect (not (config/provider-model-visible? :openai-codex "gpt-5.2-codex")))
-      (expect (not (config/provider-model-visible? :github-copilot "gpt-4o")))))
+      (expect (not (config/provider-model-visible? :github-copilot-business "gpt-4o")))
+      (expect (nil? (config/provider-template :github-copilot)))
+      (expect (nil? (config/provider-template :blockether)))
+      (expect (nil? (config/provider-template :openrouter)))
+      (expect (nil? (config/provider-template :github-models)))))
+
+  (it "reads standard provider presets from provider extensions"
+    (let [openai (config/provider-template :openai)]
+      (expect (= "OpenAI" (:label openai)))
+      (expect (= "gpt-5" (first (:default-models openai))))))
 
   (it "keeps local provider base URLs while letting Ollama discover models dynamically"
     (let [ollama   (config/provider-template :ollama)
@@ -88,30 +103,51 @@
 
   (it "prefers OAuth token API URL over catalog Copilot base URL"
     (with-redefs [registry/provider-by-id (fn [pid]
-                                            (when (= pid :github-copilot)
-                                              {:provider/get-token-fn (fn []
+                                            (when (= pid :github-copilot-business)
+                                              {:provider/preset {:base-url "https://api.business.githubcopilot.com"}
+                                               :provider/get-token-fn (fn []
                                                                         {:token "tok"
-                                                                         :api-url "https://proxy.individual.githubcopilot.com"})}))]
-      (let [provider (config/->svar-provider {:id :github-copilot
-                                              :base-url "https://api.individual.githubcopilot.com"
+                                                                         :api-url "https://api.business.githubcopilot.com"})}))]
+      (let [provider (config/->svar-provider {:id :github-copilot-business
+                                              :base-url "https://api.business.githubcopilot.com"
                                               :models [{:name "claude-opus-4-6"}]})]
         (expect (= "tok" (:api-key provider)))
-        (expect (= "https://proxy.individual.githubcopilot.com" (:base-url provider))))))
+        (expect (= "https://api.business.githubcopilot.com" (:base-url provider))))))
 
   (it "preserves custom provider URLs over OAuth token API URLs"
     (with-redefs [registry/provider-by-id (fn [pid]
-                                            (when (= pid :github-copilot)
-                                              {:provider/get-token-fn (fn []
+                                            (when (= pid :github-copilot-business)
+                                              {:provider/preset {:base-url "https://api.business.githubcopilot.com"}
+                                               :provider/get-token-fn (fn []
                                                                         {:token "tok"
-                                                                         :api-url "https://proxy.individual.githubcopilot.com"})}))]
-      (let [provider (config/->svar-provider {:id :github-copilot
+                                                                         :api-url "https://api.business.githubcopilot.com"})}))]
+      (let [provider (config/->svar-provider {:id :github-copilot-business
                                               :base-url "http://localhost:4141/v1"
                                               :models [{:name "claude-opus-4-6"}]})]
         (expect (= "tok" (:api-key provider)))
-        (expect (= "http://localhost:4141/v1" (:base-url provider)))))))
+        (expect (= "http://localhost:4141/v1" (:base-url provider))))))
 
-(defdescribe internal-local-provider-registration-test
-  (it "registers internal Ollama and LM Studio status providers"
+  (it "marks Z.ai GLM thinking models as Z.ai reasoning-capable"
+    (let [provider (config/->svar-provider {:id :zai
+                                            :api-key "configured-token"
+                                            :models [{:name "glm-4.7"}
+                                                     {:name "minimax-m2.7:cloud"}]})
+          [glm minimax] (:models provider)]
+      (expect (= true (:reasoning? glm)))
+      (expect (= :zai-thinking (:reasoning-style glm)))
+      (expect (nil? (:reasoning? minimax)))
+      (expect (nil? (:reasoning-style minimax)))))
+
+  (it "marks Z.ai Coding Plan GLM-5 models as Z.ai reasoning-capable"
+    (let [provider (config/->svar-provider {:id :zai-coding
+                                            :api-key "configured-token"
+                                            :models [{:name "glm-5-turbo"}]})
+          [glm] (:models provider)]
+      (expect (= true (:reasoning? glm)))
+      (expect (= :zai-thinking (:reasoning-style glm))))))
+
+(defdescribe local-provider-extension-registration-test
+  (it "registers Ollama and LM Studio through provider extensions"
     (let [ollama   (registry/provider-by-id :ollama)
           lmstudio (registry/provider-by-id :lmstudio)]
       (expect (= :ollama (:provider/id ollama)))
@@ -119,18 +155,12 @@
       (expect (ifn? (:provider/status-fn ollama)))
       (expect (ifn? (:provider/status-fn lmstudio)))))
 
-  (it "status fns return schema-adherent local status maps"
-    (with-redefs [config/local-provider-status (fn [provider-id]
-                                                 {:authenticated? true
-                                                  :provider-id    provider-id
-                                                  :source         :local
-                                                  :base-url       "http://localhost"
-                                                  :status-code    200})]
-      (let [status ((:provider/status-fn (registry/provider-by-id :ollama)))]
-        (expect (= true (:authenticated? status)))
-        (expect (= :ollama (:provider-id status)))
-        (expect (= :local (:source status)))
-        (expect (= 200 (:status-code status)))))))
+  (it "status fns return local status maps"
+    (let [status ((:provider/status-fn (registry/provider-by-id :ollama)))]
+      (expect (= false (:authenticated? status)))
+      (expect (= :ollama (:provider-id status)))
+      (expect (= :local (:source status)))
+      (expect (= "http://localhost:11434/v1" (:base-url status))))))
 
 (defdescribe model-name-test
   (it "extracts model names from strings and maps"

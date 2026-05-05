@@ -14,13 +14,6 @@ Package: `com.blockether/vis-exa`. Source: `extensions/common/vis-exa/`.
 (get-in c [:result :content])
 ```
 
-PI-compatible spellings are also registered:
-
-```clojure
-(exa/web-search-exa "latest React features")
-(exa/get-code-context-exa "Rust error handling examples")
-```
-
 Tool results are Vis envelopes. Payload lives under `:result`; do not read `(:content r)`.
 
 ## Endpoint and token behavior
@@ -48,7 +41,7 @@ Environment variables are supported directly:
 | `EXA_MCP_MAX_LINES` | max retained output lines | `2000` |
 | `EXA_MCP_CONFIG` | explicit JSON config path | unset |
 
-JSON config is also supported, matching PI's `@benvargas/pi-exa-mcp` shape:
+JSON config is also supported through an explicit `EXA_MCP_CONFIG` path:
 
 ```json
 {
@@ -62,14 +55,8 @@ JSON config is also supported, matching PI's `@benvargas/pi-exa-mcp` shape:
 }
 ```
 
-Config file lookup order:
-
-1. `EXA_MCP_CONFIG`
-2. project `.pi/extensions/exa-mcp.json`
-3. global `~/.pi/agent/extensions/exa-mcp.json`
-
 Config string values can reference environment variables as `$NAME`, `${NAME}`, or `env:NAME`.
 
 ## Output bounds
 
-The MCP content is rendered into `[:result :content]`, then bounded by `maxBytes` and `maxLines`. If truncated, the full output is written to a temp file and `[:result :temp-file]` points at it.
+The MCP content is rendered into `[:result :content]`, then bounded by `:max-bytes` and `:max-lines` call options, capped by configured `maxBytes` and `maxLines`. If truncated, the full output is written to a temp file and `[:result :temp-file]` points at it.

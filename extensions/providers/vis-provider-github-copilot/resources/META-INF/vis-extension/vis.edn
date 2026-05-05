@@ -1,4 +1,6 @@
-;; GitHub Copilot OAuth device-flow provider. Loading the ns calls
-;; (provider/register-global! ...). Non-LLM-facing.
-{github-copilot
+;; GitHub Copilot OAuth device-flow providers. Loading the shared ns registers
+;; one extension/provider entry per account type.
+{github-copilot-individual
+ {:nses [com.blockether.vis.ext.provider-github-copilot]}
+ github-copilot-business
  {:nses [com.blockether.vis.ext.provider-github-copilot]}}

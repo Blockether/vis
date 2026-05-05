@@ -554,14 +554,14 @@
     (-> st (update :crow inc) (assoc :ccol (min ccol (count (nth lines (inc crow))))))
     st))
 
-;; ── Paste placeholders (pi-style)  ───────────────────────────────────────
+;; ── Paste placeholders  ─────────────────────────────────────────────────
 ;;
 ;; A multi-line / large clipboard payload doesn't go inline into the
 ;; input box - it would scroll the typing area off the user's screen
-;; and force them to navigate around hundreds of unwanted rows. Pi /
-;; Claude Code's UX (and what we mirror here): the screen loop stashes
-;; the payload in `app-db :pastes` keyed by an auto-incrementing id,
-;; and inserts a single-line PLACEHOLDER token into the input buffer:
+;; and force them to navigate around hundreds of unwanted rows. The
+;; screen loop stashes the payload in `app-db :pastes` keyed by an
+;; auto-incrementing id, and inserts a single-line PLACEHOLDER token
+;; into the input buffer:
 ;;
 ;;     [Pasted #1: 42 lines]
 ;;
@@ -620,8 +620,7 @@
 (defn use-placeholder?
   "True when the pasted text is large enough OR multi-line enough
    that the user benefits from the placeholder UX. Single-line
-   ASCII pastes shorter than `PASTE_INLINE_MAX_CHARS` go inline,
-   matching the same instinct pi follows."
+   ASCII pastes shorter than `PASTE_INLINE_MAX_CHARS` go inline."
   [^String text]
   (boolean
     (or (.contains text "\n")

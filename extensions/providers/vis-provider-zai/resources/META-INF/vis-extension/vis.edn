@@ -1,6 +1,6 @@
-;; Z.ai static-API-key provider — covers BOTH Z.ai endpoints
-;; (`:zai-coding` for the coding plan, `:zai` for pay-as-you-go) in
-;; ONE namespace. Loading the ns calls (sdk/register-extension! ...)
-;; with two `:provider/...` entries. Non-LLM-facing.
-{zai
+;; Z.ai static-API-key providers. Loading the shared ns registers one
+;; extension/provider entry per Z.ai plan.
+{zai-coding
+ {:nses [com.blockether.vis.ext.provider-zai]}
+ zai
  {:nses [com.blockether.vis.ext.provider-zai]}}
