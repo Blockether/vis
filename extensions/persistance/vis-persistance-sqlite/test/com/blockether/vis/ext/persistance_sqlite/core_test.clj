@@ -509,8 +509,11 @@
                                                      :status :running})
           iid    (vis/db-store-iteration! s {:conversation-turn-id tid
                                              :blocks [{:code "(+ 1 2)"
-                                                       :result 3}]})
+                                                       :result 3}
+                                                      {:code "(+ 2 3)"
+                                                       :result 5}]})
           ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          ref-2  (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/2")
           intent (vis/db-store-intent! s {:conversation-turn-id tid
                                           :title "Ship it"
                                           :rationale "User asked for it."})
@@ -538,13 +541,13 @@
                                               :slots {slot {:ref ref}}})
           fulfilled-again (vis/db-fulfill-intent! s (:id intent)
                             {:summary "Done again."
-                             :refs [ref]})
+                             :refs [ref ref-2]})
           state  (vis/db-intents s {:conversation-turn-id tid})]
       (expect (= 1 (raw-count s :conversation_intent)))
       (expect (= 1 (raw-count s :conversation_intent_plan)))
       (expect (= 1 (raw-count s :conversation_intent_gate)))
       (expect (= 1 (raw-count s :conversation_intent_gate_ref)))
-      (expect (= 1 (raw-count s :conversation_intent_ref)))
+      (expect (= 2 (raw-count s :conversation_intent_ref)))
       (expect (= :verify (get-in plan-dsl [:steps 0 :id])))
       (expect (= :proven (:status proven)))
       (expect (= :proven (:status proven-again)))
@@ -552,10 +555,12 @@
       (expect (= ref (get-in proven [:proof :slots slot :ref])))
       (expect (= :fulfilled (:status fulfilled)))
       (expect (= :fulfilled (:status fulfilled-again)))
+      (expect (= "Done." (:fulfillment-summary fulfilled-again)))
       (expect (= ref (-> fulfilled :refs first :ref)))
       (expect (= :fulfillment-evidence (-> fulfilled :refs first :role)))
       (expect (= true (:ok? state)))
       (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
+      (expect (= ref-2 (-> fulfilled-again :refs last :ref)))
       (expect (= :vis/sci (get-in (vis/db-list-iteration-blocks s iid) [0 :rendering-kind])))))
 
   (it "derives abandonment refs from required impeded gates when refs are omitted"

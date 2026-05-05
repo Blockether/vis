@@ -1130,6 +1130,7 @@
 
 (def ^:private chrome-display-text @#'render/chrome-display-text)
 (def ^:private resources-badge-label @#'render/resources-badge-label)
+(def ^:private extract-link-refs @#'render/extract-link-refs)
 
 (defn- chrome-of [src]
   (let [[ref] (links/parse-md-refs src)]
@@ -1170,6 +1171,11 @@
       (let [s (chrome-of "[plain](https://example.com)")]
         (expect (str/includes? s " → "))
         (expect (str/includes? s "https://example.com"))))))
+
+(defdescribe extract-link-refs-guard-test
+  (it "skips link extraction for giant messages"
+    (let [text (apply str (repeat 25050 "a"))]
+      (expect (= [] (extract-link-refs {:text text} 80))))))
 
 (defdescribe resources-badge-test
   (describe "top-right resources badge"

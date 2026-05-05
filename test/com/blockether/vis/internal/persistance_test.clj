@@ -5,10 +5,15 @@
    fatal stack traces in channel entry points. The fix belongs in the
    persistence facade so every channel gets the same user-facing error."
   (:require
+   [babashka.fs :as fs]
    [clojure.string :as str]
+   [com.blockether.vis.ext.persistance-sqlite.core]
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
-   [lazytest.core :refer [defdescribe expect it]]))
+   [lazytest.core :refer [defdescribe expect it]])
+  (:import
+   (java.nio.file Files)
+   (java.nio.file.attribute FileAttribute)))
 
 (def ^:private migration-checksum-mismatch?
   (deref #'persistance/migration-checksum-mismatch?))
@@ -18,6 +23,9 @@
 
 (def ^:private migration-checksum-mismatch-user-message
   (deref #'persistance/migration-checksum-mismatch-user-message))
+
+(def ^:private shared-conn-stale?
+  (deref #'persistance/shared-conn-stale?))
 
 (defdescribe migration-checksum-detection-test
   (it "matches Flyway checksum text at top level"
@@ -79,3 +87,21 @@
   (it "helper leaves unrelated errors untouched"
     (let [e (ex-info "x" {})]
       (expect (identical? e (maybe-wrap-db-open-error e))))))
+
+(defdescribe shared-connection-refresh-test
+  (it "treats a replaced persistent sqlite file as stale"
+    (let [dir (str (Files/createTempDirectory "vis-persist-test" (make-array FileAttribute 0)))
+          _   (try (persistance/db-dispose-shared-connection!) (catch Throwable _ nil))
+          first-store (with-redefs [manifest/scan-extensions! (fn [] nil)]
+                        (persistance/db-shared-connection! {:backend :sqlite :path dir}))]
+      (try
+        (let [db-file (:db-file first-store)
+              old-key (:file-key-snapshot first-store)]
+          (persistance/db-dispose-shared-connection!)
+          (fs/delete db-file)
+          (spit db-file "")
+          (expect (true? (shared-conn-stale? (assoc first-store :file-key-snapshot old-key)
+                           {:backend :sqlite :path dir}))))
+        (finally
+          (try (persistance/db-dispose-shared-connection!) (catch Throwable _ nil))
+          (fs/delete-tree dir))))))
