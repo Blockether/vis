@@ -250,12 +250,14 @@
            (github-copilot-claude-model? n))
          (assoc :api-style :openai-compatible-chat
            :reasoning? true
-           :reasoning-style :openai-effort)
+           :reasoning-style :openai-effort
+           :reasoning-effort? true)
 
          (and (zai-provider-id? provider-id)
            (zai-thinking-model? n))
          (assoc :reasoning? true
-           :reasoning-style :zai-thinking))))))
+           :reasoning-style :zai-thinking
+           :reasoning-effort? false))))))
 
 (defn ->svar-provider
   "Coerce a provider map to svar-native shape (`:id`, `:api-key`,

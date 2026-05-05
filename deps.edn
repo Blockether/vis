@@ -143,10 +143,6 @@
                         "--dir" "extensions/common/vis-exa/test"
                         "--dir" "extensions/languages/clojure/test"]}
 
-  :bench {:extra-deps {com.blockether/vis-benchmark {:local/root "benchmarks"}}
-          :jvm-opts    ["-Xmx8g"]
-          :main-opts   ["-m" "com.blockether.vis.bench.runner"]}
-
   ;; Development entry path. Starts an nREPL on `$NREPL_PORT` (default
   ;; 7888), writes `.nrepl-port` for `clj-nrepl-eval --discover-ports`,
   ;; and exposes helpers for launching entry points. `tui` opens
@@ -165,33 +161,8 @@
                      "--enable-native-access=ALL-UNNAMED"
                      "--sun-misc-unsafe-memory-access=allow"]
         :main-opts   ["-m" "com.blockether.vis.dev"]}
-
-  ;; Microbenchmarks live next to the code they exercise, in
-  ;; `*_bench_test.clj` files under each extension's `test/` tree.
-  ;; They are NOT lazytest cases (so the default suite stays fast)
-  ;; — they expose a plain `run-bench!` fn that calls
-  ;; `criterium.core/quick-benchmark`. This alias rebuilds the same
-  ;; classpath as `:test` but swaps the lazytest entry point for a
-  ;; literal `-e` form so the user can pick which bench to run:
-  ;;
-  ;;   clojure -M:bench-micro -e \
-  ;;     \"(require '[com.blockether.vis.ext.channel-tui.render-bench-test :as b]) (b/run-bench!)\"
   :bench-micro
-  {:extra-paths ["test"
-                 "extensions/persistance/vis-persistance-sqlite/test"
-                 "extensions/providers/vis-provider-openai-codex/test"
-                 "extensions/providers/vis-provider-zai/test"
-                 "extensions/providers/vis-provider-standard/test"
-                 "extensions/channels/vis-channel-tui/test"
-                 "extensions/common/vis-foundation/test"
-                 "extensions/common/vis-exa/test"]
-   :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
-                 com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
-                 com.blockether/vis-provider-openai-codex   {:local/root "extensions/providers/vis-provider-openai-codex"}
-                 com.blockether/vis-provider-standard       {:local/root "extensions/providers/vis-provider-standard"}
-                 com.blockether/vis-channel-tui             {:local/root "extensions/channels/vis-channel-tui"}
-                 com.blockether/vis-foundation              {:local/root "extensions/common/vis-foundation"}
-                 com.blockether/vis-exa                     {:local/root "extensions/common/vis-exa"}
+  {:extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                  criterium/criterium                        {:mvn/version "0.4.6"}}}
 
   :build {:deps  {io.github.clojure/tools.build {:mvn/version "0.10.13"}

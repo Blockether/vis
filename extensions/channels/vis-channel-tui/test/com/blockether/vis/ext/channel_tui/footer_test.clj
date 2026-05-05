@@ -18,6 +18,21 @@
                       (filter #(= :left (:region %)))
                       (mapv :text))))))))
 
+  (it "hides reasoning effort for Z.ai fixed-thinking models"
+    (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "glm-4.7"
+                                                          :provider :zai
+                                                          :reasoning? true
+                                                          :reasoning-style :zai-thinking
+                                                          :reasoning-effort? false})}
+        (fn []
+          (expect (= ["zai/glm-4.7" "(Ctrl+T)"]
+                    (->> (build-segments {:messages []
+                                          :settings {:reasoning-level :deep}}
+                           0)
+                      (filter #(= :left (:region %)))
+                      (mapv :text))))))))
+
   (it "shows Codex verbosity in the footer for the Codex provider"
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5.5"
@@ -60,6 +75,40 @@
             (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
             (expect (re-find #"Codex 7d 85% left ↺3d18h @" text)))))))
 
+  (it "shows Z.ai Coding Plan quota windows as percentages on the second footer line"
+    (let [build-limits-segments @#'footer/build-limits-segments
+          now-ms                1000000000000
+          report                {:provider-id :zai-coding
+                                 :dynamic {:limits [{:id :zai-coding-5h
+                                                     :label "Z.ai Coding 5h token quota"
+                                                     :kind :tokens
+                                                     :used 25.0
+                                                     :limit 100.0
+                                                     :remaining 75.0
+                                                     :unlimited? false
+                                                     :window {:resets-at-ms (+ now-ms (* 90 60 1000))}}
+                                                    {:id :zai-coding-7d
+                                                     :label "Z.ai Coding 7d token quota"
+                                                     :kind :tokens
+                                                     :used 50.0
+                                                     :limit 100.0
+                                                     :remaining 50.0
+                                                     :unlimited? false
+                                                     :window {:resets-at-ms (+ now-ms (* 3 24 60 60 1000))}}]}}]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "glm-5.1"
+                                                          :provider :zai-coding})}
+        (fn []
+          (let [text (->> (build-limits-segments {:messages []
+                                                  :settings {}
+                                                  :provider-limits {:provider-id :zai-coding
+                                                                    :report report}}
+                            now-ms)
+                       (filter #(= :left (:region %)))
+                       first
+                       :text)]
+            (expect (re-find #"Z\.ai Coding 5h token 75% left ↺1h30m" text))
+            (expect (re-find #"Z\.ai Coding 7d token 50% left ↺3d0h" text)))))))
+
   (it "shows GitHub Copilot premium interaction utilization on the second footer line"
     (let [build-limits-segments @#'footer/build-limits-segments
           now-ms                1000000000000
@@ -96,7 +145,7 @@
                        :text)]
             (expect (re-find #"Premium interactions 60/300 used \(240 left\) ↺2d0h" text)))))))
 
-  (it "shows git repository state on the first footer line right side"
+  (it "shows git repository state with one changed-file count on the first footer line right side"
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai})
@@ -110,7 +159,7 @@
                                                              :ahead 4
                                                              :behind 0})}
         (fn []
-          (expect (= [" ~/vis (main)" "3 C, 2 M, 1 D" "commits: ⇡4"]
+          (expect (= [" ~/vis (main)" "6 modified" "commits: ⇡4"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))

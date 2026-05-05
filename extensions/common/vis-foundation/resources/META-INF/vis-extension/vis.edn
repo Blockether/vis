@@ -47,14 +47,15 @@ Provenance is machine data. Markdown and labels are derived by renderers, not st
 ## File I/O and tools
 
 ```clojure
-(v/cat path {:offset 1 :limit 120 :char-limit 12000}) ; opts are checked; :max-lines aliases :limit
-(v/silent! aggregate-map) ; returns only shape, elides noisy aggregate output
+(v/cat path) ; whole file -> [:result :lines]
+(v/preview file {:result [[:lines {:from 40 :to 120}]]}) ; EQL projection into journal/TUI
+(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})
+(v/preview value) ; shape/default preview
 (v/ls path)
 (v/rg [\"literal\"] path)
 (v/bash command)
-(v/read-all-lines path)
-(v/write-lines path lines)
-(v/update-file path f & xs)
+(v/cat path)
+(v/patch [{:path path :search "old" :replace "new"}])
 (v/glob root pattern)
 ```
 

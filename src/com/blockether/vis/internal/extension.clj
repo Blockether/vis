@@ -29,6 +29,7 @@
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.theme :as theme]
    [taoensso.telemere :as tel])
   (:import
    (java.io ByteArrayOutputStream InputStream)
@@ -110,6 +111,17 @@
       (if ok?
         (nil? error)
         (some? error)))))
+
+(def ^:dynamic *preview-sink*
+  "Optional per-eval atom used by v/preview to surface every preview call
+   from a block, even when the final form result is not the preview value."
+  nil)
+
+(defn record-preview!
+  [preview-result]
+  (when *preview-sink*
+    (swap! *preview-sink* conj preview-result))
+  preview-result)
 
 (defn tool-result?
   [x]
@@ -485,6 +497,27 @@
     :opt-un [:ext.env/label :ext.env/description :ext.env/secret? :ext.env/required?]))
 (s/def :ext/env (s/coll-of ::env-entry :kind vector?))
 
+;; Optional extension-owned TUI setting declarations. The TUI stores the
+;; values, but the extension owns the row metadata so extension-specific
+;; knobs appear under Extensions → <extension> instead of hardcoded host
+;; buckets.
+(s/def :ext.setting/key (s/or :keyword keyword? :string non-blank-string?))
+(s/def :ext.setting/type #{:toggle :choice :action})
+(s/def :ext.setting/label non-blank-string?)
+(s/def :ext.setting/description string?)
+(s/def :ext.setting/choices (s/coll-of keyword? :kind vector? :min-count 1))
+(s/def ::setting-entry
+  (s/keys :req-un [:ext.setting/key :ext.setting/type :ext.setting/label]
+    :opt-un [:ext.setting/description :ext.setting/choices]))
+(s/def :ext/settings (s/coll-of ::setting-entry :kind vector?))
+
+;; Optional extension-owned theme declarations. Plain EDN shape:
+;;   {:ext/theme {"THEME_NAME" {"PADDING" "0px"}}}
+;; The public `com.blockether.vis.theme` namespace owns the reusable theme
+;; token spec and built-in palettes; extensions can add channel-agnostic
+;; string-key settings here for channels to adapt.
+(s/def :ext/theme theme/extension-theme-map?)
+
 ;; Optional dependency declaration. Vector of extension namespace symbols.
 (s/def :ext/requires (s/coll-of symbol? :kind vector?))
 
@@ -629,7 +662,7 @@
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
             :ext/ns-alias :ext/prompt :ext/environment-info-fn :ext/nudge-fn
-            :ext/on-parse-error-fn :ext/env :ext/requires
+            :ext/on-parse-error-fn :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
             :ext/doctor-check-fn
@@ -918,6 +951,13 @@
                      :hash-sha256 (:source-hash-sha256 ext-prov)}}))
     result))
 
+(defn- maybe-record-preview-result!
+  [result]
+  (if (and (tool-result? result)
+        (= :v/preview (get-in result [:provenance :op])))
+    (record-preview! result)
+    result))
+
 (defn invoke-symbol-wrapper
   "Full invocation pipeline for a function symbol entry:
    before-fn → fn → after-fn, with on-error-fn catching :fn errors.
@@ -941,7 +981,8 @@
       (let [ms (elapsed-ms t0)
             result (->> (:result before-out)
                      (enrich-tool-result-provenance ext sym-entry)
-                     (validate-symbol-result! sym spec-ref))]
+                     (validate-symbol-result! sym spec-ref)
+                     (maybe-record-preview-result!))]
         (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
         result)
       (let [{env  :env
@@ -968,7 +1009,8 @@
             {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
             result (->> result
                      (enrich-tool-result-provenance ext sym-entry)
-                     (validate-symbol-result! sym spec-ref))
+                     (validate-symbol-result! sym spec-ref)
+                     (maybe-record-preview-result!))
             ms (elapsed-ms t0)]
         (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
         result))))
@@ -1128,6 +1170,8 @@
       (not (:ext/classes spec))                        (assoc :ext/classes {})
       (not (:ext/imports spec))                        (assoc :ext/imports {})
       (not (:ext/env spec))                            (assoc :ext/env [])
+      (not (:ext/settings spec))                       (assoc :ext/settings [])
+      (not (:ext/theme spec))                          (assoc :ext/theme {})
       (not (:ext/requires spec))                       (assoc :ext/requires [])
       (not (:ext/cli spec))                            (assoc :ext/cli [])
       (not (:ext/channels spec))                       (assoc :ext/channels [])

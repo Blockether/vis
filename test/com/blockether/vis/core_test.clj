@@ -88,7 +88,8 @@
       (expect (fn? (:ext/activation-fn e)))
       (expect (true? ((:ext/activation-fn e) {})))
       (expect (= {} (:ext/classes e)))
-      (expect (= {} (:ext/imports e))))))
+      (expect (= {} (:ext/imports e)))
+      (expect (= [] (:ext/settings e))))))
 
 (defdescribe invoke-symbol-wrapper-result-spec-test
   (it "rejects a function result that violates :result-spec"
@@ -130,10 +131,44 @@
       (expect (= "Acme" (get-in out [:provenance :extension :author])))
       (expect (= [] (get-in out [:provenance :source :paths]))))))
 
+(defdescribe extension-settings-declaration-test
+  (it "extension/extension accepts extension-owned setting declarations"
+    (let [e (vis/extension
+              {:ext/namespace 'com.acme.ext.settings
+               :ext/doc       "Settings owner"
+               :ext/kind      "tools"
+               :ext/settings  [{:key :acme-mode
+                                :type :choice
+                                :choices [:quiet :loud]
+                                :label "Acme mode"
+                                :description "Extension-owned UI knob."}]})]
+      (expect (= [{:key :acme-mode
+                   :type :choice
+                   :choices [:quiet :loud]
+                   :label "Acme mode"
+                   :description "Extension-owned UI knob."}]
+                (:ext/settings e)))))
+
+  (it "extension/extension accepts extension-owned theme declarations"
+    (let [e (vis/extension
+              {:ext/namespace 'com.acme.ext.theme
+               :ext/doc       "Theme owner"
+               :ext/kind      "tools"
+               :ext/theme     {"THEME_NAME" {"PADDING" "0px"}}})]
+      (expect (= {"THEME_NAME" {"PADDING" "0px"}}
+                (:ext/theme e))))))
+
 (defdescribe provider-limits-api-test
   (it "re-exports provider limits helpers from the public vis.core surface"
     (expect (ifn? vis/provider-limits))
     (expect (ifn? vis/all-provider-limits)))
+
+  (it "re-exports theme helpers from the public vis.core surface"
+    (expect (= "vis-light" vis/default-theme-id))
+    (expect (= [255 255 255] (vis/color :terminal-bg)))
+    (expect (= {"PADDING" "0px"}
+              (get (vis/extension-theme-settings {"THEME_NAME" {:settings {"PADDING" "0px"}}})
+                "THEME_NAME"))))
 
   (it "re-exports extension provenance and rendering helpers from the public vis.core surface"
     (expect (ifn? vis/extension-provenance))

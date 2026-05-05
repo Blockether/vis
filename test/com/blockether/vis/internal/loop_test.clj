@@ -422,7 +422,7 @@
                     (get-in @seen [:opts :extra-body])))
           (expect (not (contains? (get-in @seen [:opts :extra-body]) :copilot-initiator)))))))
 
-  (it "asks svar to enable Z.ai preserved thinking for Z.ai thinking models"
+  (it "asks svar to enable Z.ai preserved thinking without configurable reasoning effort"
     (let [seen (atom nil)
           environment {:router ::router
                        :answer-atom (atom nil)
@@ -441,8 +441,10 @@
              :reasoning-level :balanced
              :resolved-model {:provider :zai
                               :name "glm-4.7"
-                              :reasoning-style :zai-thinking}})
-          (expect (= :balanced (:reasoning @seen)))
+                              :reasoning? true
+                              :reasoning-style :zai-thinking
+                              :reasoning-effort? false}})
+          (expect (nil? (:reasoning @seen)))
           (expect (= true (:preserved-thinking? @seen))))))))
 
 (defdescribe run-iteration-silent-chunk-test

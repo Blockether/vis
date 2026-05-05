@@ -4,8 +4,7 @@
    Smoke-checks the loaded extension surface (symbol vector, doc
    strings, prompt fragment) plus behavioral coverage of the
    structured preview/search helpers (`v/cat`, `v/rg`) and the new
-   thin babashka.fs wrappers (`v/read-all-lines`, `v/write-lines`,
-   `v/patch`, `v/update-file`, `v/glob`, ...).
+   thin babashka.fs wrappers (`v/patch`, `v/glob`, ...).
 
    Tests reach private fns directly through the registry to avoid
    bringing up a full SCI sandbox. Temp files land under
@@ -49,18 +48,20 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 16 (count editing/editing-symbols)))
+    (expect (= 13 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
-    (expect (some #{'read-all-lines}
+    (expect (not-any? #{'read-all-lines}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'patch}
               (map :ext.symbol/sym editing/editing-symbols)))
-    (expect (some #{'update-file}
+    (expect (not-any? #{'write-lines 'update-file}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'bash}
               (map :ext.symbol/sym editing/editing-symbols)))
-    (expect (some #{'silent!}
+    (expect (some #{'preview}
+              (map :ext.symbol/sym editing/editing-symbols)))
+    (expect (not-any? #{'silent!}
               (map :ext.symbol/sym editing/editing-symbols))))
 
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
@@ -90,7 +91,7 @@
                 (:ext.symbol/examples bash-symbol)))))
 
   (it "registers custom structured renderers for rich tool outputs"
-    (doseq [sym-name '[cat silent! ls rg read-all-lines patch write-lines update-file create-dirs glob copy move delete delete-if-exists exists? bash]]
+    (doseq [sym-name '[cat preview ls rg patch create-dirs glob copy move delete delete-if-exists exists? bash]]
       (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
                     editing/editing-symbols)]
         (expect (ifn? (:ext.symbol/render-fn entry))))))
@@ -106,172 +107,105 @@
                 (:ext.symbol/examples bash-symbol))))))
 
 (defdescribe editing-prompt-read-policy-test
-  (it "teaches full-read vars, preview-only journal, and no duplicate rereads by default"
+  (it "teaches full-read vars, canonical patching, and no duplicate rereads by default"
     (let [patch-symbol (some #(when (= 'patch (:ext.symbol/sym %)) %)
-                         editing/editing-symbols)
-          write-lines-symbol (some #(when (= 'write-lines (:ext.symbol/sym %)) %)
-                               editing/editing-symbols)
-          update-file-symbol (some #(when (= 'update-file (:ext.symbol/sym %)) %)
-                               editing/editing-symbols)]
+                         editing/editing-symbols)]
       (expect (string/includes? editing/editing-prompt
-                "bind once: (def lines (:result (v/read-all-lines path)))"))
+                "`v/cat` with no opts reads the whole file"))
       (expect (string/includes? editing/editing-prompt
-                "Journal shows preview only; reuse the var instead of rereading"))
+                "[:result :lines]"))
       (expect (string/includes? editing/editing-prompt
                 "Edit text with canonical (v/patch"))
       (expect (string/includes? editing/editing-prompt
                 "every :search must match exactly once"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "Canonical exact text patch"))
+      (expect (string/includes? (:ext.symbol/doc patch-symbol)
+                "all edits validate before any write"))
       (expect (string/includes? editing/editing-prompt
                 "Read back after writes only when exact persisted bytes matter"))
-      (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
-                "one pre-write read plus intended new text"))
-      (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
-                ":start-line"))
-      (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
-                ":insert-at"))
-      (expect (string/includes? (:ext.symbol/doc update-file-symbol)
-                "reads once"))
-      (expect (string/includes? editing/editing-prompt
-                "{:start-line a :end-line b}"))
-      (expect (string/includes? editing/editing-prompt
-                "{:insert-at n}"))
-      (expect (some #(string/includes? % "(:result (v/read-all-lines path))")
-                (:ext.symbol/examples write-lines-symbol)))
-      (expect (some #(string/includes? % "{:insert-at 3}")
-                (:ext.symbol/examples write-lines-symbol)))
-      (expect (some #(string/includes? % "{:start-line 4 :end-line 6}")
-                (:ext.symbol/examples write-lines-symbol)))
-      (expect (some #(string/includes? % "(:result (v/read-all-lines path))")
-                (:ext.symbol/examples update-file-symbol))))))
+      (expect (not (string/includes? editing/editing-prompt "read-all-lines")))
+      (expect (not (string/includes? editing/editing-prompt "write-lines")))
+      (expect (not (string/includes? editing/editing-prompt "update-file"))))))
 
 (defdescribe vis-cat-structured-shape-test
-  (it "returns structured pagination metadata plus raw :lines"
-    (let [path (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
+  (it "reads the whole file as raw lines plus shape metadata"
+    (let [path (write-temp! "small.txt" "alpha
+beta
+gamma
+")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      (expect (= #{:path :offset :total-lines :truncated-by :next-offset
-                   :effective-limit :effective-char-limit :lines}
+      (expect (= #{:path :offset :total-lines :truncated-by :lines}
                 (set (keys out))))
       (expect (string? (:path out)))
       (expect (= 1 (:offset out)))
-      ;; str/split-lines drops the trailing empty after final \n.
+      ;; str/split-lines drops the trailing empty after final 
+      .
       (expect (= 3 (:total-lines out)))
       (expect (= ["alpha" "beta" "gamma"] (:lines out)))
-      (expect (= :end-of-file (:truncated-by out)))
-      (expect (nil? (:next-offset out)))
-      (expect (nil? (:effective-limit out)))
-      (expect (= 6000 (:effective-char-limit out)))))
-
-  (it ":lines carries raw strings — no leading line-number prefix"
-    (let [path (write-temp! "raw.txt" "   indented\nplain\n")
-          read-file (private-fn "read-file")
-          out  (read-file path)]
-      ;; The pre-structured contract prepended `\"%4d  \"`. The new
-          ;; contract preserves the file's exact bytes per line so
-          ;; the model can compute on raw content without parsing.
-      (expect (= ["   indented" "plain"] (:lines out)))))
-
-  (it ":offset + :limit slice the file 1-based, :truncated-by signals state"
-    (let [path (write-temp! "slice.txt"
-                 (string/join "\n" (map #(str "line" %) (range 1 11))))
-          read-file (private-fn "read-file")
-          out  (read-file path {:offset 3 :limit 4})]
-      (expect (= 3 (:offset out)))
-      (expect (= 10 (:total-lines out)))
-      (expect (= ["line3" "line4" "line5" "line6"] (:lines out)))
-      ;; Took 4 of remaining 8 lines — limit hit, more file remains.
-      (expect (= :line-limit (:truncated-by out)))
-      (expect (= 7 (:next-offset out)))
-      (expect (= 4 (:effective-limit out)))))
-
-  (it ":truncated-by :char-limit when the slice overflows :char-limit"
-    (let [;; 10 lines * (line<n>=6 chars + \n) ~= 70 chars total. A
-          ;; 20-char cap should let through ~3 lines (\"line1\\nline2\\nline3\")
-          ;; before the budget runs out.
-          path (write-temp! "chartrunc.txt"
-                 (string/join "\n" (map #(str "line" %) (range 1 11))))
-          read-file (private-fn "read-file")
-          out  (read-file path {:char-limit 20})]
-      (expect (= :char-limit (:truncated-by out)))
-      (expect (pos? (count (:lines out))))
-      (expect (every? #(string/starts-with? % "line") (:lines out)))))
-
-  (it ":offset past EOF yields empty :lines + :truncated-by :end-of-file"
-    (let [path (write-temp! "two.txt" "a\nb\n")
-          read-file (private-fn "read-file")
-          out  (read-file path {:offset 99})]
-      (expect (= [] (:lines out)))
-      (expect (= 99 (:offset out)))
-      (expect (= 2 (:total-lines out)))
       (expect (= :end-of-file (:truncated-by out)))))
 
-  (it "accepts :max-lines as a compatibility alias for :limit"
-    (let [path (write-temp! "max-lines-alias.txt" "a\nb\nc\nd\n")
+  (it ":lines carries raw strings — no leading line-number prefix"
+    (let [path (write-temp! "raw.txt" "   indented
+plain
+")
           read-file (private-fn "read-file")
-          out (read-file path {:offset 2 :max-lines 2})]
-      (expect (= ["b" "c"] (:lines out)))
-      (expect (= 2 (:effective-limit out)))
-      (expect (= 4 (:next-offset out)))
-      (expect (= :line-limit (:truncated-by out)))))
+          out  (read-file path)]
+      ;; The contract preserves the file's exact bytes per line so
+      ;; the model can compute on raw content without parsing display text.
+      (expect (= ["   indented" "plain"] (:lines out)))))
 
-  (it "rejects unknown, non-positive, and conflicting v/cat opts"
-    (let [path (write-temp! "validate.txt" "x\n")
+  (it "cat reads everything; display ranges belong to v/preview"
+    (let [long-line (apply str (repeat 7000 "x"))
+          path (write-temp! "whole-cat.txt" (str long-line "
+last
+"))
+          read-file (private-fn "read-file")
+          out (read-file path)]
+      (expect (= :end-of-file (:truncated-by out)))
+      (expect (= [long-line "last"] (:lines out)))))
+
+  (it "rejects all v/cat opts because cat is full acquisition only"
+    (let [path (write-temp! "validate.txt" "x
+")
           read-file (private-fn "read-file")]
-      (doseq [bad-opts [{:offset 0}
-                        {:offset -1}
-                        {:limit 0}
-                        {:char-limit 0}
-                        {:max-lines 0}
-                        {:max-line 2}
-                        {:max-lines 2 :limit 3}]]
+      (doseq [bad-opts [{:offset 1}
+                        {:limit 10}
+                        {:char-limit 20}
+                        {:max-lines 2}
+                        2]]
         (expect (throws? clojure.lang.ExceptionInfo #(read-file path bad-opts)))))))
 
-(defdescribe vis-silent-tool-test
-  (it "returns only shape and marks the result silent"
-    (let [silent-tool (private-fn "silent-tool")
-          out (silent-tool {:huge (vec (range 100))
-                            :nested {:answer "x"}})]
+(defdescribe vis-preview-tool-test
+  (it "projects nested EQL ranges and always carries source/projection shapes"
+    (let [preview-tool (private-fn "preview-tool")
+          value {:result {:lines ["a" "b" "c" "d"]
+                          :from "literal-from"
+                          :to "literal-to"}}
+          out (preview-tool value {:result [[:lines {:from 1 :to 3}]]})]
       (expect (extension/tool-result? out))
-      (expect (= :vis/silent (:rendering-kind out)))
-      (expect (not (contains? out :markdown)))
-      (expect (= {:type :map
-                  :count 2
-                  :keys [:huge :nested]
-                  :key-stats {:sample-size 2
-                              :types [:keyword]
-                              :non-nil-types [:keyword]
-                              :homogeneous-ratio 1.0}
-                  :sample-stats {:sample-size 2
-                                 :nil-count 0
-                                 :types [:vector :map]
-                                 :non-nil-types [:vector :map]
-                                 :homogeneous-ratio 0.5}
-                  :shape {:huge {:type :vector
-                                 :count 100
-                                 :items {:type :int}
-                                 :sample-stats {:sample-size 32
-                                                :nil-count 0
-                                                :types [:int]
-                                                :non-nil-types [:int]
-                                                :homogeneous-ratio 1.0}}
-                          :nested {:type :map
-                                   :count 1
-                                   :keys [:answer]
-                                   :key-stats {:sample-size 1
-                                               :types [:keyword]
-                                               :non-nil-types [:keyword]
-                                               :homogeneous-ratio 1.0}
-                                   :sample-stats {:sample-size 1
-                                                  :nil-count 0
-                                                  :types [:string]
-                                                  :non-nil-types [:string]
-                                                  :homogeneous-ratio 1.0}
-                                   :shape {:answer {:type :string
-                                                    :chars 1
-                                                    :lines 1}}}}}
-                (:result out))))))
+      (expect (= {:result {:lines ["b" "c"]}} (:result out)))
+      (expect (= {:result {:lines ["b" "c"]}} (:result out)))
+      (expect (= {:result [[:lines {:from 1 :to 3}]]} (:preview-eql out)))
+      (expect (map? (:source-shape out)))
+      (expect (map? (:projection-shape out)))
+      (expect (= :v/preview (get-in out [:provenance :op])))))
+
+  (it "supports literal :from/:to keys, wildcard, and ranged item projection"
+    (let [preview-tool (private-fn "preview-tool")
+          value {:result {:from "literal-from"
+                          :to "literal-to"
+                          :hits [{:path "a" :line 1 :text "x" :extra true}
+                                 {:path "b" :line 2 :text "y" :extra false}]}}
+          literal (preview-tool value {:result [:from :to]})
+          wildcard (preview-tool value {:result [:*]})
+          hits (preview-tool value {:result [[:hits {:from 0 :to 1} [:path :line :text]]]})]
+      (expect (= {:result {:from "literal-from" :to "literal-to"}}
+                (:result literal)))
+      (expect (= (:result value) (get-in wildcard [:result :result])))
+      (expect (= {:result {:hits [{:path "a" :line 1 :text "x"}]}}
+                (:result hits))))))
 
 (defdescribe vis-rg-structured-shape-test
   (it "returns a 2-key map: :hits + :truncated-by"
@@ -305,55 +239,6 @@
       (expect (= :end-of-results (:truncated-by out))))))
 
 (defdescribe thin-bbfs-wrapper-test
-  (it "read-all-lines returns raw line strings"
-    (let [path           (write-temp! "bbfs/read.txt" "alpha\nbeta\n")
-          read-all-lines (private-fn "read-all-lines-safe")]
-      (expect (= ["alpha" "beta"]
-                (read-all-lines path)))))
-
-  (it "write-lines creates parent dirs and writes text"
-    (let [path        "bbfs/write/out.txt"
-          rooted-path (str (temp-root) "/" path)
-          write-lines (private-fn "write-lines-safe")]
-      (expect (= rooted-path
-                (write-lines rooted-path ["a" "b"])))
-      (expect (= "a\nb\n"
-                (slurp rooted-path)))))
-
-  (it "write-lines can replace an inclusive line range"
-    (let [path        (write-temp! "bbfs/write/range.txt" "a\nb\nc\nd\n")
-          write-lines (private-fn "write-lines-safe")]
-      (expect (= path
-                (write-lines path ["B" "C"] {:start-line 2 :end-line 3})))
-      (expect (= "a\nB\nC\nd\n"
-                (slurp path)))))
-
-  (it "write-lines can insert lines at a line boundary"
-    (let [path        (write-temp! "bbfs/write/insert.txt" "a\nb\nc\n")
-          write-lines (private-fn "write-lines-safe")]
-      (expect (= path
-                (write-lines path ["x" "y"] {:insert-at 2})))
-      (expect (= "a\nx\ny\nb\nc\n"
-                (slurp path)))))
-
-  (it "write-lines rejects invalid partial-edit opts"
-    (let [path        (write-temp! "bbfs/write/invalid.txt" "a\nb\nc\n")
-          write-lines (private-fn "write-lines-safe")]
-      (doseq [bad-opts [{:start-line 2}
-                        {:end-line 2}
-                        {:start-line 3 :end-line 2}
-                        {:insert-at 2 :start-line 1 :end-line 1}
-                        {:insert-at 99}
-                        {:start-line 9 :end-line 10}]]
-        (expect (throws? clojure.lang.ExceptionInfo #(write-lines path ["x"] bad-opts))))))
-
-  (it "update-file mutates existing text and returns the new contents"
-    (let [path        (write-temp! "bbfs/update.txt" "hello")
-          update-file (private-fn "update-file-safe")]
-      (expect (= "HELLO"
-                (update-file path string/upper-case)))
-      (expect (= "HELLO" (slurp path)))))
-
   (it "patch replaces exact text only when search is unique"
     (let [path  (write-temp! "bbfs/patch.txt" "alpha\nbeta\ngamma\n")
           patch (private-fn "patch-safe")]
@@ -412,37 +297,16 @@
       (expect (throws? clojure.lang.ExceptionInfo #(run-bash "pwd" {:cwd ".."}))))))
 
 (defdescribe editing-renderer-guidance-test
-  (it "read-all-lines renderer previews requested content without dumping full value"
-    (let [render-read-all-lines (private-fn "render-read-all-lines")
-          lines (vec (concat ["alpha" "beta"] (repeat 4000 "x")))
-          rendered (render-read-all-lines
+  (it "patch renderer avoids mandatory duplicate read-back and shows fenced diffs"
+    (let [render-patch (private-fn "render-patch")
+          rendered (render-patch
                      {:tool-result {:ok? true
-                                    :result lines
-                                    :provenance {:target {:requested "target/editing-test/read.txt"}}}})]
-      (expect (string/includes? rendered "Full lines are in the tool result; journal shows preview only"))
-      (expect (string/includes? rendered "alpha\nbeta"))
-      (expect (string/includes? rendered "…<+"))))
-
-  (it "write and update renderers avoid mandatory duplicate read-back"
-    (let [render-write-lines (private-fn "render-write-lines")
-          render-update-file (private-fn "render-update-file")
-          tool-result        {:ok? true
-                              :result "target/editing-test/out.txt"
-                              :provenance {:target {:requested "target/editing-test/out.txt"}}}]
-      (expect (string/includes? (render-write-lines {:tool-result tool-result})
-                "Read back only when exact persisted bytes matter"))
-      (expect (string/includes? (render-update-file {:tool-result tool-result})
-                "Read back only when exact persisted bytes matter"))))
-
-  (it "write renderer shows a fenced diff block for changes"
-    (let [render-write-lines (private-fn "render-write-lines")
-          rendered (render-write-lines
-                     {:tool-result {:ok? true
-                                    :result "target/editing-test/out.txt"
-                                    :provenance {:target {:requested "target/editing-test/out.txt"}
-                                                 :changed? true
-                                                 :before "alpha\nbeta\n"
-                                                 :after "alpha\ngamma\n"}}})]
+                                    :result [{:path "target/editing-test/out.txt"}]
+                                    :provenance {:files [{:path "target/editing-test/out.txt"
+                                                          :changed? true
+                                                          :before "alpha\nbeta\n"
+                                                          :after "alpha\ngamma\n"}]}}})]
+      (expect (string/includes? rendered "Read back only when exact persisted bytes matter"))
       (expect (string/includes? rendered "```diff"))
       (expect (string/includes? rendered "--- a/target/editing-test/out.txt"))
       (expect (string/includes? rendered "-beta"))
@@ -451,19 +315,20 @@
 (defdescribe tool-envelope-test
   (it "tool wrappers return the required contract keys"
     (let [path (write-temp! "contract/read.txt" "alpha\nbeta\n")
-          read-all-lines (private-fn "read-all-lines-tool")
-          out (read-all-lines path)]
-      (expect (= #{:ok? :result :result-shape :provenance :error}
+          cat-tool (private-fn "cat-tool")
+          out (cat-tool path)]
+      (expect (= #{:ok? :result :result-shape :provenance :error :presentation}
                 (set (keys out))))
       (expect (true? (:ok? out)))
-      (expect (= ["alpha" "beta"] (:result out)))
+      (expect (= ["alpha" "beta"] (get-in out [:result :lines])))
       (expect (not (contains? out :markdown)))
-      (expect (nil? (:error out)))))
+      (expect (nil? (:error out)))
+      (expect (= :source (get-in out [:presentation :kind])))))
 
   (it "tool failure contract includes structured :error with normalized trace"
-    (let [read-all-lines (private-fn "read-all-lines-symbol")
-          on-error       (:ext.symbol/on-error-fn read-all-lines)
-          out            (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
+    (let [cat-symbol (private-fn "cat-symbol")
+          on-error   (:ext.symbol/on-error-fn cat-symbol)
+          out        (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
       (expect (false? (:ok? out)))
       (expect (= nil (:result out)))
       (expect (= "clojure.lang.ExceptionInfo" (get-in out [:error :type])))

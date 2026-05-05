@@ -28,17 +28,55 @@
       (expect (some #(= "         export ZAI_CODING_API_KEY=<your-zai-api-key>" %) lines))
       (expect (some #(= "  Endpoint: https://api.z.ai/api/coding/paas/v4" %) lines)))))
 
+(defdescribe auth-detection-test
+  (it "detects the TUI/config API key used by runtime model calls"
+    (require 'com.blockether.vis.ext.provider-zai :reload)
+    (with-redefs-fn {#'zai/load-auth-file (constantly nil)
+                     #'zai/env-key-for-plan (constantly nil)
+                     #'vis/current-config (constantly {:providers [{:id :zai-coding
+                                                                    :api-key "config-key"}]})}
+      (fn []
+        (expect (= {:api-key "config-key" :source :config}
+                  (#'zai/detect-key :coding)))))))
+
 (defdescribe limits-test
-  (it "reports :ok when the coding-plan key is available"
+  (it "reports live 5h and 7d coding-plan quota when the coding-plan key is available"
     (require 'com.blockether.vis.ext.provider-zai :reload)
     (with-redefs-fn {#'zai/detect-key (fn [plan-tag]
                                         (when (= :coding plan-tag)
-                                          {:api-key "k" :source :auth-file}))}
+                                          {:api-key "k" :source :auth-file}))
+                     #'zai/fetch-quota! (fn [api-key]
+                                          (expect (= "k" api-key))
+                                          {:data {:level "pro"
+                                                  :limits [{:type "TOKENS_LIMIT"
+                                                            :unit 3
+                                                            :number 5
+                                                            :usage 800000000
+                                                            :currentValue 200000000
+                                                            :remaining 600000000
+                                                            :percentage 25
+                                                            :nextResetTime 1770648402389}
+                                                           {:type "TOKENS_LIMIT"
+                                                            :unit 6
+                                                            :number 7
+                                                            :usage 2000000000
+                                                            :currentValue 1000000000
+                                                            :remaining 1000000000
+                                                            :percentage 50
+                                                            :nextResetTime 1770848402389}]}})}
       (fn []
-        (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding)))]
+        (let [report (vis/provider-limits :zai-coding)]
           (expect (= :zai-coding (:provider-id report)))
           (expect (= :ok (:status report)))
-          (expect (= [] (get-in report [:dynamic :limits])))))))
+          (expect (= [:zai-coding-5h :zai-coding-7d]
+                    (mapv :id (get-in report [:dynamic :limits]))))
+          (expect (= 25.0 (get-in report [:dynamic :limits 0 :used])))
+          (expect (= 100.0 (get-in report [:dynamic :limits 0 :limit])))
+          (expect (= 75.0 (get-in report [:dynamic :limits 0 :remaining])))
+          (expect (= {:kind :rolling :unit :hour :size 5 :resets-at-ms 1770648402389}
+                    (get-in report [:dynamic :limits 0 :window])))
+          (expect (= {:kind :rolling :unit :day :size 7 :resets-at-ms 1770848402389}
+                    (get-in report [:dynamic :limits 1 :window])))))))
 
   (it "reports :unauthenticated when the coding-plan key is absent"
     (require 'com.blockether.vis.ext.provider-zai :reload)

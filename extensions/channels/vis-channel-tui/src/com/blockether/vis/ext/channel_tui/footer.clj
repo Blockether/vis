@@ -24,7 +24,7 @@
    («Vis is thinking (iter 3)… 4.1s · Esc to cancel»).
 
    The first footer row carries repository context on the right:
-   repo/branch, compact created/modified/deleted counts, and ahead/behind counts
+   repo/branch, one compact changed-file count, and ahead/behind counts
    when an upstream is configured. The second footer row carries provider
    budgets and cumulative usage under that git context. Git status is
    cached briefly so repainting the TUI does not run JGit on every frame.
@@ -73,6 +73,12 @@
   (when-let [r (try (lp/get-router) (catch Throwable _ nil))]
     (try (lp/resolve-effective-model r) (catch Throwable _ nil))))
 
+(defn- reasoning-effort-configurable?
+  [info]
+  (and (boolean (:reasoning? info))
+    (not= false (:reasoning-effort? info))
+    (not= :zai-thinking (:reasoning-style info))))
+
 (def ^:private git-glyph "")
 
 (defn- git-repo-label
@@ -81,13 +87,13 @@
 
 (defn- git-dirty-label
   [{:keys [modified created deleted]}]
-  (let [modified (long (or modified 0))
-        created  (long (or created 0))
-        deleted  (long (or deleted 0))]
-    (if (zero? (+ modified created deleted))
+  (let [changed (+ (long (or modified 0))
+                  (long (or created 0))
+                  (long (or deleted 0)))]
+    (if (zero? changed)
       "files: clean"
-      (String/format Locale/ROOT "%d C, %d M, %d D"
-        (into-array Object [created modified deleted])))))
+      (String/format Locale/ROOT "%d modified"
+        (into-array Object [changed])))))
 
 (defn- git-sync-label
   [{:keys [upstream? ahead behind]}]
@@ -235,7 +241,7 @@
 (defn- percentage-limit-row?
   [{:keys [id kind limit remaining]}]
   (and (number? remaining)
-    (or (contains? #{:codex-5h :codex-7d} id)
+    (or (contains? #{:codex-5h :codex-7d :zai-coding-5h :zai-coding-7d} id)
       (and (= :rate kind)
         (number? limit)
         (== 100.0 (double limit))))))
@@ -278,7 +284,9 @@
      :premium_interactions 0
      :premium-interactions 0
      :codex-5h 1
+     :zai-coding-5h 1
      :codex-7d 2
+     :zai-coding-7d 2
      3)
    (if (generic-limit-has-signal? row) 0 1)
    (or (:label row) (name (:id row)))])
@@ -319,7 +327,7 @@
         model-display (if (and provider model)
                         (str (name provider) "/" model)
                         model)
-        reasoning? (boolean (:reasoning? info))
+        reasoning? (reasoning-effort-configurable? info)
         reasoning-level (or (:reasoning-level settings) default-reasoning-level)
         codex-provider? (= :openai-codex provider)
         codex-verbosity (or (:openai-codex-verbosity settings) default-codex-verbosity)

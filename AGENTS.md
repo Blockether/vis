@@ -39,10 +39,9 @@ Human ⊗ AI ⊗ REPL
 
 ### Headless-safe terminal path
 
-- Do not load Swing/AWT from normal terminal/TUI code paths.
-- Swing/AWT is allowed only in explicit graphical/standalone UI namespaces, e.g. `vis channels tui --standalone`.
-- Graphical code must be isolated from terminal startup and must fail clearly when headless.
-- Vis normal terminal mode must work in terminals, CI, SSH, TUI-only envs.
+- Do not load graphical UI libraries from terminal/TUI code paths.
+- Do not add graphical TUI backends.
+- Vis terminal mode must work in terminals, CI, SSH, TUI-only envs.
 
 ### README stub
 
@@ -91,51 +90,31 @@ Rules:
 - `dev/tui!` opens separate macOS Terminal.app running `bin/dev terminal-tui`.
 - In that Terminal process, nREPL + TUI run in same JVM so TUI is REPL-controllable.
 - Do not launch `bin/vis channels tui` from `dev/tui!`; that defeats controllable-TUI path.
-- Standalone TUI via `vis channels tui` / `bin/vis channels tui` is valid while dev nREPL is open.
+- Packaged-entrypoint TUI via `vis channels tui` / `bin/vis channels tui` is valid while dev nREPL is open.
 - Do not run TUI inside nREPL/stdout tool terminal.
 
-### Structured Clojure edits
+### Clojure edits
 
-Use `z/zedit` for non-trivial `.clj` / `.cljc` / `.cljs` / `.edn` form edits.
+Use `z/patch` for `.clj` / `.cljc` / `.cljs` / `.edn` zipper edits. Same map shape as `v/patch`.
 
 Rules:
 
+- Prefer one vector of edit maps: `(z/patch [{:path p :search locator :replace replacement} ...])`.
+- `:search` is a Clojure/EDN locator form/source snippet, not raw text.
+- `:search` must match exactly once in the zipper; all edits validate before any write.
+- Multiple edits to the same file are applied in vector order and written once.
+- Discover locators with `(z/locators path)` or `(z/symbols path)` when unsure.
+- Full rewrite-clj zipper API is available under `z/`; `z/subedit->` works in SCI for advanced transforms.
 - Do not use `(declare ...)` unless strictly required by mutual recursion or an unavoidable load-order cycle. Prefer sorting defs in dependency order. If a declare is kept, add a nearby comment explaining why sorting cannot remove it.
-- Change forms/symbols/requires/maps/vectors/nested data structurally, not by offsets.
-- If zipper path unclear, rehearse on small string in nREPL: `(z/of-string source {:track-position? true})`.
-- Zipper immutable: every movement/edit returns next zloc; return final zloc.
-- Whole-file symbol search: `(z/find-value zloc z/next 'sym)`. Short form searches siblings only.
-- Verify hit before edit: `(z/sexpr hit)`, `(z/tag hit)`, `(z/position-span hit)`.
-- Normal nav (`z/down`, `z/up`, `z/right`, `z/left`, `z/next`, `z/prev`) skips whitespace/comments but preserves root string.
-- Use `*` nav variants only when editing whitespace/comment nodes.
-- Use `z/subedit->` / `z/subedit->>` for focused nested edits.
 - If delimiters break: do not manually rebalance. Run `clj-paren-repair <files>`.
 - Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
 
-Patterns:
+Pattern:
 
 ```clojure
-;; Replace symbol everywhere.
-(z/zedit "src/foo.clj"
-  (fn [zl]
-    (loop [zloc zl]
-      (if-let [hit (z/find-value zloc z/next 'old-sym)]
-        (recur (z/replace hit 'new-sym))
-        zloc))))
-
-;; Replace value right of key.
-(z/zedit "src/foo.clj"
-  (fn [zl]
-    (if-let [k (z/find-value zl z/next :some-key)]
-      (-> k z/right (z/replace :new-value))
-      zl)))
-
-;; Add require.
-(z/zedit "src/foo.clj"
-  (fn [zl]
-    (if-let [req (z/find-value zl z/next :require)]
-      (-> req z/up (z/append-child '[clojure.string :as str]))
-      zl)))
+(z/patch [{:path "src/foo.clj"
+           :search "old-sym"
+           :replace "new-sym"}])
 ```
 
 ## S3 — Control: enforce policy
@@ -230,7 +209,7 @@ Until told otherwise, schema changes are inline:
 ```text
 λ coordinate(x). REPL(control) ∥ standalone(entrypoint) ∥ SQLite(shared)
 λ db(x). WAL + immediate_tx + retry | migrate_lock(short) | ¬exclusive_process_lock
-λ tui(x). controllable(dev/tui!) ∨ standalone(vis channels tui) | choose_by_task
+λ tui(x). controllable(dev/tui!) ∨ packaged_entrypoint(vis channels tui) | choose_by_task
 λ boundaries(x). io ∨ async ∨ invoke ∨ process ∨ db → explicit_state + observable_failure
 ```
 

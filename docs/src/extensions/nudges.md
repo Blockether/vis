@@ -37,9 +37,7 @@ nil
  :text "nudge text"}
 ```
 
-`{:message "..."}` and `{:body "..."}` are accepted aliases for `:text`.
-
-A legacy string prefixed with `[system_nudge]` is accepted; Vis strips the prefix and renders a tagged `<system_nudge importance="normal">` entry.
+No aliases. No legacy prefixes. Use `:text` only; Vis owns the XML wrapper.
 
 Invalid returns are logged at `:warn` and skipped. Throwing nudge-fns are caught, logged at `:warn`, and skipped.
 

@@ -1,19 +1,9 @@
 (ns com.blockether.vis.ext.channel-tui.input
   "Keyboard / paste / clipboard surface for the TUI channel.
 
-   Important: this namespace MUST NOT import any `java.awt.*` class.
-   Loading AWT on macOS - even just touching `Toolkit` from a JVM
-   subprocess - spawns a full Cocoa application, registers a Dock
-   icon, and steals focus from the user's terminal. We saw it in
-   the wild: a single `verify.sh` run popped the Java rocket onto
-   the Dock and switched the front window away from the shell.
-
-   Clipboard read/write therefore goes through OS shell helpers
-   only: `pbcopy` / `pbpaste` on macOS (always present since 10.0),
-   `wl-copy` / `wl-paste` on Wayland, `xclip` / `xsel` on X11. AWT
-   remains absent from this namespace so clipboard helpers are safe in
-   native terminal sessions. The optional standalone TUI backend isolates
-   its Swing/AWT usage in `channel-tui.standalone`."
+   Clipboard read/write goes through OS shell helpers only: `pbcopy` /
+   `pbpaste` on macOS (always present since 10.0), `wl-copy` /
+   `wl-paste` on Wayland, `xclip` / `xsel` on X11."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [taoensso.telemere :as tel])
@@ -358,15 +348,7 @@
                         paste-end-pattern
                         sgr-mouse-pattern]))))
 
-;;; ── Clipboard (shell helpers, AWT-free) ─────────────────────────────────────
-;;
-;; Why no AWT here: importing `java.awt.Toolkit` on a macOS JVM is enough
-;; to register a Dock icon and steal focus from the user's terminal the
-;; first time the AWT subsystem initialises. We saw it on a normal
-;; `verify.sh` run - a single class-load triggered the Cocoa bridge and
-;; yanked the foreground app away. The optional standalone backend may
-;; use Swing/AWT, but this native-terminal input/clipboard namespace stays
-;; AWT-free by construction.
+;;; ── Clipboard (shell helpers) ───────────────────────────────────────────────
 ;;
 ;; Two shell candidate lists, one per direction. Ordered most-likely
 ;; first per platform but every entry is tried in turn, so a macOS
@@ -447,8 +429,7 @@
 
 (defn clipboard-paste
   "Read the system clipboard as a UTF-8 string. Returns the captured
-   text or `nil` when no helper produced output. Pure shell pipeline
-   - no AWT, no Cocoa init, no Dock icon."
+   text or `nil` when no helper produced output."
   []
   (try (shell-clipboard-paste!) (catch Throwable _ nil)))
 
@@ -457,13 +438,7 @@
    helpers (`pbcopy` / `wl-copy` / `xclip` / `xsel`). Returns true
    on success, false when every helper failed. Logs the winning
    helper so \"the copy didn't work\" reports can be diagnosed
-   against `~/.vis/vis.log`.
-
-   AWT is intentionally absent: on macOS, touching
-   `Toolkit.getDefaultToolkit()` boots a full Cocoa app (Dock icon,
-   menu bar, focus theft); on headless Linux it throws; on SSH it
-   writes to the wrong machine's clipboard. The shell helpers Just
-   Work on every supported platform."
+   against `~/.vis/vis.log`."
   [^String text]
   (let [winner (shell-clipboard-copy! text)
         ok?    (not= winner :none)]

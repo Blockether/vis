@@ -1050,7 +1050,12 @@ Covers: **23, 25, 26, 27, 28**
 
 ### Rationale
 
-Current foundation editing surface has `v/cat`, `v/write-lines`, `v/update-file`, and `v/bash`. No true preconditioned patch surface and no real background process lifecycle.
+Current foundation editing surface should be minimal:
+
+- `v/cat` is the single file-read surface. With no opts it reads the whole file into `[:result :lines]`; `:offset`, `:limit`, and `:char-limit` are explicit pagination knobs only.
+- `v/patch` is the single text-edit surface for exact search/replace patches.
+- `v/write-lines`, `v/update-file`, and `v/read-all-lines` are removed from the model-facing public surface.
+- `v/bash` remains for process boundaries until background lifecycle tools replace it.
 
 Need safer edits and observable long-running work.
 
@@ -1129,9 +1134,11 @@ Notification formatting:
 
 ### Acceptance tasks
 
-- [ ] Add `v/patch` with exact search/replace and sha/mtime preconditions.
-- [ ] Decide whether `write-lines` becomes internal, alias, or deprecated public surface.
-- [ ] Add patch render fn with Markdown details.
+- [x] Make `v/cat` no-opts read the whole file; pagination is explicit via opts.
+- [x] Remove `v/read-all-lines`, `v/write-lines`, and `v/update-file` from the model-facing public surface.
+- [x] Add `v/patch` with exact search/replace.
+- [ ] Add `v/patch` sha/mtime preconditions.
+- [x] Add patch render fn with Markdown details.
 - [ ] Add background process extension/runtime module.
 - [ ] Add bg start/status/stop/tail symbols.
 - [ ] Persist or aggregate background process metadata.
@@ -1450,7 +1457,7 @@ Caution: the current agent harness reads `AGENTS.md`, so deleting it before repl
 | 20 | Extension commons | Extract commons, but not streaming; streaming belongs in svar. |
 | 21 | Extension persistence | `extension_aggregate` schema. |
 | 22 | Presentation/tool calls | Tool details must render Markdown. |
-| 23 | Editing | `v/patch` with sha/mtime preconditions; decide fate of `write-lines`. |
+| 23 | Editing | `v/cat` whole-file read by default; `v/patch` as canonical edit surface; add sha/mtime preconditions. |
 | 24 | Presentation/system calls | Render system calls prettily. |
 | 25 | Background | Background process support. |
 | 26 | Notifications | OS notification adapter. |
@@ -1534,6 +1541,6 @@ Canonical detail plan lives in [`FOCUS.md`](FOCUS.md). Do not duplicate the full
 - [ ] Remove lazytest from SCI.
 - [ ] Improve provider error diagnostics.
 - [ ] Add adversarial proof tests: slot lies, wrong event op, compact refs rejected.
-- [ ] Add `v/patch` preconditioned edit.
+- [ ] Finish `v/patch` sha/mtime preconditions.
 - [ ] Add agent-end notification hook + OSC 777 adapter.
 - [ ] Spike clj-kondo/clj-xref integration.

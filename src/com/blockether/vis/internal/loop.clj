@@ -500,7 +500,7 @@
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 (def ^:private silent-host-form-heads
-  '#{conversation-title silent! v/silent!})
+  '#{conversation-title})
 
 (defn- silent-host-form?
   "True for host side-effect forms that intentionally return
@@ -559,27 +559,29 @@
   (let [stdout-writer (java.io.StringWriter.)
         stderr-writer (java.io.StringWriter.)
         err-pw       (java.io.PrintWriter. stderr-writer true)
+        preview-sink (atom [])
         exec-future (future
                       (try
-                        (let [result (sci/binding [sci/out stdout-writer
-                                                   sci/err err-pw]
-                                       (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
-                                         (:val (sci/eval-string+ sci-ctx code
-                                                 (when ns {:ns ns})))))]
-                          {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :error nil})
+                        (let [result (binding [extension/*preview-sink* preview-sink]
+                                       (sci/binding [sci/out stdout-writer
+                                                     sci/err err-pw]
+                                         (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
+                                           (:val (sci/eval-string+ sci-ctx code
+                                                   (when ns {:ns ns}))))))]
+                          {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink :error nil})
                         (catch Throwable e
-                          {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
+                          {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink
                            :error (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))})))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
-                             {:result nil :stdout "" :stderr "" :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
+                             {:result nil :stdout "" :stderr "" :previews @preview-sink :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
     (.close stdout-writer)
     (.close stderr-writer)
     (if (nil? execution-result)
       (do (future-cancel exec-future)
-        {:result nil :stdout "" :stderr "" :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
+        {:result nil :stdout "" :stderr "" :previews @preview-sink :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
       execution-result)))
 
 (defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time]
@@ -1302,6 +1304,19 @@
     (when-not (str/blank? s*)
       s*)))
 
+(defn- reasoning-effort-configurable?
+  "True when a model accepts a caller-selected reasoning effort.
+
+   `:reasoning?` means the model can produce reasoning/thinking text.
+   It does NOT imply that Vis may tune that thinking depth. Z.ai GLM
+   thinking is binary/preserved-thinking only, so keep the stream visible
+   but do not send `:reasoning` levels to svar. Providers can opt out
+   explicitly with `:reasoning-effort? false`."
+  [resolved-model]
+  (and (boolean (:reasoning? resolved-model))
+    (not= false (:reasoning-effort? resolved-model))
+    (not= :zai-thinking (:reasoning-style resolved-model))))
+
 (defn- zai-preserved-thinking-model?
   [resolved-model]
   (and (contains? #{:zai :zai-coding} (:provider resolved-model))
@@ -1337,7 +1352,8 @@
                      (prov-life/block-ref {:turn-prefix turn-prefix
                                            :iteration iteration-position
                                            :block (inc idx)}))
-          effective-reasoning (when (some? reasoning-level)
+          effective-reasoning (when (and (some? reasoning-level)
+                                      (reasoning-effort-configurable? resolved-model))
                                 (or (normalize-reasoning-level reasoning-level)
                                   (throw (ex-info "Invalid :reasoning-level."
                                            {:type :vis/invalid-reasoning-level
@@ -1496,6 +1512,7 @@
                                           :code              expr
                                           :comment           form-comment
                                           :result            (:result result*)
+                                          :previews          (:previews result*)
                                           :error             (:error result*)
                                           :stdout            (:stdout result*)
                                           :stderr            (:stderr result*)
@@ -1514,6 +1531,7 @@
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
+                                    :previews (:previews result)
                                     :stdout (:stdout result)
                                     :stderr (:stderr result)
                                     :error (:error result)
@@ -2114,7 +2132,7 @@
         resolved-model (resolve-effective-model (:router environment))
         effective-model (:name resolved-model)
         _ (assert effective-model "Router must resolve a root model")
-        has-reasoning? (boolean (:reasoning? resolved-model))
+        has-reasoning? (reasoning-effort-configurable? resolved-model)
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per turn. Threaded through both the
         ;; system-prompt assembler (cacheable prefix) and the per-iteration
@@ -3334,6 +3352,12 @@
                          :alias alias-sym)}
         (str "Auto-require of alias '" alias-sym "' failed")))))
 
+(defn- sci-binding-var
+  [ext-ns sym val]
+  (if (and (map? val) (contains? val :vis.sci/macro-fn))
+    (sci/new-var sym (:vis.sci/macro-fn val) {:ns ext-ns :macro true})
+    (sci/new-var sym val {:ns ext-ns})))
+
 (defn- extension-namespace-bindings
   [environment ns-sym alias-sym active-exts]
   (let [ext-ns (sci/create-ns ns-sym)]
@@ -3344,7 +3368,7 @@
         (let [wrapped (extension/wrap-extension ext environment)
               ns-bindings (into {}
                             (map (fn [[sym val]]
-                                   [sym (sci/new-var sym val {:ns ext-ns})]))
+                                   [sym (sci-binding-var ext-ns sym val)]))
                             wrapped)
               collisions (vec (filter #(contains? bindings %) (keys ns-bindings)))]
           (when (seq collisions)
