@@ -1117,12 +1117,7 @@
 
       :else
       (try
-        (let [account-type (if (get parsed "provider")
-                             (first residual)
-                             (second residual))]
-          (if (and (= provider-id :github-copilot) account-type)
-            ((:provider/auth-fn provider) stdout! {:account-type account-type})
-            ((:provider/auth-fn provider) stdout!)))
+        ((:provider/auth-fn provider) stdout!)
         (catch Exception e
           (stdout! (error/format-error (str "Authentication failed: " (ex-message e))))))))
   (shutdown-agents))
@@ -1253,7 +1248,7 @@
           :cmd/doc    "Show provider authentication status together with static/dynamic limits."
           :cmd/usage  "vis providers status [provider]"
           :cmd/examples ["vis providers status"
-                         "vis providers status github-copilot"
+                         "vis providers status github-copilot-business"
                          "vis providers status openai-codex"]
           :cmd/run-fn cli-providers-status!}
          {:cmd/name   "limits"
@@ -1267,11 +1262,11 @@
          {:cmd/name   "auth"
           :cmd/parent ["providers"]
           :cmd/doc    "Run a provider's interactive authentication flow."
-          :cmd/usage  "vis providers auth <provider> [account-type]"
+          :cmd/usage  "vis providers auth <provider>"
           :cmd/args   [{:name "provider" :kind :positional :type :string
-                        :doc  "Registered provider id (for example: github-copilot or openai-codex)."}]
-          :cmd/examples ["vis providers auth github-copilot business"
-                         "vis providers auth github-copilot enterprise"
+                        :doc  "Registered provider id (for example: github-copilot-business or openai-codex)."}]
+          :cmd/examples ["vis providers auth github-copilot-business"
+                         "vis providers auth github-copilot-individual"
                          "vis providers auth openai-codex"]
           :cmd/run-fn cli-providers-auth!}
          {:cmd/name   "logout"
@@ -1280,7 +1275,8 @@
           :cmd/usage  "vis providers logout <provider>"
           :cmd/args   [{:name "provider" :kind :positional :type :string
                         :doc  "Registered provider id."}]
-          :cmd/examples ["vis providers logout github-copilot"
+          :cmd/examples ["vis providers logout github-copilot-business"
+                         "vis providers logout github-copilot-individual"
                          "vis providers logout openai-codex"]
           :cmd/run-fn cli-providers-logout!}
          {:cmd/name   "list"

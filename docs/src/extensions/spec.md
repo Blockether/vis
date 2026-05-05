@@ -48,7 +48,7 @@ Two conditional rules apply on top of the spec:
 | `:ext/activation-fn`     | ✗              | `(constantly true)`  | `(fn [env] → bool)` — when falsy, all symbols are unbound and `:ext/nudge-fn` is skipped. |
 | `:ext/prompt`            | ✗              | —                    | Optional extra string or `(fn [env] → string)` appended as an extension prompt block. Strings are normalized to `(constantly s)`. |
 | `:ext/environment-info-fn` | ✗            | —                    | `(fn [env] → string\|seq\|map\|nil)` — live environment-info contribution rendered inside the system prompt's `<environment-info>` block. Use for cwd/repo/runtime facts; any active extension can add a sibling section. |
-| `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|nil)` — per-iteration nudge composer (see [Nudge System](nudges.md)). |
+| `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|{:importance :low\|:normal\|:high\|:critical :text string}\|nil)` — per-iteration nudge composer. Return value is spec-checked at runtime and rendered as `<system_nudge importance="...">` (see [Nudge System](nudges.md)). |
 | `:ext/on-parse-error-fn` | ✗              | —                    | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
 | `:ext/requires`          | ✗              | `[]`                  | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.foundation.editing.core]`. |
 | `:ext/version`           | ✗              | —                    | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"`. |
@@ -316,7 +316,8 @@ Called internally by `extension`; safe to call standalone.
      :ext/nudge-fn      (fn [{:keys [environment iteration previous-blocks]}]
                           (when (and (> iteration 5)
                                     (some :error previous-blocks))
-                            "[system_nudge] Document searches are failing."))
+                            {:importance :high
+                             :text "Document searches are failing."}))
      :ext/symbols       [search-sym max-results-sym]
      :ext/classes       {'java.time.LocalDate java.time.LocalDate}
      :ext/imports       {'LocalDate 'java.time.LocalDate}}))

@@ -1,6 +1,6 @@
 # Focus — Context Contract
 
-This is the current high-priority implementation focus. It groups prompt/context, previews, vars, tools, skills, reasoning memory, and audit/attestation display into one task. It links back to `TASKS.md` clusters 1, 2, and Ref D.
+This is the current high-priority implementation focus. It groups prompt/context, previews, vars, tools, skills, reasoning memory, and audit/attestation display into one task. It is the canonical detail plan; `TASKS.md` links here instead of duplicating the same checklist.
 
 ## Goal
 
@@ -24,7 +24,8 @@ system role:
 
   <extensions>
     extension-owned prompt fragments
-    foundation-owned <skills> catalog preview lives here already
+    foundation-owned <skills> catalog lives here already:
+      <skill name="..." source="..."><activation_trigger>...</activation_trigger></skill>
   </extensions>
 
   <specific_provider_model_prompt provider="..." model="...">
@@ -39,7 +40,9 @@ user role:
 per-iteration user role:
   <extensions>
     <active_skills>
-      full bodies of skills explicitly loaded this turn
+      <skill name="..." source="...">
+        full prompt/body returned by v/load-skill
+      </skill>
     </active_skills>
   </extensions>
 
@@ -60,7 +63,9 @@ per-iteration user role:
   </audit>
 
   <system_nudges>
-    context/title/strategy nudges
+    <system_nudge importance="low|normal|high|critical">
+      context/title/strategy nudge
+    </system_nudge>
   </system_nudges>
 ```
 
@@ -73,10 +78,10 @@ Tag rule: if Vis injects structured context, it uses an XML-ish tag. Free prose 
 | `<system_prompt>` | no | yes | Stable behavior/protocol. Keep lean. Do not put live data here. |
 | `<environment-info>` | no silent cut | yes | Live cwd/git/repo/provider/runtime facts. If too large, fail loud. |
 | `<extensions>` | bounded by extension prompt design | no | Tool availability and extension protocol. Foundation `<skills>` catalog is here. |
-| `<skills>` | yes, catalog preview | no | Skill names/descriptions/load hints. Already exists. Do not duplicate elsewhere. |
+| `<skills>` | yes, catalog trigger | no | XML skill entries with `name` + `source` attrs and `<activation_trigger>` only. Already exists. Do not duplicate elsewhere. |
 | `<specific_provider_model_prompt>` | no silent cut | yes | Provider/model quirks only. |
 | `<user_turn_request_main_goal>` | no | yes | Exact current human request. No prior dialog. |
-| `<extensions><active_skills>` | no silent cut | yes | Full loaded skill bodies after `(v/load-skill ...)`. Dynamic extension context; if too large, fail loud. |
+| `<extensions><active_skills>` | no silent cut | yes | XML skill entries with `name` + `source` attrs and full loaded prompt/body after `(v/load-skill ...)`. Dynamic extension context; if too large, fail loud. |
 | `<journal>` | yes | no | Recent observed event display: refs + previews. |
 | `<var_index>` | yes | no | Live var names/shapes/previews. Lets model know what full values it can use. |
 | SCI vars | no | yes | Full live values. Model should use vars directly instead of rereading. |
@@ -180,11 +185,11 @@ We already have skills.
 
 Do not create a second skill catalog.
 
-- `<skills>` = preview/catalog, owned by foundation extension prompt under `<extensions>`.
+- `<skills>` = activation catalog, owned by foundation extension prompt under `<extensions>`; each entry is `<skill name="..." source="..."><activation_trigger>...</activation_trigger></skill>`.
 - `(v/load-skill "name")` = activation/read full skill.
-- `<extensions><active_skills>` = full loaded skill bodies in next iteration.
+- `<extensions><active_skills>` = full loaded skill prompts/bodies in next iteration; each entry is `<skill name="..." source="...">FULL_PROMPT</skill>`.
 
-`<active_skills>` is nested under `<extensions>` because skills are extension-owned dynamic context. It should not be silently trimmed. If loaded skills exceed budget, Vis should fail loud and tell which skill bodies caused overflow.
+`<active_skills>` is nested under `<extensions>` because skills are extension-owned dynamic context. It carries source metadata, but not duplicate description/path wrappers; the skill tag body is the loaded prompt/body. It should not be silently trimmed. If loaded skills exceed budget, Vis should fail loud and tell which skill bodies caused overflow.
 
 ## Reasoning memory
 
@@ -252,7 +257,7 @@ Bounded previews:
 
 - `<journal>` token budget, newest evidence kept;
 - `<var_index>` token budget, newest hot vars kept;
-- `<skills>` catalog prompt budget, omitted skills still loadable;
+- `<skills>` catalog activation-trigger budget, omitted skills still loadable;
 - tool stdout/stderr/file previews.
 
 If protected blocks exceed context:
@@ -263,7 +268,9 @@ fail loud before provider call with token counts and responsible blocks.
 
 Do not solve protected overflow by silently trimming environment info, user request, provider prompt, or active skill bodies.
 
-## Implementation task group
+## Implementation plan
+
+This checklist is the single detailed plan for the context contract. `TASKS.md` should only reference it from the Pareto table and Recommended execution plan.
 
 ### A. Prompt shape
 
@@ -274,7 +281,7 @@ Do not solve protected overflow by silently trimming environment info, user requ
 - [x] `<specific_provider_model_prompt>` wrapper.
 - [x] `<user_turn_request_main_goal>` wrapper.
 - [x] `<extensions><active_skills>` for loaded skill bodies.
-- [ ] Wrap system nudges in `<system_nudges>` instead of loose `[system_nudge]` lines.
+- [x] Wrap system nudges in `<system_nudges>` with spec-checked `<system_nudge importance="low|normal|high|critical">` entries instead of loose `[system_nudge]` lines.
 - [ ] Decide whether previous reasoning needs its own `<reasoning>` block or stays only in `<journal>` + `ITERATION_PREVIOUS_REASONING`.
 
 ### B. Preview/full contract
@@ -310,4 +317,5 @@ Do not solve protected overflow by silently trimming environment info, user requ
 ## Links
 
 - Main backlog: `TASKS.md`
+- Recommended execution plan: `TASKS.md` → Sprint 0 — Context contract (`FOCUS.md`)
 - Relevant clusters: Presentation/render contract, Extension contract v2, Ref D attestation ledger

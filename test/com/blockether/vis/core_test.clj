@@ -2083,7 +2083,8 @@
         env         (merge (into {} (System/getenv))
                       {"VIS_DB_PATH" (.getAbsolutePath db-dir)}
                       (:env opts))]
-    (apply sh/sh (concat [vis-bin] args [:env env]))))
+    (apply sh/sh (concat [vis-bin] args [:env env]
+                   (when-let [dir (:dir opts)] [:dir dir])))))
 
 (defn- execute-formatted!
   [conn formatted]
@@ -2157,7 +2158,14 @@
                                   "OS:"
                                   "Java:"
                                   "DB path:"
-                                  "Summary:"])))))
+                                  "Summary:"]))))
+
+  (it "uses the invocation cwd for project guidance instead of the source checkout"
+    (let [dir (.getAbsolutePath (make-temp-db-dir "vis-cwd-smoke-"))
+          {:keys [exit out]} (run-vis {:dir dir :env {"VIS_CRAC" "0"}} "doctor")]
+      (expect (= 1 exit))
+      (expect (contains-all? out ["No project guidance found"]))
+      (expect (not (str/includes? out "/vis/AGENTS.md"))))))
 
 (defdescribe vis-extensions
   (it "lists the `vis-foundation` extension as discovered"
@@ -2239,7 +2247,8 @@
     (let [{:keys [exit out]} (run-vis "providers" "auth" "--help")]
       (expect (zero? exit))
       (expect (contains-all? out ["vis providers auth <provider>"
-                                  "vis providers auth github-copilot"
+                                  "vis providers auth github-copilot-business"
+                                  "vis providers auth github-copilot-individual"
                                   "vis providers auth openai-codex"]))))
 
   (it "shows limits subcommand examples"

@@ -23,6 +23,25 @@
     (expect (= :balanced (loop/normalize-reasoning-level "medium")))
     (expect (= :deep (loop/normalize-reasoning-level "HIGH")))))
 
+(defdescribe zai-preserved-thinking-test
+  (it "echoes prior Z.ai assistant reasoning_content only for Z.ai thinking models"
+    (let [messages [{:role "system" :content "sys"}
+                    {:role "user" :content "task"}]
+          journal [[1 {:thinking "reason-1"
+                       :llm-executable-code "(def x 1)"}]
+                   [2 {:thinking ""
+                       :llm-executable-code "(def y 2)"}]
+                   [3 {:thinking "reason-3"
+                       :llm-executable-code nil}]]]
+      (expect (= (conj messages {:role "assistant"
+                                 :content "(def x 1)"
+                                 :reasoning_content "reason-1"})
+                (#'loop/append-zai-preserved-thinking-messages
+                 messages journal {:provider :zai :reasoning-style :zai-thinking})))
+      (expect (= messages
+                (#'loop/append-zai-preserved-thinking-messages
+                 messages journal {:provider :openai :reasoning-style :openai-effort}))))))
+
 (defdescribe copilot-billing-guard-test
   (it "marks first human iteration as user and internal iterations as agent"
     (expect (= "user" (#'loop/copilot-initiator-for-iteration 0)))
@@ -30,7 +49,7 @@
 
   (it "disables reasoning for casual Copilot Claude turns"
     (expect (nil? (#'loop/copilot-claude-safe-reasoning-level
-                   {:provider :github-copilot :name "claude-sonnet-4.6"}
+                   {:provider :github-copilot-business :name "claude-sonnet-4.6"}
                    "siema"
                    :deep
                    {}))))
@@ -38,13 +57,13 @@
   (it "caps Copilot Claude deep reasoning unless explicitly allowed"
     (expect (= :balanced
               (#'loop/copilot-claude-safe-reasoning-level
-               {:provider :github-copilot :name "claude-sonnet-4.6"}
+               {:provider :github-copilot-business :name "claude-sonnet-4.6"}
                "fix this failing test"
                :deep
                {})))
     (expect (= :deep
               (#'loop/copilot-claude-safe-reasoning-level
-               {:provider :github-copilot :name "claude-sonnet-4.6"}
+               {:provider :github-copilot-business :name "claude-sonnet-4.6"}
                "fix this failing test"
                :deep
                {:allow-copilot-claude-deep? true}))))
@@ -52,7 +71,7 @@
   (it "leaves non-Copilot-Claude reasoning untouched"
     (expect (= :deep
               (#'loop/copilot-claude-safe-reasoning-level
-               {:provider :github-copilot :name "gpt-5.4"}
+               {:provider :github-copilot-business :name "gpt-5.4"}
                "siema"
                :deep
                {}))))
@@ -394,14 +413,37 @@
           (loop/run-iteration environment
             [{:role "user" :content "continue"}]
             {:iteration 1
-             :resolved-model {:provider :github-copilot :name "claude-sonnet-4.6"}
+             :resolved-model {:provider :github-copilot-business :name "claude-sonnet-4.6"}
              :extra-body {:copilot-initiator "agent"
                           :text {:verbosity "low"}}})
           (expect (= "agent" (get-in @seen [:headers "X-Initiator"])))
           (expect (= "conversation-edits" (get-in @seen [:headers "Openai-Intent"])))
           (expect (= {:text {:verbosity "low"}}
                     (get-in @seen [:opts :extra-body])))
-          (expect (not (contains? (get-in @seen [:opts :extra-body]) :copilot-initiator))))))))
+          (expect (not (contains? (get-in @seen [:opts :extra-body]) :copilot-initiator)))))))
+
+  (it "asks svar to enable Z.ai preserved thinking for Z.ai thinking models"
+    (let [seen (atom nil)
+          environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ opts]
+                                          (reset! seen opts)
+                                          {:raw ""
+                                           :blocks []
+                                           :result ""
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})}
+        (fn []
+          (loop/run-iteration environment
+            [{:role "user" :content "continue"}]
+            {:iteration 1
+             :reasoning-level :balanced
+             :resolved-model {:provider :zai
+                              :name "glm-4.7"
+                              :reasoning-style :zai-thinking}})
+          (expect (= :balanced (:reasoning @seen)))
+          (expect (= true (:preserved-thinking? @seen))))))))
 
 (defdescribe run-iteration-silent-chunk-test
   (it "does not emit form-start for known :vis/silent host forms"
@@ -756,6 +798,36 @@
           (expect (re-find #"Repeated non-progress operation rejected"
                     (-> third :blocks first :error))))))))
 
+(defdescribe plain-prose-guard-test
+  (it "aborts bare prose before each word is evaluated as a symbol"
+    (let [executed (atom [])
+          raw-code "I need to see the full status reporting"
+          environment {:router ::router
+                       :answer-atom (atom nil)
+                       :current-form-idx-atom (atom nil)}]
+      (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                          {:raw raw-code
+                                           :blocks []
+                                           :result raw-code
+                                           :tokens {:input 1 :output 1}
+                                           :duration-ms 1})
+                       #'loop/execute-code (fn [_ code]
+                                             (swap! executed conj code)
+                                             {:result :unexpected
+                                              :stdout ""
+                                              :stderr ""
+                                              :execution-time-ms 0})}
+        (fn []
+          (let [result (loop/run-iteration environment
+                         [{:role "user" :content "continue"}]
+                         {:iteration 0
+                          :resolved-model {:provider :zai-coding :name "glm-5.1"}})]
+            (expect (empty? @executed))
+            (expect (= 1 (count (:blocks result))))
+            (expect (= (str ";; " raw-code) (-> result :blocks first :comment)))
+            (expect (re-find #"Provider returned plain prose" (-> result :blocks first :error)))
+            (expect (not (re-find #"Unable to resolve symbol: I" (-> result :blocks first :error))))))))))
+
 (defdescribe markdown-fence-guard-test
   (it "rejects multi-line fence-only fragments before SCI eval"
     (let [environment (env/create-sci-context nil)
@@ -831,53 +903,55 @@
 
 (defdescribe sandbox-restore-with-glob-test
   (it "restores the exact persisted value shape for v/glob-derived vars across restart"
-    (let [db-dir (make-temp-db-dir "vis-glob-restore-")
-          db-spec {:backend :sqlite :path db-dir}
-          router (loop/get-router)
-          env-1  (loop/create-environment router {:db db-spec :channel :cli})
-          cid    (:conversation-id env-1)
-          ns-1   (sci/find-ns (:sci-ctx env-1) 'sandbox)]
-      (try
-        (sci/eval-string+ (:sci-ctx env-1)
-          (str "(def raw-glob (v/glob \"extensions\" \"**/*.clj\"))\n"
-            "(def bad-files (->> raw-glob :result (map :path) sort vec))\n"
-            "(def good-files (->> raw-glob :result sort vec))")
-          {:ns ns-1})
-        (expect (= [nil nil nil]
-                  (:val (sci/eval-string+ (:sci-ctx env-1) "(take 3 bad-files)" {:ns ns-1}))))
-        (expect (every? string?
-                  (:val (sci/eval-string+ (:sci-ctx env-1) "(take 3 good-files)" {:ns ns-1}))))
-        (let [bad-files  (:val (sci/eval-string+ (:sci-ctx env-1) "bad-files" {:ns ns-1}))
-              good-files (:val (sci/eval-string+ (:sci-ctx env-1) "good-files" {:ns ns-1}))
-              turn-id    (vis/db-store-conversation-turn! (:db-info env-1)
-                           {:parent-conversation-id cid
-                            :user-request "persist glob-derived vars"
-                            :status :done})]
-          (vis/db-store-iteration! (:db-info env-1)
-            {:conversation-turn-id turn-id
-             :blocks []
-             :duration-ms 0
-             :vars [{:name "bad-files"
-                     :value bad-files
-                     :code "(def bad-files (->> (v/glob \"extensions\" \"**/*.clj\") :result (map :path) sort vec))"}
-                    {:name "good-files"
-                     :value good-files
-                     :code "(def good-files (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec))"}]}))
-        (finally
-          (loop/dispose-environment! env-1)))
-      (let [env-2 (loop/create-environment router {:db db-spec
-                                                   :channel :cli
-                                                   :conversation (str cid)})
-            ns-2  (sci/find-ns (:sci-ctx env-2) 'sandbox)]
+    (with-redefs [config/resolve-config (fn ([] {:providers [{:id :openai :models [{:name "gpt-5"}]}]})
+                                          ([_] {:providers [{:id :openai :models [{:name "gpt-5"}]}]}))]
+      (let [db-dir (make-temp-db-dir "vis-glob-restore-")
+            db-spec {:backend :sqlite :path db-dir}
+            router (loop/get-router)
+            env-1  (loop/create-environment router {:db db-spec :channel :cli})
+            cid    (:conversation-id env-1)
+            ns-1   (sci/find-ns (:sci-ctx env-1) 'sandbox)]
         (try
+          (sci/eval-string+ (:sci-ctx env-1)
+            (str "(def raw-glob (v/glob \"extensions\" \"**/*.clj\"))\n"
+              "(def bad-files (->> raw-glob :result (map :path) sort vec))\n"
+              "(def good-files (->> raw-glob :result sort vec))")
+            {:ns ns-1})
+          (expect (= [nil nil nil]
+                    (:val (sci/eval-string+ (:sci-ctx env-1) "(take 3 bad-files)" {:ns ns-1}))))
+          (expect (every? string?
+                    (:val (sci/eval-string+ (:sci-ctx env-1) "(take 3 good-files)" {:ns ns-1}))))
+          (let [bad-files  (:val (sci/eval-string+ (:sci-ctx env-1) "bad-files" {:ns ns-1}))
+                good-files (:val (sci/eval-string+ (:sci-ctx env-1) "good-files" {:ns ns-1}))
+                turn-id    (vis/db-store-conversation-turn! (:db-info env-1)
+                             {:parent-conversation-id cid
+                              :user-request "persist glob-derived vars"
+                              :status :done})]
+            (vis/db-store-iteration! (:db-info env-1)
+              {:conversation-turn-id turn-id
+               :blocks []
+               :duration-ms 0
+               :vars [{:name "bad-files"
+                       :value bad-files
+                       :code "(def bad-files (->> (v/glob \"extensions\" \"**/*.clj\") :result (map :path) sort vec))"}
+                      {:name "good-files"
+                       :value good-files
+                       :code "(def good-files (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec))"}]}))
+          (finally
+            (loop/dispose-environment! env-1)))
+        (let [env-2 (loop/create-environment router {:db db-spec
+                                                     :channel :cli
+                                                     :conversation (str cid)})
+              ns-2  (sci/find-ns (:sci-ctx env-2) 'sandbox)]
+          (try
           ;; Restart restore is working here: it restores the same wrong `bad-files`
           ;; value that was persisted, and the same correct `good-files` strings.
-          (expect (= [nil nil nil]
-                    (:val (sci/eval-string+ (:sci-ctx env-2) "(take 3 bad-files)" {:ns ns-2}))))
-          (expect (every? string?
-                    (:val (sci/eval-string+ (:sci-ctx env-2) "(take 3 good-files)" {:ns ns-2}))))
-          (finally
-            (loop/dispose-environment! env-2)))))))
+            (expect (= [nil nil nil]
+                      (:val (sci/eval-string+ (:sci-ctx env-2) "(take 3 bad-files)" {:ns ns-2}))))
+            (expect (every? string?
+                      (:val (sci/eval-string+ (:sci-ctx env-2) "(take 3 good-files)" {:ns ns-2}))))
+            (finally
+              (loop/dispose-environment! env-2))))))))
 
 (defdescribe router-provider-resolution-test
   (it "resolves OAuth provider credentials before constructing the router"

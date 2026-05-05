@@ -1,0 +1,8 @@
+;; Standard provider presets. Each provider namespace registers exactly
+;; one Vis extension/provider entry; shared package only avoids seven tiny jars.
+{:paths ["src" "resources"]
+ :deps {com.blockether/vis {:local/root "../../.."}}
+ :aliases
+ {:test {:extra-paths ["test"]
+         :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+         :main-opts ["-m" "lazytest.main" "--dir" "test"]}}}

@@ -123,9 +123,8 @@
                 [{:name "diagnose" :source :repo
                   :description "Disciplined diagnosis loop."}])]
       (expect (string/includes? out "<skills count=\"1\">"))
-      (expect (string/includes? out "<skill name=\"diagnose\">"))
-      (expect (string/includes? out "<prompt_preview>Disciplined diagnosis loop.</prompt_preview>"))
-      (expect (not (string/includes? out "source=\"repo\"")))
+      (expect (string/includes? out "<skill name=\"diagnose\" source=\"repo\">"))
+      (expect (string/includes? out "<activation_trigger>Disciplined diagnosis loop.</activation_trigger>"))
       ;; Tail line: SYSTEM-var enumeration + symbol-call activation.
       (expect (string/includes? out "TURN_ACCESSIBLE_SKILLS"))
       (expect (string/includes? out "(v/load-skill \"name\")"))

@@ -19,6 +19,7 @@
      7. Extension provenance includes cached source markers."
   (:require
    [com.blockether.vis.internal.extension :as ext]
+   [com.blockether.vis.internal.registry :as registry]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private base-channel
@@ -78,6 +79,17 @@
       (expect (ifn? (get-in e [:ext/providers 0 :provider/on-selected-fn])))
       (expect (ifn? (get-in e [:ext/providers 0 :provider/prompt-fn])))))
 
+  (it "dispatches every provider in :ext/providers, not just the first one"
+    (let [calls (atom [])
+          e (ext/extension
+              {:ext/namespace 'test.multi-provider
+               :ext/doc       "Multi-provider extension fixture."
+               :ext/providers [{:provider/id :multi-a :provider/label "Multi A"}
+                               {:provider/id :multi-b :provider/label "Multi B"}]})]
+      (with-redefs [registry/register-provider! #(swap! calls conj (:provider/id %))]
+        (ext/register-extension! e)
+        (expect (= [:multi-a :multi-b] @calls)))))
+
   (it "derives \"channels\" for extensions exporting :ext/channels"
     (let [e (ext/extension
               {:ext/namespace 'test.channel-only
@@ -128,6 +140,17 @@
                :ext/doc       "Extension with environment-info contribution."
                :ext/environment-info-fn f})]
       (expect (identical? f (:ext/environment-info-fn e))))))
+
+(defdescribe system-nudge-result-spec-test
+  (it "spec-checks extension nudge return values"
+    (expect (ext/system-nudge-result? nil))
+    (expect (ext/system-nudge-result? "plain nudge"))
+    (expect (ext/system-nudge-result? {:importance :high :text "important"}))
+    (expect (ext/system-nudge-result? {:importance :critical :message "stop"}))
+    (expect (not (ext/system-nudge-result? "")))
+    (expect (not (ext/system-nudge-result? {:importance :urgent :text "bad level"})))
+    (expect (not (ext/system-nudge-result? {:importance :high :text ""})))
+    (expect (not (ext/system-nudge-result? {:importance :high :text "ok" :extra true})))))
 
 (defdescribe owner-field-test
   (it "accepts :ext/owner as a non-blank string and round-trips it"

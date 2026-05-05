@@ -11,12 +11,11 @@
         (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
         (v/rg patterns path)    ; -> {:hits :truncated-by}; patterns = non-empty vec of literal substrings
 
-   2. Thin cwd-safe wrappers over the babashka.fs file API, so the
-      model acts via normal Clojure code instead of bespoke edit DSLs:
+   2. Cwd-safe wrappers over the babashka.fs file API. `v/patch` is
+      the canonical text edit surface:
 
         (v/read-all-lines path)
-        (v/write-lines path lines)
-        (v/update-file path f & xs)
+        (v/patch [{:path path :search old :replace new}])
         (v/create-dirs path)
         (v/glob root pattern)
         (v/copy src dest)
@@ -455,160 +454,74 @@
    (vec (fs/read-all-lines (ensure-existing-file! (safe-path path))
           (or opts {})))))
 
-(def ^:private write-lines-opt-keys #{:start-line :end-line :insert-at})
+(def ^:private patch-required-keys #{:path :search :replace})
 
-(defn- coerce-write-lines-opts
-  [opts]
-  (when (and (some? opts) (not (map? opts)))
-    (throw (ex-info "v/write-lines opts must be a map"
-             {:type :ext.foundation.editing/invalid-write-lines-opts
-              :opts opts})))
-  (let [opts      (or opts {})
-        start     (:start-line opts)
-        end       (:end-line opts)
-        insert-at (:insert-at opts)
-        fs-opts   (apply dissoc opts write-lines-opt-keys)
-        validate-positive (fn [k v]
-                            (when (and (some? v)
-                                    (or (not (integer? v)) (not (pos? v))))
-                              (throw (ex-info (str "v/write-lines " k " must be a positive integer")
-                                       {:type :ext.foundation.editing/invalid-write-lines-opts
-                                        :opt  k
-                                        :got  v
-                                        :opts opts}))))]
-    (validate-positive :start-line start)
-    (validate-positive :end-line end)
-    (validate-positive :insert-at insert-at)
-    (when (and (some? insert-at)
-            (or (some? start) (some? end)))
-      (throw (ex-info "v/write-lines opts cannot mix :insert-at with :start-line/:end-line"
-               {:type :ext.foundation.editing/invalid-write-lines-opts
-                :opts opts})))
-    (when (not= (some? start) (some? end))
-      (throw (ex-info "v/write-lines range edits require both :start-line and :end-line"
-               {:type :ext.foundation.editing/invalid-write-lines-opts
-                :opts opts})))
-    (when (and start end (> start end))
-      (throw (ex-info "v/write-lines :start-line must be <= :end-line"
-               {:type :ext.foundation.editing/invalid-write-lines-opts
-                :start-line start
-                :end-line end
-                :opts opts})))
-    (when (and (not= :replace-all
-                 (cond
-                   (some? insert-at) :insert-at
-                   (some? start) :replace-range
-                   :else :replace-all))
-            (:append fs-opts))
-      (throw (ex-info "v/write-lines partial edits do not support :append"
-               {:type :ext.foundation.editing/invalid-write-lines-opts
-                :opts opts})))
-    {:mode       (cond
-                   (some? insert-at) :insert-at
-                   (some? start) :replace-range
-                   :else :replace-all)
-     :start-line start
-     :end-line   end
-     :insert-at  insert-at
-     :fs-opts    fs-opts}))
+(defn- coerce-patch-edits
+  [edits]
+  (let [edits (if (map? edits) [edits] edits)]
+    (when-not (sequential? edits)
+      (throw (ex-info "v/patch expects a map or vector of edit maps"
+               {:type :ext.foundation.editing/invalid-patch-edits
+                :got  (type edits)})))
+    (mapv (fn [edit]
+            (when-not (map? edit)
+              (throw (ex-info "v/patch edit must be a map"
+                       {:type :ext.foundation.editing/invalid-patch-edit
+                        :edit edit})))
+            (let [missing (seq (remove #(contains? edit %) patch-required-keys))]
+              (when missing
+                (throw (ex-info "v/patch edit missing required keys"
+                         {:type :ext.foundation.editing/invalid-patch-edit
+                          :missing (vec missing)
+                          :edit edit}))))
+            (update edit :path str))
+      edits)))
 
-(defn- replace-line-range
-  [current-lines start-line end-line replacement-lines]
-  (let [line-count (count current-lines)]
-    (when (zero? line-count)
-      (throw (ex-info "v/write-lines range replace requires an existing non-empty file"
-               {:type :ext.foundation.editing/invalid-write-lines-range
-                :start-line start-line
-                :end-line end-line})))
-    (when (> start-line line-count)
-      (throw (ex-info "v/write-lines :start-line exceeds file length"
-               {:type :ext.foundation.editing/invalid-write-lines-range
-                :start-line start-line
-                :line-count line-count})))
-    (when (> end-line line-count)
-      (throw (ex-info "v/write-lines :end-line exceeds file length"
-               {:type :ext.foundation.editing/invalid-write-lines-range
-                :end-line end-line
-                :line-count line-count})))
-    (into [] cat [(subvec current-lines 0 (dec start-line))
-                  (vec replacement-lines)
-                  (subvec current-lines end-line)])))
+(defn- occurrence-count
+  [^String haystack ^String needle]
+  (when (str/blank? needle)
+    (throw (ex-info "v/patch :search must be non-blank"
+             {:type :ext.foundation.editing/invalid-patch-search})))
+  (loop [idx 0 n 0]
+    (let [hit (str/index-of haystack needle idx)]
+      (if (nil? hit)
+        n
+        (recur (+ hit (count needle)) (inc n))))))
 
-(defn- insert-lines-at
-  [current-lines insert-at new-lines]
-  (let [line-count (count current-lines)]
-    (when (> insert-at (inc line-count))
-      (throw (ex-info "v/write-lines :insert-at exceeds the next valid line boundary"
-               {:type :ext.foundation.editing/invalid-write-lines-range
-                :insert-at insert-at
-                :line-count line-count})))
-    (into [] cat [(subvec current-lines 0 (dec insert-at))
-                  (vec new-lines)
-                  (subvec current-lines (dec insert-at))])))
+(defn- patch-plan
+  [edits]
+  (let [edits (coerce-patch-edits edits)]
+    (loop [remaining edits
+           states {}]
+      (if-let [{:keys [path search replace]} (first remaining)]
+        (let [file (ensure-existing-file! (safe-path path))
+              before (or (get-in states [path :before]) (slurp file))
+              current (or (get-in states [path :after]) before)
+              search (str search)
+              replace (str replace)
+              matches (occurrence-count current search)]
+          (when-not (= 1 matches)
+            (throw (ex-info (str "v/patch :search must match exactly once in " path
+                              "; matched " matches " time(s)")
+                     {:type :ext.foundation.editing/patch-search-not-unique
+                      :path path
+                      :matches matches
+                      :search search})))
+          (recur (next remaining)
+            (assoc states path {:file file
+                                :path (rel-path file)
+                                :before before
+                                :after (str/replace-first current
+                                         (java.util.regex.Pattern/quote search)
+                                         (java.util.regex.Matcher/quoteReplacement replace))})))
+        (vals states)))))
 
-(defn- lines->file-text
-  [lines]
-  (if (seq lines)
-    (str (str/join "\n" lines) "\n")
-    ""))
-
-(defn- write-lines-plan
-  [path lines opts]
-  (let [f (safe-path path)
-        {:keys [mode start-line end-line insert-at fs-opts]} (coerce-write-lines-opts opts)
-        before (when (.exists f)
-                 (slurp (ensure-existing-file! f)))
-        current-lines (if before (vec (str/split-lines before)) [])
-        final-lines (case mode
-                      :replace-all (vec lines)
-                      :replace-range (replace-line-range current-lines start-line end-line lines)
-                      :insert-at (insert-lines-at current-lines insert-at lines))
-        after-text (if (:append fs-opts)
-                     (str (or before "") (lines->file-text final-lines))
-                     (lines->file-text final-lines))]
-    {:file f
-     :path (rel-path f)
-     :before before
-     :after after-text
-     :final-lines final-lines
-     :fs-opts fs-opts}))
-
-(defn write-lines-safe
-  ([path lines]
-   (write-lines-safe path lines nil))
-  ([path lines opts]
-   (let [{:keys [file path final-lines fs-opts]} (write-lines-plan path lines opts)]
-     (ensure-parent-dirs! file)
-     (fs/write-lines file final-lines fs-opts)
-     path)))
-
-(defn- update-file-plan
-  [path more]
-  (let [file (ensure-existing-file! (safe-path path))
-        [opts f xs] (if (map? (first more))
-                      [(first more) (second more) (nnext more)]
-                      [nil (first more) (next more)])
-        before (if opts
-                 (apply slurp file (apply concat opts))
-                 (slurp file))
-        _ (when-not (ifn? f)
-            (throw (ex-info "v/update-file requires a function"
-                     {:type :ext.foundation.editing/invalid-update-file-args
-                      :got  (type f)})))
-        after (str (apply f before xs))]
-    {:file file
-     :path (rel-path file)
-     :before before
-     :after after}))
-
-(defn update-file-safe
-  [path & more]
-  (let [{:keys [file after]} (update-file-plan path more)
-        opts (when (map? (first more)) (first more))]
-    (if opts
-      (apply spit file after (apply concat opts))
+(defn patch-safe
+  [edits]
+  (let [plans (vec (patch-plan edits))]
+    (doseq [{:keys [file after]} plans]
       (spit file after))
-    after))
+    (mapv #(select-keys % [:path :before :after]) plans)))
 
 (defn- create-dirs-safe [path]
   (let [f (safe-path path)]
@@ -927,6 +840,23 @@
                     :lines-before (count (str/split-lines before))
                     :lines-after (count (str/split-lines after))}})))
 
+(defn- patch-tool
+  [edits]
+  (let [plans (patch-safe edits)]
+    (tool-success
+      {:op :v/patch
+       :path (or (:path (first plans)) ".")
+       :kind :file
+       :result (mapv #(select-keys % [:path]) plans)
+       :provenance {:files (mapv (fn [{:keys [path before after]}]
+                                   {:path path
+                                    :changed? (not= before after)
+                                    :before before
+                                    :after after
+                                    :lines-before (count (str/split-lines before))
+                                    :lines-after (count (str/split-lines after))})
+                             plans)}})))
+
 (defn- create-dirs-tool
   [path]
   (let [before (fs/exists? (safe-path path))
@@ -1187,6 +1117,20 @@
         (when diff-txt
           (md/code-block "diff" diff-txt))))))
 
+(defn- render-patch
+  [{:keys [tool-result]}]
+  (if-not (:ok? tool-result)
+    (tool-error-text tool-result)
+    (let [files (get-in tool-result [:provenance :files])]
+      (md/join
+        (md/p "Patched" (count files) "file(s). Each :search matched exactly once before any write. Read back only when exact persisted bytes matter or external writers may interfere.")
+        (for [{:keys [path changed? before after]} files
+              :let [diff-txt (when changed? (unified-diff-text path before after))]]
+          (md/join
+            (md/p (md/code path) (when (false? changed?) "(no change)"))
+            (when diff-txt
+              (md/code-block "diff" diff-txt))))))))
+
 (defn- render-create-dirs
   [{:keys [tool-result]}]
   (if-not (:ok? tool-result)
@@ -1383,13 +1327,23 @@
 
 (def update-file-symbol
   (vis/symbol 'update-file update-file-tool
-    {:doc "Read-modify-write text file. Tool result; `:result` = new contents. The tool reads once, applies the function, writes the new text, and previews the diff. Read back only when exact persisted bytes matter or an external writer may interfere."
+    {:doc "Legacy read-modify-write text file. Prefer `v/patch` for source edits. Tool result; `:result` = new contents. The tool reads once, applies the function, writes the new text, and previews the diff. Read back only when exact persisted bytes matter or an external writer may interfere."
      :arglists '([path f & xs] [path opts f & xs])
      :examples ["(v/update-file \"README.md\" #(str % \"\\nnew line\\n\"))"
                 "(let [path \"x.txt\"]\n  (v/update-file path str/upper-case)\n  (:result (v/read-all-lines path)))"]
      :result-spec tool-result-spec
      :render-fn render-update-file
      :on-error-fn (tool-failure-on-error :v/update-file :file nil)}))
+
+(def patch-symbol
+  (vis/symbol 'patch patch-tool
+    {:doc "Canonical exact text patch. Takes one edit map or a vector of maps with required keys `:path`, `:search`, `:replace`. Every `:search` must match exactly once in the current file; all edits validate before any write. Tool result envelope."
+     :arglists '([edits])
+     :examples ["(v/patch [{:path \"src/main.clj\" :search \"old\" :replace \"new\"}])"
+                "(v/patch {:path \"README.md\" :search \"alpha\" :replace \"beta\"})"]
+     :result-spec tool-result-spec
+     :render-fn render-patch
+     :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
 
 (def create-dirs-symbol
   (vis/symbol 'create-dirs create-dirs-tool
@@ -1474,6 +1428,7 @@
    ls-symbol
    rg-symbol
    read-all-lines-symbol
+   patch-symbol
    write-lines-symbol
    update-file-symbol
    create-dirs-symbol
@@ -1486,6 +1441,6 @@
    bash-symbol])
 
 (def editing-prompt
-  "`v/` files: Use structured tools for discovery and reads: (v/cat path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?), (v/ls path opts?). `v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. `v/cat` opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. For full-file work, bind once: (def lines (:result (v/read-all-lines path))). Journal shows preview only; reuse the var instead of rereading unless file changed or you need persisted-byte verification. Edit with (v/write-lines path lines opts?), (v/update-file path f & xs). `v/write-lines` defaults to whole-file replacement; use `{:start-line a :end-line b}` for inclusive range replacement or `{:insert-at n}` to insert before line boundary `n`. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
+  "`v/` files: Use structured tools for discovery and reads: (v/cat path opts?), (v/rg [lits] path opts?), (v/glob root pat opts?), (v/ls path opts?). `v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. `v/cat` opts are ONLY :offset, :limit, :char-limit; :max-lines is tolerated as a :limit alias. If (:truncated-by (:result c)) is :char-limit or :line-limit, continue with (:next-offset (:result c)) when present, or raise :char-limit. For full-file work, bind once: (def lines (:result (v/read-all-lines path))). Journal shows preview only; reuse the var instead of rereading unless file changed or you need persisted-byte verification. Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. `v/write-lines` and `v/update-file` are legacy/narrow tools; prefer v/patch for source edits. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
 `v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
 Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\" {:offset 1 :limit 120}) [:result :lines]), (:result (v/read-all-lines \"IDEAS.md\")), (get-in (v/bash \"pwd\") [:result :stdout]), (-> (v/rg [\"needle\"] \"src\") :result :hits). Use (v/silent! aggregate-map) when constituent tool/var outputs were already shown and the aggregate value would only burn journal tokens; it returns only shape and is elided from live display. For Clojure source edits prefer z/zedit when `z/` is active; use v/read-all-lines + v/write-lines only for trivial line/data changes.")

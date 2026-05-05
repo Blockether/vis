@@ -1,9 +1,7 @@
 (ns com.blockether.vis.ext.exa.core
   "Exa MCP extension for Vis.
 
-   This ports the useful shape of PI's `@benvargas/pi-exa-mcp`
-   package into the Vis SCI extension model: two model-facing tools
-   under `exa/` backed by Exa's HTTP MCP endpoint.
+   Two model-facing tools under `exa/` backed by Exa's HTTP MCP endpoint.
 
    Important distinction: normal Exa REST APIs require `x-api-key`.
    The public MCP endpoint supports basic unauthenticated usage and an
@@ -123,13 +121,9 @@
 
 (defn- config-candidates
   []
-  (cond
-    (env "EXA_MCP_CONFIG")
-    [(home-path (env "EXA_MCP_CONFIG"))]
-
-    :else
-    [(str (System/getProperty "user.dir") "/.pi/extensions/exa-mcp.json")
-     (str (System/getProperty "user.home") "/.pi/agent/extensions/exa-mcp.json")]))
+  (if-let [path (env "EXA_MCP_CONFIG")]
+    [(home-path path)]
+    []))
 
 (defn- read-json-file
   [path]
@@ -436,9 +430,9 @@
 (defn- effective-limits
   [opts]
   (let [cfg (effective-config)]
-    {:max-bytes (min (positive-long (or (:pi-max-bytes opts) (:piMaxBytes opts)) (:max-bytes cfg))
+    {:max-bytes (min (positive-long (:max-bytes opts) (:max-bytes cfg))
                   (:max-bytes cfg))
-     :max-lines (min (positive-long (or (:pi-max-lines opts) (:piMaxLines opts)) (:max-lines cfg))
+     :max-lines (min (positive-long (:max-lines opts) (:max-lines cfg))
                   (:max-lines cfg))}))
 
 (defn- render-exa-result
@@ -555,16 +549,6 @@
        (catch Throwable t
          (tool-failure :exa/code-context "get_code_context_exa" query ep t))))))
 
-(defn web-search-exa
-  "PI-compatible spelling for `web-search`."
-  ([query] (web-search query))
-  ([query opts] (web-search query opts)))
-
-(defn get-code-context-exa
-  "PI-compatible spelling for `code-context`."
-  ([query] (code-context query))
-  ([query opts] (code-context query opts)))
-
 (def web-search-symbol
   (vis/symbol 'web-search web-search
     {:doc "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Tool result; payload under :result."
@@ -583,30 +567,12 @@
      :result-spec tool-result-spec
      :render-fn render-exa-result}))
 
-(def web-search-exa-symbol
-  (vis/symbol 'web-search-exa web-search-exa
-    {:doc "PI-compatible alias for exa/web-search."
-     :arglists '([query] [query opts])
-     :examples ["(exa/web-search-exa \"latest React features\")"]
-     :result-spec tool-result-spec
-     :render-fn render-exa-result}))
-
-(def get-code-context-exa-symbol
-  (vis/symbol 'get-code-context-exa get-code-context-exa
-    {:doc "PI-compatible alias for exa/code-context."
-     :arglists '([query] [query opts])
-     :examples ["(exa/get-code-context-exa \"Rust error handling examples\")"]
-     :result-spec tool-result-spec
-     :render-fn render-exa-result}))
-
 (def exa-symbols
   [web-search-symbol
-   code-context-symbol
-   web-search-exa-symbol
-   get-code-context-exa-symbol])
+   code-context-symbol])
 
 (def exa-prompt
-  "`exa/` web search: (exa/web-search query opts?) for current web facts; (exa/code-context query opts?) for code/docs/API examples. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :pi-max-bytes, :pi-max-lines. code-context supports :tokens-num, :pi-max-bytes, :pi-max-lines. Tool results are envelopes; read payload with (get-in r [:result :content]), not (:content r). PI-compatible aliases: exa/web-search-exa, exa/get-code-context-exa.")
+  "`exa/` web search: (exa/web-search query opts?) for current web facts; (exa/code-context query opts?) for code/docs/API examples. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :max-bytes, :max-lines. code-context supports :tokens-num, :max-bytes, :max-lines. Tool results are envelopes; read payload with (get-in r [:result :content]), not (:content r).")
 
 (def exa-env
   [{:name "EXA_API_KEY"

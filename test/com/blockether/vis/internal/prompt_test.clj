@@ -12,7 +12,7 @@
    regression that:
      1. `build-iteration-context` no longer accepts / requires a
         `:call-counts-atom` arg.
-     2. The function never injects a `[system_nudge]` line on its own
+     2. The function never injects a `<system_nudge>` entry on its own
         \u2014 only `:ext/nudge-fn` results land in the output."
   (:require
    [clojure.string :as str]
@@ -141,9 +141,9 @@
     (it "never injects a built-in repetition nudge, even on identical reruns"
       ;; Regression: the built-in `repetition-warning` was removed.
       ;; Repeating the same expression must NOT produce a
-      ;; `[system_nudge]` line from the repetition path. Title-nudge
+      ;; `<system_nudge>` entry from the repetition path. Title-nudge
       ;; suppressed by pre-binding a non-blank title; we check for the
-      ;; absence of any [system_nudge] line.
+      ;; absence of any system nudge entry.
       (let [env    (env-with-title)
             blocks [{:code "(grep \"X\")" :result []}]
             out-1  (prompt/build-iteration-context
@@ -154,8 +154,8 @@
                      env {:active-extensions   NO_EXTENSIONS
                           :blocks-by-iteration [(->iter 1 blocks)]
                           :iteration           1})]
-        (expect (not (str/includes? (or out-1 "") "[system_nudge]")))
-        (expect (not (str/includes? (or out-2 "") "[system_nudge]")))))
+        (expect (not (str/includes? (or out-1 "") "<system_nudge")))
+        (expect (not (str/includes? (or out-2 "") "<system_nudge")))))
 
     (it "appends extension nudges when :ext/nudge-fn returns a non-blank string"
       (let [ext (identity
@@ -170,9 +170,35 @@
                   {:active-extensions   [ext-only-ext]
                    :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
                    :iteration           0})]
-        (expect (str/includes? out "[system_nudge] hi from fake.nudger"))
+        (expect (str/includes? out "<system_nudges>"))
+        (expect (str/includes? out "<system_nudge importance=\"normal\">\nhi from fake.nudger\n</system_nudge>"))
+        (expect (not (str/includes? out "[system_nudge]")))
         ;; Silence the unused alias warning -- present for future tests.
         (when (some? ext) :ok)))
+
+    (it "accepts extension nudge maps with explicit importance"
+      (let [ext {:ext/namespace 'fake.important
+                 :ext/nudge-fn  (fn [_ctx] {:importance :critical
+                                            :text "Stop and ask user."})}
+            out (prompt/build-iteration-context
+                  (env-with-title)
+                  {:active-extensions   [ext]
+                   :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
+                   :iteration           0})]
+        (expect (str/includes? out "<system_nudge importance=\"critical\">\nStop and ask user.\n</system_nudge>"))))
+
+    (it "skips invalid extension nudge returns"
+      (let [ext {:ext/namespace 'fake.invalid
+                 :ext/nudge-fn  (fn [_ctx] {:importance :urgent
+                                            :text "bad level"})}
+            out (prompt/build-iteration-context
+                  (env-with-title)
+                  {:active-extensions   [ext]
+                   :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
+                   :iteration           0})]
+        (expect (string? out))
+        (expect (not (str/includes? out "bad level")))
+        (expect (not (str/includes? out "<system_nudge")))))
 
     (it "swallows extension nudge-fn exceptions instead of bubbling"
       (let [ext {:ext/namespace 'fake.thrower
@@ -186,7 +212,7 @@
         ;; Both built-in and extension nudges suppressed: title is
         ;; non-blank, iteration not on the refresh cadence,
         ;; extension nudge threw and was swallowed.
-        (expect (not (str/includes? out "[system_nudge]")))))
+        (expect (not (str/includes? out "<system_nudge")))))
 
     (it "fires the title-nudge when CONVERSATION_TITLE is blank"
       (let [env-blank-title {:conversation-title-atom (atom "")}
@@ -195,7 +221,8 @@
                   {:active-extensions   NO_EXTENSIONS
                    :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
                    :iteration           0})]
-        (expect (str/includes? out "[system_nudge]"))
+        (expect (str/includes? out "<system_nudges>"))
+        (expect (str/includes? out "<system_nudge importance=\"low\">"))
         (expect (str/includes? out "CONVERSATION_TITLE is currently empty"))))
 
     (it "fires the title-refresh nudge every TITLE_REFRESH_NUDGE_PERIOD iterations"
@@ -205,7 +232,7 @@
                   {:active-extensions   NO_EXTENSIONS
                    :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
                    :iteration           period})]
-        (expect (str/includes? out "[system_nudge]"))
+        (expect (str/includes? out "<system_nudge importance=\"low\">"))
         (expect (str/includes? out (str "You're " period " iterations"))))))
 
   (it "renders loaded skill bodies under <extensions>/<active_skills>"
@@ -219,7 +246,7 @@
                 {:active-extensions NO_EXTENSIONS
                  :iteration 0})]
       (expect (str/includes? out "<extensions>\n<active_skills count=\"1\">"))
-      (expect (str/includes? out "<skill name=\"diagnose\">\n# Full skill body\nDo repro first.\n</skill>"))
+      (expect (str/includes? out "<skill name=\"diagnose\" source=\"repo\">\n# Full skill body\nDo repro first.\n</skill>"))
       (expect (not (str/includes? out "Debug loop.")))
       (expect (not (str/includes? out "/repo/.agents/skills/diagnose/SKILL.md")))))
 

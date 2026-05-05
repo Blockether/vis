@@ -17,10 +17,6 @@ Single alias: `exa/`.
 ```clojure
 (exa/web-search \"latest Clojure release\" {:num-results 5})
 (exa/code-context \"rewrite-clj z/find-value examples\" {:tokens-num 12000})
-
-;; PI-compatible spellings also exist:
-(exa/web-search-exa \"latest Clojure release\")
-(exa/get-code-context-exa \"HoneySQL SQLite examples\")
 ```
 
 The extension talks to Exa MCP at `https://mcp.exa.ai/mcp`. Basic usage works without an API key; set `EXA_API_KEY` or `EXA_MCP_API_KEY` for higher limits.
@@ -31,11 +27,9 @@ Config sources, highest priority first:
 
 1. env vars: `EXA_MCP_URL`, `EXA_MCP_TOOLS`, `EXA_API_KEY` / `EXA_MCP_API_KEY`, `EXA_MCP_TIMEOUT_MS`, `EXA_MCP_PROTOCOL_VERSION`, `EXA_MCP_MAX_BYTES`, `EXA_MCP_MAX_LINES`.
 2. `EXA_MCP_CONFIG` JSON file.
-3. project `.pi/extensions/exa-mcp.json`.
-4. global `~/.pi/agent/extensions/exa-mcp.json`.
-5. defaults.
+3. defaults.
 
-JSON shape mirrors PI's `@benvargas/pi-exa-mcp` package. String values can reference env vars as `$NAME`, `${NAME}`, or `env:NAME`:
+JSON string values can reference env vars as `$NAME`, `${NAME}`, or `env:NAME`:
 
 ```json
 {

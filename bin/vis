@@ -12,11 +12,14 @@
 #      (or symlink: ln -s "$PWD/bin/vis" /usr/local/bin/vis)
 #   3. Run `vis help` to confirm.
 #
-# This script always invokes Clojure from the repo root that contains
-# THIS script, regardless of where the user runs it from. That keeps
-# `:local/root` deps resolving correctly.
+# This script resolves Clojure deps from the repo root that contains
+# THIS script, but preserves the user's invocation directory as the
+# JVM `user.dir`. Vis runtime git/environment context must describe
+# where the user ran `vis`, not ~/.vis/sourcecode.
 
 set -euo pipefail
+
+invocation_cwd="$PWD"
 
 # Resolve the directory of this script, following symlinks.
 src="${BASH_SOURCE[0]}"
@@ -202,22 +205,22 @@ else
       mkdir -p "$image_dir"
       echo "vis: building CRaC image at $image_dir ($rebuild_reason)" >&2
       checkpoint_start_ms="$(measure_now_ms)"
-      if ! clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCCheckpointTo="$image_dir" -M:vis-crac-bootstrap; then
+      if ! clojure -J-XX:+IgnoreUnrecognizedVMOptions "-J-Duser.dir=$invocation_cwd" -J-XX:CRaCCheckpointTo="$image_dir" -M:vis-crac-bootstrap; then
         measure_log_since "crac checkpoint failed" "$checkpoint_start_ms"
         echo "vis: CRaC bootstrap failed; falling back to cold Clojure startup. Set VIS_CRAC=0 to disable." >&2
-        run_measured_or_exec "process cold clojure -M:vis" clojure -M:vis "$@"
+        run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
       fi
       measure_log_since "crac checkpoint" "$checkpoint_start_ms"
       if ! crac_image_has_entries "$image_dir"; then
         echo "vis: CRaC bootstrap produced no image; falling back to cold Clojure startup." >&2
-        run_measured_or_exec "process cold clojure -M:vis" clojure -M:vis "$@"
+        run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
       fi
       printf '%s\n' "$fingerprint" > "$stamp_file"
     else
       measure_log "crac image fresh: $image_dir"
     fi
     measure_log "exec crac restore: $image_dir"
-    run_measured_or_exec "process crac restore" clojure -J-XX:+IgnoreUnrecognizedVMOptions -J-XX:CRaCRestoreFrom="$image_dir" -M:vis "$@"
+    run_measured_or_exec "process crac restore" clojure -J-XX:+IgnoreUnrecognizedVMOptions "-J-Duser.dir=$invocation_cwd" -J-XX:CRaCRestoreFrom="$image_dir" -M:vis "$@"
   else
     measure_log_since "crac support probe: unsupported" "$crac_probe_start_ms"
     if crac_rebuild_requested || crac_forced || measure_enabled; then
@@ -227,4 +230,4 @@ else
 fi
 
 measure_log "exec cold clojure -M:vis"
-run_measured_or_exec "process cold clojure -M:vis" clojure -M:vis "$@"
+run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"

@@ -162,7 +162,8 @@
 
 (defn- github-copilot-claude-model?
   [resolved-model]
-  (and (= :github-copilot (:provider resolved-model))
+  (and (contains? #{:github-copilot-individual :github-copilot-business}
+         (:provider resolved-model))
     (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
 
 (def ^:private casual-request-pattern
@@ -1016,6 +1017,29 @@
     (catch Throwable _
       false)))
 
+(defn- bare-symbol-entry?
+  [{:keys [expr]}]
+  (try
+    (symbol? (edamame/parse-string (str expr) edamame-opts))
+    (catch Throwable _
+      false)))
+
+(defn- plain-prose-code-error
+  [raw-code code-entries]
+  (when (and (not (str/blank? (or raw-code "")))
+          (re-find #"\s" (str raw-code))
+          (<= 3 (count code-entries))
+          (every? bare-symbol-entry? code-entries))
+    (str "Provider returned plain prose where executable Clojure was required. "
+      "Wrap final prose in `(answer ...)` or emit a fenced `clojure` code block; "
+      "aborting this iteration instead of evaluating each word as a symbol.")))
+
+(defn- prose->comment
+  [raw-code]
+  (->> (str/split-lines (str raw-code))
+    (map #(str ";; " %))
+    (str/join "\n")))
+
 (defn- code-entries-preflight
   ([iteration-position raw-code]
    (code-entries-preflight iteration-position raw-code nil))
@@ -1037,11 +1061,14 @@
                                :else
                                (vec (filter #(not (str/blank? (:expr %)))
                                       (or forms []))))
+         plain-prose-error (when-not (or raw-fence-error parse-error)
+                             (plain-prose-code-error raw-code parsed-code-entries))
          parsed-total-blocks (count parsed-code-entries)
          normalized-code (normalized-code-source parsed-code-entries)
          code-hash (when-not (str/blank? normalized-code)
                      (sha256-hex normalized-code))
          answer-preflight-form-idx (when (and (not raw-fence-error)
+                                           (not plain-prose-error)
                                            (pos? parsed-total-blocks))
                                      (answer-position-preflight-form-idx
                                        iteration-position
@@ -1050,9 +1077,14 @@
                                   (answer-position-preflight-error-message
                                     answer-preflight-form-idx
                                     parsed-total-blocks))
-         repeat-error (when-not (or raw-fence-error parse-error answer-preflight-error)
+         repeat-error (when-not (or raw-fence-error parse-error plain-prose-error answer-preflight-error)
                         (repeat-preflight-error repeat-state code-hash))]
      {:code-entries (cond
+                      plain-prose-error
+                      [{:expr "(vis/preflight-error :plain-prose-code)"
+                        :comment (prose->comment raw-code)
+                        :preflight-error plain-prose-error}]
+
                       answer-preflight-error
                       (mapv (fn [entry]
                               (assoc entry :preflight-error answer-preflight-error))
@@ -1066,6 +1098,7 @@
                       parsed-code-entries)
       :answer-preflight-error answer-preflight-error
       :repeat-preflight-error repeat-error
+      :plain-prose-preflight-error plain-prose-error
       :raw-fence-preflight-error raw-fence-error
       :normalized-code normalized-code
       :code-hash code-hash
@@ -1263,6 +1296,36 @@
    :completion_tokens_details {:reasoning_tokens (long (or (token-number tokens [:reasoning]) 0))}
    :prompt_tokens_details {:cached_tokens (long (or (token-number tokens [:cached :cached-input :input-cached]) 0))}})
 
+(defn- nonblank-str
+  [s]
+  (when-let [s* (some-> s str)]
+    (when-not (str/blank? s*)
+      s*)))
+
+(defn- zai-preserved-thinking-model?
+  [resolved-model]
+  (and (contains? #{:zai :zai-coding} (:provider resolved-model))
+    (= :zai-thinking (:reasoning-style resolved-model))))
+
+(defn- zai-preserved-thinking-message
+  [[_ {:keys [thinking llm-executable-code]}]]
+  (when-let [reasoning (nonblank-str thinking)]
+    (when-let [content (nonblank-str llm-executable-code)]
+      {:role "assistant"
+       :content content
+       :reasoning_content reasoning})))
+
+(defn- append-zai-preserved-thinking-messages
+  "For Z.ai GLM thinking models, echo exact prior assistant content plus
+   `reasoning_content` back to the OpenAI-compatible chat endpoint. Z.ai
+   Preserved Thinking requires the complete unmodified reasoning_content;
+   non-Z.ai providers must never see this provider-specific key."
+  [messages journal-iters resolved-model]
+  (let [messages* (vec (or messages []))]
+    (if (zai-preserved-thinking-model? resolved-model)
+      (into messages* (keep zai-preserved-thinking-message) journal-iters)
+      messages*)))
+
 (defn run-iteration
   "Runs a single RLM iteration: ask! → check final → execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -1323,6 +1386,7 @@
                                   :routing  (or routing {})
                                   :check-context? true}
                            effective-reasoning (assoc :reasoning effective-reasoning)
+                           (zai-preserved-thinking-model? resolved-model) (assoc :preserved-thinking? true)
                            streaming-fn        (assoc :on-chunk streaming-fn)
                            extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
           model-reasoning (:reasoning ask-result)
@@ -2343,7 +2407,9 @@
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
                                            :system-prompt       system-prompt})
-                      effective-messages (cond-> messages
+                      provider-messages (append-zai-preserved-thinking-messages
+                                          messages journal-iters pre-resolved-model)
+                      effective-messages (cond-> provider-messages
                                            (not (str/blank? iteration-context))
                                            (conj {:role "user" :content iteration-context}))
                       resolved-model pre-resolved-model
@@ -2629,7 +2695,8 @@
                                 ;; budget, not by iteration count.
                                   next-recent (conj (vec (or journal-iters []))
                                                 [(inc (long iteration)) {:thinking thinking
-                                                                         :blocks   blocks}])]
+                                                                         :blocks   blocks
+                                                                         :llm-executable-code (:llm-executable-code iteration-result)}])]
                               (recur (merge loop-state
                                        {:iteration          (inc iteration)
                                         :messages           messages

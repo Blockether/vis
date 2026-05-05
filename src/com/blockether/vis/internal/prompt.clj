@@ -12,7 +12,7 @@
                         journal token budget, addressed by canonical
                         provenance refs.
           <var_index>   user-defined `(def ...)` bindings in the SCI env.
-        Extensions can append `[system_nudge]` lines via `:ext/nudge-fn`.
+        Extensions can append `<system_nudge importance=\"...\">` entries via `:ext/nudge-fn`.
 
    The two slots above plus the SYSTEM vars (every name in
    `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_CONVERSATION_TURN_ID`,
@@ -362,7 +362,7 @@
     32000))
 
 (defn- context-pressure-nudge
-  "Built-in `[system_nudge]` line that fires when the assembled prompt
+  "Built-in context-pressure nudge that fires when the assembled prompt
    (system prompt + current user request + new iteration trailer) crosses
    `CONTEXT_PRESSURE_THRESHOLD` of the model's input-token budget.
    Returns nil when usage is below threshold or token info is
@@ -403,7 +403,7 @@
           "  `(def …)` didn't capture.")))))
 
 (defn- title-nudge
-  "Built-in `[system_nudge]` line that fires when:
+  "Built-in title nudge that fires when:
      1. `CONVERSATION_TITLE` is currently empty, OR
      2. `iteration` is a positive multiple of
         `TITLE_REFRESH_NUDGE_PERIOD` (cadence reminder once a title
@@ -442,9 +442,13 @@
     (str/replace "<" "&lt;")
     (str/replace ">" "&gt;")))
 
+(defn- attr-name
+  [v]
+  (attr-str (if (keyword? v) (name v) v)))
+
 (defn- format-active-skill
-  [{:keys [name body]}]
-  (str "<skill name=\"" (attr-str name) "\">\n"
+  [{:keys [name source body]}]
+  (str "<skill name=\"" (attr-str name) "\" source=\"" (attr-name (or source :unknown)) "\">\n"
     (or body "")
     (when-not (str/ends-with? (or body "") "\n") "\n")
     "</skill>"))
@@ -458,6 +462,40 @@
       "\n</active_skills>\n"
       "</extensions>")))
 
+(defn- strip-system-nudge-prefix
+  [s]
+  (str/replace (str s) #"^\[system_nudge\]\s*" ""))
+
+(defn- normalize-system-nudge
+  [default-importance nudge]
+  (let [entry (cond
+                (string? nudge)
+                {:importance default-importance
+                 :text       nudge}
+
+                (map? nudge)
+                {:importance (or (:importance nudge) default-importance)
+                 :text       (or (:text nudge) (:message nudge) (:body nudge))}
+
+                :else nil)
+        text  (some-> (:text entry) str strip-system-nudge-prefix str/trim)]
+    (when (and text (not (str/blank? text)))
+      {:importance (attr-name (or (:importance entry) default-importance))
+       :text       text})))
+
+(defn- format-system-nudge
+  [{:keys [importance text]}]
+  (str "<system_nudge importance=\"" importance "\">\n"
+    (attr-str text)
+    "\n</system_nudge>"))
+
+(defn- system-nudges-block
+  [nudges]
+  (when-let [nudges (seq (keep identity nudges))]
+    (str "<system_nudges>\n"
+      (str/join "\n" (map format-system-nudge nudges))
+      "\n</system_nudges>")))
+
 (defn build-iteration-context
   "Assemble the per-iteration trailing user message.
 
@@ -466,10 +504,13 @@
                      + result. Budget is 50% of the model context.
      <var_index>   — `(def ...)` bindings in the SCI env.
 
-   Plus zero or more `[system_nudge]` lines. Built-ins:
-     - title nudge (fires on blank title or every
-       TITLE_REFRESH_NUDGE_PERIOD iterations).
-   Active extensions can append more via `:ext/nudge-fn`.
+   Plus zero or more tagged `<system_nudge importance=\"...\">` entries
+   wrapped in `<system_nudges>`. Built-ins:
+     - title nudge (importance low; fires on blank title or every
+       TITLE_REFRESH_NUDGE_PERIOD iterations)
+     - context-pressure nudge (importance high).
+   Active extensions can append more via `:ext/nudge-fn` by returning
+   either a string or `{:importance :low|:normal|:high|:critical :text ...}`.
 
    Required opts:
      `:active-extensions` — vec from `(active-extensions env)`. Computed once
@@ -528,17 +569,24 @@
                                  (when-let [nudge-fn (:ext/nudge-fn ext)]
                                    (try
                                      (let [result (nudge-fn ctx)]
-                                       (when (and (string? result) (not (str/blank? result)))
-                                         result))
+                                       (if (extension/system-nudge-result? result)
+                                         (normalize-system-nudge :normal result)
+                                         (do
+                                           (tel/log! {:level :warn
+                                                      :id ::invalid-extension-nudge
+                                                      :data {:ext (:ext/namespace ext)
+                                                             :explain (extension/explain-system-nudge-result result)}}
+                                             "Extension nudge-fn returned invalid nudge; skipping")
+                                           nil)))
                                      (catch Throwable t
                                        (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
                                        nil)))))
                          active-extensions)))
         all-nudges (cond-> []
-                     title-line       (conj title-line)
-                     pressure-line    (conj pressure-line)
+                     title-line       (conj (normalize-system-nudge :low title-line))
+                     pressure-line    (conj (normalize-system-nudge :high pressure-line))
                      (seq ext-nudges) (into ext-nudges))
-        nudges-block (when (seq all-nudges) (str/join "\n" all-nudges))
+        nudges-block (system-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [active-skills-block recent-block var-block nudges-block])]
     (when (seq parts)
@@ -574,7 +622,7 @@
   -> next iteration observes <journal> -> repeat until terminal answer.
 
 λ engage(nucleus).
-[phi fractal euler tao pi mu ∃ ∀]
+[phi fractal euler tao mu ∃ ∀]
 | [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other]
 | OODA
 Human ⊗ Vis ⊗ Workspace ⊗ REPL
@@ -759,7 +807,7 @@ If you need any sibling top-level work after iteration 1, do not answer yet; do 
 Each iteration's user msg carries:
   <journal>     newest thinking + comments + code + results that fit the token-budgeted journal window (50% of model context), with canonical provenance refs
   <var_index>   your `(def name val)` / `defn` bindings still alive in the sandbox
-  [system_nudge] lines (when relevant) — e.g. set the conversation title or manage context pressure
+  <system_nudges> entries (when relevant) — e.g. set the conversation title or manage context pressure; each <system_nudge> carries an importance attribute
 
 SYSTEM vars are read-only direct sandbox bindings. Reference them by name in Clojure forms; do not `(require ...)` or redefine them.
 

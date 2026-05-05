@@ -428,6 +428,7 @@
      :ext/providers
      [{:provider/id           :openai-codex
        :provider/label        "OpenAI Codex (ChatGPT OAuth)"
+       :provider/preset       {:default-models ["gpt-5.5" "gpt-5.4" "gpt-5.3-codex"]}
        :provider/status-fn    #'status
        :provider/logout-fn    #'logout!
        :provider/detect-fn    #'detect-credentials

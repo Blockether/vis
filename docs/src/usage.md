@@ -10,10 +10,27 @@ for the package layout, [Packages](architecture/packages.md).
 
 ## Install and run from source
 
-The bootstrap scripts check for Java, the official Clojure CLI
+The bootstrap scripts check for Java 21+, the official Clojure CLI
 (`clojure -Sdescribe`), and git before cloning anything. If Clojure is
 missing, install it from the [official Clojure install guide](https://clojure.org/guides/install_clojure)
 and rerun the script.
+
+`~/.vis` is the Vis app home, not necessarily your development checkout:
+
+```text
+~/.vis/
+├── sourcecode/           default installed source checkout
+├── config.edn            local provider/model config
+├── vis.mdb/vis.db        SQLite conversations + iteration state
+└── vis.log               stderr log for TTY-owning channels
+```
+
+You can keep source somewhere else. Runtime state still lives under
+`~/.vis/` unless you explicitly configure otherwise.
+
+### Method 1: default install
+
+Use this when you just want a working global `vis` command.
 
 macOS, Linux, and WSL:
 
@@ -33,17 +50,144 @@ Both installers clone or update Vis under `~/.vis/sourcecode`; Unix-like
 systems symlink `~/.local/bin/vis`, and native Windows writes
 `~/.local/bin/vis.cmd`.
 
-From an existing checkout you can run the same scripts directly:
+### Method 2: custom install directory
+
+Use this when you want the source checkout under `~/code`, an external
+volume, or any other normal repo location.
 
 ```bash
-bin/install-source
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source \
+  | bash -s -- --dest "$HOME/code/vis"
+
+~/.local/bin/vis help
 ```
+
+Equivalent environment form:
+
+```bash
+VIS_SOURCE_DIR="$HOME/code/vis" \
+  bash <(curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source)
+```
+
+Native Windows PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File bin\install-source.ps1
+$env:VIS_SOURCE_DIR = "$HOME\code\vis"
+irm https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source.ps1 | iex
+~\.local\bin\vis.cmd help
 ```
 
-Manual path:
+### Method 3: install from your fork URL
+
+Use this when you already have a GitHub fork and want the installer to
+clone that fork instead of `Blockether/vis`.
+
+HTTPS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source \
+  | bash -s -- --repo https://github.com/YOUR_GITHUB_USER/vis.git --dest "$HOME/code/vis"
+```
+
+SSH:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source \
+  | bash -s -- --repo git@github.com:YOUR_GITHUB_USER/vis.git --dest "$HOME/code/vis"
+```
+
+Then add the upstream remote once:
+
+```bash
+cd "$HOME/code/vis"
+git remote add upstream https://github.com/Blockether/vis.git
+git fetch upstream
+```
+
+If you rerun the installer on a fork checkout, pass `--repo` again. The
+installer intentionally sets `origin` to the repo URL you give it.
+
+### Method 4: fork and clone with GitHub CLI through the installer
+
+Use this for contribution work. The installer asks `gh` to create or
+reuse your GitHub fork, clones that fork locally, sets `origin` to your
+fork, sets `upstream` to `Blockether/vis`, and links the global `vis`
+launcher to that checkout.
+
+```bash
+gh auth login
+
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source \
+  | bash -s -- --fork --dest "$HOME/code/vis"
+
+cd "$HOME/code/vis"
+git remote -v
+vis help
+vis doctor
+```
+
+From an existing checkout, run the same mode directly:
+
+```bash
+bin/install-source --fork --dest "$HOME/code/vis"
+```
+
+Native Windows PowerShell:
+
+```powershell
+gh auth login
+$install = irm https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source.ps1
+& ([scriptblock]::Create($install)) -Fork -Dest "$HOME\code\vis"
+~\.local\bin\vis.cmd doctor
+```
+
+Optional fork controls:
+
+```bash
+bin/install-source --fork \
+  --fork-source Blockether/vis \
+  --fork-owner YOUR_GITHUB_USER_OR_ORG \
+  --fork-name vis \
+  --dest "$HOME/code/vis"
+```
+
+Manual `gh` equivalent, if you do not want the installer to do it:
+
+```bash
+gh auth login
+mkdir -p "$HOME/code"
+cd "$HOME/code"
+gh repo fork Blockether/vis --clone --remote
+cd vis
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$PWD/bin/vis" "$HOME/.local/bin/vis"
+```
+
+Push contribution branches to your fork:
+
+```bash
+git checkout -b my-change
+# edit, test, commit
+git push -u origin my-change
+gh pr create --web
+```
+
+To update your fork from upstream:
+
+```bash
+git fetch upstream
+git checkout main
+git merge --ff-only upstream/main
+git push origin main
+```
+
+Do not commit `~/.vis/config.edn`, `~/.vis/vis.mdb`, or `~/.vis/vis.log`.
+Those are local runtime files, not repo files.
+
+### Method 5: manual clone without installer
+
+Use this when you want maximum control and do not need the bootstrap
+script.
 
 ```bash
 git clone https://github.com/Blockether/vis.git ~/.vis/sourcecode
@@ -55,12 +199,42 @@ mdbook-mermaid install docs
 # Run any sub-command via the :vis alias
 clojure -M:vis            # prints the full help tree
 clojure -M:vis help       # same
+
+# Optional global launcher
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$PWD/bin/vis" "$HOME/.local/bin/vis"
 ```
 
 `bin/vis` is a checked-in wrapper that just `exec`s `clojure -M:vis`
-from the repo root. The installer links it as `~/.local/bin/vis`; make
-sure `~/.local/bin` is on `PATH`, and every example below works with
-`vis` instead of `clojure -M:vis`.
+from the repo root. The installer links it as `~/.local/bin/vis`; for
+manual installs, create that symlink yourself. Make sure `~/.local/bin`
+is on `PATH`, and every example below works with `vis` instead of
+`clojure -M:vis`.
+
+### Corporate / proxy install
+
+Zscaler and similar corporate proxies can intercept HTTPS and re-sign
+traffic with their own CA. That can make `curl` or `git` fail before Vis
+is cloned.
+
+Quick dirty path, only if you accept disabling verification:
+
+```bash
+curl -k -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source | bash
+git config --global http.sslVerify false
+```
+
+Proper path:
+
+```bash
+export https_proxy="http://proxy.corp.local:8080"
+export CURL_CA_BUNDLE=/path/to/corp-ca-bundle.pem
+git config --global http.sslCAInfo /path/to/corp-ca-bundle.pem
+
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source | bash
+```
+
+Ask IT for the proxy CA PEM file. Prefer the proper path when possible.
 
 ## Development nREPL path
 

@@ -5,7 +5,7 @@
    strings, prompt fragment) plus behavioral coverage of the
    structured preview/search helpers (`v/cat`, `v/rg`) and the new
    thin babashka.fs wrappers (`v/read-all-lines`, `v/write-lines`,
-   `v/update-file`, `v/glob`, ...).
+   `v/patch`, `v/update-file`, `v/glob`, ...).
 
    Tests reach private fns directly through the registry to avoid
    bringing up a full SCI sandbox. Temp files land under
@@ -49,10 +49,12 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 15 (count editing/editing-symbols)))
+    (expect (= 16 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'read-all-lines}
+              (map :ext.symbol/sym editing/editing-symbols)))
+    (expect (some #{'patch}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'update-file}
               (map :ext.symbol/sym editing/editing-symbols)))
@@ -88,7 +90,7 @@
                 (:ext.symbol/examples bash-symbol)))))
 
   (it "registers custom structured renderers for rich tool outputs"
-    (doseq [sym-name '[cat silent! ls rg read-all-lines write-lines update-file create-dirs glob copy move delete delete-if-exists exists? bash]]
+    (doseq [sym-name '[cat silent! ls rg read-all-lines patch write-lines update-file create-dirs glob copy move delete delete-if-exists exists? bash]]
       (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
                     editing/editing-symbols)]
         (expect (ifn? (:ext.symbol/render-fn entry))))))
@@ -105,7 +107,9 @@
 
 (defdescribe editing-prompt-read-policy-test
   (it "teaches full-read vars, preview-only journal, and no duplicate rereads by default"
-    (let [write-lines-symbol (some #(when (= 'write-lines (:ext.symbol/sym %)) %)
+    (let [patch-symbol (some #(when (= 'patch (:ext.symbol/sym %)) %)
+                         editing/editing-symbols)
+          write-lines-symbol (some #(when (= 'write-lines (:ext.symbol/sym %)) %)
                                editing/editing-symbols)
           update-file-symbol (some #(when (= 'update-file (:ext.symbol/sym %)) %)
                                editing/editing-symbols)]
@@ -113,6 +117,12 @@
                 "bind once: (def lines (:result (v/read-all-lines path)))"))
       (expect (string/includes? editing/editing-prompt
                 "Journal shows preview only; reuse the var instead of rereading"))
+      (expect (string/includes? editing/editing-prompt
+                "Edit text with canonical (v/patch"))
+      (expect (string/includes? editing/editing-prompt
+                "every :search must match exactly once"))
+      (expect (string/includes? (:ext.symbol/doc patch-symbol)
+                "Canonical exact text patch"))
       (expect (string/includes? editing/editing-prompt
                 "Read back after writes only when exact persisted bytes matter"))
       (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
@@ -343,6 +353,20 @@
       (expect (= "HELLO"
                 (update-file path string/upper-case)))
       (expect (= "HELLO" (slurp path)))))
+
+  (it "patch replaces exact text only when search is unique"
+    (let [path  (write-temp! "bbfs/patch.txt" "alpha\nbeta\ngamma\n")
+          patch (private-fn "patch-safe")]
+      (expect (= [{:path path
+                   :before "alpha\nbeta\ngamma\n"
+                   :after "alpha\nBETA\ngamma\n"}]
+                (patch [{:path path :search "beta" :replace "BETA"}])))
+      (expect (= "alpha\nBETA\ngamma\n" (slurp path)))
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(patch [{:path path :search "missing" :replace "x"}])))
+      (spit path "dup\ndup\n")
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(patch [{:path path :search "dup" :replace "x"}])))))
 
   (it "glob returns cwd-relative path strings for immediate-child patterns"
     (let [_    (write-temp! "bbfs/tree/a.clj" "(ns a)")

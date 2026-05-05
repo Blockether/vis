@@ -339,7 +339,7 @@
                   :input-history-index nil
                   :input-history-draft nil
                   :submitted-input nil
-                  ;; Pi-style paste registry. Each multi-line / large
+                  ;; Paste registry. Each multi-line / large
                   ;; clipboard payload lands here keyed by an auto-
                   ;; incrementing id; the input buffer carries a
                   ;; placeholder token `[Pasted #N: …]` instead of the
