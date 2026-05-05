@@ -184,10 +184,8 @@
    level."
   [_parsed _residual]
   (vis/init-cli!)
-  (let [env  (vis/create-environment (vis/get-router)
-               {:db (vis/resolve-db-spec)})
-        msgs (try (vis/run-doctor-checks env)
-               (finally (vis/dispose-environment! env)))]
+  (let [env  {:db-info (vis/resolve-db-spec)}
+        msgs (vis/run-doctor-checks env)]
     (println-original! (vis/doctor-format-output msgs))
     (System/exit (int (vis/doctor-exit-code msgs)))))
 

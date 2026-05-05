@@ -2,7 +2,7 @@
 
 This file groups the current backlog into architectural task clusters. English only. Pareto first: fix high-leverage seams before adding more ad-hoc features.
 
-Current focus: [`FOCUS.md`](FOCUS.md) — context contract for XML-tagged prompt surfaces, preview/full value boundaries, var-index/journal behavior, active skills, reasoning memory, and audit/attestation loading.
+Current focus: [`FOCUS.md`](FOCUS.md) — canonical context contract for XML-tagged prompt surfaces, preview/full value boundaries, var-index/journal behavior, skill activation/full-body blocks, reasoning memory, and audit/attestation loading.
 
 ## Pareto order
 
@@ -11,7 +11,7 @@ Current focus: [`FOCUS.md`](FOCUS.md) — context contract for XML-tagged prompt
 | 1 | Attestation ledger + intent lifecycle cleanup | Ref D, 2, 7, 8, 9, 10, 15, 16, 30, 35, 38 | Current proofing is weak. Trust semantics need immutable events, derived evidence, attestations, plan completion, and intent closure before more proof UX. |
 | 2 | Presentation/render contract | 1, 3, 8, 22, 24, 29, 30, 36, Ref D, FOCUS.md | Visible UX must render previews/full retrieval, events, bundles, attestations, audits, proofs, tool calls, system calls, Mermaid, and provider errors from one seam. |
 | 3 | Extension contract v2 | 4, 5, 17, 20, 21, 25, 26, 28, 39, Ref A, FOCUS.md | Config, toggles, renderers, preview/full surfaces, background jobs, aggregate state, custom providers, and agent-end hooks need the same extension seam. |
-| 4 | Native workspace manager | Ref C, 6, 12, 18, 19 | Git worktrees, submodules, and explicit attached repos give every conversation a real tool-visible workspace. |
+| 4 | [Native workspace manager](workspaes.md) | Ref C, 6, 12, 18, 19 | Git worktrees, submodules, and explicit attached repos give every conversation a real tool-visible workspace. |
 | 5 | Git checkpoint/time-travel module | Ref B, Ref C, Ref D, 13, 18, 19, 23 | Protects user data and makes every agent edit a restorable Git tree that can become a branch. Checkpoints should cite provenance events. |
 | 6 | Clojure language tooling cleanup | 11, 32, 33, 37 | Remove duplicate SCI test surfaces; add Clojure-native diagnosis tools. |
 | 7 | Conversation switching while active | 13 | Useful UX, but stateful and risky. Do after runtime state is clearer. |
@@ -180,6 +180,7 @@ Example proof projection:
 - [ ] Ensure `<details>` body renders full Markdown, not plain text.
 - [ ] Extract presentation Markdown seam to internal namespace with clear docstring.
 - [ ] Make every tool-call renderer return/use shared presentation blocks.
+- [ ] Implement the canonical prompt/context contract in [`FOCUS.md`](FOCUS.md) (including skill `<activation_trigger>` catalog entries and active-skill full bodies).
 - [ ] Add pretty render for system calls (`:vis/system`).
 - [ ] Add provider-error presentation block.
 - [ ] Add Mermaid fenced-code rendering support.
@@ -337,7 +338,7 @@ Correct split:
 - [ ] Move extension env vars into Extension config box.
 - [ ] Add extension aggregate persistence using HoneySQL in app code.
 - [ ] Keep SQLite schema changes inline in V1 unless migration policy changes.
-- [ ] Remove PI mentions, PI aliases, PI config paths, or mark migration-only internally.
+- [x] Remove PI mentions, PI aliases, PI config paths, or mark migration-only internally.
 - [ ] Add custom provider-by-URL config shape.
 
 ### Considered alternatives
@@ -357,292 +358,13 @@ Correct split:
 - Extension authors can declare UI/config instead of editing channel code.
 - Settings becomes data-driven.
 - Provider/custom URL support has a proper home.
-- Need compatibility/migration for current Exa config paths.
+- Legacy Exa PI config paths intentionally dropped; use explicit `EXA_MCP_CONFIG` or env vars.
 
 ---
 
 ## Task cluster 3 — Native workspace manager
 
-Covers: **Ref C, 6, 12, 18, 19**
-
-### Rationale
-
-Vis already detects git state and repositories, but Ref C changes the goal: workspace support is not only discovery and prompt reporting. Vis needs real, isolated, tool-visible workspaces that external tools can operate on normally.
-
-Hard requirements from Ref C:
-
-- LSP servers, grep, test runners, compilers, formatters, and file watchers must see normal on-disk files.
-- Main repo writable workspaces use Git worktrees.
-- Submodules stay Git-native.
-- `.gitignore`d nested repos are never implicitly used.
-- Non-submodule nested repos that matter must be declared as attached repos.
-- Workspace runtime state lives outside the source checkout.
-- One deep workspace manager owns all materialization and cleanup.
-
-### Proposal
-
-Create a deep workspace manager:
-
-```clojure
-com.blockether.vis.internal.workspace
-com.blockether.vis.internal.workspace.catalog
-com.blockether.vis.internal.workspace.main-repo
-com.blockether.vis.internal.workspace.submodules
-com.blockether.vis.internal.workspace.attached-repos
-com.blockether.vis.internal.workspace.reconciler
-```
-
-Public interface:
-
-```clojure
-(create-workspace! opts)
-(open-workspace id)
-(refresh-workspace! id)
-(destroy-workspace! id)
-(workspace-status id)
-(workspace-roots id)
-```
-
-The manager hides:
-
-- `git worktree add` for main repo materialization;
-- submodule sync/update;
-- attached repo checkout/symlink materialization;
-- isolated vs shared attached repo policy;
-- drift detection;
-- cleanup;
-- runtime state persistence.
-
-### Child kinds
-
-Every child path is owned by exactly one kind:
-
-```clojure
-:main       ;; main repo worktree
-:submodule  ;; Git-native submodule from .gitmodules and checked-out commit
-:attached   ;; explicit nested repo not tracked as submodule
-```
-
-Main repo:
-
-```bash
-git worktree add <workspace-root> <ref>
-```
-
-Submodules:
-
-```bash
-git submodule sync --recursive
-git submodule update --init --recursive
-```
-
-Attached repos:
-
-```clojure
-{:path "vendor/private-sdk"
- :kind :attached
- :attached/id "private-sdk"
- :required? true
- :workspace-mode :isolated
- :write-mode :read-write
- :materialization :checkout-at-path
- :ref {:mode :follow-branch :branch "main"}
- :indexing :include}
-```
-
-Attached repo modes:
-
-- `:isolated` — default for writable code; each parent workspace gets its own nested checkout.
-- `:shared` — opt-in for read-mostly/shared resources; mutation leakage is accepted by configuration.
-
-### Static manifest and attached repo catalog
-
-Workspace shape is project intent, not inferred from host leftovers.
-
-Static manifest example:
-
-```clojure
-{:version 1
- :main {:default-branch "main"}
- :children [{:path "libs/parser"
-             :kind :submodule
-             :required? true
-             :indexing :include}
-            {:path "vendor/private-sdk"
-             :kind :attached
-             :attached/id "private-sdk"
-             :required? true
-             :workspace-mode :isolated
-             :write-mode :read-write
-             :materialization :checkout-at-path
-             :ref {:mode :follow-branch :branch "main"}
-             :indexing :include}]}
-```
-
-Attached repo catalog example:
-
-```clojure
-{:version 1
- :attached {"private-sdk"
-            {:source {:type :git
-                      :url "git@github.com:acme/private-sdk.git"}
-             :cache {:mirror-name "private-sdk.git"}
-             :checkout-default :worktree}}}
-```
-
-### Runtime state outside the repo
-
-Materialized workspaces, mirrors, and metadata live outside the main repository checkout, for example:
-
-```text
-~/.local/state/vis/repos/<repo-id>/workspaces/<workspace-id>
-~/.local/state/vis/repos/<repo-id>/mirrors/<mirror-name>.git
-~/.local/state/vis/workspaces/<workspace-id>.edn
-```
-
-Runtime state example:
-
-```clojure
-{:workspace/id "ws-123"
- :workspace/repo-id "vis"
- :workspace/root "/Users/me/.local/state/vis/repos/vis/workspaces/ws-123"
- :workspace/state :ready
- :main {:ref {:type :branch :name "feature/native-workspaces"}
-        :head "9f8e7d6"}
- :children {"libs/parser"
-            {:kind :submodule
-             :path "libs/parser"
-             :state :ready
-             :head "abc123"
-             :dirty? false}
-            "vendor/private-sdk"
-            {:kind :attached
-             :attached/id "private-sdk"
-             :path "vendor/private-sdk"
-             :workspace-mode :isolated
-             :state :ready
-             :head "def456"
-             :dirty? false}}}
-```
-
-### SCI symbols under `v/`
-
-```clojure
-(v/workspace)
-(v/workspaces)
-(v/workspace-status id)
-(v/workspace-roots id)
-(v/create-workspace! opts)
-(v/open-workspace id)
-(v/refresh-workspace! id)
-(v/destroy-workspace! id)
-(v/repositories)
-(v/git-summary)
-```
-
-### Prompt block
-
-```text
-<workspace>
-id: ws-123
-root: /Users/me/.local/state/vis/repos/vis/workspaces/ws-123
-repo-id: vis
-state: ready
-main:
-  branch: feature/native-workspaces
-  head: 9f8e7d6
-children:
-  - path: libs/parser
-    kind: submodule
-    state: ready
-    dirty: false
-  - path: vendor/private-sdk
-    kind: attached
-    mode: isolated
-    state: ready
-    dirty: false
-</workspace>
-```
-
-Installer target layout:
-
-```text
-~/.local/share/vis      repo clone
-~/.local/state/vis      workspace runtime state, mirrors, materialized workspaces
-~/.local/bin/vis        launcher symlink/script
-~/.vis/config.edn       runtime config
-```
-
-Config records:
-
-```edn
-{:vis/install-root "/Users/me/.local/share/vis"
- :vis/state-root "/Users/me/.local/state/vis"
- :vis/original-source "https://github.com/Blockether/vis.git"}
-```
-
-### Invariants
-
-- [ ] Every declared child path is owned by exactly one kind: main, submodule, or attached.
-- [ ] Every `:required? true` child exists before LSP starts.
-- [ ] Writable attached repos default to `:isolated`.
-- [ ] Shared attached repos are opt-in and assumed cross-workspace mutable unless marked read-only.
-- [ ] `.gitignore`d nested repos are never implicitly used.
-- [ ] Workspace manager is the only module allowed to materialize child repos.
-- [ ] Runtime state never lives inside the source checkout.
-
-### Acceptance tasks
-
-- [ ] Create internal workspace manager module and submodules listed above.
-- [ ] Add static workspace manifest reader/validator.
-- [ ] Add attached repo catalog reader/validator.
-- [ ] Add runtime workspace state store outside the repo.
-- [ ] Implement main repo materialization with `git worktree add`.
-- [ ] Implement submodule reconciliation with `git submodule sync/update --recursive`.
-- [ ] Implement attached repo materialization for `:isolated` checkout-at-path.
-- [ ] Implement attached repo materialization for `:shared` symlink/shared-path, opt-in only.
-- [ ] Add drift detection for main repo, submodules, and attached repos.
-- [ ] Add cleanup/destroy semantics, including dirty workspace safeguards.
-- [ ] Add `create/open/refresh/destroy/status/roots` public interface.
-- [ ] Add `v/workspace`, `v/workspaces`, `v/workspace-status`, `v/workspace-roots` symbols.
-- [ ] Add `v/create-workspace!`, `v/open-workspace`, `v/refresh-workspace!`, `v/destroy-workspace!` symbols if safe for SCI.
-- [ ] Detect multirepositories only as candidates; require manifest for attached repos that matter.
-- [ ] Render bounded workspace prompt summary.
-- [ ] Include dirty/clean, changes, stash count, stale/ahead/behind where available.
-- [ ] Cache bounded status scans; never block prompt assembly indefinitely.
-- [ ] Add installer script for `~/.local/share/vis`, `~/.local/state/vis`, and `~/.local/bin/vis`.
-- [ ] Record install root/state root/original source in config/system prompt.
-- [ ] Add regression tests for worktree creation, submodule reconciliation, attached repo validation, and ignored nested repo rejection.
-
-### Open questions
-
-- [ ] Should shared attached repos default to `:indexing :exclude`?
-- [ ] Should attached repo refs support tags, or only pinned SHA and branch-following?
-- [ ] Should attached repo materialization prefer nested worktrees over lightweight clones in all cases?
-- [ ] How should dirty attached repos affect refresh and destroy semantics?
-- [ ] Do we need a lockfile or lease mechanism for concurrent workspace reconciliation?
-
-### Considered alternatives
-
-1. Pure in-memory filesystem.
-   - Rejected: external tools need real files, real paths, and normal watcher semantics.
-2. FUSE or mounted virtual filesystem.
-   - Rejected: platform-specific complexity and watcher/save/rename risk without clear advantage over real worktrees.
-3. Implicit `.gitignore`d nested repos.
-   - Rejected: host-local ignored directories make workspaces non-reproducible and hard to diagnose.
-4. Keep cwd-only model.
-   - Too weak for conversation/branch isolation.
-
-### Consequences
-
-- LSP, grep, test runners, compilers, and formatters see a normal filesystem.
-- Main repo uses Git-native worktrees.
-- Submodules preserve Git semantics.
-- Ignored nested repositories become explicit and reproducible.
-- One module owns workspace complexity and improves locality.
-- Workspace creation depends on Git availability and repository hygiene.
-- Attached repo manifests and lifecycle machinery become first-class.
-- Cleanup and drift detection become operational concerns.
+Moved to [`workspaes.md`](workspaes.md).
 
 ---
 
@@ -1710,7 +1432,7 @@ Caution: the current agent harness reads `AGENTS.md`, so deleting it before repl
 | 2 | Provider/intent visibility | Compare raw provider trace + TUI settings; add toggle if hidden by us. |
 | 3 | Presentation | Split/clarify internal Markdown module; all renderers use it. |
 | 4 | Extension/settings | Bigger settings, separate Extension config box. |
-| 5 | Extension cleanup | Remove PI mentions/aliases/paths or mark migration-only internally. |
+| 5 | Extension cleanup | DONE — removed PI mentions/aliases/paths from Exa and TUI comments; no migration compatibility kept. |
 | 6 | Workspace | Add `v/workspace(s)` symbols. |
 | 7 | Intent taxonomy | System intent kinds. |
 | 8 | Attestation/presentation | Make evidence non-anemic: events, bundles, attestations, gates, plan completion, intent closure, violations. |
@@ -1733,7 +1455,7 @@ Caution: the current agent harness reads `AGENTS.md`, so deleting it before repl
 | 25 | Background | Background process support. |
 | 26 | Notifications | OS notification adapter. |
 | 27 | Tooling | Deprecate/remove bash after replacements exist. |
-| 28 | Cleanup/background | Remove PI prefixes; background lifecycle. |
+| 28 | Cleanup/background | PI prefixes removed for Exa; background lifecycle remains. |
 | 29 | Presentation | Mermaid rendering. |
 | 30 | Presentation/audit | Audit report as Mermaid + event/bundle/attestation/gate/plan/intent projection. |
 | 31 | Project guidance | Replace huge AGENTS.md with Clojure-coded extension guidance, with compatibility. |
@@ -1753,6 +1475,15 @@ Caution: the current agent harness reads `AGENTS.md`, so deleting it before repl
 ---
 
 ## Recommended execution plan
+
+### Sprint 0 — Context contract (`FOCUS.md`)
+
+Canonical detail plan lives in [`FOCUS.md`](FOCUS.md). Do not duplicate the full checklist here.
+
+- [ ] Finish remaining `FOCUS.md` context-contract tasks before deeper ledger/presentation work.
+- [ ] Keep prompt/context surfaces XML-tagged and spec-checked.
+- [ ] Keep `<skills>` activation catalog and `<active_skills>` full bodies aligned with `FOCUS.md`.
+- [ ] Keep nudge return contract aligned with `<system_nudge importance="low|normal|high|critical">`.
 
 ### Sprint 1 — Attestation ledger foundation
 
@@ -1777,7 +1508,7 @@ Caution: the current agent harness reads `AGENTS.md`, so deleting it before repl
 - [ ] Add `:ext/config`, `:ext/toggles`, `:ext/renderers`.
 - [ ] Make settings dialog bigger.
 - [ ] Add separate Extension config box.
-- [ ] Remove PI mentions from Exa docs/code.
+- [x] Remove PI mentions from Exa docs/code.
 - [ ] Add custom provider config shape.
 
 ### Sprint 4 — Checkpoints + workspaces

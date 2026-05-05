@@ -20,10 +20,9 @@ or `mdbook build` will find them in place. The preprocessor
 ` ```mermaid ` blocks into rendered diagrams — the JS files just do
 the client-side rendering.
 
-The whole codebase has only **two** Mermaid diagrams (both in
-`src/rationale.md`, where the tool-call vs vis sequence comparison
-carries its weight). Every other architectural illustration is plain
-text / ASCII so the docs read fine without any JS at all.
+Most architectural illustrations are plain text / ASCII so the docs
+read fine without any JS at all. If a page adds a Mermaid diagram,
+`mdbook-mermaid install .` regenerates the required local assets.
 
 ## Structure
 
@@ -35,15 +34,21 @@ forbids creating one (`find` / `grep` instead).
 ```
 docs/
 ├── book.toml          mdBook config
+├── README.md          docs build/dev notes
 ├── theme/
 │   └── custom.css     style overrides
 └── src/
     ├── SUMMARY.md     table of contents (defines nav)
     ├── README.md      landing page
-    ├── rationale.md   why RLM, why SCI, what we learned
+    ├── usage.md       install, auth, CLI, TUI, Telegram, embedding
+    ├── logo.png       book/logo asset
     ├── architecture/
     │   ├── overview.md
+    │   ├── packages.md
     │   ├── iteration-flow.md
+    │   ├── evidence.md
+    │   ├── rlm-memory.md
+    │   ├── completion-contract.md
     │   ├── state.md
     │   ├── database.md
     │   └── channels.md
@@ -52,7 +57,11 @@ docs/
         ├── spec.md
         ├── hooks.md
         ├── environment.md
-        └── nudges.md
+        ├── nudges.md
+        └── common/
+            ├── vis-foundation.md
+            ├── markdown.md
+            └── vis-exa.md
 ```
 
 ## Rules

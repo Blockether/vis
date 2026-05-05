@@ -126,6 +126,16 @@
 
 ;;; ── GitHub Copilot OAuth (hard dep) ──────────────────────────────────
 
+(def ^:private github-copilot-account-types
+  {:github-copilot-individual :individual
+   :github-copilot-business   :business})
+
+(defn- github-copilot-provider? [provider-id]
+  (contains? github-copilot-account-types provider-id))
+
+(defn- github-copilot-account-type [provider-id]
+  (get github-copilot-account-types provider-id :individual))
+
 (defn- copilot-auth-instructions!
   [^TerminalScreen screen verification-uri user-code]
   (loop [status nil]
@@ -237,39 +247,42 @@
 
    Returns nil immediately when the optional vis-providers-github-copilot
    jar isn't on the classpath."
-  [^TerminalScreen screen]
-  (let [start-fn    copilot/start-device-flow!
-        poll-fn     copilot/poll-for-token!
-        exchange-fn copilot/get-copilot-token!
-        detect-fn   copilot/detect-oauth-token]
+  ([^TerminalScreen screen]
+   (copilot-oauth-flow! screen :individual))
+  ([^TerminalScreen screen account-type]
+   (let [start-fn    copilot/start-device-flow!
+         poll-fn     copilot/poll-for-token!
+         exchange-fn copilot/get-copilot-token!
+         detect-fn   copilot/detect-oauth-token
+         opts        {:account-type account-type}]
       ;; Already authenticated?
-    (if (detect-fn)
-      (try
-        (let [{:keys [token]} (exchange-fn)]
-          token)
-        (catch Exception _
-          (dlg/confirm-dialog! screen "Copilot" "Existing token is invalid. Re-authenticate.")
-          nil))
+     (if (detect-fn)
+       (try
+         (let [{:keys [token]} (exchange-fn opts)]
+           token)
+         (catch Exception _
+           (dlg/confirm-dialog! screen "Copilot" "Existing token is invalid. Re-authenticate.")
+           nil))
         ;; Device flow
-      (try
-        (let [{:keys [user-code verification-uri device-code interval expires-in]}
-              (start-fn)]
-          (when (copilot-auth-instructions! screen verification-uri user-code)
+       (try
+         (let [{:keys [user-code verification-uri device-code interval expires-in]}
+               (start-fn opts)]
+           (when (copilot-auth-instructions! screen verification-uri user-code)
             ;; Poll in background, show waiting message
-            (let [result (future (poll-fn device-code interval expires-in))]
+             (let [result (future (poll-fn device-code interval expires-in opts))]
               ;; The poll runs in background; once authorized it returns.
-              (loop [attempt 0]
-                (if (realized? result)
-                  (let [{:keys [token]} (exchange-fn)]
-                    (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
-                    token)
-                  (do
-                    (Thread/sleep 2000)
-                    (when (< attempt 180) ;; 6 min max
-                      (recur (inc attempt)))))))))
-        (catch Exception e
-          (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
-          nil)))))
+               (loop [attempt 0]
+                 (if (realized? result)
+                   (let [{:keys [token]} (exchange-fn opts)]
+                     (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
+                     token)
+                   (do
+                     (Thread/sleep 2000)
+                     (when (< attempt 180) ;; 6 min max
+                       (recur (inc attempt)))))))))
+         (catch Exception e
+           (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
+           nil))))))
 
 (defn- codex-oauth-ready!
   "Run OpenAI Codex browser OAuth from the TUI when needed.
@@ -325,13 +338,13 @@
               base-url   (:base-url preset)
               has-key?   (some? (:api-key preset))
               ;; OAuth providers store credentials outside config.
-              oauth?     (contains? #{:github-copilot :openai-codex} pid)
+              oauth?     (or (github-copilot-provider? pid) (= :openai-codex pid))
               ;; Local providers need no key
               needs-key? (not (or has-key? oauth? (contains? #{:ollama :lmstudio} pid)))
               api-key    (cond
                            has-key?   (:api-key preset)
-                           (= pid :github-copilot) (copilot-oauth-flow! screen)
-                           (= pid :openai-codex)   (when (codex-oauth-ready! screen) :oauth-ready)
+                           (github-copilot-provider? pid) (copilot-oauth-flow! screen (github-copilot-account-type pid))
+                           (= pid :openai-codex)          (when (codex-oauth-ready! screen) :oauth-ready)
                            needs-key? (let [raw (dlg/text-input-dialog! screen
                                                   (str (:label preset) " Setup")
                                                   "API Key:"
@@ -1004,11 +1017,14 @@
 
 (defn authenticate-provider!
   [^TerminalScreen screen provider]
-  (case (:id provider)
-    :github-copilot (when (copilot-oauth-flow! screen) provider)
-    :openai-codex   (when (codex-oauth-ready! screen true) provider)
-    :ollama         nil
-    :lmstudio       nil
+  (cond
+    (github-copilot-provider? (:id provider))
+    (when (copilot-oauth-flow! screen (github-copilot-account-type (:id provider))) provider)
+
+    (= :openai-codex (:id provider)) (when (codex-oauth-ready! screen true) provider)
+    (= :ollama (:id provider)) nil
+    (= :lmstudio (:id provider)) nil
+    :else
     (let [prompted (prompt-for-api-key! screen provider)]
       (cond
         (= api-key-prompt-cancelled prompted) nil
@@ -1050,9 +1066,14 @@
   (when-let [item (dlg/select-dialog! screen "Authenticate Provider" (auth-provider-items))]
     (let [provider (or (:provider item)
                      (vis/provider-by-id (:provider-id item)))]
-      (case (:provider/id provider)
-        :github-copilot (boolean (copilot-oauth-flow! screen))
-        :openai-codex   (boolean (codex-oauth-ready! screen true))
+      (cond
+        (github-copilot-provider? (:provider/id provider))
+        (boolean (copilot-oauth-flow! screen (github-copilot-account-type (:provider/id provider))))
+
+        (= :openai-codex (:provider/id provider))
+        (boolean (codex-oauth-ready! screen true))
+
+        :else
         (if-let [auth-fn (:provider/auth-fn provider)]
           (let [lines (atom [])
                 print! #(swap! lines conj %)]

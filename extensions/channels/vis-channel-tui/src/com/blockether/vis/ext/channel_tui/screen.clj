@@ -1137,7 +1137,7 @@
                        (vreset! paste-buffer nil)
                        (when-not (.isEmpty text)
                          (if (input/use-placeholder? text)
-                           ;; Pi-style: stash the payload, insert a
+                           ;; Stash the payload, insert a
                            ;; one-line `[Pasted #N: …]` placeholder.
                            ;; The send path expands every active
                            ;; placeholder back into its content via
@@ -1513,7 +1513,7 @@
                        (.append ^StringBuilder @paste-buffer ^String ch))
                    (recur))
 
-                 ;; Pi-style placeholder smart-delete: a single
+                 ;; Placeholder smart-delete: a single
                  ;; Backspace right after the closing `]` of a
                  ;; `[Pasted #N: …]` token nukes the WHOLE token in
                  ;; one keystroke, and drops the matching entry from

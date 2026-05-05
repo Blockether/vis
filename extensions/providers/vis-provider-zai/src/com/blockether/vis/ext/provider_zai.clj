@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.provider-zai
-  "Z.ai (ZhipuAI) static-API-key provider. ONE extension, TWO plans:
+  "Z.ai (ZhipuAI) static-API-key provider helpers. Each plan is registered as its own extension:
 
      :zai-coding → coding-plan subscription
                    (https://api.z.ai/api/coding/paas/v4).
@@ -11,9 +11,9 @@
 
    Both endpoints serve the same GLM model family (`glm-5-turbo`,
    `glm-5.1`, `glm-4.7`, `glm-4.6`, `glm-4.6v`, …) with binary
-   thinking (`:zai-thinking` reasoning-style — handled by svar). The
-   only thing that differs is the URL and the API key, which is why
-   they share one extension namespace.
+   thinking (`:zai-thinking` reasoning-style — handled by svar). They
+   share helper code, but the runtime extension registry sees one
+   extension entry per provider id.
 
    Auth lifecycle:
      1. `vis providers auth zai-coding` (or `vis providers auth zai`) prompts for the API
@@ -54,10 +54,12 @@
   {:coding {:provider-id :zai-coding
             :label       "Z.ai (Coding Plan)"
             :base-url    "https://api.z.ai/api/coding/paas/v4"
+            :default-models ["glm-5-turbo" "glm-4.7" "glm-5.1"]
             :env-keys    ["ZAI_CODING_API_KEY"]}
    :pass   {:provider-id :zai
             :label       "Z.ai (Pass)"
             :base-url    "https://api.z.ai/api/paas/v4"
+            :default-models ["glm-5-turbo" "glm-5.1" "glm-4.7" "glm-4.6v"]
             :env-keys    ["ZAI_API_KEY"]}})
 
 ;; =============================================================================
@@ -287,34 +289,41 @@
 ;; =============================================================================
 ;; Provider registration
 ;;
-;; Loading this namespace plugs BOTH plans into the global provider
-;; registry. `:zai-coding` and `:zai` are independent first-class
-;; entries — `vis providers auth zai-coding`, `vis providers status zai`,
-;; per-plan logout, etc. all work. The TUI's add-provider picker
-;; shows them as two separate cards (driven by
-;; `provider-presets`).
+;; Loading this namespace registers ONE extension entry per plan.
+;; `:zai-coding` and `:zai` are independent first-class providers —
+;; `vis providers auth zai-coding`, `vis providers status zai`,
+;; per-plan logout, etc. all work. The TUI's add-provider picker shows
+;; them as two separate cards driven by each provider's preset metadata.
 ;; =============================================================================
 
 (require '[com.blockether.vis.core :as vis])
 
 (defn- provider-entry [plan-tag]
-  (let [{:keys [provider-id label]} (get PLANS plan-tag)]
-    {:provider/id           provider-id
-     :provider/label        label
-     :provider/status-fn    (make-status-fn plan-tag)
-     :provider/logout-fn    (make-logout-fn plan-tag)
-     :provider/detect-fn       (make-detect-fn plan-tag)
-     :provider/auth-fn         (make-auth-fn plan-tag)
-     :provider/auth-prompt-fn  #(auth-instruction-lines plan-tag)
-     :provider/get-token-fn    (make-get-token-fn plan-tag)
-     :provider/limits-fn       (make-limits-fn plan-tag)}))
+  (let [{:keys [provider-id label base-url default-models]} (get PLANS plan-tag)]
+    {:provider/id             provider-id
+     :provider/label          label
+     :provider/preset         {:base-url       base-url
+                               :default-models default-models}
+     :provider/status-fn      (make-status-fn plan-tag)
+     :provider/logout-fn      (make-logout-fn plan-tag)
+     :provider/detect-fn      (make-detect-fn plan-tag)
+     :provider/auth-fn        (make-auth-fn plan-tag)
+     :provider/auth-prompt-fn #(auth-instruction-lines plan-tag)
+     :provider/get-token-fn   (make-get-token-fn plan-tag)
+     :provider/limits-fn      (make-limits-fn plan-tag)}))
 
-(vis/register-extension!
-  (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.provider-zai
-     :ext/doc       "Z.ai (ZhipuAI) static-API-key provider — covers both the coding-plan and pay-as-you-go endpoints in one extension."
-     :ext/version   "0.1.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/providers (mapv provider-entry (keys PLANS))}))
+(defn- register-plan-extension! [plan-tag]
+  (let [{:keys [label]} (get PLANS plan-tag)]
+    (vis/register-extension!
+      (vis/extension
+        {:ext/namespace (symbol (str "com.blockether.vis.ext.provider-zai." (name plan-tag)))
+         :ext/nses      ['com.blockether.vis.ext.provider-zai]
+         :ext/doc       (str label " static-API-key provider.")
+         :ext/version   "0.2.0"
+         :ext/author    "Blockether"
+         :ext/owner     "vis"
+         :ext/license   "Apache-2.0"
+         :ext/providers [(provider-entry plan-tag)]}))))
+
+(doseq [plan-tag (keys PLANS)]
+  (register-plan-extension! plan-tag))

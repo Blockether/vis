@@ -4,15 +4,20 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe provider-registration-test
-  (it "registers GitHub Copilot through the provider extension contract"
-    (let [provider (vis/provider-by-id :github-copilot)]
-      (expect (= :github-copilot (:provider/id provider)))
-      (expect (ifn? (:provider/status-fn provider)))
-      (expect (ifn? (:provider/logout-fn provider)))
-      (expect (ifn? (:provider/detect-fn provider)))
-      (expect (ifn? (:provider/auth-fn provider)))
-      (expect (ifn? (:provider/get-token-fn provider)))
-      (expect (ifn? (:provider/limits-fn provider)))))
+  (it "registers business and individual GitHub Copilot providers as separate extension entries"
+    (require 'com.blockether.vis.ext.provider-github-copilot :reload)
+    (let [business   (vis/provider-by-id :github-copilot-business)
+          individual (vis/provider-by-id :github-copilot-individual)]
+      (expect (= :github-copilot-business (:provider/id business)))
+      (expect (= :github-copilot-individual (:provider/id individual)))
+      (expect (= "https://api.business.githubcopilot.com" (get-in business [:provider/preset :base-url])))
+      (expect (= "https://api.individual.githubcopilot.com" (get-in individual [:provider/preset :base-url])))
+      (expect (ifn? (:provider/status-fn business)))
+      (expect (ifn? (:provider/logout-fn business)))
+      (expect (ifn? (:provider/detect-fn business)))
+      (expect (ifn? (:provider/auth-fn business)))
+      (expect (ifn? (:provider/get-token-fn business)))
+      (expect (ifn? (:provider/limits-fn business)))))
 
   (it "returns Vis-owned static LLM headers with cached Copilot token"
     (reset! @#'sut/token-cache {:token "tid=x;proxy-ep=proxy.individual.githubcopilot.com;exp=1"

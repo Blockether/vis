@@ -44,6 +44,24 @@
 
 (def ^:private COPILOT_ACCOUNT_TYPES #{:individual :business :enterprise})
 
+(def ^:private COPILOT_PROVIDER_IDS
+  {:individual :github-copilot-individual
+   :business   :github-copilot-business
+   :enterprise :github-copilot-enterprise})
+
+(def ^:private COPILOT_PROVIDER_LABELS
+  {:individual "GitHub Copilot (Individual)"
+   :business   "GitHub Copilot (Business)"
+   :enterprise "GitHub Copilot (Enterprise)"})
+
+(def ^:private COPILOT_STATIC_LIMITS {:rpm 500 :tpm 2000000})
+
+(defn- account-provider-id [account-type]
+  (get COPILOT_PROVIDER_IDS account-type))
+
+(defn- account-provider-label [account-type]
+  (get COPILOT_PROVIDER_LABELS account-type))
+
 (def ^:private COPILOT_HEADERS
   "Required headers for Copilot API calls."
   {"Editor-Version"       "vscode/1.100.0"
@@ -392,7 +410,9 @@
        ;; Need to refresh
        (let [oauth-token (or (:oauth-token cached)
                            (:oauth-token (detect-oauth-token))
-                           (throw (ex-info "No GitHub Copilot OAuth token found. Run `vis providers auth github-copilot` to authenticate."
+                           (throw (ex-info (str "No GitHub Copilot OAuth token found. Run `vis providers auth "
+                                             (name (account-provider-id account-type))
+                                             "` to authenticate.")
                                     {:type :vis/copilot-not-authenticated})))
              fresh (exchange-for-copilot-token! oauth-token (assoc opts :account-type account-type))]
          (reset! token-cache (assoc fresh :oauth-token oauth-token :account-type account-type))
@@ -416,20 +436,23 @@
   "Return a status map describing the current auth state.
    {:authenticated? bool :source keyword :oauth-token-preview str
     :account-type keyword :copilot-token-valid? bool :expires-in-ms long}"
-  []
-  (let [detected (detect-oauth-token)
-        cached   @token-cache
-        now      (System/currentTimeMillis)]
-    (cond-> {:authenticated? (some? detected)
-             :account-type (configured-account-type nil)}
-      detected
-      (assoc :source (:source detected)
-        :oauth-token-preview (let [t (:oauth-token detected)]
-                               (str (subs t 0 (min 8 (count t))) "...")))
-      (and cached (:token cached))
-      (assoc :copilot-token-valid? (> (:expires-at-ms cached) now)
-        :expires-in-ms (- (:expires-at-ms cached) now)
-        :api-url (:api-url cached)))))
+  ([] (status nil))
+  ([opts]
+   (let [detected     (detect-oauth-token)
+         account-type (configured-account-type opts)
+         cached       @token-cache
+         now          (System/currentTimeMillis)]
+     (cond-> {:authenticated? (some? detected)
+              :account-type account-type}
+       detected
+       (assoc :source (:source detected)
+         :oauth-token-preview (let [t (:oauth-token detected)]
+                                (str (subs t 0 (min 8 (count t))) "...")))
+       (and cached (:token cached)
+         (= account-type (or (normalize-account-type (:account-type cached)) :individual)))
+       (assoc :copilot-token-valid? (> (:expires-at-ms cached) now)
+         :expires-in-ms (- (:expires-at-ms cached) now)
+         :api-url (:api-url cached))))))
 
 (defn logout!
   "Clear all cached and persisted tokens."
@@ -532,6 +555,18 @@
      :dynamic {:limits []
                :note "Authenticate GitHub Copilot to fetch dynamic quota data."}}))
 
+(defn- make-status-fn [account-type]
+  (fn [] (status {:account-type account-type})))
+
+(defn- make-get-token-fn [account-type]
+  (fn [] (get-copilot-token! {:account-type account-type})))
+
+(defn- make-limits-fn [account-type]
+  (fn []
+    (assoc (dynamic-limits!)
+      :provider-id (account-provider-id account-type)
+      :static COPILOT_STATIC_LIMITS)))
+
 ;; =============================================================================
 ;; Provider registration
 ;;
@@ -557,8 +592,8 @@
      (if (detect-oauth-token)
        (do (print! "  Already authenticated with GitHub Copilot.")
          (print! (str "  Account type: " (name account-type)))
-         (print! "  Run `vis providers status github-copilot` for details.")
-         (print! "  Run `vis providers logout github-copilot` first to re-authenticate.")
+         (print! (str "  Run `vis providers status " (name (account-provider-id account-type)) "` for details."))
+         (print! (str "  Run `vis providers logout " (name (account-provider-id account-type)) "` first to re-authenticate."))
          :already-authenticated)
        (let [{:keys [user-code verification-uri device-code interval expires-in]}
              (start-device-flow! opts)]
@@ -575,20 +610,39 @@
          (print! "  ✓ Authenticated! GitHub Copilot is ready.")
          :ok)))))
 
-(vis/register-extension!
-  (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.provider-github-copilot
-     :ext/doc       "GitHub Copilot OAuth + token-exchange provider."
-     :ext/version   "0.3.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/providers
-     [{:provider/id           :github-copilot
-       :provider/label        "GitHub Copilot"
-       :provider/status-fn    #'status
-       :provider/logout-fn    #'logout!
-       :provider/detect-fn    #'detect-oauth-token
-       :provider/auth-fn      #'interactive-auth!
-       :provider/get-token-fn #'get-copilot-token!
-       :provider/limits-fn    #'dynamic-limits!}]}))
+(defn- make-auth-fn [account-type]
+  (fn [printer-fn]
+    (interactive-auth! printer-fn {:account-type account-type})))
+
+(def ^:private COPILOT_DEFAULT_MODELS
+  ["claude-sonnet-4.6" "claude-haiku-4.5"
+   "gpt-5.4" "gpt-5.4-mini" "gpt-5.3-codex"
+   "gemini-3-pro-preview" "grok-code-fast-1"])
+
+(defn- provider-entry [account-type]
+  {:provider/id           (account-provider-id account-type)
+   :provider/label        (account-provider-label account-type)
+   :provider/preset       {:base-url (get COPILOT_ACCOUNT_BASE_URLS account-type)
+                           :api-style :openai-compatible-chat
+                           :default-models COPILOT_DEFAULT_MODELS}
+   :provider/status-fn    (make-status-fn account-type)
+   :provider/logout-fn    #'logout!
+   :provider/detect-fn    #'detect-oauth-token
+   :provider/auth-fn      (make-auth-fn account-type)
+   :provider/get-token-fn (make-get-token-fn account-type)
+   :provider/limits-fn    (make-limits-fn account-type)})
+
+(defn- register-account-extension! [account-type]
+  (vis/register-extension!
+    (vis/extension
+      {:ext/namespace (symbol (str "com.blockether.vis.ext.provider-github-copilot." (name account-type)))
+       :ext/nses      ['com.blockether.vis.ext.provider-github-copilot]
+       :ext/doc       (str (account-provider-label account-type) " OAuth + token-exchange provider.")
+       :ext/version   "0.4.0"
+       :ext/author    "Blockether"
+       :ext/owner     "vis"
+       :ext/license   "Apache-2.0"
+       :ext/providers [(provider-entry account-type)]})))
+
+(doseq [account-type [:individual :business]]
+  (register-account-extension! account-type))
