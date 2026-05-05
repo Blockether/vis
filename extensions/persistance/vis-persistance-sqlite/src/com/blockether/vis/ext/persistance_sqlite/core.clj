@@ -1410,13 +1410,6 @@
     (and (refs-covered? (:refs proof) refs)
       (proof-slots-covered? (:slots proof) requested-slots))))
 
-(defn- intent-resolution-refs-covered?
-  [db-info intent-id refs role]
-  (let [existing-refs (->> (intent-refs db-info intent-id)
-                        (filter #(= role (:role %)))
-                        (map :ref))]
-    (refs-covered? existing-refs refs)))
-
 (defn db-store-gate!
   [db-info {:keys [plan-id proposition expected-proof candidate-proof required? created-ref metadata]
             legacy-question :question}]
@@ -1612,6 +1605,16 @@
                  :metadata (->json metadata)
                  :created_at now}]})))
 
+(defn- missing-intent-resolution-refs
+  [db-info intent-id refs role-kw]
+  (let [existing (->> (intent-refs db-info intent-id)
+                   (keep (fn [{:keys [role ref]}]
+                           (when (= role role-kw) ref)))
+                   set)]
+    (->> refs
+      (map #(normalize-ref-entry role-kw %))
+      (remove #(contains? existing (:ref %))))))
+
 (defn db-fulfill-intent!
   [db-info intent-id {:keys [summary refs resolved-ref metadata conversation-turn-id]}]
   (when (ds db-info)
@@ -1624,9 +1627,17 @@
         (fn [tx-info]
           (let [intent-row (require-row tx-info :conversation_intent intent-id "conversation_intent not found")]
             (if (not= "active" (:status intent-row))
-              (if (and (= "fulfilled" (:status intent-row))
-                    (intent-resolution-refs-covered? tx-info intent-id refs-v :fulfillment-evidence))
-                (row->intent intent-row (intent-refs tx-info intent-id) [] [])
+              (if (= "fulfilled" (:status intent-row))
+                (let [soul-id (intent-conversation-soul-id tx-info intent-id)
+                      now     (now-ms)
+                      missing (vec (missing-intent-resolution-refs tx-info intent-id refs-v :fulfillment-evidence))]
+                  (when (seq missing)
+                    (validate-provenance-refs! tx-info soul-id (mapv :ref missing) :proof)
+                    (store-intent-resolution-refs! tx-info intent-id missing :fulfillment-evidence now))
+                  (row->intent (require-row tx-info :conversation_intent intent-id "conversation_intent not found")
+                    (intent-refs tx-info intent-id)
+                    []
+                    []))
                 (throw (ex-info "intent is already resolved"
                          {:type :vis/intent-already-resolved
                           :intent-id (->uuid (->ref intent-id))

@@ -85,6 +85,36 @@
     (expect (= "![alt](./x.png)"
               (md/image "alt" "./x.png"))))
 
+  (it "link/image/file-link/anchor reject missing required targets loudly"
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/link nil "https://example.com")))
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/link "docs" nil)))
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/image "alt" nil)))
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/file-link nil)))
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/anchor nil))))
+
+  (it "required target helpers reject tool-result envelopes with targeted hints"
+    (let [cat-result {:ok? true
+                      :result {:lines ["a" "b"]}
+                      :provenance {:op :v/cat}}
+          rg-result  {:ok? true
+                      :result {:hits [{:path "x" :line 1 :text "needle"}]}
+                      :provenance {:op :v/rg}}]
+      (try
+        (md/link "docs" cat-result)
+        (expect false)
+        (catch clojure.lang.ExceptionInfo e
+          (expect (.contains (ex-message e) "[:result :lines]"))))
+      (try
+        (md/file-link rg-result)
+        (expect false)
+        (catch clojure.lang.ExceptionInfo e
+          (expect (.contains (ex-message e) "[:result :hits]"))))))
+
   (it "link with a title attribute"
     (expect (= "[docs](https://example.com \"Project docs\")"
               (md/link "docs" "https://example.com" "Project docs")))
@@ -162,6 +192,16 @@
               (md/code-block nil)))
     (expect (throws? clojure.lang.ExceptionInfo
               (md/code-block "text" nil))))
+
+  (it "code-block rejects tool-result envelopes with targeted payload hint"
+    (let [bash-result {:ok? true
+                       :result {:stdout "hello"}
+                       :provenance {:op :v/bash}}]
+      (try
+        (md/code-block bash-result)
+        (expect false)
+        (catch clojure.lang.ExceptionInfo e
+          (expect (.contains (ex-message e) "[:result :stdout]"))))))
 
   (it "blockquote prefixes every line"
     (expect (= "> a\n> b" (md/blockquote "a\nb")))
@@ -400,7 +440,11 @@
 
   (it "renders an empty body gracefully"
     (let [out (md/table ["a"] [])]
-      (expect (= "| a |\n| --- |" out)))))
+      (expect (= "| a |\n| --- |" out))))
+
+  (it "table rejects nil headers loudly"
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/table nil [])))))
 
 (defdescribe needs-input-test
   (it "returns a host-visible marker with ask text"
@@ -469,6 +513,12 @@
   (it "section emits heading + body"
     (expect (= "## Summary\n\nbody" (md/section "Summary" "body")))
     (expect (= "### Details\n\nbody" (md/section 3 "Details" "body"))))
+
+  (it "section rejects nil title/body loudly"
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/section nil "body")))
+    (expect (throws? clojure.lang.ExceptionInfo
+              (md/section "Title" nil))))
 
   (it "escape backslash-escapes commonmark specials"
     (expect (= "a\\*b\\_c"   (md/escape "a*b_c")))
