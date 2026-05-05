@@ -13,6 +13,8 @@
    :os-arch    "aarch64"
    :shell      "/bin/zsh"
    :locale     "en-US"
+   :time       "2026-05-05T14:30:00-07:00"
+   :timezone   "America/Los_Angeles"
    :jvm        "OpenJDK 21"})
 
 (defdescribe render-test
@@ -22,6 +24,7 @@
       (expect (string/ends-with?   out "</environment>\n"))
       (expect (string/includes?    out "cwd: /tmp/x"))
       (expect (string/includes?    out "user: alice (home: /home/alice)"))
+      (expect (string/includes?    out "<current_time timezone=\"America/Los_Angeles\">2026-05-05T14:30:00-07:00</current_time>"))
       (expect (string/includes?    out "platform: Linux 6.6.0 (aarch64)"))
       (expect (not (string/includes? out "git.")))
       (expect (not (string/includes? out "languages:")))

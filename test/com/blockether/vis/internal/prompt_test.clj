@@ -83,6 +83,28 @@
       (expect (str/includes? out "(+ 1 2)"))
       (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/1"))))
 
+  (it "renders every preview captured from one block into <journal>"
+    (let [preview-a {:ok? true :result {:a 1} :result-shape {} :error nil
+                     :provenance {:op :v/preview}}
+          preview-b {:ok? true :result {:b 2} :result-shape {} :error nil
+                     :provenance {:op :v/preview}}
+          out (with-redefs [extension/render-tool-result
+                            (fn [_surface tool-result]
+                              (str "PREVIEW=" (pr-str (:result tool-result))))]
+                (prompt/build-iteration-context
+                  {:conversation-title-atom (atom "set")}
+                  {:active-extensions   NO_EXTENSIONS
+                   :blocks-by-iteration [[1 {:thinking nil
+                                             :blocks [{:code "(do (v/preview a) (v/preview b) :done)"
+                                                       :result :done
+                                                       :previews [preview-a preview-b]
+                                                       :provenance {:ref "turn/3f2a91c0/iteration/1/block/1"
+                                                                    :op :sci/eval
+                                                                    :status :done}}]}]]
+                   :iteration 0}))]
+      (expect (str/includes? out "PREVIEW={:a 1}"))
+      (expect (str/includes? out "PREVIEW={:b 2}"))))
+
   (it "renders block-level provenance in <journal> for regular evaluated forms"
     (let [out (prompt/build-iteration-context
                 {:conversation-title-atom (atom "set")}
@@ -160,11 +182,11 @@
     (it "appends extension nudges when :ext/nudge-fn returns a non-blank string"
       (let [ext (identity
                   {:ext/namespace 'fake.nudger
-                   :ext/nudge-fn  (fn [_ctx] "[system_nudge] hi from fake.nudger")})
+                   :ext/nudge-fn  (fn [_ctx] "hi from fake.nudger")})
             ;; Always-on title nudge keeps the line count >= 1 already;
             ;; we just check the model's nudge gets concatenated.
             ext-only-ext {:ext/namespace 'fake.nudger
-                          :ext/nudge-fn  (fn [_ctx] "[system_nudge] hi from fake.nudger")}
+                          :ext/nudge-fn  (fn [_ctx] "hi from fake.nudger")}
             out (prompt/build-iteration-context
                   (env-with-title)
                   {:active-extensions   [ext-only-ext]
@@ -172,7 +194,6 @@
                    :iteration           0})]
         (expect (str/includes? out "<system_nudges>"))
         (expect (str/includes? out "<system_nudge importance=\"normal\">\nhi from fake.nudger\n</system_nudge>"))
-        (expect (not (str/includes? out "[system_nudge]")))
         ;; Silence the unused alias warning -- present for future tests.
         (when (some? ext) :ok)))
 

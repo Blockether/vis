@@ -56,7 +56,8 @@
    [com.blockether.vis.internal.progress     :as progress]
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
-   [com.blockether.vis.internal.registry     :as registry]))
+   [com.blockether.vis.internal.registry     :as registry]
+   [com.blockether.vis.theme                 :as theme]))
 
 ;; =============================================================================
 ;; Cancellation
@@ -67,6 +68,19 @@
 (def cancel!                   cancellation/cancel!)
 (def cancelled?                cancellation/cancelled?)
 (def cancellation?             cancellation/cancellation?)
+
+;; =============================================================================
+;; Theme facade
+;; =============================================================================
+(def default-theme-id          theme/default-theme-id)
+(def default-theme             theme/default-theme)
+(def themes                    theme/themes)
+(def palette                   theme/palette)
+(def pallete                   theme/pallete)
+(def theme                     theme/theme)
+(def color                     theme/color)
+(def extension-theme-settings  theme/extension-theme-settings)
+(def available-theme-ids       theme/available-theme-ids)
 
 ;; =============================================================================
 ;; Error formatting

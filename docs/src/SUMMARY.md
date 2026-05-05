@@ -12,6 +12,7 @@
 - [Iteration Flow](architecture/iteration-flow.md)
 - [Evidence, Diagnostics, and Resolution](architecture/evidence.md)
 - [RLM Memory](architecture/rlm-memory.md)
+- [Preview Contract](architecture/preview-contract.md)
 - [Conversation Intents, Plans, and Gates](architecture/completion-contract.md)
 - [State Ownership](architecture/state.md)
 - [Database schema](architecture/database.md)

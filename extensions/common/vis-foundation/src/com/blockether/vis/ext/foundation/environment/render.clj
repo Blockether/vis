@@ -97,6 +97,18 @@
     (.startsWith cwd (str git-root "/")) (subs cwd (inc (count git-root)))
     :else                           nil))
 
+(defn- attr-str
+  [v]
+  (-> (str v)
+    (string/replace "&" "&amp;")
+    (string/replace "\"" "&quot;")
+    (string/replace "<" "&lt;")
+    (string/replace ">" "&gt;")))
+
+(defn- attr-name
+  [v]
+  (attr-str (if (keyword? v) (name v) v)))
+
 (defn render
   "Build the textual `<environment>` block from a snapshot map of
    the shape:
@@ -106,7 +118,8 @@
       :languages  <com.blockether.vis.ext.foundation.environment.languages/scan>
       :monorepo   <com.blockether.vis.ext.foundation.environment.monorepo/snapshot or nil>}"
   [{:keys [host git languages monorepo repositories]}]
-  (let [{:keys [cwd user home shell os-name os-arch os-version locale jvm]} host
+  (let [{:keys [cwd user home shell os-name os-arch os-version locale jvm
+                time timezone]} host
         cwd-vs-root      (relativize-cwd cwd (:root git))
         cwd-line         (cond
                            (= cwd-vs-root :root) (str cwd " (= git root)")
@@ -134,9 +147,13 @@
                              (format-bytes (long (or (:total-bytes languages) 0)))
                              (when (:truncated? languages) ", truncated")
                              ", " (:elapsed-ms languages) "ms)"))
+        time-line        (str "<current_time timezone=\"" (attr-str (or timezone "?")) "\">"
+                           (attr-str (or time "?"))
+                           "</current_time>")
         lines (cond-> ["<environment>"
                        (str "  cwd: " cwd-line)
                        (str "  user: " user " (home: " home ")")
+                       (str "  " time-line)
                        (str "  platform: " platform-line)
                        (str "  jvm: " jvm)]
 
@@ -182,18 +199,6 @@
    (prompt budget). Enumerate full list via TURN_ACCESSIBLE_SKILLS.`
    marker when truncated."
   8192)
-
-(defn- attr-str
-  [v]
-  (-> (str v)
-    (string/replace "&" "&amp;")
-    (string/replace "\"" "&quot;")
-    (string/replace "<" "&lt;")
-    (string/replace ">" "&gt;")))
-
-(defn- attr-name
-  [v]
-  (attr-str (if (keyword? v) (name v) v)))
 
 (defn- skill-entry
   "XML-ish skill preview. The skill name lives in an attribute (not as a

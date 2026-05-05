@@ -16,6 +16,8 @@
       (expect (string? (:os-version snapshot)))
       (expect (string? (:shell snapshot)))
       (expect (string? (:locale snapshot)))
+      (expect (string? (:time snapshot)))
+      (expect (string? (:timezone snapshot)))
       (expect (string? (:jvm snapshot)))))
 
   (it "shell falls back to 'unknown' rather than nil"

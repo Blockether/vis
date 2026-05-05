@@ -1,173 +1,121 @@
 (ns com.blockether.vis.ext.channel-tui.theme
+  "Lanterna adapter for public `com.blockether.vis.theme` tokens."
+  (:require [com.blockether.vis.theme :as theme])
   (:import [com.googlecode.lanterna TextColor$RGB]))
 
-;;; ── Light theme — clean, high-contrast ─────────────────────────────────────
+(def default-theme theme/default-theme)
+(def default-palette (:palette default-theme))
+(def default-fonts (:fonts default-theme))
+(def default-widths (:widths default-theme))
+(def default-spacing (:spacing default-theme))
+
+(defn- rgb
+  [token]
+  (let [[r g b] (theme/color default-theme token)]
+    (TextColor$RGB. r g b)))
+
+;;; ── Light theme — adapted from shared public tokens ────────────────────────
 
 ;; Terminal
-(def terminal-bg    (TextColor$RGB. 255 255 255))  ;; pure white
-(def text-fg        (TextColor$RGB. 30 30 30))     ;; near-black
+(def terminal-bg    (rgb :terminal-bg))
+(def text-fg        (rgb :text-fg))
 
 ;; Header
-(def header-fg       text-fg)                 ;; same near-black as body text
-(def header-hover-fg (TextColor$RGB. 70 70 70)) ;; subtle hover contrast, not dimmed
+(def header-fg       (rgb :header-fg))
+(def header-hover-fg (rgb :header-hover-fg))
 
 ;; Boxes (messages + input)
-(def box-bg         (TextColor$RGB. 255 255 255))  ;; white
-(def box-fg         (TextColor$RGB. 30 30 30))     ;; near-black
-(def border-fg      (TextColor$RGB. 80 80 80))     ;; dark gray border — very visible
+(def box-bg         (rgb :box-bg))
+(def box-fg         (rgb :box-fg))
+(def border-fg      (rgb :border-fg))
 
 ;; Dialog
-(def dialog-bg       (TextColor$RGB. 248 248 248))  ;; very light gray
-(def dialog-fg       (TextColor$RGB. 30 30 30))
-(def dialog-title-fg (TextColor$RGB. 255 255 255))  ;; white text on accent bar
-(def dialog-title-bg (TextColor$RGB. 60 60 60))     ;; dark gray accent bar
-(def dialog-border   (TextColor$RGB. 120 120 120))  ;; solid gray border
-(def dialog-shadow   (TextColor$RGB. 200 200 200))  ;; subtle shadow
-(def dialog-hint     (TextColor$RGB. 120 120 120))  ;; muted hint text
-(def dialog-hint-key (TextColor$RGB. 50 50 50))     ;; near-black key labels
+(def dialog-bg       (rgb :dialog-bg))
+(def dialog-fg       (rgb :dialog-fg))
+(def dialog-title-fg (rgb :dialog-title-fg))
+(def dialog-title-bg (rgb :dialog-title-bg))
+(def dialog-border   (rgb :dialog-border))
+(def dialog-shadow   (rgb :dialog-shadow))
+(def dialog-hint     (rgb :dialog-hint))
+(def dialog-hint-key (rgb :dialog-hint-key))
 
-;; Chat messages — user (no background fill, terminal bg shows through)
-;;
-;; User requests intentionally use the same white background as the
-;; terminal. The text and role label still identify the prompt; no
-;; yellow zone is painted behind it.
-(def user-bubble-bg    (TextColor$RGB. 255 255 255))  ;; identical to terminal-bg — no user-request bg tint
-(def user-bubble-fg    (TextColor$RGB. 30 30 30))     ;; near-black text on white
-(def user-role-fg      (TextColor$RGB. 130 90 0))     ;; bold amber accent for the "You" label
-(def turn-separator-bg (TextColor$RGB. 248 244 235))  ;; warm separator band between Vis and You turns
-(def turn-separator-fg (TextColor$RGB. 190 150 40))   ;; amber rule on the turn separator band
+;; Chat messages — user
+(def user-bubble-bg    (rgb :user-bubble-bg))
+(def user-bubble-fg    (rgb :user-bubble-fg))
+(def user-role-fg      (rgb :user-role-fg))
+(def turn-separator-bg (rgb :turn-separator-bg))
+(def turn-separator-fg (rgb :turn-separator-fg))
 
-;; Chat messages — assistant (no background fill, terminal bg shows through)
-(def ai-bubble-bg      (TextColor$RGB. 255 255 255))  ;; white — same as terminal
-(def ai-bubble-fg      (TextColor$RGB. 30 30 30))     ;; near-black text
-(def ai-role-fg        (TextColor$RGB. 80 160 80))    ;; green "vis" label
+;; Chat messages — assistant
+(def ai-bubble-bg      (rgb :ai-bubble-bg))
+(def ai-bubble-fg      (rgb :ai-bubble-fg))
+(def ai-role-fg        (rgb :ai-role-fg))
 
 ;; Status indicators
-(def status-ok  (TextColor$RGB. 40 160 60))    ;; green
-(def status-bad (TextColor$RGB. 220 50 50))    ;; red
-(def warning-bg (TextColor$RGB. 255 245 180))  ;; soft yellow warning background
-(def warning-fg (TextColor$RGB. 80 60 0))      ;; dark amber warning text
-(def warning-border (TextColor$RGB. 190 150 40)) ;; amber warning border
-(def cancelled-bg (TextColor$RGB. 240 240 240))  ;; soft gray — "this turn was aborted" zone
-(def cancelled-fg (TextColor$RGB. 110 110 110))  ;; muted gray text on the cancelled bg
+(def status-ok      (rgb :status-ok))
+(def status-bad     (rgb :status-bad))
+(def warning-bg     (rgb :warning-bg))
+(def warning-fg     (rgb :warning-fg))
+(def warning-border (rgb :warning-border))
+(def cancelled-bg   (rgb :cancelled-bg))
+(def cancelled-fg   (rgb :cancelled-fg))
 
 ;; Code block styling
-(def code-block-bg     (TextColor$RGB. 240 243 248))  ;; neutral bg — currently running / not-yet-executed code
-(def code-ok-bg        (TextColor$RGB. 232 248 232))  ;; light green — successful executed code
-(def code-err-bg       (TextColor$RGB. 253 235 235))  ;; very light red — failed code only
-(def code-block-fg     (TextColor$RGB. 30 30 30))     ;; near-black text in code
-(def code-success-fg   (TextColor$RGB. 40 160 60))    ;; green ✓ marker
-(def code-error-fg     (TextColor$RGB. 220 50 50))    ;; red ✗ marker
-(def code-duration-fg  (TextColor$RGB. 130 130 130))  ;; muted duration text
-(def code-result-fg    (TextColor$RGB. 70 70 70))     ;; dim result text
-(def code-error-result-fg (TextColor$RGB. 180 40 40)) ;; red result text (on red bg)
-(def code-syntax-special-fg (TextColor$RGB. 120 70 170))  ;; purple special forms / defs
-(def code-syntax-keyword-fg (TextColor$RGB. 25 110 120))  ;; teal keywords
-(def code-syntax-string-fg  (TextColor$RGB. 150 80 40))   ;; brown strings
-(def code-syntax-number-fg  (TextColor$RGB. 30 90 180))   ;; blue numbers
-(def code-syntax-comment-fg (TextColor$RGB. 120 120 120)) ;; gray comments
-(def code-border-fg    (TextColor$RGB. 90 95 110))    ;; darker neutral — table borders / code-section dividers (heavy box-drawing chars need real contrast)
-(def stdout-bg         (TextColor$RGB. 247 244 238))  ;; warm beige — stdout output
-(def stdout-fg         (TextColor$RGB. 80 80 80))     ;; dim text in stdout
-(def stdout-label-fg   (TextColor$RGB. 155 155 155))  ;; muted "stdout" label
-(def stdout-sep-fg     (TextColor$RGB. 210 205 195))  ;; separator in stdout (warm)
-(def iteration-header-fg    (TextColor$RGB. 170 170 170))  ;; iteration header label (subtle)
-(def iteration-header-bg    (TextColor$RGB. 244 244 244))  ;; iteration zone background
-(def answer-sep-fg     (TextColor$RGB. 190 190 190))  ;; answer separator line
-(def answer-sep-bg     (TextColor$RGB. 250 250 250))  ;; answer separator background
-;; Final answer zone background.
-;;   1st pass: (224 235 252) — saturated blue, dominated the bubble.
-;;   2nd pass: (247 250 254) — barely-tinted, still visible.
-;;   3rd pass (current, per user request): identical to terminal-bg
-;;     so there is NO visual answer-zone background at all. The
-;;     answer is distinguished by the optional `FINAL ANSWER`
-;;     header glyph + heading colours, NOT by a bg block. Cleaner
-;;     read when answers are the bulk of the bubble.
-;; Kept as a separate `def` (rather than aliased to `terminal-bg`)
-;; so a future revert is a single-line theme tweak with no source
-;; surgery; every painter still uses `t/answer-bg` and just sees
-;; white today.
-(def answer-bg         (TextColor$RGB. 255 255 255))  ;; identical to terminal-bg — no zone bg
-(def answer-fg         (TextColor$RGB. 25 25 25))     ;; near-black answer text
+(def code-block-bg     (rgb :code-block-bg))
+(def code-ok-bg        (rgb :code-ok-bg))
+(def code-err-bg       (rgb :code-err-bg))
+(def code-block-fg     (rgb :code-block-fg))
+(def code-success-fg   (rgb :code-success-fg))
+(def code-error-fg     (rgb :code-error-fg))
+(def code-duration-fg  (rgb :code-duration-fg))
+(def code-result-fg    (rgb :code-result-fg))
+(def code-error-result-fg (rgb :code-error-result-fg))
+(def code-syntax-special-fg (rgb :code-syntax-special-fg))
+(def code-syntax-keyword-fg (rgb :code-syntax-keyword-fg))
+(def code-syntax-string-fg  (rgb :code-syntax-string-fg))
+(def code-syntax-number-fg  (rgb :code-syntax-number-fg))
+(def code-syntax-comment-fg (rgb :code-syntax-comment-fg))
+(def code-border-fg    (rgb :code-border-fg))
+(def stdout-bg         (rgb :stdout-bg))
+(def stdout-fg         (rgb :stdout-fg))
+(def stdout-label-fg   (rgb :stdout-label-fg))
+(def stdout-sep-fg     (rgb :stdout-sep-fg))
+(def iteration-header-fg    (rgb :iteration-header-fg))
+(def iteration-header-bg    (rgb :iteration-header-bg))
+(def answer-sep-fg     (rgb :answer-sep-fg))
+(def answer-sep-bg     (rgb :answer-sep-bg))
+(def answer-bg         (rgb :answer-bg))
+(def answer-fg         (rgb :answer-fg))
 
-;; Markdown heading colours (answer-mode H1/H2/H3). Pre-fix headings
-;; were near-black + bold, indistinguishable from body text + bold.
-;; Now a saturated GOLD/AMBER gradient that pops on both the white
-;; assistant background AND the new pale-blue answer-bg. WCAG ratios
-;; on white: H1 ≈ 4.8, H2 ≈ 6.2, H3 ≈ 8.4 — all pass AA, H3 passes
-;; AAA. Hierarchy reads strongest → most muted as you descend H1→H3,
-;; matching what `glow` / `mdcat` do (and what every prose stylesheet
-;; on the planet does).
-;; Tuned to clear WCAG AA (>= 4.5:1) on BOTH white and the dialed-back
-;; answer-bg — the heading-colours-test pins both surfaces. The
-;; previous (184 124 0) hit only 3.5:1 on white, which counts as AA
-;; for large/bold text but the bubble renderer doesn't enlarge the
-;; glyph, only bolds it, so we hold to the stricter normal-text bar.
-(def md-h1-fg          (TextColor$RGB. 150 100 0))    ;; rich amber/gold — H1 is the loudest
-(def md-h2-fg          (TextColor$RGB. 125 80 0))     ;; deeper amber — H2 a step quieter
-(def md-h3-fg          (TextColor$RGB. 100 65 0))     ;; deep bronze — H3 is the most muted of the three
-(def confidence-fg     (TextColor$RGB. 140 140 140))  ;; muted confidence label
+;; Markdown
+(def md-h1-fg          (rgb :md-h1-fg))
+(def md-h2-fg          (rgb :md-h2-fg))
+(def md-h3-fg          (rgb :md-h3-fg))
+(def confidence-fg     (rgb :confidence-fg))
+(def md-summary-bg     (rgb :md-summary-bg))
+(def md-summary-fg     (rgb :md-summary-fg))
+(def th-md-summary-bg  (rgb :th-md-summary-bg))
+(def th-md-summary-fg  (rgb :th-md-summary-fg))
+(def proof-summary-bg     (rgb :proof-summary-bg))
+(def proof-summary-fg     (rgb :proof-summary-fg))
+(def th-proof-summary-bg  (rgb :th-proof-summary-bg))
+(def th-proof-summary-fg  (rgb :th-proof-summary-fg))
 
-;; <details><summary> disclosure label band. The TUI doesn't model
-;; click-to-collapse (yet), so the summary line carries the WHOLE
-;; visual weight of "this is a disclosure section" — it needs to
-;; read as a distinct band, not just a bold paragraph. Pale lavender
-;; was chosen because:
-;;   - it's far enough from `code-block-bg` (light blue-gray) and
-;;     `warning-bg` (soft yellow) that the eye doesn't confuse the
-;;     three zone tints;
-;;   - the saturation is low enough to sit quietly on white
-;;     assistant bg without screaming.
-;; WCAG ratio fg/bg ≈ 9.5 (AAA).
-(def md-summary-bg     (TextColor$RGB. 226 214 250))  ;; visible lavender band
-(def md-summary-fg     (TextColor$RGB. 55 30 120))     ;; deep violet — high-contrast text
-;; Thinking-mode summary keeps the iteration-header tint family so
-;; the disclosure stays inside the dim reasoning zone instead of
-;; popping out of it. Slightly cooler / darker than the surrounding
-;; iteration-header-bg so the band is still legible against it.
-(def th-md-summary-bg  (TextColor$RGB. 218 214 236))  ;; visible cool lavender inside reasoning
-(def th-md-summary-fg  (TextColor$RGB. 70 55 125))     ;; muted violet on the dim band
+;; Link chrome
+(def link-chrome-fg       (rgb :link-chrome-fg))
+(def link-chrome-arrow-fg (rgb :link-chrome-arrow-fg))
+(def link-chrome-url-fg   (rgb :link-chrome-url-fg))
+(def link-chrome-hover-bg (rgb :link-chrome-hover-bg))
+(def link-chrome-hover-fg (rgb :link-chrome-hover-fg))
+(def link-chrome-blocked-fg (rgb :link-chrome-blocked-fg))
 
-;; <proofs> proof disclosure badge. Warmer green/teal tint than generic
-;; details so runtime proof appendices read as verified evidence, not just
-;; another collapsed prose section. WCAG ratio fg/bg > 7 on light theme.
-(def proof-summary-bg     (TextColor$RGB. 218 244 232)) ;; soft proof green band
-(def proof-summary-fg     (TextColor$RGB. 20 105 75))   ;; deep teal proof text
-(def th-proof-summary-bg  (TextColor$RGB. 206 232 224)) ;; dim proof band in thinking
-(def th-proof-summary-fg  (TextColor$RGB. 45 105 90))   ;; muted teal in thinking
-
-;; Clickable link / image / file-link chrome painted at the foot of
-;; an assistant bubble. Three states:
-;;
-;;   normal   — enabled, not hovered. Reads as a quiet hyperlink.
-;;   hover    — mouse cursor is over the row. Subtle bg fill +
-;;              brighter fg so the click affordance is unambiguous.
-;;   blocked  — ref's scheme is rejected (javascript:, ..-escape
-;;              etc.). Painted dim + struck-through so the user
-;;              sees “this is here but I won’t open it.”
-;;
-;; The hover bg is intentionally pale (no aggressive solid fill)
-;; because mouse-mode terminals already invert text selection on
-;; the row underneath the cursor; piling more colour on top makes
-;; the highlight read as a glitch. WCAG ratio on hover-bg vs
-;; link-chrome-fg holds at >= 7.0 (AAA).
-(def link-chrome-fg       (TextColor$RGB. 30 90 200))   ;; classic underline-blue link colour
-(def link-chrome-arrow-fg (TextColor$RGB. 130 130 130)) ;; the " → " separator between text + url
-(def link-chrome-url-fg   (TextColor$RGB. 90 110 140))  ;; muted url tail
-(def link-chrome-hover-bg (TextColor$RGB. 232 240 252)) ;; pale blue hover band
-(def link-chrome-hover-fg (TextColor$RGB. 10 50 160))   ;; deeper blue on hover for stronger contrast
-(def link-chrome-blocked-fg (TextColor$RGB. 170 170 170)) ;; muted gray for rejected entries
-
-;; Footer (dedicated row below the input box)
-;; Codex-style three-region status: left=identity, center=run-state, right=budget.
-;; Colors are tuned to match the existing muted palette — the footer should
-;; sit quietly until ctx pressure or an active turn pulls the eye to it.
-(def footer-fg          (TextColor$RGB. 60 60 60))    ;; default text
-(def footer-fg-muted    (TextColor$RGB. 140 140 140)) ;; separators, low-priority segments, cost
-(def footer-fg-strong   (TextColor$RGB. 30 30 30))    ;; model name (bold)
-(def footer-spinner-fg  (TextColor$RGB. 80 160 80))   ;; running spinner — same green as ai-role-fg
-(def footer-warning-fg  (TextColor$RGB. 180 110 0))   ;; cancelling…
-(def footer-error-fg    (TextColor$RGB. 200 40 40))   ;; red, bold
+;; Footer
+(def footer-fg          (rgb :footer-fg))
+(def footer-fg-muted    (rgb :footer-fg-muted))
+(def footer-fg-strong   (rgb :footer-fg-strong))
+(def footer-spinner-fg  (rgb :footer-spinner-fg))
+(def footer-warning-fg  (rgb :footer-warning-fg))
+(def footer-error-fg    (rgb :footer-error-fg))
 
 ;; Padding
-(def pad-x 1)
+(def pad-x (:pad-x default-spacing))

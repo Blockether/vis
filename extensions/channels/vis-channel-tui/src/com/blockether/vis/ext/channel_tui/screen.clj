@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.theme :as shared-theme]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
@@ -815,35 +816,26 @@
     (state/dispatch [:set-title title]))
   (subscribe-title-listener! id))
 
-(defn- standalone?
-  [opts]
-  (true? (:standalone opts)))
-
 (defn- create-terminal!
-  [opts]
-  (if (standalone? opts)
-    ((requiring-resolve 'com.blockether.vis.ext.channel-tui.standalone/create-terminal!) opts)
-    (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset))))
+  [_opts]
+  (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset)))
 
 (defn- configure-terminal-input!
-  [terminal opts]
+  [terminal _opts]
   (when (instance? UnixTerminal terminal)
-    (input/register-custom-patterns! terminal))
-  (when-not (standalone? opts)
+    (input/register-custom-patterns! terminal)
     (try (.setMouseCaptureMode terminal MouseCaptureMode/CLICK_RELEASE_DRAG_MOVE)
       (catch Throwable _ nil))))
 
 (defn- enable-terminal-escape-modes!
-  [opts]
-  (when-not (standalone? opts)
-    (input/enable-bracketed-paste! @vis/tty-out)
-    (input/enable-sgr-mouse! @vis/tty-out)))
+  [_opts]
+  (input/enable-bracketed-paste! @vis/tty-out)
+  (input/enable-sgr-mouse! @vis/tty-out))
 
 (defn- disable-terminal-escape-modes!
-  [opts]
-  (when-not (standalone? opts)
-    (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
-    (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil))))
+  [_opts]
+  (try (input/disable-bracketed-paste! @vis/tty-out) (catch Throwable _ nil))
+  (try (input/disable-sgr-mouse! @vis/tty-out) (catch Throwable _ nil)))
 
 (defn- sweep-orphaned-running-turns!
   []
@@ -988,9 +980,7 @@
          ;; the same payload as pure ASCII text, so wide terminals (the
          ;; copy-id glyph lives near the right edge!) survive intact.
          ;; The custom pattern registered above turns SGR sequences into
-         ;; `MouseAction` instances with correct integer mx/my. The
-         ;; standalone Swing backend receives mouse input from Swing and
-         ;; intentionally skips terminal escape-mode writes.
+         ;; `MouseAction` instances with correct integer mx/my.
          (let [scrollbar-drag-offset (volatile! nil)
                ;; `click-action-fired?` is set to true when the
                ;; CLICK_DOWN branch already handled a click region
@@ -1638,8 +1628,7 @@
                        :continue (recur))))))))
          (finally
         ;; Tell native terminals to stop wrapping pastes and reporting
-        ;; SGR mouse events. Standalone Swing never writes these escape
-        ;; modes to the user's controlling TTY.
+        ;; SGR mouse events.
            (disable-terminal-escape-modes! opts)
         ;; Drop the notifications watcher so the next TUI session
         ;; doesn't accumulate stale hooks (the screen is short-lived
@@ -1669,9 +1658,7 @@
 ;;; ── CLI argument parsing for the TUI channel ─────────────────────────
 
 (def ^:private tui-usage
-  (str "vis channels tui [--conversation-id ID | --resume] [--standalone] "
-    "[--font-size N] [--font-bundle NAME] [--maximized] "
-    "[--standalone-cols N] [--standalone-rows N]"))
+  "vis channels tui [--conversation-id ID | --resume]")
 
 (defn- missing-value?
   [v]
@@ -1686,30 +1673,10 @@
                {:vis/user-error true})))
     v))
 
-(defn- parse-positive-int
-  [flag value]
-  (try
-    (let [n (Integer/parseInt value)]
-      (when-not (pos? n)
-        (throw (NumberFormatException. value)))
-      n)
-    (catch NumberFormatException _
-      (throw (ex-info (str flag " requires a positive integer, got: " value
-                        "\nUsage: " tui-usage)
-               {:vis/user-error true
-                :flag           flag
-                :value          value})))))
-
 (defn- parse-args
   "Parse `vis channels tui` flags.
      --conversation-id ID   Resume a conversation (full UUID or short prefix)
      --resume               Resume the latest :tui conversation
-     --standalone           Use Lanterna's Swing backend instead of /dev/tty
-     --font-size N          Standalone Swing font size, default 16
-     --font-bundle NAME     Bundled Cascadia variant: code, code-pl, code-nf, mono, mono-pl, mono-nf
-     --maximized            Request OS/window-manager maximization on startup
-     --standalone-cols N    Standalone initial columns, default 120
-     --standalone-rows N    Standalone initial rows, default 36
 
    Unknown flags and missing flag values throw a `:vis/user-error` ex-info
    so the user sees a clean error instead of the TUI silently swallowing a
@@ -1727,31 +1694,6 @@
 
           "--resume"
           (recur more (assoc opts :resume true))
-
-          "--standalone"
-          (recur more (assoc opts :standalone true))
-
-          "--font-size"
-          (let [v (flag-value arg more)]
-            (recur (next more) (assoc opts :font-size (parse-positive-int arg v))))
-
-          "--font-bundle"
-          (let [v (flag-value arg more)]
-            (recur (next more) (assoc opts :font-bundle (keyword v))))
-
-          "--maximized"
-          (recur more (assoc opts :maximized true))
-
-          "--maximize"
-          (recur more (assoc opts :maximized true))
-
-          "--standalone-cols"
-          (let [v (flag-value arg more)]
-            (recur (next more) (assoc opts :columns (parse-positive-int arg v))))
-
-          "--standalone-rows"
-          (let [v (flag-value arg more)]
-            (recur (next more) (assoc opts :rows (parse-positive-int arg v))))
 
           (throw (ex-info (str "unknown flag: " arg
                             "\nUsage: " tui-usage)
@@ -1817,6 +1759,7 @@
      :ext/author    "Blockether"
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
+     :ext/theme     (shared-theme/extension-theme-settings)
      :ext/channels  [{:channel/id        :tui
                       :channel/cmd       "tui"
                       :channel/doc       "Interactive terminal UI."

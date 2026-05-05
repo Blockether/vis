@@ -135,6 +135,7 @@
           [glm minimax] (:models provider)]
       (expect (= true (:reasoning? glm)))
       (expect (= :zai-thinking (:reasoning-style glm)))
+      (expect (= false (:reasoning-effort? glm)))
       (expect (nil? (:reasoning? minimax)))
       (expect (nil? (:reasoning-style minimax)))))
 
@@ -144,7 +145,8 @@
                                             :models [{:name "glm-5-turbo"}]})
           [glm] (:models provider)]
       (expect (= true (:reasoning? glm)))
-      (expect (= :zai-thinking (:reasoning-style glm))))))
+      (expect (= :zai-thinking (:reasoning-style glm)))
+      (expect (= false (:reasoning-effort? glm))))))
 
 (defdescribe local-provider-extension-registration-test
   (it "registers Ollama and LM Studio through provider extensions"

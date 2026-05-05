@@ -357,23 +357,6 @@
   (it "--resume sets :resume true"
     (expect (= {:resume true} (parse-args ["--resume"]))))
 
-  (it "--standalone selects the Swing backend conditionally"
-    (expect (= {:standalone true} (parse-args ["--standalone"]))))
-
-  (it "standalone font and sizing flags are parsed without starting Swing"
-    (expect (= {:standalone true
-                :font-size 18
-                :font-bundle :code-nf
-                :maximized true
-                :columns 140
-                :rows 42}
-              (parse-args ["--standalone"
-                           "--font-size" "18"
-                           "--font-bundle" "code-nf"
-                           "--maximized"
-                           "--standalone-cols" "140"
-                           "--standalone-rows" "42"]))))
-
   (it "--conversation-id captures the next token as the id"
     (expect (= {:conversation-id "abc123"}
               (parse-args ["--conversation-id" "abc123"]))))
@@ -404,21 +387,6 @@
     ;; Catches the case where the user types `--conversation-id --resume`
     ;; and `--resume` would otherwise be silently treated as the id.
     (expect (user-error? #(parse-args ["--conversation-id" "--resume"]))))
-
-  (it "standalone integer flags reject invalid values"
-    (expect (user-error? #(parse-args ["--standalone" "--font-size" "zero"])))
-    (expect (user-error? #(parse-args ["--standalone" "--standalone-cols" "0"]))))
-
-  (it "standalone value flags reject missing values"
-    (expect (user-error? #(parse-args ["--standalone" "--font-bundle"]))))
-
-  (it "standalone accepts --maximize as an alias for --maximized"
-    (expect (= {:standalone true :maximized true}
-              (parse-args ["--standalone" "--maximize"]))))
-
-  (it "standalone rejects non-Cascadia font flags"
-    (expect (user-error? #(parse-args ["--standalone" "--font-family" "Menlo"])))
-    (expect (user-error? #(parse-args ["--standalone" "--font-path" "/tmp/custom.ttf"]))))
 
   (it "non-flag positional arg also errors (no positional API today)"
     (expect (user-error? #(parse-args ["stray-positional"])))))

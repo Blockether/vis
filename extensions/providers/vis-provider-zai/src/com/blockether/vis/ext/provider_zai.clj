@@ -20,14 +20,17 @@
         key once and persists it under `~/.vis/zai-auth.json`,
         `{:coding {:api-key str :saved-at long}
           :pass   {:api-key str :saved-at long}}`.
-     2. Subsequent runs read the persisted key. Env vars
-        (`ZAI_CODING_API_KEY`, `ZAI_API_KEY`) override the file when
+     2. Subsequent runs read the configured provider key, env var, or
+        persisted key. A TUI/config `:api-key` wins so status/limits
+        match the key used for model calls; env vars
+        (`ZAI_CODING_API_KEY`, `ZAI_API_KEY`) override the auth file when
         present so CI / scripted setups stay home-directory-free.
      3. `vis providers status zai-coding` reports the source
-        (file / env) without exposing the full key.
+        (config / env / file) without exposing the full key.
      4. `vis providers logout zai-coding` clears the persisted key for
         that plan only; the other plan stays intact."
-  (:require [charred.api :as json]
+  (:require [babashka.http-client :as http]
+            [charred.api :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [taoensso.telemere :as tel]))
@@ -113,21 +116,45 @@
             (when-not (str/blank? v) v)))
     (:env-keys (get PLANS plan-tag))))
 
+(defn- configured-key-for-plan
+  "API key from Vis provider config (`~/.vis/config.edn`) for this
+   plan, or nil. This covers the TUI flow, which stores static API keys
+   in the normal provider config instead of the provider auth file."
+  [plan-tag]
+  (let [provider-id (:provider-id (get PLANS plan-tag))]
+    (try
+      (when-let [current-config-fn (requiring-resolve 'com.blockether.vis.core/current-config)]
+        (some (fn [provider]
+                (when (= provider-id (:id provider))
+                  (when-let [k (:api-key provider)]
+                    (when-not (str/blank? k)
+                      k))))
+          (:providers (current-config-fn))))
+      (catch Throwable _ nil))))
+
+(defn- auth-file-key-for-plan
+  [plan-tag]
+  (when-let [from-file (get (load-auth-file) plan-tag)]
+    (when-let [k (:api-key from-file)]
+      (when-not (str/blank? k)
+        k))))
+
 (defn- detect-key
   "Lookup priority for one plan:
-     1. `~/.vis/zai-auth.json` slice for this plan.
+     1. TUI/config provider `:api-key` for this plan.
      2. The plan's env-var chain.
+     3. `~/.vis/zai-auth.json` slice for this plan.
    Returns `{:api-key str :source kw}` or nil. Never throws.
 
-   `:source` is `:auth-file` or `:env-var` so the status fn can
-   show the user where the key came from."
+   `:source` is `:config`, `:env-var`, or `:auth-file` so the status fn
+   can show the user where the key came from."
   [plan-tag]
-  (or (when-let [from-file (get (load-auth-file) plan-tag)]
-        (when-let [k (:api-key from-file)]
-          (when-not (str/blank? k)
-            {:api-key k :source :auth-file})))
+  (or (when-let [k (configured-key-for-plan plan-tag)]
+        {:api-key k :source :config})
     (when-let [k (env-key-for-plan plan-tag)]
-      {:api-key k :source :env-var})))
+      {:api-key k :source :env-var})
+    (when-let [k (auth-file-key-for-plan plan-tag)]
+      {:api-key k :source :auth-file})))
 
 (defn- get-token
   "Resolve a usable API key for the given plan. Throws when no
@@ -184,6 +211,129 @@
                :msg   (str "Cleared persisted Z.ai key for plan " plan-tag)})
     :logged-out))
 
+(def ^:private coding-quota-url
+  "https://api.z.ai/api/monitor/usage/quota/limit")
+
+(defn- object-map
+  [value]
+  (when (and (map? value) (not (record? value)))
+    value))
+
+(defn- field
+  [m k]
+  (when-let [m* (object-map m)]
+    (cond
+      (contains? m* k)        (get m* k)
+      (contains? m* (name k)) (get m* (name k)))))
+
+(defn- limit-kind
+  [limit]
+  (case (some-> (field limit :type) str/upper-case)
+    "TOKENS_LIMIT" :tokens
+    "TIME_LIMIT"   :requests
+    :rate))
+
+(defn- limit-label
+  [limit]
+  (let [kind   (limit-kind limit)
+        unit   (field limit :unit)
+        number (field limit :number)]
+    (cond
+      (and (= :tokens kind) (= 3 unit) (= 5 number)) "Z.ai Coding 5h token quota"
+      (and (= :tokens kind) (= 6 unit) (= 7 number)) "Z.ai Coding 7d token quota"
+      (= :tokens kind)                         "Z.ai Coding token quota"
+      (and (= :requests kind) (= 5 unit))      "Z.ai Coding web/search quota"
+      (= :requests kind)                       "Z.ai Coding request quota"
+      :else                                    "Z.ai Coding quota")))
+
+(defn- limit-id
+  [limit idx]
+  (let [kind   (limit-kind limit)
+        unit   (field limit :unit)
+        number (field limit :number)]
+    (cond
+      (and (= :tokens kind) (= 3 unit) (= 5 number)) :zai-coding-5h
+      (and (= :tokens kind) (= 6 unit) (= 7 number)) :zai-coding-7d
+      (and (= :requests kind) (= 5 unit))            :zai-coding-web-searches
+      :else                                          (keyword (str "zai-coding-limit-" idx)))))
+
+(defn- limit-window
+  [limit]
+  (let [unit        (field limit :unit)
+        number      (field limit :number)
+        reset-at-ms (field limit :nextResetTime)
+        base        (case unit
+                      3 {:kind :rolling :unit :hour :size (or number 1)}
+                      5 {:kind :calendar :unit :month :size (or number 1)}
+                      6 {:kind :rolling :unit :day :size (or number 1)}
+                      nil)]
+    (cond-> base
+      (and base (number? reset-at-ms)) (assoc :resets-at-ms (long reset-at-ms)))))
+
+(defn- quota-limit-row
+  [idx limit]
+  (let [kind        (limit-kind limit)
+        usage       (field limit :usage)
+        current     (field limit :currentValue)
+        remaining   (field limit :remaining)
+        percentage  (field limit :percentage)
+        window      (limit-window limit)
+        token-pct?  (and (= :tokens kind) (number? percentage))]
+    (cond-> {:id         (limit-id limit idx)
+             :label      (limit-label limit)
+             :scope      :plan
+             :kind       kind
+             :precision  :exact
+             :source     :provider-api
+             :unlimited? false}
+      window        (assoc :window window)
+      token-pct?    (assoc :used (double percentage)
+                      :limit 100.0
+                      :remaining (double (max 0 (- 100 percentage))))
+      (and (not token-pct?) (number? current))
+      (assoc :used (double current))
+      (and (not token-pct?) (number? usage))
+      (assoc :limit (double usage))
+      (and (not token-pct?) (number? remaining))
+      (assoc :remaining (double remaining))
+      (and (not token-pct?) (not (number? current)) (number? percentage))
+      (assoc :used (double percentage) :limit 100.0 :remaining (double (max 0 (- 100 percentage)))))))
+
+(defn- quota->dynamic-limits
+  [quota]
+  (let [data   (or (field quota :data) quota)
+        limits (field data :limits)
+        rows   (if (sequential? limits)
+                 (mapv quota-limit-row (range) limits)
+                 [])
+        level  (field data :level)]
+    (cond-> {:limits rows}
+      (empty? rows)
+      (assoc :note "Z.ai Coding quota endpoint did not return quota windows.")
+      (and (seq rows) (some? level))
+      (assoc :note (str "Z.ai Coding plan level: " level ".")))))
+
+(defn- fetch-quota!
+  [api-key]
+  (let [response (http/get coding-quota-url
+                   {:headers {"Accept"        "application/json"
+                              "Authorization" (str "Bearer " api-key)}
+                    :timeout 30000
+                    :throw   false})
+        status   (:status response)
+        body     (:body response)]
+    (if (<= 200 status 299)
+      (json/read-json body :key-fn keyword)
+      (throw (ex-info (str "Z.ai Coding quota request failed: HTTP " status)
+               {:type   :provider/zai-coding-quota-error
+                :status status
+                :body   body
+                :url    coding-quota-url})))))
+
+(defn- coding-dynamic-limits!
+  [api-key]
+  (quota->dynamic-limits (fetch-quota! api-key)))
+
 (defn- make-limits-fn [plan-tag]
   (fn []
     (let [{:keys [provider-id label]} (get PLANS plan-tag)
@@ -191,10 +341,17 @@
       {:provider-id   provider-id
        :status        (if detected :ok :unauthenticated)
        :fetched-at-ms (System/currentTimeMillis)
-       :dynamic       {:limits []
-                       :note (if detected
-                               (str label " does not expose a dynamic quota endpoint yet.")
-                               (str label " is not authenticated."))}})))
+       :dynamic       (cond
+                        (nil? detected)
+                        {:limits []
+                         :note (str label " is not authenticated.")}
+
+                        (= :coding plan-tag)
+                        (coding-dynamic-limits! (:api-key detected))
+
+                        :else
+                        {:limits []
+                         :note (str label " does not expose a dynamic quota endpoint yet.")})})))
 
 (defn- auth-instruction-lines
   [plan-tag]
@@ -230,13 +387,14 @@
           {:keys [provider-id label env-keys base-url]} (get PLANS plan-tag)
           existing (detect-key plan-tag)]
       (cond
-        ;; Already on disk → no-op so re-running auth doesn't
+        ;; Configured or already on disk → no-op so re-running auth doesn't
         ;; require re-typing the key.
-        (and existing (= :auth-file (:source existing)))
+        (and existing (contains? #{:config :auth-file} (:source existing)))
         (do
           (print! (str "  Already authenticated with " label "."))
+          (print! (str "  Source: " (name (:source existing)) "."))
           (print! (str "  Run `vis providers status " (name provider-id) "` for details."))
-          (print! (str "  Run `vis providers logout " (name provider-id) "` first to switch keys."))
+          (print! (str "  Run `vis providers logout " (name provider-id) "` first to switch stored keys."))
           :already-authenticated)
 
         ;; Env var is set but not persisted → write it through to

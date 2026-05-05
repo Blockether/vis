@@ -129,6 +129,28 @@
   [v]
   (extension/render-tool-result :journal v))
 
+(defn- preview-tool-result?
+  [v]
+  (and (extension/tool-result? v)
+    (= :v/preview (get-in v [:provenance :op]))))
+
+(defn- collect-preview-results
+  ([v]
+   (collect-preview-results v #{}))
+  ([v seen]
+   (cond
+     (preview-tool-result? v) [v]
+
+     (or (nil? v) (seen (System/identityHashCode v))) []
+
+     (map? v)
+     (mapcat #(collect-preview-results % (conj seen (System/identityHashCode v))) (vals v))
+
+     (and (sequential? v) (not (string? v)))
+     (mapcat #(collect-preview-results % (conj seen (System/identityHashCode v))) v)
+
+     :else [])))
+
 (defn- provenance-journal-suffix
   "Compact block-level provenance for the model-facing journal. Keep
    only the fields that help the next iteration reason about where the
@@ -149,7 +171,7 @@
    bound content. Tool-result envelopes render through shared display text
    instead of dumping the full map into the journal."
   [iteration-position k expr]
-  (let [{:keys [code error result stdout stderr execution-time-ms provenance]} expr
+  (let [{:keys [code error result previews stdout stderr execution-time-ms provenance]} expr
         display-ref    (or (:ref provenance)
                          (str "<missing-canonical-ref iteration=" iteration-position
                            " block=" (inc k) ">"))
@@ -165,10 +187,14 @@
                         (str "ERROR: " (truncate error 600))
                         (if (extension/tool-result? result)
                           (tool-result-journal-text result)
-                          (let [v (realize-value result)
-                                [value-str truncated?] (truncated-pr-str v)]
-                            (str value-str
-                              (when truncated? " :truncated? true")))))]
+                          (let [preview-values (seq (or previews (collect-preview-results result)))]
+                            (if preview-values
+                              (str/join "\n"
+                                (map tool-result-journal-text preview-values))
+                              (let [v (realize-value result)
+                                    [value-str truncated?] (truncated-pr-str v)]
+                                (str value-str
+                                  (when truncated? " :truncated? true")))))))]
     (str "  " display-ref "  " code-str " → " value-part
       (or slow-suffix "")
       (or (provenance-journal-suffix provenance) "")
@@ -378,7 +404,7 @@
   (when (and (integer? used-tokens) (integer? limit-tokens) (pos? limit-tokens))
     (let [util (double (/ used-tokens limit-tokens))]
       (when (>= util CONTEXT_PRESSURE_THRESHOLD)
-        (str "[system_nudge] Context window is at "
+        (str "Context window is at "
           (int (Math/round (* 100.0 util))) "% ("
           used-tokens " / " limit-tokens " tokens). Older <journal>\n"
           "  lines drop when the journal exceeds its token budget. Curate the\n"
@@ -414,7 +440,7 @@
         blank? (or (nil? title) (str/blank? title))]
     (cond
       blank?
-      (str "[system_nudge] CONVERSATION_TITLE is currently empty. "
+      (str "CONVERSATION_TITLE is currently empty. "
         "Set it via `(conversation-title \"…\")` (3-7-word noun phrase, "
         "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
         "the conversation is discoverable in the sidebar.")
@@ -422,7 +448,7 @@
       (and (integer? iteration)
         (pos? iteration)
         (zero? (mod iteration TITLE_REFRESH_NUDGE_PERIOD)))
-      (str "[system_nudge] You're " iteration " iterations into this turn. "
+      (str "You're " iteration " iterations into this turn. "
         "If the conversation's focus has shifted from \"" title "\", "
         "refresh the title via `(conversation-title \"…\")`."))))
 
@@ -462,10 +488,6 @@
       "\n</active_skills>\n"
       "</extensions>")))
 
-(defn- strip-system-nudge-prefix
-  [s]
-  (str/replace (str s) #"^\[system_nudge\]\s*" ""))
-
 (defn- normalize-system-nudge
   [default-importance nudge]
   (let [entry (cond
@@ -475,10 +497,10 @@
 
                 (map? nudge)
                 {:importance (or (:importance nudge) default-importance)
-                 :text       (or (:text nudge) (:message nudge) (:body nudge))}
+                 :text       (:text nudge)}
 
                 :else nil)
-        text  (some-> (:text entry) str strip-system-nudge-prefix str/trim)]
+        text  (some-> (:text entry) str str/trim)]
     (when (and text (not (str/blank? text)))
       {:importance (attr-name (or (:importance entry) default-importance))
        :text       text})))
@@ -994,7 +1016,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
    every `:ext/symbols` entry as a `- (alias/sym args) — docstring`
    line, which silently ballooned the prompt for any extension whose
    `:ext/symbols` was a thin wrapper around an upstream library: e.g.
-   `vis-language-clojure`'s `z/` extension dumped 104 rewrite-clj.zip
+   older `vis-language-clojure` builds dumped many upstream zipper
    publics with full upstream docstrings (~7000 tokens), every
    iteration, of every conversation — even when the user just typed
    a one-word greeting. Authors who want their tools advertised in

@@ -3,6 +3,7 @@
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.theme :as shared-theme]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]))
@@ -151,9 +152,20 @@
     :high   :high
     :low))
 
+(defn- normalize-theme-name
+  [v]
+  (let [s (cond
+            (keyword? v) (name v)
+            (string? v)  (str/trim v)
+            :else        nil)]
+    (keyword (if (str/blank? s)
+               shared-theme/default-theme-id
+               s))))
+
 (defn- normalize-settings
   [settings]
   (-> settings
+    (update :theme-name normalize-theme-name)
     (update :reasoning-level normalize-reasoning-level)
     (update :openai-codex-verbosity normalize-codex-verbosity)
     (update :show-thinking boolean)
@@ -166,16 +178,19 @@
   "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
    `:tui-settings`.
 
+     theme-name — reusable channel theme id. Default `:vis-light`; extension
+         themes are declared through `:ext/theme` and surfaced in Settings.
+
      show-thinking / show-iterations  — high-signal content controls.
          Default ON because new users want to SEE the agent reasoning;
          power users turn them off when they want a clean transcript.
 
      reasoning-level — base model thinking depth for reasoning-capable
          models. Default `:balanced`; users can cycle it via
-         Ctrl+K → Settings → Extensions.
+         Ctrl+K → Settings → Providers & Models.
 
      openai-codex-verbosity — Codex-only output detail knob.
-         Default `:low`; users can cycle it via Ctrl+K → Settings → Extensions.
+         Default `:low`; users can cycle it via Ctrl+K → Settings → Providers & Models.
 
      show-timestamps — chrome control. Default OFF because timestamps
          duplicate info already on screen.
@@ -193,7 +208,8 @@
    FINAL ANSWER superscripts they controlled have been deleted from
    the rendering pipeline outright (the visual zones already convey
    the same boundaries without the labels)."
-  {:show-thinking          true
+  {:theme-name            (keyword shared-theme/default-theme-id)
+   :show-thinking          true
    :show-iterations        true
    :reasoning-level        :balanced
    :openai-codex-verbosity :low
@@ -326,6 +342,23 @@
           :message (str "Model: " provider-prefix (:model next-entry))
           :level :info})))))
 
+(defn- current-model-info
+  []
+  (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
+    (try (vis/resolve-effective-model router) (catch Throwable _ nil))))
+
+(defn- current-provider-id
+  []
+  (:provider (current-model-info)))
+
+(defn- reasoning-effort-configurable?
+  []
+  (let [info (current-model-info)]
+    (or (nil? info)
+      (and (boolean (:reasoning? info))
+        (not= false (:reasoning-effort? info))
+        (not= :zai-thinking (:reasoning-style info))))))
+
 (defn init!
   "Initialize app-db with default state."
   []
@@ -390,17 +423,23 @@
 
 (reg-event-fx :cycle-reasoning-level
   (fn [db _]
-    (let [current (normalize-reasoning-level (get-in db [:settings :reasoning-level]))
-          next    (cycle-choice reasoning-level-order current)]
-      {:db (apply-settings-update! db {:reasoning-level next})
-       :fx [[:notify (str "Reasoning: " (name next)) :info settings-notification-ttl-ms]]})))
+    (if-not (reasoning-effort-configurable?)
+      {:db db
+       :fx [[:notify "Reasoning effort is not configurable for this model" :warn settings-notification-ttl-ms]]}
+      (let [current (normalize-reasoning-level (get-in db [:settings :reasoning-level]))
+            next    (cycle-choice reasoning-level-order current)]
+        {:db (apply-settings-update! db {:reasoning-level next})
+         :fx [[:notify (str "Reasoning: " (name next)) :info settings-notification-ttl-ms]]}))))
 
 (reg-event-fx :cycle-codex-verbosity
   (fn [db _]
-    (let [current (normalize-codex-verbosity (get-in db [:settings :openai-codex-verbosity]))
-          next    (cycle-choice codex-verbosity-order current)]
-      {:db (apply-settings-update! db {:openai-codex-verbosity next})
-       :fx [[:notify (str "Codex verbosity: " (name next)) :info settings-notification-ttl-ms]]})))
+    (if-not (= :openai-codex (current-provider-id))
+      {:db db
+       :fx [[:notify "Codex verbosity is only available for OpenAI Codex" :warn settings-notification-ttl-ms]]}
+      (let [current (normalize-codex-verbosity (get-in db [:settings :openai-codex-verbosity]))
+            next    (cycle-choice codex-verbosity-order current)]
+        {:db (apply-settings-update! db {:openai-codex-verbosity next})
+         :fx [[:notify (str "Codex verbosity: " (name next)) :info settings-notification-ttl-ms]]}))))
 
 (reg-event-fx :cycle-model
   (fn [db _]
@@ -633,12 +672,6 @@
             new-scroll (long (Math/round (* fraction max-scroll)))]
         (assoc db :messages-scroll (max 0 (min max-scroll new-scroll)))))))
 
-(defn- current-provider-id
-  []
-  (when-let [router (try (vis/get-router) (catch Throwable _ nil))]
-    (some-> (try (vis/resolve-effective-model router) (catch Throwable _ nil))
-      :provider)))
-
 (defn- turn-extra-body
   [{:keys [settings]}]
   (when (= :openai-codex (current-provider-id))
@@ -658,7 +691,9 @@
     (let [visible-text (input/expand-paste-placeholders text (:pastes db))
           agent-text   (input/expand-file-mentions visible-text)
           token        (vis/cancellation-token)
-          extra-body   (turn-extra-body db)]
+          extra-body   (turn-extra-body db)
+          reasoning-level (when (reasoning-effort-configurable?)
+                            (get-in db [:settings :reasoning-level]))]
       {:db (-> db
              (update :messages conj (chat/user-message visible-text))
              (update :messages conj (chat/assistant-message "Sending request to provider…"))
@@ -677,7 +712,7 @@
                :input-history-index nil
                :input-history-draft nil))
        :fx [[:rlm-turn (:conversation db) agent-text token
-             (get-in db [:settings :reasoning-level]) extra-body]]})))
+             reasoning-level extra-body]]})))
 
 (reg-event-fx :cancel-turn
   (fn [db _]
