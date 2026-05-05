@@ -1321,7 +1321,7 @@
                          (cond-> {:lang     "clojure"
                                   :messages messages
                                   :routing  (or routing {})
-                                  :check-context? false}
+                                  :check-context? true}
                            effective-reasoning (assoc :reasoning effective-reasoning)
                            streaming-fn        (assoc :on-chunk streaming-fn)
                            extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
@@ -2037,8 +2037,8 @@
    If a buggy model never finalizes, the user cancels."
   [environment user-request
    {:keys [system-prompt
-           conversation-turn-id history-messages
-           max-consecutive-errors max-restarts
+           conversation-turn-id
+           max-consecutive-errors max-restarts max-context-tokens
            hooks cancel-atom current-iteration-atom
            reasoning-default routing extra-body allow-copilot-claude-deep?]}]
   (let [;; Tightened from 5 to 3. Three consecutive failures is enough
@@ -2064,8 +2064,7 @@
         initial-user-content user-request
         initial-messages (prompt/assemble-initial-messages
                            {:system-prompt system-prompt
-                            :initial-user-content initial-user-content
-                            :history-messages history-messages})
+                            :initial-user-content initial-user-content})
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0})
         accumulate-usage! (fn [api-usage]
                             (when api-usage
@@ -2201,6 +2200,8 @@
     ;; prompt/accessible-skills-snapshot for the per-element shape.
     (env/bind-and-bump! environment 'TURN_ACCESSIBLE_SKILLS
       (prompt/accessible-skills-snapshot))
+    (when-let [a (:active-skills-atom environment)]
+      (reset! a {}))
     ;; Reset ITERATION_ID to nil at turn start; rebound by
     ;; `update-iteration-id!` after each iteration row commits.
     (env/bind-and-bump! environment 'ITERATION_ID nil)
@@ -2339,9 +2340,10 @@
                                            :active-extensions   active-exts
                                            :iteration           iteration
                                            :model               (some-> pre-resolved-model :name str)
+                                           :context-limit       max-context-tokens
+                                           :current-user-content user-request
                                            :system-prompt       system-prompt})
-                      base-messages (prompt/trim-to-initial-history messages (count initial-messages))
-                      effective-messages (cond-> base-messages
+                      effective-messages (cond-> messages
                                            (not (str/blank? iteration-context))
                                            (conj {:role "user" :content iteration-context}))
                       resolved-model pre-resolved-model
@@ -2712,20 +2714,18 @@
           ;;   3. The synthetic `{:requirement …}` frame the LLM sees
           ;;      restated the whole conversation as the "requirement".
           ;;
-          ;; Conversation history still reaches the model via the `messages`
-          ;; vector itself (passed through to the LLM call unmodified).
-          ;; `user-request` is ONLY the current turn — one ask, one value.
+          ;; Prior dialog transcript is dropped here. `user-request` is
+          ;; ONLY the current turn — one ask, one value.
           extract-text           (fn [c]
                                    (cond
                                      (string? c)     c
                                      (sequential? c) (str/join " "
                                                        (keep #(when (= "text" (:type %)) (:text %)) c))
                                      :else           nil))
-          ;; Locate the LAST user message once. It's both the source of
-          ;; `user-request` (the `{:requirement ...}` payload for iteration 0)
-          ;; AND the boundary between history and the current turn:
-          ;; everything BEFORE its index is prior conversation history,
-          ;; which `iteration-loop` replays as `:history-messages`.
+          ;; Locate the LAST user message once. It is the only human text
+          ;; sent into this turn. Prior dialog transcript is intentionally
+          ;; NOT replayed to the model; durable context flows through
+          ;; <journal>, <var_index>, SYSTEM vars, and DB-backed tools.
           last-user-idx          (->> (map-indexed vector messages)
                                    reverse
                                    (some (fn [[i m]]
@@ -2737,9 +2737,6 @@
                                    ;; use the last message's text. Better than an empty user request.
                                    (some-> messages last :content extract-text)
                                    "")
-          history-messages       (if last-user-idx
-                                   (vec (take last-user-idx messages))
-                                   (vec messages))
           env-router             (:router env)
           root-resolved-model    (when env-router (resolve-effective-model env-router))
           root-model             (or (:name root-resolved-model) model)
@@ -2778,8 +2775,7 @@
        :reasoning-default      reasoning-default
        :routing                routing
        :extra-body             extra-body
-       :messages               messages
-       :history-messages       history-messages})))
+       :messages               messages})))
 
 ;; -----------------------------------------------------------------------------
 ;; Run iteration phase
@@ -2788,7 +2784,7 @@
 (defn- run-iteration-phase
   "Runs the main iteration loop via run-turn!.
    Returns iteration-result, conversation-turn-id, cost atoms, and merge-cost! fn."
-  [{:keys [environment user-request history-messages spec
+  [{:keys [environment user-request spec
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom
            reasoning-default routing extra-body]}]
@@ -2797,7 +2793,6 @@
                                     :max-context-tokens     max-context-tokens
                                     :system-prompt          system-prompt
                                     :reasoning-default      reasoning-default
-                                    :history-messages       history-messages
                                     :current-iteration-atom current-iteration-atom
                                     :hooks                  hooks
                                     :cancel-atom            cancel-atom}
@@ -3413,6 +3408,7 @@
   (let [depth-atom               (atom 0)
         db-info                  (persistance/db-create-connection! db)
         var-index-atom           (atom {:index nil :revision -1 :current-revision 0})
+        active-skills-atom       (atom {})
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
                                         :conversation-id nil})
@@ -3526,6 +3522,7 @@
              :depth-atom      depth-atom
              :db-info         db-info
              :var-index-atom  var-index-atom
+             :active-skills-atom active-skills-atom
              :state-atom      state-atom
              :sci-ctx         sci-ctx
              :sandbox-ns      sandbox-ns

@@ -4,8 +4,8 @@
    Two surfaces:
 
      1. The system prompt — written once, cached per-conversation.
-        `assemble-system-prompt` joins the minimal core prompt + the
-        environment-info block + each active extension's prompt fragment.
+        `assemble-system-prompt` joins tagged blocks: <system_prompt>,
+        <environment-info>, <extensions>, and provider-specific prompt.
 
      2. The trailing user message — rebuilt every iteration. Two slots:
           <journal>      newest code + result lines that fit the dynamic
@@ -51,6 +51,13 @@
    newest evidence stays, oldest journal lines drop when the rendered
    journal would exceed this fraction of the active model context."
   0.50)
+
+(def ^:const VAR_INDEX_CONTEXT_FRACTION
+  "Maximum fraction of the model context window reserved for rendered
+   <var_index>. Entry count alone is not enough: 100 live string vars at
+   8k chars each can consume ~200k tokens. Keep newest entries and drop
+   older entries with an explicit marker."
+  0.15)
 
 (def ^:const CONTEXT_PRESSURE_THRESHOLD
   "Fraction of the model's effective input-token budget at which the
@@ -112,9 +119,11 @@
 (declare count-prompt-tokens model-context-limit)
 
 (defn- journal-token-budget
-  [model]
-  (max 1 (long (Math/floor (* JOURNAL_CONTEXT_FRACTION
-                             (double (model-context-limit model)))))))
+  ([model]
+   (journal-token-budget model nil))
+  ([model context-limit]
+   (max 1 (long (Math/floor (* JOURNAL_CONTEXT_FRACTION
+                              (double (or context-limit (model-context-limit model)))))))))
 
 (defn- tool-result-journal-text
   [v]
@@ -200,19 +209,21 @@
    a line would create misleading half-evidence. Per-value truncation
    above keeps individual lines bounded, while this token cap stops
    repeated reads from dominating every later provider prompt."
-  [model lines]
-  (let [budget-tokens (journal-token-budget model)]
-    (loop [remaining (reverse lines)
-           kept      '()
-           used      0]
-      (if-let [line (first remaining)]
-        (let [line-tokens (or (count-prompt-tokens model line)
-                            (long (quot (count line) 4)))
-              next-used  (+ used line-tokens 1)]
-          (if (and (seq kept) (> next-used budget-tokens))
-            [(vec kept) (count remaining) budget-tokens used]
-            (recur (rest remaining) (conj kept line) next-used)))
-        [(vec kept) 0 budget-tokens used]))))
+  ([model lines]
+   (trim-journal-lines model lines nil))
+  ([model lines token-budget]
+   (let [budget-tokens (or token-budget (journal-token-budget model))]
+     (loop [remaining (reverse lines)
+            kept      '()
+            used      0]
+       (if-let [line (first remaining)]
+         (let [line-tokens (or (count-prompt-tokens model line)
+                             (long (quot (count line) 4)))
+               next-used  (+ used line-tokens 1)]
+           (if (and (seq kept) (> next-used budget-tokens))
+             [(vec kept) (count remaining) budget-tokens used]
+             (recur (rest remaining) (conj kept line) next-used)))
+         [(vec kept) 0 budget-tokens used])))))
 
 (defn- format-journal-block
   "Render all carried iterations with canonical provenance refs, then
@@ -225,23 +236,25 @@
        the model authored a leading `;; …` / `#_(...)` comment for
        that form
      - `<canonical-ref>  <code> → <value>` for every block in the iteration"
-  [model iters]
-  (let [lines (->> (or iters [])
-                (mapcat (fn [[pos iteration-data]]
-                          (format-journal-iteration-block pos iteration-data)))
-                vec)
-        [trimmed-lines dropped-count budget-tokens used-tokens]
-        (trim-journal-lines model lines)
-        omitted-line (str "  ... " dropped-count
-                       " older journal lines omitted to fit journal token budget "
-                       used-tokens "/" budget-tokens
-                       " tokens (" (long (* 100 JOURNAL_CONTEXT_FRACTION))
-                       "% of model context)")
-        rendered-lines (if (pos? dropped-count)
-                         (vec (cons omitted-line trimmed-lines))
-                         trimmed-lines)]
-    (when (seq rendered-lines)
-      (str "<journal>\n" (str/join "\n" rendered-lines) "\n</journal>"))))
+  ([model iters]
+   (format-journal-block model iters nil))
+  ([model iters token-budget]
+   (let [lines (->> (or iters [])
+                 (mapcat (fn [[pos iteration-data]]
+                           (format-journal-iteration-block pos iteration-data)))
+                 vec)
+         [trimmed-lines dropped-count budget-tokens used-tokens]
+         (trim-journal-lines model lines token-budget)
+         omitted-line (str "  ... " dropped-count
+                        " older journal lines omitted to fit journal token budget "
+                        used-tokens "/" budget-tokens
+                        " tokens (" (long (* 100 JOURNAL_CONTEXT_FRACTION))
+                        "% of model context)")
+         rendered-lines (if (pos? dropped-count)
+                          (vec (cons omitted-line trimmed-lines))
+                          trimmed-lines)]
+     (when (seq rendered-lines)
+       (str "<journal>\n" (str/join "\n" rendered-lines) "\n</journal>")))))
 
 ;; =============================================================================
 ;; <var_index> — read/cache the current SCI sandbox shape
@@ -265,6 +278,51 @@
                             nil)]
           (swap! var-index-atom assoc :index idx :revision current-revision)
           idx)))))
+
+(defn- var-index-token-budget
+  [context-limit remaining-budget]
+  (let [fraction-budget (long (Math/floor (* VAR_INDEX_CONTEXT_FRACTION
+                                            (double context-limit))))]
+    (max 1 (min fraction-budget (max 1 (long (or remaining-budget fraction-budget)))))))
+
+(defn- var-index-entry-start? [line]
+  (str/starts-with? (str line) ";; v="))
+
+(defn- split-var-index-entries
+  [var-index-str]
+  (let [lines (str/split-lines (or var-index-str ""))]
+    (loop [remaining lines
+           current   []
+           entries   []]
+      (if-let [line (first remaining)]
+        (if (and (var-index-entry-start? line) (seq current))
+          (recur (rest remaining) [line] (conj entries (str/join "\n" current)))
+          (recur (rest remaining) (conj current line) entries))
+        (cond-> entries
+          (seq current) (conj (str/join "\n" current)))))))
+
+(defn- trim-var-index-str
+  [model var-index-str token-budget]
+  (when (and (string? var-index-str) (not (str/blank? var-index-str)))
+    (let [entries (split-var-index-entries var-index-str)
+          budget  (max 1 (long token-budget))]
+      (loop [remaining entries
+             kept      []
+             used      0]
+        (if-let [entry (first remaining)]
+          (let [entry-tokens (or (count-prompt-tokens model entry)
+                               (long (quot (count entry) 4)))
+                next-used    (+ used entry-tokens 1)]
+            (if (and (seq kept) (> next-used budget))
+              (let [dropped (count remaining)
+                    marker  (str ";; ... " dropped
+                              " older <var_index> entries omitted to fit var-index token budget "
+                              used "/" budget " tokens ("
+                              (long (* 100 VAR_INDEX_CONTEXT_FRACTION))
+                              "% of model context max)")]
+                (str/join "\n" (conj kept marker)))
+              (recur (rest remaining) (conj kept entry) next-used)))
+          (str/join "\n" kept))))))
 
 ;; =============================================================================
 ;; Iteration context — the trailing user message
@@ -305,7 +363,7 @@
 
 (defn- context-pressure-nudge
   "Built-in `[system_nudge]` line that fires when the assembled prompt
-   (system message + history + new iteration trailer) crosses
+   (system prompt + current user request + new iteration trailer) crosses
    `CONTEXT_PRESSURE_THRESHOLD` of the model's input-token budget.
    Returns nil when usage is below threshold or token info is
    unavailable.
@@ -325,7 +383,7 @@
           used-tokens " / " limit-tokens " tokens). Older <journal>\n"
           "  lines drop when the journal exceeds its token budget. Curate the\n"
           "  insight you've earned BEFORE that happens — emit a structured\n"
-          "  `(def …)` so the value lands in <var_index> + persisted history and\n"
+          "  `(def …)` so the value lands in <var_index> + persisted var store and\n"
           "  survives the roll. Chain-of-Density-style recipe (use only\n"
           "  facts that already appeared in the journal; no new\n"
           "  characterizations / evaluative adjectives):\n"
@@ -339,8 +397,8 @@
           "\n"
           "  Keys above are illustrative — use whatever shape fits the\n"
           "  task. Atoms preferred (file paths, symbol names, error keys,\n"
-          "  canonical refs) over prose. Raw history stays reachable via\n"
-          "  `(v/inspect)` after iterations roll off; use its :transcript\n"
+          "  canonical refs) over prose. Raw iteration evidence stays reachable via\n"
+          "  `(v/inspect)` after journal lines roll off; use its :transcript\n"
           "  and :failures keys when you genuinely need precision your\n"
           "  `(def …)` didn't capture.")))))
 
@@ -368,6 +426,45 @@
         "If the conversation's focus has shifted from \"" title "\", "
         "refresh the title via `(conversation-title \"…\")`."))))
 
+(defn- prompt-block
+  [tag body]
+  (when (and (string? body) (not (str/blank? body)))
+    (str "<" tag ">\n"
+      body
+      (when-not (str/ends-with? body "\n") "\n")
+      "</" tag ">")))
+
+(defn- attr-str
+  [v]
+  (-> (str v)
+    (str/replace "&" "&amp;")
+    (str/replace "\"" "&quot;")
+    (str/replace "<" "&lt;")
+    (str/replace ">" "&gt;")))
+
+(defn- format-active-skill
+  [{:keys [name description source path body]}]
+  (str "<skill name=\"" (attr-str name) "\""
+    (when source (str " source=\"" (attr-str source) "\""))
+    (when path (str " path=\"" (attr-str path) "\""))
+    ">\n"
+    (when (and (string? description) (not (str/blank? description)))
+      (str "<description>\n" description "\n</description>\n"))
+    "<body>\n"
+    (or body "")
+    (when-not (str/ends-with? (or body "") "\n") "\n")
+    "</body>\n"
+    "</skill>"))
+
+(defn- active-skills-block
+  [environment]
+  (when-let [skills (some-> (:active-skills-atom environment) deref vals seq)]
+    (str "<extensions>\n"
+      "<active_skills count=\"" (count skills) "\">\n"
+      (str/join "\n\n" (map format-active-skill (sort-by :name skills)))
+      "\n</active_skills>\n"
+      "</extensions>")))
+
 (defn build-iteration-context
   "Assemble the per-iteration trailing user message.
 
@@ -394,28 +491,36 @@
      `:iteration` — current iteration position (1-based for rendered refs;
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
-                       model system-prompt]
+                       model system-prompt current-user-content context-limit]
                 :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [recent-block (format-journal-block model blocks-by-iteration)
-        last-iteration-blocks (some-> blocks-by-iteration last second)
+  (let [ctx-limit (long (or context-limit (model-context-limit model)))
+        active-skills-block (active-skills-block environment)
+        pinned-text (str/join "\n\n" (keep identity [system-prompt current-user-content active-skills-block]))
+        pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
+        budget-after-pinned (max 1 (- ctx-limit (long pinned-tokens)))
         var-index-str (read-var-index-str environment)
-        var-block (when (and (string? var-index-str)
-                          (not (str/blank? var-index-str)))
-                    (str "<var_index>\n" var-index-str "\n</var_index>"))
+        var-index-budget (var-index-token-budget ctx-limit budget-after-pinned)
+        var-index-str* (trim-var-index-str model var-index-str var-index-budget)
+        var-block (when (and (string? var-index-str*)
+                          (not (str/blank? var-index-str*)))
+                    (str "<var_index>\n" var-index-str* "\n</var_index>"))
+        var-tokens (or (count-prompt-tokens model (or var-block "")) 0)
+        journal-budget (max 1 (min (journal-token-budget model ctx-limit)
+                                (- budget-after-pinned (long var-tokens))))
+        recent-block (format-journal-block model blocks-by-iteration journal-budget)
+        last-iteration-blocks (some-> blocks-by-iteration last second)
         title-line (title-nudge environment iteration)
         ;; Token-budget probe. Estimate the size of the assembled
         ;; prompt that would be sent to the LLM; fire the
         ;; context-pressure nudge when it crosses
-        ;; `CONTEXT_PRESSURE_THRESHOLD`. The probe is a no-op when
-        ;; `:model` isn't supplied (e.g. test fixtures).
+        ;; `CONTEXT_PRESSURE_THRESHOLD`.
         prompt-text (str/join "\n\n"
                       (keep identity
-                        [system-prompt recent-block var-block]))
+                        [system-prompt current-user-content active-skills-block recent-block var-block]))
         used-tokens (count-prompt-tokens model prompt-text)
-        ctx-limit   (model-context-limit model)
         pressure-line (when (and used-tokens ctx-limit)
                         (context-pressure-nudge model used-tokens ctx-limit))
         ext-nudges (when (seq active-extensions)
@@ -442,7 +547,7 @@
                      (seq ext-nudges) (into ext-nudges))
         nudges-block (when (seq all-nudges) (str/join "\n" all-nudges))
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [recent-block var-block nudges-block])]
+                [active-skills-block recent-block var-block nudges-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -451,15 +556,16 @@
 ;; =============================================================================
 
 (defn assemble-initial-messages
-  [{:keys [system-prompt initial-user-content history-messages]}]
+  "Initial provider messages for one turn. Deliberately excludes prior
+   dialog transcript: Vis state flows through SYSTEM vars, <journal>,
+   <var_index>, and DB-backed tools. The current user request is tagged as
+   <user_turn_request_main_goal>."
+  [{:keys [system-prompt initial-user-content]}]
   (vec
     (concat
       (when system-prompt [{:role "system" :content system-prompt}])
-      (or history-messages [])
-      (when initial-user-content [{:role "user" :content initial-user-content}]))))
-
-(defn trim-to-initial-history [messages initial-count]
-  (vec (take initial-count messages)))
+      (when initial-user-content
+        [{:role "user" :content (prompt-block "user_turn_request_main_goal" initial-user-content)}]))))
 
 ;; =============================================================================
 ;; System prompt
@@ -861,14 +967,27 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
     (when-let [extra-fn (:ext/prompt ext)]
       (let [body (extra-fn environment)]
         (when (and (string? body) (not (str/blank? body)))
-          (if-let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
-            (str "[namespace: " alias-sym " → " ns-sym "]\n" body)
-            body))))
+          (let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
+            (str "<extension namespace=\"" (:ext/namespace ext) "\""
+              (when alias-sym (str " alias=\"" alias-sym "\""))
+              (when ns-sym (str " target-namespace=\"" ns-sym "\""))
+              ">\n"
+              body
+              (when-not (str/ends-with? body "\n") "\n")
+              "</extension>")))))
     (catch Throwable t
       (tel/log! {:level :error :id ::ext-prompt-error
                  :data {:ext (:ext/namespace ext) :error (ex-message t)}}
         (str "Extension '" (:ext/namespace ext) "' prompt rendering failed"))
       nil)))
+
+(defn- render-extensions-prompt-block
+  [environment active-extensions]
+  (when-let [sections (seq (keep #(render-extension-prompt-block environment %)
+                             active-extensions))]
+    (str "<extensions>\n"
+      (str/join "\n\n" sections)
+      "\n</extensions>")))
 
 (defn- normalize-environment-info-body
   [body]
@@ -879,10 +998,9 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                                       (keep normalize-environment-info-body)
                                       (str/join "\n"))]
                          (when-not (str/blank? joined) joined))
-    :else (let [s (safe-pr-str body {:max-chars 2000
-                                     :print-length 32
-                                     :print-level 4})]
-            (when-not (str/blank? s) s))))
+    :else (str "<environment-info-error>invalid :ext/environment-info-fn return; "
+            "expected string or seq of strings, got " (.getName (class body))
+            "</environment-info-error>")))
 
 (defn- render-environment-info-section
   "Render one active extension's dedicated environment-info contribution.
@@ -930,7 +1048,13 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
     (when-let [prompt-fn (:provider/prompt-fn descriptor)]
       (let [body (prompt-fn provider-prompt-context)]
         (when (and (string? body) (not (str/blank? body)))
-          (str "[provider: " (name (:id provider)) "]\n" body))))
+          (str "<specific_provider_model_prompt provider=\"" (name (:id provider)) "\""
+            (when-let [model-name (:name (:model provider-prompt-context))]
+              (str " model=\"" model-name "\""))
+            ">\n"
+            body
+            (when-not (str/ends-with? body "\n") "\n")
+            "</specific_provider_model_prompt>"))))
     (catch Throwable t
       (tel/log! {:level :warn :id ::provider-prompt-error
                  :data {:provider (:id provider)
@@ -957,15 +1081,13 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-system-prompt requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [base       (build-system-prompt {:system-prompt system-prompt})
+  (let [base       (prompt-block "system_prompt" (build-system-prompt {:system-prompt system-prompt}))
         env-info   (render-environment-info-block environment active-extensions)
-        ext-ps     (keep #(render-extension-prompt-block environment %) active-extensions)
+        ext-ps     (render-extensions-prompt-block environment active-extensions)
         provider-p (when provider-prompt-context
                      (render-provider-prompt-block provider-prompt-context))
-        blocks     (seq (cond-> []
+        blocks     (seq (cond-> [base]
                           env-info   (conj env-info)
-                          true       (into ext-ps)
+                          ext-ps     (conj ext-ps)
                           provider-p (conj provider-p)))]
-    (if blocks
-      (str base "\n\n" (str/join "\n\n" blocks))
-      base)))
+    (str/join "\n\n" blocks)))

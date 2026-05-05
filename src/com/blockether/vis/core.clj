@@ -400,7 +400,6 @@
 (def safe-pr-str                prompt/safe-pr-str)
 (def truncated-pr-str           prompt/truncated-pr-str)
 (def assemble-initial-messages  prompt/assemble-initial-messages)
-(def trim-to-initial-history    prompt/trim-to-initial-history)
 (def CORE_SYSTEM_PROMPT         prompt/CORE_SYSTEM_PROMPT)
 
 ;; =============================================================================

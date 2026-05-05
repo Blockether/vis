@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Clone or update the Vis source checkout under ~/.vis/sourcecode.
+# Checks the runtime tools needed to run Vis from source before touching disk.
+
+set -euo pipefail
+
+repo_url="${VIS_REPO_URL:-https://github.com/Blockether/vis.git}"
+dest="${VIS_SOURCE_DIR:-$HOME/.vis/sourcecode}"
+branch="${VIS_REPO_BRANCH:-}"
+local_bin_dir="${VIS_LOCAL_BIN_DIR:-$HOME/.local/bin}"
+vis_link="$local_bin_dir/vis"
+
+usage() {
+  cat <<EOF
+Usage: bin/install-source [--dest PATH] [--repo URL] [--branch NAME]
+
+Checks for Java, Clojure CLI, and git, then clones Vis to:
+  $dest
+
+It also symlinks the launcher to:
+  $vis_link
+
+Environment overrides:
+  VIS_SOURCE_DIR     checkout path (default: ~/.vis/sourcecode)
+  VIS_LOCAL_BIN_DIR  symlink dir (default: ~/.local/bin)
+  VIS_REPO_URL       git remote (default: $repo_url)
+  VIS_REPO_BRANCH    branch/tag to clone or update
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dest)
+      [[ $# -ge 2 ]] || { echo "vis install: --dest requires a path" >&2; exit 2; }
+      dest="$2"
+      shift 2
+      ;;
+    --repo)
+      [[ $# -ge 2 ]] || { echo "vis install: --repo requires a URL" >&2; exit 2; }
+      repo_url="$2"
+      shift 2
+      ;;
+    --branch)
+      [[ $# -ge 2 ]] || { echo "vis install: --branch requires a name" >&2; exit 2; }
+      branch="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "vis install: unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+missing=()
+for cmd in java clojure git; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    missing+=("$cmd")
+  fi
+done
+
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "vis install: missing required command(s): ${missing[*]}" >&2
+  echo "" >&2
+  echo "Install Java 21+ and the Clojure CLI, then rerun this script." >&2
+  echo "macOS/Homebrew example:" >&2
+  echo "  brew install openjdk clojure/tools/clojure git" >&2
+  echo "" >&2
+  echo "Linux packages vary by distro; verify with:" >&2
+  echo "  java -version" >&2
+  echo "  clojure -Sdescribe" >&2
+  exit 1
+fi
+
+if ! java -version >/dev/null 2>&1; then
+  echo "vis install: java exists but failed to run: java -version" >&2
+  exit 1
+fi
+
+if ! clojure -Sdescribe >/dev/null 2>&1; then
+  echo "vis install: clojure exists but failed to run: clojure -Sdescribe" >&2
+  echo "vis install: install the official Clojure CLI, not only a standalone clojure.jar." >&2
+  exit 1
+fi
+
+mkdir -p "$(dirname "$dest")"
+
+if [[ -e "$dest" && ! -d "$dest/.git" ]]; then
+  echo "vis install: destination exists but is not a git checkout: $dest" >&2
+  echo "vis install: move it aside or choose another --dest." >&2
+  exit 1
+fi
+
+if [[ ! -d "$dest/.git" ]]; then
+  echo "vis install: cloning $repo_url -> $dest"
+  if [[ -n "$branch" ]]; then
+    git clone --branch "$branch" "$repo_url" "$dest"
+  else
+    git clone "$repo_url" "$dest"
+  fi
+else
+  echo "vis install: updating existing checkout: $dest"
+  git -C "$dest" remote set-url origin "$repo_url"
+  git -C "$dest" fetch --prune origin
+  if [[ -n "$branch" ]]; then
+    git -C "$dest" checkout "$branch"
+    git -C "$dest" pull --ff-only origin "$branch"
+  else
+    current_branch="$(git -C "$dest" branch --show-current || true)"
+    if [[ -n "$current_branch" ]]; then
+      git -C "$dest" pull --ff-only origin "$current_branch"
+    else
+      echo "vis install: checkout is detached; fetched origin but did not switch branches." >&2
+    fi
+  fi
+fi
+
+mkdir -p "$local_bin_dir"
+if [[ -e "$vis_link" && ! -L "$vis_link" ]]; then
+  echo "vis install: not replacing existing non-symlink: $vis_link" >&2
+  echo "vis install: move it aside, or run directly: $dest/bin/vis" >&2
+else
+  ln -sfn "$dest/bin/vis" "$vis_link"
+  echo "vis install: linked $vis_link -> $dest/bin/vis"
+fi
+
+cat <<EOF
+
+vis install: source checkout ready:
+  $dest
+
+Try:
+  $vis_link help
+  $vis_link doctor
+EOF
+
+case ":$PATH:" in
+  *":$local_bin_dir:"*) ;;
+  *)
+    cat <<EOF
+
+Add Vis to PATH if your shell does not already include ~/.local/bin:
+  echo 'export PATH="$local_bin_dir:\$PATH"' >> ~/.zshrc
+EOF
+    ;;
+esac
