@@ -2,6 +2,8 @@
 
 The `v/` foundation extension exposes model-facing helpers for inspection, reporting, Markdown composition, filesystem/tool operations, provenance, and conversation intents.
 
+Normal source installs keep the Vis checkout at `~/.vis/sourcecode`. When an agent needs to inspect Vis itself, that is the expected local source path.
+
 ## Intent API
 
 `v/` exposes the resolution API used by the model. Evidence comes from journal refs; resolution state consumes those refs.

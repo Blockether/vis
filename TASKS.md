@@ -2,13 +2,15 @@
 
 This file groups the current backlog into architectural task clusters. English only. Pareto first: fix high-leverage seams before adding more ad-hoc features.
 
+Current focus: [`FOCUS.md`](FOCUS.md) — context contract for XML-tagged prompt surfaces, preview/full value boundaries, var-index/journal behavior, active skills, reasoning memory, and audit/attestation loading.
+
 ## Pareto order
 
 | Rank | Task cluster | Covers | Why now |
 |---:|---|---|---|
 | 1 | Attestation ledger + intent lifecycle cleanup | Ref D, 2, 7, 8, 9, 10, 15, 16, 30, 35, 38 | Current proofing is weak. Trust semantics need immutable events, derived evidence, attestations, plan completion, and intent closure before more proof UX. |
-| 2 | Presentation/render contract | 1, 3, 8, 22, 24, 29, 30, 36, Ref D | Visible UX must render events, bundles, attestations, audits, proofs, tool calls, system calls, Mermaid, and provider errors from one seam. |
-| 3 | Extension contract v2 | 4, 5, 17, 20, 21, 25, 26, 28, 39, Ref A | Config, toggles, renderers, background jobs, aggregate state, custom providers, and agent-end hooks need the same extension seam. |
+| 2 | Presentation/render contract | 1, 3, 8, 22, 24, 29, 30, 36, Ref D, FOCUS.md | Visible UX must render previews/full retrieval, events, bundles, attestations, audits, proofs, tool calls, system calls, Mermaid, and provider errors from one seam. |
+| 3 | Extension contract v2 | 4, 5, 17, 20, 21, 25, 26, 28, 39, Ref A, FOCUS.md | Config, toggles, renderers, preview/full surfaces, background jobs, aggregate state, custom providers, and agent-end hooks need the same extension seam. |
 | 4 | Native workspace manager | Ref C, 6, 12, 18, 19 | Git worktrees, submodules, and explicit attached repos give every conversation a real tool-visible workspace. |
 | 5 | Git checkpoint/time-travel module | Ref B, Ref C, Ref D, 13, 18, 19, 23 | Protects user data and makes every agent edit a restorable Git tree that can become a branch. Checkpoints should cite provenance events. |
 | 6 | Clojure language tooling cleanup | 11, 32, 33, 37 | Remove duplicate SCI test surfaces; add Clojure-native diagnosis tools. |
@@ -174,7 +176,7 @@ Example proof projection:
 
 ### Acceptance tasks
 
-- [ ] Fix bad `<proofs>` / future `<audit-report>` rendering in TUI.
+- [ ] Fix bad `<proofs>` / future `<audit-markdown>` rendering in TUI.
 - [ ] Ensure `<details>` body renders full Markdown, not plain text.
 - [ ] Extract presentation Markdown seam to internal namespace with clear docstring.
 - [ ] Make every tool-call renderer return/use shared presentation blocks.
@@ -810,7 +812,7 @@ Transition aliases:
 
 - `v/provenance-guards` -> primary `v/ledger-checks`, old alias deprecated.
 - `v/proof-checks` -> primary `v/audit`, old alias deprecated.
-- `v/proofs` -> primary `v/audit-report` or `v/attestations`, old alias deprecated.
+- `v/proofs` -> primary `v/audit-markdown` or `v/attestations`, old alias deprecated.
 - Keep `:guard` in the DSL.
 
 ### Target flow
@@ -1199,7 +1201,7 @@ Required read surfaces:
 (v/attestations)
 (v/attestation attestation-id)
 (v/audit)                ;; new primary name for whole-system validation
-(v/audit-report)         ;; concise Markdown disclosure for normal answers
+(v/audit-markdown)       ;; concise Markdown disclosure for normal answers
 (v/intents)              ;; shows active plan, gates, latest completion/closure attestations
 ```
 
@@ -1238,7 +1240,7 @@ Proof summary
 - [ ] Make direct fulfillment refs optional artifact refs, not repeated gate proof refs.
 - [ ] Add audit over event ledger, bundles, attestations, gate states, plan states, intent states.
 - [ ] Update `v/intents` to show plan completion and closure attestation.
-- [ ] Update `v/audit-report` / deprecated `v/proofs` rendering to distinguish gate proof, plan completion, and intent closure.
+- [ ] Update `v/audit-markdown` / deprecated `v/proofs` rendering to distinguish gate proof, plan completion, and intent closure.
 
 ### Schema checklist
 
