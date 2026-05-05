@@ -443,17 +443,10 @@
     (str/replace ">" "&gt;")))
 
 (defn- format-active-skill
-  [{:keys [name description source path body]}]
-  (str "<skill name=\"" (attr-str name) "\""
-    (when source (str " source=\"" (attr-str source) "\""))
-    (when path (str " path=\"" (attr-str path) "\""))
-    ">\n"
-    (when (and (string? description) (not (str/blank? description)))
-      (str "<description>\n" description "\n</description>\n"))
-    "<body>\n"
+  [{:keys [name body]}]
+  (str "<skill name=\"" (attr-str name) "\">\n"
     (or body "")
     (when-not (str/ends-with? (or body "") "\n") "\n")
-    "</body>\n"
     "</skill>"))
 
 (defn- active-skills-block
