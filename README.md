@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Blockether/vis/main/docs/src/logo.png" alt="Vis logo" width="200">
+  <img src="https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/docs/src/logo.png" alt="Vis logo" width="200">
 </p>
 
 # Vis
@@ -21,14 +21,14 @@ windows, no "summarize the last 50 messages".
 **macOS / Linux / WSL**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source | bash
 ~/.local/bin/vis help
 ```
 
 **Windows PowerShell**
 
 ```powershell
-irm https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 | iex
+irm https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source.ps1 | iex
 ~\.local\bin\vis.cmd help
 ```
 
@@ -44,7 +44,7 @@ their own CA, which causes 403 errors from `curl` and `git`.
 **Skip verification (quick & dirty):**
 
 ```bash
-curl -k -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+curl -k -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source | bash
 git config --global http.sslVerify false
 ```
 
@@ -57,7 +57,7 @@ export https_proxy="http://proxy.corp.local:8080"
 export CURL_CA_BUNDLE=/path/to/corp-ca-bundle.pem
 git config --global http.sslCAInfo /path/to/corp-ca-bundle.pem
 
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source | bash
 ```
 
 ---

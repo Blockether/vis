@@ -18,14 +18,14 @@ and rerun the script.
 macOS, Linux, and WSL:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source | bash
+curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source | bash
 ~/.local/bin/vis help
 ```
 
 Native Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/Blockether/vis/main/bin/install-source.ps1 | iex
+irm https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/install-source.ps1 | iex
 ~\.local\bin\vis.cmd help
 ```
 
