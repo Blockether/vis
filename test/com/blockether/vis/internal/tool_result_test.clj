@@ -101,22 +101,39 @@
         (finally
           (tr/deregister-extension! 'com.acme.ext.fs)))))
 
-  (it "generic rendering includes structured result and provenance"
-    (let [out (tr/merge-provenance
-                (tr/success {:result {:lines ["a" "b"]}
-                             :provenance {:op :demo}})
-                {:tool {:sym 'cat
-                        :call "v/cat"}
-                 :extension {:namespace 'com.acme.ext.fs}
-                 :source {:paths ["/tmp/ext.clj"]
-                          :mtime-max 1
-                          :hash-sha256 nil}})
-          rendered (tr/render-tool-result :journal out)]
-      (expect (str/includes? rendered "Tool `:demo` ok"))
-      (expect (str/includes? rendered "; result {:lines [\"a\" \"b\"]}"))
-      (expect (str/includes? rendered "; provenance {:tool {:sym cat, :call \"v/cat\"}"))
-      (expect (str/includes? rendered ":extension {:namespace com.acme.ext.fs}"))
-      (expect (str/includes? rendered ":source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}")))))
+  (it "tool results require an owning symbol render-fn"
+    (let [sym (tr/symbol 'cat (constantly nil)
+                {:doc "cat"
+                 :arglists '([path])
+                 :render-fn (fn [{:keys [tool-result]}]
+                              (str "ok=" (:ok? tool-result)
+                                "; result=" (pr-str (:result tool-result))
+                                "; provenance=" (pr-str (select-keys (:provenance tool-result)
+                                                          [:tool :extension :source]))))})
+          ext (tr/extension {:ext/namespace 'com.acme.ext.fs.render
+                             :ext/doc "fs render"
+                             :ext/kind "filesystem"
+                             :ext/ns-alias {:ns 'vis.ext.fs.render :alias 'fsr}
+                             :ext/symbols [sym]})]
+      (try
+        (tr/register-extension! ext)
+        (let [out (tr/merge-provenance
+                    (tr/success {:result {:lines ["a" "b"]}
+                                 :provenance {:op :demo}})
+                    {:tool {:sym 'cat
+                            :call "fsr/cat"}
+                     :extension {:namespace 'com.acme.ext.fs.render}
+                     :source {:paths ["/tmp/ext.clj"]
+                              :mtime-max 1
+                              :hash-sha256 nil}})
+              rendered (tr/render-tool-result :journal out)]
+          (expect (str/includes? rendered "ok=true"))
+          (expect (str/includes? rendered "result={:lines [\"a\" \"b\"]}"))
+          (expect (str/includes? rendered ":tool {:sym cat, :call \"fsr/cat\"}"))
+          (expect (str/includes? rendered ":extension {:namespace com.acme.ext.fs.render}"))
+          (expect (str/includes? rendered ":source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}")))
+        (finally
+          (tr/deregister-extension! 'com.acme.ext.fs.render))))))
 
 (defdescribe tool-result-trace-test
   (it "normalizes a frame into {:class :method :file :line :origin}"

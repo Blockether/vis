@@ -77,8 +77,8 @@
         (expect (some #(and (= 1 (:row %))
                          (= (+ expected-col id-w) (:col %))
                          (= separator (:text %))
-                         (= t/footer-fg-strong (:fg %))
-                         (contains? (:modifiers %) p/BOLD))
+                         (= t/header-fg (:fg %))
+                         (not (contains? (:modifiers %) p/BOLD)))
                   @writes))
         (expect (= uuid (:text md-hit)))
         (expect (= {:row 1 :col expected-md-col :width md-w}
@@ -107,12 +107,16 @@
           uuid   "123e4567-e89b-12d3-a456-426614174000"
           db     {:title "New Conversation"
                   :conversation {:id uuid}}]
+      (cr/begin-frame!)
       (header/draw-header! g db 0 80)
+      (cr/commit-frame!)
       (let [copy-hit (some #(when (= :copy-id (:kind %)) %) (cr/current))]
         (expect (some? copy-hit))
         (expect (true? (cr/set-hovered! copy-hit)))
         (reset! writes [])
+        (cr/begin-frame!)
         (header/draw-header! g db 0 80)
+        (cr/commit-frame!)
         (let [write-by-text (fn [text]
                               (some #(when (= text (:text %)) %) @writes))]
           (expect (= t/header-fg (:fg (write-by-text "New Conversation"))))
