@@ -161,6 +161,7 @@
             rows (conversation-items [{:id "123e4567-e89b-12d3-a456-426614174000"
                                        :title (str "Title " (apply str (repeat 80 "汉")))
                                        :turn-count 2
+                                       :fork-count 3
                                        :modified-at #inst "2024-01-03T04:05:00.000-00:00"
                                        :created-at #inst "2024-01-01T01:02:00.000-00:00"}
                                       {:id "abcdef00-e89b-12d3-a456-426614174000"
@@ -186,6 +187,7 @@
         (is (str/includes? active-label "2024-01-03 04:05"))
         (is (str/includes? active-label "2024-01-01 01:02"))
         (is (str/includes? active-label "Title"))
+        (is (str/includes? active-label "[forks:3]"))
         (is (str/includes? active-label "…"))
         (is (str/includes? inactive-label "│ abcdef00 │"))
         (is (str/includes? inactive-label "│     0 │"))

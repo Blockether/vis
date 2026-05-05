@@ -5,7 +5,7 @@
 
      1. The system prompt — written once, cached per-conversation.
         `assemble-system-prompt` joins the minimal core prompt + the
-        environment block + each active extension's prompt fragment.
+        environment-info block + each active extension's prompt fragment.
 
      2. The trailing user message — rebuilt every iteration. Two slots:
           <journal>      newest code + result lines that fit the dynamic
@@ -870,6 +870,49 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
         (str "Extension '" (:ext/namespace ext) "' prompt rendering failed"))
       nil)))
 
+(defn- normalize-environment-info-body
+  [body]
+  (cond
+    (nil? body) nil
+    (string? body) (when-not (str/blank? body) body)
+    (sequential? body) (let [joined (->> body
+                                      (keep normalize-environment-info-body)
+                                      (str/join "\n"))]
+                         (when-not (str/blank? joined) joined))
+    :else (let [s (safe-pr-str body {:max-chars 2000
+                                     :print-length 32
+                                     :print-level 4})]
+            (when-not (str/blank? s) s))))
+
+(defn- render-environment-info-section
+  "Render one active extension's dedicated environment-info contribution.
+
+   This is distinct from `:ext/prompt`: it is for live, runtime facts
+   such as repository state, cwd, versions, feature flags, or extension
+   diagnostics. The host owns the section wrapper so any extension can
+   add to the same prompt area without copying the foundation prompt."
+  [environment ext]
+  (try
+    (when-let [info-fn (:ext/environment-info-fn ext)]
+      (when-let [body (normalize-environment-info-body (info-fn environment))]
+        (str "<section extension=\"" (:ext/namespace ext) "\">\n"
+          body
+          (when-not (str/ends-with? body "\n") "\n")
+          "</section>")))
+    (catch Throwable t
+      (tel/log! {:level :error :id ::ext-environment-info-error
+                 :data {:ext (:ext/namespace ext) :error (ex-message t)}}
+        (str "Extension '" (:ext/namespace ext) "' environment-info rendering failed"))
+      nil)))
+
+(defn- render-environment-info-block
+  [environment active-extensions]
+  (when-let [sections (seq (keep #(render-environment-info-section environment %)
+                             active-extensions))]
+    (str "<environment-info>\n"
+      (str/join "\n\n" sections)
+      "\n</environment-info>")))
+
 (defn- render-provider-prompt-block
   "Render the active provider's append-only prompt contribution.
 
@@ -897,8 +940,9 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
       nil)))
 
 (defn assemble-system-prompt
-  "Build the full system prompt: core agent rules + active-extension prompts
-   + the active provider's append-only prompt block.
+  "Build the full system prompt: core agent rules + active extension
+   environment-info sections + active-extension prompts + the active
+   provider's append-only prompt block.
 
    Required opts:
      `:active-extensions` — vec from `(active-extensions env)`.
@@ -914,10 +958,13 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
     (throw (ex-info "assemble-system-prompt requires :active-extensions"
              {:type :vis/missing-active-extensions})))
   (let [base       (build-system-prompt {:system-prompt system-prompt})
+        env-info   (render-environment-info-block environment active-extensions)
         ext-ps     (keep #(render-extension-prompt-block environment %) active-extensions)
         provider-p (when provider-prompt-context
                      (render-provider-prompt-block provider-prompt-context))
-        blocks     (seq (cond-> (vec ext-ps)
+        blocks     (seq (cond-> []
+                          env-info   (conj env-info)
+                          true       (into ext-ps)
                           provider-p (conj provider-p)))]
     (if blocks
       (str base "\n\n" (str/join "\n\n" blocks))

@@ -151,8 +151,8 @@
           newer-id  (java.util.UUID/randomUUID)
           empty-id  (java.util.UUID/randomUUID)
           convs     [{:id older-id :channel :telegram :title "older" :created-at (java.util.Date. 1000)}
-                     {:id empty-id :channel :cli :title "empty" :created-at (java.util.Date. 9000)}
-                     {:id newer-id :channel :tui :title "newer" :created-at (java.util.Date. 2000)}]
+                     {:id empty-id :channel :cli :title "empty" :fork-count 2 :created-at (java.util.Date. 9000)}
+                     {:id newer-id :channel :tui :title "newer" :fork-count 1 :created-at (java.util.Date. 2000)}]
           turns     {older-id [{:created-at (java.util.Date. 3000)}]
                      newer-id [{:created-at (java.util.Date. 5000)}]}]
       (with-redefs [persistance/db-list-conversation-turns
@@ -161,6 +161,7 @@
           (expect (= ["newer" "older" "empty"] (mapv :title rows)))
           (expect (= ["tui" "telegram" "cli"] (mapv :last-channel rows)))
           (expect (= [1 1 0] (mapv :turns rows)))
+          (expect (= [1 0 2] (mapv :forks rows)))
           (expect (= "—" (:last-turn (last rows)))))))))
 
 (defdescribe wrap-str-test

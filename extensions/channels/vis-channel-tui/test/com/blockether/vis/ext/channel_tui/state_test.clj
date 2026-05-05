@@ -238,4 +238,35 @@
                        :token
                        :balanced
                        {:text {:verbosity "high"}}]]
-                    fx)))))))
+                    fx))))))
+
+  (it "restores a cancelled prompt to the input instead of rendering a cancelled answer"
+    (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)
+          reset-input-fn      (-> #'state/event-registry deref deref (get :reset-input) :fn)
+          message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
+          token              (input/format-paste-placeholder {:id 1 :content "hello"})
+          text               (str "edit me " token)
+          initial-messages   [{:role :assistant :text "previous"}]
+          db                 {:conversation {:id "c1"}
+                              :messages initial-messages
+                              :messages-scroll 9
+                              :input-history ["prior"]
+                              :input-history-index nil
+                              :input-history-draft nil
+                              :settings {:reasoning-level :balanced
+                                         :openai-codex-verbosity :low}
+                              :pastes {1 {:id 1 :content "hello"}}
+                              :paste-counter 1}]
+      (with-redefs [vis/cancellation-token (fn [] :token)]
+        (let [sent-db      (:db (send-message-fn db [:send-message text]))
+              reset-db     (reset-input-fn sent-db [:reset-input])
+              restored-db  (message-received-fn reset-db
+                             [:message-received "Cancelled by user." {:status :cancelled}])]
+          (expect (= initial-messages (:messages restored-db)))
+          (expect (= text (input/input->text (:input restored-db))))
+          (expect (= {1 {:id 1 :content "hello"}} (:pastes restored-db)))
+          (expect (= 1 (:paste-counter restored-db)))
+          (expect (= ["prior"] (:input-history restored-db)))
+          (expect (false? (:loading? restored-db)))
+          (expect (not-any? #(= "Cancelled by user." (:text %))
+                    (:messages restored-db))))))))

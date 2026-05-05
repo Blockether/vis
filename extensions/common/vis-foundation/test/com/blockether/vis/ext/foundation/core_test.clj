@@ -30,6 +30,9 @@
       (expect (str/includes? prompt "v/file-link"))
       (expect (str/includes? prompt "v/join"))))
 
+  (it "contributes environment info through the dedicated hook"
+    (expect (fn? (:ext/environment-info-fn foundation/vis-extension))))
+
   (it "does not leave a standalone md extension registered"
     (expect (contains? (set (vis/registered-extension-ids)) 'v))
     (expect (not (contains? (set (vis/registered-extension-ids)) 'md))))

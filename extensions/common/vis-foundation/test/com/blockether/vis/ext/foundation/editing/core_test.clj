@@ -103,33 +103,38 @@
       (expect (some #(string/includes? % "[:result :exit]")
                 (:ext.symbol/examples bash-symbol))))))
 
-(it "requires read-back verification after exact writes instead of trusting write success alone"
-  (let [write-lines-symbol (some #(when (= 'write-lines (:ext.symbol/sym %)) %)
-                             editing/editing-symbols)
-        update-file-symbol (some #(when (= 'update-file (:ext.symbol/sym %)) %)
-                             editing/editing-symbols)]
-    (expect (string/includes? editing/editing-prompt
-              "After exact writes, attachment transcription, or generated-file output, immediately read the file back and verify it"))
-    (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
-              "A successful write only proves I/O succeeded"))
-    (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
-              ":start-line"))
-    (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
-              ":insert-at"))
-    (expect (string/includes? (:ext.symbol/doc update-file-symbol)
-              "the tool succeeding is not enough"))
-    (expect (string/includes? editing/editing-prompt
-              "{:start-line a :end-line b}"))
-    (expect (string/includes? editing/editing-prompt
-              "{:insert-at n}"))
-    (expect (some #(string/includes? % "(:result (v/read-all-lines path))")
-              (:ext.symbol/examples write-lines-symbol)))
-    (expect (some #(string/includes? % "{:insert-at 3}")
-              (:ext.symbol/examples write-lines-symbol)))
-    (expect (some #(string/includes? % "{:start-line 4 :end-line 6}")
-              (:ext.symbol/examples write-lines-symbol)))
-    (expect (some #(string/includes? % "(:result (v/read-all-lines path))")
-              (:ext.symbol/examples update-file-symbol)))))
+(defdescribe editing-prompt-read-policy-test
+  (it "teaches full-read vars, preview-only journal, and no duplicate rereads by default"
+    (let [write-lines-symbol (some #(when (= 'write-lines (:ext.symbol/sym %)) %)
+                               editing/editing-symbols)
+          update-file-symbol (some #(when (= 'update-file (:ext.symbol/sym %)) %)
+                               editing/editing-symbols)]
+      (expect (string/includes? editing/editing-prompt
+                "bind once: (def lines (:result (v/read-all-lines path)))"))
+      (expect (string/includes? editing/editing-prompt
+                "Journal shows preview only; reuse the var instead of rereading"))
+      (expect (string/includes? editing/editing-prompt
+                "Read back after writes only when exact persisted bytes matter"))
+      (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
+                "one pre-write read plus intended new text"))
+      (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
+                ":start-line"))
+      (expect (string/includes? (:ext.symbol/doc write-lines-symbol)
+                ":insert-at"))
+      (expect (string/includes? (:ext.symbol/doc update-file-symbol)
+                "reads once"))
+      (expect (string/includes? editing/editing-prompt
+                "{:start-line a :end-line b}"))
+      (expect (string/includes? editing/editing-prompt
+                "{:insert-at n}"))
+      (expect (some #(string/includes? % "(:result (v/read-all-lines path))")
+                (:ext.symbol/examples write-lines-symbol)))
+      (expect (some #(string/includes? % "{:insert-at 3}")
+                (:ext.symbol/examples write-lines-symbol)))
+      (expect (some #(string/includes? % "{:start-line 4 :end-line 6}")
+                (:ext.symbol/examples write-lines-symbol)))
+      (expect (some #(string/includes? % "(:result (v/read-all-lines path))")
+                (:ext.symbol/examples update-file-symbol))))))
 
 (defdescribe vis-cat-structured-shape-test
   (it "returns structured pagination metadata plus raw :lines"
@@ -383,16 +388,27 @@
       (expect (throws? clojure.lang.ExceptionInfo #(run-bash "pwd" {:cwd ".."}))))))
 
 (defdescribe editing-renderer-guidance-test
-  (it "write and update renderers tell the model to verify exact persisted contents"
+  (it "read-all-lines renderer previews requested content without dumping full value"
+    (let [render-read-all-lines (private-fn "render-read-all-lines")
+          lines (vec (concat ["alpha" "beta"] (repeat 4000 "x")))
+          rendered (render-read-all-lines
+                     {:tool-result {:ok? true
+                                    :result lines
+                                    :provenance {:target {:requested "target/editing-test/read.txt"}}}})]
+      (expect (string/includes? rendered "Full lines are in the tool result; journal shows preview only"))
+      (expect (string/includes? rendered "alpha\nbeta"))
+      (expect (string/includes? rendered "…<+"))))
+
+  (it "write and update renderers avoid mandatory duplicate read-back"
     (let [render-write-lines (private-fn "render-write-lines")
           render-update-file (private-fn "render-update-file")
           tool-result        {:ok? true
                               :result "target/editing-test/out.txt"
                               :provenance {:target {:requested "target/editing-test/out.txt"}}}]
       (expect (string/includes? (render-write-lines {:tool-result tool-result})
-                "Read back the file when exact contents matter"))
+                "Read back only when exact persisted bytes matter"))
       (expect (string/includes? (render-update-file {:tool-result tool-result})
-                "Read back the file when exact contents matter"))))
+                "Read back only when exact persisted bytes matter"))))
 
   (it "write renderer shows a fenced diff block for changes"
     (let [render-write-lines (private-fn "render-write-lines")

@@ -331,6 +331,37 @@
       (expect (str/includes? p "Never invent refs"))
       (expect (str/includes? p "If reader/parser errors repeat")))))
 
+(defdescribe environment-info-prompt-test
+  (it "collects dedicated environment-info fragments from active extensions"
+    (let [ext-a (extension/extension
+                  {:ext/namespace 'test.env-info.a
+                   :ext/doc       "Environment facts A."
+                   :ext/environment-info-fn (fn [env]
+                                              (str "cwd: " (:cwd env)))})
+          ext-b (extension/extension
+                  {:ext/namespace 'test.env-info.b
+                   :ext/doc       "Environment facts B."
+                   :ext/environment-info-fn (constantly ["repo: service-a"
+                                                         "dirty: no"])})
+          out   (prompt/assemble-system-prompt
+                  {:cwd "/tmp/project"}
+                  {:active-extensions [ext-a ext-b]})]
+      (expect (str/includes? out "<environment-info>"))
+      (expect (str/includes? out "<section extension=\"test.env-info.a\">"))
+      (expect (str/includes? out "cwd: /tmp/project"))
+      (expect (str/includes? out "<section extension=\"test.env-info.b\">"))
+      (expect (str/includes? out "repo: service-a\ndirty: no"))))
+
+  (it "skips blank environment-info fragments"
+    (let [ext (extension/extension
+                {:ext/namespace 'test.env-info.blank
+                 :ext/doc       "Blank environment facts."
+                 :ext/environment-info-fn (constantly "")})
+          out (prompt/assemble-system-prompt
+                {}
+                {:active-extensions [ext]})]
+      (expect (not (str/includes? out "<environment-info>"))))))
+
 (defdescribe provider-prompt-test
   (it "appends active provider prompt blocks without replacing the core prompt"
     (let [seen (atom nil)

@@ -304,6 +304,14 @@
       (expect (= 2 (count (vis/db-list-conversations s :tui))))
       (expect (= 1 (count (vis/db-list-conversations s :telegram))))))
 
+  (it "reports fork count after the latest state becomes the fork"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui :title "A"})]
+      (vis/db-fork-conversation! s cid {})
+      (expect (= [1] (mapv :fork-count (vis/db-list-conversations s :tui))))
+      (vis/db-fork-conversation! s cid {})
+      (expect (= [2] (mapv :fork-count (vis/db-list-conversations s :tui))))))
+
   (it "finds by external-id via metadata JSON"
     (let [s  (h/store)
           id (vis/db-store-conversation! s {:channel :telegram :external-id "chat-42"})]
@@ -454,7 +462,11 @@
       (vis/db-fork-conversation! s cid {})
       (vis/db-fork-conversation! s cid {})
       (expect (= 2 (:version (vis/db-get-conversation s cid))))
-      (expect (= 3 (raw-count s :conversation_state))))))
+      (expect (= 3 (raw-count s :conversation_state)))))
+
+  (it "returns nil instead of throwing when there is no state to fork"
+    (let [s (h/store)]
+      (expect (nil? (vis/db-fork-conversation! s (random-uuid) {}))))))
 
 ;; =============================================================================
 ;; Turn

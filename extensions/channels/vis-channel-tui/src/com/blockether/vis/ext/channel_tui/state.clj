@@ -91,6 +91,7 @@
 ;;  :input-history []            ;; persisted user queries for this conversation
 ;;  :input-history-index nil     ;; nil = editing live draft, 0 = newest history entry
 ;;  :input-history-draft nil     ;; unsent draft preserved while browsing history
+;;  :submitted-input nil         ;; prompt/paste snapshot for restoring cancelled turns
 ;;  :loading?   false            ;; true while RLM is working
 ;;  :cancel-token nil            ;; channels.cancellation token for the
 ;;                               ;; in-flight turn (nil when idle). Holds
@@ -337,6 +338,7 @@
                   :input-history []
                   :input-history-index nil
                   :input-history-draft nil
+                  :submitted-input nil
                   ;; Pi-style paste registry. Each multi-line / large
                   ;; clipboard payload lands here keyed by an auto-
                   ;; incrementing id; the input buffer carries a
@@ -473,6 +475,7 @@
         :input-history user-history
         :input-history-index nil
         :input-history-draft nil
+        :submitted-input nil
         :pastes {}
         :paste-counter 0
         :loading? false
@@ -494,6 +497,39 @@
         crow  (dec (count lines))
         ccol  (count (nth lines crow))]
     {:lines lines :crow crow :ccol ccol}))
+
+(defn- drop-pending-turn-messages
+  "Remove the transient user + assistant placeholder pair created by
+   `:send-message`. Used only when a submitted prompt is cancelled and
+   restored to the editor instead of becoming a transcript turn."
+  [messages]
+  (let [messages (vec (or messages []))
+        n        (count messages)]
+    (cond
+      (and (<= 2 n)
+        (= :assistant (:role (peek messages)))
+        (= :user (:role (nth messages (- n 2)))))
+      (subvec messages 0 (- n 2))
+
+      :else
+      messages)))
+
+(defn- restore-submitted-input
+  [db {:keys [text pastes paste-counter input-history]}]
+  (-> db
+    (assoc :messages (drop-pending-turn-messages (:messages db))
+      :messages-scroll nil
+      :input (text->input-state text)
+      :input-history (vec (or input-history []))
+      :input-history-index nil
+      :input-history-draft nil
+      :pastes (or pastes {})
+      :paste-counter (or paste-counter 0)
+      :loading? false
+      :progress nil
+      :cancel-token nil
+      :cancelling? false)
+    (dissoc :turn-start-ms :submitted-input)))
 
 (reg-event-db :history-up
   (fn [db _]
@@ -634,6 +670,10 @@
                :cancelling? false
                :progress {:iterations []}
                :turn-start-ms (System/currentTimeMillis)
+               :submitted-input {:text text
+                                 :pastes (:pastes db)
+                                 :paste-counter (:paste-counter db)
+                                 :input-history (vec (or (:input-history db) []))}
                :input-history-index nil
                :input-history-draft nil))
        :fx [[:rlm-turn (:conversation db) agent-text token
@@ -658,33 +698,28 @@
 
 (reg-event-db :message-received
   (fn [db [_ answer & [{:keys [model iteration-count duration-ms tokens cost confidence conversation-turn-id status]}]]]
-    (let [start    (:turn-start-ms db)
-          wall-ms  (when start (- (System/currentTimeMillis) start))
-          trace    (get-in db [:progress :iterations])
-          ;; Cancelled turns get a `:status :cancelled` flag on the
-          ;; message so the bubble renderer dims the content (muted
-          ;; italic fg) on bare terminal-bg. We KEEP the iteration
-          ;; trace on cancelled messages so the user can see how far
-          ;; the agent got before the abort — the renderer sews the
-          ;; trace together with a plain status footer (\"Cancelled
-          ;; by user.\") so partial work stays visible.
-          response (-> (chat/assistant-message (or answer ""))
-                     (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
-                       (seq trace)
-                       (assoc :trace trace :raw-answer (or answer ""))
-                       (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
-                       model      (assoc :model model)
-                       iteration-count (assoc :iteration-count iteration-count)
-                       tokens     (assoc :tokens tokens)
-                       cost       (assoc :cost cost)
-                       confidence (assoc :confidence confidence)
-                       status     (assoc :status status)))]
-      (-> db
-        (update :messages pop)
-        (update :messages conj response)
-        (assoc :messages-scroll nil :loading? false :progress nil
-          :cancel-token nil :cancelling? false)
-        (dissoc :turn-start-ms)))))
+    (if (and (= :cancelled status) (:submitted-input db))
+      (restore-submitted-input db (:submitted-input db))
+      (let [start    (:turn-start-ms db)
+            wall-ms  (when start (- (System/currentTimeMillis) start))
+            trace    (get-in db [:progress :iterations])
+            response (-> (chat/assistant-message (or answer ""))
+                       (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
+                         (seq trace)
+                         (assoc :trace trace :raw-answer (or answer ""))
+                         (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
+                         model      (assoc :model model)
+                         iteration-count (assoc :iteration-count iteration-count)
+                         tokens     (assoc :tokens tokens)
+                         cost       (assoc :cost cost)
+                         confidence (assoc :confidence confidence)
+                         status     (assoc :status status)))]
+        (-> db
+          (update :messages pop)
+          (update :messages conj response)
+          (assoc :messages-scroll nil :loading? false :progress nil
+            :cancel-token nil :cancelling? false)
+          (dissoc :turn-start-ms :submitted-input))))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 

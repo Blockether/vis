@@ -1224,10 +1224,13 @@
 
 (defn- conversation-title
   [conversation]
-  (let [title (:title conversation)]
-    (if (and (string? title) (not (str/blank? title)))
-      title
-      "Untitled conversation")))
+  (let [title      (:title conversation)
+        base-title (if (and (string? title) (not (str/blank? title)))
+                     title
+                     "Untitled conversation")
+        fork-count (long (or (:fork-count conversation) 0))]
+    (cond-> base-title
+      (pos? fork-count) (str " [forks:" fork-count "]"))))
 
 (def ^:private conversation-dialog-content-w 96)
 (def ^:private conversation-dialog-content-h 14)
@@ -1292,7 +1295,7 @@
 (defn conversation-dialog-label
   "Format one fixed-width conversation table row. Columns are intentionally
    stable so the picker reads as a table inside the shared dialog chrome."
-  [{:keys [id title turn-count modified-at created-at] :as conversation} active-id body-w]
+  [{:keys [id turn-count modified-at created-at] :as conversation} active-id body-w]
   (let [active? (= (str id) (some-> active-id str))]
     (conversation-table-row-label
       [(if active? "●" "")
@@ -1300,7 +1303,7 @@
        (str (long (or turn-count 0)))
        (format-conversation-date modified-at)
        (format-conversation-date created-at)
-       (conversation-title {:title title :id id})]
+       (conversation-title conversation)]
       body-w)))
 
 (defn conversation-dialog-header
