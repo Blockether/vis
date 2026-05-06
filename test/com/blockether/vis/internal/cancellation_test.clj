@@ -2,6 +2,27 @@
   (:require [clojure.test :refer [deftest is testing]]
             [com.blockether.vis.internal.cancellation :as cancel]))
 
+(deftest worker-future-test
+  (testing "worker-future returns a cancellable Future and runs the body"
+    (let [f (cancel/worker-future "test-worker" (fn [] 42))]
+      (is (instance? java.util.concurrent.Future f))
+      (is (= 42 (.get ^java.util.concurrent.Future f 5 java.util.concurrent.TimeUnit/SECONDS)))
+      (is (= 42 @f))
+      (is (realized? f))))
+  (testing "worker-future cancellation interrupts blocking work"
+    (let [started (promise)
+          f       (cancel/worker-future "test-worker-cancel"
+                    (fn []
+                      (deliver started true)
+                      (Thread/sleep 10000)
+                      :done))]
+      (is (true? (deref started 1000 false)))
+      (.cancel ^java.util.concurrent.Future f true)
+      (is (.isCancelled ^java.util.concurrent.Future f))))
+  (testing "worker runtime reports virtual-thread availability"
+    (is (= :vis/worker-future (:worker-helper (cancel/worker-runtime))))
+    (is (boolean? (:virtual-threads? (cancel/worker-runtime))))))
+
 (deftest cancellation-token-test
   (testing "token has correct shape with flag and future atoms"
     (let [token (cancel/cancellation-token)]

@@ -25,6 +25,7 @@
     (expect (str/includes? patch/z-prompt "Same map shape as v/patch"))
     (expect (str/includes? patch/z-prompt "z/locators"))
     (expect (str/includes? patch/z-prompt "z/symbols"))
+    (expect (str/includes? patch/z-prompt "z/locator-for-symbol"))
     (expect (str/includes? patch/z-prompt "z/subedit->"))
     (expect (not (str/includes? patch/z-prompt "z/zedit")))
     (expect (< (count patch/z-prompt) 800))
@@ -77,18 +78,55 @@
                  {:path path :search "(def b 2)" :replace "(def b 20)"}])
       (expect (= "(ns demo)\n(def a 10)\n(def b 20)\n" (slurp path)))))
 
-  (it "z/locators and z/symbols return zipper locator rows"
+  (it "z/locators and z/symbols return bounded agent-usable zipper locator rows"
     (let [path        (write-temp! "patch/locators.clj" "(ns demo)\n(defn f [] old-sym :k \"s\")\n")
           locators-fn (:ext.symbol/fn patch/locators-symbol)
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
-          locators    (locators-fn path)
-          symbols     (symbols-fn path)]
+          locators    (locators-fn path {:limit 100})
+          symbols     (symbols-fn path {:limit 100})
+          old-row     (first (filter #(= 'old-sym (:value %)) (:result locators)))]
       (expect (true? (:success? locators)))
       (expect (true? (:success? symbols)))
-      (expect (some #(and (= 'old-sym (:value %)) (= "old-sym" (:locator %)))
+      (expect (every? #(= path (:path %)) (:result locators)))
+      (expect (every? #(integer? (:index %)) (:result locators)))
+      (expect (every? #(= #{:path :index :tag :value :locator :source :span}
+                         (set (keys %)))
                 (:result locators)))
+      (expect (= {:path path
+                  :tag :token
+                  :value 'old-sym
+                  :locator "old-sym"
+                  :source "old-sym"
+                  :span [[2 12] [2 19]]}
+                (dissoc old-row :index)))
       (expect (every? #(symbol? (:value %)) (:result symbols)))
+      (expect (every? #(= path (:path %)) (:result symbols)))
       (expect (some #(= 'old-sym (:value %)) (:result symbols)))))
+
+  (it "z/locators defaults to 10 rows and supports focused symbol/source lookup"
+    (let [path          (write-temp! "patch/locators-focused.clj"
+                          (str "(ns demo)\n"
+                            (str/join "\n" (map #(str "(def sym" % " " % ")") (range 20)))
+                            "\n(defn needle [] target-sym)\n"))
+          locators-fn   (:ext.symbol/fn patch/locators-symbol)
+          symbols-fn    (:ext.symbol/fn patch/symbols-symbol)
+          by-default    (locators-fn path)
+          by-symbol     (locators-fn path {:symbol 'target-sym})
+          by-source     (locators-fn path {:source-contains "needle" :limit 20})
+          symbol-filter (symbols-fn path {:name 'target-sym})]
+      (expect (= 10 (count (:result by-default))))
+      (expect (true? (get-in by-default [:provenance :truncated?])))
+      (expect (= ['target-sym] (mapv :value (:result by-symbol))))
+      (expect (some #(str/includes? (:source %) "needle") (:result by-source)))
+      (expect (= ['target-sym] (mapv :value (:result symbol-filter))))))
+
+  (it "z/locator-for-symbol returns one symbol row without dumping the namespace"
+    (let [path       (write-temp! "patch/locator-for-symbol.clj" "(ns demo)\n(defn f [] target-sym)\n")
+          locator-fn (:ext.symbol/fn patch/locator-for-symbol-symbol)
+          out        (locator-fn path 'target-sym)]
+      (expect (true? (:success? out)))
+      (expect (= :z/locator-for-symbol (get-in out [:provenance :op])))
+      (expect (= 'target-sym (get-in out [:result :value])))))
 
   (it "accepts locator rows from z/symbols as span-specific search locators"
     (let [path        (write-temp! "patch/locator-row.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")
@@ -99,6 +137,16 @@
       (expect (= 2 (count old-symbols)))
       (patch-fn {:path path :search second-old :replace 'new-sym})
       (expect (= "(ns demo)\n(def a old-sym)\n(def b new-sym)\n" (slurp path)))))
+
+  (it "applies multiple span-specific locator row edits to the same original file"
+    (let [path        (write-temp! "patch/locator-row-multi.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")
+          patch-fn    (private-fn "patch-safe")
+          symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
+          old-symbols (filterv #(= 'old-sym (:value %)) (:result (symbols-fn path)))]
+      (expect (= 2 (count old-symbols)))
+      (patch-fn [(assoc (first old-symbols) :replace 'new-a)
+                 (assoc (second old-symbols) :replace 'new-b)])
+      (expect (= "(ns demo)\n(def a new-a)\n(def b new-b)\n" (slurp path)))))
 
   (it "accepts locator rows as replacements via their source"
     (let [path        (write-temp! "patch/locator-replace.clj" "(ns demo)\n(def a source-sym)\n(def b target-sym)\n")

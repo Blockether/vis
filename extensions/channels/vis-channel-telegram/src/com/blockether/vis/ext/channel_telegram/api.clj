@@ -3,10 +3,11 @@
 
    Telegram Bot API reference: https://core.telegram.org/bots/api
 
-   Three primitives are enough for a chat bot:
+   Telegram-facing primitives:
    - `get-updates`      long-poll for incoming messages
-   - `send-message!`    send text back as HTML (auto-splits at 4096-char limit)
-   - `send-chat-action!`  show 'typing…' while the LLM works"
+   - `send-message!`    send text back (auto-splits at Telegram's limit)
+   - `send-chat-action!`  show 'typing…' while the LLM works
+   - `set-my-commands!` install the slash-command menu shown by Telegram"
   (:require [babashka.http-client :as http]
             [charred.api :as json]
             [clojure.string :as str]))
@@ -228,6 +229,21 @@
            (cond-> {"chat_id" chat-id
                     "text" raw-chunk}
              reply-markup (assoc "reply_markup" reply-markup))))))))
+
+(defn set-my-commands!
+  "Install Telegram's slash-command menu for the bot.
+
+   `commands` is a seq of Telegram BotCommand maps with string keys
+   `command` and `description`.
+   Throws when Telegram rejects the menu so caller can log diagnostics."
+  [token commands]
+  (let [resp (post-json! token "/setMyCommands"
+               {"commands" (mapv #(select-keys % ["command" "description"])
+                             commands)})]
+    (when-not (:ok resp)
+      (throw (ex-info (str "Telegram setMyCommands failed: " (:description resp))
+               {:body resp})))
+    resp))
 
 (defn answer-callback-query!
   "Acknowledge a Telegram inline-keyboard callback. Best-effort."

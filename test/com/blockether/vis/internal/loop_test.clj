@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
+   [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.vis.core :as vis]
@@ -19,6 +20,20 @@
   (str (Files/createTempDirectory prefix (make-array FileAttribute 0))))
 
 (do
+  (defdescribe llm-text-helper-test
+    (it "uses svar cost optimization and returns plain text"
+      (let [seen (atom nil)]
+        (with-redefs [loop/get-router (constantly {:router true})
+                      svar/ask-code! (fn [router opts]
+                                       (reset! seen {:router router :opts opts})
+                                       {:result " rewritten prompt "})]
+          (expect (= "rewritten prompt"
+                    (:text (loop/llm-text! {:system "sys" :prompt "raw"}))))
+          (expect (= {:router true} (:router @seen)))
+          (expect (= {:optimize :cost} (get-in @seen [:opts :routing])))
+          (expect (= :off (get-in @seen [:opts :reasoning])))
+          (expect (= "text" (get-in @seen [:opts :lang])))))))
+
   (defdescribe normalize-reasoning-level-test
     (it "accepts the UI reasoning vocabulary and OpenAI aliases"
       (expect (= :quick (loop/normalize-reasoning-level :quick)))
@@ -72,14 +87,39 @@
                        :llm-executable-code "(def y 2)"}]
                    [3 {:thinking "reason-3"
                        :llm-executable-code nil}]]]
-      (expect (= (conj messages {:role "assistant"
-                                 :content "(def x 1)"
-                                 :reasoning_content "reason-1"})
+      (expect (= [{:role "system" :content "sys"}
+                  {:role "assistant"
+                   :content "(def x 1)"
+                   :reasoning_content "reason-1"}
+                  {:role "user" :content "task"}]
                 (#'loop/append-zai-preserved-thinking-messages
                  messages journal {:provider :zai :reasoning-style :zai-thinking})))
       (expect (= messages
                 (#'loop/append-zai-preserved-thinking-messages
                  messages journal {:provider :openai :reasoning-style :openai-effort}))))))
+
+(defdescribe provider-message-order-test
+  (it "keeps the current user goal as the final user-role message after journal insertion"
+    (let [messages [{:role "system" :content "sys"}
+                    {:role "user" :content "<user_turn_request_main_goal>\nnew task\n</user_turn_request_main_goal>"}]
+          out (#'loop/insert-before-last-user-message
+               messages
+               [{:role "user" :content "<journal>old topic</journal>"}])]
+      (expect (= ["system" "user" "user"] (mapv :role out)))
+      (expect (= "<journal>old topic</journal>" (:content (second out))))
+      (expect (str/includes? (:content (last out)) "new task"))))
+
+  (it "keeps current goal last even with preserved Z.ai assistant reasoning"
+    (let [messages [{:role "system" :content "sys"}
+                    {:role "user" :content "task"}]
+          journal [[1 {:thinking "reason" :llm-executable-code "(def old 1)"}]]
+          out (-> messages
+                (#'loop/append-zai-preserved-thinking-messages
+                 journal {:provider :zai :reasoning-style :zai-thinking})
+                (#'loop/insert-before-last-user-message
+                 [{:role "user" :content "<journal>ctx</journal>"}]))]
+      (expect (= ["system" "assistant" "user" "user"] (mapv :role out)))
+      (expect (= "task" (:content (last out)))))))
 
 (defdescribe copilot-billing-guard-test
   (it "marks first human iteration as user and internal iterations as agent"

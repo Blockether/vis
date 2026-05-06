@@ -338,8 +338,18 @@
                                    (get blocks-by-code (:code var-row))
                                    var-row
                                    (:value var-row))))
-                         (:vars iteration))]
-    (vec (concat direct-calls var-calls))))
+                         (:vars iteration))
+        {:keys [order rows]}
+        (reduce (fn [{:keys [order rows] :as acc} call]
+                  (let [dedupe-key (or (:ref call)
+                                     [(:parent-ref call) (:op call) (:code call)])]
+                    (if (contains? rows dedupe-key)
+                      (assoc acc :rows (update rows dedupe-key merge call))
+                      {:order (conj order dedupe-key)
+                       :rows  (assoc rows dedupe-key call)})))
+          {:order [] :rows {}}
+          (concat direct-calls var-calls))]
+    (mapv rows order)))
 
 (defn- transcript-calls
   [turns]

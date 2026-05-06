@@ -114,6 +114,10 @@
     (keep (fn [[sym v]] (var->symbol-entry sym v)))
     vec))
 
+(defn- clojure-environment-info
+  [_environment]
+  "Clojure/EDN workspace detected. Prefer structural editing through the `z/` alias before raw text edits: use `z/locators` or `z/symbols` to discover rewrite-clj locator rows, then `z/patch` for Clojure/EDN changes. Locator rows include `:path`, `:index`, `:tag`, `:value`, `:locator`, `:source`, and `:span`; add `:replace` to a row to turn it into a patch edit. Use `v/patch` only for comments/plain text or non-Clojure files.")
+
 (def clojure-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core
@@ -125,8 +129,9 @@
      :ext/ns-alias  {:ns 'vis.ext.clj :alias 'z}
      :ext/kind      "languages"
      :ext/activation-fn (fn [_] (clojure-project?))
+     :ext/environment-info-fn clojure-environment-info
      :ext/prompt    patch/z-prompt
-     :ext/symbols   (into [patch/patch-symbol patch/locators-symbol patch/symbols-symbol]
+     :ext/symbols   (into [patch/patch-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol]
                       rewrite-clj-zip-symbols)}))
 
 (vis/register-extension! clojure-extension)

@@ -37,7 +37,7 @@
               (format/format-tokens {:input 10 :output 5
                                      :cached 0})))
     (expect (= "~$0.123456" (format/format-cost 0.1234564)))
-    (expect (= "~$0.012000 (not cached ~$0.008000, cached ~$0.001000, output ~$0.003000)"
+    (expect (= "input ~$0.008000, input cached ~$0.001000, output ~$0.003000, total ~$0.012000"
               (format/format-cost {:total-cost 0.012
                                    :input-uncached-cost 0.008
                                    :input-cached-cost 0.001
@@ -50,10 +50,16 @@
                   :duration-ms 1200
                   :tokens {:input 100 :output 20 :cached 60}
                   :cost {:total-cost 0.00042
+                         :input-uncached-cost 0.00020
+                         :input-cached-cost 0.00005
+                         :output-cost 0.00017
                          :provider :openai
                          :model "gpt-4o"}})]
       (expect (str/includes? line "openai/gpt-4o"))
       (expect (str/includes? line "2 iters"))
       (expect (str/includes? line "↑100 (cached 60) ↓20"))
-      (expect (str/includes? line "~$0.000420"))
+      (expect (str/includes? line "input ~$0.000200"))
+      (expect (str/includes? line "input cached ~$0.000050"))
+      (expect (str/includes? line "output ~$0.000170"))
+      (expect (str/includes? line "total ~$0.000420"))
       (expect (str/includes? line "1.2s")))))

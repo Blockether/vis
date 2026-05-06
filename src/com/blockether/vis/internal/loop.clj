@@ -36,6 +36,7 @@
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.util :as util]
    [com.blockether.vis.internal.config :as config]
+   [com.blockether.vis.internal.cancellation :as cancellation]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
@@ -560,18 +561,19 @@
         stderr-writer (java.io.StringWriter.)
         err-pw       (java.io.PrintWriter. stderr-writer true)
         preview-sink (atom [])
-        exec-future (future
-                      (try
-                        (let [result (binding [extension/*preview-sink* preview-sink]
-                                       (sci/binding [sci/out stdout-writer
-                                                     sci/err err-pw]
-                                         (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
-                                           (:val (sci/eval-string+ sci-ctx code
-                                                   (when ns {:ns ns}))))))]
-                          {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink :error nil})
-                        (catch Throwable e
-                          {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink
-                           :error (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))})))
+        exec-future (cancellation/worker-future "vis-sci-eval"
+                      (fn []
+                        (try
+                          (let [result (binding [extension/*preview-sink* preview-sink]
+                                         (sci/binding [sci/out stdout-writer
+                                                       sci/err err-pw]
+                                           (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
+                                             (:val (sci/eval-string+ sci-ctx code
+                                                     (when ns {:ns ns}))))))]
+                            {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink :error nil})
+                          (catch Throwable e
+                            {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink
+                             :error (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))}))))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
@@ -580,7 +582,7 @@
     (.close stdout-writer)
     (.close stderr-writer)
     (if (nil? execution-result)
-      (do (future-cancel exec-future)
+      (do (.cancel ^java.util.concurrent.Future exec-future true)
         {:result nil :stdout "" :stderr "" :previews @preview-sink :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
       execution-result)))
 
@@ -1359,6 +1361,33 @@
        :content content
        :reasoning_content reasoning})))
 
+(defn- last-user-message-index
+  [messages]
+  (->> (map-indexed vector messages)
+    reverse
+    (some (fn [[idx {:keys [role]}]]
+            (when (contains? #{"user" :user} role)
+              idx)))))
+
+(defn- insert-before-last-user-message
+  "Insert `insertions` before the current turn's final user message.
+
+   Provider recency matters: the last user-role message must remain the
+   current goal, not a synthetic context/journal block or preserved-thinking
+   replay. Conversation 9a55ca1a reproduced the failure mode: OpenAI Codex
+   saw a 355k-char `<journal>` as the final user message and drifted back to
+   the old PROOF topic instead of the latest ask."
+  [messages insertions]
+  (let [messages*   (vec (or messages []))
+        insertions* (vec (remove nil? insertions))]
+    (if (seq insertions*)
+      (if-let [idx (last-user-message-index messages*)]
+        (vec (concat (subvec messages* 0 idx)
+               insertions*
+               (subvec messages* idx)))
+        (into messages* insertions*))
+      messages*)))
+
 (defn- append-zai-preserved-thinking-messages
   "For Z.ai GLM thinking models, echo exact prior assistant content plus
    `reasoning_content` back to the OpenAI-compatible chat endpoint. Z.ai
@@ -1367,7 +1396,9 @@
   [messages journal-iters resolved-model]
   (let [messages* (vec (or messages []))]
     (if (zai-preserved-thinking-model? resolved-model)
-      (into messages* (keep zai-preserved-thinking-message) journal-iters)
+      (insert-before-last-user-message
+        messages*
+        (keep zai-preserved-thinking-message journal-iters))
       messages*)))
 
 (defn run-iteration
@@ -1802,6 +1833,34 @@
    `ask!` (JSON-spec) is gone; every Vis caller uses `ask-code!`."
   [opts]
   (svar/ask-code! (get-router) opts))
+
+(defn llm-text!
+  "Fast helper LLM call for extensions.
+
+   Uses svar routing (`:routing {:optimize :cost}`) instead of Vis-side model
+   name heuristics. The call still goes through `svar/ask-code!` because Vis no
+   longer uses the retired `ask!` structured-output path; `:lang \"text\"`,
+   `:reasoning :off`, and `:code-tail-pointer? true` make the return a plain
+   text string under :text. Callers may pass either :messages or :system +
+   :prompt."
+  [{:keys [messages system prompt reasoning temperature routing] :as opts}]
+  (let [messages (or messages
+                   (cond-> []
+                     (seq system) (conj {:role "system" :content system})
+                     (seq prompt) (conj {:role "user" :content prompt})))
+        resp     (svar/ask-code! (get-router)
+                   (merge (dissoc opts :system :prompt :temperature)
+                     {:messages           messages
+                      :lang               "text"
+                      :reasoning          (or reasoning :off)
+                      :routing            (or routing {:optimize :cost})
+                      :code-tail-pointer? true}
+                     (when (some? temperature)
+                       {:temperature temperature})))
+        text     (or (some-> resp :result str/trim not-empty)
+                   (some-> resp :raw str/trim not-empty)
+                   "")]
+    (assoc resp :text text)))
 
 (defn resolve-effective-model
   "Best-effort root model descriptor from router config.
@@ -2492,12 +2551,19 @@
                                            :model               (some-> pre-resolved-model :name str)
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
-                                           :system-prompt       system-prompt})
+                                           :system-prompt       system-prompt
+                                           ;; One low-importance turn-boundary check keeps
+                                           ;; titles live across topic shifts. The old
+                                           ;; iteration-only cadence never fired for a
+                                           ;; string of short turns, which reproduced in
+                                           ;; conversation 9a55ca1a.
+                                           :title-refresh?      (zero? (long iteration))})
                       provider-messages (append-zai-preserved-thinking-messages
                                           messages journal-iters pre-resolved-model)
-                      effective-messages (cond-> provider-messages
-                                           (not (str/blank? iteration-context))
-                                           (conj {:role "user" :content iteration-context}))
+                      effective-messages (insert-before-last-user-message
+                                           provider-messages
+                                           (when-not (str/blank? iteration-context)
+                                             [{:role "user" :content iteration-context}]))
                       resolved-model pre-resolved-model
                       effective-routing (or routing {})
                       iteration-result (try
@@ -3121,9 +3187,9 @@
    (TUI header, Telegram label) on its own."
   [args]
   (when args
-    (future
-      (try (auto-title! args)
-        (catch Throwable _))))
+    (cancellation/worker-future "vis-auto-title"
+      #(try (auto-title! args)
+         (catch Throwable _))))
   nil)
 
 ;; -----------------------------------------------------------------------------

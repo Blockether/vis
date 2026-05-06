@@ -22,6 +22,63 @@
    directly without pulling in the rest of the SDK."
   (:refer-clojure))
 
+(defn virtual-threads-available?
+  "True when this JVM exposes Java virtual-thread APIs. Reflection keeps
+   source compatible with older runtimes."
+  []
+  (try
+    (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))
+    true
+    (catch Throwable _ false)))
+
+(defn worker-runtime
+  "Runtime probe for worker execution. `:worker-helper` is stable metadata for
+   diagnostics; `:virtual-threads?` reports whether new worker tasks will use
+   Java virtual threads."
+  []
+  {:worker-helper :vis/worker-future
+   :virtual-threads? (virtual-threads-available?)})
+
+(defn worker-future
+  "Run `f` on a cancellable worker Future. Uses a virtual thread when the JVM
+   supports it, otherwise falls back to a named daemon platform thread.
+
+   The returned value implements java.util.concurrent.Future plus Clojure
+   deref/realized? protocols so legacy `future` call sites can migrate without
+   losing timeout/cancellation behavior."
+  ([f] (worker-future "vis-worker" f))
+  ([name f]
+   (let [task (java.util.concurrent.FutureTask.
+                ^java.util.concurrent.Callable
+                (reify java.util.concurrent.Callable
+                  (call [_] (f))))
+         _runner (if (virtual-threads-available?)
+                   (let [m (.getMethod Thread "startVirtualThread" (into-array Class [Runnable]))]
+                     (.invoke m nil (object-array [task])))
+                   (doto (Thread. ^Runnable task (str name))
+                     (.setDaemon true)
+                     (.start)))]
+     (reify
+       java.util.concurrent.Future
+       (cancel [_ may-interrupt-if-running]
+         (.cancel task may-interrupt-if-running))
+       (isCancelled [_] (.isCancelled task))
+       (isDone [_] (.isDone task))
+       (get [_] (.get task))
+       (get [_ timeout unit] (.get task timeout unit))
+
+       clojure.lang.IDeref
+       (deref [_] (.get task))
+
+       clojure.lang.IBlockingDeref
+       (deref [_ timeout-ms timeout-val]
+         (try
+           (.get task timeout-ms java.util.concurrent.TimeUnit/MILLISECONDS)
+           (catch java.util.concurrent.TimeoutException _ timeout-val)))
+
+       clojure.lang.IPending
+       (isRealized [_] (.isDone task))))))
+
 (defn cancellation-token
   "Construct a fresh cancellation token. The token wraps a cooperative
    flag (`:cancel-atom` of `turn!`) and a worker `Future` reference so

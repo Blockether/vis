@@ -347,7 +347,7 @@
           (str/join "\n" kept))))))
 
 ;; =============================================================================
-;; Iteration context — the trailing user message
+;; Iteration context — provider context block inserted before current user goal
 ;; =============================================================================
 
 (def ^:const TITLE_REFRESH_NUDGE_PERIOD
@@ -427,11 +427,11 @@
 (defn- title-nudge
   "Built-in title nudge that fires when:
      1. `CONVERSATION_TITLE` is currently empty, OR
-     2. `iteration` is a positive multiple of
-        `TITLE_REFRESH_NUDGE_PERIOD` (cadence reminder once a title
-        has been set).
+     2. caller requests a turn-boundary refresh check, OR
+     3. `iteration` is a positive multiple of
+        `TITLE_REFRESH_NUDGE_PERIOD` (cadence reminder inside a long turn).
    Returns nil otherwise."
-  [environment iteration]
+  [environment iteration refresh?]
   (let [title (some-> (:conversation-title-atom environment) deref str str/trim)
         blank? (or (nil? title) (str/blank? title))]
     (cond
@@ -440,6 +440,11 @@
         "Set it via `(conversation-title \"…\")` (3-7-word noun phrase, "
         "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
         "the conversation is discoverable in the sidebar.")
+
+      refresh?
+      (str "Current CONVERSATION_TITLE is \"" title "\". "
+        "If this turn changes the conversation focus, refresh the title via "
+        "`(conversation-title \"…\")`.")
 
       (and (integer? iteration)
         (pos? iteration)
@@ -515,7 +520,7 @@
       "\n</system_nudges>")))
 
 (defn build-iteration-context
-  "Assemble the per-iteration trailing user message.
+  "Assemble the per-iteration context block inserted before the current user goal.
 
    Two slots:
      <journal>     — newest token-budgeted comments + code + result.
@@ -547,7 +552,8 @@
      `:iteration` — current iteration position (1-based for rendered refs;
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
-                       model system-prompt current-user-content context-limit]
+                       model system-prompt current-user-content context-limit
+                       title-refresh?]
                 :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
@@ -568,7 +574,7 @@
                                 (- budget-after-pinned (long var-tokens))))
         recent-block (format-journal-block model blocks-by-iteration journal-budget)
         last-iteration-blocks (some-> blocks-by-iteration last second)
-        title-line (title-nudge environment iteration)
+        title-line (title-nudge environment iteration title-refresh?)
         ;; Token-budget probe. Estimate the size of the assembled
         ;; prompt that would be sent to the LLM; fire the
         ;; context-pressure nudge when it crosses

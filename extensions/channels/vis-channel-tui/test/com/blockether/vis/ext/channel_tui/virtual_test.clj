@@ -50,6 +50,67 @@
      :iteration-count n-iters
      :timestamp       #inst "2026-04-30T00:00:00"}))
 
+(defn- incident-9a55-shaped-message
+  "Sanitized render fixture matching the bad 9a55 incident shape: 304 tool
+   forms, ~100 previews, duplicated refs in source shape, two huge locator
+   dumps, and one answer bubble. Payload text is synthetic; operation mix and
+   cardinality are the regression signal."
+  []
+  (let [ops      (vec (take 304 (cycle [:v/preview :v/cat :v/bash :v/patch :z/locators :v/rg])))
+        huge     (str/join "\n" (map #(str "locator-" % " (defn huge-fixture [] :ok)") (range 240)))
+        preview  (str/join "\n" (map #(str % ": selected preview line") (range 1 61)))
+        mk-form  (fn [idx op]
+                   {:code (str "(" (namespace op) "/" (name op) " \"fixture-" idx "\")")
+                    :result (case op
+                              :v/preview preview
+                              :z/locators huge
+                              :v/bash "exit 0\nran fixture command"
+                              :v/patch "1 file changed"
+                              :v/rg "12 matches"
+                              "read 20 lines")
+                    :kind (if (= op :v/preview) :preview :tool)
+                    :detail {:op op
+                             :op-class (case op
+                                         (:v/cat :z/locators) :op/read
+                                         :v/rg :op/search
+                                         :v/preview :op/preview
+                                         :v/patch :op/edit
+                                         :v/bash :op/shell
+                                         :op/meta)
+                             :presentation-kind (case op
+                                                  (:v/cat :z/locators) :tool/read
+                                                  :v/rg :tool/search
+                                                  :v/preview :tool/preview
+                                                  :v/patch :tool/edit
+                                                  :v/bash :tool/shell
+                                                  :tool/meta)
+                             :color-role (case op
+                                           (:v/cat :z/locators) :tool-color/read
+                                           :v/rg :tool-color/search
+                                           :v/preview :tool-color/preview
+                                           :v/patch :tool-color/edit
+                                           :v/bash :tool-color/shell
+                                           :tool-color/meta)
+                             :raw (when (= op :v/preview) (pr-str preview))}})
+        forms    (mapv mk-form (range) ops)
+        trace    (->> forms
+                   (partition-all 12)
+                   (mapv (fn [chunk]
+                           {:thinking "synthetic 9a55 reasoning chunk"
+                            :code (mapv :code chunk)
+                            :results (mapv :result chunk)
+                            :result-kinds (mapv :kind chunk)
+                            :result-details (mapv :detail chunk)
+                            :stdouts (vec (repeat (count chunk) ""))
+                            :durations (vec (repeat (count chunk) 1))
+                            :successes (vec (repeat (count chunk) true))})))]
+    {:role :assistant
+     :raw-answer "done"
+     :text "done"
+     :trace trace
+     :iteration-count (count trace)
+     :timestamp #inst "2026-04-30T00:00:00"}))
+
 (def ^:private bubble-w 100)
 
 (def ^:private settings
@@ -167,7 +228,62 @@
         (expect (str/includes? (:text projected) "RESULT"))
         (expect (str/includes? (:text projected) "chars hidden"))
         (expect (not (str/includes? (:text projected) huge-result)))
-        (expect (some #(= :toggle-details (:kind %)) (:line-meta projected))))))
+        (expect (some #(= :toggle-details (:kind %)) (:line-meta projected)))))
+
+    (it "keeps long live progress layout inside scroll-frame budget"
+      (render/invalidate-cache!)
+      (let [m              {:role :assistant :text "Sending request to provider…"}
+            huge-result    (str/join " " (repeat 1000 "abcdefghij"))
+            progress-entry (fn [i done?]
+                             {:events    [{:type :form-result :form-idx 0}]
+                              :code      [(str "(do (Thread/sleep 1000) " i ")")]
+                              :results   [(when done? huge-result)]
+                              :stdouts   [""]
+                              :durations [(when done? 1000)]
+                              :successes [(when done? true)]
+                              :started-at-ms [(when-not done? 0)]})
+            progress       {:iterations (vec (concat (map #(progress-entry % true) (range 300))
+                                               [(progress-entry 300 false)]))}
+            sample         (fn []
+                             (let [t0 (System/nanoTime)
+                                   r  (virtual/layout [m] 90 settings nil 30
+                                        {:loading? true
+                                         :progress progress
+                                         :progress-extra {:now-ms 100000 :turn-start-ms 0}}
+                                        {:conversation-id "conversation"
+                                         :detail-expansions {}})
+                                   dt (/ (- (System/nanoTime) t0) 1000000.0)]
+                               {:ms dt
+                                :line-count (count (get-in r [:visible 0 :projected :prewrapped-lines]))}))
+            samples        (doall (repeatedly 12 sample))
+            sorted-ms      (vec (sort (map :ms samples)))
+            p95-ms         (nth sorted-ms (dec (count sorted-ms)))
+            max-lines      (apply max (map :line-count samples))]
+        (expect (< max-lines 300))
+        (expect (< p95-ms 60.0)
+          (str "progress layout p95-ms=" p95-ms " samples=" samples)))))
+
+  (it "keeps sanitized 9a55 scroll-frame layout inside headless budget"
+    (render/invalidate-cache!)
+    (let [msgs        [(user-msg "reproduce 9a55 slowdown") (incident-9a55-shaped-message)]
+          opts        {:conversation-id "9a55ca1a-447b-409d-b6e1-f952487bfb4c"
+                       :detail-expansions {}}
+          scrolls     [0 120 480 nil]
+          sample      (fn [scroll]
+                        (let [t0 (System/nanoTime)
+                              r  (virtual/layout msgs 96 settings scroll 32 {} opts)
+                              dt (/ (- (System/nanoTime) t0) 1000000.0)]
+                          {:scroll scroll
+                           :ms dt
+                           :visible-bubble-count (count (:visible r))
+                           :rendered-line-count (reduce + (map :height (:visible r)))}))
+          samples     (doall (for [_ (range 4) scroll scrolls] (sample scroll)))
+          sorted-ms   (vec (sort (map :ms samples)))
+          p95-ms      (nth sorted-ms (dec (count sorted-ms)))
+          max-lines   (apply max (map :rendered-line-count samples))]
+      (expect (pos? max-lines))
+      (expect (< p95-ms 90.0)
+        (str "9a55 scroll p95-ms=" p95-ms " samples=" samples))))
 
   (describe "fixed scroll offset (scroll = some long)"
     (it "clamps to [0, max-scroll]"
