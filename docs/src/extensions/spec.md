@@ -50,6 +50,7 @@ Two conditional rules apply on top of the spec:
 | `:ext/environment-info-fn` | ✗            | —                    | `(fn [env] → string\|seq\|map\|nil)` — live environment-info contribution rendered inside the system prompt's `<environment-info>` block. Use for cwd/repo/runtime facts; any active extension can add a sibling section. |
 | `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|{:importance :low\|:normal\|:high\|:critical :text string}\|nil)` — per-iteration nudge composer. Return value is spec-checked at runtime and rendered as `<system_nudge importance="...">` (see [Nudge System](nudges.md)). |
 | `:ext/rendering-kinds`   | ✗              | `{}`                 | `{kind-keyword render-fn}` — semantic renderers for preview/result data. A render fn receives `{:surface :rendering-kind :value ...}` plus optional `:tool-result`, and returns Markdown/plain text. Use this when tools return data with a rendering kind and many surfaces should render it consistently. |
+| `:ext/fenced-renderers`  | ✗              | `[]`                 | Vector of Markdown fenced-code renderers. Each entry is `{:renderer/id kw :renderer/langs #{"lang" ...} :renderer/render-fn fn}`. A render fn receives `{:surface :lang :source :source-lines :width ...}` and returns `{:lines ["..."]}` or nil to fall back to the default fenced-code renderer. |
 | `:ext/on-parse-error-fn` | ✗              | —                    | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
 | `:ext/requires`          | ✗              | `[]`                  | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.foundation.editing.core]`. |
 | `:ext/version`           | ✗              | —                    | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"`. |
@@ -132,6 +133,26 @@ placements (the binary's own built-ins, custom command trees), call
 `vis providers`, `vis doctor`, `vis conversations` are registered with
 `registry/register-cmd!`; only the `vis extensions list` subcommand
 goes through `:ext/cli`.
+
+## Fenced-code renderers
+
+Extensions can register terminal-safe renderers for Markdown fenced code blocks:
+
+```clojure
+:ext/fenced-renderers
+[{:renderer/id :mermaid/ascii
+  :renderer/langs #{"mermaid"}
+  :renderer/render-fn
+  (fn [{:keys [surface lang source width]}]
+    ;; Return nil to let the channel fall back to its normal fenced-code renderer.
+    {:lines ["Mermaid (ASCII)" "A ──▶ B"]})}]
+```
+
+The host normalizes `:lang` by trimming and lower-casing before dispatch. Renderers
+run in extension registration order; the first renderer matching the language and
+returning non-nil wins. Renderer exceptions are logged and treated as nil so the
+TUI can fall back to the normal code block. Keep renderers bounded and headless-safe:
+no GUI, no unbounded subprocesses, no hidden truncation.
 
 ## Rendering-kind functions
 

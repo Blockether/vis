@@ -273,11 +273,13 @@
              (when force?
                (copilot/logout!))
             ;; Poll in background, show waiting message
-             (let [result (future (poll-fn device-code interval expires-in opts))]
+             (let [result (vis/worker-future "vis-tui-copilot-oauth-poll"
+                            #(poll-fn device-code interval expires-in opts))]
               ;; The poll runs in background; once authorized it returns.
                (loop [attempt 0]
                  (if (realized? result)
-                   (let [{:keys [token]} (exchange-fn opts)]
+                   (let [_poll-result @result
+                         {:keys [token]} (exchange-fn opts)]
                      (dlg/text-view-dialog! screen "GitHub Copilot" ["✓ Authenticated!"])
                      token)
                    (do
@@ -815,10 +817,10 @@
   (let [pid (:id provider)]
     (swap! statuses assoc pid (initial-provider-status provider))
     (swap! limits assoc pid (initial-provider-limits provider))
-    (future
-      (swap! statuses assoc pid (configured-provider-status provider)))
-    (future
-      (swap! limits assoc pid (safe-provider-limits provider))))
+    (vis/worker-future "vis-tui-provider-status"
+      #(swap! statuses assoc pid (configured-provider-status provider)))
+    (vis/worker-future "vis-tui-provider-limits"
+      #(swap! limits assoc pid (safe-provider-limits provider))))
   nil)
 
 (defn- refresh-providers-diagnostics!

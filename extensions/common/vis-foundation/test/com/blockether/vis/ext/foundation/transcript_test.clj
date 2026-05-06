@@ -300,6 +300,32 @@
             (expect (= "hi\n" (get-in call [:result-summary :stdout-preview])))
             (expect (= (:parent-ref call) (:ref code-row)))
             (expect (= call tool-row))))
+        (finally (vis/db-dispose-connection! s)))))
+
+  (it "dedupes one visible tool call when a tool result is both the block result and a var binding"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid   (vis/db-store-conversation! s {:channel :tui :title "tool transcript" :model "x"})
+              turn  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                        :user-request "run a tool"
+                                                        :status :running})
+              code  "(def out (v/bash \"echo hi\"))"
+              value (tool-result "echo hi" "hi\n")]
+          (vis/db-store-iteration! s {:conversation-turn-id turn
+                                      :blocks [{:code code
+                                                :result value
+                                                :execution-time-ms 6}]
+                                      :vars [{:name "out" :value value :code code}]
+                                      :answer "done"
+                                      :duration-ms 10})
+          (vis/db-update-conversation-turn! s turn {:status :done :answer "done"})
+          (let [data  (transcript/transcript s cid)
+                calls (:calls data)]
+            (expect (= 1 (count calls)))
+            (expect (= [(:ref (first calls))]
+                      (->> calls (map :ref) distinct vec)))
+            (expect (= "out" (:var (first calls))))
+            (expect (= 1 (count (filter #(= :tool-call (:kind %)) (:timeline data)))))))
         (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------

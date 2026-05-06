@@ -260,6 +260,16 @@
         (expect (str/includes? out "<system_nudge importance=\"low\">"))
         (expect (str/includes? out "CONVERSATION_TITLE is currently empty"))))
 
+    (it "fires a title-refresh nudge when the turn boundary requests it"
+      (let [out (prompt/build-iteration-context
+                  (env-with-title)
+                  {:active-extensions   NO_EXTENSIONS
+                   :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
+                   :iteration           0
+                   :title-refresh?      true})]
+        (expect (str/includes? out "<system_nudge importance=\"low\">"))
+        (expect (str/includes? out "Current CONVERSATION_TITLE is"))))
+
     (it "fires the title-refresh nudge every TITLE_REFRESH_NUDGE_PERIOD iterations"
       (let [period @(requiring-resolve 'com.blockether.vis.internal.prompt/TITLE_REFRESH_NUDGE_PERIOD)
             out (prompt/build-iteration-context

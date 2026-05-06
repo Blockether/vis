@@ -30,6 +30,17 @@
   {:reasoning-level :balanced
    :openai-codex-verbosity :low})
 
+(def ^:private bot-menu-commands
+  [{"command" "start"     "description" "Show Vis help"}
+   {"command" "help"      "description" "Show Vis help"}
+   {"command" "status"    "description" "Show conversation/model/status"}
+   {"command" "model"     "description" "Show current model"}
+   {"command" "models"    "description" "List and choose models"}
+   {"command" "reasoning" "description" "Show or set reasoning effort"}
+   {"command" "verbosity" "description" "Show or set Codex verbosity"}
+   {"command" "cancel"    "description" "Cancel current request"}
+   {"command" "export"    "description" "Export conversation as Markdown"}])
+
 (defn- extract-text [message] (or (:text message) (:caption message)))
 
 (defn- extract-sender [message]
@@ -239,6 +250,7 @@
 
 (defn- command-help []
   (str "Vis Telegram commands:\n"
+    "/start — show this help\n"
     "/status — show conversation, model, reasoning, verbosity\n"
     "/model — show current model\n"
     "/models — list models and choose with buttons\n"
@@ -411,10 +423,24 @@
                       "  export TELEGRAM_BOT_TOKEN=<your-token>")
              {}))))
 
+(defn- install-bot-menu! [token]
+  (try
+    (tg/set-my-commands! token bot-menu-commands)
+    (tel/log! {:level :info :id ::bot-menu-installed}
+      "Telegram bot command menu installed")
+    (catch Exception e
+      ;; Menu install is UX parity, not startup correctness. Keep the bot alive
+      ;; and leave diagnostics in the log when Telegram rejects the command list
+      ;; or the network is down during boot.
+      (tel/log! {:level :warn :id ::bot-menu-install-failed
+                 :data  {:error (ex-message e)}
+                 :msg   "Telegram bot command menu install failed"}))))
+
 (defn start! []
   (when (compare-and-set! running? false true)
     (let [token (resolve-token!)
           t     (Thread. ^Runnable #(poll-loop! token) "vis-channel-telegram-poll")]
+      (install-bot-menu! token)
       (.setDaemon t true)
       (.start t)
       (reset! poll-thread t)

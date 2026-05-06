@@ -103,15 +103,17 @@
     (extension/tool-result? (:result chunk)) :tool
     :else :value))
 
-(defn- preview-result-detail
+(defn- tool-result-detail
   [tool-result]
-  (when (and (extension/tool-result? tool-result)
-          (= :v/preview (get-in tool-result [:provenance :op])))
-    {:raw (prompt/safe-pr-str (:result tool-result))}))
+  (when (extension/tool-result? tool-result)
+    (let [prov (:provenance tool-result)]
+      (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role])
+        (= :v/preview (:op prov))
+        (assoc :raw (prompt/safe-pr-str (:result tool-result)))))))
 
 (defn- form-result-detail
   [chunk]
-  (preview-result-detail (:result chunk)))
+  (tool-result-detail (:result chunk)))
 
 (defn- format-form-result
   "Pre-format a per-form chunk's result for renderer consumption.

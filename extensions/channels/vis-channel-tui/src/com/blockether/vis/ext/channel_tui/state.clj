@@ -107,6 +107,7 @@
 ;;                               ;;                  :final?    bool}]}
 ;;                               ;; Cleared on :message-received.
 ;;  :settings  {:show-thinking true :show-iterations true}
+;;  :channel-status {}           ;; extension/channel status banners keyed by id
 ;;  :dialog-open? false}         ;; dialog singleton guard
 ;;
 
@@ -391,6 +392,7 @@
                     :progress   nil
                     :settings   settings
                     :provider-limits nil
+                    :channel-status {}
                     :detail-expansions {}
                     :dialog-open? false
                   ;; Render thread coordination — see render-monitor docstring.
@@ -544,6 +546,27 @@
         crow  (dec (count lines))
         ccol  (count (nth lines crow))]
     {:lines lines :crow crow :ccol ccol}))
+
+(reg-event-db :external-input
+  (fn [db [_ op text]]
+    (let [current (:input db)
+          next    (case op
+                    :replace (text->input-state text)
+                    :append  (text->input-state (str (input/input->text current) (or text "")))
+                    :insert  (input/paste-text current (or text ""))
+                    current)]
+      (assoc db :input next
+        :input-history-index nil
+        :input-history-draft nil))))
+
+(reg-event-db :channel-status-set
+  (fn [db [_ id status]]
+    (assoc-in db [:channel-status id]
+      (assoc status :updated-at-ms (System/currentTimeMillis)))))
+
+(reg-event-db :channel-status-clear
+  (fn [db [_ id]]
+    (update db :channel-status dissoc id)))
 
 (defn- drop-pending-turn-messages
   "Remove the transient user + assistant placeholder pair created by
@@ -781,33 +804,34 @@
 
 (reg-fx :rlm-turn
   (fn [conversation text token reasoning-level extra-body]
-    (let [fut (future
-                (try
-                  (let [{:keys [on-chunk]}
-                        (vis/make-progress-tracker
-                          {:on-update (fn [timeline _chunk]
-                                        (try (dispatch [:set-progress-iterations timeline])
-                                          (catch Throwable _ nil)))})
-                        result (chat/turn! conversation text
-                                 {:on-chunk          on-chunk
-                                  :cancel-atom       (vis/cancellation-atom token)
-                                  :reasoning-default reasoning-level
-                                  :extra-body        extra-body})]
-                    (if (:error result)
-                      (dispatch [:message-received (vis/format-error (:error result))])
-                      (dispatch [:message-received (:answer result)
-                                 (select-keys result
-                                   [:model :iteration-count :duration-ms :tokens
-                                    :cost :confidence :conversation-turn-id :status])])))
-                  (catch Throwable t
+    (let [fut (vis/worker-future "vis-tui-turn"
+                (fn []
+                  (try
+                    (let [{:keys [on-chunk]}
+                          (vis/make-progress-tracker
+                            {:on-update (fn [timeline _chunk]
+                                          (try (dispatch [:set-progress-iterations timeline])
+                                            (catch Throwable _ nil)))})
+                          result (chat/turn! conversation text
+                                   {:on-chunk          on-chunk
+                                    :cancel-atom       (vis/cancellation-atom token)
+                                    :reasoning-default reasoning-level
+                                    :extra-body        extra-body})]
+                      (if (:error result)
+                        (dispatch [:message-received (vis/format-error (:error result))])
+                        (dispatch [:message-received (:answer result)
+                                   (select-keys result
+                                     [:model :iteration-count :duration-ms :tokens
+                                      :cost :confidence :conversation-turn-id :status])])))
+                    (catch Throwable t
                     ;; channels.cancellation/cancellation? folds in
                     ;; InterruptedException, CancellationException, and
                     ;; runtime wrappers around them — keep all the
                     ;; channel-shaped logic in one place. The bubble
                     ;; renderer dims the result based on `:status
                     ;; :cancelled`, so we attach it explicitly here.
-                    (if (vis/cancellation? t)
-                      (dispatch [:message-received "Cancelled by user."
-                                 {:status :cancelled}])
-                      (dispatch [:message-received (vis/format-error (or (ex-message t) (str t)))])))))]
+                      (if (vis/cancellation? t)
+                        (dispatch [:message-received "Cancelled by user."
+                                   {:status :cancelled}])
+                        (dispatch [:message-received (vis/format-error (or (ex-message t) (str t)))]))))))]
       (vis/cancellation-set-future! token fut))))

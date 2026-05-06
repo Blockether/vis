@@ -136,9 +136,9 @@
 (def ^:private copy-success-ttl-ms 1500)
 
 (defn- copy-conversation-id! [text]
-  (future
-    (try (input/clipboard-copy! text)
-      (catch Throwable _ nil)))
+  (vis/worker-future "vis-tui-copy-conversation-id"
+    #(try (input/clipboard-copy! text)
+       (catch Throwable _ nil)))
   (vis/notify! "✓ Copied conversation ID"
     :level :success :ttl-ms copy-success-ttl-ms))
 
@@ -146,40 +146,69 @@
   ([text]
    (copy-selection! text :transcript))
   ([text source]
-   (future
-     (try (input/clipboard-copy! (or text ""))
-       (catch Throwable _ nil)))
+   (vis/worker-future "vis-tui-copy-selection"
+     #(try (input/clipboard-copy! (or text ""))
+        (catch Throwable _ nil)))
    (vis/notify! (if (= source :input)
                   "✓ Copied input selection"
                   "✓ Copied selection")
      :level :success :ttl-ms copy-success-ttl-ms)))
 
 (defn- copy-bubble! [text]
-  (future
-    (try (input/clipboard-copy! (or text ""))
-      (catch Throwable _ nil)))
+  (vis/worker-future "vis-tui-copy-bubble"
+    #(try (input/clipboard-copy! (or text ""))
+       (catch Throwable _ nil)))
   (vis/notify! "✓ Copied bubble"
     :level :success :ttl-ms copy-success-ttl-ms))
 
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} handle-channel-event!
+  [{:keys [op id text level ttl-ms] :as event}]
+  (case op
+    :input/replace (state/dispatch [:external-input :replace text])
+    :input/append  (state/dispatch [:external-input :append text])
+    :input/insert  (state/dispatch [:external-input :insert text])
+    :status/set    (state/dispatch [:channel-status-set (or id (:source event) :external)
+                                    {:text text :level (or level :info)}])
+    :status/clear  (state/dispatch [:channel-status-clear (or id (:source event) :external)])
+    :notify        (vis/notify! (or text "") :level (or level :info) :ttl-ms (or ttl-ms copy-success-ttl-ms))
+    nil))
+
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} extension-commands
+  [screen]
+  (let [ctx {:channel/id :tui
+             :screen screen
+             :app-db state/app-db
+             :publish! #(vis/publish-channel-event! :tui %)}]
+    (->> (vis/channel-hooks-for :tui)
+      (mapcat (fn [{:keys [commands-fn hook-id]}]
+                (try
+                  (map #(assoc % :hook-id hook-id) (or (some-> commands-fn (apply [ctx])) []))
+                  (catch Throwable t
+                    (vis/notify! (str "Extension command hook failed: " (or (ex-message t) t))
+                      :level :warn :ttl-ms copy-success-ttl-ms)
+                    []))))
+      (filter #(and (:id %) (:label %) (ifn? (:run-fn %))))
+      vec)))
+
 (defn- copy-conversation-as-markdown! [conversation-id]
-  (future
-    (try
-      (if-not conversation-id
-        (vis/notify! "No conversation to copy as Markdown"
-          :level :warn :ttl-ms copy-success-ttl-ms)
-        (let [env      (vis/env-for conversation-id)
-              markdown (when env
-                         (vis/conversation->markdown (:db-info env) conversation-id))]
-          (if (seq markdown)
-            (do (input/clipboard-copy! markdown)
-              (vis/notify! "✓ Copied conversation as Markdown"
-                :level :success :ttl-ms copy-success-ttl-ms))
-            (vis/notify! "No persisted turns to copy as Markdown"
-              :level :warn :ttl-ms copy-success-ttl-ms))))
-      (catch Throwable t
-        (vis/notify!
-          (str "Markdown copy failed: " (or (.getMessage t) (.getName (class t))))
-          :level :error :ttl-ms copy-success-ttl-ms)))))
+  (vis/worker-future "vis-tui-copy-conversation-markdown"
+    #(try
+       (if-not conversation-id
+         (vis/notify! "No conversation to copy as Markdown"
+           :level :warn :ttl-ms copy-success-ttl-ms)
+         (let [env      (vis/env-for conversation-id)
+               markdown (when env
+                          (vis/conversation->markdown (:db-info env) conversation-id))]
+           (if (seq markdown)
+             (do (input/clipboard-copy! markdown)
+               (vis/notify! "✓ Copied conversation as Markdown"
+                 :level :success :ttl-ms copy-success-ttl-ms))
+             (vis/notify! "No persisted turns to copy as Markdown"
+               :level :warn :ttl-ms copy-success-ttl-ms))))
+       (catch Throwable t
+         (vis/notify!
+           (str "Markdown copy failed: " (or (.getMessage t) (.getName (class t))))
+           :level :error :ttl-ms copy-success-ttl-ms)))))
 
 (defn- capture-screen-cells
   "Read the current Lanterna back-buffer as per-cell strings.
@@ -408,12 +437,12 @@
 
 (defn- open-click-target!
   ([{:keys [kind url]}]
-   (future
-     (try
-       (if (= :file kind)
-         (opener/open-file-in-editor! url)
-         (opener/open! url))
-       (catch Throwable _ nil))))
+   (vis/worker-future "vis-tui-open-click-target"
+     #(try
+        (if (= :file kind)
+          (opener/open-file-in-editor! url)
+          (opener/open! url))
+        (catch Throwable _ nil))))
   ([^TerminalScreen screen {:keys [kind url] :as ref}]
    (if (= :provenance kind)
      (open-provenance-popup! screen url)
@@ -785,9 +814,22 @@
       :turn-count (count turns)
       :modified-at modified-at)))
 
+(defn- conversation-sort-key
+  "Default conversation picker ordering.
+
+   Prefer conversations with real turns, then newest latest-turn/modified time,
+   then higher turn count. This keeps the latest active conversation first while
+   still pushing empty/new shells behind conversations with history."
+  [{:keys [turn-count modified-at created-at]}]
+  [(if (pos? (long (or turn-count 0))) 1 0)
+   (or (date->millis modified-at) (date->millis created-at) 0)
+   (long (or turn-count 0))])
+
 (defn- latest-modified-first
   [conversations]
-  (sort-by #(or (date->millis (:modified-at %)) 0) > conversations))
+  (sort-by conversation-sort-key
+    (fn [a b] (compare b a))
+    conversations))
 
 (defn- tui-conversation-summaries
   []
@@ -877,6 +919,8 @@
      (vis/watch-notifications! :tui-screen
        (fn [_snapshot]
          (state/dispatch [:bump-render-version])))
+
+     (vis/add-channel-event-listener! :tui :tui-screen handle-channel-event!)
 
   ;; Load persisted config
      (when-let [c (vis/load-config)]
@@ -1530,43 +1574,52 @@
                  :else
                  (let [{:keys [action state]} (input/handle-key key (:input db))]
                    (state/dispatch [:update-input state])
-                   (let [run-command!
+                   (let [extra-commands (extension-commands screen)
+                         extra-by-id    (into {} (map (juxt :id identity)) extra-commands)
+                         run-command!
                          (fn [cmd]
-                           (when-not (:dialog-open? @state/app-db)
-                             (case cmd
-                               :new-conversation
-                               (switch-conversation! {:action :new})
+                           (if-let [ext-cmd (get extra-by-id cmd)]
+                             (when-not (:dialog-open? @state/app-db)
+                               ((:run-fn ext-cmd)
+                                {:channel/id :tui
+                                 :screen screen
+                                 :app-db state/app-db
+                                 :publish! #(vis/publish-channel-event! :tui %)}))
+                             (when-not (:dialog-open? @state/app-db)
+                               (case cmd
+                                 :new-conversation
+                                 (switch-conversation! {:action :new})
 
-                               :fork-conversation
-                               (switch-conversation! {:action :fork})
+                                 :fork-conversation
+                                 (switch-conversation! {:action :fork})
 
-                               :switch-conversation
-                               (show-conversations!)
+                                 :switch-conversation
+                                 (show-conversations!)
 
-                               :providers
-                               (when-let [c (with-dialog-lock
-                                              #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-                                 (state/dispatch [:set-config c]))
+                                 :providers
+                                 (when-let [c (with-dialog-lock
+                                                #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                                   (state/dispatch [:set-config c]))
 
-                               :settings
-                               (let [redraw-ui! (fn []
-                                                  (let [size   (screen-size screen)
-                                                        cols   (.getColumns size)
-                                                        rows   (.getRows size)
-                                                        layout (render-frame! screen cols rows @state/app-db
-                                                                 (System/currentTimeMillis))]
-                                                    (state/dispatch [:set-layout layout])))]
-                                 (when-let [s (with-dialog-lock
-                                                #(dlg/settings-dialog! screen
-                                                   (:settings @state/app-db)
-                                                   {:on-change (fn [settings]
-                                                                 (state/dispatch [:update-settings settings]))
-                                                    :redraw-ui redraw-ui!}))]
-                                   (state/dispatch [:update-settings s])))
+                                 :settings
+                                 (let [redraw-ui! (fn []
+                                                    (let [size   (screen-size screen)
+                                                          cols   (.getColumns size)
+                                                          rows   (.getRows size)
+                                                          layout (render-frame! screen cols rows @state/app-db
+                                                                   (System/currentTimeMillis))]
+                                                      (state/dispatch [:set-layout layout])))]
+                                   (when-let [s (with-dialog-lock
+                                                  #(dlg/settings-dialog! screen
+                                                     (:settings @state/app-db)
+                                                     {:on-change (fn [settings]
+                                                                   (state/dispatch [:update-settings settings]))
+                                                      :redraw-ui redraw-ui!}))]
+                                     (state/dispatch [:update-settings s])))
 
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
-                               nil)))]
+                                 nil))))]
                      (case action
                        :quit nil
 
@@ -1584,7 +1637,7 @@
                        (do
                          (when-not (:dialog-open? @state/app-db)
                            (loop []
-                             (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen))]
+                             (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen extra-commands))]
                                (run-command! cmd)
                                (recur))))
                          (recur))
@@ -1650,6 +1703,7 @@
         ;; relative to the JVM — leaving stale watchers around would
         ;; eventually hold references to dead atoms).
            (try (vis/unwatch-notifications! :tui-screen) (catch Throwable _ nil))
+           (try (vis/remove-channel-event-listener! :tui :tui-screen) (catch Throwable _ nil))
         ;; Tell the render thread to exit and wake it so the wait
         ;; finishes immediately. Daemon thread, so the join is
         ;; optional — doing it anyway lets the final paint (or the

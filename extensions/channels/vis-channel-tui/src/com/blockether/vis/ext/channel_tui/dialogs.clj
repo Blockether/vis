@@ -467,15 +467,15 @@
 
 (defn- open-picker-item!
   [{:keys [path]}]
-  (future
-    (try
-      (opener/open! path)
-      (catch Throwable t
-        {:status :spawn-failed
-         :command nil
-         :scheme nil
-         :target path
-         :error (.getMessage t)}))))
+  (vis/worker-future "vis-tui-open-picker-item"
+    #(try
+       (opener/open! path)
+       (catch Throwable t
+         {:status :spawn-failed
+          :command nil
+          :scheme nil
+          :target path
+          :error (.getMessage t)}))))
 
 (def ^:private file-picker-table-headers
   ["Status" "File" "Size" "Modified"])
@@ -1840,10 +1840,13 @@
    No bespoke padding — `select-dialog!` runs at the shared default modal
    footprint, and `draw-list-item!` already fills the highlight stripe
    across the full inner width regardless of label length."
-  [^TerminalScreen screen]
-  (let [items (mapv (fn [cmd] {:label (:label cmd)}) palette-commands)]
-    (when-let [choice (select-dialog! screen "Commands" items)]
-      (:id (nth palette-commands (.indexOf ^java.util.List (mapv :label items) (:label choice)))))))
+  ([^TerminalScreen screen]
+   (command-palette! screen []))
+  ([^TerminalScreen screen extra-commands]
+   (let [commands (vec (concat palette-commands extra-commands))
+         items    (mapv (fn [cmd] {:label (:label cmd)}) commands)]
+     (when-let [choice (select-dialog! screen "Commands" items)]
+       (:id (nth commands (.indexOf ^java.util.List (mapv :label items) (:label choice))))))))
 
 ;;; ── Text viewer dialog ─────────────────────────────────────────────────────────
 

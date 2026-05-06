@@ -64,6 +64,9 @@
 (def ^:private latest-modified-first
   (deref #'screen/latest-modified-first))
 
+(def ^:private conversation-sort-key
+  (deref #'screen/conversation-sort-key))
+
 (def ^:private pre-resolve-conversation-id!
   (deref #'screen/pre-resolve-conversation-id!))
 
@@ -189,6 +192,30 @@
                             :projected {:role :user
                                         :text "siema"}}]}
                 4 6 20))))
+
+  (it "sorts conversations by real turns, latest modified time, then turn count by default"
+    (let [old-with-turns {:id :old
+                          :turn-count 1
+                          :modified-at #inst "2024-01-02T00:00:00.000-00:00"
+                          :created-at #inst "2024-01-01T00:00:00.000-00:00"}
+          latest-empty {:id :empty
+                        :turn-count 0
+                        :modified-at #inst "2024-01-10T00:00:00.000-00:00"
+                        :created-at #inst "2024-01-10T00:00:00.000-00:00"}
+          latest-with-turns {:id :latest
+                             :turn-count 2
+                             :modified-at #inst "2024-01-03T00:00:00.000-00:00"
+                             :created-at #inst "2024-01-01T00:00:00.000-00:00"}
+          same-latest-more-turns {:id :more-turns
+                                  :turn-count 5
+                                  :modified-at #inst "2024-01-03T00:00:00.000-00:00"
+                                  :created-at #inst "2024-01-01T00:00:00.000-00:00"}]
+      (expect (= [1 1704240000000 2]
+                (conversation-sort-key latest-with-turns)))
+      (expect (= [:more-turns :latest :old :empty]
+                (mapv :id
+                  (latest-modified-first
+                    [old-with-turns latest-empty latest-with-turns same-latest-more-turns]))))))
 
   (it "copies transcript content without role labels, answer separators, or model metadata"
     (let [ranges (bubble-selectable-ranges

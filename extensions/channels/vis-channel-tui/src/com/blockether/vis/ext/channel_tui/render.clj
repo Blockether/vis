@@ -243,7 +243,7 @@
    whole TUI before first paint."
   ^String [s ^long max-cols]
   (let [s        (str s)
-        max-cols (max 0 (long max-cols))]
+        max-cols (max 0 max-cols)]
     (cond
       (zero? max-cols) ""
       (not (str/includes? s "\u001b")) (p/truncate-cols s max-cols)
@@ -971,6 +971,20 @@
 ;; the var here so Clojure can resolve the symbol at compile time.
 (declare markdown->inline markdown->lines)
 
+(defn- tool-color-role->fg
+  [role]
+  (case role
+    :tool-color/read t/tool-color-read
+    :tool-color/search t/tool-color-search
+    :tool-color/preview t/tool-color-preview
+    :tool-color/edit t/tool-color-edit
+    :tool-color/create t/tool-color-create
+    :tool-color/delete t/tool-color-delete
+    :tool-color/move t/tool-color-move
+    :tool-color/shell t/tool-color-shell
+    :tool-color/meta t/tool-color-meta
+    nil))
+
 (defn- paint-preview-switcher!
   [g x y fbx iw abs-row meta bg fg inactive-fg base-styles]
   (p/set-bg! g bg)
@@ -1419,9 +1433,11 @@
                                    hovered? t/link-chrome-hover-bg
                                    proof?   t/proof-summary-bg
                                    :else    t/md-summary-bg)
+                        tool-fg  (tool-color-role->fg (:color-role meta))
                         fg       (cond
                                    hovered? t/link-chrome-hover-fg
                                    proof?   t/proof-summary-fg
+                                   tool-fg  tool-fg
                                    :else    t/md-summary-fg)]
                     (if (= :preview-switcher (:kind meta))
                       (paint-preview-switcher! g x y fbx iw abs-row meta bg fg t/dialog-hint [p/BOLD])
@@ -1570,9 +1586,11 @@
                                    hovered? t/link-chrome-hover-bg
                                    proof?   t/th-proof-summary-bg
                                    :else    t/th-md-summary-bg)
+                        tool-fg  (tool-color-role->fg (:color-role meta))
                         fg       (cond
                                    hovered? t/link-chrome-hover-fg
                                    proof?   t/th-proof-summary-fg
+                                   tool-fg  tool-fg
                                    :else    t/th-md-summary-fg)]
                     (if (= :preview-switcher (:kind meta))
                       (paint-preview-switcher! g x y fbx iw abs-row meta bg fg t/dialog-hint [p/BOLD p/ITALIC])
@@ -2094,6 +2112,25 @@
       summary
       (str proof-summary-icon " " summary))))
 
+(defn- tool-detail-badge
+  [detail]
+  (when (map? detail)
+    (let [op     (:op detail)
+          cls    (:op-class detail)
+          label  (case cls
+                   :op/read "READ"
+                   :op/search "SEARCH"
+                   :op/preview "PREVIEW"
+                   :op/edit "EDIT"
+                   :op/create "CREATE"
+                   :op/delete "DELETE"
+                   :op/move "MOVE"
+                   :op/shell "SHELL"
+                   :op/meta "META"
+                   nil)]
+      (when label
+        (str label (when op (str " " (name op))))))))
+
 (defn- preview-switcher-entry
   [{:keys [marker active-mode conversation-id node-id max-w]}]
   (let [tokens (mapv (fn [[mode label]]
@@ -2123,7 +2160,7 @@
             :options spans}}))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
-  [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id proofs?]
+  [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id proofs? color-role]
     :as detail-ctx}]
   (let [suffix    (detail-id-suffix detail-ctx)
         hint      (when collapsed? (str " · " (hidden-size-hint hidden-entries)))
@@ -2137,7 +2174,8 @@
                    :conversation-id (str conversation-id)
                    :node-id (str node-id)
                    :collapsed? collapsed?
-                   :proofs? (boolean proofs?)}]
+                   :proofs? (boolean proofs?)
+                   :color-role color-role}]
     (mapv (fn [line] {:line (str marker line) :meta meta}) wrapped)))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} auto-collapse-needed?
@@ -2147,7 +2185,7 @@
 
 (defn- maybe-collapse-block
   [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
-           block-number kind summary summary-marker body-marker lines max-w]}]
+           block-number kind summary summary-marker body-marker lines max-w color-role]}]
   (let [entries (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines)]
     (if (or (nil? conversation-id)
           (not (auto-collapse-needed? lines (str/join "\n" lines))))
@@ -2158,7 +2196,8 @@
                         :block-number block-number
                         :details-path nil
                         :section :iteration
-                        :kind kind}
+                        :kind kind
+                        :color-role color-role}
             node-id    (detail-node-id detail-ctx)
             collapsed? (not (detail-expanded? detail-expansions conversation-id node-id false))]
         (vec (concat
@@ -2215,7 +2254,7 @@
    expensive on long single-line data dumps; when the detail row is
    collapsed by default, the first frame only needs the summary hint."
   [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
-           block-number kind summary summary-marker raw-text max-w]
+           block-number kind summary summary-marker raw-text max-w color-role]
     :as opts}]
   (let [raw-text (str/trim (str raw-text))]
     (when-not (str/blank? raw-text)
@@ -2225,7 +2264,8 @@
                         :block-number block-number
                         :details-path nil
                         :section :iteration
-                        :kind kind}
+                        :kind kind
+                        :color-role color-role}
             node-id    (detail-node-id detail-ctx)
             collapsed? (not (detail-expanded? detail-expansions conversation-id node-id false))]
         (if (and conversation-id
@@ -2560,8 +2600,8 @@
 (defn- format-iteration-entry-entries
   [{:keys [thinking events code comments results result-kinds result-details stdouts durations successes started-at-ms error repeat-count]}
    code-width iteration-number
-   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms]
-       :or   {show-header? true}}]]
+   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines]
+       :or   {show-header? true preview-default-lines 4}}]]
   (let [fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
         label       (label-text "iteration" iteration-number)
@@ -2677,43 +2717,88 @@
                 result-str    (when results (get results idx))
                 result-kind   (when result-kinds (get result-kinds idx))
                 result-detail (when result-details (get result-details idx))
+                tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
                 result-lines  (when (and result-str (not (str/blank? (str result-str))))
                                 (if (= :preview result-kind)
-                                  (let [switch-id      (detail-node-id {:conversation-turn-id conversation-turn-id
-                                                                        :iteration-number iteration-number
-                                                                        :block-number block-number
-                                                                        :section :iteration
-                                                                        :kind :preview-switch})
-                                        active-mode    (preview-mode detail-expansions conversation-id switch-id)
-                                        detail-text    (fn [k]
-                                                         (when (map? result-detail) (get result-detail k)))
-                                        mode-text      (case active-mode
-                                                         :preview (str/trim (str result-str))
-                                                         :raw (or (some-> (detail-text :raw) str) ""))
-                                        mode-lines     (if (= :preview active-mode)
-                                                         (mapcat #(wrap-text % fill-w) (str/split-lines mode-text))
-                                                         (str/split-lines (format-clojure-ansi mode-text fill-w)))
-                                        switcher-entry (preview-switcher-entry
-                                                         {:marker md-summary-marker
-                                                          :conversation-id conversation-id
-                                                          :node-id switch-id
-                                                          :active-mode active-mode
-                                                          :max-w fill-w})]
-                                    (vec (cons switcher-entry
-                                           (mapv #(line-entry (str r-marker %)) mode-lines))))
-                                  (maybe-collapse-raw-text-block
-                                    {:conversation-id      conversation-id
-                                     :detail-expansions   detail-expansions
-                                     :conversation-turn-id conversation-turn-id
-                                     :iteration-number    iteration-number
-                                     :block-number        block-number
-                                     :kind                :result
-                                     :summary             "RESULT"
-                                     :summary-marker      md-summary-marker
-                                     :body-marker         r-marker
-                                     :raw-text            result-str
-                                     :max-w               fill-w})))
+                                  (let [switch-id        (detail-node-id {:conversation-turn-id conversation-turn-id
+                                                                          :iteration-number iteration-number
+                                                                          :block-number block-number
+                                                                          :section :iteration
+                                                                          :kind :preview-switch})
+                                        body-id          (detail-node-id {:conversation-turn-id conversation-turn-id
+                                                                          :iteration-number iteration-number
+                                                                          :block-number block-number
+                                                                          :section :iteration
+                                                                          :kind :preview-body})
+                                        active-mode      (preview-mode detail-expansions conversation-id switch-id)
+                                        detail-text      (fn [k]
+                                                           (when (map? result-detail) (get result-detail k)))
+                                        mode-text        (case active-mode
+                                                           :preview (str/trim (str result-str))
+                                                           :raw (or (some-> (detail-text :raw) str) ""))
+                                        mode-lines       (if (= :preview active-mode)
+                                                           (mapcat #(wrap-text % fill-w) (str/split-lines mode-text))
+                                                           (str/split-lines (format-clojure-ansi mode-text fill-w)))
+                                        preview-limit    (max 1 (long (or preview-default-lines 4)))
+                                        collapsible?     (and conversation-id
+                                                           (= :preview active-mode)
+                                                           (> (count mode-lines) preview-limit))
+                                        body-expanded?   (and collapsible?
+                                                           (detail-expanded? detail-expansions conversation-id body-id false))
+                                        collapsed?       (and collapsible? (not body-expanded?))
+                                        visible-lines    (if collapsed?
+                                                           (take preview-limit mode-lines)
+                                                           mode-lines)
+                                        hidden-count     (when collapsible?
+                                                           (- (count mode-lines) (count visible-lines)))
+                                        switcher-entry   (preview-switcher-entry
+                                                           {:marker md-summary-marker
+                                                            :conversation-id conversation-id
+                                                            :node-id switch-id
+                                                            :active-mode active-mode
+                                                            :max-w fill-w})
+                                        body-entries     (mapv #(line-entry (str r-marker %)) visible-lines)
+                                        summary-entry    (when collapsible?
+                                                           (let [summary-text (if collapsed?
+                                                                                (str "PREVIEW · " hidden-count " lines hidden")
+                                                                                (str "PREVIEW · showing all " (count mode-lines) " lines"))
+                                                                 suffix       (detail-id-suffix {:conversation-turn-id conversation-turn-id
+                                                                                                 :iteration-number iteration-number
+                                                                                                 :block-number block-number
+                                                                                                 :section :iteration
+                                                                                                 :kind :preview})
+                                                                 left         (str (if collapsed? "▸ " "▾ ") summary-text)
+                                                                 line         (format-detail-summary-line left suffix fill-w)]
+                                                             {:line (str md-summary-marker line)
+                                                              :meta {:kind :toggle-details
+                                                                     :conversation-id (str conversation-id)
+                                                                     :node-id (str body-id)
+                                                                     :collapsed? collapsed?
+                                                                     :proofs? false}}))]
+                                    (vec (concat [switcher-entry]
+                                           body-entries
+                                           (when summary-entry [summary-entry]))))
+                                  (let [color-role (when (map? result-detail) (:color-role result-detail))
+                                        badge-entry (when tool-badge
+                                                      {:line (str md-summary-marker tool-badge)
+                                                       :meta {:kind :tool-badge
+                                                              :color-role color-role}})]
+                                    (vec (concat
+                                           (when badge-entry [badge-entry])
+                                           (maybe-collapse-raw-text-block
+                                             {:conversation-id      conversation-id
+                                              :detail-expansions   detail-expansions
+                                              :conversation-turn-id conversation-turn-id
+                                              :iteration-number    iteration-number
+                                              :block-number        block-number
+                                              :kind                :result
+                                              :summary             (or tool-badge "RESULT")
+                                              :color-role          color-role
+                                              :summary-marker      md-summary-marker
+                                              :body-marker         r-marker
+                                              :raw-text            result-str
+                                              :max-w               fill-w}))))))
                 code-block    (vec (concat
                                      (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
                                      (when (seq comment-lines)
@@ -2878,7 +2963,7 @@
 
    The activity row sits last so it tracks the natural reading
    direction — trace history flows top-down like a transcript, and
-   \"what's happening RIGHT NOW\" lives where the cursor is about to
+   what is happening RIGHT NOW lives where the cursor is about to
    write next. Putting the spinner above the trace forced the user
    to look at a moving line, then drop their eye further down to
    read static history that doesn't change. Inverted now.
@@ -2902,6 +2987,7 @@
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
          show-iteration-headers?  (get settings :show-iteration-headers false)
+         live-limit       (max 1 (long (get settings :progress/live-iteration-limit 24)))
          {:keys [now-ms turn-start-ms cancelling? conversation-id
                  conversation-turn-id detail-expansions]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
@@ -2912,18 +2998,53 @@
                             (progress-phase iterations cancelling?) "…  "
                             elapsed-str "  ·  Esc to cancel")
          line-entry       (fn [line] {:line line :meta nil})
+         history-ctx      {:conversation-id conversation-id
+                           :conversation-turn-id conversation-turn-id
+                           :details-path nil
+                           :section :progress
+                           :kind :history}
+         history-node-id  (detail-node-id history-ctx)
+         grouped-iterations (collapse-repeated-error-runs iterations)
+         history-needed?  (> (count grouped-iterations) live-limit)
+         history-expanded? (and history-needed?
+                             conversation-id
+                             (detail-expanded? detail-expansions conversation-id history-node-id false))
+         hidden-count     (if (and history-needed? (not history-expanded?))
+                            (- (count grouped-iterations) live-limit)
+                            0)
+         visible-iterations (if (pos? hidden-count)
+                              (subvec grouped-iterations hidden-count)
+                              grouped-iterations)
+         history-summary  (when history-needed?
+                            (let [collapsed?   (pos? hidden-count)
+                                  summary-text (if collapsed?
+                                                 (str "PROGRESS HISTORY · " hidden-count " iterations hidden")
+                                                 (str "PROGRESS HISTORY · showing all " (count grouped-iterations) " iterations"))
+                                  suffix       (detail-id-suffix history-ctx)
+                                  left         (str (if collapsed? "▸ " "▾ ") summary-text)
+                                  line         (format-detail-summary-line left suffix content-w)
+                                  meta         (when conversation-id
+                                                 {:kind :toggle-details
+                                                  :conversation-id (str conversation-id)
+                                                  :node-id (str history-node-id)
+                                                  :collapsed? collapsed?
+                                                  :proofs? false})]
+                              [{:line (str md-summary-marker line) :meta meta}]))
          trace-entries    (when (and show-iterations? (seq iterations))
                             (into []
-                              (mapcat (fn [[idx entry]]
-                                        (format-iteration-entry-entries
-                                          (if show-thinking? entry (dissoc entry :thinking :events))
-                                          content-w (inc idx)
-                                          {:show-header?         show-iteration-headers?
-                                           :now-ms               now-ms
-                                           :conversation-id      conversation-id
-                                           :conversation-turn-id conversation-turn-id
-                                           :detail-expansions   detail-expansions})))
-                              (collapse-repeated-error-runs iterations)))
+                              (concat
+                                (or history-summary [])
+                                (mapcat (fn [[idx entry]]
+                                          (format-iteration-entry-entries
+                                            (if show-thinking? entry (dissoc entry :thinking :events))
+                                            content-w (inc idx)
+                                            {:show-header?         show-iteration-headers?
+                                             :now-ms               now-ms
+                                             :conversation-id      conversation-id
+                                             :conversation-turn-id conversation-turn-id
+                                             :detail-expansions   detail-expansions
+                                             :preview-default-lines (get settings :preview/default-lines 4)}))
+                                  visible-iterations))))
          entries          (if (seq trace-entries)
                             (conj (conj trace-entries (line-entry ""))
                               (line-entry spinner-line))
@@ -3593,7 +3714,19 @@
                                    code)
                      tail        (if (seq tail) (next tail) tail)]
                  (recur (seq tail) false
-                   (into acc (code-block-lines m lang code max-w prefix))))
+                   (into acc
+                     (let [source (str/join "\n" code)
+                           rendered (vis/render-fenced-block
+                                      {:surface :tui
+                                       :lang lang
+                                       :source source
+                                       :source-lines (vec code)
+                                       :width max-w
+                                       :mode mode})
+                           lines (:lines rendered)]
+                       (if (seq lines)
+                         (mapv #(str (:code m) prefix %) lines)
+                         (code-block-lines m lang code max-w prefix))))))
 
                (str/starts-with? (str/trim line) "```")
                (recur rst false (conj acc (str (:code m) "")))
@@ -3892,7 +4025,8 @@
                                                 {:show-header?         show-iteration-headers?
                                                  :conversation-id      (:conversation-id opts)
                                                  :detail-expansions   (:detail-expansions opts)
-                                                 :conversation-turn-id (:conversation-turn-id opts)})))
+                                                 :conversation-turn-id (:conversation-turn-id opts)
+                                                 :preview-default-lines (get settings :preview/default-lines 4)})))
                                     (collapse-repeated-error-runs trace)))
         answer-str              (or answer "")
         fa-label                (label-text "final answer")

@@ -111,11 +111,13 @@
                                                                (= :v/preview (get-in result [:provenance :op]))) :preview
                                                              (extension/tool-result? result) :tool
                                                              :else :value))
-                                             preview-result-detail
+                                             tool-result-detail
                                              (fn [result]
-                                               (when (and (extension/tool-result? result)
-                                                       (= :v/preview (get-in result [:provenance :op])))
-                                                 {:raw (pr-str (:result result))}))
+                                               (when (extension/tool-result? result)
+                                                 (let [prov (:provenance result)]
+                                                   (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role])
+                                                     (= :v/preview (:op prov))
+                                                     (assoc :raw (pr-str (:result result)))))))
                                              result-strs (mapv (fn [{:keys [result error] :as expr}]
                                                                  (cond
                                                                    error (vis/format-error error)
@@ -125,7 +127,7 @@
                                                                    (extension/render-tool-result :tui result {:block expr})
                                                                    :else (pr-str result)))
                                                            exprs)
-                                             result-details (mapv (comp preview-result-detail :result) exprs)
+                                             result-details (mapv (comp tool-result-detail :result) exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
                                              durations   (mapv #(or (:duration-ms %) 0) exprs)]
                                          {:thinking  (visible-thinking (:thinking it))

@@ -122,17 +122,37 @@
       :fg t/footer-error-fg :bold? true
       :region :right :priority 2}]))
 
+(def ^:private session-cost-keys
+  [:input-cost
+   :input-uncached-cost
+   :input-cached-cost
+   :input-cache-write-cost
+   :cache-read-cost
+   :cache-write-cost
+   :output-cost
+   :total-cost])
+
+(defn- add-cost-slot
+  [acc cost k]
+  (let [v (get cost k)]
+    (if (number? v)
+      (update acc k (fnil + 0.0) (double v))
+      acc)))
+
+(defn- add-message-cost
+  [acc {:keys [cost]}]
+  (cond
+    (map? cost)    (reduce #(add-cost-slot %1 cost %2) acc session-cost-keys)
+    (number? cost) (update acc :total-cost (fnil + 0.0) (double cost))
+    :else          acc))
+
 (defn- session-cost
-  "Cumulative session cost in USD across all assistant turns, or nil
-   when no turns carried `:cost`. Vis already tracks `:total-cost` per
-   turn (used by the meta-line under each bubble); this just sums."
+  "Cumulative session cost across assistant turns. Preserves detailed
+   input / cached-input / output / total slots so the footer can show the
+   same split as per-bubble meta lines."
   [messages]
-  (let [total (reduce (fn [acc m]
-                        (if-let [c (some-> m :cost :total-cost)]
-                          (+ acc (double c))
-                          acc))
-                0.0 messages)]
-    (when (pos? total) total)))
+  (let [totals (reduce add-message-cost {} messages)]
+    (when (seq totals) totals)))
 
 (defn- first-token-number
   [tokens ks]
@@ -389,7 +409,7 @@
 (defn- build-usage-segments
   [{:keys [messages]}]
   (let [tokens-str (some-> (session-tokens messages) fmt/format-tokens)
-        cost-str   (format-cost (session-cost messages))]
+        cost-str   (some-> (session-cost messages) fmt/format-cost)]
     (cond-> []
       tokens-str
       (conj {:text (str "total " tokens-str)
@@ -397,7 +417,7 @@
              :region :right :priority 2})
 
       cost-str
-      (conj {:text cost-str
+      (conj {:text (str "cost " cost-str)
              :fg t/footer-fg-muted :bold? false
              :region :right :priority 3}))))
 

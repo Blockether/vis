@@ -15,6 +15,18 @@
              :from {:username "alice"}
              :text text}})
 
+(defdescribe bot-menu-test
+  (it "installs every Telegram command in the bot menu"
+    (let [installed (atom nil)
+          install-bot-menu! (private-var 'install-bot-menu!)]
+      (with-redefs [tg/set-my-commands! (fn [token commands]
+                                          (reset! installed {:token token :commands commands})
+                                          {:ok true})]
+        (install-bot-menu! "token")
+        (expect (= "token" (:token @installed)))
+        (expect (= ["start" "help" "status" "model" "models" "reasoning" "verbosity" "cancel" "export"]
+                  (mapv #(get % "command") (:commands @installed))))))))
+
 (defdescribe command-test
   (it "sets reasoning and verbosity through Telegram slash commands"
     (reset-chat-state!)
@@ -30,6 +42,17 @@
         (expect (= {:reasoning-level :deep
                     :openai-codex-verbosity :high}
                   (get-in @(private-var 'chat-state) [42 :settings]))))))
+
+  (it "/start opens the same help as the menu"
+    (reset-chat-state!)
+    (let [sent (atom nil)
+          handle-command! (private-var 'handle-command!)]
+      (with-redefs [tg/send-message! (fn [_token chat-id text & _opts]
+                                       (reset! sent [chat-id text]))]
+        (expect (true? (handle-command! "token" 42 "/start")))
+        (expect (= 42 (first @sent)))
+        (expect (re-find #"/models — list models" (second @sent)))
+        (expect (re-find #"/export — export" (second @sent))))))
 
   (it "cancels the active Telegram turn"
     (reset-chat-state!)

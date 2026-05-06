@@ -102,6 +102,13 @@
   []
   (last (vis/notifications)))
 
+(defn- latest-channel-status
+  [{:keys [channel-status]}]
+  (->> (vals channel-status)
+    (filter #(seq (:text %)))
+    (sort-by #(long (or (:updated-at-ms %) 0)))
+    last))
+
 (defn- level->fg
   "Map a notification level to a foreground color. Falls back to the
    muted-footer color so an unknown level still renders something."
@@ -175,9 +182,9 @@
         separator-w  (p/display-width right-block-separator)
         md-copy-col  (when (and right-col (pos? md-copy-w))
                        (+ right-col id-copy-w separator-w))
-        notif        (latest-notification)
-        notif-text   (some-> notif :text)
-        notif-level  (some-> notif :level)
+        banner       (or (latest-channel-status db) (latest-notification))
+        notif-text   (some-> banner :text)
+        notif-level  (some-> banner :level)
         ;; Reserve up to 1/3 of the row for the LEFT banner so the
         ;; centered title still has room. Banner truncates with an
         ;; ellipsis if the notification text is longer.

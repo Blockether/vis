@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.lang-clojure.core-test
   (:require
    [babashka.fs :as fs]
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.lang-clojure.core :as clj-ext]
    [lazytest.core :refer [defdescribe expect it]]
@@ -49,6 +50,16 @@
       (expect (contains? symbols 'find-value))
       (expect (contains? symbols 'replace))
       (expect (contains? symbols 'subedit->))))
+
+  (it "adds Clojure structural-editing guidance to environment info"
+    (let [info ((:ext/environment-info-fn clj-ext/clojure-extension) {})]
+      (expect (string? info))
+      (expect (str/includes? info "Prefer structural editing"))
+      (expect (str/includes? info "`z/locators`"))
+      (expect (str/includes? info "`z/symbols`"))
+      (expect (str/includes? info "`z/patch`"))
+      (expect (str/includes? info "rewrite-clj"))
+      (expect (str/includes? info "add `:replace`"))))
 
   (it "makes rewrite-clj threading macros callable inside SCI"
     (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (vis/create-sci-context nil)

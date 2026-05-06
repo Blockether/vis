@@ -91,6 +91,15 @@
 (def code-syntax-number-fg  (rgb :code-syntax-number-fg))
 (def code-syntax-comment-fg (rgb :code-syntax-comment-fg))
 (def code-border-fg    (rgb :code-border-fg))
+(def tool-color-read    (rgb :tool-color-read))
+(def tool-color-search  (rgb :tool-color-search))
+(def tool-color-preview (rgb :tool-color-preview))
+(def tool-color-edit    (rgb :tool-color-edit))
+(def tool-color-create  (rgb :tool-color-create))
+(def tool-color-delete  (rgb :tool-color-delete))
+(def tool-color-move    (rgb :tool-color-move))
+(def tool-color-shell   (rgb :tool-color-shell))
+(def tool-color-meta    (rgb :tool-color-meta))
 (def stdout-bg         (rgb :stdout-bg))
 (def stdout-fg         (rgb :stdout-fg))
 (def stdout-label-fg   (rgb :stdout-label-fg))
@@ -195,6 +204,15 @@
    :code-syntax-number-fg #'code-syntax-number-fg
    :code-syntax-comment-fg #'code-syntax-comment-fg
    :code-border-fg #'code-border-fg
+   :tool-color-read #'tool-color-read
+   :tool-color-search #'tool-color-search
+   :tool-color-preview #'tool-color-preview
+   :tool-color-edit #'tool-color-edit
+   :tool-color-create #'tool-color-create
+   :tool-color-delete #'tool-color-delete
+   :tool-color-move #'tool-color-move
+   :tool-color-shell #'tool-color-shell
+   :tool-color-meta #'tool-color-meta
    :stdout-bg #'stdout-bg
    :stdout-fg #'stdout-fg
    :stdout-label-fg #'stdout-label-fg

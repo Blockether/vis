@@ -132,6 +132,55 @@
        :absolute  nil
        :kind      kind})))
 
+(defn tool-op->class
+  "Classify editing/language tool operations by user-visible effect."
+  [op]
+  (case op
+    (:v/cat :v/ls :v/glob :v/exists? :z/locators :z/symbols :z/locator-for-symbol) :op/read
+    (:v/rg :all :any) :op/search
+    :v/preview :op/preview
+    (:v/patch :z/patch :v/write) :op/edit
+    :v/create-dirs :op/create
+    (:v/delete :v/delete-if-exists) :op/delete
+    (:v/move :v/copy) :op/move
+    :v/bash :op/shell
+    :op/meta))
+
+(defn tool-op->presentation-kind
+  "Return stable presentation kind for operation class badges/cards."
+  [op]
+  (case (tool-op->class op)
+    :op/read :tool/read
+    :op/search :tool/search
+    :op/preview :tool/preview
+    :op/edit :tool/edit
+    :op/create :tool/create
+    :op/delete :tool/delete
+    :op/move :tool/move
+    :op/shell :tool/shell
+    :tool/meta))
+
+(defn tool-op->color-role
+  "Return semantic TUI color role for operation class. Themes can map these
+   roles without render code hard-coding RGB values."
+  [op]
+  (case (tool-op->class op)
+    :op/read :tool-color/read
+    :op/search :tool-color/search
+    :op/preview :tool-color/preview
+    :op/edit :tool-color/edit
+    :op/create :tool-color/create
+    :op/delete :tool-color/delete
+    :op/move :tool-color/move
+    :op/shell :tool-color/shell
+    :tool-color/meta))
+
+(defn- op-presentation
+  [op]
+  {:op-class (tool-op->class op)
+   :presentation-kind (tool-op->presentation-kind op)
+   :color-role (tool-op->color-role op)})
+
 (defn- tool-success
   [{:keys [op path kind result provenance presentation]}]
   (let [t (now-ms)]
@@ -143,23 +192,41 @@
                              :started-at-ms  t
                              :finished-at-ms t
                              :duration-ms    0}
+                       (op-presentation op)
                        provenance)})
-      presentation (assoc :presentation presentation))))
+      presentation (assoc :presentation (merge (op-presentation op) presentation)))))
 
 (defn- tool-failure-on-error
   [op kind _render-fn]
   (fn [err _env _f args]
-    (let [path (first args)
-          target (path->target path kind)
-          t (now-ms)]
+    (let [bash?        (= :v/bash op)
+          bash-opts    (when bash? (second args))
+          path         (if bash? (or (:cwd bash-opts) ".") (first args))
+          target       (path->target path kind)
+          interrupted? (instance? InterruptedException err)
+          t            (now-ms)
+          error        (when interrupted?
+                         {:type    "java.lang.InterruptedException"
+                          :message (str (name op)
+                                     " interrupted while running; operation was cancelled.")
+                          :trace   []})]
       {:result (extension/failure
                  {:result     nil
-                  :provenance {:op             op
-                               :target         target
-                               :started-at-ms  t
-                               :finished-at-ms t
-                               :duration-ms    0}
-                  :throwable  err})})))
+                  :provenance (cond-> (merge {:op             op
+                                              :target         target
+                                              :started-at-ms  t
+                                              :finished-at-ms t
+                                              :duration-ms    0}
+                                        (op-presentation op))
+                                bash?
+                                (assoc :command (first args)
+                                  :cwd path
+                                  :opts (dissoc bash-opts :stdin))
+                                interrupted?
+                                (assoc :interrupted? true
+                                  :status :interrupted))
+                  :error      error
+                  :throwable  (when-not error err)})})))
 
 ;; =============================================================================
 ;; .gitignore (cheap, lazy)
@@ -430,33 +497,82 @@
         n
         (recur (+ hit (count needle)) (inc n))))))
 
-(defn- patch-plan
+(def ^:private patch-search-preview-chars 180)
+
+(defn- search-preview
+  [s]
+  (let [s (str s)]
+    (if (<= (count s) patch-search-preview-chars)
+      s
+      (str (subs s 0 patch-search-preview-chars)
+        "…<+" (- (count s) patch-search-preview-chars) " chars>"))))
+
+(defn- patch-analysis
   [edits]
   (let [edits (coerce-patch-edits edits)]
-    (loop [remaining edits
-           states {}]
+    (loop [idx 0
+           remaining edits
+           states {}
+           checks []
+           failures []]
       (if-let [{:keys [path search replace]} (first remaining)]
-        (let [file (ensure-existing-file! (safe-path path))
-              before (or (get-in states [path :before]) (slurp file))
+        (let [file    (ensure-existing-file! (safe-path path))
+              rel     (rel-path file)
+              before  (or (get-in states [path :before]) (slurp file))
               current (or (get-in states [path :after]) before)
-              search (str search)
+              search  (str search)
               replace (str replace)
-              matches (occurrence-count current search)]
-          (when-not (= 1 matches)
-            (throw (ex-info (str "v/patch :search must match exactly once in " path
-                              "; matched " matches " time(s)")
-                     {:type :ext.foundation.editing/patch-search-not-unique
-                      :path path
-                      :matches matches
-                      :search search})))
-          (recur (next remaining)
-            (assoc states path {:file file
-                                :path (rel-path file)
-                                :before before
-                                :after (str/replace-first current
-                                         (re-pattern (java.util.regex.Pattern/quote search))
-                                         (java.util.regex.Matcher/quoteReplacement replace))})))
-        (vals states)))))
+              matches (occurrence-count current search)
+              check   {:edit-index idx
+                       :path rel
+                       :matches matches
+                       :search-preview (search-preview search)}]
+          (if (= 1 matches)
+            (recur (inc idx)
+              (next remaining)
+              (assoc states path {:file file
+                                  :path rel
+                                  :before before
+                                  :after (str/replace-first current
+                                           (re-pattern (java.util.regex.Pattern/quote search))
+                                           (java.util.regex.Matcher/quoteReplacement replace))})
+              (conj checks check)
+              failures)
+            (recur (inc idx)
+              (next remaining)
+              states
+              (conj checks check)
+              (conj failures check))))
+        {:plans (vals states)
+         :checks checks
+         :failures failures
+         :valid? (empty? failures)}))))
+
+(defn- patch-failure-message
+  [failures]
+  (let [{:keys [edit-index path matches]} (first failures)]
+    (if (= 1 (count failures))
+      (str "v/patch edit " edit-index " failed in " path
+        "; matched " matches " time(s)")
+      (str "v/patch " (count failures) " edits failed; first edit " edit-index
+        " in " path " matched " matches " time(s)"))))
+
+(defn- patch-plan
+  [edits]
+  (let [{:keys [plans failures checks]} (patch-analysis edits)]
+    (when (seq failures)
+      (throw (ex-info (patch-failure-message failures)
+               {:type :ext.foundation.editing/patch-search-not-unique
+                :failures failures
+                :checks checks})))
+    plans))
+
+(defn patch-check
+  [edits]
+  (let [{:keys [checks failures valid?]} (patch-analysis edits)]
+    {:valid? valid?
+     :checks checks
+     :failures failures}))
 
 (defn patch-safe
   [edits]
@@ -647,26 +763,34 @@
          ^Process process (.start pb)
          stdout-f (future (read-stream-limited (.getInputStream process) max-output-chars))
          stderr-f (future (read-stream-limited (.getErrorStream process) max-output-chars))
-         stdin-f  (future (write-stdin-and-close! process stdin))
-         done?    (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
-         _        (when-not done?
-                    (.destroyForcibly process)
-                    (.waitFor process))
-         finished (now-ms)
-         stdout   @stdout-f
-         stderr   @stderr-f
-         _        (try @stdin-f (catch Throwable _ nil))]
-     {:command           command
-      :cwd               cwd-rel
-      :exit              (if done? (.exitValue process) 124)
-      :timed-out?        (not done?)
-      :duration-ms       (long (max 0 (- finished started)))
-      :stdout            (:text stdout)
-      :stderr            (:text stderr)
-      :stdout-chars      (:chars stdout)
-      :stderr-chars      (:chars stderr)
-      :stdout-truncated? (:truncated? stdout)
-      :stderr-truncated? (:truncated? stderr)})))
+         stdin-f  (future (write-stdin-and-close! process stdin))]
+     (try
+       (let [done?    (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
+             _        (when-not done?
+                        (.destroyForcibly process)
+                        (.waitFor process 1000 TimeUnit/MILLISECONDS))
+             finished (now-ms)
+             stdout   @stdout-f
+             stderr   @stderr-f
+             _        (try @stdin-f (catch Throwable _ nil))]
+         {:command           command
+          :cwd               cwd-rel
+          :exit              (if done? (.exitValue process) 124)
+          :timed-out?        (not done?)
+          :timeout-ms        timeout-ms
+          :duration-ms       (long (max 0 (- finished started)))
+          :stdout            (:text stdout)
+          :stderr            (:text stderr)
+          :stdout-chars      (:chars stdout)
+          :stderr-chars      (:chars stderr)
+          :stdout-truncated? (:truncated? stdout)
+          :stderr-truncated? (:truncated? stderr)})
+       (catch InterruptedException e
+         (.destroyForcibly process)
+         (future-cancel stdout-f)
+         (future-cancel stderr-f)
+         (future-cancel stdin-f)
+         (throw e))))))
 
 ;; =============================================================================
 ;; Preview EQL
@@ -914,6 +1038,18 @@
                                     :lines-after (count (str/split-lines after))})
                              plans)}})))
 
+(defn- patch-check-tool
+  [edits]
+  (let [out (patch-check edits)]
+    (tool-success
+      {:op :v/patch-check
+       :path (or (:path (first (:checks out))) ".")
+       :kind :file
+       :result out
+       :provenance {:valid? (:valid? out)
+                    :edit-count (count (:checks out))
+                    :failure-count (count (:failures out))}})))
+
 (defn- create-dirs-tool
   [path]
   (let [before (fs/exists? (safe-path path))
@@ -1012,7 +1148,9 @@
         :provenance {:command command
                      :cwd (:cwd out)
                      :exit (:exit out)
+                     :status (if (:timed-out? out) :timeout :done)
                      :timed-out? (:timed-out? out)
+                     :timeout-ms (:timeout-ms out)
                      :stdout-truncated? (:stdout-truncated? out)
                      :stderr-truncated? (:stderr-truncated? out)
                      :opts (dissoc opts :stdin)}
@@ -1331,6 +1469,12 @@
             (when diff-txt
               (md/code-block "diff" diff-txt))))))))
 
+(defn- render-patch-check
+  [{:keys [surface tool-result]}]
+  (if-not (:success? tool-result)
+    (tool-error-text tool-result)
+    (render-edn-block surface (:result tool-result))))
+
 (defn- render-create-dirs
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
@@ -1421,7 +1565,7 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [{:keys [command cwd exit timed-out? duration-ms stdout stderr
+    (let [{:keys [command cwd exit timed-out? timeout-ms duration-ms stdout stderr
                   stdout-truncated? stderr-truncated?]} (:result tool-result)
           out (cond-> []
                 (not (str/blank? stdout))
@@ -1430,7 +1574,7 @@
                 (conj (md/join "stderr:" (md/code-block "text" (bounded-render-text stderr)))))]
       (md/join
         (md/p "Ran bash in" (md/code cwd) "- exit" (md/code exit) "," duration-ms "ms"
-          (when timed-out? ", timed out")
+          (when timed-out? (str ", timed out after " timeout-ms "ms"))
           (when (or stdout-truncated? stderr-truncated?) ", output truncated")
           ".")
         (md/p "Command:" (md/code command))
@@ -1453,7 +1597,7 @@
 
 (def preview-symbol
   (vis/symbol 'preview preview-tool
-    {:doc "Project a value into <journal>/TUI display with EQL. Observation call: use as a standalone display form; leave durable bindings for source/acquisition values. Strategy: bind full reads/searches you need later, then call preview separately; never echo a var just to inspect it. Examples: `(def file (v/cat \"src/foo.clj\"))` followed by `(v/preview file {:result [[:lines {:from 100 :to 180}]]})`, `(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)`, `(v/preview value)`. With no EQL, previews the whole payload. EQL supports keys, [:*], nested pulls, and field ranges like {:result [[:lines {:from 40 :to 120}]]}. Preserves source rendering metadata and provenance boundary."
+    {:doc "Project a value into <journal>/TUI display with EQL. The tool envelope always keeps the raw projected value under `:result`; rendering is separate display metadata. Observation call: use as a standalone display form; leave durable bindings for source/acquisition values. Strategy: bind full reads/searches you need later, then call preview separately; never echo a var just to inspect it. Examples: `(def file (v/cat \"src/foo.clj\"))` followed by `(v/preview file {:result [[:lines {:from 100 :to 180}]]})`, `(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)`, `(v/preview value)`. With no EQL, previews the whole payload. EQL supports keys, [:*], nested pulls, and field ranges like {:result [[:lines {:from 40 :to 120}]]}. Preserves source rendering metadata and provenance boundary."
      :arglists '([value] [value preview-eql])
      :examples ["(v/preview file {:result [[:lines {:from 40 :to 120}]]})"
                 "(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})"
@@ -1491,6 +1635,15 @@
      :result-spec tool-result-spec
      :render-fn render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
+
+(def patch-check-symbol
+  (vis/symbol 'patch-check patch-check-tool
+    {:doc "Preflight canonical exact text patches without writing. Returns match counts for each edit plus bounded search previews; use before v/patch when searches may be stale or multi-edit risk is high."
+     :arglists '([edits])
+     :examples ["(v/patch-check [{:path \"src/main.clj\" :search \"old\" :replace \"new\"}])"]
+     :result-spec tool-result-spec
+     :render-fn render-patch-check
+     :on-error-fn (tool-failure-on-error :v/patch-check :file nil)}))
 
 (def create-dirs-symbol
   (vis/symbol 'create-dirs create-dirs-tool
@@ -1575,6 +1728,7 @@
    ls-symbol
    rg-symbol
    patch-symbol
+   patch-check-symbol
    create-dirs-symbol
    glob-symbol
    copy-symbol
@@ -1595,9 +1749,8 @@
     "With no EQL, `v/preview` previews the whole payload. Every preview emitted in a block is rendered. EQL supports [:*] for all map keys at one level; plain keywords are payload keys, so :from/:to are selectable keys and ranges use field params like [[:hits {:from 0 :to 12} [:path :line :text]]]. "
     "`v/silent!` is removed. `v/cat` has no opts; cat is full acquisition only. `v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. "
     "Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. "
-    "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
-    "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).
-"
+    "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Use (v/patch-check edits) to preflight match counts without writing. Read exact bytes first; keep searches small and unique; do not invent long paragraphs. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
+    "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).\n"
     "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
 "
     "Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\") [:result :lines]), (get-in (v/bash \"pwd\") [:result :stdout]), (-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits). "
