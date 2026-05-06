@@ -63,6 +63,7 @@
      :ext/kind           "foundation"
      :ext/environment-info-fn environment/environment-info
      :ext/prompt         combined-prompt
+     :ext/rendering-kinds editing/rendering-kind-fns
      :ext/symbols        (vec (concat introspection/all-symbols
                                 editing/editing-symbols
                                 markdown/markdown-symbols

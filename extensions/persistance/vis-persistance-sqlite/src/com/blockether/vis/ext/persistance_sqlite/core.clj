@@ -350,10 +350,10 @@
     (locking sqlite-write-lock
       (loop [attempt 0 delays sqlite-write-retry-delays-ms]
         (let [result (try
-                       {:ok? true :value (sqlite-write-attempt! db-info f)}
+                       {:success? true :value (sqlite-write-attempt! db-info f)}
                        (catch Throwable t
-                         {:ok? false :throwable t}))]
-          (if (:ok? result)
+                         {:success? false :throwable t}))]
+          (if (:success? result)
             (:value result)
             (let [t (:throwable result)]
               (if (and (sqlite-busy? t) (seq delays))
@@ -1781,10 +1781,10 @@
       [[] []]
       (cond
         (= :fulfilled (:status intent))
-        [[{:check :intent-resolved :ok? true :intent-id (:id intent)}] []]
+        [[{:check :intent-resolved :success? true :intent-id (:id intent)}] []]
 
         (= :abandoned (:status intent))
-        [[{:check :intent-resolved :ok? true :intent-id (:id intent)}] []]
+        [[{:check :intent-resolved :success? true :intent-id (:id intent)}] []]
 
         :else
         (let [plans (vec (active-plans intent))
@@ -1826,7 +1826,7 @@
                                      :gate-id (:id gate)
                                      :message (str "Required gate is impeded; re-plan or abandon: " (:proposition gate))})
                                (filter #(= :impeded (:status %)) required))))]
-          [[{:check :intent-resolved :ok? false :intent-id (:id intent)}] violations])))))
+          [[{:check :intent-resolved :success? false :intent-id (:id intent)}] violations])))))
 
 (defn- code-ish [x]
   (str "`" x "`"))
@@ -1939,7 +1939,7 @@
                                 :blocking? true
                                 :message "No focused conversation intent exists."}))
             ok? (empty? violations)]
-        {:ok? ok?
+        {:success? ok?
          :scope :conversation
          :conversation-id (->uuid conversation-soul-id)
          :turn-state-id (some-> turn-state-id ->uuid)
@@ -1949,7 +1949,7 @@
          :checks checks
          :violations violations
          :report (intents-report-markdown ok? focused-ids-v unfocused-active-ids intents violations)})
-      {:ok? false
+      {:success? false
        :scope :conversation
        :conversation-id nil
        :turn-state-id nil
@@ -2051,7 +2051,7 @@
 (defn- structural-tool-result?
   [v]
   (and (map? v)
-    (contains? v :ok?)
+    (contains? v :success?)
     (contains? v :provenance)))
 
 (defn- lifecycle-child-events
@@ -2065,7 +2065,7 @@
               status (or (:status tool-prov)
                        (cond
                          (:error result) :error
-                         (false? (:ok? result)) :error
+                         (false? (:success? result)) :error
                          :else :done))
               op (or (:op tool-prov) :v/tool)
               ref (prov-life/child-ref parent-ref {:op op})]

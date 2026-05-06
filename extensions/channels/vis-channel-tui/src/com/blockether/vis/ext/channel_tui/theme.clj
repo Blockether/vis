@@ -3,18 +3,32 @@
   (:require [com.blockether.vis.theme :as theme])
   (:import [com.googlecode.lanterna TextColor$RGB]))
 
-(def default-theme theme/default-theme)
+(def active-theme-id (atom theme/default-theme-id))
+
+(def default-theme (theme/theme @active-theme-id))
 (def default-palette (:palette default-theme))
 (def default-fonts (:fonts default-theme))
 (def default-widths (:widths default-theme))
 (def default-spacing (:spacing default-theme))
 
-(defn- rgb
-  [token]
-  (let [[r g b] (theme/color default-theme token)]
+(defn- rgb*
+  [theme-map token]
+  (let [[r g b] (theme/color theme-map token)]
     (TextColor$RGB. r g b)))
 
-;;; ── Light theme — adapted from shared public tokens ────────────────────────
+(defn- rgb
+  [token]
+  (rgb* default-theme token))
+
+(defn- width
+  [token]
+  (get default-widths token))
+
+(defn- spacing
+  [token]
+  (get default-spacing token))
+
+;;; ── Shared theme tokens adapted to Lanterna ────────────────────────────────
 
 ;; Terminal
 (def terminal-bg    (rgb :terminal-bg))
@@ -38,6 +52,7 @@
 (def dialog-shadow   (rgb :dialog-shadow))
 (def dialog-hint     (rgb :dialog-hint))
 (def dialog-hint-key (rgb :dialog-hint-key))
+(def input-field-bg  (rgb :input-field-bg))
 
 ;; Chat messages — user
 (def user-bubble-bg    (rgb :user-bubble-bg))
@@ -117,5 +132,139 @@
 (def footer-warning-fg  (rgb :footer-warning-fg))
 (def footer-error-fg    (rgb :footer-error-fg))
 
-;; Padding
-(def pad-x (:pad-x default-spacing))
+;; Widths
+(def dialog-width-ratio  (width :dialog-width-ratio))
+(def dialog-min-width    (width :dialog-min-width))
+(def dialog-max-width    (width :dialog-max-width))
+(def dialog-height-ratio (width :dialog-height-ratio))
+(def dialog-min-height   (width :dialog-min-height))
+(def dialog-max-height   (width :dialog-max-height))
+(def dialog-chrome-w     (width :dialog-chrome-w))
+(def dialog-chrome-h     (width :dialog-chrome-h))
+(def settings-option-indent (width :settings-option-indent))
+(def input-min-width     (width :input-min-width))
+(def chat-min-width      (width :chat-min-width))
+
+;; Spacing
+(def pad-x (spacing :pad-x))
+
+(def ^:private color-vars
+  {:terminal-bg #'terminal-bg
+   :text-fg #'text-fg
+   :header-fg #'header-fg
+   :header-hover-fg #'header-hover-fg
+   :box-bg #'box-bg
+   :box-fg #'box-fg
+   :border-fg #'border-fg
+   :dialog-bg #'dialog-bg
+   :dialog-fg #'dialog-fg
+   :dialog-title-fg #'dialog-title-fg
+   :dialog-title-bg #'dialog-title-bg
+   :dialog-border #'dialog-border
+   :dialog-shadow #'dialog-shadow
+   :dialog-hint #'dialog-hint
+   :dialog-hint-key #'dialog-hint-key
+   :input-field-bg #'input-field-bg
+   :user-bubble-bg #'user-bubble-bg
+   :user-bubble-fg #'user-bubble-fg
+   :user-role-fg #'user-role-fg
+   :turn-separator-bg #'turn-separator-bg
+   :turn-separator-fg #'turn-separator-fg
+   :ai-bubble-bg #'ai-bubble-bg
+   :ai-bubble-fg #'ai-bubble-fg
+   :ai-role-fg #'ai-role-fg
+   :status-ok #'status-ok
+   :status-bad #'status-bad
+   :warning-bg #'warning-bg
+   :warning-fg #'warning-fg
+   :warning-border #'warning-border
+   :cancelled-bg #'cancelled-bg
+   :cancelled-fg #'cancelled-fg
+   :code-block-bg #'code-block-bg
+   :code-ok-bg #'code-ok-bg
+   :code-err-bg #'code-err-bg
+   :code-block-fg #'code-block-fg
+   :code-success-fg #'code-success-fg
+   :code-error-fg #'code-error-fg
+   :code-duration-fg #'code-duration-fg
+   :code-result-fg #'code-result-fg
+   :code-error-result-fg #'code-error-result-fg
+   :code-syntax-special-fg #'code-syntax-special-fg
+   :code-syntax-keyword-fg #'code-syntax-keyword-fg
+   :code-syntax-string-fg #'code-syntax-string-fg
+   :code-syntax-number-fg #'code-syntax-number-fg
+   :code-syntax-comment-fg #'code-syntax-comment-fg
+   :code-border-fg #'code-border-fg
+   :stdout-bg #'stdout-bg
+   :stdout-fg #'stdout-fg
+   :stdout-label-fg #'stdout-label-fg
+   :stdout-sep-fg #'stdout-sep-fg
+   :iteration-header-fg #'iteration-header-fg
+   :iteration-header-bg #'iteration-header-bg
+   :answer-sep-fg #'answer-sep-fg
+   :answer-sep-bg #'answer-sep-bg
+   :answer-bg #'answer-bg
+   :answer-fg #'answer-fg
+   :md-h1-fg #'md-h1-fg
+   :md-h2-fg #'md-h2-fg
+   :md-h3-fg #'md-h3-fg
+   :confidence-fg #'confidence-fg
+   :md-summary-bg #'md-summary-bg
+   :md-summary-fg #'md-summary-fg
+   :th-md-summary-bg #'th-md-summary-bg
+   :th-md-summary-fg #'th-md-summary-fg
+   :proof-summary-bg #'proof-summary-bg
+   :proof-summary-fg #'proof-summary-fg
+   :th-proof-summary-bg #'th-proof-summary-bg
+   :th-proof-summary-fg #'th-proof-summary-fg
+   :link-chrome-fg #'link-chrome-fg
+   :link-chrome-arrow-fg #'link-chrome-arrow-fg
+   :link-chrome-url-fg #'link-chrome-url-fg
+   :link-chrome-hover-bg #'link-chrome-hover-bg
+   :link-chrome-hover-fg #'link-chrome-hover-fg
+   :link-chrome-blocked-fg #'link-chrome-blocked-fg
+   :footer-fg #'footer-fg
+   :footer-fg-muted #'footer-fg-muted
+   :footer-fg-strong #'footer-fg-strong
+   :footer-spinner-fg #'footer-spinner-fg
+   :footer-warning-fg #'footer-warning-fg
+   :footer-error-fg #'footer-error-fg})
+
+(def ^:private width-vars
+  {:dialog-width-ratio #'dialog-width-ratio
+   :dialog-min-width #'dialog-min-width
+   :dialog-max-width #'dialog-max-width
+   :dialog-height-ratio #'dialog-height-ratio
+   :dialog-min-height #'dialog-min-height
+   :dialog-max-height #'dialog-max-height
+   :dialog-chrome-w #'dialog-chrome-w
+   :dialog-chrome-h #'dialog-chrome-h
+   :settings-option-indent #'settings-option-indent
+   :input-min-width #'input-min-width
+   :chat-min-width #'chat-min-width})
+
+(def ^:private spacing-vars
+  {:pad-x #'pad-x})
+
+(defn apply-theme!
+  "Apply registered theme id to the TUI adapter vars. Future paints use the
+   updated Lanterna colors/widths/spacing without requiring channels to ship
+   their own theme declaration."
+  [theme-id]
+  (let [theme-id (or theme-id theme/default-theme-id)
+        theme-map (theme/theme theme-id)
+        widths (:widths theme-map)
+        spacing (:spacing theme-map)]
+    (reset! active-theme-id (:name theme-map))
+    (alter-var-root #'default-theme (constantly theme-map))
+    (alter-var-root #'default-palette (constantly (:palette theme-map)))
+    (alter-var-root #'default-fonts (constantly (:fonts theme-map)))
+    (alter-var-root #'default-widths (constantly widths))
+    (alter-var-root #'default-spacing (constantly spacing))
+    (doseq [[token v] color-vars]
+      (alter-var-root v (constantly (rgb* theme-map token))))
+    (doseq [[token v] width-vars]
+      (alter-var-root v (constantly (get widths token))))
+    (doseq [[token v] spacing-vars]
+      (alter-var-root v (constantly (get spacing token))))
+    theme-map))

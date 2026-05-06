@@ -207,6 +207,56 @@
                     p/MARKER_MD_H3 p/MARKER_MD_H3 p/MARKER_MD_H3]
                   (mapv marker-of lines)))))))
 
+(defdescribe markdown-task-list-test
+  (describe "GitHub-style task-list checkboxes"
+    (it "renders unchecked and checked bullets as checkbox glyphs, not raw [ ] / [x] text"
+      (let [lines (md->lines (str "- [ ] write tests\n"
+                               "- [x] ship fix\n"
+                               "- [X] verify") 80 :answer)
+            bodies (mapv body-of lines)]
+        (expect (= [p/MARKER_MD_BULLET p/MARKER_MD_BULLET p/MARKER_MD_BULLET]
+                  (mapv marker-of lines)))
+        (expect (= ["  ☐ write tests" "  ☑ ship fix" "  ☑ verify"] bodies))
+        (expect (not-any? #(str/includes? % "[ ]") bodies))
+        (expect (not-any? #(str/includes? % "[x]") bodies))
+        (expect (not-any? #(str/includes? % "[X]") bodies)))))
+
+  (it "renders category-prefixed checkbox tokens inside list bodies"
+    (let [lines (md->lines (str "- A: [ ] Decide whether previous reasoning needs its own block\n"
+                             "- B: [x] Define shared presentation preview shape\n"
+                             "- C: [X] Document model policy\n"
+                             "- D: [ x ] Keep audit protocol minimal") 80 :answer)
+          bodies (mapv body-of lines)]
+      (expect (= ["  • A: ☐ Decide whether previous reasoning needs its own block"
+                  "  • B: ☑ Define shared presentation preview shape"
+                  "  • C: ☑ Document model policy"
+                  "  • D: ☑ Keep audit protocol minimal"]
+                bodies))
+      (expect (not-any? #(str/includes? % "[ ]") bodies))
+      (expect (not-any? #(str/includes? % "[x]") bodies))
+      (expect (not-any? #(str/includes? % "[X]") bodies))
+      (expect (not-any? #(str/includes? % "[ x ]") bodies))))
+
+  (it "renders backticked checkboxes inside reasoning bullets"
+    (let [lines (md->lines (str "- A: `[ ]` Decide whether previous reasoning needs its own block\n"
+                             "- B: `[x]` Define shared presentation preview shape\n"
+                             "- C: `[X]` Document model policy") 80 :thinking)
+          bodies (mapv body-of lines)]
+      (expect (= [p/MARKER_TH_MD_BULLET p/MARKER_TH_MD_BULLET p/MARKER_TH_MD_BULLET]
+                (mapv marker-of lines)))
+      (expect (= ["  • A: ☐ Decide whether previous reasoning needs its own block"
+                  "  • B: ☑ Define shared presentation preview shape"
+                  "  • C: ☑ Document model policy"]
+                bodies))
+      (expect (not-any? #(str/includes? % "[ ]") bodies))
+      (expect (not-any? #(str/includes? % "[x]") bodies))
+      (expect (not-any? #(str/includes? % "[X]") bodies))))
+
+  (it "wraps continuation rows under the checkbox body"
+    (let [lines (md->lines "- [x] alpha beta gamma delta" 16 :answer)
+          bodies (mapv body-of lines)]
+      (expect (= ["  ☑ alpha beta" "    gamma delta"] bodies)))))
+
 (defdescribe live-running-block-test
   (it "renders a block slot with no result as currently running with elapsed time"
     (let [lines (format-iteration-entry {:iteration     0
@@ -219,7 +269,21 @@
       (expect (some #(str/includes? % "BLOCK 1") lines))
       (expect (not-any? #(str/includes? % "CODE 1") lines))
       (expect (= p/MARKER_CODE (marker-of code-line)))
-      (expect (= p/MARKER_CODE (marker-of status-line))))))
+      (expect (= p/MARKER_CODE (marker-of status-line)))))
+
+  (it "puts success status on its own bottom line and keeps bottom padding"
+    (let [lines (format-iteration-entry {:iteration 0
+                                         :code ["(+ 1 2)"]
+                                         :results ["3"]
+                                         :successes [true]
+                                         :durations [1]}
+                  40 1 {})
+          bodies (mapv (comp strip-ansi body-of) lines)
+          status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
+      (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
+      (expect (= p/MARKER_CODE_OK (marker-of status-line)))
+      (expect (= p/MARKER_CODE_OK_PAD (marker-of (nth lines (- (count lines) 2)))))
+      (expect (some #(= "3" (str/trim %)) bodies)))))
 
 (defdescribe markdown-fenced-code-language-test
   (it "syntax-colors clojure fences produced by v/code-block"
@@ -1274,19 +1338,46 @@
           (expect (str/includes? body ":system-prompt"))
           (expect (str/includes? body "palette command entry")))))
 
-    (it "two consecutive bullets each get a single-line body"
-      (let [src (str "- `dialogs.clj`\n"
-                  "\n"
-                  " — removed `:system-prompt` palette command entry\n"
-                  "- `screen.clj`\n"
-                  "\n"
-                  " — removed `:system-prompt` handler (viewer dialog)")
-            bullets (bullet-bodies src 80)]
-        (expect (= 2 (count bullets)))
-        (expect (str/includes? (strip-sentinels (nth bullets 0)) "dialogs.clj"))
-        (expect (str/includes? (strip-sentinels (nth bullets 0)) "palette command entry"))
-        (expect (str/includes? (strip-sentinels (nth bullets 1)) "screen.clj"))
-        (expect (str/includes? (strip-sentinels (nth bullets 1)) "viewer dialog"))))
+    (do
+      (it "two consecutive bullets each get a single-line body"
+        (let [src (str "- `dialogs.clj`\n"
+                    "\n"
+                    " — removed `:system-prompt` palette command entry\n"
+                    "- `screen.clj`\n"
+                    "\n"
+                    " — removed `:system-prompt` handler (viewer dialog)")
+              bullets (bullet-bodies src 80)]
+          (expect (= 2 (count bullets)))
+          (expect (str/includes? (strip-sentinels (nth bullets 0)) "dialogs.clj"))
+          (expect (str/includes? (strip-sentinels (nth bullets 0)) "palette command entry"))
+          (expect (str/includes? (strip-sentinels (nth bullets 1)) "screen.clj"))
+          (expect (str/includes? (strip-sentinels (nth bullets 1)) "viewer dialog"))))
+
+      (it "keeps whitespace-only md/join separators inside one bullet item"
+        (let [src (str "- [provider.clj:756](provider.clj#L756)\n"
+                    "  \n"
+                    "   \n"
+                    "  \n"
+                    "  `safe-provider-status`\n"
+                    "  \n"
+                    "   calls \n"
+                    "  \n"
+                    "  `:provider/status-fn`\n"
+                    "  \n"
+                    "   or \n"
+                    "  \n"
+                    "  `:provider/detect-fn`\n"
+                    "  \n"
+                    "  .")
+              bodies (mapv strip-sentinels (bullet-bodies src 160))
+              flat   (str/join " " bodies)]
+          (expect (= 1 (count (filter #(str/starts-with? % "  • ") bodies))))
+          (expect (str/includes? flat "provider.clj:756"))
+          (expect (str/includes? flat "safe-provider-status"))
+          (expect (str/includes? flat "calls"))
+          (expect (str/includes? flat ":provider/status-fn"))
+          (expect (str/includes? flat "or"))
+          (expect (str/includes? flat ":provider/detect-fn")))))
 
     (it "regression for the user's exact report — six fragmented bullets coalesce to six"
       (let [src (str "## Pruned: System Prompt Copy / Inspector\n"
@@ -1754,6 +1845,89 @@
       (expect (some #(str/includes? % "line-40") rows)))))
 
 (defdescribe auto-collapse-rendering-test
+  (it "keeps preview results expanded because preview already selected display data"
+    (render/invalidate-cache!)
+    (let [preview-text (str/join "\n" (map #(str % ": selected line") (range 1 31)))
+          detail {:raw "{:secret \"raw-only\"}"}
+          trace [{:code ["(v/preview file {:result [[:lines {:from 0 :to 30}]]})"]
+                  :results [preview-text]
+                  :result-kinds [:preview]
+                  :result-details [detail]
+                  :stdouts [""]
+                  :durations [1]
+                  :successes [true]}]
+          opts {:conversation-id "conversation"
+                :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"}
+          payload (render/format-answer-with-thinking-data
+                    "" trace 96 {:show-iterations true} nil false opts)
+          raw-view (render/format-answer-with-thinking-data
+                     "" trace 96 {:show-iterations true} nil false
+                     (assoc opts :detail-expansions
+                       {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}))]
+      (expect (not (str/includes? (:text payload) "Preview.")))
+      (expect (str/includes? (:text payload) "30: selected line"))
+      (expect (str/includes? (:text payload) "● PREVIEW  ○ RAW"))
+      (expect (not (str/includes? (:text payload) "SHAPE")))
+      (expect (not (str/includes? (:text payload) ":source-shape")))
+      (expect (not (str/includes? (:text payload) "raw-only")))
+      (expect (str/includes? (:text raw-view) "○ PREVIEW  ● RAW"))
+      (expect (str/includes? (:text raw-view) "raw-only"))
+      (expect (not (str/includes? (:text raw-view) "src/demo.clj")))
+      (expect (not (str/includes? (:text raw-view) ":provenance")))
+      (expect (not (str/includes? (:text payload) "RESULT")))))
+
+  (it "paints preview raw controls on the right with underline and translated ANSI"
+    (render/invalidate-cache!)
+    (let [detail {:raw "{:secret \"raw-only\"}"}
+          trace [{:code ["(v/preview file {:result [[:lines {:from 0 :to 30}]]})"]
+                  :results ["1: selected line"]
+                  :result-kinds [:preview]
+                  :result-details [detail]
+                  :stdouts [""]
+                  :durations [1]
+                  :successes [true]}]
+          opts {:conversation-id "conversation"
+                :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}}
+          payload (render/format-answer-with-thinking-data
+                    "" trace 96 {:show-iterations true} nil false opts)
+          puts (atom [])
+          active (atom #{})
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString [_col _row text]
+                       (swap! puts conj {:text text :sgr @active})
+                       this)
+                     (fillRectangle [_ _ _] this)
+                     (setCharacter [_ _ _] this))]
+      (render/draw-chat-bubble! graphics
+        {:role :assistant
+         :text (:text payload)
+         :prewrapped-lines (:lines payload)
+         :line-meta (:line-meta payload)}
+        0 2 96 {:viewport-h 50})
+      (expect (some #(str/includes? (:text %) "raw-only") @puts))
+      (expect (not-any? #(str/includes? (:text %) ":provenance") @puts))
+      (expect (not-any? #(str/includes? (:text %) "src/demo.clj") @puts))
+      (expect (not-any? #(str/includes? (:text %) "\u001b[") @puts))
+      (expect (some #(and (= "● RAW" (:text %))
+                       (contains? (:sgr %) com.googlecode.lanterna.SGR/UNDERLINE))
+                @puts))))
+
   (it "does not wrap collapsed huge result bodies before rendering the summary"
     (render/invalidate-cache!)
     (let [huge-result (str/join " " (repeat 4000 "abcdefghij"))

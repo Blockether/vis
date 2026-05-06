@@ -54,7 +54,7 @@ The preferred gate failure verb is **impede**. `v/block-gate!` remains as a lega
 (v/intents)
 ```
 
-`v/intents` is the single read/check/report surface. It returns focus, old unfocused active intents, aggregate intent/plan/gate state, checks, violations, and a Markdown report.
+`v/intents` is the single read/check/report surface. It returns focus, old unfocused active intents, aggregate intent/plan/gate state, checks, violations, and a Markdown report. The aggregate boolean outcome key is `:success?`.
 
 ## Final-answer readiness
 

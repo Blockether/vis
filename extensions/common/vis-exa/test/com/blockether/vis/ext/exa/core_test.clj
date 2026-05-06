@@ -117,7 +117,7 @@
                                 (json/read-json (:body request) :key-fn keyword))
                           requests)]
            (expect (extension/tool-result? out))
-           (expect (true? (:ok? out)))
+           (expect (true? (:success? out)))
            (expect (= "Result 1\nResult 2" (get-in out [:result :content])))
            (expect (= ["initialize" "notifications/initialized" "tools/call"]
                      (mapv :method payloads)))
@@ -137,7 +137,7 @@
                                                    :body "boom"})}
       #(let [out (exa/code-context "HoneySQL examples")]
          (expect (extension/tool-result? out))
-         (expect (false? (:ok? out)))
+         (expect (false? (:success? out)))
          (expect (str/includes? (get-in out [:error :message]) "MCP HTTP 500"))))))
 
 (defdescribe exa-truncation-test

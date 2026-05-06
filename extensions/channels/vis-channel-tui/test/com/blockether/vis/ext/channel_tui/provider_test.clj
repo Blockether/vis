@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
+            [com.blockether.vis.ext.provider-github-copilot :as copilot]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [lazytest.core :refer [defdescribe expect it]]))
 
@@ -226,6 +227,30 @@
           (expect (= false @provider-probed?))
           (expect (= false @limits-probed?)))))))
 
+(defdescribe copilot-oauth-ready-test
+  (it "does not start the device flow when Copilot credentials already exist"
+    (let [start-called? (atom false)]
+      (with-redefs [copilot/detect-oauth-token (constantly {:oauth-token "oauth"})
+                    copilot/get-copilot-token! (constantly {:token "api-token"})
+                    copilot/start-device-flow! (fn [& _]
+                                                 (reset! start-called? true))]
+        (expect (= "api-token" (@#'provider/copilot-oauth-flow! nil :individual)))
+        (expect (= false @start-called?)))))
+
+  (it "starts the device flow when Copilot re-authentication is requested"
+    (let [start-called? (atom false)]
+      (with-redefs [copilot/detect-oauth-token (constantly {:oauth-token "oauth"})
+                    copilot/start-device-flow! (fn [& _]
+                                                 (reset! start-called? true)
+                                                 {:user-code "ABCD-EFGH"
+                                                  :verification-uri "https://github.com/login/device"
+                                                  :device-code "device"
+                                                  :interval 5
+                                                  :expires-in 900})
+                    provider/copilot-auth-instructions! (fn [& _] nil)]
+        (expect (nil? (@#'provider/copilot-oauth-flow! nil :individual true)))
+        (expect (= true @start-called?))))))
+
 (defdescribe codex-oauth-ready-test
   (it "returns true immediately when Codex credentials already exist"
     (let [login-called? (atom false)]
@@ -243,7 +268,8 @@
                     codex/login!       (fn [printer-fn opts]
                                          (reset! seen {:printer-fn printer-fn :opts opts})
                                          :ok)
-                    dlg/confirm-dialog! (fn [& _] nil)
+                    dlg/confirm-dialog! (fn [& _] true)
+                    dlg/text-view-dialog! (fn [& _] nil)
                     dlg/text-input-dialog! (fn [& _] "http://localhost:1455/auth/callback?code=abc&state=s")]
         (expect (= true (@#'provider/codex-oauth-ready! nil)))
         (expect (= "vis-tui" (get-in @seen [:opts :originator])))
@@ -257,28 +283,56 @@
                     codex/login!       (fn [printer-fn opts]
                                          (reset! seen {:printer-fn printer-fn :opts opts})
                                          :ok)
-                    dlg/confirm-dialog! (fn [& _] nil)
+                    dlg/confirm-dialog! (fn [& _] true)
+                    dlg/text-view-dialog! (fn [& _] nil)
                     dlg/text-input-dialog! (fn [& _] "http://localhost:1455/auth/callback?code=abc&state=s")]
         (expect (= true (@#'provider/codex-oauth-ready! nil true)))
         (expect (= true (get-in @seen [:opts :force?]))))))
 
-  (it "uses forced Codex login from the provider action menu"
+  (it "does not force Codex login from a plain authenticate call when credentials exist"
+    (let [login-called? (atom false)
+          provider-config {:id :openai-codex :models [{:name "gpt-5.1"}]}]
+      (with-redefs [vis/provider-by-id (constantly {:provider/detect-fn (constantly {:account-id "acct_123"})})
+                    codex/login!       (fn [& _]
+                                         (reset! login-called? true)
+                                         :ok)
+                    dlg/confirm-dialog! (fn [& _] nil)]
+        (expect (= provider-config (provider/authenticate-provider! nil provider-config)))
+        (expect (= false @login-called?)))))
+
+  (it "does not force Codex login from the auth picker when credentials exist"
+    (let [login-called? (atom false)
+          provider-item {:provider-id :openai-codex
+                         :provider {:provider/id :openai-codex
+                                    :provider/label "OpenAI Codex"}}]
+      (with-redefs [dlg/select-dialog! (fn [& _] provider-item)
+                    vis/provider-by-id (constantly {:provider/detect-fn (constantly {:account-id "acct_123"})})
+                    codex/login!       (fn [& _]
+                                         (reset! login-called? true)
+                                         :ok)
+                    dlg/confirm-dialog! (fn [& _] nil)]
+        (expect (= true (provider/show-provider-auth-dialog! nil)))
+        (expect (= false @login-called?)))))
+
+  (it "forces Codex login only when re-authentication is requested"
     (let [seen (atom nil)
           provider-config {:id :openai-codex :models [{:name "gpt-5.1"}]}]
       (with-redefs [vis/provider-by-id (constantly {:provider/detect-fn (constantly {:account-id "acct_123"})})
                     codex/login!       (fn [printer-fn opts]
                                          (reset! seen {:printer-fn printer-fn :opts opts})
                                          :ok)
-                    dlg/confirm-dialog! (fn [& _] nil)
+                    dlg/confirm-dialog! (fn [& _] true)
+                    dlg/text-view-dialog! (fn [& _] nil)
                     dlg/text-input-dialog! (fn [& _] "http://localhost:1455/auth/callback?code=abc&state=s")]
-        (expect (= provider-config (provider/authenticate-provider! nil provider-config)))
+        (expect (= provider-config (provider/authenticate-provider! nil provider-config true)))
         (expect (= true (get-in @seen [:opts :force?]))))))
 
   (it "returns false when the shared Codex login flow fails"
     (with-redefs [vis/provider-by-id (constantly {:provider/detect-fn (constantly nil)})
                   codex/login!       (fn [& _]
                                        (throw (ex-info "boom" {})))
-                  dlg/confirm-dialog! (fn [& _] nil)]
+                  dlg/confirm-dialog! (fn [& _] true)
+                  dlg/text-view-dialog! (fn [& _] nil)]
       (expect (= false (@#'provider/codex-oauth-ready! nil))))))
 
 (defdescribe add-provider-test

@@ -17,7 +17,7 @@ Real incidents from this conversation, with exact code, error messages, root cau
 | Attempt | Code | Error |
 |---------|------|-------|
 | iter 2 | `(def tui-ls (v/ls \"src/com/blockether/vis/tui\"))` | `Path not found: …/src/com/blockether/vis/tui` |
-| iter 4 | `(v/rg [\"system_prompt\"] \"src/com/blockether/vis/internal/db.clj\")` | `Path not found: …/db.clj` |
+| iter 4 | `(v/rg {:all [\"system_prompt\"] :paths [\"src/com/blockether/vis/internal/db.clj\"]})` | `Path not found: …/db.clj` |
 
 The agent assumed directory layouts and file locations without confirming them first.
 
@@ -31,7 +31,7 @@ Agent guessed paths from conventions instead of probing the actual filesystem.
 ;; => ExceptionInfo: Path not found
 
 ;; This WILL fail on a non-existent file:
-(def y (v/rg [\"foo\"] \"some/nonexistent/path.clj\"))
+(def y (v/rg {:all [\"foo\"] :paths [\"some/nonexistent/path.clj\"]}))
 ;; => ExceptionInfo: Path not found
 
 ;; Step 1: List the top-level source tree to discover real paths
@@ -39,11 +39,11 @@ Agent guessed paths from conventions instead of probing the actual filesystem.
 src-tree
 
 ;; Step 2: Use rg at a broader scope to find the actual file
-(def hits (v/rg [\"system-prompt\"] \"src\"))
+(def hits (v/rg {:all [\"system-prompt\"] :paths [\"src\"]}))
 hits
 
 ;; Step 3: Read the discovered file
-(def the-file (v/cat (-> hits :hits first :path)))
+(def the-file (v/cat (-> hits :result :hits first :path)))
 
 Let me dig deeper what \"system prompt copy\" actually is.
 
@@ -65,7 +65,7 @@ src-tree
 
 ;; ✅ CORRECT: Comments inside code blocks are fine
 ;; Find the system-prompt-copy references
-(def hits (v/rg [\"system-prompt-copy\"] \"src\"))
+(def hits (v/rg {:all [\"system-prompt-copy\"] :paths [\"src\"]}))
 hits
 
 ;; v/edit #1: Removed the ctx segment from the RIGHT region
@@ -117,31 +117,31 @@ broken-area
 (v/edit \"footer.clj\" \"old segment code\" \"\")
 
 ;; Forget to check if the helpers are still there:
-(v/rg [\"ctx-left-info\"] \"footer.clj\")
+(v/rg {:all [\"ctx-left-info\"] :paths [\"footer.clj\"]})
 ;; => {:hits [{:line 94 :text \"(defn- ctx-left-info\"}]}
 
 ;; Step 1: Remove the usage
 (v/edit \"footer.clj\" \"ctx-segment\" \"\")
 
 ;; Step 2: Grep for ALL references to the removed concept
-(v/rg [\"ctx-left\" \"context-limit\" \"ctx-color\"] \"extensions/channels/vis-channel-tui/src\")
+(v/rg {:any [\"ctx-left\" \"context-limit\" \"ctx-color\"] :paths [\"extensions/channels/vis-channel-tui/src\"]})
 
 ;; Step 3: Remove each hit — functions, imports, comments
 (v/edit \"footer.clj\" \"(defn- ctx-left-info ...\" \"\")
 (v/edit \"footer.clj\" \"svar-router\" \"\")  ;; if no other consumer
 
 ;; Step 4: Verify zero hits
-(v/rg [\"ctx-left\"] \"src\" {:respect-gitignore? true})
+(v/rg {:all [\"ctx-left\"] :paths [\"src\"] :respect-gitignore? true})
 ;; => {:hits [] :truncated-by :end-of-results}
 
-(v/rg [\"some-pattern\"] \"single-file-path.clj\")
+(v/rg {:all [\"some-pattern\"] :paths [\"single-file-path.clj\"]})
 ;; => ArityException: Wrong number of args (1) passed to: .../grep-files
 
 ;; ❌ Don't pass a single file to v/rg:
-(v/rg [\"pattern\"] \"specific-file.clj\")
+(v/rg {:all [\"pattern\"] :paths [\"specific-file.clj\"]})
 
 ;; ✅ Pass the containing directory and filter hits:
-(def hits (v/rg [\"pattern\"] \"extensions/channels/vis-channel-tui/src\"))
+(def hits (v/rg {:all [\"pattern\"] :paths [\"extensions/channels/vis-channel-tui/src\"]}))
 (filter #(= \"specific-file.clj\" (:path %)) (:hits hits))
 
 ;; ✅ Or just read the file and search with re-seq:

@@ -71,7 +71,7 @@
 
   (it "validates the v/intents aggregate read shape"
     (expect (s/valid? ::intent-spec/intents-report
-              {:ok? false
+              {:success? false
                :scope :conversation
                :conversation-id (random-uuid)
                :turn-state-id (random-uuid)

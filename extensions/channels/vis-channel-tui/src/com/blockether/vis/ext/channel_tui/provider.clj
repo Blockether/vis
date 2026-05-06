@@ -248,40 +248,44 @@
    Returns nil immediately when the optional vis-providers-github-copilot
    jar isn't on the classpath."
   ([^TerminalScreen screen]
-   (copilot-oauth-flow! screen :individual))
+   (copilot-oauth-flow! screen :individual false))
   ([^TerminalScreen screen account-type]
+   (copilot-oauth-flow! screen account-type false))
+  ([^TerminalScreen screen account-type force?]
    (let [start-fn    copilot/start-device-flow!
          poll-fn     copilot/poll-for-token!
          exchange-fn copilot/get-copilot-token!
          detect-fn   copilot/detect-oauth-token
          opts        {:account-type account-type}]
       ;; Already authenticated?
-     (if (detect-fn)
+     (if (and (not force?) (detect-fn))
        (try
          (let [{:keys [token]} (exchange-fn opts)]
            token)
          (catch Exception _
-           (dlg/confirm-dialog! screen "Copilot" "Existing token is invalid. Re-authenticate.")
+           (dlg/text-view-dialog! screen "Copilot" ["Existing token is invalid. Re-authenticate."])
            nil))
         ;; Device flow
        (try
          (let [{:keys [user-code verification-uri device-code interval expires-in]}
                (start-fn opts)]
            (when (copilot-auth-instructions! screen verification-uri user-code)
+             (when force?
+               (copilot/logout!))
             ;; Poll in background, show waiting message
              (let [result (future (poll-fn device-code interval expires-in opts))]
               ;; The poll runs in background; once authorized it returns.
                (loop [attempt 0]
                  (if (realized? result)
                    (let [{:keys [token]} (exchange-fn opts)]
-                     (dlg/confirm-dialog! screen "GitHub Copilot" "✓ Authenticated!")
+                     (dlg/text-view-dialog! screen "GitHub Copilot" ["✓ Authenticated!"])
                      token)
                    (do
                      (Thread/sleep 2000)
                      (when (< attempt 180) ;; 6 min max
                        (recur (inc attempt)))))))))
          (catch Exception e
-           (dlg/confirm-dialog! screen "GitHub Copilot" (str "Auth failed: " (ex-message e)))
+           (dlg/text-view-dialog! screen "GitHub Copilot" [(str "Auth failed: " (ex-message e))])
            nil))))))
 
 (defn- codex-oauth-ready!
@@ -299,15 +303,14 @@
          detect-fn (:provider/detect-fn provider)]
      (if (and (not force?) detect-fn (detect-fn))
        true
-       (do
-         (dlg/confirm-dialog! screen "OpenAI Codex"
-           ["Vis will start the ChatGPT/Codex browser OAuth flow."
-            ""
-            "After browser login, copy the final redirect URL from the"
-            "address bar and paste it into the next dialog."
-            ""
-            "Fallback if needed:"
-            "  vis providers auth openai-codex"])
+       (when (dlg/confirm-dialog! screen "OpenAI Codex"
+               ["Vis will start the ChatGPT/Codex browser OAuth flow."
+                ""
+                "After browser login, copy the final redirect URL from the"
+                "address bar and paste it into the next dialog."
+                ""
+                "Fallback if needed:"
+                "  vis providers auth openai-codex"])
          (try
            (let [result (codex/login! (constantly nil)
                           {:originator     "vis-tui"
@@ -317,10 +320,10 @@
                                                "OpenAI Codex"
                                                "Paste the final browser URL or authorization code:"))})]
              (when (= result :ok)
-               (dlg/confirm-dialog! screen "OpenAI Codex" "✓ Authenticated!"))
+               (dlg/text-view-dialog! screen "OpenAI Codex" ["✓ Authenticated!"]))
              true)
            (catch Exception e
-             (dlg/confirm-dialog! screen "OpenAI Codex"
+             (dlg/text-view-dialog! screen "OpenAI Codex"
                [(str "Auth failed: " (ex-message e))
                 ""
                 "If browser auth still fails here, run:"
@@ -332,7 +335,7 @@
   [^TerminalScreen screen existing-ids]
   (let [available (vec (remove #(contains? existing-ids (:id %)) (vis/provider-presets)))]
     (if (empty? available)
-      (do (dlg/confirm-dialog! screen "Add Provider" "All providers already configured.") nil)
+      (do (dlg/text-view-dialog! screen "Add Provider" ["All providers already configured."]) nil)
       (when-let [preset (dlg/select-dialog! screen "Add Provider" available)]
         (let [pid        (:id preset)
               base-url   (:base-url preset)
@@ -937,13 +940,14 @@
   ([provider]
    (provider-action-items provider (configured-provider-status provider)))
   ([provider status]
-   (let [registered (vis/provider-by-id (:id provider))
-         auth-label (if (provider-authenticated? provider status)
-                      "Re-authenticate"
-                      "Authenticate")]
+   (let [registered     (vis/provider-by-id (:id provider))
+         authenticated? (provider-authenticated? provider status)
+         auth-label     (if authenticated?
+                          "Re-authenticate"
+                          "Authenticate")]
      (cond-> [{:id :models :label "Configure Models"}]
        (provider-supports-auth? provider)
-       (conj {:id :authenticate :label auth-label})
+       (conj {:id :authenticate :label auth-label :force? authenticated?})
 
        (or (:provider/status-fn registered)
          (:provider/detect-fn registered)
@@ -1011,25 +1015,27 @@
               (str/join "\n" (concat @lines ["" (str "Authentication failed: " (or (ex-message e) (str e)))])))
             nil)))
       (do
-        (dlg/confirm-dialog! screen "Authenticate Provider"
+        (dlg/text-view-dialog! screen "Authenticate Provider"
           [(str (vis/display-label (:id provider)) " does not expose an interactive auth flow.")])
         nil))))
 
 (defn authenticate-provider!
-  [^TerminalScreen screen provider]
-  (cond
-    (github-copilot-provider? (:id provider))
-    (when (copilot-oauth-flow! screen (github-copilot-account-type (:id provider))) provider)
+  ([^TerminalScreen screen provider]
+   (authenticate-provider! screen provider false))
+  ([^TerminalScreen screen provider force?]
+   (cond
+     (github-copilot-provider? (:id provider))
+     (when (copilot-oauth-flow! screen (github-copilot-account-type (:id provider)) force?) provider)
 
-    (= :openai-codex (:id provider)) (when (codex-oauth-ready! screen true) provider)
-    (= :ollama (:id provider)) nil
-    (= :lmstudio (:id provider)) nil
-    :else
-    (let [prompted (prompt-for-api-key! screen provider)]
-      (cond
-        (= api-key-prompt-cancelled prompted) nil
-        prompted prompted
-        :else (run-generic-provider-auth! screen provider)))))
+     (= :openai-codex (:id provider)) (when (codex-oauth-ready! screen force?) provider)
+     (= :ollama (:id provider)) nil
+     (= :lmstudio (:id provider)) nil
+     :else
+     (let [prompted (prompt-for-api-key! screen provider)]
+       (cond
+         (= api-key-prompt-cancelled prompted) nil
+         prompted prompted
+         :else (run-generic-provider-auth! screen provider))))))
 
 (defn logout-provider!
   [^TerminalScreen screen provider]
@@ -1040,7 +1046,7 @@
       (when-let [logout-fn (:provider/logout-fn registered)]
         (logout-fn))
       (let [updated (dissoc provider :api-key)]
-        (dlg/confirm-dialog! screen
+        (dlg/text-view-dialog! screen
           (str (vis/display-label (:id provider)) " Authentication")
           [(str "Logged out of " (vis/display-label (:id provider)) ".")])
         updated))))
@@ -1071,7 +1077,7 @@
         (boolean (copilot-oauth-flow! screen (github-copilot-account-type (:provider/id provider))))
 
         (= :openai-codex (:provider/id provider))
-        (boolean (codex-oauth-ready! screen true))
+        (boolean (codex-oauth-ready! screen false))
 
         :else
         (if-let [auth-fn (:provider/auth-fn provider)]
@@ -1236,7 +1242,7 @@
                                  (assoc provider :models (:models updated-models))))
 
                              :authenticate
-                             (when-let [updated (authenticate-provider! screen provider)]
+                             (when-let [updated (authenticate-provider! screen provider (:force? action))]
                                (swap! items assoc @selected updated))
 
                              :status

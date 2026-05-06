@@ -50,12 +50,14 @@ Provenance is machine data. Markdown and labels are derived by renderers, not st
 (v/cat path) ; whole file -> [:result :lines]
 (v/preview file {:result [[:lines {:from 40 :to 120}]]}) ; EQL projection into journal/TUI
 (v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})
-(v/preview value) ; shape/default preview
+(v/preview value) ; whole payload preview as a standalone observation
 (v/ls path)
-(v/rg [\"literal\"] path)
+(v/rg {:all [\"literal\"]}) ; literal search, paths default to [\".\"]
+(v/rg {:all [\"defn\" \"name\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) ; all terms same line
+(v/rg {:any [\"foo\" \"bar\"] :paths [\".\"]}) ; any term same line
 (v/bash command)
 (v/cat path)
-(v/patch [{:path path :search "old" :replace "new"}])
+(v/patch [{:path path :search \"old\" :replace \"new\"}])
 (v/glob root pattern)
 ```
 

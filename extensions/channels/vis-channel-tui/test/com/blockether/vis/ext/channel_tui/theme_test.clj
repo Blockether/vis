@@ -9,6 +9,7 @@
        'dials back' a colour into illegibility, this test screams
        before the user does."
   (:require [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.theme :as shared-theme]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TextColor$RGB]))
 
@@ -83,3 +84,26 @@
                 [(.getRed t/answer-bg) (.getGreen t/answer-bg) (.getBlue t/answer-bg)])))
     (it "answer-fg on answer-bg still passes WCAG AAA (>= 7)"
       (expect (>= (contrast-ratio t/answer-fg t/answer-bg) 7.0)))))
+
+(defn- rgb-vec
+  [^TextColor$RGB rgb]
+  [(.getRed rgb) (.getGreen rgb) (.getBlue rgb)])
+
+(defdescribe adapter-coverage-test
+  (describe "TUI adapter consumes every shared theme token"
+    (it "has a public Lanterna var for every palette token and matches light theme values"
+      (t/apply-theme! :vis-light)
+      (doseq [[token expected] (:palette shared-theme/vis-light)]
+        (let [v (ns-resolve 'com.blockether.vis.ext.channel-tui.theme (symbol (name token)))]
+          (expect (some? v))
+          (expect (= expected (rgb-vec @v))))))
+
+    (it "applies dark theme through the atom-backed shared theme registry"
+      (try
+        (t/apply-theme! :vis-dark)
+        (expect (= [12 14 18] (rgb-vec t/terminal-bg)))
+        (expect (= (:widths shared-theme/vis-dark) t/default-widths))
+        (expect (= (:fonts shared-theme/vis-dark) t/default-fonts))
+        (expect (= (:spacing shared-theme/vis-dark) t/default-spacing))
+        (finally
+          (t/apply-theme! :vis-light))))))

@@ -34,6 +34,15 @@
       (expect (re-find #" \u2026<\+\d+ chars>$" out))
       (expect (< (count out) 200))))
 
+  (it "zprints Clojure data results instead of one-line pr-str blobs"
+    (let [out (prompt/safe-pr-str {:alpha (vec (range 20))
+                                   :beta {:nested true
+                                          :numbers (vec (range 10))}}
+                {:max-chars 2000})]
+      (expect (str/includes? out "\n"))
+      (expect (str/includes? out ":alpha"))
+      (expect (str/includes? out ":beta"))))
+
   (it "swallows unprintable values instead of throwing"
     (let [bomb (reify Object (toString [_] (throw (ex-info "boom" {}))))]
       (expect (string? (prompt/safe-pr-str bomb))))))
@@ -67,12 +76,13 @@
                     {:active-extensions NO_EXTENSIONS
                      :iteration         0}))))
 
-  (it "renders <journal> for prior iteration blocks"
+  (it "renders <journal> for prior iteration blocks without LLM-only reasoning"
     (let [out (prompt/build-iteration-context
                 {:conversation-title-atom (atom "set")}
                 {:active-extensions   NO_EXTENSIONS
-                 :blocks-by-iteration [[1 {:thinking nil
+                 :blocks-by-iteration [[1 {:thinking "LLM-only private reasoning must stay out"
                                            :blocks   [{:code "(+ 1 2)"
+                                                       :comment "block-authored intermediate comment is okay"
                                                        :result 3
                                                        :provenance {:ref "turn/3f2a91c0/iteration/1/block/1"
                                                                     :op :sci/eval
@@ -81,12 +91,15 @@
       (expect (string? out))
       (expect (str/includes? out "<journal>"))
       (expect (str/includes? out "(+ 1 2)"))
-      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/1"))))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/1"))
+      (expect (str/includes? out ";; block-authored intermediate comment is okay"))
+      (expect (not (str/includes? out "LLM-only private reasoning must stay out")))
+      (expect (not (str/includes? out "iteration/1 thinking:")))))
 
   (it "renders every preview captured from one block into <journal>"
-    (let [preview-a {:ok? true :result {:a 1} :result-shape {} :error nil
+    (let [preview-a {:success? true :result {:a 1} :error nil
                      :provenance {:op :v/preview}}
-          preview-b {:ok? true :result {:b 2} :result-shape {} :error nil
+          preview-b {:success? true :result {:b 2} :error nil
                      :provenance {:op :v/preview}}
           out (with-redefs [extension/render-tool-result
                             (fn [_surface tool-result]
@@ -138,10 +151,11 @@
                  :iteration           1})]
       (expect (string? out))
       ;; nil model uses the conservative 32k context fallback; journal
-      ;; budget is 50% of that and token count falls back to chars/4.
+      ;; budget is capped at 50% before pinned/var-index reductions,
+      ;; and token count falls back to chars/4.
       (expect (< (count out) 70000))
       (expect (str/includes? out "older journal lines omitted"))
-      (expect (str/includes? out "50% of model context"))
+      (expect (str/includes? out "journal cap <= 50% model context"))
       (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/119"))))
 
   ;; Helpers ------------------------------------------------------------------

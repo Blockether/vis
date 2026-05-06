@@ -99,7 +99,7 @@
 (s/def :provenance/ref canonical-ref?)
 (s/def :rendering/kind rendering-kinds)
 (s/def :block/idx nat-int?)
-(s/def :report/ok? boolean?)
+(s/def :report/success? boolean?)
 
 ;; -----------------------------------------------------------------------------
 ;; Public writer opts — validates actual ergonomic public keys.
@@ -215,7 +215,7 @@
 (s/def ::fulfillment-summary non-blank-string?)
 (s/def ::abandonment-reason non-blank-string?)
 (s/def ::report string?)
-(s/def ::ok? boolean?)
+(s/def ::success? boolean?)
 (s/def ::scope #{:conversation})
 (s/def ::focused-intent-ids (s/coll-of uuid-string? :kind vector?))
 (s/def ::unfocused-active-intent-ids (s/coll-of uuid-string? :kind vector?))
@@ -224,6 +224,6 @@
 (s/def ::intents vector?)
 
 (s/def ::intents-report
-  (s/keys :req-un [::ok? ::scope ::conversation-id ::turn-state-id
+  (s/keys :req-un [::success? ::scope ::conversation-id ::turn-state-id
                    ::focused-intent-ids ::unfocused-active-intent-ids
                    ::intents ::checks ::violations ::report]))
