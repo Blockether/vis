@@ -42,24 +42,42 @@
     (expect (= "languages" (:ext/kind clj-ext/clojure-extension)))
     (expect (fn? (:ext/activation-fn clj-ext/clojure-extension))))
 
-  (it "exports z/patch helpers and rewrite-clj zipper API"
+  (it "exports z/patch helpers, xref tools, and rewrite-clj zipper API"
     (let [symbols (set (map :ext.symbol/sym (:ext/symbols clj-ext/clojure-extension)))]
       (expect (contains? symbols 'patch))
       (expect (contains? symbols 'locators))
       (expect (contains? symbols 'symbols))
       (expect (contains? symbols 'find-value))
       (expect (contains? symbols 'replace))
-      (expect (contains? symbols 'subedit->))))
+      (expect (contains? symbols 'subedit->))
+      (expect (contains? symbols 'xref-analyze!))
+      (expect (contains? symbols 'who-calls))
+      (expect (contains? symbols 'context-for))
+      (expect (contains? symbols 'locator-for-ref))
+      (expect (contains? symbols 'repair-range))
+      (expect (contains? symbols 'repair-locator))
+      (expect (contains? symbols 'repair-file))
+      (expect (contains? symbols 'definition))
+      (expect (contains? symbols 'call-sites))
+      (expect (contains? symbols 'diagnostics))
+      (expect (contains? symbols 'rename-plan))
+      (expect (contains? symbols 'clean-ns-plan))))
 
   (it "adds Clojure structural-editing guidance to environment info"
     (let [info ((:ext/environment-info-fn clj-ext/clojure-extension) {})]
       (expect (string? info))
-      (expect (str/includes? info "Prefer structural editing"))
+      (expect (str/includes? info "Prefer the `z/` alias"))
       (expect (str/includes? info "`z/locators`"))
       (expect (str/includes? info "`z/symbols`"))
       (expect (str/includes? info "`z/patch`"))
       (expect (str/includes? info "rewrite-clj"))
-      (expect (str/includes? info "add `:replace`"))))
+      (expect (str/includes? info "add `:replace`"))
+      (expect (str/includes? info "`z/who-calls`"))
+      (expect (str/includes? info "`z/locator-for-ref`"))
+      (expect (str/includes? info "`z/repair-range`"))
+      (expect (str/includes? info "`z/repair-locator`"))
+      (expect (str/includes? info "`z/diagnostics`"))
+      (expect (str/includes? info "`z/rename-plan`"))))
 
   (it "makes rewrite-clj threading macros callable inside SCI"
     (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (vis/create-sci-context nil)

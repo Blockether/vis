@@ -214,15 +214,17 @@
      :reasoning-default — base reasoning effort (`:quick`, `:balanced`, `:deep`)
                           forwarded to `vis/send!` for reasoning-capable models.
      :extra-body        — provider-specific request-body overrides forwarded to
-                          `vis/send!` unchanged."
+                          `vis/send!` unchanged.
+     :turn-features     — per-turn feature flags consumed by extension prompts."
   ([conversation text] (turn! conversation text {}))
-  ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body]}]
+  ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body turn-features]}]
    (try
      (let [send-opts (cond-> {}
                        on-chunk          (assoc :hooks {:on-chunk on-chunk})
                        cancel-atom       (assoc :cancel-atom cancel-atom)
                        reasoning-default (assoc :reasoning-default reasoning-default)
-                       extra-body        (assoc :extra-body extra-body))
+                       extra-body        (assoc :extra-body extra-body)
+                       turn-features     (assoc :turn/features turn-features))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
            ;; Plain text — the bubble renderer dims it via the

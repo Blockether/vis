@@ -113,9 +113,16 @@
 ;; and benefit from REPL redefinition.
 (s/def :channel/main-fn ifn?)
 
+;; Channel-owned nested commands, e.g. `vis channels telegram approve`.
+;; This keeps channel subcommands inside the channel descriptor instead of
+;; extension namespaces registering global command-registry entries directly.
+(s/def :channel/subcommands
+  (s/or :static (s/coll-of map? :kind vector?)
+    :dynamic ifn?))
+
 (s/def ::channel
   (s/keys :req [:channel/id :channel/cmd :channel/doc :channel/main-fn]
-    :opt [:channel/usage :channel/owns-tty?]))
+    :opt [:channel/usage :channel/owns-tty? :channel/subcommands]))
 
 (defn channel
   "Build and validate a channel descriptor map."
@@ -388,15 +395,25 @@
 (defn- channel->command
   "Adapt a `:channel/...`-keyed channel descriptor into a command map.
    Channels parse their own raw args so we forward the residual
-   untouched and ignore the parsed map."
+   untouched and ignore the parsed map. Channel subcommands live on
+   `:channel/subcommands`; the registered-under fallback stays for
+   host-owned compatibility, but extension namespaces should not call
+   `register-cmd!` directly."
   [c]
-  {:cmd/name      (:channel/cmd c)
-   :cmd/doc       (:channel/doc c)
-   :cmd/usage     (or (:channel/usage c)
-                    (str "vis channels " (:channel/cmd c)))
-   :cmd/owns-tty? (boolean (:channel/owns-tty? c))
-   :cmd/run-fn    (fn [_parsed residual]
-                    ((:channel/main-fn c) (vec residual)))})
+  {:cmd/name        (:channel/cmd c)
+   :cmd/doc         (:channel/doc c)
+   :cmd/usage       (or (:channel/usage c)
+                      (str "vis channels " (:channel/cmd c)))
+   :cmd/owns-tty?   (boolean (:channel/owns-tty? c))
+   :cmd/subcommands #(let [s (:channel/subcommands c)
+                           direct (cond
+                                    (nil? s) []
+                                    (ifn? s) (vec (s))
+                                    (sequential? s) (vec s)
+                                    :else [])]
+                       (into direct (registered-under ["channels" (:channel/cmd c)])))
+   :cmd/run-fn      (fn [_parsed residual]
+                      ((:channel/main-fn c) (vec residual)))})
 
 (defn channel-subcommands
   "Compose subcommands for the `vis channels` parent from TWO sources:

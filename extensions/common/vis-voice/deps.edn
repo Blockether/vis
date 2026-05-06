@@ -1,0 +1,10 @@
+{:paths ["src" "resources"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.4"}
+        com.blockether/vis {:local/root "../../.."}
+        com.litongjava/sherpa-onnx-java-api {:mvn/version "1.0.1"}
+        com.microsoft.onnxruntime/onnxruntime {:mvn/version "1.17.1"}
+        org.apache.commons/commons-compress {:mvn/version "1.28.0"}}
+ :aliases
+ {:test {:extra-paths ["test"]
+         :extra-deps {io.github.noahtheduke/lazytest {:mvn/version "2.0.0"}}
+         :main-opts ["-m" "lazytest.main"]}}}

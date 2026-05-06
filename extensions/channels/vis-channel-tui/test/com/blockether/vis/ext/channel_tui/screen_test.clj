@@ -25,6 +25,9 @@
 (def ^:private submit-input!
   (deref #'screen/submit-input!))
 
+(def ^:private palette-extra-commands
+  (deref #'screen/palette-extra-commands))
+
 (def ^:private copy-conversation-id!
   (deref #'screen/copy-conversation-id!))
 
@@ -115,7 +118,25 @@
       (expect (not (re-find #"Ctrl\+T model" empty-hint)))
       (expect (not (re-find #"Ctrl\+R reasoning" typed-hint)))
       (expect (not (re-find #"Ctrl\+L verbosity" typed-hint)))
-      (expect (not (re-find #"Ctrl\+T model" typed-hint))))))
+      (expect (not (re-find #"Ctrl\+T model" typed-hint)))))
+
+  (it "idle hints advertise direct voice toggle"
+    (let [empty-hint (current-hint {:input (input/empty-input)})
+          typed-hint (current-hint {:input (input/paste-text (input/empty-input) "hello")})]
+      (expect (re-find #"Ctrl\+B voice" empty-hint))
+      (expect (re-find #"Ctrl\+B voice" typed-hint)))))
+
+(defdescribe extension-command-test
+  (it "hides direct-only extension commands from Ctrl+K palette"
+    (expect (= [{:id :shown :label "Shown" :run-fn identity}]
+              (palette-extra-commands
+                [{:id :voice-parakeet/toggle
+                  :label "Voice: Toggle Recording (Ctrl+B)"
+                  :palette? false
+                  :run-fn identity}
+                 {:id :shown
+                  :label "Shown"
+                  :run-fn identity}])))))
 
 (defdescribe startup-resume-test
   (it "--conversation-id sweeps orphaned running turns before rebuilding history"

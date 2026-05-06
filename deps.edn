@@ -27,6 +27,7 @@
   com.blockether/vis-foundation               {:local/root "extensions/common/vis-foundation"}
   com.blockether/vis-exa                      {:local/root "extensions/common/vis-exa"}
   com.blockether/vis-mermaid                  {:local/root "extensions/common/vis-mermaid"}
+  com.blockether/vis-voice                   {:local/root "extensions/common/vis-voice"}
   com.blockether/vis-voice-parakeet           {:local/root "extensions/common/vis-voice-parakeet"}
   com.blockether/vis-language-clojure         {:local/root "extensions/languages/clojure"}
 
@@ -60,6 +61,7 @@
   ;;   lanterna                 → vis-channel-tui
   com.blockether/svar              {:mvn/version "0.4.4"}
   com.blockether/anomaly           {:mvn/version "1.0.1"}
+  babashka/process                 {:mvn/version "0.6.25"}
   org.clojure/clojure              {:mvn/version "1.12.4"}
   com.taoensso/telemere            {:mvn/version "1.2.1"}
   io.github.tonsky/clojure-plus    {:mvn/version "1.7.2"}
@@ -117,6 +119,7 @@
                         "extensions/common/vis-foundation/test"
                         "extensions/common/vis-exa/test"
                         "extensions/common/vis-mermaid/test"
+                        "extensions/common/vis-voice/test"
                         "extensions/common/vis-voice-parakeet/test"
                         "extensions/languages/clojure/test"]
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
@@ -128,6 +131,7 @@
                         com.blockether/vis-foundation              {:local/root "extensions/common/vis-foundation"}
                         com.blockether/vis-exa                     {:local/root "extensions/common/vis-exa"}
                         com.blockether/vis-mermaid                 {:local/root "extensions/common/vis-mermaid"}
+                        com.blockether/vis-voice                  {:local/root "extensions/common/vis-voice"}
                         com.blockether/vis-voice-parakeet          {:local/root "extensions/common/vis-voice-parakeet"}
                         ;; Microbenchmarks. Pulled into `:test` so a
                         ;; `*_bench_test.clj` file can `(require
@@ -150,6 +154,7 @@
                         "--dir" "extensions/common/vis-foundation/test"
                         "--dir" "extensions/common/vis-exa/test"
                         "--dir" "extensions/common/vis-mermaid/test"
+                        "--dir" "extensions/common/vis-voice/test"
                         "--dir" "extensions/common/vis-voice-parakeet/test"
                         "--dir" "extensions/languages/clojure/test"]}
 

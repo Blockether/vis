@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.foundation.doctor
-  "Foundation's contribution to the `vis doctor` aggregator. ONE fn
-   (`check-fn`) returns the full message stream from four logical
+  "Foundation's contribution to the `vis extensions doctor` aggregator. ONE fn
+   (`check-fn`) returns the full message stream from five logical
    sections, each stamping its own `:check-id` so the formatter
    groups them under the same banner the original four-checks-vec
    shape produced (plan §1 Q18 / §10):
@@ -16,6 +16,8 @@
      ::skills            Skills catalog summary: count + breakdown
                           by source; :error lines per malformed
                           SKILL.md file.
+     ::voice             Optional voice runtime readiness: voice extensions,
+                          ffmpeg, and Piper espeak-ng-data presence.
      ::scan-warnings     Aggregated warnings from agents + skills
                           scanners (already surfaced via
                           `(v/scan-warnings)`); promoted to
@@ -29,6 +31,8 @@
    runs regardless of `:ext/activation-fn`, so the section fns must
    NOT assume `:db-info` or other env keys are present."
   (:require
+   [babashka.process :as process]
+   [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.environment.agents :as agents]
    [com.blockether.vis.ext.foundation.environment.skills :as skills]))
@@ -113,6 +117,65 @@
                    " loaded (" repo-n " repo, " user-n " user-global)")}])))
 
 ;; ---------------------------------------------------------------------------
+;; ::voice — optional voice runtime checks
+;; ---------------------------------------------------------------------------
+
+(defn- executable? [cmd]
+  (try
+    (zero? (:exit (process/sh {:out :string :err :string :continue true}
+                    "command" "-v" cmd)))
+    (catch Throwable _ false)))
+
+(defn- resolved? [sym]
+  (boolean (requiring-resolve sym)))
+
+(defn- call-resolved [sym & args]
+  (when-let [f (requiring-resolve sym)]
+    (apply f args)))
+
+(defn- voice-extension-message []
+  (let [asr? (resolved? 'com.blockether.vis.ext.voice-parakeet.sherpa/transcribe-file!)
+        tts? (resolved? 'com.blockether.vis.ext.voice.core/synthesize-file!)]
+    (if (or asr? tts?)
+      {:level :info
+       :message (str "Voice extensions:"
+                  " input=" (if asr? "loaded" "missing")
+                  ", output=" (if tts? "loaded" "missing"))}
+      {:level       :warn
+       :message     "Voice extensions: none loaded; voice menus/commands are disabled."
+       :remediation "Add/load vis-voice for output and/or vis-voice-parakeet for input, then restart the channel."})))
+
+(defn- ffmpeg-message []
+  (if (executable? "ffmpeg")
+    {:level :info
+     :message "ffmpeg: installed"}
+    {:level       :warn
+     :message     "ffmpeg: missing; Telegram voice input cannot convert .oga/.opus to WAV for ASR."
+     :remediation "Install ffmpeg and ensure it is on PATH for the Vis/Telegram process."}))
+
+(defn- piper-espeak-message []
+  (try
+    (if-let [files (call-resolved 'com.blockether.vis.ext.voice.core/model-files)]
+      (let [data-dir (:data files)]
+        (if (.isDirectory (io/file data-dir))
+          {:level :info
+           :message (str "Piper espeak-ng-data: installed — " data-dir)}
+          {:level       :warn
+           :message     (str "Piper espeak-ng-data: missing — " data-dir)
+           :remediation "Run `vis extensions voice models download --piper` or set VIS_PIPER_MODEL_DIR to a complete Piper model directory."}))
+      {:level :info
+       :message "Piper espeak-ng-data: skipped; vis-voice output extension is not loaded."})
+    (catch Throwable t
+      {:level       :warn
+       :message     (str "Piper espeak-ng-data: check failed: " (or (ex-message t) t))
+       :remediation "Run `vis extensions voice models status` for detailed voice model diagnostics."})))
+
+(defn- voice-check-fn [_environment]
+  [(voice-extension-message)
+   (ffmpeg-message)
+   (piper-espeak-message)])
+
+;; ---------------------------------------------------------------------------
 ;; ::scan-warnings — promotes scanner warnings into doctor :error msgs
 ;; ---------------------------------------------------------------------------
 
@@ -126,24 +189,25 @@
                :remediation (case source
                               :skill-frontmatter
                               (str "Fix the YAML frontmatter (required fields: name, description), "
-                                "then run `(vis/reload-skills!)` from `:code` or `bin/vis doctor` "
+                                "then run `(vis/reload-skills!)` from `:code` or `bin/vis extensions doctor` "
                                 "to revalidate.")
                               :agents-md
                               (str "Verify the file is readable; then run `(vis/reload-instructions!)` "
-                                "or `bin/vis doctor` to revalidate.")
+                                "or `bin/vis extensions doctor` to revalidate.")
                               :claude-md-fallback
                               (str "Verify the file is readable; or add a proper `AGENTS.md` instead of "
                                 "relying on the CLAUDE.md fallback.")
-                              "Investigate, fix, then revalidate via `bin/vis doctor`.")
+                              "Investigate, fix, then revalidate via `bin/vis extensions doctor`.")
                :data        {:path path :source source}})
         warnings))))
 
 ;; ---------------------------------------------------------------------------
 ;; The single fn the foundation extension wires into
 ;; `:ext/doctor-check-fn`. Order is intentional: system facts first,
-;; then project-guidance presence, then skills summary, then any
-;; scan failures. Each section stamps its own `:check-id` so the
-;; formatter still groups the output under the documented prefixes.
+;; then project-guidance presence, then skills summary, then voice
+;; readiness, then any scan failures. Each section stamps its own
+;; `:check-id` so the formatter still groups the output under the
+;; documented prefixes.
 ;; ---------------------------------------------------------------------------
 
 (defn- stamp [check-id msgs]
@@ -158,13 +222,13 @@
       (stamp ::system        (system-check-fn        environment))
       (stamp ::agents-md     (agents-md-check-fn     environment))
       (stamp ::skills        (skills-check-fn        environment))
+      (stamp ::voice         (voice-check-fn         environment))
       (stamp ::scan-warnings (scan-warnings-check-fn environment)))))
 
 ;; ---------------------------------------------------------------------------
-;; Top-level `vis doctor` CLI command. Foundation owns this now —
-;; lifted out of `internal/main.clj`'s built-ins. Direct
-;; `register-cmd!` (NOT `:ext/cli`) because the command lives at the
-;; top of the tree (`vis doctor`), not under `vis extensions ...`.
+;; `vis extensions doctor` CLI command. Foundation owns the diagnostics,
+;; but extension-owned CLI must mount under `vis extensions ...` through
+;; `:ext/cli`, never by direct global command registration.
 ;; ---------------------------------------------------------------------------
 
 (defn- println-original!
@@ -178,7 +242,7 @@
   (.flush ^java.io.PrintStream vis/original-stdout))
 
 (defn- cli-doctor-run!
-  "CLI handler for `vis doctor`. Init host runtime, walk every
+  "CLI handler for `vis extensions doctor`. Init host runtime, walk every
    extension's `:ext/doctor-check-fn` via [[vis/run-doctor-checks]],
    format + print to original-stdout, exit with 0 / 1 / 2 by max
    level."
@@ -189,9 +253,8 @@
     (println-original! (vis/doctor-format-output msgs))
     (System/exit (int (vis/doctor-exit-code msgs)))))
 
-(defn register-cli! []
-  (vis/register-cmd!
-    {:cmd/name   "doctor"
-     :cmd/doc    "Run cross-extension diagnostics. Prints info / warn / error messages contributed by every loaded extension; exits 0 (clean) / 1 (warnings) / 2 (errors)."
-     :cmd/usage  "vis doctor"
-     :cmd/run-fn cli-doctor-run!}))
+(defn cli-command []
+  {:cmd/name   "doctor"
+   :cmd/doc    "Run cross-extension diagnostics. Prints info / warn / error messages contributed by every loaded extension; exits 0 (clean) / 1 (warnings) / 2 (errors)."
+   :cmd/usage  "vis extensions doctor"
+   :cmd/run-fn cli-doctor-run!})

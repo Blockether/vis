@@ -1941,18 +1941,52 @@
       (expect (str/includes? (:text payload) "4: selected line"))
       (expect (not (str/includes? (:text payload) "5: selected line")))
       (expect (not (str/includes? (:text payload) "30: selected line")))
-      (expect (str/includes? (:text payload) "PREVIEW · 26 lines hidden"))
-      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))
+      (expect (str/includes? (:text payload) "▸ 26 lines hidden"))
+      (let [preview-rows    (filter (fn [line] (str/includes? (body-of line) "PREVIEW")) (:lines payload))
+            preview-row-idx (.indexOf (:lines payload) (first preview-rows))
+            first-body-idx  (.indexOf (:lines payload)
+                              (first (filter (fn [line] (str/includes? (body-of line) "1: selected line")) (:lines payload))))]
+        (expect (= 1 (count preview-rows)))
+        (expect (str/includes? (body-of (first preview-rows)) "▸ 26 lines hidden"))
+        (expect (not (str/includes? (body-of (first preview-rows)) "▸ PREVIEW")))
+        (expect (str/includes? (body-of (first preview-rows)) "● PREVIEW  ○ RAW"))
+        (expect (< preview-row-idx first-body-idx)))
+      (expect (some #(= :preview-switcher (:kind %)) (:line-meta payload)))
       (expect (str/includes? (:text expanded) "30: selected line"))
       (expect (str/includes? (:text payload) "● PREVIEW  ○ RAW"))
       (expect (not (str/includes? (:text payload) "SHAPE")))
       (expect (not (str/includes? (:text payload) ":source-shape")))
       (expect (not (str/includes? (:text payload) "raw-only")))
-      (expect (str/includes? (:text raw-view) "○ PREVIEW  ● RAW"))
+      (expect (str/includes? (:text raw-view) "▾ showing all 30 lines"))
+      (expect (str/includes? (:text raw-view) "Turn: 123e4567"))
+      (expect (str/includes? (:text raw-view) "Iteration: 1"))
+      (expect (str/includes? (:text raw-view) "Block: 1"))
       (expect (str/includes? (:text raw-view) "raw-only"))
       (expect (not (str/includes? (:text raw-view) "src/demo.clj")))
       (expect (not (str/includes? (:text raw-view) ":provenance")))
-      (expect (not (str/includes? (:text payload) "RESULT")))))
+      (expect (not (str/includes? (:text payload) "RESULT")))
+      (let [wrap-text*   @#'render/wrap-text
+            wrap-calls   (atom 0)
+            preview-text (str/join "\n" (map #(str % ": selected line xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+                                          (range 1 2001)))
+            trace        {:code ["(v/preview huge)"]
+                          :results [preview-text]
+                          :result-kinds [:preview]
+                          :result-details [{:raw "{:raw true}"}]
+                          :stdouts [""]
+                          :durations [1]
+                          :successes [true]}]
+        (with-redefs-fn {(resolve 'com.blockether.vis.ext.channel-tui.render/wrap-text)
+                         (fn [& args]
+                           (swap! wrap-calls inc)
+                           (apply wrap-text* args))}
+          (fn []
+            (let [payload (render/format-answer-with-thinking-data
+                            "" [trace] 96 {:show-iterations true} nil false opts)]
+              (expect (str/includes? (:text payload) "1: selected line"))
+              (expect (str/includes? (:text payload) "4: selected line"))
+              (expect (not (str/includes? (:text payload) "5: selected line")))
+              (expect (< @wrap-calls 80))))))))
 
   (it "renders operation badges and color roles for tool result summaries"
     (render/invalidate-cache!)
@@ -1975,9 +2009,10 @@
 
   (it "paints preview raw controls on the right with underline and translated ANSI"
     (render/invalidate-cache!)
-    (let [detail {:raw "{:secret \"raw-only\"}"}
+    (let [preview-text (str/join "\n" (map #(str % ": selected line") (range 1 31)))
+          detail {:raw "{:secret \"raw-only\"}"}
           trace [{:code ["(v/preview file {:result [[:lines {:from 0 :to 30}]]})"]
-                  :results ["1: selected line"]
+                  :results [preview-text]
                   :result-kinds [:preview]
                   :result-details [detail]
                   :stdouts [""]
@@ -2017,7 +2052,9 @@
          :prewrapped-lines (:lines payload)
          :line-meta (:line-meta payload)}
         0 2 96 {:viewport-h 50})
+      (expect (some #(str/includes? (:text %) "showing all 30 lines") @puts))
       (expect (some #(str/includes? (:text %) "raw-only") @puts))
+      (expect (not-any? #(str/includes? (:text %) "\\space") @puts))
       (expect (not-any? #(str/includes? (:text %) ":provenance") @puts))
       (expect (not-any? #(str/includes? (:text %) "src/demo.clj") @puts))
       (expect (not-any? #(str/includes? (:text %) "\u001b[") @puts))

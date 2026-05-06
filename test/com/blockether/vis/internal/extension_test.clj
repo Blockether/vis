@@ -60,7 +60,28 @@
       (with-redefs-fn {#'ext/log-hook! (fn [level & _] (swap! levels conj level))}
         (fn []
           (expect (= :pong (#'ext/invoke-symbol-wrapper extension sym-entry [] {})))
-          (expect (= [:debug :debug :debug] @levels)))))))
+          (expect (= [:debug :debug :debug] @levels))))))
+
+  (it "records tool-start before the symbol function returns"
+    (let [started   (promise)
+          can-return (promise)
+          sym-entry (ext/symbol 'slow-tool
+                      (fn []
+                        (expect (realized? started))
+                        (deliver can-return true)
+                        :done)
+                      {:doc "Slow tool." :arglists '([])})
+          extension (ext/extension {:ext/namespace 'test.tool-start
+                                    :ext/doc "Tool start fixture."
+                                    :ext/kind "fixture"
+                                    :ext/ns-alias {:ns 'test.tool-start :alias 'tts}
+                                    :ext/symbols [sym-entry]})]
+      (binding [ext/*tool-event-sink* #(deliver started %)]
+        (expect (= :done (#'ext/invoke-symbol-wrapper extension sym-entry [] {}))))
+      (expect (= true (deref can-return 1000 false)))
+      (expect (= :tool-start (:phase @started)))
+      (expect (= :tts/slow-tool (:op @started)))
+      (expect (= :running (:status @started))))))
 
 (defdescribe kind-auto-derivation-test
   (it "derives \"providers\" for extensions exporting :ext/providers"

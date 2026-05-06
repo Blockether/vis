@@ -85,7 +85,7 @@ top-level command set built in `cli.clj :: root-command`:
 | `vis run "prompt"`         | One-shot agent turn (ephemeral by default; `--persist` saves under `:cli`).       |
 | `vis providers …`          | Provider auth / status / limits (e.g. GitHub Copilot OAuth, Z.ai static-API-key). |
 | `vis conversations […]`    | List conversations, optionally filtered by channel (`tui` / `telegram` / `cli`).  |
-| `vis doctor`               | Environment diagnostics.                                                          |
+| `vis extensions doctor`    | Environment diagnostics.                                                          |
 | `vis extensions list`      | List registered extensions.                                                       |
 | `vis extensions <cmd> […]` | Run an extension-provided CLI command (`:ext/cli` entries).                       |
 | `vis channels <name> […]`  | Run a registered channel (e.g. `vis channels tui`, `vis channels telegram`).      |

@@ -4,11 +4,13 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.voice-parakeet.recorder :as recorder]
             [com.blockether.vis.ext.voice-parakeet.rewrite :as rewrite]
-            [com.blockether.vis.ext.voice-parakeet.sherpa :as sherpa]))
+            [com.blockether.vis.ext.voice-parakeet.sherpa :as sherpa]
+            [taoensso.telemere :as tel]))
 
 (defonce state
   (atom {:recorder nil
-         :ticker nil}))
+         :ticker nil
+         :transcribing? false}))
 
 (defn- publish!
   [event]
@@ -19,73 +21,119 @@
   (let [s (quot (- (System/currentTimeMillis) (long started-at-ms)) 1000)]
     (format "%02d:%02d" (quot s 60) (mod s 60))))
 
+(defn- voice-status!
+  [text level]
+  (publish! {:op :status/set
+             :id :voice/parakeet
+             :text text
+             :level level}))
+
+(defn- idle-status! []
+  (voice-status! "○ Voice ready" :success))
+
+(defn- voice-asr-failed-signal
+  [audio-file throwable message]
+  {:level :error
+   :id ::voice-asr-failed
+   :data {:audio-file (str audio-file)
+          :error message
+          :type (:type (ex-data throwable))}})
+
+(defn- log-voice-asr-failed!
+  [audio-file throwable message]
+  (tel/log! (voice-asr-failed-signal audio-file throwable message)))
+
 (defn- start-ticker!
   [started-at-ms]
   (future
     (while (:recorder @state)
-      (publish! {:op :status/set
-                 :id :voice/parakeet
-                 :text (str "🎙 Recording " (elapsed-label started-at-ms))
-                 :level :info})
+      (voice-status! (str "● Recording " (elapsed-label started-at-ms)) :warn)
       (Thread/sleep 1000))))
 
 (defn start-recording!
   [_ctx]
-  (if (:recorder @state)
+  (cond
+    (:transcribing? @state)
+    (publish! {:op :notify
+               :text "Voice is still transcribing the previous recording"
+               :level :warn})
+
+    (:recorder @state)
     (publish! {:op :notify :text "Voice recording is already running" :level :warn})
+
+    :else
     (let [rec (recorder/start!)
           ticker (start-ticker! (:started-at-ms rec))]
-      (reset! state {:recorder rec :ticker ticker})
-      (publish! {:op :status/set
-                 :id :voice/parakeet
-                 :text "🎙 Recording 00:00"
-                 :level :info}))))
+      (reset! state {:recorder rec :ticker ticker :transcribing? false})
+      (voice-status! "● Recording 00:00" :warn))))
 
 (defn- transcribe-and-insert!
   [audio-file]
   (future
     (try
-      (publish! {:op :status/set :id :voice/parakeet :text "🎙 Transcribing…" :level :info})
+      (voice-status! "● Transcribing…" :info)
       (let [raw (sherpa/transcribe-file! audio-file)]
-        (publish! {:op :status/set :id :voice/parakeet :text "🎙 Rewriting…" :level :info})
+        (voice-status! "● Rewrite…" :info)
         (let [rewritten (rewrite/rewrite-transcript! raw)
               text      (if (str/blank? rewritten) raw rewritten)]
-          (publish! {:op :input/replace :text text :source :voice/parakeet})
-          (publish! {:op :status/clear :id :voice/parakeet})
-          (publish! {:op :notify :text "✓ Voice inserted into input" :level :success})))
+          (publish! {:op :input/append :text text :source :voice/parakeet})
+          (idle-status!)
+          (publish! {:op :notify :text "✓ Voice appended to input" :level :success})))
       (catch Throwable t
-        (publish! {:op :status/clear :id :voice/parakeet})
-        (publish! {:op :notify
-                   :text (str "Voice failed: " (or (ex-message t) t))
-                   :level :error})))))
+        (let [message (or (ex-message t) (str t))]
+          (log-voice-asr-failed! audio-file t message)
+          (voice-status! "○ Voice failed" :error)
+          (publish! {:op :notify
+                     :text (str "Voice failed: " message)
+                     :level :error})))
+      (finally
+        (swap! state assoc :transcribing? false)))))
 
 (defn stop-and-transcribe!
   [_ctx]
-  (if-let [rec (:recorder @state)]
-    (let [audio-file (recorder/stop! rec)]
-      (reset! state {:recorder nil :ticker nil})
+  (cond
+    (:transcribing? @state)
+    (publish! {:op :notify
+               :text "Voice is still transcribing the previous recording"
+               :level :warn})
+
+    (:recorder @state)
+    (let [rec (:recorder @state)
+          audio-file (recorder/stop! rec)]
+      (reset! state {:recorder nil :ticker nil :transcribing? true})
       (transcribe-and-insert! audio-file))
+
+    :else
     (publish! {:op :notify :text "Voice recording is not running" :level :warn})))
 
 (defn cancel-recording!
   [_ctx]
-  (when-let [rec (:recorder @state)]
-    (recorder/stop! rec))
-  (reset! state {:recorder nil :ticker nil})
-  (publish! {:op :status/clear :id :voice/parakeet})
-  (publish! {:op :notify :text "Voice recording cancelled" :level :info}))
+  (cond
+    (:transcribing? @state)
+    (publish! {:op :notify
+               :text "Voice transcription cannot be cancelled"
+               :level :warn})
+
+    :else
+    (do
+      (when-let [rec (:recorder @state)]
+        (recorder/stop! rec))
+      (reset! state {:recorder nil :ticker nil :transcribing? false})
+      (idle-status!)
+      (publish! {:op :notify :text "Voice recording cancelled" :level :info}))))
+
+(defn toggle-recording!
+  [ctx]
+  (if (:recorder @state)
+    (stop-and-transcribe! ctx)
+    (start-recording! ctx)))
 
 (defn tui-commands
   [_ctx]
-  [{:id :voice-parakeet/start
-    :label "Voice: Start Recording"
-    :run-fn start-recording!}
-   {:id :voice-parakeet/stop
-    :label "Voice: Stop and Transcribe"
-    :run-fn stop-and-transcribe!}
-   {:id :voice-parakeet/cancel
-    :label "Voice: Cancel Recording"
-    :run-fn cancel-recording!}])
+  [{:id :voice-parakeet/toggle
+    :label "Voice: Toggle Recording (Ctrl+B)"
+    :palette? false
+    :run-fn toggle-recording!}])
 
 (def parakeet-extension
   (vis/extension
