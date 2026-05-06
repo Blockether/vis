@@ -340,9 +340,12 @@ vis channels tui --conversation-id <UUID>         # resume a specific one (full 
 ```
 
 Key bindings live in the dialogs (`Ctrl+K` opens the action menu).
-Typing `@` opens the file picker for inline file references; inside the
-picker, `Alt+I` toggles ignored files, `Alt+S` cycles sort mode, and
-`Alt+O` opens the selected file through the OS opener.
+Typing `@` opens the file picker for inline file references. The visible
+chat keeps `@path`, while the agent prompt gets an `[Attached File: path]`
+read-now directive requiring `(v/cat path)`, a `def` binding, and
+`v/preview` before answering about that file. Inside the picker, `Alt+I`
+toggles ignored files, `Alt+S` cycles sort mode, and `Alt+O` opens the
+selected file through the OS opener.
 On the main chat screen, `Ctrl+R` cycles reasoning effort, `Ctrl+L`
 cycles OpenAI Codex verbosity, and `Ctrl+T` cycles the primary provider's
 configured models; changes apply to the next request and are persisted
@@ -417,9 +420,13 @@ vis extensions <cmd> [args…]         # run an extension's exported CLI command
 
 The bundled `extensions/common/vis-foundation` package adds `v/cat`,
 `v/patch`, `v/ls`, `v/rg`, `v/bash`, and thin babashka.fs wrappers like
-`v/glob` (filesystem tools namespaced under the `v/` alias). It is already
-wired into the root `deps.edn`; add the same `:local/root` entry to a
- downstream consumer's `deps.edn` to enable it:
+`v/glob` (filesystem tools namespaced under the `v/` alias). `v/rg` uses one
+spec-map grammar: `(v/rg {:all ["defn" "name"] :paths ["src"]})` narrows to
+lines containing every literal; `(v/rg {:any ["foo" "bar"] :paths ["."]})`
+broadens to either literal. There is no public `v/grep`; bind `v/rg` once and
+use `v/preview` to display selected hits. It is already wired into the root
+`deps.edn`; add the same `:local/root` entry to a downstream consumer's
+`deps.edn` to enable it:
 
 ```clojure
 ;; deps.edn

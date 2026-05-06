@@ -47,9 +47,8 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-(s/def ::ok? boolean?)
+(s/def ::success? boolean?)
 (s/def ::result any?)
-(s/def ::result-shape map?)
 (s/def ::rendered string?)
 
 (s/def ::op keyword?)
@@ -102,13 +101,13 @@
 (s/def ::error (s/nilable ::error-map))
 
 (s/def ::tool-result-base
-  (s/keys :req-un [::ok? ::result ::result-shape ::provenance ::error]))
+  (s/keys :req-un [::success? ::result ::provenance ::error]))
 
 (s/def ::tool-result
   (s/and
     ::tool-result-base
-    (fn [{:keys [ok? error]}]
-      (if ok?
+    (fn [{:keys [success? error]}]
+      (if success?
         (nil? error)
         (some? error)))))
 
@@ -170,95 +169,6 @@
                  assert-tool-result!)]
     (with-meta merged meta*)))
 
-(def ^:private collection-shape-sample-limit 32)
-
-(defn- sample-type-tag [v]
-  (cond
-    (nil? v) :nil
-    (string? v) :string
-    (boolean? v) :boolean
-    (integer? v) :int
-    (float? v) :float
-    (keyword? v) :keyword
-    (symbol? v) :symbol
-    (map? v) :map
-    (vector? v) :vector
-    (set? v) :set
-    (sequential? v) :seq
-    :else :object))
-
-(defn- frequency-max [xs]
-  (if (seq xs)
-    (reduce max 0 (vals (frequencies xs)))
-    0))
-
-(defn- map-key-stats [m]
-  (let [sample-keys (vec (take collection-shape-sample-limit (keys m)))
-        key-types   (->> sample-keys (map sample-type-tag) distinct vec)]
-    {:sample-size        (count sample-keys)
-     :types              key-types
-     :non-nil-types      (vec (remove #{:nil} key-types))
-     :homogeneous-ratio  (if (seq sample-keys)
-                           (/ (double (frequency-max (map sample-type-tag sample-keys)))
-                             (count sample-keys))
-                           1.0)}))
-
-(defn- collection-sample-stats
-  [values]
-  (let [sample         (vec (take collection-shape-sample-limit values))
-        tagged         (map sample-type-tag sample)
-        types          (->> tagged distinct vec)
-        non-nil-types  (vec (remove #{:nil} types))
-        homogeneous-ratio (if (seq sample)
-                            (/ (double (frequency-max (remove #{:nil} tagged)))
-                              (max 1 (count (remove nil? sample))))
-                            1.0)]
-    {:sample-size   (count sample)
-     :nil-count     (count (filter nil? sample))
-     :types         types
-     :non-nil-types non-nil-types
-     :homogeneous-ratio homogeneous-ratio}))
-
-(declare simple-shape)
-
-(defn- simple-shape
-  [v depth]
-  (cond
-    (neg? depth) {:type :unknown}
-    (nil? v) {:type :nil}
-    (string? v) {:type :string :chars (count v) :lines (count (str/split-lines v))}
-    (boolean? v) {:type :boolean}
-    (integer? v) {:type :int}
-    (float? v) {:type :float}
-    (keyword? v) {:type :keyword}
-    (symbol? v) {:type :symbol}
-    (map? v) {:type :map
-              :count (count v)
-              :keys (->> (keys v) (take 12) vec)
-              :key-stats (map-key-stats v)
-              :shape (into {}
-                       (map (fn [[k vv]] [k (simple-shape vv (dec depth))])
-                         (take 8 v)))
-              :sample-stats (collection-sample-stats (vals v))}
-    (vector? v) {:type :vector
-                 :count (count v)
-                 :items (when-let [x (first v)] (simple-shape x (dec depth)))
-                 :sample-stats (collection-sample-stats v)}
-    (set? v) {:type :set
-              :count (count v)
-              :items (when-let [x (first (seq v))] (simple-shape x (dec depth)))
-              :sample-stats (collection-sample-stats v)}
-    (sequential? v) {:type :seq
-                     :count (count (take 128 v))
-                     :items (when-let [x (first v)] (simple-shape x (dec depth)))
-                     :sample-stats (collection-sample-stats v)}
-    :else {:type :object
-           :class (.getName (class v))}))
-
-(defn result-shape
-  [v]
-  (simple-shape v 2))
-
 (defn- frame-origin
   [^StackTraceElement frame]
   (let [class-name (.getClassName frame)
@@ -313,23 +223,21 @@
    :trace   (normalize-trace t)})
 
 (defn success
-  [{:keys [result provenance] :as m}]
-  (-> {:ok?          true
-       :result       result
-       :result-shape (or (:result-shape m) (result-shape result))
-       :provenance   (normalize-provenance provenance)
-       :error        nil}
+  [{:keys [result provenance]}]
+  (-> {:success?   true
+       :result     result
+       :provenance (normalize-provenance provenance)
+       :error      nil}
     assert-tool-result!))
 
 (defn failure
-  [{:keys [result provenance error throwable] :as m}]
+  [{:keys [result provenance error throwable]}]
   (let [err (or error
               (when throwable (normalize-error throwable)))]
-    (-> {:ok?          false
-         :result       result
-         :result-shape (or (:result-shape m) (result-shape result))
-         :provenance   (normalize-provenance provenance)
-         :error        err}
+    (-> {:success?   false
+         :result     result
+         :provenance (normalize-provenance provenance)
+         :error      err}
       assert-tool-result!)))
 
 ;; =============================================================================
@@ -376,6 +284,12 @@
 ;; provide one — either explicitly via `:render-fn` or implicitly via
 ;; the `vis/symbol` builder attaching `render-value`.
 (s/def :ext.symbol/render-fn fn?)
+
+;; Extension-owned renderers for semantic rendering kinds carried by
+;; data/preview metadata. Each fn receives a context map with at least
+;; `:surface`, `:rendering-kind`, and `:value`; callers may include
+;; `:tool-result` or other surface context. Return markdown/plain text.
+(s/def :ext/rendering-kinds (s/map-of keyword? fn?))
 
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
@@ -440,10 +354,10 @@
 (defn- system-nudge-map?
   [x]
   (and (map? x)
-    (every? #{:importance :text :message :body} (keys x))
+    (every? #{:importance :text} (keys x))
     (or (nil? (:importance x))
       (contains? system-nudge-importances (:importance x)))
-    (some non-blank-string? [(:text x) (:message x) (:body x)])))
+    (non-blank-string? (:text x))))
 
 (s/def ::system-nudge-result
   (s/nilable
@@ -662,7 +576,8 @@
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
             :ext/ns-alias :ext/prompt :ext/environment-info-fn :ext/nudge-fn
-            :ext/on-parse-error-fn :ext/env :ext/settings :ext/theme :ext/requires
+            :ext/on-parse-error-fn :ext/rendering-kinds
+            :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
             :ext/doctor-check-fn
@@ -1437,12 +1352,14 @@
                       :cli         (count (:ext/cli ext))
                       :channels    (count (:ext/channels ext))
                       :providers   (count (:ext/providers ext))
-                      :persistance (count (:ext/persistance ext))}
+                      :persistance (count (:ext/persistance ext))
+                      :themes      (count (:ext/theme ext))}
                :msg (str "Extension '" ns-sym "' registered globally")})
     (doseq [c (:ext/cli ext)]      (registry/register-cmd! (mount-under-extensions c)))
     (doseq [c (:ext/channels ext)] (registry/register-channel! c))
     (dispatch-providers!   (:ext/providers ext))
     (dispatch-persistance! (:ext/persistance ext))
+    (theme/register-themes! (:ext/theme ext))
     ;; Compute and store source markers in the sidecar atom. Resolved
     ;; via the helper (see source_markers.clj) which knows how to walk
     ;; both file: and jar: classpath URLs. Failures are logged at :warn
@@ -1553,6 +1470,7 @@
           (tel/log! {:level :warn :id ::deregister-backend-failed
                      :data  {:ext ns-sym :backend-id id
                              :error (ex-message t)}}))))
+    (theme/unregister-themes! (keys (:ext/theme ext)))
     (tel/log! {:level :info :id ::deregister-global
                :data {:ext ns-sym}
                :msg  (str "Extension '" ns-sym "' deregistered globally")}))
@@ -1564,6 +1482,26 @@
 (defn registered-extensions []
   (let [registry @extension-registry]
     (into [] (keep registry) @extension-order)))
+
+(defn- rendering-kind-fn
+  [rendering-kind]
+  (some (fn [ext]
+          (get-in ext [:ext/rendering-kinds rendering-kind]))
+    (registered-extensions)))
+
+(defn render-rendering-kind
+  "Render `value` using the first registered extension renderer for
+   `rendering-kind`. Returns nil when no extension owns that kind."
+  ([surface rendering-kind value]
+   (render-rendering-kind surface rendering-kind value {}))
+  ([surface rendering-kind value ctx]
+   (when-let [render-fn (rendering-kind-fn rendering-kind)]
+     (let [ctx* (assoc ctx
+                  :surface surface
+                  :rendering-kind rendering-kind
+                  :value value)
+           rendered (render-fn ctx*)]
+       (if (string? rendered) rendered (pr-str rendered))))))
 
 (defn- tool-result-symbol-entry
   [tool-result]

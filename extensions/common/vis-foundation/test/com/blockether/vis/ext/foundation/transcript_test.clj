@@ -13,7 +13,7 @@
 
 (defn- tool-result
   [command stdout]
-  {:ok? true
+  {:success? true
    :result {:exit 0
             :timed-out? false
             :cwd "."
@@ -25,7 +25,6 @@
             :stdout-chars (count stdout)
             :stdout-truncated? false
             :stdout stdout}
-   :result-shape {:type :map}
    :provenance {:op :v/bash
                 :tool {:sym 'bash :call "v/bash" :alias 'v}
                 :command command

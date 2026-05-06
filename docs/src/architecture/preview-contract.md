@@ -1,98 +1,145 @@
 # Preview contract
 
-Vis separates **acquisition** from **preview projection** from **presentation**.
+Vis uses three separate layers:
 
-- Acquisition functions read, search, run, or fetch data.
-- `v/preview` chooses the payload projection that enters the journal and human surfaces.
-- Tools/results own presentation metadata.
-- Provenance and lifecycle metadata stay unchanged.
+- **Acquire** — tools read/search/fetch/run and return data.
+- **Preview** — `v/preview` selects the data slice that should be visible and records that projection for the journal.
+- **Present** — rendering-kind functions display that same selected data for journal, TUI, transcript, or answer.
 
-The journal is an attention window, not storage. Runtime values and persisted evidence are memory; previews are projections over that memory.
+Journal is attention, not storage. Full runtime values and persisted evidence are memory.
 
-## Core rule
+## Public API
 
-```clojure
-(def data (v/cat "src/foo.clj"))
-(v/preview data {:result [[:lines {:from 40 :to 120}]]})
-```
-
-Read once. Bind the full value. Preview only the payload slice needed for the next model step or human display.
-
-## One public operation
-
-There is one model-facing operation:
+One public operation:
 
 ```clojure
 (v/preview value)
 (v/preview value preview-eql)
 ```
 
-`eql` is the projection directly. There is no option map wrapper.
+Rules:
 
-No:
+- `preview-eql` is the projection directly.
+- No option wrapper.
+- No `:select`.
+- No `:presentation-kind`.
+- No `:show`.
+- No surface opts.
+- No title / columns / language knobs.
+- No hidden mode.
+- `v/silent!` is removed.
 
-- `:select`
-- `:presentation-kind`
-- `:show`
-- surface opts
-- title/columns/language knobs
-- hidden mode
-
-`v/silent!` is removed. Shape/default display is:
+Full-payload preview:
 
 ```clojure
 (v/preview value)
 ```
 
-## Preview always enters the journal
+With no `preview-eql`, preview selects the whole payload. Renderers still apply safety bounds.
+
+## Read once, preview many
+
+```clojure
+(def file (v/cat "src/foo.clj"))
+(v/preview file {:result [[:lines {:from 40 :to 120}]]})
+```
+
+- `v/cat` reads the whole file.
+- `v/preview` selects lines for journal/TUI.
+- `v/preview` is an observation call, not a value you need to `def`.
+- It writes the selected projection into `<journal>` and TUI/human surfaces.
+- Use `v/preview` instead of echo-only binding patterns when the goal is only to show data in the journal.
+- Keep `def` for durable source/acquisition values you need later.
+- Call preview separately as a standalone observation.
+- Correct: `(v/preview focus {:result [[:lines {:from 100 :to 180}]]})`.
+- Do not call `v/cat` again just to display a different slice.
+
+Search example:
+
+```clojure
+(def hits (v/rg {:all ["render"] :paths ["src"]}))
+(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})
+```
+
+Many previews over one value are fine:
+
+```clojure
+(def file (v/cat "src/foo.clj"))
+(v/preview file {:result [[:lines {:from 0 :to 80}]]})
+(v/preview file {:result [[:lines {:from 200 :to 260}]]})
+```
+
+Preview strategies:
+
+- **Show a slice** as journal-visible evidence:
+
+  ```clojure
+  (v/preview focus {:result [[:lines {:from 100 :to 180}]]})
+  ```
+
+- **Show many slices** from one full value:
+
+  ```clojure
+  (do
+    (v/preview file {:result [[:lines {:from 0 :to 80}]]})
+    (v/preview file {:result [[:lines {:from 200 :to 260}]]})
+    :done)
+  ```
+
+- **Show a whole payload** when no slicing is needed:
+
+  ```clojure
+  (v/preview value)
+  ```
+
+- **Compute later and display now** by binding the durable value, then previewing separately:
+
+  ```clojure
+  (def x expensive-or-useful-value)
+  (v/preview x)
+  ```
+
+## Every preview lands in journal
 
 Every `v/preview` call is journal-visible evidence.
 
-If one top-level form calls `v/preview` multiple times, every preview projection from that form is carried to the journal. The renderer must not keep only the final preview.
-
-Example:
+If one top-level block emits many previews, all of them enter the journal.
 
 ```clojure
-(let [f (v/cat "src/foo.clj")
-      hits (v/rg ["foo"] "src")]
+(let [f    (v/cat "src/foo.clj")
+      hits (v/rg {:all ["foo"] :paths ["src"]})]
   [(v/preview f {:result [[:lines {:from 0 :to 80}]]})
    (v/preview hits {:result [[:hits {:from 0 :to 10} [:path :line :text]]]})])
 ```
 
-Both previews land in the journal.
+Journal must contain both previews. Renderer must not keep only the final value.
 
-## Preview always shows shape
+Implementation schema:
 
-Every preview shown in the journal includes shape metadata.
-
-Minimum journal payload:
-
-```clojure
-{:source-shape {...}
- :projection-shape {...}}
-```
-
-If an preview EQL projection also produces a body, the journal shows both:
-
-1. shape: type, keys, counts, truncation metadata;
-2. selected projection: lines/items/text rendered from the same data the user can inspect.
+- executed block carries `:previews` — vector of every preview emitted by that block;
+- each preview carries `:preview-eql` — the projection used;
+- each preview also carries `:preview {:rendering-kind ...}` when known;
+- provenance/lifecycle stays separate and unchanged.
 
 ## Same data, different presentation
 
-User and model must see the same selected data.
+User and model see the same selected data.
 
 - Journal and TUI receive the same preview projection.
-- Renderers may format that same data differently: compact journal text, foldable TUI panel, transcript row, final-answer block.
-- Presentation can differ; data cannot.
-- No journal-only or TUI-only data branches.
+- Renderers may format differently.
+- Presentation can differ.
+- Data cannot differ.
+- No journal-only data branch.
+- No TUI-only data branch.
 
-## Presentation metadata is source-owned
+## Rendering kind belongs to tools/results
 
 `v/preview` does not accept presentation hints.
 
-Tools and SCI results report presentation metadata because they know their domain. Preview preserves that metadata on the selected projection.
+Tools and SCI results own rendering-kind metadata because they know their domain.
+Extensions can register rendering-kind functions that turn selected data into Markdown/text.
 
-Examples:
+Example source result:
 
 ```clojure
 {:result {:path "src/foo.clj"
@@ -102,40 +149,54 @@ Examples:
                 :line-key :lines}}
 ```
 
+Example search result:
+
 ```clojure
-{:result {:hits [{:path "src/foo.clj" :line 42 :text "..."}]}
+{:result {:hits [{:path "src/foo.clj"
+                  :line 42
+                  :text "..."}]}
  :presentation {:kind :search-hits
                 :row-keys [:path :line :text]}}
 ```
 
-Presentation source order:
+Preview preserves rendering-kind metadata on the selected projection.
 
-1. presentation metadata already in the tool/SCI result;
-2. source tool provenance, e.g. `v/cat` path + line structure;
-3. projection shape, e.g. maps with `:path`, `:line`, `:text` imply search hits;
+Rendering source order:
+
+1. `:presentation` already on the result;
+2. tool provenance, e.g. `v/cat` path + line structure;
+3. projection shape, e.g. maps with `:path`, `:line`, `:text`;
 4. fallback data rendering.
 
-Recursive presentation rule: when selected nested values carry presentation metadata, preview preserves that metadata on the corresponding nested projection.
+Nested selected values may carry nested rendering metadata. Preserve it recursively.
+
+## Built-in rendering strategies
+
+Foundation registers initial rendering-kind functions:
+
+- `:source` — numbered source/text lines.
+- `:search-hits` — path/line/text hit rows.
+- `:table` — sequence-of-maps or map key/value table.
+- `:tree` — directory/tree-shaped data.
+- `:diagnostic` — exit/stdout/stderr/error report.
+- `:text` — plain text block.
+- `:markdown` — already-rendered Markdown.
+- `:diff` — diff fenced block.
+- `:data` — EDN fallback.
+
+Other extensions may add more rendering-kind functions through `:ext/rendering-kinds`.
 
 ## Provenance boundary
 
-`v/preview` operates on payload fields, not proof metadata.
+`v/preview` selects payload fields only:
 
-A Vis block/tool/eval value may contain:
+- `:result`
+- `:stdout`
+- `:stderr`
+- `:error`
+- ordinary nested values
 
-```clojure
-{:result ...
- :stdout ...
- :stderr ...
- :error ...
- :provenance ...
- :rendering-kind ...
- :execution-time-ms ...}
-```
-
-Preview EQL may select payload fields such as `:result`, `:stdout`, `:stderr`, `:error`, and ordinary nested values.
-
-Preview must not mutate, drop, fabricate, or reinterpret:
+`v/preview` must not mutate, drop, fabricate, or reinterpret:
 
 - canonical refs;
 - provenance;
@@ -143,7 +204,7 @@ Preview must not mutate, drop, fabricate, or reinterpret:
 - execution timing;
 - proof/intent/gate metadata.
 
-Those remain attached around the preview and remain the source of proofability. If proof needs provenance, use provenance/intents APIs; do not pull provenance through `v/preview`.
+Proof uses provenance/intents APIs, not preview pulls.
 
 ## Acquisition contract
 
@@ -153,7 +214,7 @@ Examples:
 
 ```clojure
 (v/cat path)
-(v/rg ["literal"] root)
+(v/rg {:all ["literal"] :paths [root]})
 (v/ls root)
 (v/bash command)
 (exa/search ...)
@@ -161,95 +222,56 @@ Examples:
 
 Rules:
 
-1. No hidden journal-oriented character caps in acquisition functions.
-2. If acquisition cannot return complete data, it must say so in data: `:complete? false`, `:truncated-by`, `:next-offset`, `:limit`, or equivalent explicit metadata.
-3. Safety caps are allowed only at true boundary risks: process output explosion, remote API limits, timeout, memory pressure, or provider-side truncation. These caps are not presentation policy and must be observable.
-4. Default renderers may be compact, but compact rendering must not imply the underlying acquisition result was compact.
-5. `v/preview` is the normal way to reduce journal/TUI/final-answer noise.
+- `v/cat` is cat: reads the whole file. No max chars, max width, max lines, offset, or pagination opts.
+- No hidden journal-oriented character caps in acquisition functions.
+- If acquisition cannot return complete data, it must say so with explicit metadata such as `:complete? false`, `:truncated-by`, or remote/provider truncation fields.
+- Safety caps are allowed only at real boundary risks: process output explosion, remote API limit, timeout, memory pressure, provider-side truncation.
+- Safety caps are not presentation policy and must be observable.
+- Default raw-tool renderers may be compact, but compact rendering must not imply the underlying acquisition result was compact.
+- `v/preview` is the normal way to reduce journal/TUI/final-answer noise.
 
-So `v/rg` should not have a journal character preview baked into the search result. It may have explicit search scope/result controls, and it must expose whether more hits exist. The model then does:
+## Preview EQL
 
-```clojure
-(def hits (v/rg ["render"] "src"))
-(v/preview hits {:result [[:hits {:from 0 :to 20} [:path :line :text]]]})
-```
+`v/preview` takes zero or one `preview-eql` projection.
 
-Same for Exa: fetch result data first; preview it separately. If Exa or the client truncates because of remote/output constraints, expose truncation metadata and let `v/preview` choose the visible projection.
-
-## preview EQL projection contract
-
-`v/preview` takes zero or one preview EQL projection.
-
-Plain keywords always mean map keys. This is why range controls live in a **field parameter map**, not in the selector vector itself: payload keys named `:from` or `:to` remain selectable as ordinary keys.
+Plain keywords always mean payload keys. Therefore keys named `:from` and `:to` are safe.
 
 Supported forms:
 
 | Form | Meaning |
 |---|---|
-| omitted / nil | Shape of the whole payload, plus renderer-inferred tiny head when safe. |
-| `:key` | Keep map key `:key`. |
-| `[:a :b]` | Pull keys `:a` and `:b` from a map. Keys named `:from` and `:to` are just keys here. |
+| omitted / nil | Whole payload, rendered with renderer safety bounds. |
+| `:key` | Pull map key `:key`. |
+| `[:a :b]` | Pull keys `:a` and `:b`. |
 | `[:*]` | Pull all map keys at this level. |
-| `[{:k eql}]` | Pull key `:k` and apply nested projection `eql`. |
-| `{:k eql}` | Same nested pull form, useful at map boundaries. |
-| `[[:k {:from n :to m}]]` | Pull key `:k`, then take zero-based `[n,m)` range from its sequential/text value. |
-| `[[:k {:from n :to m} eql]]` | Pull key `:k`, take zero-based `[n,m)` range, then apply `eql` to each selected item. |
-
-Projection is recursive. This supports nested result trees and recursive presentation metadata.
+| `[{:k preview-eql}]` | Pull key `:k`, then apply nested projection. |
+| `{:k preview-eql}` | Same nested pull form, useful at map boundaries. |
+| `[[:k {:from n :to m}]]` | Pull key `:k`, then take zero-based `[n,m)` range. |
+| `[[:k {:from n :to m} preview-eql]]` | Range key `:k`, then project each selected item. |
 
 Examples:
 
 ```clojure
-;; Pull a plain result submap.
+;; Pull result metadata.
 (v/preview x {:result [:path :total-lines]})
 
-;; Pull keys literally named :from and :to.
+;; Pull literal keys named :from and :to.
 (v/preview x {:result [:from :to]})
 
-;; Pull all fields under :result.
+;; Pull all keys under :result.
 (v/preview x {:result [:*]})
 
-;; Pull source lines by data index.
+;; Pull source lines by zero-based data index.
 (v/preview x {:result [[:lines {:from 40 :to 120}]]})
 
-;; Pull first search hits and only selected fields from each hit.
+;; Pull first search hits, selecting fields from each hit.
 (v/preview x {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})
 
 ;; Pull stdout and error payload.
 (v/preview x [:stdout :error])
 ```
 
-Add new EQL forms only after a real repeated need appears.
-
-## Renderer inference
-
-Renderers render the same selected data according to preserved presentation metadata.
-
-Surface behavior is renderer-owned:
-
-- Journal: compact attention for next model iteration; always includes shape; includes every preview emitted by a block.
-- TUI: readable, foldable, copyable display inferred from projection and presentation metadata.
-- Transcript: forensic record with preview metadata and refs. Full raw evidence is already stored elsewhere when available; no opt needed.
-- Final answer: user-facing rendering of only what supports the answer.
-
-If something should not clutter the TUI, the TUI decides fold/elision from size, shape, provenance, and presentation metadata. The model does not pass a visibility flag.
-
-## Preview result shape
-
-A preview result carries projection, preserved presentation metadata, shape, and original proof metadata around it:
-
-```clojure
-{:preview-eql {:result [[:lines {:from 40 :to 120}]]}
- :presentation <preserved-or-derived>
- :source-shape {...}
- :projection-shape {...}
- :truncated? true
- :truncated-by :limit
- :result ...
- :provenance <unchanged>}
-```
-
-The preview projection is evidence-bearing because it is produced by a top-level form and gets a canonical ref. The full underlying value is evidence too when it was emitted or bound earlier. Provenance on both remains canonical and unchanged.
+Add new EQL forms only after repeated real need.
 
 ## Renderer duties
 
@@ -257,54 +279,30 @@ Renderers must not dump arbitrary full values by accident.
 
 For any value:
 
-1. If the value is a `v/preview` result, render shape plus selected projection.
-2. If a block contains multiple preview results, render all of them into the journal.
-3. If the value is a raw acquisition result, render compact metadata and tell the model to call `v/preview` for curated display.
-4. If the value is huge and not a preview, show shape, counts, truncation metadata, and provenance, not full body.
-5. Never hide truncation. Show `:truncated-by` or equivalent.
+- If value is a preview result, render the selected projection.
+- If a block has many previews, render all of them into journal.
+- Use registered rendering-kind functions when available.
+- If value is raw acquisition result, render compact metadata and nudge model to use `v/preview`.
+- If value is huge and not preview, show counts/truncation/provenance, not full body.
+- Never hide truncation.
 
-## Examples
+Surface behavior:
 
-### Full file once, source slice visible
-
-```clojure
-(def core-file (v/cat "extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/editing/core.clj"))
-(v/preview core-file {:result [[:lines {:from 728 :to 790}]]})
-```
-
-### Search once, top hits visible
-
-```clojure
-(def hits (v/rg ["render-silent"] "src"))
-(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})
-```
-
-### Exa fetch once, top results visible
-
-```clojure
-(def papers (exa/search {:query "recursive language models journal memory"}))
-(v/preview papers {:result [[:results {:from 0 :to 8} [:title :url :published-date]]]})
-```
-
-### Aggregate state, shape only
-
-```clojure
-(def investigation {:files [core-file]
-                    :hits hits
-                    :notes notes})
-(v/preview investigation)
-```
+- Journal: compact attention; every preview from block.
+- TUI: readable, foldable, copyable display inferred from projection and rendering-kind metadata.
+- Transcript: forensic record with preview metadata and refs.
+- Final answer: user-facing rendering of selected data only when useful.
 
 ## Prompt wording
 
-The system prompt should teach:
+Teach model:
 
-> Read/search/fetch once and bind the full result with `def`. Use `v/preview` with EQL to choose the result/stdout/stderr/error projection that appears in `<journal>` and human surfaces. Every preview includes shape in the journal. Every preview emitted by a block lands in the journal. `[:*]` pulls all map keys at one level. Plain keywords always mean payload keys; range uses field parameter maps like `[[:hits {:from 0 :to 12} [:path :line :text]]]` so payload keys named `:from` and `:to` remain selectable. User and model see the same selected data; presentation may differ by renderer. Tools/results own presentation metadata; preview preserves it. Provenance and lifecycle metadata stay unchanged and remain the proof substrate. Acquisition functions return data; preview controls attention. Avoid duplicate reads just to change display. Do not use `v/silent!`; use `(v/preview value)` for shape/default preview or `(v/preview value preview-eql)` for a selected projection.
+> Read/search/fetch once and bind the full result with `def` when you need it later. Use `v/preview` as a standalone observation to choose the result/stdout/stderr/error projection that appears in `<journal>` and human surfaces; do not echo vars just to inspect them. Correct strategies: `(def file (v/cat "src/foo.clj"))` then `(v/preview file {:result [[:lines {:from 40 :to 120}]]})`, `(do (v/preview a) (v/preview b) :done)`, `(v/preview value)`. `(v/preview value)` without EQL previews the whole payload. Every preview emitted by a block lands in the journal. `[:*]` pulls all map keys at one level. Plain keywords always mean payload keys; ranges use field parameter maps like `[[:hits {:from 0 :to 12} [:path :line :text]]]` so payload keys named `:from` and `:to` remain selectable. User and model see the same selected data; rendering may differ by surface renderer. Tools/results own rendering-kind metadata; preview preserves it. Extensions own rendering-kind functions that turn selected values into Markdown/text. Provenance and lifecycle metadata stay unchanged and remain the proof substrate. `v/cat` reads whole files; use preview for display ranges. Do not use `v/silent!`.
 
 ## Non-goals
 
-- `v/preview` is not a summarizer that invents facts.
-- `v/preview` does not replace evidence refs, intents, gates, or proof slots.
-- `v/preview` does not authorize hiding failures or truncation.
-- `v/preview` does not mutate provenance or lifecycle state.
-- Acquisition functions may still expose explicit paging/scope controls for performance and safety; those controls are not journal presentation policy.
+- No invented summaries.
+- No proof replacement.
+- No provenance mutation.
+- No hidden truncation.
+- No display limits in `v/cat`.

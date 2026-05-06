@@ -61,9 +61,8 @@
    :duration-ms 1})
 
 (defn- tool-result [op _markdown]
-  {:ok? true
+  {:success? true
    :result {:value :ok}
-   :result-shape {:type :map}
    :provenance {:op op
                 :status :done
                 :started-at-ms 10
@@ -542,7 +541,7 @@
 (defdescribe foundation-await-proof-test
   (it "returns terminal :done provenance for completed futures"
     (let [out ((private-fn "foundation-await-proof!") (future 42) {:timeout-ms 1000})]
-      (expect (true? (:ok? out)))
+      (expect (true? (:success? out)))
       (expect (= 42 (:result out)))
       (expect (= :future/await (get-in out [:provenance :op])))
       (expect (= :done (get-in out [:provenance :status])))))
@@ -550,7 +549,7 @@
   (it "returns terminal :timeout provenance for blocking deref timeouts"
     (let [p (promise)
           out ((private-fn "foundation-await-proof!") p {:timeout-ms 1})]
-      (expect (false? (:ok? out)))
+      (expect (false? (:success? out)))
       (expect (= :future/await (get-in out [:provenance :op])))
       (expect (= :timeout (get-in out [:provenance :status])))
       (expect (= "java.util.concurrent.TimeoutException" (get-in out [:error :type]))))))
@@ -658,7 +657,7 @@
                    :error nil
                    :execution-time-ms 1}]})
       (let [guards ((private-fn "foundation-provenance-guards") (env s conversation-id))]
-        (expect (true? (:ok? guards)))
+        (expect (true? (:success? guards)))
         (expect (= [] (:violations guards))))))
 
   (it "renders a compact Markdown provenance report"
@@ -703,7 +702,7 @@
       (expect (= [(:id intent) :verification] slot))
       (expect (= [[:intent (:id intent)] :requires [:slot slot]] (first (:edges graph))))
       (expect (= "Verification passes." (:proposition gate)))
-      (expect (false? (:ok? checks)))
+      (expect (false? (:success? checks)))
       (expect (str/includes? (:report checks) "Intent"))
       (expect (str/includes? (:report checks) "Plan"))
       (expect (str/includes? (:report checks) "Gate"))
@@ -735,7 +734,7 @@
                                                    {:summary "Done."
                                                     :refs [ref]})
         (let [checks ((private-fn "foundation-intents") e)]
-          (expect (true? (:ok? checks)))
+          (expect (true? (:success? checks)))
           (expect (str/includes? (:report checks) ref))))))
 
   (it "proof-checks reports what each gate asked for, what proof was given, and renders <proofs> meat"
@@ -771,7 +770,7 @@
               out ((private-fn "foundation-proofs") e checks)
               event (introspection/foundation-provenance-event e ref)]
           (expect (= ref (:ref event)))
-          (expect (true? (:ok? checks)))
+          (expect (true? (:success? checks)))
           (expect (= "Verification passes." (:asked gate-check)))
           (expect (= {slot {:ref ref :exit-code 0}} (get-in gate-check [:given :slots])))
           (expect (= [] (:violations checks)))
@@ -802,11 +801,43 @@
       (let [checks ((private-fn "foundation-proof-checks") e)
             gate-check (first (:gates checks))
             out ((private-fn "foundation-proofs") e checks)]
-        (expect (false? (:ok? checks)))
+        (expect (false? (:success? checks)))
         (expect (some #(= :unobserved-ref (:type %)) (:violations checks)))
         (expect (false? (:observed? (first (:ref-checks gate-check)))))
         (expect (str/includes? out "Proofs · NEEDS WORK"))
         (expect (str/includes? out stale-ref)))))
+
+  (it "proof-checks rejects refs that only observe intent/proof bookkeeping"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          e (assoc (env s conversation-id)
+              :current-conversation-turn-id-atom (atom conversation-turn-id))
+          ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1")]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0
+                   :code "(v/intents)"
+                   :result {:success? true}
+                   :execution-time-ms 1
+                   :provenance (eval-provenance 1 1 1)}]})
+      (let [intent ((private-fn "foundation-issue-intent!") e {:title "Explain TUI auth bug"
+                                                               :rationale "User asked."})
+            plan   ((private-fn "foundation-issue-plan!") e {:intent-id (:id intent)
+                                                             :summary "Plan"})
+            gate   ((private-fn "foundation-issue-gate!") e {:plan-id (:id plan)
+                                                             :proposition "Source has been inspected."
+                                                             :expected-proof {:slots {}}})]
+        ((private-fn "foundation-prove-gate!") e (:id gate)
+                                               {:summary "Bookkeeping observed."
+                                                :refs [ref]})
+        ((private-fn "foundation-fulfill-intent!") e (:id intent)
+                                                   {:summary "Done."
+                                                    :refs [ref]})
+        (let [checks ((private-fn "foundation-proof-checks") e)
+              gate-check (first (:gates checks))]
+          (expect (false? (:success? checks)))
+          (expect (some #(= :non-evidence-ref (:type %)) (:violations checks)))
+          (expect (false? (:success? (first (:ref-checks gate-check)))))
+          (expect (false? (:evidence? (first (:ref-checks gate-check)))))))))
 
   (it "accepts :summary as an abandon-intent! reason alias at the foundation boundary"
     (let [s (h/store)

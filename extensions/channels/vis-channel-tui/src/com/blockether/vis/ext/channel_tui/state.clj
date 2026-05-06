@@ -5,6 +5,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.theme :as shared-theme]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
+            [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]))
 
@@ -250,6 +251,7 @@
   ;; many toggles.
   (render/invalidate-cache!)
   (let [merged (normalize-settings (merge default-settings (:settings db) new-settings))]
+    (tui-theme/apply-theme! (:theme-name merged))
     (persist-settings! merged)
     (assoc db :settings merged)))
 
@@ -362,16 +364,18 @@
 (defn init!
   "Initialize app-db with default state."
   []
-  (reset! app-db {:config     nil
-                  :conversation nil
-                  :title      nil
-                  :messages   []
-                  :messages-scroll nil
-                  :input      (input/empty-input)
-                  :input-history []
-                  :input-history-index nil
-                  :input-history-draft nil
-                  :submitted-input nil
+  (let [settings (load-persisted-settings)]
+    (tui-theme/apply-theme! (:theme-name settings))
+    (reset! app-db {:config     nil
+                    :conversation nil
+                    :title      nil
+                    :messages   []
+                    :messages-scroll nil
+                    :input      (input/empty-input)
+                    :input-history []
+                    :input-history-index nil
+                    :input-history-draft nil
+                    :submitted-input nil
                   ;; Paste registry. Each multi-line / large
                   ;; clipboard payload lands here keyed by an auto-
                   ;; incrementing id; the input buffer carries a
@@ -379,23 +383,23 @@
                   ;; raw text. Send-time substitution uses this map
                   ;; to materialise the full content before the
                   ;; message reaches the agent. Cleared on send.
-                  :pastes     {}
-                  :paste-counter 0
-                  :loading?   false
-                  :cancel-token nil
-                  :cancelling? false
-                  :progress   nil
-                  :settings   (load-persisted-settings)
-                  :provider-limits nil
-                  :detail-expansions {}
-                  :dialog-open? false
+                    :pastes     {}
+                    :paste-counter 0
+                    :loading?   false
+                    :cancel-token nil
+                    :cancelling? false
+                    :progress   nil
+                    :settings   settings
+                    :provider-limits nil
+                    :detail-expansions {}
+                    :dialog-open? false
                   ;; Render thread coordination — see render-monitor docstring.
-                  :render-version 0
-                  :shutdown? false
+                    :render-version 0
+                    :shutdown? false
                   ;; Populated by the render thread after each frame so the
                   ;; input thread's scroll handlers know how big the
                   ;; messages area is right now. nil before the first paint.
-                  :layout nil}))
+                    :layout nil})))
 
 ;;; ── Pure event handlers ────────────────────────────────────────────────────
 
@@ -467,6 +471,10 @@
             (if expanded?
               (dissoc m k)
               (assoc (or m {}) k true))))))))
+
+(reg-event-db :select-preview-mode
+  (fn [db [_ conversation-id node-id mode]]
+    (assoc-in db [:detail-expansions [(str conversation-id) (str node-id)]] mode)))
 
 (reg-event-db :bump-render-version
   (fn [db _]
@@ -685,8 +693,8 @@
   ;;      are expanded for BOTH the visible transcript and the agent.
   ;;   2. `@path/to/file` mentions inserted by the file picker. Those
   ;;      stay concise in the visible transcript, but expand into
-  ;;      bounded prompt blocks for the AGENT so the file content is
-  ;;      available immediately.
+  ;;      read-now directives for the AGENT: bind `(v/cat path)` with
+  ;;      `def`, then `v/preview` relevant lines before answering.
   (fn [db [_ text]]
     (let [visible-text (input/expand-paste-placeholders text (:pastes db))
           agent-text   (input/expand-file-mentions visible-text)

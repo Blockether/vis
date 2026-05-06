@@ -228,6 +228,14 @@
           (long m-idx)
           -1)))))
 
+(defn- strip-ansi-sgr
+  ^String [s]
+  (str/replace (str s) #"\u001B\[[0-9;]*m" ""))
+
+(defn- visible-width
+  ^long [s]
+  (p/display-width (strip-ansi-sgr s)))
+
 (defn- truncate-ansi-cols
   "Like `p/truncate-cols`, but preserves ANSI SGR escapes as zero-width.
    Zprint emits ANSI-colored Clojure code; feeding those rows directly to
@@ -932,6 +940,22 @@
 ;; far too late for a chrome helper this high in the file. We pin
 ;; the var here so Clojure can resolve the symbol at compile time.
 (declare markdown->inline markdown->lines)
+
+(defn- paint-preview-switcher!
+  [g x y fbx iw abs-row meta bg fg inactive-fg base-styles]
+  (p/set-bg! g bg)
+  (p/fill-rect! g fbx y iw 1)
+  (doseq [{:keys [mode active? label start width]} (:options meta)]
+    (p/set-colors! g (if active? fg inactive-fg) bg)
+    (p/styled g (cond-> (vec base-styles) active? (conj p/UNDERLINE))
+      (p/put-str! g (+ x start) y label))
+    (cr/register!
+      {:bounds {:row abs-row :col (+ x start) :width width}
+       :kind :preview-switcher
+       :conversation-id (:conversation-id meta)
+       :node-id (:node-id meta)
+       :mode mode})))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1240,13 +1264,13 @@
                   (str/starts-with? line result-marker)
                   (do (p/set-colors! g t/code-result-fg t/code-ok-bg)
                     (p/fill-rect! g fbx y iw 1)
-                    (p/put-str! g x y (subs line 1)))
+                    (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-ok-bg))
 
               ;; ── Result (error) — red on light red bg ──
                   (str/starts-with? line err-result-marker)
                   (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
                     (p/fill-rect! g fbx y iw 1)
-                    (p/put-str! g x y (subs line 1)))
+                    (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-err-bg))
 
               ;; ── Stdout text — distinct stdout bg, italic ──
                   (str/starts-with? line stdout-marker)
@@ -1358,7 +1382,7 @@
                   ;; right edge, not just the text width.
                   (str/starts-with? line md-summary-marker)
                   (let [abs-row (+ (long viewport-top) y)
-                        hovered? (and (= :toggle-details (:kind meta))
+                        hovered? (and (contains? #{:toggle-details :preview-switcher} (:kind meta))
                                    (= abs-row (:row (:bounds (cr/hovered)))))
                         proof?   (:proofs? meta)
                         bg       (cond
@@ -1369,20 +1393,26 @@
                                    hovered? t/link-chrome-hover-fg
                                    proof?   t/proof-summary-fg
                                    :else    t/md-summary-fg)]
-                    (p/set-colors! g fg bg)
-                    (p/fill-rect! g fbx y iw 1)
-                    (p/styled g [p/BOLD]
-                      (p/paint-styled-line! g x y (subs line 1)
-                        fg bg
-                        t/code-block-fg t/code-block-bg))
-                    (when (= :toggle-details (:kind meta))
-                      (cr/register!
-                        {:bounds {:row abs-row :col fbx :width iw}
-                         :kind :toggle-details
-                         :conversation-id (:conversation-id meta)
-                         :node-id (:node-id meta)
-                         :collapsed? (:collapsed? meta)
-                         :proofs? (:proofs? meta)})))
+                    (if (= :preview-switcher (:kind meta))
+                      (paint-preview-switcher! g x y fbx iw abs-row meta bg fg t/dialog-hint [p/BOLD])
+                      (do
+                        (p/set-colors! g fg bg)
+                        (p/fill-rect! g fbx y iw 1)
+                        (p/styled g [p/BOLD]
+                          (p/paint-styled-line! g x y (subs line 1)
+                            fg bg
+                            t/code-block-fg t/code-block-bg))
+                        (case (:kind meta)
+                          :toggle-details
+                          (cr/register!
+                            {:bounds {:row abs-row :col fbx :width iw}
+                             :kind :toggle-details
+                             :conversation-id (:conversation-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)
+                             :proofs? (:proofs? meta)})
+
+                          nil))))
 
                   (str/starts-with? line md-code-marker)
                   (do (p/set-colors! g t/code-block-fg t/code-block-bg)
@@ -1503,7 +1533,7 @@
                   ;; whole reasoning block reads as one cohesive zone.
                   (str/starts-with? line th-md-summary-marker)
                   (let [abs-row (+ (long viewport-top) y)
-                        hovered? (and (= :toggle-details (:kind meta))
+                        hovered? (and (contains? #{:toggle-details :preview-switcher} (:kind meta))
                                    (= abs-row (:row (:bounds (cr/hovered)))))
                         proof?   (:proofs? meta)
                         bg       (cond
@@ -1514,20 +1544,26 @@
                                    hovered? t/link-chrome-hover-fg
                                    proof?   t/th-proof-summary-fg
                                    :else    t/th-md-summary-fg)]
-                    (p/set-colors! g fg bg)
-                    (p/fill-rect! g fbx y iw 1)
-                    (p/styled g [p/BOLD p/ITALIC]
-                      (p/paint-styled-line! g x y (subs line 1)
-                        fg bg
-                        t/code-result-fg t/code-block-bg))
-                    (when (= :toggle-details (:kind meta))
-                      (cr/register!
-                        {:bounds {:row abs-row :col fbx :width iw}
-                         :kind :toggle-details
-                         :conversation-id (:conversation-id meta)
-                         :node-id (:node-id meta)
-                         :collapsed? (:collapsed? meta)
-                         :proofs? (:proofs? meta)})))
+                    (if (= :preview-switcher (:kind meta))
+                      (paint-preview-switcher! g x y fbx iw abs-row meta bg fg t/dialog-hint [p/BOLD p/ITALIC])
+                      (do
+                        (p/set-colors! g fg bg)
+                        (p/fill-rect! g fbx y iw 1)
+                        (p/styled g [p/BOLD p/ITALIC]
+                          (p/paint-styled-line! g x y (subs line 1)
+                            fg bg
+                            t/code-result-fg t/code-block-bg))
+                        (case (:kind meta)
+                          :toggle-details
+                          (cr/register!
+                            {:bounds {:row abs-row :col fbx :width iw}
+                             :kind :toggle-details
+                             :conversation-id (:conversation-id meta)
+                             :node-id (:node-id meta)
+                             :collapsed? (:collapsed? meta)
+                             :proofs? (:proofs? meta)})
+
+                          nil))))
 
               ;; Thinking fenced code: visible code-block bg, italic dim text.
               ;; Clojure/EDN fences can carry zprint ANSI syntax color;
@@ -1955,6 +1991,11 @@
        [(str conversation-id) (str node-id)]
        default-expanded?))))
 
+(defn- preview-mode
+  [detail-expansions conversation-id node-id]
+  (let [mode (get detail-expansions [(str conversation-id) (str node-id)] :preview)]
+    (if (contains? #{:preview :raw} mode) mode :preview)))
+
 (defn- hidden-size-hint
   ^String [entries]
   (let [line-count (count entries)
@@ -2022,6 +2063,34 @@
     (if (str/includes? summary proof-summary-icon)
       summary
       (str proof-summary-icon " " summary))))
+
+(defn- preview-switcher-entry
+  [{:keys [marker active-mode conversation-id node-id max-w]}]
+  (let [tokens (mapv (fn [[mode label]]
+                       {:mode mode
+                        :active? (= active-mode mode)
+                        :label (str (if (= active-mode mode) "●" "○") " " label)})
+                 [[:preview "PREVIEW"] [:raw "RAW"]])
+        sep    "  "
+        body   (str/join sep (map :label tokens))
+        pad    (max 0 (- (long (or max-w 0)) (visible-width body)))
+        line   (str (repeat-str \space pad) body)
+        spans  (loop [acc [] col pad remaining tokens]
+                 (if-let [{:keys [mode active? label]} (first remaining)]
+                   (recur (conj acc {:mode mode
+                                     :active? active?
+                                     :label label
+                                     :start col
+                                     :width (visible-width label)})
+                     (+ col (visible-width label) (if (next remaining) (visible-width sep) 0))
+                     (next remaining))
+                   acc))]
+    {:line (str marker line)
+     :meta {:kind :preview-switcher
+            :conversation-id (str conversation-id)
+            :node-id (str node-id)
+            :active-mode active-mode
+            :options spans}}))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
   [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id proofs?]
@@ -2459,7 +2528,7 @@
           (subvec remaining run))))))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking events code comments results stdouts durations successes started-at-ms error repeat-count]}
+  [{:keys [thinking events code comments results result-kinds result-details stdouts durations successes started-at-ms error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms]
        :or   {show-header? true}}]]
@@ -2576,20 +2645,45 @@
                 code-lines    (str/split-lines formatted)
                 c-lines       (mapv #(line-entry (str c-marker %)) code-lines)
                 result-str    (when results (get results idx))
+                result-kind   (when result-kinds (get result-kinds idx))
+                result-detail (when result-details (get result-details idx))
                 r-marker      (if is-error? err-result-marker result-marker)
                 result-lines  (when (and result-str (not (str/blank? (str result-str))))
-                                (maybe-collapse-raw-text-block
-                                  {:conversation-id      conversation-id
-                                   :detail-expansions   detail-expansions
-                                   :conversation-turn-id conversation-turn-id
-                                   :iteration-number    iteration-number
-                                   :block-number        block-number
-                                   :kind                :result
-                                   :summary             "RESULT"
-                                   :summary-marker      md-summary-marker
-                                   :body-marker         r-marker
-                                   :raw-text            result-str
-                                   :max-w               fill-w}))
+                                (if (= :preview result-kind)
+                                  (let [switch-id      (detail-node-id {:conversation-turn-id conversation-turn-id
+                                                                        :iteration-number iteration-number
+                                                                        :block-number block-number
+                                                                        :section :iteration
+                                                                        :kind :preview-switch})
+                                        active-mode    (preview-mode detail-expansions conversation-id switch-id)
+                                        detail-text    (fn [k]
+                                                         (when (map? result-detail) (get result-detail k)))
+                                        mode-text      (case active-mode
+                                                         :preview (str/trim (str result-str))
+                                                         :raw (or (some-> (detail-text :raw) str) ""))
+                                        mode-lines     (if (= :preview active-mode)
+                                                         (mapcat #(wrap-text % fill-w) (str/split-lines mode-text))
+                                                         (str/split-lines (format-clojure-ansi mode-text fill-w)))
+                                        switcher-entry (preview-switcher-entry
+                                                         {:marker md-summary-marker
+                                                          :conversation-id conversation-id
+                                                          :node-id switch-id
+                                                          :active-mode active-mode
+                                                          :max-w fill-w})]
+                                    (vec (cons switcher-entry
+                                           (mapv #(line-entry (str r-marker %)) mode-lines))))
+                                  (maybe-collapse-raw-text-block
+                                    {:conversation-id      conversation-id
+                                     :detail-expansions   detail-expansions
+                                     :conversation-turn-id conversation-turn-id
+                                     :iteration-number    iteration-number
+                                     :block-number        block-number
+                                     :kind                :result
+                                     :summary             "RESULT"
+                                     :summary-marker      md-summary-marker
+                                     :body-marker         r-marker
+                                     :raw-text            result-str
+                                     :max-w               fill-w})))
                 code-block    (vec (concat
                                      (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
                                      (when (seq comment-lines)
@@ -3174,6 +3268,44 @@
 (defn- list-marker-line? [^String line]
   (boolean (re-matches list-marker-line-re line)))
 
+(defn- task-checked?
+  [mark]
+  (contains? #{"x" "X"} mark))
+
+(defn- task-checkbox-glyph
+  [checked?]
+  (if checked? "☑" "☐"))
+
+(defn- task-list-line
+  [^String line]
+  (when-let [[_ indent mark body]
+             (re-matches #"^(\s*)[-*+]\s+\[\s*([xX]?)\s*\]\s*(.*)$" line)]
+    {:indent indent
+     :checked? (task-checked? mark)
+     :body body}))
+
+(defn- task-checkbox-body
+  [^String body]
+  (when-let [[_ label-prefix mark tail]
+             (re-matches #"^((?:[^\[]*?:\s*)?)`?\[\s*([xX]?)\s*\]`?\s*(.*)$" body)]
+    {:label-prefix label-prefix
+     :checked? (task-checked? mark)
+     :body tail}))
+
+(defn- decorate-task-checkbox-body
+  [body]
+  (if-let [{:keys [label-prefix checked? body]} (task-checkbox-body (str body))]
+    (str (or label-prefix "")
+      (task-checkbox-glyph checked?)
+      (when-not (str/blank? body) " ")
+      body)
+    body))
+
+(defn- task-list-prefix
+  [indent checked?]
+  (let [glyph (str (task-checkbox-glyph checked?) " ")]
+    (nested-prefix indent (repeat 4 glyph))))
+
 (defn- top-level-bold-paragraph-line?
   "True when a line opens with `**...**` AND has more content after
    the closing `**`. Matches the shape of a top-level \"label: value\"
@@ -3338,7 +3470,7 @@
           ;; In list scope, blank line. One blank → buffer; two in a
           ;; row → list closes (CommonMark loose-list end).
           (and current (str/blank? line))
-          (let [n (inc blanks)]
+          (let [n (if (empty? line) (inc blanks) (max 1 blanks))]
             (if (>= n 2)
               (recur rst nil 0 (conj acc current ""))
               (recur rst current n acc)))
@@ -3488,10 +3620,21 @@
                  (recur rst false
                    (into acc (mapv #(str (:quote m) "┃ " %) wrapped))))
 
+               (task-list-line line)
+               (let [{:keys [indent checked? body]} (task-list-line line)
+                     prefix    (task-list-prefix indent checked?)
+                     prefix-w  (p/display-width prefix)
+                     decorated (markdown->inline (or body ""))
+                     wrapped   (wrap-text decorated (max 1 (- max-w prefix-w)))]
+                 (recur rst false
+                   (into acc
+                     (into [(str (:bullet m) prefix (first wrapped))]
+                       (mapv #(str (:bullet m) (repeat-str \space prefix-w) %) (rest wrapped))))))
+
                (re-matches #"^\s*[-*+]\s+.*" line)
                (let [[_ indent trimmed] (re-matches #"^(\s*)[-*+]\s+(.*)$" line)
                      prefix    (nested-prefix indent ["• " "◦ " "▪ " "• "])
-                     decorated (markdown->inline trimmed)
+                     decorated (markdown->inline (decorate-task-checkbox-body trimmed))
                      wrapped   (wrap-text decorated (max 1 (- max-w (count prefix))))]
                  (recur rst false
                    (into acc
@@ -3500,7 +3643,7 @@
 
                (re-matches #"^\s*\d+[.)]\s+.*" line)
                (let [[_ indent num body] (re-matches #"^(\s*)(\d+)[.)]\s+(.*)$" line)
-                     decorated (markdown->inline (or body ""))
+                     decorated (markdown->inline (decorate-task-checkbox-body (or body "")))
                      prefix    (nested-prefix indent [(str num ". ") (str num ". ") (str num ". ") (str num ". ")])
                      wrapped   (wrap-text decorated (max 1 (- max-w (count prefix))))]
                  (recur rst false
@@ -3637,7 +3780,7 @@
                 (when (and (= conversation-id (str cid))
                         (or (= base node-id)
                           (str/starts-with? node-id prefix)))
-                  [node-id (boolean expanded?)]))))
+                  [node-id expanded?]))))
       sort
       vec)))
 
@@ -3655,7 +3798,7 @@
                 (when (and (= conversation-id (str cid))
                         (or (nil? turn-token)
                           (str/includes? node-id turn-token)))
-                  [node-id (boolean expanded?)]))))
+                  [node-id expanded?]))))
       sort
       vec)))
 

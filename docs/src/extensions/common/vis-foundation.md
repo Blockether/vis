@@ -37,7 +37,7 @@ Normal source installs keep the Vis checkout at `~/.vis/sourcecode`. When an age
 (v/intents)
 ```
 
-`v/intents` is the single read/check/report surface for conversation intent state. `v/block-gate!` exists only as a legacy alias for `v/impede-gate!`.
+`v/intents` is the single read/check/report surface for conversation intent state. Its aggregate result uses `:success?` as the boolean outcome key. `v/block-gate!` exists only as a legacy alias for `v/impede-gate!`.
 
 ## Provenance API
 
@@ -52,6 +52,55 @@ Use provenance APIs before proof or fulfillment:
 ```
 
 For deferred work, cite a terminal observed ref. A running future/deferred child ref proves only start, not completion.
+
+## Search: `v/rg`
+
+`v/rg` is the public search tool. There is no public `v/grep`; `grep` is only the internal implementation concept. Use one normalized spec map:
+
+```clojure
+(v/rg {:all ["literal"]})
+(v/rg {:all ["defn" "provenance-event"]
+       :paths ["src" "extensions"]
+       :include ["*.clj" "*.cljc"]})
+(v/rg {:any ["provenance-event" "latest-provenance"]
+       :paths ["src"]})
+```
+
+Spec rules:
+
+- exactly one of `:all` or `:any`;
+- `:all` means every literal must occur on the same line;
+- `:any` means at least one literal must occur on the line;
+- every collection field is a vector of non-blank strings;
+- `:paths` defaults to `["."]` and may include multiple roots;
+- overlapping roots are deduplicated, so `["." "src"]` does not duplicate hits;
+- `:include` and `:exclude` are glob vectors for file filtering;
+- regex syntax is not interpreted, so `"foo|bar"` searches for literal pipe text;
+- there is no public `:limit`; acquisition has a private hard cap and reports `:truncated-by :internal-cap` if hit.
+
+Strategies:
+
+```clojure
+;; Find a function definition by name: narrow with :all.
+(def hits
+  (v/rg {:all ["defn" "provenance-event"]
+         :paths ["src" "extensions"]
+         :include ["*.clj" "*.cljc"]}))
+(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})
+
+;; Find any of several related names: broaden with :any.
+(v/rg {:any ["provenance-event" "provenance-timeline" "latest-provenance"]
+       :paths ["src" "extensions"]
+       :include ["*.clj" "*.cljc"]})
+
+;; Literal characters stay literal; no escaping games.
+(v/rg {:all ["foo|bar"] :paths ["."]})
+
+;; If `:truncated-by` is `:internal-cap`, narrow the spec: add more :all terms,
+;; reduce :paths, or add :include/:exclude. Do not ask for a larger limit.
+```
+
+`v/rg` returns a normal tool envelope. Matches live at `[:result :hits]` as rows shaped `{:path :line :text}`. Bind the acquisition once, then use `v/preview` for journal/TUI display.
 
 ## Rendering
 

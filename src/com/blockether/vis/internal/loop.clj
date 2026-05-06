@@ -288,7 +288,7 @@
           proofs-fn       (requiring-resolve
                             'com.blockether.vis.ext.foundation.introspection/foundation-proofs)
           checks          (when proof-checks-fn (proof-checks-fn environment))]
-      (when (and proofs-fn (:ok? checks))
+      (when (and proofs-fn (:success? checks))
         (let [appendix (proofs-fn environment checks)]
           (when (and (string? appendix) (not (str/blank? appendix)))
             appendix))))
@@ -500,7 +500,7 @@
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
 (def ^:private silent-host-form-heads
-  '#{conversation-title})
+  '#{conversation-title v/silent!})
 
 (defn- silent-host-form?
   "True for host side-effect forms that intentionally return
@@ -793,6 +793,35 @@
                  :data {:error (ex-message e)}
                  :msg "Failed to read sandbox locals, returning empty map"})
       {})))
+
+(defn- top-level-value-def-symbols
+  [code]
+  (try
+    (->> (edamame/parse-string-all (or code "") {:all true})
+      (keep (fn [form]
+              (when (seq? form)
+                (let [[op name & _] form]
+                  (when (and (contains? '#{def defonce} op)
+                          (symbol? name))
+                    name)))))
+      distinct
+      vec)
+    (catch Throwable _
+      [])))
+
+(defn- def-display-result
+  "For single value defs, display and persist the bound value, not the Var return."
+  [environment code result]
+  (if (or (:error result) (:timeout? result) (nil? (:sci-ctx environment)))
+    result
+    (let [defs (top-level-value-def-symbols code)]
+      (if (= 1 (count defs))
+        (let [locals (get-locals environment)
+              name   (first defs)]
+          (if (contains? locals name)
+            (assoc result :result (get locals name))
+            result))
+        result))))
 
 ;; ---------------------------------------------------------------------------
 ;; Noop expression filter
@@ -1159,7 +1188,7 @@
      (when (and db-info turn-id)
        (let [state (try (persistance/db-intents db-info {:conversation-turn-id turn-id})
                      (catch Throwable e
-                       {:ok? false
+                       {:success? false
                         :violations [{:type :intent-check-error
                                       :blocking? true
                                       :message (ex-message e)}]}))
@@ -1168,7 +1197,7 @@
              needs-input? (needs-input-answer? answer-value)
              missing-focus-allowed? (and missing-focus-only?
                                       (or (not required?) needs-input?))]
-         (when (and (not (:ok? state))
+         (when (and (not (:success? state))
                  (not missing-focus-allowed?))
            (str "Final answer rejected: focused conversation intents are not resolved. "
              "Run `(v/intents)`, prove/block gates with canonical provenance refs, "
@@ -1490,9 +1519,10 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true))
-                                 rendering-kind (eval-rendering-kind result)
-                                 provenance (eval-provenance turn-prefix iteration-position idx total-blocks result rendering-kind)
-                                 result* (assoc result
+                                 display-result (def-display-result environment expr result)
+                                 rendering-kind (eval-rendering-kind display-result)
+                                 provenance (eval-provenance turn-prefix iteration-position idx total-blocks display-result rendering-kind)
+                                 result* (assoc display-result
                                            :provenance provenance
                                            :rendering-kind rendering-kind)]
                              ;; Per-form streaming chunk (:phase

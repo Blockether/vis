@@ -75,7 +75,27 @@
         (is (= [(str "Tool `:demo` ok — result shape {:type :map, :count 1, :keys (:lines), :shape {:lines {:type :vector, :count 1, :items {:type :string, :chars 1, :lines 1}}}}"
                   "; result {:lines [\"x\"]}"
                   "; provenance {:tool {:sym cat, :call \"v/cat\"}, :extension {:namespace com.acme.ext.fs}, :source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}}.")]
-              (:results entry)))))))
+              (:results entry))))))
+  (testing ":form-result marks preview envelopes and carries raw details"
+    (let [tracker (progress/make-progress-tracker)
+          result  (extension/merge-provenance
+                    (assoc (extension/success {:result {:lines ["x"]}
+                                               :provenance {:op :v/preview}})
+                      :preview-eql {:result [[:lines {:from 0 :to 1}]]}
+                      :presentation {:kind :source :path "src/demo.clj"})
+                    {:tool {:sym 'preview
+                            :call "v/preview"}
+                     :extension {:namespace 'com.acme.ext.fs}})]
+      (with-redefs [extension/render-tool-result (fn [_surface _result & _]
+                                                   "1: x")]
+        ((:on-chunk tracker) {:phase :form-result :iteration 1 :form-idx 0
+                              :code "(v/preview file)" :result result
+                              :stdout "" :stderr "" :execution-time-ms 5}))
+      (let [entry (first (:get-timeline tracker))]
+        (is (= [:preview] (:result-kinds entry)))
+        (is (= ["1: x"] (:results entry)))
+        (is (nil? (:shape (first (:result-details entry)))))
+        (is (= "{:lines [\"x\"]}" (:raw (first (:result-details entry)))))))))
 
 (deftest on-chunk-iteration-final-test
   (testing ":iteration-final marks iteration as done"

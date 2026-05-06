@@ -193,7 +193,7 @@ prompt block:
 Filesystem tools (use v/ prefix):
 - (v/cat path) ...
 - (v/ls ".") ...
-- (v/rg ["foo" "bar"] ".") ...
+- (v/rg {:any ["foo" "bar"] :paths ["."]}) ...
 ```
 
 Extension-declared `:ext/classes` and `:ext/imports` are also injected
@@ -274,7 +274,7 @@ Real in-tree examples — every package below ships exactly one
 
 ### Sandbox tools
 
-`extensions/common/vis-foundation/.../core.clj` — read / list / grep / patch:
+`extensions/common/vis-foundation/.../core.clj` — read / list / search (`v/rg`) / patch:
 
 ```clojure
 (sdk/register-extension!

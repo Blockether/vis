@@ -437,7 +437,7 @@
 
 (defn- render-exa-result
   [{:keys [tool-result]}]
-  (if-not (:ok? tool-result)
+  (if-not (:success? tool-result)
     (let [op    (get-in tool-result [:provenance :op])
           query (get-in tool-result [:result :query])]
       (md/p "Exa" (md/code op) "failed for" (md/code query) ":"

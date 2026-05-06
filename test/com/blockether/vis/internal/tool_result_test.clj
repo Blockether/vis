@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.tool-result-test
   "Contract tests for the tool-result envelope: required keys,
-   success/failure shape, symbol-level rendering, and sanitized trace
+   success/failure data, symbol-level rendering, and sanitized trace
    normalization."
   (:require
    [clojure.string :as str]
@@ -8,17 +8,17 @@
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe tool-result-contract-test
-  (it "success requires :ok? :result :result-shape :provenance and nil :error"
+  (it "success requires :success? :result :provenance and nil :error"
     (let [out (tr/success {:result {:a 1}
                            :provenance {:op :demo}})]
-      (expect (true? (:ok? out)))
+      (expect (true? (:success? out)))
       (expect (= nil (:error out)))
       (expect (= :demo (get-in out [:provenance :op])))
       (expect (integer? (get-in out [:provenance :started-at-ms])))
       (expect (integer? (get-in out [:provenance :finished-at-ms])))
       (expect (integer? (get-in out [:provenance :duration-ms])))
       (expect (= {:a 1} (:result out)))
-      (expect (map? (:result-shape out)))
+      (expect (not (contains? out (keyword (str "result" "-" "shape")))))
       (expect (not (contains? out :markdown)))))
 
   (it "failure requires structured :error with type/message/trace"
@@ -28,7 +28,7 @@
           out (tr/failure {:result nil
                            :provenance {:op :demo}
                            :throwable ex})]
-      (expect (false? (:ok? out)))
+      (expect (false? (:success? out)))
       (expect (= nil (:result out)))
       (expect (= "clojure.lang.ExceptionInfo" (get-in out [:error :type])))
       (expect (= "boom" (get-in out [:error :message])))
@@ -36,33 +36,7 @@
 
   (it "invalid envelope throws"
     (expect (throws? clojure.lang.ExceptionInfo
-              #(tr/assert-tool-result! {:ok? true :result 1}))))
-
-  (it "result-shape reports nils and sampled homogeneity for collections"
-    (let [shape (tr/result-shape [1 nil "x" {:a 1} nil])]
-      (expect (= :vector (:type shape)))
-      (expect (= 5 (:count shape)))
-      (expect (= {:sample-size 5
-                  :nil-count 2
-                  :types [:int :nil :string :map]
-                  :non-nil-types [:int :string :map]
-                  :homogeneous-ratio (/ 1.0 3.0)}
-                (:sample-stats shape)))))
-
-  (it "result-shape reports sampled map value and key stats"
-    (let [shape (tr/result-shape {:a nil :b 1 :c 2})]
-      (expect (= :map (:type shape)))
-      (expect (= {:sample-size 3
-                  :types [:keyword]
-                  :non-nil-types [:keyword]
-                  :homogeneous-ratio 1.0}
-                (:key-stats shape)))
-      (expect (= {:sample-size 3
-                  :nil-count 1
-                  :types [:nil :int]
-                  :non-nil-types [:int]
-                  :homogeneous-ratio 1.0}
-                (:sample-stats shape)))))
+              #(tr/assert-tool-result! {:success? true :result 1}))))
 
   (it "merge-provenance re-validates the envelope without presentation carriers"
     (let [base (tr/success {:result true
@@ -101,12 +75,25 @@
         (finally
           (tr/deregister-extension! 'com.acme.ext.fs)))))
 
+  (it "renders semantic rendering kinds through extension-owned functions"
+    (let [ext (tr/extension {:ext/namespace 'com.acme.ext.rendering-kind
+                             :ext/doc "rendering kind"
+                             :ext/kind "rendering"
+                             :ext/rendering-kinds {:demo (fn [{:keys [surface value]}]
+                                                           (str (name surface) ":" (:x value)))}})]
+      (try
+        (tr/register-extension! ext)
+        (expect (= "journal:42"
+                  (tr/render-rendering-kind :journal :demo {:x 42})))
+        (finally
+          (tr/deregister-extension! 'com.acme.ext.rendering-kind)))))
+
   (it "tool results require an owning symbol render-fn"
     (let [sym (tr/symbol 'cat (constantly nil)
                 {:doc "cat"
                  :arglists '([path])
                  :render-fn (fn [{:keys [tool-result]}]
-                              (str "ok=" (:ok? tool-result)
+                              (str "ok=" (:success? tool-result)
                                 "; result=" (pr-str (:result tool-result))
                                 "; provenance=" (pr-str (select-keys (:provenance tool-result)
                                                           [:tool :extension :source]))))})

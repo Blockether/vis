@@ -4,6 +4,8 @@ This file groups the current backlog into architectural task clusters. English o
 
 Current focus: [`FOCUS.md`](FOCUS.md) — canonical context contract for XML-tagged prompt surfaces, preview/full value boundaries, var-index/journal behavior, skill activation/full-body blocks, reasoning memory, and audit/attestation loading.
 
+Pinned context rule: `<journal>` is observed block evidence only. It may show block-authored intermediate `;;` / `#_(...)` comments, but it must not show LLM-only iteration `:thinking` or `ITERATION_PREVIOUS_REASONING`. Latest prior reasoning stays available only through the `ITERATION_PREVIOUS_REASONING` system var unless a future explicit reasoning surface is designed.
+
 ## Pareto order
 
 | Rank | Task cluster | Covers | Why now |

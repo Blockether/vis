@@ -29,7 +29,8 @@
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.extension :as extension]
-   [taoensso.telemere :as tel]))
+   [taoensso.telemere :as tel]
+   [zprint.core :as zp]))
 
 ;; =============================================================================
 ;; Tunables
@@ -45,11 +46,13 @@
   1500)
 
 (def ^:const JOURNAL_CONTEXT_FRACTION
-  "Fraction of the model context window reserved for rendered <journal>.
+  "Maximum fraction of the model context window allowed for rendered
+   <journal> before the remaining per-iteration budget is considered.
 
    There is no fixed iteration-count cap. The window is token-budgeted:
    newest evidence stays, oldest journal lines drop when the rendered
-   journal would exceed this fraction of the active model context."
+   journal would exceed this cap. Actual journal budget may be smaller
+   after protected/pinned context and <var_index> consume tokens."
   0.50)
 
 (def ^:const VAR_INDEX_CONTEXT_FRACTION
@@ -88,17 +91,32 @@
     (string? v) v
     :else v))
 
+(defn- zprintable-data?
+  [v]
+  (or (map? v)
+    (vector? v)
+    (set? v)
+    (instance? clojure.lang.IPersistentList v)))
+
+(defn- value-pr-str
+  [v bounded-print?]
+  (if (and (zprintable-data? v) (not bounded-print?))
+    (zp/zprint-str v {:width 80})
+    (pr-str v)))
+
 (defn safe-pr-str
-  "Bounded pr-str. Used in <journal> rendering."
+  "Bounded Clojure data rendering. Used in <journal> and TUI result rendering."
   ([v] (safe-pr-str v {}))
-  ([v {:keys [max-chars print-length print-level]
+  ([v {:keys [max-chars print-length print-level] :as opts
        :or {max-chars MAX_RESULT_DISPLAY_CHARS
             print-length 64
             print-level 6}}]
    (try
      (binding [*print-length* print-length
                *print-level*  print-level]
-       (let [s (strip-sandbox-ns (pr-str v))]
+       (let [bounded-print? (or (contains? opts :print-length)
+                              (contains? opts :print-level))
+             s (strip-sandbox-ns (value-pr-str v bounded-print?))]
          (if (> (count s) max-chars)
            (str (subs s 0 max-chars) " …<+" (- (count s) max-chars) " chars>")
            s)))
@@ -128,28 +146,6 @@
 (defn- tool-result-journal-text
   [v]
   (extension/render-tool-result :journal v))
-
-(defn- preview-tool-result?
-  [v]
-  (and (extension/tool-result? v)
-    (= :v/preview (get-in v [:provenance :op]))))
-
-(defn- collect-preview-results
-  ([v]
-   (collect-preview-results v #{}))
-  ([v seen]
-   (cond
-     (preview-tool-result? v) [v]
-
-     (or (nil? v) (seen (System/identityHashCode v))) []
-
-     (map? v)
-     (mapcat #(collect-preview-results % (conj seen (System/identityHashCode v))) (vals v))
-
-     (and (sequential? v) (not (string? v)))
-     (mapcat #(collect-preview-results % (conj seen (System/identityHashCode v))) v)
-
-     :else [])))
 
 (defn- provenance-journal-suffix
   "Compact block-level provenance for the model-facing journal. Keep
@@ -187,14 +183,13 @@
                         (str "ERROR: " (truncate error 600))
                         (if (extension/tool-result? result)
                           (tool-result-journal-text result)
-                          (let [preview-values (seq (or previews (collect-preview-results result)))]
-                            (if preview-values
-                              (str/join "\n"
-                                (map tool-result-journal-text preview-values))
-                              (let [v (realize-value result)
-                                    [value-str truncated?] (truncated-pr-str v)]
-                                (str value-str
-                                  (when truncated? " :truncated? true")))))))]
+                          (if-let [preview-values (seq previews)]
+                            (str/join "\n"
+                              (map tool-result-journal-text preview-values))
+                            (let [v (realize-value result)
+                                  [value-str truncated?] (truncated-pr-str v)]
+                              (str value-str
+                                (when truncated? " :truncated? true"))))))]
     (str "  " display-ref "  " code-str " → " value-part
       (or slow-suffix "")
       (or (provenance-journal-suffix provenance) "")
@@ -202,33 +197,34 @@
       (or stderr-suffix ""))))
 
 (defn- format-journal-iteration-block
-  "One iteration's full `<journal>` segment: optional thinking line,
-   then per-block canonical-ref lines that include the leading `:comment`
-   (when present) right above the code→value line."
+  "One iteration's full `<journal>` segment: per-block canonical-ref
+   lines that include the leading `:comment` (when present) right above
+   the code→value line. LLM-only iteration `:thinking` is intentionally
+   excluded; the previous value is available only through the
+   `ITERATION_PREVIOUS_REASONING` system var, not the journal."
   [iteration-position iteration-data]
-  (let [{:keys [thinking blocks]} iteration-data
-        header-lines (when (and (string? thinking)
-                             (not (str/blank? thinking)))
-                       [(str "  iteration/" iteration-position " thinking: "
-                          (truncate (str/trim thinking) 800))])
-        block-lines  (vec (mapcat (fn [[k blk]]
-                                    (let [comment-text (some-> (:comment blk) str/trim)
-                                          comment-line (when (and comment-text
-                                                               (not (str/blank? comment-text)))
-                                                         (str "  " (or (get-in blk [:provenance :ref])
-                                                                     (str "<missing-canonical-ref iteration=" iteration-position
-                                                                       " block=" (inc k) ">"))
-                                                           "  ;; "
-                                                           (truncate comment-text 400)))]
-                                      (cond-> []
-                                        comment-line (conj comment-line)
-                                        :always      (conj (format-block-line iteration-position
-                                                             k blk)))))
-                            (map-indexed vector (or blocks []))))]
-    (vec (concat header-lines block-lines))))
+  (let [{:keys [blocks]} iteration-data
+        block-lines (vec (mapcat (fn [[k blk]]
+                                   (let [comment-text (some-> (:comment blk) str/trim)
+                                         comment-line (when (and comment-text
+                                                              (not (str/blank? comment-text)))
+                                                        (str "  " (or (get-in blk [:provenance :ref])
+                                                                    (str "<missing-canonical-ref iteration=" iteration-position
+                                                                      " block=" (inc k) ">"))
+                                                          "  ;; "
+                                                          (truncate comment-text 400)))]
+                                     (cond-> []
+                                       comment-line (conj comment-line)
+                                       :always      (conj (format-block-line iteration-position
+                                                            k blk)))))
+                           (map-indexed vector (or blocks []))))]
+    block-lines))
 
 (defn- trim-journal-lines
-  "Keep newest journal lines within 50% of the active model context.
+  "Keep newest journal lines within the supplied journal token budget.
+
+   By default, that budget is capped at 50% of the active model context,
+   then may be reduced by protected/pinned context and <var_index> usage.
 
    Returns `[lines dropped-count budget-tokens used-tokens]`. Lines are
    indivisible because each carries one canonical ref; truncating inside
@@ -255,9 +251,9 @@
   "Render all carried iterations with canonical provenance refs, then
    trim the rendered lines by token budget instead of by iteration count.
    `iters` is a seq of `[iteration-position {:thinking :blocks}]` pairs,
-   oldest-first. Each iteration's segment carries:
-     - `iteration/N thinking: …` once at the top (when the iteration emitted
-       any reasoning text)
+   oldest-first. Iteration-level `:thinking` is LLM-only reasoning and is
+   not rendered in `<journal>`; only `ITERATION_PREVIOUS_REASONING` exposes
+   the latest prior value. Each iteration's segment carries:
      - per-block `<canonical-ref>  ;; <comment>` line above the code line, when
        the model authored a leading `;; …` / `#_(...)` comment for
        that form
@@ -274,8 +270,8 @@
          omitted-line (str "  ... " dropped-count
                         " older journal lines omitted to fit journal token budget "
                         used-tokens "/" budget-tokens
-                        " tokens (" (long (* 100 JOURNAL_CONTEXT_FRACTION))
-                        "% of model context)")
+                        " tokens (journal cap <= " (long (* 100 JOURNAL_CONTEXT_FRACTION))
+                        "% model context; actual budget may be lower)")
          rendered-lines (if (pos? dropped-count)
                           (vec (cons omitted-line trimmed-lines))
                           trimmed-lines)]
@@ -522,8 +518,12 @@
   "Assemble the per-iteration trailing user message.
 
    Two slots:
-     <journal>     — newest token-budgeted thinking + comments + code
-                     + result. Budget is 50% of the model context.
+     <journal>     — newest token-budgeted comments + code + result.
+                     Budget is capped at 50% of the model context, then
+                     reduced by protected/pinned context and <var_index>.
+                     It never renders LLM-only iteration `:thinking`; the
+                     latest prior value is available as
+                     `ITERATION_PREVIOUS_REASONING`.
      <var_index>   — `(def ...)` bindings in the SCI env.
 
    Plus zero or more tagged `<system_nudge importance=\"...\">` entries
@@ -542,8 +542,8 @@
    Optional:
      `:blocks-by-iteration` — carried iterations as
         `[iteration-position {:thinking :blocks}]` pairs for the
-        <journal> renderer. Rendering trims by token budget, not fixed
-        iteration count.
+        <journal> renderer. Rendering ignores `:thinking` and trims by token
+        budget, not fixed iteration count.
      `:iteration` — current iteration position (1-based for rendered refs;
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
@@ -766,12 +766,12 @@ Resolve the focused intent before `(answer ...)`, either in its own iteration or
    :provenance (v/provenance-guards)})
 checks
 ```
-If `(:ok? (:intents checks))` is false, fix the plan/gates, re-plan, prove/impede gates, or abandon the intent. If the runtime rejects an answer, read the validation error, run `(v/intents)` and `(v/latest-provenance-refs)`, then fulfill/abandon focused intents with observed canonical refs.
+If `(:success? (:intents checks))` is false, fix the plan/gates, re-plan, prove/impede gates, or abandon the intent. If the runtime rejects an answer, read the validation error, run `(v/intents)` and `(v/latest-provenance-refs)`, then fulfill/abandon focused intents with observed canonical refs.
 
 Scratch values are still useful, but they are not proof. Persist and surface observations with `def`, then cite their refs after observing them:
 ```clojure
-(def hits (v/rg [\"keyword\"] \"src\"))
-hits
+(def hits (v/rg {:all [\"keyword\"] :paths [\"src\"]}))
+(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})
 ```
 Reusable pure helpers are fine; keep effectful calls at leaves:
 ```clojure
@@ -782,9 +782,9 @@ Reusable pure helpers are fine; keep effectful calls at leaves:
 
 Top-level observability rule: a top-level form's result is mainly evidence for the NEXT iteration's <journal>. Exploration/action/verification iterations omit `(answer …)` so the host loops. Correct shape:
 ```clojure
-(def hits (v/rg [\"foo\"] \"src\"))
-(def summary {:count (count (:hits hits))
-              :paths (->> (:hits hits) (map :path) distinct vec)})
+(def hits (v/rg {:all [\"foo\"] :paths [\"src\"]}))
+(def summary {:count (count (get-in hits [:result :hits]))
+              :paths (->> (get-in hits [:result :hits]) (map :path) distinct vec)})
 summary
 ```
 Then observe `summary` in <journal>, prove/impede gates, verify, or continue.
@@ -799,7 +799,7 @@ checks
 ```clojure
 ;; iteration N+1: final turn-finisher after observed evidence, exactly one top-level form.
 ;; If intent resolution is still pending, do it inside this one wrapper with observed refs only.
-(let [_ (when-not (get-in (v/intents) [:ok?])
+(let [_ (when-not (get-in (v/intents) [:success?])
           (v/fulfill-intent! (:id intent)
             {:summary \"User objective satisfied.\"
              :refs [\"turn/3f2a91c0/iteration/5/block/2\"]}))]
@@ -827,7 +827,7 @@ Answer shapes. After iteration 1, `(answer …)` is the ONLY top-level form of i
 If you need any sibling top-level work after iteration 1, do not answer yet; do that work in earlier iterations, surface results, then finish with one top-level answer-bearing form. Final intent resolution may live inside that one wrapper only when it cites already-observed refs.
 
 Each iteration's user msg carries:
-  <journal>     newest thinking + comments + code + results that fit the token-budgeted journal window (50% of model context), with canonical provenance refs
+  <journal>     newest comments + code + results that fit the token-budgeted journal window (capped at 50% of model context and reduced by pinned context/<var_index>), with canonical provenance refs; LLM-only :thinking is not rendered here
   <var_index>   your `(def name val)` / `defn` bindings still alive in the sandbox
   <system_nudges> entries (when relevant) — e.g. set the conversation title or manage context pressure; each <system_nudge> carries an importance attribute
 
@@ -1035,6 +1035,8 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
               (when alias-sym (str " alias=\"" alias-sym "\""))
               (when ns-sym (str " target-namespace=\"" ns-sym "\""))
               ">\n"
+              (when (and alias-sym ns-sym)
+                (str "[namespace: " alias-sym " → " ns-sym "]\n"))
               body
               (when-not (str/ends-with? body "\n") "\n")
               "</extension>")))))

@@ -374,9 +374,9 @@
 
 (defn- run-shell-helper!
   "Spawn `cmd` (an argv vector), feed `stdin-bytes` to its stdin
-   when non-nil, drain stdout, return `{:ok? boolean :stdout String}`.
+   when non-nil, drain stdout, return `{:success? boolean :stdout String}`.
    Capped at 1 second; a missing helper or unreadable PATH entry
-   raises in the `try` block and we report `{:ok? false}` so the
+   raises in the `try` block and we report `{:success? false}` so the
    caller falls through to the next candidate."
   [cmd ^bytes stdin-bytes]
   (try
@@ -399,9 +399,9 @@
               (.write buf tmp 0 n)
               (recur))))
         (.waitFor p 1 java.util.concurrent.TimeUnit/SECONDS)
-        {:ok?    (zero? (.exitValue p))
+        {:success?    (zero? (.exitValue p))
          :stdout (.toString buf "UTF-8")}))
-    (catch Throwable _ {:ok? false :stdout nil})))
+    (catch Throwable _ {:success? false :stdout nil})))
 
 (defn- shell-clipboard-copy!
   "Try every helper in `copy-helpers` until one succeeds. Returns
@@ -412,7 +412,7 @@
     (loop [[cmd & rest] copy-helpers]
       (if (nil? cmd)
         :none
-        (if (:ok? (run-shell-helper! cmd bytes))
+        (if (:success? (run-shell-helper! cmd bytes))
           (keyword (first cmd))
           (recur rest))))))
 
@@ -422,9 +422,9 @@
   []
   (loop [[cmd & rest] paste-helpers]
     (when cmd
-      (let [{:keys [ok? stdout]} (run-shell-helper! cmd nil)]
+      (let [{:keys [success? stdout]} (run-shell-helper! cmd nil)]
         (cond
-          (and ok? (some? stdout) (pos? (count stdout))) stdout
+          (and success? (some? stdout) (pos? (count stdout))) stdout
           :else (recur rest))))))
 
 (defn clipboard-paste
@@ -665,8 +665,8 @@
 (def ^:private file-mention-regex
   #"(?<!\S)@(?:\"([^\"]+)\"|([A-Za-z0-9][A-Za-z0-9._/\-]*))")
 
-(def ^:private file-mention-max-lines 200)
-(def ^:private file-mention-max-chars 24000)
+(def ^:private file-mention-preview-lines 120)
+(def ^:private file-mention-binding-prefix "attached-file")
 
 (defn- file-mention-needs-quotes?
   [path]
@@ -696,51 +696,39 @@
         candidate))
     (catch Throwable _ nil)))
 
-(defn- truncate-file-content
-  [text]
-  (let [all-lines        (str/split text #"\n" -1)
-        total-lines      (count all-lines)
-        visible-lines    (take file-mention-max-lines all-lines)
-        line-limited-text (str/join "\n" visible-lines)
-        char-truncated?  (> (count line-limited-text) file-mention-max-chars)
-        shown-text       (if char-truncated?
-                           (subs line-limited-text 0 file-mention-max-chars)
-                           line-limited-text)
-        shown-lines      (count (str/split shown-text #"\n" -1))
-        truncated?       (or (> total-lines file-mention-max-lines)
-                           char-truncated?)]
-    {:text        shown-text
-     :shown-lines shown-lines
-     :total-lines total-lines
-     :truncated?  truncated?}))
+(defn- file-mention-binding-symbol
+  [path]
+  (let [slug (-> (str path)
+               str/lower-case
+               (str/replace #"[^a-z0-9]+" "-")
+               (str/replace #"(^-+|-+$)" ""))]
+    (if (seq slug)
+      (str file-mention-binding-prefix "-" slug)
+      file-mention-binding-prefix)))
 
 (defn- file-mention->prompt-block
   [path]
-  (if-let [f (resolve-local-file path)]
-    (try
-      (let [text (slurp f)]
-        (if (str/includes? text "\u0000")
-          (str "[Attached file: " path " - binary content omitted]")
-          (let [{:keys [text shown-lines total-lines truncated?]}
-                (truncate-file-content text)
-                suffix (when truncated?
-                         (str " - showing " shown-lines "/" total-lines " lines"))]
-            (str "[Attached file: " path suffix "]\n"
-              "----- BEGIN FILE -----\n"
-              text
-              (when-not (str/ends-with? text "\n") "\n")
-              "----- END FILE -----"))))
-      (catch Throwable _
-        (str "[Attached file: " path " - unreadable, content omitted]")))
+  (if (resolve-local-file path)
+    (let [binding (file-mention-binding-symbol path)
+          path-lit (pr-str (str path))]
+      (str "[Attached File: " path "]\n"
+        "IMPORTANT: READ IT NOW. This is a focused attached file reference, not file contents.\n"
+        "Before answering about it, acquire runtime truth with `v/cat`, bind the result, and preview the relevant lines.\n"
+        "Use this exact first-observation pattern:\n"
+        "```clojure\n"
+        "(def " binding " (v/cat " path-lit "))\n"
+        "(v/preview " binding " {:result [[:lines {:from 1 :to " file-mention-preview-lines "}]]})\n"
+        "```\n"
+        "Do not answer about this file from memory, the path name, or stale context; answer only after the `v/cat` result is observed."))
     (format-file-mention path)))
 
 (defn expand-file-mentions
-  "Replace inline `@path/to/file` mentions with bounded prompt blocks so
-   the agent sees the file content immediately.
+  "Replace inline `@path/to/file` mentions with read-now prompt directives.
 
-   The visible chat transcript can keep the concise `@path` token; this
-   expansion is meant for the outbound agent prompt only. Unknown paths
-   pass through unchanged."
+   The visible chat transcript keeps the concise `@path` token. The outbound
+   agent prompt gets an explicit attached-file directive that tells the agent
+   to acquire runtime truth with `v/cat`, bind it with `def`, then `v/preview`
+   relevant lines before answering. Unknown paths pass through unchanged."
   [^String text]
   (str/replace text file-mention-regex
     (fn [[_ quoted-path bare-path]]

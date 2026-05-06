@@ -18,7 +18,14 @@
         (expect (= {["cid" "answer:t11111111:proofs:d1"] true}
                   (:detail-expansions @state/app-db)))
         (expect (zero? @render-invalidations))
-        (expect (zero? @height-invalidations))))))
+        (expect (zero? @height-invalidations)))))
+
+  (it "stores preview switcher mode on the same detail-expansions bus"
+    (reset! state/app-db {:detail-expansions {}
+                          :render-version 0})
+    (state/dispatch [:select-preview-mode "cid" "iteration:t11111111:i1:b1:preview-switch" :raw])
+    (expect (= {["cid" "iteration:t11111111:i1:b1:preview-switch"] :raw}
+              (:detail-expansions @state/app-db)))))
 
 (defdescribe init-settings-test
   (it "loads the default balanced reasoning level when config has none"

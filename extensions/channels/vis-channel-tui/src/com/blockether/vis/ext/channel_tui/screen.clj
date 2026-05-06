@@ -1,7 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.screen
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.theme :as shared-theme]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
@@ -1374,6 +1373,9 @@
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
 
+                               :preview-switcher
+                               (state/dispatch [:select-preview-mode (:conversation-id hit) (:node-id hit) (:mode hit)])
+
                                :resources
                                (open-resources-popup! screen (:refs hit))
 
@@ -1434,6 +1436,9 @@
 
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
+
+                               :preview-switcher
+                               (state/dispatch [:select-preview-mode (:conversation-id hit) (:node-id hit) (:mode hit)])
 
                                :resources
                                (open-resources-popup! screen (:refs hit))
@@ -1544,10 +1549,20 @@
                                  (state/dispatch [:set-config c]))
 
                                :settings
-                               (when-let [s (with-dialog-lock
-                                              #(dlg/settings-dialog! screen
-                                                 (:settings @state/app-db)))]
-                                 (state/dispatch [:update-settings s]))
+                               (let [redraw-ui! (fn []
+                                                  (let [size   (screen-size screen)
+                                                        cols   (.getColumns size)
+                                                        rows   (.getRows size)
+                                                        layout (render-frame! screen cols rows @state/app-db
+                                                                 (System/currentTimeMillis))]
+                                                    (state/dispatch [:set-layout layout])))]
+                                 (when-let [s (with-dialog-lock
+                                                #(dlg/settings-dialog! screen
+                                                   (:settings @state/app-db)
+                                                   {:on-change (fn [settings]
+                                                                 (state/dispatch [:update-settings settings]))
+                                                    :redraw-ui redraw-ui!}))]
+                                   (state/dispatch [:update-settings s])))
 
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
@@ -1759,7 +1774,6 @@
      :ext/author    "Blockether"
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
-     :ext/theme     (shared-theme/extension-theme-settings)
      :ext/channels  [{:channel/id        :tui
                       :channel/cmd       "tui"
                       :channel/doc       "Interactive terminal UI."

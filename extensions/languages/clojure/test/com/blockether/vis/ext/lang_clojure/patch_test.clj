@@ -83,8 +83,8 @@
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
           locators    (locators-fn path)
           symbols     (symbols-fn path)]
-      (expect (true? (:ok? locators)))
-      (expect (true? (:ok? symbols)))
+      (expect (true? (:success? locators)))
+      (expect (true? (:success? symbols)))
       (expect (some #(and (= 'old-sym (:value %)) (= "old-sym" (:locator %)))
                 (:result locators)))
       (expect (every? #(symbol? (:value %)) (:result symbols)))
@@ -112,7 +112,7 @@
     (let [path     (write-temp! "patch/tool.clj" "(ns demo)\n(def z 1)\n")
           patch-fn (:ext.symbol/fn patch/patch-symbol)
           out      (patch-fn {:path path :search "(def z 1)" :replace "(def z 3)"})]
-      (expect (true? (:ok? out)))
+      (expect (true? (:success? out)))
       (expect (= :z/patch (get-in out [:provenance :op])))
       (expect (= [{:path path}] (:result out)))
       (expect (= "(ns demo)\n(def z 1)\n"

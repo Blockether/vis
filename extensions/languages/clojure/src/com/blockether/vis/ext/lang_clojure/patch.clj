@@ -378,7 +378,7 @@
 
 (defn- render-patch-result
   [{:keys [tool-result]}]
-  (if-not (:ok? tool-result)
+  (if-not (:success? tool-result)
     (tool-error-text tool-result)
     (let [files (get-in tool-result [:provenance :files])]
       (md/join
@@ -442,7 +442,7 @@
 
 (defn- render-locators-result
   [{:keys [tool-result]}]
-  (if-not (:ok? tool-result)
+  (if-not (:success? tool-result)
     (tool-error-text tool-result)
     (let [rows (:result tool-result)
           shown (take 40 rows)

@@ -137,7 +137,7 @@ All restore paths use the same safe-restore rule:
 Example:
 
 ```clojure
-(def hits (v/rg ["foo"] "src"))
+(def hits (v/rg {:all ["foo"] :paths ["src"]}))
 ```
 
 Restoring `hits` binds the persisted value of `hits`; it does not rerun `v/rg`.

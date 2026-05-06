@@ -570,7 +570,7 @@
       (expect (= "Done." (:fulfillment-summary fulfilled-again)))
       (expect (= ref (-> fulfilled :refs first :ref)))
       (expect (= :fulfillment-evidence (-> fulfilled :refs first :role)))
-      (expect (= true (:ok? state)))
+      (expect (= true (:success? state)))
       (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
       (expect (= ref-2 (-> fulfilled-again :refs last :ref)))
       (expect (= :vis/sci (get-in (vis/db-list-iteration-blocks s iid) [0 :rendering-kind])))))
@@ -605,7 +605,7 @@
                   (:abandonment-reason abandoned)))
         (expect (= ref (-> abandoned :refs first :ref)))
         (expect (= :abandonment-evidence (-> abandoned :refs first :role)))
-        (expect (= true (:ok? state)))
+        (expect (= true (:success? state)))
         (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
         (expect (= 1 (raw-count s :conversation_intent_ref))))))
 
@@ -690,7 +690,7 @@
                                           :title "Ship it"
                                           :rationale "User asked for it."})
           state  (vis/db-intents s {:conversation-turn-id tid})]
-      (expect (= false (:ok? state)))
+      (expect (= false (:success? state)))
       (expect (some #(= :missing-active-plan (:type %)) (:violations state)))
       (expect (= [(:id intent)] (:focused-intent-ids state)))))
 
@@ -755,9 +755,8 @@
         tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                    :user-request "ship it"
                                                    :status :running})
-        timeout-result {:ok? false
+        timeout-result {:success? false
                         :result nil
-                        :result-shape {:type :nil}
                         :provenance {:op :future/await
                                      :status :timeout
                                      :started-at-ms 10
