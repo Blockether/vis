@@ -49,7 +49,7 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 14 (count editing/editing-symbols)))
+    (expect (= 15 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
@@ -60,8 +60,11 @@
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'write-lines 'update-file}
               (map :ext.symbol/sym editing/editing-symbols)))
-    (expect (some #{'bash}
-              (map :ext.symbol/sym editing/editing-symbols)))
+    (do
+      (expect (some #{'bash}
+                (map :ext.symbol/sym editing/editing-symbols)))
+      (expect (some #{'bash-strict}
+                (map :ext.symbol/sym editing/editing-symbols))))
     (expect (some #{'preview}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'silent!}
@@ -115,7 +118,7 @@
                 (:ext.symbol/examples bash-symbol)))))
 
   (it "registers custom structured renderers for rich tool outputs"
-    (doseq [sym-name '[cat preview ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash]]
+    (doseq [sym-name '[cat preview ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash bash-strict]]
       (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
                     editing/editing-symbols)]
         (expect (ifn? (:ext.symbol/render-fn entry))))))
@@ -128,7 +131,10 @@
       (expect (string/includes? editing/editing-prompt "[:result :stdout]"))
       (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
       (expect (some #(string/includes? % "[:result :exit]")
-                (:ext.symbol/examples bash-symbol))))))
+                (:ext.symbol/examples bash-symbol)))
+      (expect (string/includes? (:ext.symbol/doc bash-symbol) "Refuses shell-driven Clojure/EDN source edits"))
+      (expect (string/includes? editing/editing-prompt "v/bash-strict"))
+      (expect (string/includes? editing/editing-prompt "set -euo pipefail")))))
 
 (it "classifies operations into stable classes, presentation kinds, and color roles"
   (doseq [[op class kind role] [[:v/cat :op/read :tool/read :tool-color/read]
@@ -140,6 +146,7 @@
                                 [:v/delete :op/delete :tool/delete :tool-color/delete]
                                 [:v/move :op/move :tool/move :tool-color/move]
                                 [:v/bash :op/shell :tool/shell :tool-color/shell]
+                                [:v/bash-strict :op/shell :tool/shell :tool-color/shell]
                                 [:v/intents :op/meta :tool/meta :tool-color/meta]]]
     (expect (= class (editing/tool-op->class op)))
     (expect (= kind (editing/tool-op->presentation-kind op)))
@@ -508,20 +515,31 @@
       (expect (= "." (:cwd out)))
       (expect (false? (:timed-out? out)))))
 
-  (it "bash command timeout is distinct from interruption"
+  (it "bash warns when Traceback appears on stderr despite exit 0"
     (let [bash-tool   (private-fn "bash-tool")
           render-bash (private-fn "render-bash")
-          out         (bash-tool "sleep 1" {:timeout-ms 20})
+          out         (bash-tool "printf '%s\n' 'Traceback (most recent call last):' >&2" {:timeout-ms 5000})
           rendered    (render-bash {:tool-result out})]
       (expect (true? (:success? out)))
-      (expect (= 124 (get-in out [:result :exit])))
-      (expect (true? (get-in out [:result :timed-out?])))
-      (expect (= 20 (get-in out [:result :timeout-ms])))
-      (expect (= :timeout (get-in out [:provenance :status])))
-      (expect (nil? (:error out)))
-      (expect (string/includes? rendered "timed out after 20ms"))
-      (expect (not (string/includes? rendered "interrupted")))
-      (expect (not (string/includes? rendered "cancelled")))))
+      (expect (= 0 (get-in out [:result :exit])))
+      (expect (= :stderr-traceback-with-zero-exit
+                (get-in out [:result :warnings 0 :type])))
+      (expect (string/includes? rendered "warning(s)"))
+      (expect (string/includes? rendered "set -euo pipefail"))))
+
+  (it "bash-strict prepends strict mode and keeps original command in result"
+    (let [strict-command   (private-fn "strict-bash-command")
+          bash-strict-tool (private-fn "bash-strict-tool")
+          out              (bash-strict-tool "false\necho SHOULD_NOT_RUN" {:timeout-ms 5000})
+          result           (:result out)]
+      (expect (= "set -euo pipefail\nfalse\necho SHOULD_NOT_RUN"
+                (strict-command "false\necho SHOULD_NOT_RUN")))
+      (expect (true? (:success? out)))
+      (expect (= 1 (:exit result)))
+      (expect (= "" (:stdout result)))
+      (expect (true? (:strict? result)))
+      (expect (= "false\necho SHOULD_NOT_RUN" (:original-command result)))
+      (expect (string/starts-with? (:command result) "set -euo pipefail\n"))))
 
   (it "bash interruption returns concise cancelled failure instead of timeout or stack dump"
     (let [entry       (some #(when (= 'bash (:ext.symbol/sym %)) %)
@@ -557,9 +575,17 @@
         (expect (not (string/includes? rendered "timed out")))
         (expect (not (string/includes? (pr-str (:error v)) "core.clj"))))))
 
-  (it "bash validates cwd through the same safe path guard"
+  (it "bash validates cwd through the same safe path guard and blocks shell source edits"
     (let [run-bash (private-fn "run-bash-safe")]
-      (expect (throws? clojure.lang.ExceptionInfo #(run-bash "pwd" {:cwd ".."}))))))
+      (expect (throws? clojure.lang.ExceptionInfo #(run-bash "pwd" {:cwd ".."})))
+      (let [command "python3 - <<'PY'\nfrom pathlib import Path\nPath('src/demo.clj').write_text('(ns demo)')\nPY"]
+        (expect (throws? clojure.lang.ExceptionInfo #(run-bash command)))
+        (try
+          (run-bash command)
+          (expect false)
+          (catch clojure.lang.ExceptionInfo e
+            (expect (= :ext.foundation.editing/bash-clojure-source-edit-blocked (:type (ex-data e))))
+            (expect (= :use-z-patch (:reason (ex-data e))))))))))
 
 (defdescribe editing-renderer-guidance-test
   (it "patch renderer avoids mandatory duplicate read-back and shows fenced diffs"

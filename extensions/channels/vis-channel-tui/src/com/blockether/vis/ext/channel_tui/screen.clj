@@ -89,8 +89,8 @@
 ;; Removed from idle: `Enter send` (universally obvious). PageUp/PageDown
 ;; remain available for transcript scrolling. Model/reasoning/verbosity
 ;; shortcuts live in the footer next to the values they change.
-(def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Ctrl+G conversations · Ctrl+K menu ")
-(def ^:private hint-idle-typed " Ctrl+G conversations · Ctrl+K menu ")
+(def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Ctrl+B voice · Ctrl+G conversations · Ctrl+K menu ")
+(def ^:private hint-idle-typed " Ctrl+B voice · Ctrl+G conversations · Ctrl+K menu ")
 (def ^:private hint-loading    " Esc cancel · Ctrl+C quit ")
 (def ^:private hint-cancelling " Cancelling… please wait · Ctrl+C quit ")
 
@@ -189,6 +189,10 @@
                     []))))
       (filter #(and (:id %) (:label %) (ifn? (:run-fn %))))
       vec)))
+
+(defn- palette-extra-commands
+  [commands]
+  (filterv #(not= false (:palette? %)) commands))
 
 (defn- copy-conversation-as-markdown! [conversation-id]
   (vis/worker-future "vis-tui-copy-conversation-markdown"
@@ -1575,6 +1579,7 @@
                  (let [{:keys [action state]} (input/handle-key key (:input db))]
                    (state/dispatch [:update-input state])
                    (let [extra-commands (extension-commands screen)
+                         palette-commands (palette-extra-commands extra-commands)
                          extra-by-id    (into {} (map (juxt :id identity)) extra-commands)
                          run-command!
                          (fn [cmd]
@@ -1637,7 +1642,7 @@
                        (do
                          (when-not (:dialog-open? @state/app-db)
                            (loop []
-                             (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen extra-commands))]
+                             (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen palette-commands))]
                                (run-command! cmd)
                                (recur))))
                          (recur))
@@ -1660,6 +1665,10 @@
 
                        :cycle-model
                        (do (state/dispatch [:cycle-model])
+                         (recur))
+
+                       :toggle-voice-recording
+                       (do (run-command! :voice-parakeet/toggle)
                          (recur))
 
                        :show-conversations

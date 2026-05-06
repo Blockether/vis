@@ -199,9 +199,9 @@
   [{:keys [value span]} zloc]
   (and (z/sexpr-able? zloc)
     (try
-      (and (= value (z/sexpr zloc))
-        (or (nil? span)
-          (= span (z/position-span zloc))))
+      (if span
+        (= span (z/position-span zloc))
+        (= value (z/sexpr zloc)))
       (catch Throwable _ false))))
 
 (defn- count-matches
@@ -577,6 +577,6 @@
 (def z-prompt
   "`z/` Clojure/EDN zipper patching:
   Use (z/patch {:path p :search locator :replace replacement}) or vector of same maps. Same map shape as v/patch. :search is a parsed Clojure/EDN locator, not raw text; exactly one match required before write.
-  Discover focused locators with (z/locator-for-symbol path 'foo), (z/locators path {:symbol 'foo}), (z/locators path {:source-contains <text> :limit 20}), or symbols only with (z/symbols path {:name 'foo}). Default locator display is bounded. Rows include :path/:index/:span and can become edits by adding :replace. Full rewrite-clj.zip API is also under z/, including z/subedit->.
+  Discover focused locators with (z/locator-for-symbol path 'foo), (z/locators path {:symbol 'foo}), (z/locators path {:source-contains <text> :limit 20}), or symbols only with (z/symbols path {:name 'foo}). Default locator display is bounded. Rows include :path/:index/:span and can become edits by adding :replace. Use (z/repair-range {:path p :range [[sr sc] [er ec]]}), (z/repair-locator locator-row {:dry-run? true}), or (z/repair-file p {:dry-run? true}) for parinfer/quote repair over row/col ranges. Full rewrite-clj.zip API is also under z/, including z/subedit->.
 Examples: (z/patch [{:path \"src/foo.clj\" :search \"old-sym\" :replace \"new-sym\"}])
           (z/patch [{:path \"src/foo.clj\" :search \"(def x 1)\" :replace \"(def x 2)\"}])")

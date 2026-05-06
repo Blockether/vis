@@ -2234,7 +2234,17 @@
   (it "discovers TUI and Telegram"
     (let [{:keys [exit out]} (run-vis "channels")]
       (expect (zero? exit))
-      (expect (contains-all? out ["tui" "telegram"])))))
+      (expect (contains-all? out ["tui" "telegram"]))))
+
+  (it "mounts Telegram approve/restart commands under the channel"
+    (let [{:keys [exit out]} (run-vis "channels" "telegram" "--help")]
+      (expect (zero? exit))
+      (expect (contains-all? out ["approve" "restart" "vis channels telegram"]))))
+
+  (it "renders Telegram approve command flags"
+    (let [{:keys [exit out]} (run-vis "channels" "telegram" "approve" "--help")]
+      (expect (zero? exit))
+      (expect (contains-all? out ["--chat-id" "--restart"])))))
 
 (defdescribe vis-conversations
   (it "prints an empty-list message when no conversations exist"

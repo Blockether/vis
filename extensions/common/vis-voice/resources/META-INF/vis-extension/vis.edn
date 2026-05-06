@@ -1,0 +1,5 @@
+{voice
+ {:nses [com.blockether.vis.ext.voice.core]
+  :description "Native local voice extension: Piper/VITS TTS through sherpa-onnx."
+  :docs [{:title "Voice"
+          :content "Adds local text-to-speech with the default sharp Piper voice en_US-ryan-high. Model directory defaults to ~/.vis/models/sherpa-onnx-vits-piper-en_US-ryan-high and can be overridden with VIS_PIPER_MODEL_DIR. Voice can be overridden with VIS_PIPER_VOICE."}]}}

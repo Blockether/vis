@@ -130,6 +130,14 @@
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \o)) state)))))
 
+  (it "Ctrl+B directly toggles voice recording"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "draft"))]
+      (expect (= {:action :toggle-voice-recording :state state}
+                (input/handle-key (ctrl-key (Character. \b)) state)))
+      (expect (= {:action :toggle-voice-recording :state state}
+                (input/handle-key (ctrl-key (Character. \B)) state)))))
+
   (it "Ctrl+C and Escape clear non-empty input instead of exiting"
     (let [state (-> (input/empty-input)
                   (input/paste-text "draft"))]

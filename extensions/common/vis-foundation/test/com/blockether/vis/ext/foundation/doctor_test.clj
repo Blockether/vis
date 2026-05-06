@@ -77,6 +77,20 @@
         (expect (re-find #"\d+ skills? loaded" (:message m)))))))
 
 ;; ---------------------------------------------------------------------------
+;; ::voice
+;; ---------------------------------------------------------------------------
+
+(defdescribe voice-check-test
+  (it "emits voice extension, ffmpeg, and Piper espeak-ng-data diagnostics"
+    (let [msgs     (section-msgs ::doctor/voice {})
+          msg-text (mapv :message msgs)]
+      (expect (= 3 (count msgs)))
+      (expect (some #(str/starts-with? % "Voice extensions:") msg-text))
+      (expect (some #(str/starts-with? % "ffmpeg:") msg-text))
+      (expect (some #(str/starts-with? % "Piper espeak-ng-data:") msg-text))
+      (expect (every? #{:info :warn :error} (mapv :level msgs))))))
+
+;; ---------------------------------------------------------------------------
 ;; ::scan-warnings
 ;; ---------------------------------------------------------------------------
 
@@ -92,17 +106,18 @@
   (it "check-fn is a function suitable for `:ext/doctor-check-fn`"
     (expect (fn? doctor/check-fn)))
 
-  (it "every emitted message carries one of the four documented :check-ids in section order"
+  (it "every emitted message carries one of the five documented :check-ids in section order"
     (let [msgs (doctor/check-fn {})
           ids  (distinct (mapv :check-id msgs))]
       (expect (every? #{::doctor/system
                         ::doctor/agents-md
                         ::doctor/skills
+                        ::doctor/voice
                         ::doctor/scan-warnings}
                 ids))
       ;; Sections appear in the documented order — system, agents-md, skills,
-      ;; scan-warnings. Any present subset preserves that ordering.
+      ;; voice, scan-warnings. Any present subset preserves that ordering.
       (let [section-order [::doctor/system ::doctor/agents-md
-                           ::doctor/skills ::doctor/scan-warnings]
+                           ::doctor/skills ::doctor/voice ::doctor/scan-warnings]
             present (filter (set ids) section-order)]
         (expect (= present ids))))))

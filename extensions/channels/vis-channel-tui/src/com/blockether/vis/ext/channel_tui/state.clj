@@ -174,7 +174,8 @@
     (update :show-iterations boolean)
     (update :show-timestamps boolean)
     (update :differentiate-turns boolean)
-    (update :mouse-selection-copy boolean)))
+    (update :mouse-selection-copy boolean)
+    (update :voice/respond? boolean)))
 
 (def default-settings
   "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
@@ -217,7 +218,8 @@
    :openai-codex-verbosity :low
    :show-timestamps        false
    :differentiate-turns    true
-   :mouse-selection-copy   true})
+   :mouse-selection-copy   true
+   :voice/respond?         false})
 
 (defn- load-persisted-settings
   "Read `:tui-settings` from `~/.vis/config.edn` and merge over
@@ -547,12 +549,21 @@
         ccol  (count (nth lines crow))]
     {:lines lines :crow crow :ccol ccol}))
 
+(defn- append-input-text
+  [current text]
+  (let [current-text (input/input->text current)
+        next-text    (or text "")]
+    (cond
+      (str/blank? current-text) next-text
+      (str/blank? next-text)    current-text
+      :else                    (str current-text "\n" next-text))))
+
 (reg-event-db :external-input
   (fn [db [_ op text]]
     (let [current (:input db)
           next    (case op
                     :replace (text->input-state text)
-                    :append  (text->input-state (str (input/input->text current) (or text "")))
+                    :append  (text->input-state (append-input-text current text))
                     :insert  (input/paste-text current (or text ""))
                     current)]
       (assoc db :input next
@@ -723,6 +734,9 @@
           agent-text   (input/expand-file-mentions visible-text)
           token        (vis/cancellation-token)
           extra-body   (turn-extra-body db)
+          turn-features (cond-> {}
+                          (get-in db [:settings :voice/respond?])
+                          (assoc :voice-response? true))
           reasoning-level (when (reasoning-effort-configurable?)
                             (get-in db [:settings :reasoning-level]))]
       {:db (-> db
@@ -743,7 +757,7 @@
                :input-history-index nil
                :input-history-draft nil))
        :fx [[:rlm-turn (:conversation db) agent-text token
-             reasoning-level extra-body]]})))
+             reasoning-level extra-body turn-features]]})))
 
 (reg-event-fx :cancel-turn
   (fn [db _]
@@ -789,6 +803,15 @@
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
+(defn- speak-answer-async!
+  [answer]
+  (try
+    (when-let [speak (requiring-resolve 'com.blockether.vis.ext.voice.core/speak-answer-async!)]
+      (speak answer))
+    (catch Throwable t
+      (vis/notify! (str "Voice response failed: " (or (ex-message t) t))
+        :level :error :ttl-ms 5000))))
+
 (reg-fx :notify
   (fn [text level ttl-ms]
     (vis/notify! text :level level :ttl-ms ttl-ms)))
@@ -803,7 +826,7 @@
         (vis/refresh-cached-routers! router)))))
 
 (reg-fx :rlm-turn
-  (fn [conversation text token reasoning-level extra-body]
+  (fn [conversation text token reasoning-level extra-body turn-features]
     (let [fut (vis/worker-future "vis-tui-turn"
                 (fn []
                   (try
@@ -816,13 +839,17 @@
                                    {:on-chunk          on-chunk
                                     :cancel-atom       (vis/cancellation-atom token)
                                     :reasoning-default reasoning-level
-                                    :extra-body        extra-body})]
+                                    :extra-body        extra-body
+                                    :turn-features     turn-features})]
                       (if (:error result)
                         (dispatch [:message-received (vis/format-error (:error result))])
-                        (dispatch [:message-received (:answer result)
-                                   (select-keys result
-                                     [:model :iteration-count :duration-ms :tokens
-                                      :cost :confidence :conversation-turn-id :status])])))
+                        (do
+                          (dispatch [:message-received (:answer result)
+                                     (select-keys result
+                                       [:model :iteration-count :duration-ms :tokens
+                                        :cost :confidence :conversation-turn-id :status])])
+                          (when (:voice-response? turn-features)
+                            (speak-answer-async! (:answer result))))))
                     (catch Throwable t
                     ;; channels.cancellation/cancellation? folds in
                     ;; InterruptedException, CancellationException, and

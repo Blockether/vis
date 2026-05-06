@@ -27,6 +27,18 @@
     (expect (= {["cid" "iteration:t11111111:i1:b1:preview-switch"] :raw}
               (:detail-expansions @state/app-db)))))
 
+(defdescribe external-input-test
+  (it "append adds transcript text without replacing draft input"
+    (reset! state/app-db {:input (input/paste-text (input/empty-input) "typed")
+                          :input-history-index :stale
+                          :input-history-draft "old"
+                          :render-version 0})
+    (state/dispatch [:external-input :append "voice text"])
+    (expect (= "typed\nvoice text"
+              (input/input->text (:input @state/app-db))))
+    (expect (nil? (:input-history-index @state/app-db)))
+    (expect (nil? (:input-history-draft @state/app-db)))))
+
 (defdescribe init-settings-test
   (it "loads the default balanced reasoning level when config has none"
     (with-redefs [vis/load-config-raw (fn [] {})]
@@ -40,7 +52,9 @@
       (expect (true?
                 (get-in @state/app-db [:settings :differentiate-turns])))
       (expect (true?
-                (get-in @state/app-db [:settings :mouse-selection-copy])))))
+                (get-in @state/app-db [:settings :mouse-selection-copy])))
+      (expect (false?
+                (get-in @state/app-db [:settings :voice/respond?])))))
 
   (it "normalizes low/medium/high aliases from persisted config"
     (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:reasoning-level "HIGH"}})]
@@ -88,7 +102,8 @@
                                    :openai-codex-verbosity :low
                                    :show-timestamps false
                                    :differentiate-turns true
-                                   :mouse-selection-copy true}}
+                                   :mouse-selection-copy true
+                                   :voice/respond? false}}
                   @saved))
         (expect (= ["Reasoning: balanced" [:level :info :ttl-ms 1500]]
                   @notified)))))
@@ -297,7 +312,8 @@
                        "see @src/core.clj +paste +file"
                        :token
                        :balanced
-                       {:text {:verbosity "high"}}]]
+                       {:text {:verbosity "high"}}
+                       {}]]
                     fx))))))
 
   (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
@@ -319,7 +335,7 @@
                                                          :reasoning-style :zai-thinking
                                                          :reasoning-effort? false})]
         (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])]
-          (expect (= [[:rlm-turn {:id "c1"} "hello" :token nil nil]] fx))))))
+          (expect (= [[:rlm-turn {:id "c1"} "hello" :token nil nil {}]] fx))))))
 
   (it "restores a cancelled prompt to the input instead of rendering a cancelled answer"
     (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)

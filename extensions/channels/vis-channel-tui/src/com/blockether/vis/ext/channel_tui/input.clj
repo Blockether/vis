@@ -795,6 +795,9 @@
 
           (and ctrl (= c \k)) {:action :show-palette :state state}
 
+          (and ctrl (= (Character/toLowerCase c) \b))
+          {:action :toggle-voice-recording :state state}
+
           ;; Ctrl+O is NOT safe here: on macOS/BSD terminals it is the
           ;; VDISCARD line-discipline char, so the kernel may swallow it
           ;; before Lanterna sees a KeyStroke. Ctrl+G is not a POSIX special

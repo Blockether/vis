@@ -122,6 +122,18 @@
     (swap! *preview-sink* conj preview-result))
   preview-result)
 
+(def ^:dynamic *tool-event-sink*
+  "Optional per-eval sink for observable tool lifecycle events. Bound by
+   tests and UI/progress adapters that need to know a tool started before
+   its fn returns. The sink receives plain event maps."
+  nil)
+
+(defn- record-tool-event!
+  [event]
+  (when *tool-event-sink*
+    (*tool-event-sink* event))
+  event)
+
 (defn tool-result?
   [x]
   (s/valid? ::tool-result x))
@@ -873,6 +885,16 @@
     (str alias "/" sym)
     (str sym)))
 
+(defn- tool-start-event
+  [ext sym-entry started-at-ms]
+  (let [sym (:ext.symbol/sym sym-entry)]
+    {:phase :tool-start
+     :status :running
+     :op (keyword (tool-call-name ext sym))
+     :extension (:ext/namespace ext)
+     :symbol sym
+     :started-at-ms (long started-at-ms)}))
+
 (declare extension-provenance)
 
 (defn- enrich-tool-result-provenance
@@ -930,7 +952,9 @@
              args :args} before-out
 
             call-result
-            (let [ct0 (System/nanoTime)]
+            (let [ct0 (System/nanoTime)
+                  call-started-at-ms (now-ms)]
+              (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
               (try
                 (let [r  (apply f args)
                       ms (elapsed-ms ct0)]
@@ -1347,8 +1371,7 @@
     :else
     (throw (ex-info
              (str ":ext/cli entry '" name "' has :cmd/parent " (pr-str parent)
-               " -- :ext/cli mounts only under [\"extensions\" ...]."
-               " Use register-cmd! directly for arbitrary placement.")
+               " -- extension-owned CLI mounts only under [\"extensions\" ...].")
              {:type :ext/cli-bad-parent
               :entry entry}))))
 

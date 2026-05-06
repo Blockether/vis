@@ -325,14 +325,16 @@
 
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 
+(comment "Channel statuses render in the header; footer owns model, git, budgets, and cancellation only.")
+
 (defn- build-segments
   "Vector of `{:text :fg :bold? :region :priority}`.
 
    `:priority` semantics: 1 = critical (never drop), higher = drop first
    when the row overflows. The full priority hierarchy:
-     1  run-state spinner, cancelling…
+     1  cancelling…
      2  model name, provider dynamic limits
-     3  iter counter, model reasoning suffix
+     3  model reasoning suffix
      4  cost
      5  keyboard shortcut hints"
   [db _now-ms]
@@ -400,6 +402,9 @@
       ;; complained about — same `⠋ 11.2s` shown twice. `cancelling…`
       ;; stays because it's a whole-conversation status, not just
       ;; current-iteration.
+      ;;
+      ;; Channel statuses (voice recording, transcription, etc.) also stay out
+      ;; of the footer. The header's left banner is their single owner.
 
       ;; ── RIGHT ─────────────────────────────────────────────────────────────
       ;; Git lives here. Provider usage moved to the second row so it sits

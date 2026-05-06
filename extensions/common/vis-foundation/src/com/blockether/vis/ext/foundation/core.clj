@@ -68,18 +68,8 @@
                                 editing/editing-symbols
                                 markdown/markdown-symbols
                                 environment/environment-symbols))
-     :ext/doctor-check-fn doctor/check-fn}))
+     :ext/doctor-check-fn doctor/check-fn
+     :ext/cli            [(doctor/cli-command)
+                          (transcript/cli-command)]}))
 
 (vis/register-extension! vis-extension)
-
-;; Register the top-level `vis doctor` CLI command. Foundation owns
-;; this now (lifted out of `internal/main.clj`'s built-ins) — see
-;; plan §1 Q18. Direct `register-cmd!` (NOT `:ext/cli`) because the
-;; command must live at the top of the tree, not under `vis extensions`.
-(doctor/register-cli!)
-
-;; Register the top-level `vis report <CONVERSATION-ID>` CLI command.
-;; Same pattern as `vis doctor` — the data + Markdown renderer + CLI
-;; surface are one cohesive feature owned by foundation, not host
-;; plumbing.
-(transcript/register-cli!)

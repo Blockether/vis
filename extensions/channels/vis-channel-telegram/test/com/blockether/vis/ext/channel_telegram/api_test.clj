@@ -1,13 +1,25 @@
 (ns com.blockether.vis.ext.channel-telegram.api-test
   (:require [babashka.http-client :as http]
             [charred.api :as json]
+            [clojure.string :as str]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe markdown-escape-test
-  (it "escapes Telegram MarkdownV2 specials in plain text"
-    (expect (= "a\\_b\\! \\(x\\)"
-              (tg/escape-markdown-v2 "a_b! (x)")))))
+(defdescribe telegram-rendering-test
+  (it "sends LLM Markdown as Telegram HTML with headings, inline code, and tables rendered cleanly"
+    (let [seen (atom nil)
+          text "## Piper Model\n\n| Check | Status |\n| --- | --- |\n| ONNX | ❌ MISMATCH |\n\nUse `model-files` and **restart**."]
+      (with-redefs [http/post (fn [url opts]
+                                (reset! seen {:url url :opts opts})
+                                {:body "{\"ok\":true,\"result\":true}"})]
+        (tg/send-message! "TOKEN" 42 text))
+      (let [payload (json/read-json (get-in @seen [:opts :body]))]
+        (expect (= "https://api.telegram.org/botTOKEN/sendMessage" (:url @seen)))
+        (expect (= "HTML" (get payload "parse_mode")))
+        (expect (str/includes? (get payload "text") "<b>Piper Model</b>"))
+        (expect (str/includes? (get payload "text") "<pre>Check"))
+        (expect (str/includes? (get payload "text") "<code>model-files</code>"))
+        (expect (str/includes? (get payload "text") "<b>restart</b>"))))))
 
 (defdescribe bot-command-menu-test
   (it "posts Telegram BotCommand payloads to setMyCommands"
@@ -25,3 +37,51 @@
       (expect (= {"commands" [{"command" "status" "description" "Show status"}
                               {"command" "models" "description" "Choose model"}]}
                 (json/read-json (get-in @seen [:opts :body])))))))
+
+(defdescribe telegram-file-download-test
+  (it "downloads files from Telegram's file endpoint"
+    (let [seen-url (atom nil)
+          dest     (java.io.File/createTempFile "vis-telegram-download-test" ".oga")]
+      (try
+        (with-redefs [http/get (fn [url opts]
+                                 (reset! seen-url {:url url :opts opts})
+                                 {:status 200
+                                  :body (java.io.ByteArrayInputStream. (.getBytes "audio" "UTF-8"))})]
+          (expect (= dest (tg/download-file! "TOKEN" "voice/file3.oga" dest))))
+        (expect (= {:url "https://api.telegram.org/file/botTOKEN/voice/file3.oga"
+                    :opts {:as :stream :throw false :timeout 60000}}
+                  @seen-url))
+        (expect (= "audio" (slurp dest)))
+        (finally
+          (.delete dest)))))
+
+  (it "redacts the bot token from download failures"
+    (let [dest (java.io.File/createTempFile "vis-telegram-download-test" ".oga")]
+      (try
+        (with-redefs [http/get (fn [_url _opts]
+                                 (throw (java.io.IOException. "low-level failure")))]
+          (try
+            (tg/download-file! "SECRET-TOKEN" "voice/file3.oga" dest)
+            (expect false)
+            (catch Exception e
+              (expect (= "Telegram file download failed for voice/file3.oga" (ex-message e)))
+              (expect (not (re-find #"SECRET-TOKEN" (ex-message e)))))))
+        (finally
+          (.delete dest))))))
+
+(defdescribe telegram-audio-upload-test
+  (it "posts sendVoice as multipart with chat id and file"
+    (let [seen (atom nil)
+          f    (java.io.File/createTempFile "vis-telegram-api-test" ".ogg")]
+      (try
+        (with-redefs [http/post (fn [url opts]
+                                  (reset! seen {:url url :opts opts})
+                                  {:body "{\"ok\":true,\"result\":true}"})]
+          (expect (= {:ok true :result true}
+                    (tg/send-voice! "TOKEN" 42 f))))
+        (expect (= "https://api.telegram.org/botTOKEN/sendVoice" (:url @seen)))
+        (expect (= [{:name "chat_id" :content "42"}
+                    {:name "voice" :content f}]
+                  (get-in @seen [:opts :multipart])))
+        (finally
+          (.delete f))))))

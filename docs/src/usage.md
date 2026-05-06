@@ -123,7 +123,7 @@ curl -fsSL https://raw.githubusercontent.com/Blockether/vis/refs/heads/main/bin/
 cd "$HOME/code/vis"
 git remote -v
 vis help
-vis doctor
+vis extensions doctor
 ```
 
 From an existing checkout, run the same mode directly:
@@ -298,7 +298,7 @@ Provider config + credentials live under `~/.vis/`:
 └── vis.log              stderr log (when a TTY-owning channel is active)
 ```
 
-Run `vis doctor` any time to sanity-check the environment (config
+Run `vis extensions doctor` any time to sanity-check the environment (config
 present, DB writable, providers reachable).
 
 ## The four ways to talk to the agent
@@ -366,6 +366,32 @@ conversation in the `:telegram` channel namespace.
 export TELEGRAM_BOT_TOKEN=...
 vis channels telegram
 ```
+
+Telegram supports the same model/reasoning/verbosity controls as the TUI
+through `/models`, `/reasoning`, and `/verbosity`. Voice messages are
+transcribed through the Parakeet ASR extension when it is on the classpath.
+
+To restrict the bot to approved chats, approve the chat id from a trusted
+shell. Once the allow-list is non-empty, unlisted chats are rejected with the
+same command printed back to them:
+
+```bash
+vis channels telegram approve --chat-id 123456789
+vis channels telegram approve --chat-id 123456789 --restart
+```
+
+Restart an already-running bot as a fresh Java process after config changes:
+
+```bash
+vis channels telegram restart
+# or from Telegram:
+# /restart
+```
+
+The restart path starts a new `java -cp ... clojure.main -m com.blockether.vis.core channels telegram`
+process by default. Set `VIS_TELEGRAM_RESTART_CMD` to override the exact shell
+command. Bot pid/log files live under `~/.vis/telegram.pid` and
+`~/.vis/telegram.log`.
 
 Past Telegram conversations:
 
@@ -445,8 +471,8 @@ To author your own extension, see [Extension System](extensions/overview.md).
 | `vis channels telegram`    | Telegram long-poll bot.                                                  |
 | `vis providers …`          | Provider auth / status / limits / logout commands.                       |
 | `vis conversations [ch]`   | List conversations, optionally filtered by channel.                      |
-| `vis doctor`               | Environment diagnostics.                                                 |
-| `vis report <conv-id>`     | Forensic Markdown report for a persisted conversation.                   |
+| `vis extensions doctor`    | Environment diagnostics.                                                 |
+| `vis extensions report <conv-id>` | Forensic Markdown report for a persisted conversation.             |
 | `vis extensions list`      | List registered extensions.                                              |
 | `vis extensions <cmd> […]` | Run an extension-provided CLI command.                                   |
 | `vis channels <name> […]`  | Run any registered channel by `:channel/cmd` name.                       |

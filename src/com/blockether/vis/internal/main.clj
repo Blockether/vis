@@ -23,18 +23,20 @@
      vis extensions list    — list registered extensions
      vis channels <name>    — auto-mounted via the channel registry
 
-   `vis doctor` is registered by vis-foundation (extension-owned)
-   so every extension can plug its `:ext/doctor-check-fn` into the
-   aggregator. See plan §1 Q18 + plans/2026-04-30-..."
+   `vis extensions doctor` is registered by vis-foundation through
+   `:ext/cli`, so extension-owned commands stay under `vis extensions`.
+   Every extension can plug its `:ext/doctor-check-fn` into the aggregator."
 
   (:refer-clojure :exclude [agent run!])
   (:require
+   [babashka.process :as process]
    [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.commandline :as commandline]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.crac-bootstrap :as crac-bootstrap]
+   [com.blockether.vis.internal.doctor :as doctor]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
@@ -530,13 +532,14 @@
    Kept private and timeout-bounded so table rendering never hangs CLI startup."
   [cmd]
   (try
-    (let [process (-> (ProcessBuilder. ["sh" "-c" cmd])
-                    (.redirectErrorStream true)
-                    (.start))]
-      (if (.waitFor process 250 java.util.concurrent.TimeUnit/MILLISECONDS)
-        (some-> process .getInputStream slurp str/split-lines first)
+    (let [p    (process/process {:cmd ["sh" "-c" cmd]
+                                 :out :string
+                                 :err :out})
+          proc (:proc p)]
+      (if (.waitFor ^Process proc 250 java.util.concurrent.TimeUnit/MILLISECONDS)
+        (some-> @p :out str/split-lines first)
         (do
-          (.destroyForcibly process)
+          (process/destroy-tree p)
           nil)))
     (catch Throwable _ nil)))
 
@@ -1149,11 +1152,12 @@
 
 ;;; ── `vis doctor` ────────────────────────────────────────────────────────
 
-;; The `vis doctor` command lives in vis-foundation now — see plan §1 Q18.
-;; Foundation contributes its own `:ext/doctor-check-fn` (sections: system,
-;; agents-md, skills, scan-warnings) and registers the top-level `vis doctor`
-;; command via `register-cmd!`. Other extensions plug into the same
-;; aggregator by declaring their own `:ext/doctor-check-fn`.
+(defn- cli-doctor! [_parsed _residual]
+  (config/init-cli!)
+  (let [env  {:db-info (config/resolve-db-spec)}
+        msgs (doctor/run-checks env)]
+    (stdout! (doctor/format-output msgs))
+    (System/exit (int (doctor/exit-code msgs)))))
 
 ;;; ── `vis extensions` ────────────────────────────────────────────────────
 
@@ -1225,7 +1229,12 @@
                          "vis conversations telegram"
                          "vis conversations --fork 3a7b2c1d-..."
                          "vis conversations --fork 3a7b2c1d --title \"Branch A\""]
-          :cmd/run-fn cli-conversations!}]]
+          :cmd/run-fn cli-conversations!}
+
+         {:cmd/name  "doctor"
+          :cmd/doc   "Run cross-extension diagnostics."
+          :cmd/usage "vis doctor"
+          :cmd/run-fn cli-doctor!}]]
   (registry/register-cmd! spec))
 
 ;;; ── Extensions-namespaced subcommand: `vis extensions list` ─────────────

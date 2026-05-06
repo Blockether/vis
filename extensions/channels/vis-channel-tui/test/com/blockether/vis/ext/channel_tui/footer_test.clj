@@ -49,6 +49,22 @@
                       (filter #(= :left (:region %)))
                       (mapv :text))))))))
 
+  (it "leaves voice recording status out of the footer because header owns channel statuses"
+    (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5"
+                                                          :provider :openai})}
+        (fn []
+          (let [voice (->> (build-segments {:messages []
+                                            :settings {}
+                                            :channel-status {:voice/parakeet {:text "● Recording 00:01"
+                                                                              :level :warn}}}
+                             0)
+                        (filter #(= "● Recording 00:01" (:text %)))
+                        first)]
+            (expect (nil? voice))
+            (expect (nil? voice))
+            (expect (nil? voice)))))))
+
   (it "shows Codex dynamic quota windows on the second footer line"
     (let [build-limits-segments @#'footer/build-limits-segments
           now-ms                1000000000000
