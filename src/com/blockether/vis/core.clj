@@ -68,6 +68,9 @@
 (def cancel!                   cancellation/cancel!)
 (def cancelled?                cancellation/cancelled?)
 (def cancellation?             cancellation/cancellation?)
+(def virtual-threads-available? cancellation/virtual-threads-available?)
+(def worker-runtime             cancellation/worker-runtime)
+(def worker-future              cancellation/worker-future)
 
 ;; =============================================================================
 ;; Theme facade
@@ -277,7 +280,9 @@
 (def value                               extension/value)
 (def render-prompt                       extension/render-prompt)
 (def render-tool-result                  extension/render-tool-result)
-(def render-rendering-kind               extension/render-rendering-kind)
+(def render-rendering-kind              extension/render-rendering-kind)
+(def fenced-renderers                   extension/fenced-renderers)
+(def render-fenced-block                extension/render-fenced-block)
 (def register-extension!                 extension/register-extension!)
 (def registered-extensions               extension/registered-extensions)
 (def registered-extension-ids            extension/registered-extension-ids)
@@ -298,6 +303,7 @@
 (def extension-load-failures             manifest/load-failures)
 (def deregister-extension!               extension/deregister-extension!)
 (def extension-source-markers-of         extension/extension-source-markers-of)
+(def channel-hooks-for                   extension/channel-hooks-for)
 (def reload-extensions!                  lp/reload-extensions!)
 
 ;; =============================================================================
@@ -367,6 +373,7 @@
 ;; =============================================================================
 (def turn!                        lp/turn!)
 (def ask-code!                    lp/ask-code!)
+(def llm-text!                    lp/llm-text!)
 (def get-router                   lp/get-router)
 (def reset-router!                lp/reset-router!)
 (def rebuild-router!              lp/rebuild-router!)
@@ -424,6 +431,18 @@
 (def truncated-pr-str           prompt/truncated-pr-str)
 (def assemble-initial-messages  prompt/assemble-initial-messages)
 (def CORE_SYSTEM_PROMPT         prompt/CORE_SYSTEM_PROMPT)
+
+;; =============================================================================
+;; Channel event bus
+;; =============================================================================
+(def add-channel-event-listener!
+  (requiring-resolve 'com.blockether.vis.internal.channel-events/add-channel-event-listener!))
+(def remove-channel-event-listener!
+  (requiring-resolve 'com.blockether.vis.internal.channel-events/remove-channel-event-listener!))
+(def publish-channel-event!
+  (requiring-resolve 'com.blockether.vis.internal.channel-events/publish-channel-event!))
+(def channel-event-listeners
+  (requiring-resolve 'com.blockether.vis.internal.channel-events/channel-event-listeners))
 
 ;; =============================================================================
 ;; Binary entry point

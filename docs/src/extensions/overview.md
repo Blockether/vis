@@ -7,17 +7,17 @@
 > `discover-extensions!`, `active-extensions`, `assemble-system-prompt`)
 > is re-exported from there.
 
-Extensions are the **only** way to add symbols, classes, and documentation
-to the SCI sandbox. An extension is a namespace-like bundle that groups
-related tools, constants, prompt context, and per-iteration nudges into
-a single validated unit.
+Extensions are the **only** way to add symbols, classes, documentation,
+and extension-owned renderers to Vis. An extension is a namespace-like bundle
+that groups related tools, constants, prompt context, renderers, and
+per-iteration nudges into a single validated unit.
 
 ## What an extension can do
 
 An extension is a single `(sdk/extension {…})` data map declaring
-zero or more of FIVE surfaces. A single `(sdk/register-extension! …)`
-call handles all of them; the registrar dispatches each populated
-slot to its matching sub-registry as a side effect.
+zero or more surfaces. A single `(sdk/register-extension! …)` call handles
+all of them; the registrar dispatches each populated slot to its matching
+sub-registry as a side effect.
 
 | Slot | Purpose | Where the user sees it |
 |------|---------|------------------------|
@@ -26,6 +26,7 @@ slot to its matching sub-registry as a side effect.
 | `:ext/channels`    | User-facing front-ends (TUI, Telegram bot, web hook) registered as `vis channels <id>`. | `vis channels <id>`. |
 | `:ext/providers`   | LLM auth providers (OAuth + token exchange). | `vis providers auth <id>`. |
 | `:ext/persistance` | Concrete backend implementations of the persistence facade. | Picked up automatically by `db-create-connection!`. |
+| `:ext/fenced-renderers` | Renderers for Markdown fenced code blocks such as `mermaid`. | TUI Markdown projection, with fallback to normal code blocks. |
 
 Alongside those surfaces, every extension may also:
 

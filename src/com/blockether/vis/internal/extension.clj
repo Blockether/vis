@@ -291,6 +291,19 @@
 ;; `:tool-result` or other surface context. Return markdown/plain text.
 (s/def :ext/rendering-kinds (s/map-of keyword? fn?))
 
+;; Extension-owned renderers for Markdown fenced code blocks. Channels call
+;; `render-fenced-block` from their Markdown projection path; the first
+;; renderer whose `:renderer/langs` contains the normalized fence language
+;; and returns a non-nil result wins.
+(s/def :renderer/id keyword?)
+(s/def :renderer/langs
+  (s/and set? seq #(every? non-blank-string? %)))
+(s/def :renderer/render-fn ifn?)
+(s/def ::fenced-renderer
+  (s/keys :req [:renderer/id :renderer/langs :renderer/render-fn]))
+(s/def :ext/fenced-renderers
+  (s/coll-of ::fenced-renderer :kind vector?))
+
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
 (s/def :ext.symbol/val some?)
@@ -396,6 +409,17 @@
 (s/def :ext/on-iteration-start-fn fn?)
 (s/def :ext/on-iteration-end-fn   fn?)
 (s/def :ext/on-turn-end-fn        fn?)
+
+;; Channel-local hooks let extensions contribute UI commands/status behavior to
+;; concrete channels without requiring those channel namespaces. The TUI uses
+;; this for voice commands; other channels may ignore the surface.
+(s/def :ext.channel-hook/channel-id keyword?)
+(s/def :ext.channel-hook/hook-id keyword?)
+(s/def :ext.channel-hook/commands-fn ifn?) ;; (fn [ctx]) -> seq<{:id :label :run-fn}>
+(s/def ::channel-hook
+  (s/keys :req-un [:ext.channel-hook/channel-id :ext.channel-hook/hook-id]
+    :opt-un [:ext.channel-hook/commands-fn]))
+(s/def :ext/channel-hooks (s/coll-of ::channel-hook :kind vector?))
 
 ;; Optional extension-owned environment/config declarations. These name
 ;; OS-style environment variables that can also be overridden from
@@ -576,10 +600,11 @@
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
             :ext/ns-alias :ext/prompt :ext/environment-info-fn :ext/nudge-fn
-            :ext/on-parse-error-fn :ext/rendering-kinds
+            :ext/on-parse-error-fn :ext/rendering-kinds :ext/fenced-renderers
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
+            :ext/channel-hooks
             :ext/doctor-check-fn
             :ext/on-turn-start-fn :ext/on-iteration-start-fn
             :ext/on-iteration-end-fn :ext/on-turn-end-fn])
@@ -1092,6 +1117,8 @@
       (not (:ext/channels spec))                       (assoc :ext/channels [])
       (not (:ext/providers spec))                      (assoc :ext/providers [])
       (not (:ext/persistance spec))                    (assoc :ext/persistance [])
+      (not (:ext/channel-hooks spec))                  (assoc :ext/channel-hooks [])
+      (not (:ext/fenced-renderers spec))               (assoc :ext/fenced-renderers [])
       (not (:ext/doctor-check-fn spec))                (assoc :ext/doctor-check-fn (constantly [])))
     (validate!)))
 
@@ -1353,7 +1380,8 @@
                       :channels    (count (:ext/channels ext))
                       :providers   (count (:ext/providers ext))
                       :persistance (count (:ext/persistance ext))
-                      :themes      (count (:ext/theme ext))}
+                      :themes      (count (:ext/theme ext))
+                      :fenced-renderers (count (:ext/fenced-renderers ext))}
                :msg (str "Extension '" ns-sym "' registered globally")})
     (doseq [c (:ext/cli ext)]      (registry/register-cmd! (mount-under-extensions c)))
     (doseq [c (:ext/channels ext)] (registry/register-channel! c))
@@ -1483,6 +1511,16 @@
   (let [registry @extension-registry]
     (into [] (keep registry) @extension-order)))
 
+(defn channel-hooks-for
+  "Return registered extension channel hooks for `channel-id` in extension
+   registration order. Hooks are passive data; channels decide which hook
+   keys they support."
+  [channel-id]
+  (->> (registered-extensions)
+    (mapcat :ext/channel-hooks)
+    (filter #(= channel-id (:channel-id %)))
+    vec))
+
 (defn- rendering-kind-fn
   [rendering-kind]
   (some (fn [ext]
@@ -1491,7 +1529,7 @@
 
 (defn render-rendering-kind
   "Render `value` using the first registered extension renderer for
-   `rendering-kind`. Returns nil when no extension owns that kind."
+     `rendering-kind`. Returns nil when no extension owns that kind."
   ([surface rendering-kind value]
    (render-rendering-kind surface rendering-kind value {}))
   ([surface rendering-kind value ctx]
@@ -1502,6 +1540,67 @@
                   :value value)
            rendered (render-fn ctx*)]
        (if (string? rendered) rendered (pr-str rendered))))))
+
+(defn- normalize-fence-lang
+  [lang]
+  (let [lang (some-> lang str str/trim str/lower-case)]
+    (when (non-blank-string? lang) lang)))
+
+(defn fenced-renderers
+  "Return extension-owned Markdown fenced-code renderers in registration order."
+  []
+  (->> (registered-extensions)
+    (mapcat :ext/fenced-renderers)
+    vec))
+
+(defn- fenced-renderer-supports?
+  [renderer normalized-lang]
+  (contains? (set (keep normalize-fence-lang (:renderer/langs renderer)))
+    normalized-lang))
+
+(defn- normalize-fenced-render-result
+  [renderer-id result]
+  (let [lines (cond
+                (nil? result) nil
+                (string? result) (str/split-lines result)
+                (sequential? result) (mapv str result)
+                (map? result) (let [v (or (:lines result) (:text result))]
+                                (cond
+                                  (string? v) (str/split-lines v)
+                                  (sequential? v) (mapv str v)
+                                  :else nil))
+                :else [(str result)])]
+    (when (seq lines)
+      (cond-> (if (map? result) result {})
+        :always (assoc :renderer/id renderer-id
+                  :lines (mapv str lines))))))
+
+(defn render-fenced-block
+  "Render a Markdown fenced code block through extension-owned renderers.
+
+     `ctx` keys are channel-defined but should include at least
+     `:surface`, `:lang`, `:source`, and `:width`. Returns normalized
+     `{:renderer/id kw :lines [string ...] ...}` or nil for fallback.
+     Renderer exceptions are logged and treated as nil so display falls back
+     to Vis normal fenced code block renderer."
+  [ctx]
+  (let [lang (normalize-fence-lang (:lang ctx))]
+    (when lang
+      (some
+        (fn [{:renderer/keys [id render-fn] :as renderer}]
+          (when (fenced-renderer-supports? renderer lang)
+            (try
+              (normalize-fenced-render-result id
+                (render-fn (assoc ctx :lang lang :renderer/id id)))
+              (catch Throwable t
+                (tel/log! {:level :warn :id ::fenced-renderer-failed
+                           :data {:renderer/id id
+                                  :lang lang
+                                  :error (ex-message t)
+                                  :ex-class (.getName (class t))}
+                           :msg (str "fenced renderer " id " failed for ```" lang "`; falling back")})
+                nil))))
+        (fenced-renderers)))))
 
 (defn- tool-result-symbol-entry
   [tool-result]

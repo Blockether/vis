@@ -179,6 +179,29 @@
                :ext/channels  [base-channel]})]
       (expect (not (contains? e :ext/owner))))))
 
+(defdescribe fenced-renderer-test
+  (it "accepts fenced renderers and dispatches by normalized language"
+    (let [renderer (fn [{:keys [lang source]}]
+                     {:lines [(str lang ":" source)]})
+          e (ext/extension
+              {:ext/namespace 'test.fenced-renderer
+               :ext/doc "Fenced renderer fixture."
+               :ext/fenced-renderers [{:renderer/id :test/fence
+                                       :renderer/langs #{"demo"}
+                                       :renderer/render-fn renderer}]})]
+      (try
+        (ext/register-extension! e)
+        (expect (= {:renderer/id :test/fence
+                    :lines ["demo:payload"]}
+                  (ext/render-fenced-block {:surface :test
+                                            :lang " Demo "
+                                            :source "payload"})))
+        (expect (nil? (ext/render-fenced-block {:surface :test
+                                                :lang "other"
+                                                :source "payload"})))
+        (finally
+          (ext/deregister-extension! 'test.fenced-renderer))))))
+
 (defdescribe extension-provenance-test
   (it "resolves source markers from the extension namespace when available"
     (let [prov (ext/extension-provenance

@@ -49,12 +49,14 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 13 (count editing/editing-symbols)))
+    (expect (= 14 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (some #{'patch}
+              (map :ext.symbol/sym editing/editing-symbols)))
+    (expect (some #{'patch-check}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'write-lines 'update-file}
               (map :ext.symbol/sym editing/editing-symbols)))
@@ -113,7 +115,7 @@
                 (:ext.symbol/examples bash-symbol)))))
 
   (it "registers custom structured renderers for rich tool outputs"
-    (doseq [sym-name '[cat preview ls rg patch create-dirs glob copy move delete delete-if-exists exists? bash]]
+    (doseq [sym-name '[cat preview ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash]]
       (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
                     editing/editing-symbols)]
         (expect (ifn? (:ext.symbol/render-fn entry))))))
@@ -127,6 +129,21 @@
       (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
       (expect (some #(string/includes? % "[:result :exit]")
                 (:ext.symbol/examples bash-symbol))))))
+
+(it "classifies operations into stable classes, presentation kinds, and color roles"
+  (doseq [[op class kind role] [[:v/cat :op/read :tool/read :tool-color/read]
+                                [:z/locators :op/read :tool/read :tool-color/read]
+                                [:v/rg :op/search :tool/search :tool-color/search]
+                                [:v/preview :op/preview :tool/preview :tool-color/preview]
+                                [:v/patch :op/edit :tool/edit :tool-color/edit]
+                                [:v/create-dirs :op/create :tool/create :tool-color/create]
+                                [:v/delete :op/delete :tool/delete :tool-color/delete]
+                                [:v/move :op/move :tool/move :tool-color/move]
+                                [:v/bash :op/shell :tool/shell :tool-color/shell]
+                                [:v/intents :op/meta :tool/meta :tool-color/meta]]]
+    (expect (= class (editing/tool-op->class op)))
+    (expect (= kind (editing/tool-op->presentation-kind op)))
+    (expect (= role (editing/tool-op->color-role op)))))
 
 (defdescribe editing-prompt-read-policy-test
   (it "teaches full-read vars, canonical patching, and no duplicate rereads by default"
@@ -246,7 +263,29 @@
                 (:result literal)))
       (expect (= (:result value) (get-in wildcard [:result :result])))
       (expect (= {:result {:hits [{:path "a" :line 1 :text "x"}]}}
-                (:result hits))))))
+                (:result hits)))))
+
+  (it "records raw preview payloads for journal workflows"
+    (let [entry (some #(when (= 'preview (:ext.symbol/sym %)) %)
+                  (:ext/symbols foundation/vis-extension))
+          row   {:path "src/foo.clj"
+                 :index 7
+                 :tag :token
+                 :value 'old-sym
+                 :locator "old-sym"
+                 :source "old-sym"
+                 :span [[10 3] [10 10]]}
+          sink  (atom [])
+          out   (binding [extension/*preview-sink* sink]
+                  (extension/invoke-symbol-wrapper
+                    foundation/vis-extension entry
+                    [{:result [row]}]
+                    {}))]
+      (expect (= {:result [row]} (:result out)))
+      (expect (= [out] @sink))
+      (expect (not (contains? out :markdown)))
+      (expect (not (contains? out :rendered)))
+      (expect (= row (get-in out [:result :result 0]))))))
 
 (defdescribe rendering-kind-strategies-test
   (it "renders source, search hits, table, tree, diagnostic, markdown, text, diff, and data kinds"
@@ -386,11 +425,49 @@
                    :after "alpha\nBETA\ngamma\n"}]
                 (patch [{:path path :search "beta" :replace "BETA"}])))
       (expect (= "alpha\nBETA\ngamma\n" (slurp path)))
-      (expect (throws? clojure.lang.ExceptionInfo
-                #(patch [{:path path :search "missing" :replace "x"}])))
+      (let [err (try
+                  (patch [{:path path :search "missing" :replace "x"}])
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? err))
+        (expect (= 0 (-> err ex-data :failures first :matches))))
       (spit path "dup\ndup\n")
-      (expect (throws? clojure.lang.ExceptionInfo
-                #(patch [{:path path :search "dup" :replace "x"}])))))
+      (let [err (try
+                  (patch [{:path path :search "dup" :replace "x"}])
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? err))
+        (expect (= 2 (-> err ex-data :failures first :matches))))))
+
+  (it "patch diagnostics report failing edit index, all failures, bounded previews, and write nothing"
+    (let [path  (write-temp! "bbfs/patch-diagnostics.txt" "alpha\nbeta\ngamma\n")
+          patch (private-fn "patch-safe")
+          long-search (apply str (repeat 80 "missing "))
+          err   (try
+                  (patch [{:path path :search "alpha" :replace "ALPHA"}
+                          {:path path :search long-search :replace "x"}
+                          {:path path :search "other missing" :replace "y"}])
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))
+          data  (ex-data err)
+          failures (:failures data)]
+      (expect (some? err))
+      (expect (string/includes? (ex-message err) "first edit 1"))
+      (expect (= [1 2] (mapv :edit-index failures)))
+      (expect (= [0 0] (mapv :matches failures)))
+      (expect (every? #(<= (count (:search-preview %)) 200) failures))
+      (expect (= "alpha\nbeta\ngamma\n" (slurp path)))))
+
+  (it "patch-check reports match counts without writing"
+    (let [path        (write-temp! "bbfs/patch-check.txt" "alpha\nbeta\nbeta\n")
+          patch-check (private-fn "patch-check")
+          out         (patch-check [{:path path :search "alpha" :replace "ALPHA"}
+                                    {:path path :search "beta" :replace "BETA"}
+                                    {:path path :search "missing" :replace "x"}])]
+      (expect (= [1 2 0] (mapv :matches (:checks out))))
+      (expect (= [1 2] (mapv :edit-index (:failures out))))
+      (expect (false? (:valid? out)))
+      (expect (= "alpha\nbeta\nbeta\n" (slurp path)))))
 
   (it "glob returns cwd-relative path strings for immediate-child patterns"
     (let [_    (write-temp! "bbfs/tree/a.clj" "(ns a)")
@@ -430,6 +507,55 @@
       (expect (= "err" (:stderr out)))
       (expect (= "." (:cwd out)))
       (expect (false? (:timed-out? out)))))
+
+  (it "bash command timeout is distinct from interruption"
+    (let [bash-tool   (private-fn "bash-tool")
+          render-bash (private-fn "render-bash")
+          out         (bash-tool "sleep 1" {:timeout-ms 20})
+          rendered    (render-bash {:tool-result out})]
+      (expect (true? (:success? out)))
+      (expect (= 124 (get-in out [:result :exit])))
+      (expect (true? (get-in out [:result :timed-out?])))
+      (expect (= 20 (get-in out [:result :timeout-ms])))
+      (expect (= :timeout (get-in out [:provenance :status])))
+      (expect (nil? (:error out)))
+      (expect (string/includes? rendered "timed out after 20ms"))
+      (expect (not (string/includes? rendered "interrupted")))
+      (expect (not (string/includes? rendered "cancelled")))))
+
+  (it "bash interruption returns concise cancelled failure instead of timeout or stack dump"
+    (let [entry       (some #(when (= 'bash (:ext.symbol/sym %)) %)
+                        (:ext/symbols foundation/vis-extension))
+          render-bash (private-fn "render-bash")
+          out         (promise)
+          worker      (Thread.
+                        (fn []
+                          (try
+                            (deliver out
+                              (extension/invoke-symbol-wrapper
+                                foundation/vis-extension entry
+                                ["sleep 5" {:timeout-ms 30000}]
+                                {}))
+                            (catch Throwable e
+                              (deliver out e)))))]
+      (.start worker)
+      (Thread/sleep 100)
+      (.interrupt worker)
+      (let [v        (deref out 2000 ::timeout)
+            rendered (when (map? v) (render-bash {:tool-result v}))]
+        (expect (not= ::timeout v))
+        (expect (map? v))
+        (expect (false? (:success? v)))
+        (expect (= "java.lang.InterruptedException" (get-in v [:error :type])))
+        (expect (= [] (get-in v [:error :trace])))
+        (expect (string/includes? (get-in v [:error :message]) "cancelled"))
+        (expect (not (string/includes? (get-in v [:error :message]) "timed out")))
+        (expect (= :interrupted (get-in v [:provenance :status])))
+        (expect (= "sleep 5" (get-in v [:provenance :command])))
+        (expect (= "." (get-in v [:provenance :target :requested])))
+        (expect (string/includes? rendered "cancelled"))
+        (expect (not (string/includes? rendered "timed out")))
+        (expect (not (string/includes? (pr-str (:error v)) "core.clj"))))))
 
   (it "bash validates cwd through the same safe path guard"
     (let [run-bash (private-fn "run-bash-safe")]

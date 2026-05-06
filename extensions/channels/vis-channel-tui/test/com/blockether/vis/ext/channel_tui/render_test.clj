@@ -385,7 +385,60 @@
       (expect (str/includes? (:text payload) "RESULT"))
       (expect (str/includes? (:text payload) "chars hidden"))
       (expect (not (str/includes? (:text payload) huge-result)))
-      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload))))))
+      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
+
+  (it "live progress bounds old iteration history by default while keeping latest work visible"
+    (let [mk-entry (fn [n]
+                     {:events    [{:type :form-result :form-idx 0}]
+                      :code      [(str "(+ " n " 1)")]
+                      :comments  []
+                      :results   [(str (inc n))]
+                      :stdouts   []
+                      :stderrs   []
+                      :durations [1]
+                      :successes [true]})
+          payload   (render/progress->lines-data
+                      {:iterations (mapv mk-entry (range 80))}
+                      80
+                      {:show-thinking true
+                       :show-iterations true
+                       :progress/live-iteration-limit 8}
+                      {:now-ms            1000
+                       :turn-start-ms     0
+                       :conversation-id   "conversation"
+                       :detail-expansions {}})
+          body      (strip-ansi (:text payload))]
+      (expect (< (count (:lines payload)) 90))
+      (expect (str/includes? body "PROGRESS HISTORY"))
+      (expect (str/includes? body "72 iterations hidden"))
+      (expect (str/includes? body "(+ 79 1)"))
+      (expect (not (str/includes? body "(+ 0 1)")))
+      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
+
+  (it "expanded live progress history renders the hidden iterations on demand"
+    (let [mk-entry (fn [n]
+                     {:events    [{:type :form-result :form-idx 0}]
+                      :code      [(str "(+ " n " 1)")]
+                      :comments  []
+                      :results   [(str (inc n))]
+                      :stdouts   []
+                      :stderrs   []
+                      :durations [1]
+                      :successes [true]})
+          payload   (render/progress->lines-data
+                      {:iterations (mapv mk-entry (range 12))}
+                      80
+                      {:show-thinking true
+                       :show-iterations true
+                       :progress/live-iteration-limit 4}
+                      {:now-ms            1000
+                       :turn-start-ms     0
+                       :conversation-id   "conversation"
+                       :detail-expansions {["conversation" "progress:history"] true}})
+          body      (strip-ansi (:text payload))]
+      (expect (str/includes? body "showing all 12 iterations"))
+      (expect (str/includes? body "(+ 0 1)"))
+      (expect (str/includes? body "(+ 11 1)")))))
 
 (defdescribe iteration-live-ordering-test
   (describe "ordered live progress events"
@@ -1860,7 +1913,7 @@
       (expect (some #(str/includes? % "line-40") rows)))))
 
 (defdescribe auto-collapse-rendering-test
-  (it "keeps preview results expanded because preview already selected display data"
+  (it "collapses preview results to four lines by default and expands on demand"
     (render/invalidate-cache!)
     (let [preview-text (str/join "\n" (map #(str % ": selected line") (range 1 31)))
           detail {:raw "{:secret \"raw-only\"}"}
@@ -1875,12 +1928,22 @@
                 :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"}
           payload (render/format-answer-with-thinking-data
                     "" trace 96 {:show-iterations true} nil false opts)
+          expanded (render/format-answer-with-thinking-data
+                     "" trace 96 {:show-iterations true} nil false
+                     (assoc opts :detail-expansions
+                       {["conversation" "iteration:t123e4567:i1:b1:preview-body"] true}))
           raw-view (render/format-answer-with-thinking-data
                      "" trace 96 {:show-iterations true} nil false
                      (assoc opts :detail-expansions
                        {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}))]
       (expect (not (str/includes? (:text payload) "Preview.")))
-      (expect (str/includes? (:text payload) "30: selected line"))
+      (expect (str/includes? (:text payload) "1: selected line"))
+      (expect (str/includes? (:text payload) "4: selected line"))
+      (expect (not (str/includes? (:text payload) "5: selected line")))
+      (expect (not (str/includes? (:text payload) "30: selected line")))
+      (expect (str/includes? (:text payload) "PREVIEW · 26 lines hidden"))
+      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))
+      (expect (str/includes? (:text expanded) "30: selected line"))
       (expect (str/includes? (:text payload) "● PREVIEW  ○ RAW"))
       (expect (not (str/includes? (:text payload) "SHAPE")))
       (expect (not (str/includes? (:text payload) ":source-shape")))
@@ -1890,6 +1953,25 @@
       (expect (not (str/includes? (:text raw-view) "src/demo.clj")))
       (expect (not (str/includes? (:text raw-view) ":provenance")))
       (expect (not (str/includes? (:text payload) "RESULT")))))
+
+  (it "renders operation badges and color roles for tool result summaries"
+    (render/invalidate-cache!)
+    (let [trace [{:code ["(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"]
+                  :results ["1 file changed"]
+                  :result-kinds [:tool]
+                  :result-details [{:op :v/patch
+                                    :op-class :op/edit
+                                    :presentation-kind :tool/edit
+                                    :color-role :tool-color/edit}]
+                  :stdouts [""]
+                  :durations [1]
+                  :successes [true]}]
+          payload (render/format-answer-with-thinking-data
+                    "" trace 96 {:show-iterations true} nil false
+                    {:conversation-id "conversation"
+                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
+      (expect (str/includes? (:text payload) "EDIT patch"))
+      (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
 
   (it "paints preview raw controls on the right with underline and translated ANSI"
     (render/invalidate-cache!)

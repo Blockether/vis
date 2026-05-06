@@ -214,20 +214,27 @@
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))
 
-  (it "shows cumulative token totals in the second footer row right side"
+  (it "shows cumulative token and cost splits in the second footer row right side"
     (let [build-limits-segments @#'footer/build-limits-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
                                                           :provider :openai
                                                           :reasoning? false})}
         (fn []
-          (expect (= ["total ↑150 (cached 70) ↓45" "$0.015"]
+          (expect (= ["total ↑150 (cached 70) ↓45"
+                      "cost input ~$0.006000, input cached ~$0.002000, output ~$0.007000, total ~$0.015000"]
                     (->> (build-limits-segments {:messages [{:role :assistant
                                                              :tokens {:input 100 :output 30 :cached 60}
-                                                             :cost {:total-cost 0.01}}
+                                                             :cost {:total-cost 0.01
+                                                                    :input-uncached-cost 0.004
+                                                                    :input-cached-cost 0.001
+                                                                    :output-cost 0.005}}
                                                             {:role :assistant
                                                              :tokens {:input 50 :output 15
                                                                       :cached-input 10}
-                                                             :cost {:total-cost 0.005}}]
+                                                             :cost {:total-cost 0.005
+                                                                    :input-uncached-cost 0.002
+                                                                    :input-cached-cost 0.001
+                                                                    :output-cost 0.002}}]
                                                  :settings {}}
                            0)
                       (filter #(= :right (:region %)))
