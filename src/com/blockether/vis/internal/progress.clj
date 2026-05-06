@@ -51,6 +51,8 @@
                   {:type :form-result :form-idx int} ...]
       :code      [str ...]            ;; per-form, idx-aligned
       :results   [str-or-formatted-error ...]
+      :result-kinds [keyword ...] ;; :preview, :tool, :value, or :error
+      :result-details [map-or-str ...] ;; extra result metadata, e.g. preview raw
       :stdouts   [str ...]
       :stderrs   [str ...]
       :durations [int-ms ...]
@@ -76,6 +78,8 @@
    :code      []
    :comments  []
    :results   []
+   :result-kinds []
+   :result-details []
    :stdouts   []
    :stderrs   []
    :durations []
@@ -89,6 +93,25 @@
   (if (< (count v) target-count)
     (into v (repeat (- target-count (count v)) nil))
     v))
+
+(defn- form-result-kind
+  [chunk]
+  (cond
+    (:error chunk) :error
+    (and (extension/tool-result? (:result chunk))
+      (= :v/preview (get-in chunk [:result :provenance :op]))) :preview
+    (extension/tool-result? (:result chunk)) :tool
+    :else :value))
+
+(defn- preview-result-detail
+  [tool-result]
+  (when (and (extension/tool-result? tool-result)
+          (= :v/preview (get-in tool-result [:provenance :op])))
+    {:raw (prompt/safe-pr-str (:result tool-result))}))
+
+(defn- form-result-detail
+  [chunk]
+  (preview-result-detail (:result chunk)))
 
 (defn- format-form-result
   "Pre-format a per-form chunk's result for renderer consumption.
@@ -196,6 +219,8 @@
       (update :code      #(assoc (pad-to % need) idx (:code chunk)))
       (update :comments  #(assoc (pad-to % need) idx (:comment chunk)))
       (update :results   #(assoc (pad-to % need) idx (format-form-result chunk)))
+      (update :result-kinds #(assoc (pad-to % need) idx (form-result-kind chunk)))
+      (update :result-details #(assoc (pad-to % need) idx (form-result-detail chunk)))
       (update :stdouts   #(assoc (pad-to % need) idx (or (:stdout chunk) "")))
       (update :stderrs   #(assoc (pad-to % need) idx (or (:stderr chunk) "")))
       (update :durations #(assoc (pad-to % need) idx (or (:execution-time-ms chunk) 0)))
@@ -240,6 +265,8 @@
         (update :code      drop-slot idx)
         (update :comments  drop-slot idx)
         (update :results   drop-slot idx)
+        (update :result-kinds drop-slot idx)
+        (update :result-details drop-slot idx)
         (update :stdouts   drop-slot idx)
         (update :stderrs   drop-slot idx)
         (update :durations drop-slot idx)

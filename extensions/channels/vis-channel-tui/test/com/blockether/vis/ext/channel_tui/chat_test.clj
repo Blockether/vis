@@ -1,6 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.chat-test
   (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
+            [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe rebuild-history-test
@@ -40,6 +41,42 @@
         (expect (= ["(+ 1 2)"] (:code trace-entry)))
         (expect (= ["3"] (:results trace-entry)))
         (expect (= [true] (:successes trace-entry))))))
+
+  (it "renders persisted preview tool results and carries raw details"
+    (let [preview-result {:success? true
+                          :result {:result {:lines ["alpha" "beta"]}}
+                          :preview-eql {:result [[:lines {:from 0 :to 2}]]}
+                          :preview {:rendering-kind :source}
+                          :presentation {:kind :source :path "src/demo.clj"}
+                          :provenance {:op :v/preview}}]
+      (with-redefs [vis/db-info (fn [] :db)
+                    extension/tool-result? (fn [x]
+                                             (= :v/preview (get-in x [:provenance :op])))
+                    extension/render-tool-result (fn [surface result & _]
+                                                   (expect (= :tui surface))
+                                                   (expect (= preview-result result))
+                                                   "1: alpha\n2: beta")
+                    vis/db-list-conversation-turns
+                    (fn [_db _conversation-id]
+                      [{:id :turn-1
+                        :user-request "preview"
+                        :answer ""}])
+                    vis/db-list-conversation-turn-iterations
+                    (fn [_db _turn-id]
+                      [{:id :iter-1 :thinking nil}])
+                    vis/db-list-iteration-blocks
+                    (fn [_db _iter-id]
+                      [{:code "(v/preview file {:result [[:lines {:from 0 :to 2}]]})"
+                        :result preview-result
+                        :stdout ""
+                        :duration-ms 1}])]
+        (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+              trace-entry (-> history second :trace first)]
+          (expect (= [:preview] (:result-kinds trace-entry)))
+          (expect (= ["1: alpha\n2: beta"] (:results trace-entry)))
+          (expect (nil? (:shape (first (:result-details trace-entry)))))
+          (expect (= "{:result {:lines [\"alpha\" \"beta\"]}}"
+                    (:raw (first (:result-details trace-entry)))))))))
 
   (it "projects persisted turn cost into resumed assistant messages"
     (with-redefs [vis/db-info (fn [] :db)

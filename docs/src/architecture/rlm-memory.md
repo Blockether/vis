@@ -30,7 +30,7 @@ A proof slot is a required evidence address in the resolution graph. It is not a
 
 ## Intent memory
 
-Conversation-scoped intents are the durable memory of what Vis is trying to satisfy. `(v/intents)` reports focused intents, old unfocused active intents, plans, gates, checks, violations, and a Markdown summary.
+Conversation-scoped intents are the durable memory of what Vis is trying to satisfy. `(v/intents)` reports focused intents, old unfocused active intents, plans, gates, checks, violations, a Markdown summary, and the aggregate `:success?` boolean.
 
 The model should prove gates and fulfill/abandon focused intents using observed canonical refs before answering.
 

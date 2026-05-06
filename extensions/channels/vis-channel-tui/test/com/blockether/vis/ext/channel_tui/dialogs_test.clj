@@ -89,10 +89,14 @@
 (deftest settings-dialog-footprint-and-indent-test
   (let [settings-content-width  (var-get #'dlg/settings-content-width)
         settings-content-height (var-get #'dlg/settings-content-height)
-        settings-subsection-text (var-get #'dlg/settings-subsection-text)]
+        settings-subsection-text (var-get #'dlg/settings-subsection-text)
+        theme-picker-content-width (var-get #'dlg/theme-picker-content-width)
+        theme-picker-content-height (var-get #'dlg/theme-picker-content-height)]
     (testing "shared dialogs use the same footprint as settings"
       (is (= (dlg/default-content-width 160) (settings-content-width 160)))
       (is (= (dlg/default-content-height 50) (settings-content-height 50)))
+      (is (= (settings-content-width 160) (theme-picker-content-width 160)))
+      (is (= (settings-content-height 50) (theme-picker-content-height 50)))
       (is (<= (+ (dlg/default-content-width 60) 4) 60))
       (is (<= (+ (dlg/default-content-height 16) 6) 16)))
     (testing "extension headings are flush; options are indented by renderer"
@@ -100,8 +104,10 @@
 
 (deftest apply-settings-option-test
   (let [apply-settings-option  (var-get #'dlg/apply-settings-option)
+        activate-settings-row! (var-get #'dlg/activate-settings-row!)
         settings-option-label  (var-get #'dlg/settings-option-label)
         settings-rows          (var-get #'dlg/settings-rows)
+        theme-picker-items     (var-get #'dlg/theme-picker-items)
         palette-commands       (var-get #'dlg/palette-commands)
         conversation-items      dlg/conversation-dialog-items]
     (testing "toggle rows flip booleans"
@@ -143,6 +149,25 @@
                                     :name nil}
               {}))))
 
+    (testing "settings row activation immediately notifies on-change callbacks and requests modal-background redraw"
+      (let [values  (atom {:show-thinking true})
+            changed (atom nil)
+            calls   (atom [])]
+        (activate-settings-row! nil values {:on-change #(do (reset! changed %)
+                                                          (swap! calls conj [:change %]))
+                                            :redraw-ui #(swap! calls conj [:redraw @values])}
+          {:key :show-thinking :type :toggle})
+        (is (= {:show-thinking false} @values))
+        (is (= {:show-thinking false} @changed))
+        (is (= [[:change {:show-thinking false}]
+                [:redraw {:show-thinking false}]]
+              @calls))))
+
+    (testing "theme picker rows label registered themes"
+      (is (= [{:theme-id :vis-dark :label "Vis Dark"}
+              {:theme-id :vis-light :label "Vis Light"}]
+            (theme-picker-items [:vis-dark :vis-light]))))
+
     (testing "settings rows separate channel, provider, and extension-owned settings"
       (with-redefs [vis/registered-extensions (constantly [])
                     vis/get-router (constantly nil)]
@@ -159,7 +184,7 @@
                 (filter #(= :section (:type %)))
                 (mapv :label))))
         (is (some #(= :theme-name (:key %)) (settings-rows :channels)))
-        (is (= [:vis-light]
+        (is (= [:vis-dark :vis-light]
               (:choices (first (filter #(= :theme-name (:key %)) (settings-rows :channels))))))
         (is (some #(= :differentiate-turns (:key %)) (settings-rows :channels)))
         (is (some #(= :mouse-selection-copy (:key %)) (settings-rows :channels)))
@@ -167,14 +192,16 @@
         (is (not-any? #(= :providers (:id %)) (settings-rows :providers)))
         (is (some #(= :info (:type %)) (settings-rows :extensions)))))
 
-    (testing "extension-declared themes appear in the channel Theme setting"
-      (with-redefs [vis/get-router (constantly nil)
-                    vis/registered-extensions (fn [] [{:ext/namespace 'test.theme
-                                                       :ext/theme {"THEME_NAME" {"PADDING" "0px"}}}])]
-        (let [row (first (filter #(= :theme-name (:key %)) (settings-rows :channels)))]
-          (is (= [:THEME_NAME :vis-light] (:choices row)))
-          (is (= "Theme: THEME_NAME"
-                (settings-option-label row {:theme-name :THEME_NAME}))))))
+    (testing "registered extension themes appear in the channel Theme setting"
+      (try
+        (vis/register-themes! {"THEME_NAME" {"PADDING" "0px"}})
+        (with-redefs [vis/get-router (constantly nil)]
+          (let [row (first (filter #(= :theme-name (:key %)) (settings-rows :channels)))]
+            (is (= [:THEME_NAME :vis-dark :vis-light] (:choices row)))
+            (is (= "Theme: THEME_NAME"
+                  (settings-option-label row {:theme-name :THEME_NAME})))))
+        (finally
+          (vis/reset-themes!))))
 
     (testing "extension-declared env vars render under Extensions / Exa without UNKNOWN labels"
       (with-redefs [vis/get-router (constantly nil)
@@ -294,12 +321,21 @@
                    "123e4567-e89b-12d3-a456-426614174000"
                    body-w)
             active-label (:label (nth rows 0))
-            inactive-label (:label (nth rows 1))]
+            inactive-label (:label (nth rows 1))
+            fork-label (dlg/conversation-dialog-label
+                         {:id "fedcba00-e89b-12d3-a456-426614174000"
+                          :title "Forkable"
+                          :turn-count 4
+                          :fork-count 3
+                          :modified-at #inst "2024-01-04T04:05:00.000-00:00"
+                          :created-at #inst "2024-01-01T01:02:00.000-00:00"}
+                         nil
+                         body-w)]
         (is (= [:switch :switch] (mapv :action rows)))
         (is (not-any? #{:new :fork} (map :action rows)))
         (is (= [] (conversation-items [] nil body-w)))
-        (is (= [body-w body-w body-w]
-              (mapv p/display-width [header active-label inactive-label])))
+        (is (= [body-w body-w body-w body-w]
+              (mapv p/display-width [header active-label inactive-label fork-label])))
         (is (every? #(str/includes? % "│") [header active-label inactive-label]))
         (is (str/includes? header "ID"))
         (is (str/includes? header "Turns"))
@@ -309,7 +345,7 @@
         (is (str/includes? active-label "2024-01-03 04:05"))
         (is (str/includes? active-label "2024-01-01 01:02"))
         (is (str/includes? active-label "Title"))
-        (is (str/includes? active-label "[forks:3]"))
+        (is (str/includes? fork-label "[forks:3]"))
         (is (str/includes? active-label "…"))
         (is (str/includes? inactive-label "│ abcdef00 │"))
         (is (str/includes? inactive-label "│     0 │"))

@@ -45,7 +45,7 @@
   [helper arg-name value]
   (letfn [(tool-result-like? [x]
             (and (map? x)
-              (contains? x :ok?)
+              (contains? x :success?)
               (contains? x :result)
               (contains? x :provenance)))
           (tool-payload-hint [x]

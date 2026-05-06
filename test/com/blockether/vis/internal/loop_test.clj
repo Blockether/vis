@@ -394,6 +394,34 @@
               (expect (= 1 (:form-count prov)))
               (expect (= "turn/00000000/iteration/1/block/1" (:ref prov)))))))))
 
+  (it "displays the bound value for single value defs instead of the raw Var return"
+    (let [environment (loop/create-environment
+                        {:providers [{:id :test :models [{:name "model"}]}]}
+                        {:db :memory :channel :cli})
+          chunks      (atom [])]
+      (try
+        (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                            {:raw "```clojure\n(def tool-journal-tests {:a 1 :b {:c 2}})\n```"
+                                             :blocks [{:lang "clojure"
+                                                       :source "(def tool-journal-tests {:a 1 :b {:c 2}})"}]
+                                             :result "(def tool-journal-tests {:a 1 :b {:c 2}})"
+                                             :tokens {:input 1 :output 1}
+                                             :duration-ms 1})}
+          (fn []
+            (let [result (loop/run-iteration environment
+                           [{:role "user" :content "bind data"}]
+                           {:iteration 0
+                            :resolved-model {:provider :test :name "model"}
+                            :on-chunk #(swap! chunks conj %)})
+                  expected {:a 1 :b {:c 2}}]
+              (expect (= expected (-> result :blocks first :result)))
+              (expect (= expected (->> @chunks
+                                    (filter #(= :form-result (:phase %)))
+                                    first
+                                    :result))))))
+        (finally
+          (loop/dispose-environment! environment)))))
+
   (it "binds Copilot initiator for svar headers and strips internal extra-body keys"
     (let [seen (atom nil)
           environment {:router ::router

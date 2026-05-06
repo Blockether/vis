@@ -7,6 +7,7 @@
    back to it."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.internal.extension :as extension]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -103,19 +104,36 @@
                                                                (when-not (contains? elide-idxs idx)
                                                                  expr)))
                                                            all-exprs)
-                                             result-strs (mapv (fn [{:keys [result error]}]
+                                             result-kind (fn [{:keys [result error]}]
+                                                           (cond
+                                                             error :error
+                                                             (and (extension/tool-result? result)
+                                                               (= :v/preview (get-in result [:provenance :op]))) :preview
+                                                             (extension/tool-result? result) :tool
+                                                             :else :value))
+                                             preview-result-detail
+                                             (fn [result]
+                                               (when (and (extension/tool-result? result)
+                                                       (= :v/preview (get-in result [:provenance :op])))
+                                                 {:raw (pr-str (:result result))}))
+                                             result-strs (mapv (fn [{:keys [result error] :as expr}]
                                                                  (cond
                                                                    error (vis/format-error error)
                                                                    (and (map? result) (= :expr (:vis/ref result)))
                                                                    "<runtime value; re-evaluate expression to restore>"
+                                                                   (extension/tool-result? result)
+                                                                   (extension/render-tool-result :tui result {:block expr})
                                                                    :else (pr-str result)))
                                                            exprs)
+                                             result-details (mapv (comp preview-result-detail :result) exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
                                              durations   (mapv #(or (:duration-ms %) 0) exprs)]
                                          {:thinking  (visible-thinking (:thinking it))
                                           :code      (mapv :code exprs)
                                           :comments  (mapv :comment exprs)
                                           :results   result-strs
+                                          :result-kinds (mapv result-kind exprs)
+                                          :result-details result-details
                                           :stdouts   stdout-strs
                                           :durations durations
                                           :successes (mapv #(nil? (:error %)) exprs)})))

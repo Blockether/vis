@@ -82,7 +82,7 @@ Tag rule: if Vis injects structured context, it uses an XML-ish tag. Free prose 
 | `<specific_provider_model_prompt>` | no silent cut | yes | Provider/model quirks only. |
 | `<user_turn_request_main_goal>` | no | yes | Exact current human request. No prior dialog. |
 | `<extensions><active_skills>` | no silent cut | yes | XML skill entries with `name` + `source` attrs and full loaded prompt/body after `(v/load-skill ...)`. Dynamic extension context; if too large, fail loud. |
-| `<journal>` | yes | no | Recent observed event display: refs + previews. |
+| `<journal>` | yes | no | Recent observed event display: refs + previews. Includes block-authored intermediate `;;` comments; excludes LLM-only iteration `:thinking`. |
 | `<var_index>` | yes | no | Live var names/shapes/previews. Lets model know what full values it can use. |
 | SCI vars | no | yes | Full live values. Model should use vars directly instead of rereading. |
 | DB / future ledger | no | yes | Durable truth, replay, audit, full event payloads. |
@@ -128,7 +128,7 @@ It should show:
 (def file-lines {:n 812 :head ["..." "..." "..."]})
 
 ;; v=1 scope=live
-(def read-result {:tool-result true :ok? true :op :v/read-all-lines :result-shape ...})
+(def read-result {:tool-result true :ok? true :op :v/cat :result-shape ...})
 ```
 
 The model can then use full values directly:
@@ -199,7 +199,8 @@ Storage:
 
 - each iteration stores model reasoning/thinking in the iteration row;
 - latest previous reasoning is available through `ITERATION_PREVIOUS_REASONING` when bound;
-- `<journal>` may show bounded `iteration/N thinking: ...` preview lines;
+- `<journal>` must not render LLM-only iteration `:thinking` / `ITERATION_PREVIOUS_REASONING` previews;
+- `<journal>` may render block-authored intermediate `;;` / `#_(...)` comments because those are part of the emitted block evidence;
 - future ledger can store reasoning as event metadata if useful, but reasoning is not proof.
 
 Rules:
@@ -255,7 +256,7 @@ Protected/pinned, never silently cut:
 
 Bounded previews:
 
-- `<journal>` token budget, newest evidence kept;
+- `<journal>` token budget, capped at 50% of model context and reduced by protected/pinned context plus `<var_index>`, newest evidence kept;
 - `<var_index>` token budget, newest hot vars kept;
 - `<skills>` catalog activation-trigger budget, omitted skills still loadable;
 - tool stdout/stderr/file previews.
@@ -282,17 +283,18 @@ This checklist is the single detailed plan for the context contract. `TASKS.md` 
 - [x] `<user_turn_request_main_goal>` wrapper.
 - [x] `<extensions><active_skills>` for loaded skill bodies.
 - [x] Wrap system nudges in `<system_nudges>` with spec-checked `<system_nudge importance="low|normal|high|critical">` entries.
-- [ ] Decide whether previous reasoning needs its own `<reasoning>` block or stays only in `<journal>` + `ITERATION_PREVIOUS_REASONING`.
+- [x] Keep LLM-only previous reasoning out of `<journal>`; expose latest prior reasoning only as `ITERATION_PREVIOUS_REASONING` unless a future explicit `<reasoning>` surface is designed.
 
 ### B. Preview/full contract
 
 - [x] `<journal>` token-budgeted, newest lines kept.
+- [x] `<journal>` renders block-authored intermediate comments but not LLM-only iteration `:thinking` / `ITERATION_PREVIOUS_REASONING`.
 - [x] `<var_index>` token-budgeted, newest entries kept.
 - [x] File read/write/update journal renderers preview only.
-- [ ] Define shared presentation preview shape for tool calls.
-- [ ] Require every `:ext.symbol/render-fn` to honor `:surface :journal` as preview-only.
+- [x] Define shared preview rendering contract for tool calls.
+- [x] Require every `:ext.symbol/render-fn` to honor `:surface :journal` as preview-only.
 - [ ] Add tests that large tool/file payloads do not appear in `<journal>` or `<var_index>` in full.
-- [ ] Add explicit full retrieval helpers by ref/result id if current inspect APIs are too implicit.
+- [x] Add explicit full retrieval helpers by ref/result id if current inspect APIs are too implicit.
 
 ### C. Full data retrieval
 
@@ -307,12 +309,6 @@ This checklist is the single detailed plan for the context contract. `TASKS.md` 
 - [ ] Render only concise tagged `<audit>` summaries in context when relevant.
 - [ ] Store proof-critical truth in immutable event/bundle/attestation tables, not previews.
 - [ ] Ensure every audit/presentation output uses XML tags or typed presentation blocks before rendering.
-
-### E. Naming cleanup
-
-- [ ] Standardize op names: `file.read`, `file.write`, `file.patch`, `file.update`, `file.delete`, `shell.run`.
-- [ ] Keep compatibility aliases where needed.
-- [ ] Update prompt/docs/tests so model knows patch vs write distinction.
 
 ## Links
 

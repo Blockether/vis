@@ -49,6 +49,7 @@ Two conditional rules apply on top of the spec:
 | `:ext/prompt`            | ✗              | —                    | Optional extra string or `(fn [env] → string)` appended as an extension prompt block. Strings are normalized to `(constantly s)`. |
 | `:ext/environment-info-fn` | ✗            | —                    | `(fn [env] → string\|seq\|map\|nil)` — live environment-info contribution rendered inside the system prompt's `<environment-info>` block. Use for cwd/repo/runtime facts; any active extension can add a sibling section. |
 | `:ext/nudge-fn`          | ✗              | —                    | `(fn [ctx] → string\|{:importance :low\|:normal\|:high\|:critical :text string}\|nil)` — per-iteration nudge composer. Return value is spec-checked at runtime and rendered as `<system_nudge importance="...">` (see [Nudge System](nudges.md)). |
+| `:ext/rendering-kinds`   | ✗              | `{}`                 | `{kind-keyword render-fn}` — semantic renderers for preview/result data. A render fn receives `{:surface :rendering-kind :value ...}` plus optional `:tool-result`, and returns Markdown/plain text. Use this when tools return data with a rendering kind and many surfaces should render it consistently. |
 | `:ext/on-parse-error-fn` | ✗              | —                    | `(fn [{:code :error :environment}] → string\|nil)` — catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
 | `:ext/requires`          | ✗              | `[]`                  | Vector of extension namespace symbols that must be registered first, e.g. `['com.blockether.vis.ext.foundation.editing.core]`. |
 | `:ext/version`           | ✗              | —                    | Semver version string, e.g. `"1.0.0"`, `"0.3.1-SNAPSHOT"`. |
@@ -132,6 +133,31 @@ placements (the binary's own built-ins, custom command trees), call
 `registry/register-cmd!`; only the `vis extensions list` subcommand
 goes through `:ext/cli`.
 
+## Rendering-kind functions
+
+Extensions can register semantic renderers:
+
+```clojure
+:ext/rendering-kinds
+{:search-hits (fn [{:keys [surface value]}]
+                ;; return Markdown/plain text for journal, TUI, transcript, etc.
+                ...)}
+```
+
+Use this for data-shaped presentation, especially `v/preview` projections.
+The model selects data with preview EQL; tools/results carry rendering-kind
+metadata; extension renderers turn the selected value into Markdown/text.
+Do not put visibility or presentation options into `v/preview` calls.
+
+The render fn receives:
+
+```clojure
+{:surface :journal | :tui | :transcript | :answer
+ :rendering-kind :search-hits
+ :value selected-value
+ :tool-result optional-preview-or-tool-result}
+```
+
 ## Function binding
 
 The `symbol` constructor produces a function entry for `:ext/symbols`:
@@ -196,6 +222,23 @@ Example:
    :ext/symbols [read-file-sym patch-sym]
    :usage-note "positional args only"})
 ```
+
+## Tool-result envelope
+
+Tools that need provenance-aware rendering return the canonical tool-result
+envelope built by `sdk/success` or `sdk/failure`:
+
+```clojure
+{:success?   true|false
+ :result     value
+ :provenance {:op :v/tool ...}
+ :error      nil-or-error-map}
+```
+
+`:success?` is the single boolean outcome key for Vis public envelopes.
+Specs reject any other boolean outcome key. Use status keywords such as
+`:status :ok` only for domain status fields where the field is not the
+boolean outcome of an API envelope.
 
 ## SCI binding helper
 

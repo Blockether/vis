@@ -98,10 +98,10 @@
               #(md/anchor nil))))
 
   (it "required target helpers reject tool-result envelopes with targeted hints"
-    (let [cat-result {:ok? true
+    (let [cat-result {:success? true
                       :result {:lines ["a" "b"]}
                       :provenance {:op :v/cat}}
-          rg-result  {:ok? true
+          rg-result  {:success? true
                       :result {:hits [{:path "x" :line 1 :text "needle"}]}
                       :provenance {:op :v/rg}}]
       (try
@@ -194,7 +194,7 @@
               #(md/code-block "text" nil))))
 
   (it "code-block rejects tool-result envelopes with targeted payload hint"
-    (let [bash-result {:ok? true
+    (let [bash-result {:success? true
                        :result {:stdout "hello"}
                        :provenance {:op :v/bash}}]
       (try

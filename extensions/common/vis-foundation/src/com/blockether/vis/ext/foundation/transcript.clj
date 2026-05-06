@@ -236,7 +236,7 @@
 (defn- tool-result-envelope?
   [value]
   (and (map? value)
-    (contains? value :ok?)
+    (contains? value :success?)
     (contains? value :provenance)))
 
 (defn- result-summary
@@ -276,11 +276,11 @@
      :preview (preview-value result 400)}))
 
 (defn- event-status
-  [error ok? timeout?]
+  [error success? timeout?]
   (cond
     timeout? :timeout
     error :error
-    (false? ok?) :error
+    (false? success?) :error
     :else :done))
 
 (defn- tool-call-row
@@ -290,7 +290,7 @@
         op              (or (:op tool-provenance) :v/tool)
         parent-ref      (when block (block-ref turn iteration block))
         ref             (when parent-ref (str parent-ref "/tool/" (op-slug op)))
-        status          (event-status (:error envelope) (:ok? envelope)
+        status          (event-status (:error envelope) (:success? envelope)
                           (or (:timed-out? result) (:timeout? envelope)))
         tool            (:tool tool-provenance)]
     (cond-> {:kind           :tool-call
@@ -302,7 +302,7 @@
              :op             op
              :tool           (or (:sym tool) (:call tool) tool)
              :status         status
-             :ok?            (:ok? envelope)
+             :success?      (:success? envelope)
              :duration-ms    (or (:duration-ms tool-provenance)
                                (:duration-ms result)
                                0)

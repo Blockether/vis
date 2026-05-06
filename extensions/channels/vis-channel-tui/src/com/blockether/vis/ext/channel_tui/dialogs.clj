@@ -8,8 +8,7 @@
             [com.blockether.vis.theme :as shared-theme]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.file-picker :as picker])
-  (:import [com.googlecode.lanterna TextColor$RGB]
-           [com.googlecode.lanterna Symbols]
+  (:import [com.googlecode.lanterna Symbols]
            [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [java.text SimpleDateFormat]
@@ -17,7 +16,7 @@
 
 ;;; ── Shared dialog chrome & components ───────────────────────────────────────
 
-(def ^:private input-field-bg (TextColor$RGB. 255 255 252))
+(defn- input-field-bg [] t/input-field-bg)
 
 ;;; ── Default modal footprint ─────────────────────────────────────────────────
 ;;
@@ -30,56 +29,30 @@
 ;; Dialogs that genuinely need a bespoke size can still call the fully
 ;; explicit width+height arity, but the common path stays uniform.
 
-(def ^:const DEFAULT_DIALOG_WIDTH_RATIO
-  "Fraction of terminal width every modal occupies by default."
-  0.84)
-
-(def ^:const DEFAULT_DIALOG_MIN_WIDTH 76)
-(def ^:const DEFAULT_DIALOG_MAX_WIDTH 132)
-
-(def ^:const DEFAULT_DIALOG_HEIGHT_RATIO
-  "Fraction of terminal height every modal occupies by default. Shared
-   across the whole ESC stack so dialogs keep the same footprint."
-  0.72)
-
-(def ^:const DEFAULT_DIALOG_MIN_HEIGHT
-  "Minimum dialog box height in rows. Keeps the shared modal footprint
-   deliberate even on shorter terminals."
-  24)
-
-(def ^:const DEFAULT_DIALOG_MAX_HEIGHT
-  "Maximum default dialog box height in rows. Leaves enough surrounding
-   chat visible that a modal still feels like an overlay instead of a
-   screen takeover."
-  40)
-
-(def ^:const DIALOG_CHROME_W 4)  ;; border(1) + pad(1) each side
-(def ^:const DIALOG_CHROME_H 6)  ;; top + title + sep + body + sep + hint + bot
-
 (defn default-content-width
   "Shared content width every dialog uses, derived from `cols`. Clamped
-   between `DEFAULT_DIALOG_MIN_WIDTH` and `DEFAULT_DIALOG_MAX_WIDTH` and
-   bounded by the terminal so the box never paints off-screen."
+   between the theme's dialog min/max widths and bounded by the terminal so
+   the box never paints off-screen."
   [cols]
   (let [terminal-w (max 40 (- cols 4))
-        min-w      (min DEFAULT_DIALOG_MIN_WIDTH terminal-w)
-        box-w      (-> (int (* cols DEFAULT_DIALOG_WIDTH_RATIO))
+        min-w      (min t/dialog-min-width terminal-w)
+        box-w      (-> (int (* cols t/dialog-width-ratio))
                      (max min-w)
-                     (min DEFAULT_DIALOG_MAX_WIDTH)
+                     (min t/dialog-max-width)
                      (min terminal-w))]
-    (max 1 (- box-w DIALOG_CHROME_W))))
+    (max 1 (- box-w t/dialog-chrome-w))))
 
 (defn default-content-height
   "Shared content height every dialog uses, derived from `rows`.
    Clamped to a common modal footprint so dialogs keep equal height."
   [rows]
   (let [terminal-h (max 8 (- rows 4))
-        min-h      (min DEFAULT_DIALOG_MIN_HEIGHT terminal-h)
-        box-h      (-> (int (* rows DEFAULT_DIALOG_HEIGHT_RATIO))
+        min-h      (min t/dialog-min-height terminal-h)
+        box-h      (-> (int (* rows t/dialog-height-ratio))
                      (max min-h)
-                     (min DEFAULT_DIALOG_MAX_HEIGHT)
+                     (min t/dialog-max-height)
                      (min terminal-h))]
-    (max 1 (- box-h DIALOG_CHROME_H))))
+    (max 1 (- box-h t/dialog-chrome-h))))
 
 (defn clear-screen!
   "Fill the entire screen with terminal background. Call before sub-dialogs
@@ -218,7 +191,7 @@
         visible    (subs text h-off (min (count text) (+ h-off input-w)))]
     (p/set-colors! g t/dialog-border t/dialog-bg)
     (p/draw-box! g box-left row box-w 3)
-    (p/set-colors! g t/box-fg input-field-bg)
+    (p/set-colors! g t/box-fg (input-field-bg))
     (p/fill-rect! g input-left (inc row) input-w 1)
     (p/put-str! g input-left (inc row) visible)
     (p/cursor-pos (+ input-left (- cursor h-off)) (inc row))))
@@ -984,7 +957,7 @@
 (defn- theme-choice-order
   []
   (try
-    (mapv keyword (shared-theme/available-theme-ids (vis/registered-extensions)))
+    (mapv keyword (shared-theme/available-theme-ids))
     (catch Throwable _
       [(keyword shared-theme/default-theme-id)])))
 
@@ -1256,6 +1229,14 @@
     :toggle (update values key not)
     values))
 
+(defn- notify-settings-change!
+  [callbacks values]
+  (when-let [f (:on-change callbacks)]
+    (f values))
+  (when-let [f (:redraw-ui callbacks)]
+    (f))
+  values)
+
 (defn- settings-selectable?
   [{:keys [type]}]
   (contains? #{:toggle :choice :action :env-var} type))
@@ -1292,13 +1273,113 @@
     (when (some? raw)
       (vis/save-extension-env-var! name raw))))
 
+(defn- theme-display-label
+  [theme-id]
+  (let [theme-map (shared-theme/theme theme-id)]
+    (or (:display-name theme-map)
+      (some-> theme-id name titleize-label)
+      (str theme-id))))
+
+(defn- theme-picker-items
+  [choices]
+  (mapv (fn [theme-id]
+          {:theme-id theme-id
+           :label    (theme-display-label theme-id)})
+    choices))
+
+(defn- theme-picker-content-width
+  [cols]
+  (settings-content-width cols))
+
+(defn- theme-picker-content-height
+  [rows]
+  (settings-content-height rows))
+
+(defn- theme-picker-dialog!
+  "Small theme chooser. Moving selection previews the theme immediately;
+   Enter commits the preview, Esc restores the original theme."
+  [^TerminalScreen screen choices current preview!]
+  (let [items        (theme-picker-items choices)
+        total        (count items)
+        original     (or current (:theme-id (first items)))
+        selected     (atom (max 0 (.indexOf ^java.util.List (vec choices) original)))
+        scroll       (atom 0)
+        last-preview (atom ::none)
+        preview-selected! (fn []
+                            (when-let [theme-id (:theme-id (nth items @selected nil))]
+                              (when-not (= theme-id @last-preview)
+                                (reset! last-preview theme-id)
+                                (preview! theme-id))))]
+    (when (pos? total)
+      (loop []
+        (preview-selected!)
+        (let [size      (or (.doResizeIfNecessary screen) (.getTerminalSize screen))
+              cols      (.getColumns size)
+              rows      (.getRows size)
+              g         (.newTextGraphics screen)
+              content-w (theme-picker-content-width cols)
+              content-h (theme-picker-content-height rows)
+              bounds    (draw-dialog-chrome! g cols rows "Theme" content-w content-h)
+              {:keys [left inner-w]} bounds
+              {:keys [content-top content-h hint-row]} (dialog-layout bounds total)
+              visible   (min total content-h)
+              _         (swap! selected #(clamp % 0 (max 0 (dec total))))
+              _         (swap! scroll #(visible-window-start @selected % content-h total))]
+          (dotimes [i visible]
+            (let [idx (+ @scroll i)
+                  row-y (+ content-top i)]
+              (when (< idx total)
+                (draw-list-item! g left row-y (if (> total content-h) (dec inner-w) inner-w) (= idx @selected)
+                  (:label (nth items idx))))))
+          (draw-scrollbar! g (+ left inner-w) content-top content-h total @scroll)
+          (draw-hint-bar! g left hint-row inner-w [["↑/↓" "preview"] ["Enter" "choose"] ["Esc" "cancel"]])
+          (.setCursorPosition screen (p/cursor-pos 0 0))
+          (.refresh screen Screen$RefreshType/DELTA)
+
+          (let [key (.readInput screen)]
+            (when key
+              (condp = (.getKeyType key)
+                KeyType/Escape
+                (do
+                  (preview! original)
+                  nil)
+
+                KeyType/ArrowUp
+                (do
+                  (swap! selected #(clamp (dec %) 0 (max 0 (dec total))))
+                  (recur))
+
+                KeyType/ArrowDown
+                (do
+                  (swap! selected #(clamp (inc %) 0 (max 0 (dec total))))
+                  (recur))
+
+                KeyType/Enter
+                (:theme-id (nth items @selected))
+
+                (recur)))))))))
+
+(defn- activate-theme-row!
+  [screen values callbacks {:keys [choices key]}]
+  (let [original (get @values key)
+        preview! (fn [theme-id]
+                   (let [next-values (assoc @values key theme-id)]
+                     (reset! values next-values)
+                     (notify-settings-change! callbacks next-values)))]
+    (if-let [selected (theme-picker-dialog! screen choices original preview!)]
+      (preview! selected)
+      (preview! original))))
+
 (defn- activate-settings-row!
   [screen values callbacks row]
   (case (:type row)
     :action (when-let [f (get callbacks (:id row))]
               (f @values))
     :env-var (edit-extension-env-var! screen row)
-    (swap! values apply-settings-option row)))
+    (if (= :theme-name (:key row))
+      (activate-theme-row! screen values callbacks row)
+      (->> (swap! values apply-settings-option row)
+        (notify-settings-change! callbacks)))))
 
 (defn- settings-section-text
   [label inner-w]
@@ -1307,7 +1388,7 @@
         filler    (apply str (repeat (max 0 (- available (count prefix))) \─))]
     (ellipsize (str prefix filler) available)))
 
-(def ^:private settings-option-indent 2)
+(defn- settings-option-indent [] t/settings-option-indent)
 
 (defn- settings-subsection-text
   [label inner-w]
@@ -1407,8 +1488,9 @@
              _             (swap! scroll #(visible-window-start @selected % visible-h n))
              scrollable?   (> n visible-h)
              paint-w       (if scrollable? (max 1 (dec inner-w)) inner-w)
-             option-x      (+ left 2 settings-option-indent)
-             option-w      (max 1 (- paint-w 2 settings-option-indent))
+             option-indent (settings-option-indent)
+             option-x      (+ left 2 option-indent)
+             option-w      (max 1 (- paint-w 2 option-indent))
              labels        (mapv #(settings-option-label % @values) rows)
              label-w       (settings-label-width rows labels)
              actual-desc-w (max 1 (- option-w check-w label-w gap-w))]

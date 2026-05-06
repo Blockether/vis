@@ -598,9 +598,9 @@
         (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (v/inspect)) and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
-        (conj (str "v/rg now takes a non-empty vector of LITERAL substrings, not a regex string. "
-                "Replace \"foo\\\\|bar\" with [\"foo\" \"bar\"]; PCRE metacharacters are auto-escaped. "
-                "For genuine regex needs drop to (re-seq #\"…\" (slurp f))."))
+        (conj (str "v/rg takes one spec map with literal vectors, not regex strings or positional args. "
+                "Use {:all [\"foo|bar\"]} for literal pipe text, or {:any [\"foo\" \"bar\"]} for OR. "
+                "Add :paths and :include in the same map."))
 
         (contains? classes :regex-unescaped-quote)
         (conj "Fix the quoted regex string; an inner quote escaped poorly and exposed a bare symbol.")
@@ -750,13 +750,13 @@
 
 (defn- tool-result-envelope? [value]
   (and (map? value)
-    (contains? value :ok?)
+    (contains? value :success?)
     (contains? value :provenance)))
 
-(defn- event-status [error ok?]
+(defn- event-status [error success?]
   (cond
     error :error
-    (false? ok?) :error
+    (false? success?) :error
     :else :done))
 
 (defn- block-index [block]
@@ -802,7 +802,7 @@
     (when (tool-result-envelope? value)
       (let [parent-ref (block-ref (:position iteration) block)
             provenance (:provenance value)
-            status (event-status (:error value) (:ok? value))]
+            status (event-status (:error value) (:success? value))]
         (cond-> {:kind            :tool
                  :ref             (str parent-ref "/tool/" (or (some-> (:op provenance) name) "tool"))
                  :parent-ref      parent-ref
@@ -1007,13 +1007,13 @@
 
 (defn- foundation-provenance-guards
   "Integrity checks over the provenance ledger. Returns data, never
-   throws, so the model can gate answers on `:ok?` before citing refs."
+   throws, so the model can gate answers on `:success?` before citing refs."
   ([env]
    (foundation-provenance-guards env (:conversation-id env)))
   ([env conversation-id]
    (let [timeline   (foundation-provenance-timeline env conversation-id)
          violations (provenance-guard-violations timeline)]
-     {:ok?        (empty? violations)
+     {:success?        (empty? violations)
       :checked    {:events (count timeline)
                    :refs   (count (set (keep :ref timeline)))}
       :violations violations})))
@@ -1029,7 +1029,7 @@
      (str "## Provenance\n\n"
        "- Events: " (:event-count stats) "\n"
        "- Status: " (pr-str (:by-status stats)) "\n"
-       "- Guards: " (if (:ok? guards) "ok" (str "failed " (count (:violations guards)) " check(s)")) "\n\n"
+       "- Guards: " (if (:success? guards) "ok" (str "failed " (count (:violations guards)) " check(s)")) "\n\n"
        (if (seq timeline)
          (str/join "\n"
            (map (fn [{:keys [ref parent-ref kind op engine status duration-ms error]}]
@@ -1050,7 +1050,7 @@
 (defn- current-turn-intents
   [env]
   (safe-call #(vis/db-intents (:db-info env) {:conversation-turn-id (current-conversation-turn-id env)})
-    {:ok? false
+    {:success? false
      :scope :conversation
      :conversation-id (:conversation-id env)
      :turn-state-id nil
@@ -1071,7 +1071,7 @@ Unable to read conversation intents.
    (current-turn-intents env))
   ([env conversation-turn-id]
    (safe-call #(vis/db-intents (:db-info env) {:conversation-turn-id conversation-turn-id})
-     {:ok? false
+     {:success? false
       :scope :conversation
       :conversation-id (:conversation-id env)
       :turn-state-id nil
@@ -1301,14 +1301,49 @@ _No intents._
 
 (defn- check-ref-entry
   [event-by-ref owner entry]
-  (let [ref        (ref-value entry)
+  (let [proof-management-symbols #{"v/intents"
+                                   "v/proof-checks"
+                                   "v/proofs"
+                                   "v/provenance-guards"
+                                   "v/provenance-report"
+                                   "v/latest-provenance-refs"
+                                   "v/issue-intent!"
+                                   "v/focus-intent!"
+                                   "v/relate-intents!"
+                                   "v/issue-plan!"
+                                   "v/issue-gate!"
+                                   "v/offer-proof!"
+                                   "v/prove-gate!"
+                                   "v/impede-gate!"
+                                   "v/fulfill-intent!"
+                                   "v/abandon-intent!"
+                                   "v/proof-slot"}
+        contains-proof-management? (fn [code]
+                                     (let [s (str code)]
+                                       (boolean (some #(str/includes? s %) proof-management-symbols))))
+        answer-or-title-form?      (fn [code]
+                                     (let [s (str/trim (str code))]
+                                       (or (str/starts-with? s "(answer")
+                                         (str/starts-with? s "(conversation-title")
+                                         (str/includes? s "(answer ")
+                                         (str/includes? s "(conversation-title "))))
+        non-evidence-event?        (fn [event]
+                                     (let [code (:code event)]
+                                       (boolean
+                                         (or (answer-or-title-form? code)
+                                           (and (contains-proof-management? code)
+                                             (not= :tool (:kind event)))))))
+        evidence-required-role?    #(contains? #{:proof :fulfillment-evidence} %)
+        ref        (ref-value entry)
         role       (:role entry)
         canonical? (boolean (and ref (prov-ref/canonical-ref? ref)))
         event      (when canonical? (get event-by-ref ref))
         status     (:status event)
         observed?  (some? event)
         compatible? (and observed? (ref-compatible? role status))
-        ok?        (and canonical? observed? compatible?)
+        evidence?  (not (and (evidence-required-role? role)
+                          (non-evidence-event? event)))
+        success?   (and canonical? observed? compatible? evidence?)
         violation  (cond
                      (not canonical?) {:type :non-canonical-ref
                                        :blocking? true
@@ -1329,14 +1364,22 @@ _No intents._
                                         :status status
                                         :owner owner
                                         :message (str "Reference " ref " has status " (pr-str status)
-                                                   " and is not compatible with role " (pr-str role) ".")})]
+                                                   " and is not compatible with role " (pr-str role) ".")}
+                     (not evidence?) {:type :non-evidence-ref
+                                      :blocking? true
+                                      :ref ref
+                                      :role role
+                                      :owner owner
+                                      :message (str "Reference " ref
+                                                 " only observes Vis proof/answer bookkeeping, not source/runtime evidence.")})]
     (cond-> {:ref ref
              :role role
              :owner owner
              :canonical? canonical?
              :observed? observed?
              :compatible? compatible?
-             :ok? ok?}
+             :evidence? evidence?
+             :success? success?}
       (:slot entry) (assoc :slot (:slot entry))
       event (assoc :event event)
       violation (assoc :violation violation))))
@@ -1427,7 +1470,7 @@ _No intents._
      :checks {:required-slots-ok? (empty? missing-slots)
               :missing-slots missing-slots
               :guard-ok? guard-ok?
-              :refs-ok? (every? :ok? ref-checks)}
+              :refs-ok? (every? :success? ref-checks)}
      :ref-checks ref-checks
      :violations (vec (concat status-violations (keep :violation ref-checks)))}))
 
@@ -1502,7 +1545,7 @@ _No intents._
                           distinct
                           vec)
          evidence       (vec (keep event-by-ref used-refs))]
-     {:ok? (and (:ok? provenance) (:ok? intent-state) (empty? violations))
+     {:success? (and (:success? provenance) (:success? intent-state) (empty? violations))
       :summary {:events (count timeline)
                 :intents (count (:intents intent-state))
                 :focused-intents (count (:focused-intent-ids intent-state))
@@ -1512,7 +1555,7 @@ _No intents._
                 :violations (count violations)}
       :provenance provenance
       :latest-refs latest-refs
-      :intents (select-keys intent-state [:ok? :scope :conversation-id :turn-state-id
+      :intents (select-keys intent-state [:success? :scope :conversation-id :turn-state-id
                                           :focused-intent-ids :unfocused-active-intent-ids
                                           :checks :violations :report])
       :gates gate-checks
@@ -1544,13 +1587,13 @@ _No intents._
   [ref-checks]
   (if (seq ref-checks)
     (str/join "\n"
-      (map (fn [{:keys [ref role event ok?]}]
+      (map (fn [{:keys [ref role event success?]}]
              (str "  - " (provenance-link ref) " — " (code-ish (pr-str role))
                (if event
                  (str ", " (code-ish (pr-str (:op event))) " → " (code-ish (pr-str (:status event)))
                    ", " (or (:duration-ms event) 0) "ms")
                  ", not observed")
-               (when-not ok? " ⚠")))
+               (when-not success? " ⚠")))
         ref-checks))
     "  - none"))
 
@@ -1598,14 +1641,14 @@ _No intents._
                   (foundation-proof-checks env checks-or-conversation-id))
          summary (:summary checks)]
      (str "<proofs>\n"
-       "<summary>Proofs · " (if (:ok? checks) "OK" "NEEDS WORK")
+       "<summary>Proofs · " (if (:success? checks) "OK" "NEEDS WORK")
        " · " (:proven-gates summary) "/" (:gates summary) " gates"
        " · " (:refs summary) " refs"
        " · " (:violations summary) " violations</summary>\n\n"
        "## Proof status\n\n"
-       "- Overall: " (if (:ok? checks) "ok" "needs work") "\n"
-       "- Intents: " (if (get-in checks [:intents :ok?]) "ok" "needs resolution") "\n"
-       "- Provenance guards: " (if (get-in checks [:provenance :ok?]) "ok" "failed") "\n"
+       "- Overall: " (if (:success? checks) "ok" "needs work") "\n"
+       "- Intents: " (if (get-in checks [:intents :success?]) "ok" "needs resolution") "\n"
+       "- Provenance guards: " (if (get-in checks [:provenance :success?]) "ok" "failed") "\n"
        "- Events checked: " (get-in checks [:summary :events]) "\n"
        "- Focused intents: " (get-in checks [:summary :focused-intents]) "\n"
        "- Gates: " (get-in checks [:summary :proven-gates]) "/" (get-in checks [:summary :gates]) " proven\n"
@@ -1878,7 +1921,7 @@ _No intents._
   [{:keys [tool-result]}]
   (let [status (get-in tool-result [:provenance :status])
         duration-ms (get-in tool-result [:provenance :duration-ms])]
-    (if (:ok? tool-result)
+    (if (:success? tool-result)
       (md/p "Awaited proof - status" (md/code status) "," duration-ms "ms.")
       (md/p "Await-proof failed - status" (md/code status) "," duration-ms "ms:"
         (or (get-in tool-result [:error :message]) (pr-str (:error tool-result)))))))
@@ -1957,7 +2000,7 @@ _No intents._
 
 (def provenance-guards-symbol
   (vis/symbol 'provenance-guards foundation-provenance-guards
-    {:doc       "Run provenance integrity guards. Returns {:ok? :checked :violations}; gate answer citations on :ok?."
+    {:doc       "Run provenance integrity guards. Returns {:success? :checked :violations}; gate answer citations on :success?."
      :arglists  '([] [conversation-id])
      :examples  ["(v/provenance-guards)"
                  "(:violations (v/provenance-guards))"]
@@ -1986,7 +2029,7 @@ _No intents._
      :arglists  '([] [conversation-id])
      :examples  ["(v/proof-checks)"
                  "(:violations (v/proof-checks))"
-                 "(every? :ok? (mapcat :ref-checks (:gates (v/proof-checks))))"]
+                 "(every? :success? (mapcat :ref-checks (:gates (v/proof-checks))))"]
      :before-fn inject-environment}))
 
 (def proofs-symbol
@@ -2010,7 +2053,7 @@ _No intents._
     {:doc       "Conversation-scoped intent aggregate: focus, plans, gates, checks, violations, and Markdown report."
      :arglists  '([] [conversation-turn-id])
      :examples  ["(v/intents)"
-                 "(:ok? (v/intents))"
+                 "(:success? (v/intents))"
                  "(:report (v/intents))"]
      :before-fn inject-environment}))
 

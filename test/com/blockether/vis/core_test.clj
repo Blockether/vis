@@ -156,7 +156,20 @@
                :ext/kind      "tools"
                :ext/theme     {"THEME_NAME" {"PADDING" "0px"}}})]
       (expect (= {"THEME_NAME" {"PADDING" "0px"}}
-                (:ext/theme e))))))
+                (:ext/theme e)))))
+
+  (it "register-extension! adds extension themes to the process theme atom"
+    (try
+      (vis/register-extension!
+        {:ext/namespace 'com.acme.ext.theme-registry
+         :ext/doc       "Theme registry owner"
+         :ext/kind      "tools"
+         :ext/theme     {"ACME_DARK" {"MODE" "dark" "PADDING" "0px"}}})
+      (expect (contains? (set (vis/available-theme-ids)) "ACME_DARK"))
+      (expect (= [12 14 18] (vis/color (vis/theme "ACME_DARK") :terminal-bg)))
+      (finally
+        (vis/deregister-extension! 'com.acme.ext.theme-registry)
+        (vis/reset-themes!)))))
 
 (defdescribe provider-limits-api-test
   (it "re-exports provider limits helpers from the public vis.core surface"
@@ -165,7 +178,10 @@
 
   (it "re-exports theme helpers from the public vis.core surface"
     (expect (= "vis-light" vis/default-theme-id))
+    (expect (instance? clojure.lang.IDeref vis/themes))
+    (expect (ifn? vis/register-theme!))
     (expect (= [255 255 255] (vis/color :terminal-bg)))
+    (expect (= [12 14 18] (vis/color vis/vis-dark :terminal-bg)))
     (expect (= {"PADDING" "0px"}
               (get (vis/extension-theme-settings {"THEME_NAME" {:settings {"PADDING" "0px"}}})
                 "THEME_NAME"))))
@@ -957,7 +973,7 @@
                  :code "(def checks {})" :result #:vis{:ref :expr}
                  :stdout "" :stderr "" :execution-time-ms 1 :error nil})
       (on-chunk {:phase :form-result :iteration 0 :form-idx 2
-                 :code "checks" :result {:ok? true}
+                 :code "checks" :result {:success? true}
                  :stdout "" :stderr "" :execution-time-ms 1 :error nil})
       (on-chunk {:phase :form-result :iteration 0 :form-idx 3
                  :code "(answer \"ok\")" :result :vis/answer
