@@ -38,12 +38,13 @@
     "user"))
 
 (defn- format-footer [result]
-  ;; Canonical " · "-joined turn-summary line, identical to the CLI
-  ;; bracket and the TUI per-message footer. Provider + model
-  ;; auto-extract from the result's `:cost :provider` / `:cost :model`,
-  ;; rendering as `provider/model` (e.g. `blockether/glm-5.1`).
+  ;; Canonical " · "-joined turn-summary line, decorated for Telegram.
+  ;; Keep this RAW Markdown-ish text. `tg/send-message!` owns escaping.
+  ;; Pre-escaping here made MarkdownV2 fallback leak literal backslashes
+  ;; into chats when an answer body failed Telegram parsing.
   (let [line (vis/format-meta-line result)]
-    (str "\n\n_" (tg/escape-markdown-v2 line) "_")))
+    (when (seq line)
+      (str "\n\n_🤖 " line "_"))))
 
 (defn- normalize-choice [allowed aliases default v]
   (let [k (cond
@@ -130,8 +131,13 @@
   (when-let [provider (first (:providers config))]
     (model-entry provider (first (:models provider)))))
 
-(defn- same-model-cycle? [a b]
-  (= (frequencies a) (frequencies b)))
+(defn- model-entry-label [{:keys [provider-id model]}]
+  (str (some-> provider-id name) "/" model))
+
+(defn- current-model-label []
+  (if-let [entry (active-model-entry (or (vis/load-config) {:providers []}))]
+    (model-entry-label entry)
+    "unknown"))
 
 (defn- move-to-front [pred coll]
   (let [items (vec (or coll []))
@@ -156,41 +162,6 @@
                 provider))
         (move-to-front #(= provider-id (:id %)) providers)))))
 
-(defn- cycle-primary-model
-  ([config]
-   (cycle-primary-model config nil))
-  ([config cycle-order]
-   (let [providers (vec (or (:providers config) []))
-         entries   (model-cycle-entries config)
-         order     (if (and (seq cycle-order)
-                         (same-model-cycle? cycle-order entries))
-                     (vec cycle-order)
-                     entries)]
-     (cond
-       (empty? providers)
-       {:config config
-        :message "No providers configured"
-        :level :warn}
-
-       (< (count entries) 2)
-       {:config config
-        :message "No alternate models configured"
-        :level :warn}
-
-       :else
-       (let [active          (active-model-entry config)
-             idx             (.indexOf ^java.util.List order active)
-             next-entry      (nth order (mod (inc (if (neg? idx) -1 idx))
-                                          (count order)))
-             provider-prefix (when (< 1 (count (distinct (map :provider-id entries))))
-                               (str (name (:provider-id next-entry)) "/"))
-             config'         (select-model-entry config next-entry)]
-         {:config config'
-          :cycle-order order
-          :changed? true
-          :message (str "Model: " provider-prefix (:model next-entry))
-          :level :info})))))
-
 (defn- apply-config! [config]
   (let [raw        (or (vis/load-config-raw) {})
         persistent (assoc raw :providers (vec (:providers config)))]
@@ -200,24 +171,78 @@
       (vis/refresh-cached-routers! router))
     persistent))
 
-(defn- cycle-model! [chat-id]
+(defn- find-model-entry [entries selection]
+  (let [selection (str/trim (or selection ""))]
+    (or (when (re-matches #"\d+" selection)
+          (nth entries (dec (Long/parseLong selection)) nil))
+      (let [needle (str/lower-case selection)]
+        (first
+          (filter (fn [entry]
+                    (let [label (str/lower-case (model-entry-label entry))
+                          model (str/lower-case (:model entry))]
+                      (or (= needle label) (= needle model))))
+            entries))))))
+
+(defn- select-model! [selection]
   (let [base-config (or (vis/load-config) {:providers []})
-        {:keys [config cycle-order changed? message level]}
-        (cycle-primary-model base-config (get-in @chat-state [chat-id :model-cycle-order]))]
-    (when changed?
-      (apply-config! config)
-      (swap! chat-state assoc-in [chat-id :model-cycle-order] cycle-order))
-    {:message message :level level :changed? changed?}))
+        entries     (model-cycle-entries base-config)]
+    (cond
+      (empty? entries)
+      {:message "No models configured" :level :warn}
+
+      (str/blank? (or selection ""))
+      {:message "Missing model selection" :level :warn}
+
+      :else
+      (if-let [entry (find-model-entry entries selection)]
+        (let [config' (select-model-entry base-config entry)]
+          (apply-config! config')
+          {:message (str "Model set: " (model-entry-label entry))
+           :level :info
+           :changed? true
+           :entry entry})
+        {:message (str "Unknown model: " selection) :level :warn}))))
+
+(defn- model-list-lines [entries active]
+  (map-indexed
+    (fn [idx entry]
+      (str (inc idx) ". " (when (= entry active) "✅ ")
+        (model-entry-label entry)))
+    entries))
+
+(defn- model-inline-keyboard [entries active]
+  {"inline_keyboard"
+   (mapv (fn [[idx entry]]
+           [{"text" (str (when (= entry active) "✅ ") (model-entry-label entry))
+             "callback_data" (str "model:" idx)}])
+     (map-indexed vector entries))})
+
+(defn- command-model []
+  (str "Current model: " (current-model-label)
+    "\n\nUse /models to list and choose."))
+
+(defn- command-models [arg]
+  (let [base-config (or (vis/load-config) {:providers []})
+        entries     (model-cycle-entries base-config)
+        active      (active-model-entry base-config)]
+    (if (str/blank? (or arg ""))
+      {:message (if (seq entries)
+                  (str "Models\nCurrent: " (or (some-> active model-entry-label) "unknown")
+                    "\n\n" (str/join "\n" (model-list-lines entries active))
+                    "\n\nTap a button, or send /models 2, or /models provider/model.")
+                  "No models configured")
+       :reply-markup (when (seq entries) (model-inline-keyboard entries active))}
+      {:message (:message (select-model! arg))})))
 
 (defn- model-label []
-  (if-let [{:keys [provider name]} (current-model-info)]
-    (str (some-> provider name) "/" name)
-    "unknown"))
+  (current-model-label))
 
 (defn- command-help []
   (str "Vis Telegram commands:\n"
     "/status — show conversation, model, reasoning, verbosity\n"
-    "/model — cycle primary model, same as TUI Ctrl+T\n"
+    "/model — show current model\n"
+    "/models — list models and choose with buttons\n"
+    "/models <n|provider/model> — choose model\n"
     "/reasoning [quick|balanced|deep] — show/set reasoning effort, same as TUI Ctrl+R\n"
     "/verbosity [low|medium|high] — show/set OpenAI Codex verbosity, same as TUI Ctrl+L\n"
     "/cancel — cancel current request\n"
@@ -285,17 +310,19 @@
 
 (defn- handle-command! [token chat-id text]
   (when-let [{:keys [cmd arg]} (parse-command text)]
-    (let [reply (case cmd
-                  "/start"     (command-help)
-                  "/help"      (command-help)
-                  "/status"    (command-status chat-id)
-                  "/model"     (:message (cycle-model! chat-id))
-                  "/reasoning" (command-reasoning chat-id arg)
-                  "/verbosity" (command-verbosity chat-id arg)
-                  "/cancel"    (command-cancel chat-id)
-                  "/export"    (command-export chat-id)
-                  (str "Unknown command: " cmd "\n\n" (command-help)))]
-      (tg/send-message! token chat-id reply)
+    (let [{:keys [message reply-markup]}
+          (case cmd
+            "/start"     {:message (command-help)}
+            "/help"      {:message (command-help)}
+            "/status"    {:message (command-status chat-id)}
+            "/model"     {:message (command-model)}
+            "/models"    (command-models arg)
+            "/reasoning" {:message (command-reasoning chat-id arg)}
+            "/verbosity" {:message (command-verbosity chat-id arg)}
+            "/cancel"    {:message (command-cancel chat-id)}
+            "/export"    {:message (command-export chat-id)}
+            {:message (str "Unknown command: " cmd "\n\n" (command-help))})]
+      (tg/send-message! token chat-id message {:reply-markup reply-markup})
       true)))
 
 (defn- answer-text [result]
@@ -334,14 +361,29 @@
                     (clear-in-flight! chat-id turn-token))))]
       (vis/cancellation-set-future! turn-token fut))))
 
+(defn- handle-callback-query! [token callback]
+  (let [callback-id (:id callback)
+        data        (:data callback)
+        chat-id     (-> callback :message :chat :id)]
+    (when (and callback-id chat-id (string? data)
+            (str/starts-with? data "model:"))
+      (let [idx-str (subs data (count "model:"))
+            result  (when (re-matches #"\d+" idx-str)
+                      (select-model! (str (inc (Long/parseLong idx-str)))))]
+        (tg/answer-callback-query! token callback-id (:message result))
+        (tg/send-message! token chat-id (or (:message result) "Model selection failed."))
+        true))))
+
 (defn- handle-update! [token update]
-  (when-let [message (:message update)]
-    (let [chat-id (-> message :chat :id)
-          text    (extract-text message)
-          sender  (extract-sender message)]
-      (when (and chat-id text)
-        (when-not (handle-command! token chat-id text)
-          (handle-user-text! token chat-id text sender))))))
+  (or (when-let [callback (:callback_query update)]
+        (handle-callback-query! token callback))
+    (when-let [message (:message update)]
+      (let [chat-id (-> message :chat :id)
+            text    (extract-text message)
+            sender  (extract-sender message)]
+        (when (and chat-id text)
+          (when-not (handle-command! token chat-id text)
+            (handle-user-text! token chat-id text sender)))))))
 
 (defn- poll-loop! [token]
   (loop [offset 0]

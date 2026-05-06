@@ -29,7 +29,7 @@
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.registry :as registry]
-   [com.blockether.vis.theme :as theme]
+   [com.blockether.vis.internal.theme :as theme]
    [taoensso.telemere :as tel])
   (:import
    (java.io ByteArrayOutputStream InputStream)
@@ -427,7 +427,7 @@
 
 ;; Optional extension-owned theme declarations. Plain EDN shape:
 ;;   {:ext/theme {"THEME_NAME" {"PADDING" "0px"}}}
-;; The public `com.blockether.vis.theme` namespace owns the reusable theme
+;; The internal `com.blockether.vis.internal.theme` namespace owns the reusable theme
 ;; token spec and built-in palettes; extensions can add channel-agnostic
 ;; string-key settings here for channels to adapt.
 (s/def :ext/theme theme/extension-theme-map?)

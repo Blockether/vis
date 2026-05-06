@@ -2139,8 +2139,36 @@
 
 (def ^:private balanced-reasoning :balanced)
 
-(defn- status->id [status]
-  (when status (keyword "rlm.status" (name status))))
+(do
+  (defn- status->id [status]
+    (when status (keyword "rlm.status" (name status))))
+
+  (def ^:private cost-map-keys
+    [:input-cost
+     :input-uncached-cost
+     :input-cached-cost
+     :input-cache-write-cost
+     :cache-read-cost
+     :cache-write-cost
+     :output-cost
+     :total-cost])
+
+  (defn- estimate-token-cost
+    "Estimate cost from provider usage while preserving cached/non-cached input split."
+    ([model input-tokens output-tokens]
+     (estimate-token-cost model input-tokens output-tokens {}))
+    ([model input-tokens output-tokens opts]
+     (try
+       (svar-router/estimate-cost model input-tokens output-tokens
+         svar-router/MODEL_PRICING
+         (or opts {}))
+       (catch Throwable _ nil))))
+
+  (defn- merge-cost-maps
+    [acc extra-cost]
+    (merge-with +
+      (select-keys acc cost-map-keys)
+      (select-keys extra-cost cost-map-keys))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble → ask LLM → execute → persist
@@ -2177,7 +2205,8 @@
         initial-messages (prompt/assemble-initial-messages
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content})
-        usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0})
+        usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0
+                          :cache-creation-tokens 0})
         accumulate-usage! (fn [api-usage]
                             (when api-usage
                               (swap! usage-atom
@@ -2186,7 +2215,12 @@
                                     (update :input-tokens + (or (:prompt_tokens api-usage) 0))
                                     (update :output-tokens + (or (:completion_tokens api-usage) 0))
                                     (update :reasoning-tokens + (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
-                                    (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0)))))))
+                                    (update :cached-tokens + (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
+                                                               (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
+                                                               0))
+                                    (update :cache-creation-tokens + (or (get-in api-usage [:prompt_tokens_details :cache_creation_tokens])
+                                                                       (get-in api-usage [:prompt_tokens_details :cache_write_tokens])
+                                                                       0)))))))
         ;; Per-iteration token + cost projection. The schema's
         ;; `iteration.llm_*_tokens` / `iteration.llm_cost_usd` columns
         ;; carry one row per iteration so a future `vis report`
@@ -2200,7 +2234,9 @@
                                  (let [in   (long (or (:prompt_tokens api-usage) 0))
                                        out  (long (or (:completion_tokens api-usage) 0))
                                        reas (long (or (get-in api-usage [:completion_tokens_details :reasoning_tokens]) 0))
-                                       cach (long (or (get-in api-usage [:prompt_tokens_details :cached_tokens]) 0))
+                                       cach (long (or (get-in api-usage [:prompt_tokens_details :cached_tokens])
+                                                    (get-in api-usage [:prompt_tokens_details :input_cached_tokens])
+                                                    0))
                                        ;; svar's `estimate-cost` returns a MAP
                                        ;; `{:input-cost :output-cost :total-cost
                                        ;; :model :pricing}`, NOT a bare number.
@@ -2208,15 +2244,17 @@
                                        ;; (e.g. unknown model) leaves the
                                        ;; column NULL on disk, which the read
                                        ;; side defaults to 0.0.
-                                       cost-map (try (svar-router/estimate-cost effective-model in out)
-                                                  (catch Throwable _ nil))
+                                       cost-map (estimate-token-cost effective-model in out {:api-usage api-usage})
                                        total    (when (map? cost-map) (:total-cost cost-map))]
                                    {:tokens   {:input in :output out :reasoning reas :cached cach}
                                     :cost-usd (when (number? total) (double total))})))
         finalize-cost (fn []
-                        (let [{:keys [input-tokens output-tokens reasoning-tokens cached-tokens]} @usage-atom
+                        (let [{:keys [input-tokens output-tokens reasoning-tokens
+                                      cached-tokens cache-creation-tokens]} @usage-atom
                               total-tokens (+ input-tokens output-tokens)
-                              cost (svar-router/estimate-cost effective-model input-tokens output-tokens)]
+                              cost (estimate-token-cost effective-model input-tokens output-tokens
+                                     {:cached-tokens cached-tokens
+                                      :cache-creation-tokens cache-creation-tokens})]
                           {:tokens {:input input-tokens :output output-tokens
                                     :reasoning reasoning-tokens :cached cached-tokens
                                     :total total-tokens}
@@ -2927,8 +2965,7 @@
                             (when extra-cost
                               (swap! total-cost-atom
                                 (fn [acc]
-                                  (merge-with + (select-keys acc [:input-cost :output-cost :total-cost])
-                                    (select-keys extra-cost [:input-cost :output-cost :total-cost]))))))]
+                                  (merge-cost-maps acc extra-cost)))))]
     {:iteration-result  iteration-result
      :conversation-turn-id         conversation-turn-id
      :total-tokens-atom total-tokens-atom
@@ -4008,8 +4045,8 @@
 (defn for-telegram-chat!
   [chat-id]
   (let [ext (str chat-id)]
-    (or (when-let [ref (persistance/db-find-conversation-by-external (db-info) :telegram ext)]
-          (by-id (str (second ref))))
+    (or (when-let [id (persistance/db-find-conversation-by-external (db-info) :telegram ext)]
+          (by-id (str id)))
       (create! :telegram {:external-id ext}))))
 
 ;; =============================================================================

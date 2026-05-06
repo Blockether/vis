@@ -57,13 +57,17 @@
 (defn dirty-counts
   "Summarise JGit Status into user-facing dirty buckets."
   [^Status status]
-  {:modified (count-status-sets (.getModified status)
-               (.getChanged status))
-   :created  (count-status-sets (.getAdded status)
-               (.getUntracked status)
-               (.getUntrackedFolders status))
-   :deleted  (count-status-sets (.getRemoved status)
-               (.getMissing status))})
+  (if (.isClean status)
+    {:modified 0
+     :created  0
+     :deleted  0}
+    {:modified (count-status-sets (.getModified status)
+                 (.getChanged status))
+     :created  (count-status-sets (.getAdded status)
+                 (.getUntracked status)
+                 (.getUntrackedFolders status))
+     :deleted  (count-status-sets (.getRemoved status)
+                 (.getMissing status))}))
 
 (defn tracking-counts
   "Ahead/behind counts for `branch`, or nil when there is no upstream."

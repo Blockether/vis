@@ -37,6 +37,11 @@
               (format/format-tokens {:input 10 :output 5
                                      :cached 0})))
     (expect (= "~$0.123456" (format/format-cost 0.1234564)))
+    (expect (= "~$0.012000 (not cached ~$0.008000, cached ~$0.001000, output ~$0.003000)"
+              (format/format-cost {:total-cost 0.012
+                                   :input-uncached-cost 0.008
+                                   :input-cached-cost 0.001
+                                   :output-cost 0.003})))
     (expect (= "1.5s" (format/format-duration 1500))))
 
   (it "composes the canonical meta line"

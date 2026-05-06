@@ -1,5 +1,5 @@
-(ns com.blockether.vis.theme
-  "Public, channel-agnostic Vis theme data.
+(ns com.blockether.vis.internal.theme
+  "Internal, channel-agnostic Vis theme data.
 
    Keep this namespace pure data: no Lanterna, Swing, browser, or terminal
    backend imports. Channels adapt these tokens to their own render types."
@@ -325,7 +325,7 @@
   [theme-map]
   (when-not (valid-theme? theme-map)
     (throw (ex-info "Invalid theme"
-             {:type :vis.theme/invalid-theme
+             {:type :vis.internal.theme/invalid-theme
               :theme theme-map
               :explain (explain-theme theme-map)})))
   theme-map)
@@ -372,7 +372,7 @@
 
       :else
       (throw (ex-info "Invalid theme registry entry"
-               {:type :vis.theme/invalid-theme-entry
+               {:type :vis.internal.theme/invalid-theme-entry
                 :id id
                 :entry entry})))))
 

@@ -9,7 +9,7 @@
        'dials back' a colour into illegibility, this test screams
        before the user does."
   (:require [com.blockether.vis.ext.channel-tui.theme :as t]
-            [com.blockether.vis.theme :as shared-theme]
+            [com.blockether.vis.internal.theme :as shared-theme]
             [lazytest.core :refer [defdescribe describe expect it]])
   (:import [com.googlecode.lanterna TextColor$RGB]))
 

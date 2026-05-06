@@ -20,7 +20,7 @@
     (reset-chat-state!)
     (let [sent (atom [])
           handle-command! (private-var 'handle-command!)]
-      (with-redefs [tg/send-message! (fn [_token chat-id text]
+      (with-redefs [tg/send-message! (fn [_token chat-id text & _opts]
                                        (swap! sent conj [chat-id text]))]
         (expect (true? (handle-command! "token" 42 "/reasoning deep")))
         (expect (true? (handle-command! "token" 42 "/verbosity high")))
@@ -37,16 +37,29 @@
           handle-command! (private-var 'handle-command!)]
       (swap! (private-var 'chat-state) assoc-in [42 :in-flight] :token)
       (with-redefs [vis/cancel! (fn [token] (reset! cancelled token))
-                    tg/send-message! (fn [_token _chat-id _text])]
+                    tg/send-message! (fn [_token _chat-id _text & _opts] nil)]
         (expect (true? (handle-command! "token" 42 "/cancel")))
         (expect (= :token @cancelled))))))
 
 (defdescribe model-command-test
-  (it "cycles the primary model and preserves non-provider config"
+  (it "/model only shows the current model"
     (reset-chat-state!)
-    (let [saved     (atom nil)
-          rebuilt   (atom nil)
-          refreshed (atom nil)
+    (let [saved           (atom ::not-called)
+          handle-command! (private-var 'handle-command!)]
+      (with-redefs [vis/load-config (fn [] {:providers [{:id :openai
+                                                         :models [{:name "gpt-5"}
+                                                                  {:name "gpt-5-mini"}]}]})
+                    vis/save-config! (fn [config] (reset! saved config))
+                    tg/send-message! (fn [_token _chat-id text & _opts]
+                                       (expect (= "Current model: openai/gpt-5\n\nUse /models to list and choose." text)))]
+        (expect (true? (handle-command! "token" 42 "/model")))
+        (expect (= ::not-called @saved)))))
+
+  (it "/models selects a model and preserves non-provider config"
+    (reset-chat-state!)
+    (let [saved           (atom nil)
+          rebuilt         (atom nil)
+          refreshed       (atom nil)
           handle-command! (private-var 'handle-command!)]
       (with-redefs [vis/load-config (fn [] {:providers [{:id :openai
                                                          :models [{:name "gpt-5"}
@@ -60,9 +73,9 @@
                                           :router)
                     vis/refresh-cached-routers! (fn [router]
                                                   (reset! refreshed router))
-                    tg/send-message! (fn [_token _chat-id text]
-                                       (expect (= "Model: gpt-5-mini" text)))]
-        (expect (true? (handle-command! "token" 42 "/model")))
+                    tg/send-message! (fn [_token _chat-id text & _opts]
+                                       (expect (= "Model set: openai/gpt-5-mini" text)))]
+        (expect (true? (handle-command! "token" 42 "/models 2")))
         (expect (= {:tui-settings {:show-thinking false}
                     :db-spec {:backend :sqlite}
                     :providers [{:id :openai
@@ -70,7 +83,25 @@
                                           {:name "gpt-5"}]}]}
                   @saved))
         (expect (= @saved @rebuilt))
-        (expect (= :router @refreshed))))))
+        (expect (= :router @refreshed)))))
+
+  (it "/models lists choices with an inline keyboard"
+    (reset-chat-state!)
+    (let [sent            (atom nil)
+          handle-command! (private-var 'handle-command!)]
+      (with-redefs [vis/load-config (fn [] {:providers [{:id :openai
+                                                         :models [{:name "gpt-5"}
+                                                                  {:name "gpt-5-mini"}]}]})
+                    tg/send-message! (fn [_token _chat-id text & [{:keys [reply-markup]}]]
+                                       (reset! sent {:text text :reply-markup reply-markup}))]
+        (expect (true? (handle-command! "token" 42 "/models")))
+        (expect (= "Models\nCurrent: openai/gpt-5\n\n1. ✅ openai/gpt-5\n2. openai/gpt-5-mini\n\nTap a button, or send /models 2, or /models provider/model."
+                  (:text @sent)))
+        (expect (= {"inline_keyboard" [[{"text" "✅ openai/gpt-5"
+                                         "callback_data" "model:0"}]
+                                       [{"text" "openai/gpt-5-mini"
+                                         "callback_data" "model:1"}]]}
+                  (:reply-markup @sent)))))))
 
 (defdescribe turn-parity-test
   (it "forwards TUI-equivalent reasoning, Codex verbosity, and cancellation opts"
@@ -103,10 +134,10 @@
                                                      :model "gpt-5.5"}})
                     vis/format-meta-line (fn [_] "openai-codex/gpt-5.5")
                     tg/send-chat-action! (fn [_token _chat-id _action])
-                    tg/send-message! (fn [_token _chat-id text]
+                    tg/send-message! (fn [_token _chat-id text & _opts]
                                        (deliver sent text))]
         (handle-update! "token" (telegram-update 42 "hello"))
-        (expect (= "ok\n\n_openai\\-codex/gpt\\-5\\.5_"
+        (expect (= "ok\n\n_🤖 openai-codex/gpt-5.5_"
                   (deref sent 1000 :timeout)))
         (let [[id text opts] (deref seen-send 1000 :timeout)]
           (expect (= "c1" id))
