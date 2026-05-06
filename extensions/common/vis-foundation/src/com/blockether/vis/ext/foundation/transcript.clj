@@ -22,8 +22,9 @@
      `(transcript->md  data)`             → Markdown string
      `(transcript-md   db-info conv-id)`  → DB lookup + Markdown string
 
-     `register-cli!` mounts `vis report <CONVERSATION-ID>` at the top
-     of the command tree, mirroring the `vis doctor` pattern.
+     `cli-command` mounts `vis extensions report <CONVERSATION-ID>`
+     through `:ext/cli`, keeping extension-owned commands under
+     `vis extensions`.
 
    Canonical data shape:
 
@@ -964,8 +965,8 @@
      (str "Conversation not found: " conversation-id "\n"))))
 
 ;; =============================================================================
-;; CLI command — `vis report <CONVERSATION-ID>`. Foundation owns it
-;; (mirrors the `vis doctor` pattern in doctor.clj).
+;; CLI command — `vis extensions report <CONVERSATION-ID>`. Foundation owns
+;; it, mounted through `:ext/cli` rather than direct global registration.
 ;; =============================================================================
 
 (defn- println-original!
@@ -979,7 +980,7 @@
    "--system-prompts" :system-prompts})
 
 (defn- report-usage! []
-  (println-original! "Usage: vis report [--dialog|--prompts|--system-prompts] <CONVERSATION-ID>")
+  (println-original! "Usage: vis extensions report [--dialog|--prompts|--system-prompts] <CONVERSATION-ID>")
   (println-original! "")
   (println-original! "Modes:")
   (println-original! "  --dialog          User/assistant dialog only")
@@ -1027,16 +1028,15 @@
           (do (println-original! (transcript-md d resolved {:mode mode}))
             (System/exit 0)))))))
 
-(defn register-cli! []
-  (vis/register-cmd!
-    {:cmd/name  "report"
-     :cmd/doc   "Print a forensic Markdown report for a conversation. Default mode includes every turn, iteration, executed code block, vars, reasoning trace, final answer, and raw LLM diagnostics. Use --system-prompts for DB-backed system prompt snapshots or --prompts for full provider prompt envelopes (including journal snapshots). Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
-     :cmd/usage "vis report [--dialog|--prompts|--system-prompts] <CONVERSATION-ID>"
-     :cmd/args  [{:name "conversation-id" :kind :positional :type :string
-                  :doc  "Conversation id (full UUID or unambiguous prefix)."}]
-     :cmd/examples ["vis report eeaf9651-06c7-4dda-9e97-877fcef06337"
-                    "vis report eeaf9651"
-                    "vis report --system-prompts eeaf9651"
-                    "vis report --prompts eeaf9651 > PROMPTS.md"
-                    "vis report eeaf9651 > REPRODUCTION.md"]
-     :cmd/run-fn cli-report-run!}))
+(defn cli-command []
+  {:cmd/name  "report"
+   :cmd/doc   "Print a forensic Markdown report for a conversation. Default mode includes every turn, iteration, executed code block, vars, reasoning trace, final answer, and raw LLM diagnostics. Use --system-prompts for DB-backed system prompt snapshots or --prompts for full provider prompt envelopes (including journal snapshots). Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
+   :cmd/usage "vis extensions report [--dialog|--prompts|--system-prompts] <CONVERSATION-ID>"
+   :cmd/args  [{:name "conversation-id" :kind :positional :type :string
+                :doc  "Conversation id (full UUID or unambiguous prefix)."}]
+   :cmd/examples ["vis extensions report eeaf9651-06c7-4dda-9e97-877fcef06337"
+                  "vis extensions report eeaf9651"
+                  "vis extensions report --system-prompts eeaf9651"
+                  "vis extensions report --prompts eeaf9651 > PROMPTS.md"
+                  "vis extensions report eeaf9651 > REPRODUCTION.md"]
+   :cmd/run-fn cli-report-run!})

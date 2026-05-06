@@ -126,13 +126,12 @@ Mount entries at any depth under `vis extensions …` by specifying a
 ;; Throws ex-info with :type :ext/cli-bad-parent at register-extension! time.
 ```
 
-`:ext/cli` is the registration slot for extension-owned commands. For top-level commands or other
-placements (the binary's own built-ins, custom command trees), call
-`com.blockether.vis.core/register-cmd!` directly. See
-`src/com/blockether/vis/internal/main.clj` for an example: `vis run`,
-`vis providers`, `vis doctor`, `vis conversations` are registered with
-`registry/register-cmd!`; only the `vis extensions list` subcommand
-goes through `:ext/cli`.
+`:ext/cli` is the registration slot for extension-owned commands. It always mounts under
+`vis extensions ...`; extension packages must not register global/top-level CLI commands directly.
+Host-owned built-ins such as `vis run`, `vis providers`, `vis conversations`, `vis channels`, and
+`vis extensions list` are registered by `src/com/blockether/vis/internal/main.clj` / registry code.
+Extension-owned utilities (for example foundation diagnostics/reports and voice model downloads)
+live under `vis extensions <cmd> ...`.
 
 ## Fenced-code renderers
 

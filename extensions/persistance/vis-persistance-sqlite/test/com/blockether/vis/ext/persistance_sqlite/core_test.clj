@@ -58,6 +58,8 @@
        (finally
          (vis/db-dispose-connection! s))))")
 
+(defonce ^:private child-output-futures (atom {}))
+
 (defn- java-command []
   (str (fs/file (System/getProperty "java.home") "bin" "java")))
 
@@ -75,7 +77,9 @@
                "clojure.main"
                "-e" multiprocess-child-code])]
      (.redirectErrorStream pb true)
-     (.start pb))))
+     (let [child (.start pb)]
+       (swap! child-output-futures assoc child (future (slurp (.getInputStream child))))
+       child))))
 
 (defn- wait-for-file
   [path timeout-ms]
@@ -91,7 +95,9 @@
 (defn- expect-child-success!
   [^Process child]
   (expect (true? (.waitFor child 10 TimeUnit/SECONDS)))
-  (let [output (slurp (.getInputStream child))]
+  (let [output-future (get @child-output-futures child)
+        output        (when output-future (deref output-future 1000 ""))]
+    (swap! child-output-futures dissoc child)
     (expect (= 0 (.exitValue child)))
     (expect (str/includes? output "CHILD-DONE"))))
 
@@ -890,16 +896,32 @@
                   (:provenance exec)))
         (expect (= :vis/sci (:rendering-kind exec))))))
 
-  (it "round-trips structured values through the BLOB"
+  (it "persists running tool-start child events when a block times out before tool completion"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:conversation-turn-id qid
-                                  :blocks [{:code "{:a [1 2]}" :result {:a [1 2]}}]
-                                  :duration-ms 5})
+                                  :blocks [{:code "(v/bash \"sleep 10\")"
+                                            :error "Timeout (120s)"
+                                            :timeout? true
+                                            :execution-time-ms 120000
+                                            :tool-events [{:phase :tool-start
+                                                           :op :v/bash
+                                                           :status :running
+                                                           :started-at-ms 123
+                                                           :tool {:sym 'bash :call "v/bash"}}]}]
+                                  :duration-ms 120000})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
-            [{:keys [result]}] (vis/db-list-iteration-blocks s (:id iteration))]
-        (expect (= {:a [1 2]} result)))))
+            [exec] (vis/db-list-iteration-blocks s (:id iteration))
+            [event] (:events exec)]
+        (expect (= :timeout (get-in exec [:provenance :status])))
+        (expect (= :running (get-in event [:provenance :status])))
+        (expect (= :v/bash (get-in event [:provenance :op])))
+        (expect (= (str (get-in exec [:provenance :ref]) "/tool/v.bash")
+                  (get-in event [:provenance :ref])))
+        (expect (= 123 (get-in event [:provenance :started-at-ms])))
+        (expect (= "This event proves only that a tool was started, not that it completed."
+                  (get-in event [:metadata :proof-note]))))))
 
   (it "replaces fn results with the {:vis/ref :expr} sentinel (freeze-safe contract)"
     (let [s   (h/store)

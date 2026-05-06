@@ -556,41 +556,51 @@
 
       :else nil)))
 
-(defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns]}]
+(defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn]}]
   (let [stdout-writer (java.io.StringWriter.)
         stderr-writer (java.io.StringWriter.)
         err-pw       (java.io.PrintWriter. stderr-writer true)
         preview-sink (atom [])
+        tool-events  (atom [])
+        tool-counts  (atom {})
+        record-tool-event (fn [event]
+                            (let [op (:op event)
+                                  n  (get (swap! tool-counts update op (fnil inc 0)) op)
+                                  event* (cond-> event
+                                           (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
+                              (swap! tool-events conj event*)
+                              (when tool-event-fn (tool-event-fn event*))))
         exec-future (cancellation/worker-future "vis-sci-eval"
                       (fn []
                         (try
-                          (let [result (binding [extension/*preview-sink* preview-sink]
+                          (let [result (binding [extension/*preview-sink* preview-sink
+                                                 extension/*tool-event-sink* record-tool-event]
                                          (sci/binding [sci/out stdout-writer
                                                        sci/err err-pw]
                                            (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
                                              (:val (sci/eval-string+ sci-ctx code
                                                      (when ns {:ns ns}))))))]
-                            {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink :error nil})
+                            {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink :tool-events @tool-events :error nil})
                           (catch Throwable e
-                            {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink
+                            {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink :tool-events @tool-events
                              :error (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))}))))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
-                             {:result nil :stdout "" :stderr "" :previews @preview-sink :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
+                             {:result nil :stdout "" :stderr "" :previews @preview-sink :tool-events @tool-events :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
     (.close stdout-writer)
     (.close stderr-writer)
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
-        {:result nil :stdout "" :stderr "" :previews @preview-sink :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
+        {:result nil :stdout "" :stderr "" :previews @preview-sink :tool-events @tool-events :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
       execution-result)))
 
-(defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time]
+(defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn]
   (let [execution-result (if timeout-ms
                            (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)]
-                             (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
-                           (run-sci-code sci-ctx code :sandbox-ns sandbox-ns))
+                             (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn))
+                           (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn))
         finished-time    (System/currentTimeMillis)
         execution-time   (- finished-time start-time)]
     (cond-> execution-result
@@ -688,7 +698,7 @@
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [{:keys [sci-ctx sandbox-ns] :as environment} code
-   & {:keys [timeout-ms doc]}]
+   & {:keys [timeout-ms doc tool-event-fn]}]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
     (let [start-time (System/currentTimeMillis)
           lint-error (detect-common-mistakes code)]
@@ -698,7 +708,7 @@
         (let [parse-error (parse-clojure-syntax code)]
           (if parse-error
             (if-let [rescued (try-extension-parse-rescue environment code parse-error)]
-              (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time)]
+              (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time tool-event-fn)]
                 (when (nil? (:error exec))
                   (attach-doc-meta! environment rescued doc))
                 (assoc exec
@@ -707,7 +717,7 @@
                   :original-error parse-error))
               {:result nil :stdout "" :stderr "" :error parse-error
                :execution-time-ms 0 :timeout? false})
-            (let [exec (run-with-timing sci-ctx code sandbox-ns timeout-ms start-time)]
+            (let [exec (run-with-timing sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn)]
               (when (nil? (:error exec))
                 (attach-doc-meta! environment code doc))
               exec)))))))
@@ -1536,7 +1546,19 @@
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0
                                                  :op :vis/guard}
-                                                (let [r (execute-code environment expr)]
+                                                (let [tool-event-fn (when (and on-chunk (not suppress-form-start?) (not (silent-host-form? expr)))
+                                                                      (fn [tool-event]
+                                                                        (on-chunk {:phase :tool-start
+                                                                                   :iteration iteration-position
+                                                                                   :form-idx idx
+                                                                                   :form-of total-blocks
+                                                                                   :iteration-id iteration-id
+                                                                                   :code expr
+                                                                                   :comment form-comment
+                                                                                   :tool-event tool-event})))
+                                                      r (if tool-event-fn
+                                                          (execute-code environment expr :tool-event-fn tool-event-fn)
+                                                          (execute-code environment expr))]
                                                   (log-stage! :code-result iteration
                                                     {:idx (inc idx) :total total-blocks
                                                      :execution-time-ms (:execution-time-ms r)
@@ -1574,6 +1596,7 @@
                                           :comment           form-comment
                                           :result            (:result result*)
                                           :previews          (:previews result*)
+                                          :tool-events       (:tool-events result*)
                                           :error             (:error result*)
                                           :stdout            (:stdout result*)
                                           :stderr            (:stderr result*)
@@ -1593,6 +1616,7 @@
                                     :code code
                                     :result (:result result)
                                     :previews (:previews result)
+                                    :tool-events (:tool-events result)
                                     :stdout (:stdout result)
                                     :stderr (:stderr result)
                                     :error (:error result)
@@ -2239,8 +2263,10 @@
            conversation-turn-id
            max-consecutive-errors max-restarts max-context-tokens
            hooks cancel-atom current-iteration-atom
-           reasoning-default routing extra-body allow-copilot-claude-deep?]}]
-  (let [;; Tightened from 5 to 3. Three consecutive failures is enough
+           reasoning-default routing extra-body turn-features allow-copilot-claude-deep?]}]
+  (let [environment (cond-> environment
+                      (seq turn-features) (assoc :turn/features turn-features))
+        ;; Tightened from 5 to 3. Three consecutive failures is enough
         ;; signal that the current approach is wrong; the nudge fires
         ;; at CONSECUTIVE_ERROR_NUDGE_AT (= 2) so the model gets a
         ;; warning before the strategy-restart kicks in.
@@ -2338,7 +2364,8 @@
                               :conversation-turn-id        conversation-turn-id
                               :user-request    user-request
                               :model           effective-model
-                              :provider        (:provider resolved-model)}
+                              :provider        (:provider resolved-model)
+                              :environment     environment}
         emit-hook! (fn [hook-fn payload log-message]
                      ;; Legacy single-fn caller hook helper. Still used
                      ;; by `on-chunk` (which is not a lifecycle phase
@@ -2994,6 +3021,7 @@
        :reasoning-default      reasoning-default
        :routing                routing
        :extra-body             extra-body
+       :turn-features          (get opts :turn/features)
        :messages               messages})))
 
 ;; -----------------------------------------------------------------------------
@@ -3006,7 +3034,7 @@
   [{:keys [environment user-request spec
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom
-           reasoning-default routing extra-body]}]
+           reasoning-default routing extra-body turn-features]}]
   (let [iteration-result (run-turn! environment user-request
                            (cond-> {:output-spec            spec
                                     :max-context-tokens     max-context-tokens
@@ -3015,8 +3043,9 @@
                                     :current-iteration-atom current-iteration-atom
                                     :hooks                  hooks
                                     :cancel-atom            cancel-atom}
-                             routing    (assoc :routing routing)
-                             extra-body (assoc :extra-body extra-body)))
+                             routing       (assoc :routing routing)
+                             extra-body    (assoc :extra-body extra-body)
+                             turn-features (assoc :turn-features turn-features)))
         conversation-turn-id         (:conversation-turn-id iteration-result)
         {iteration-tokens :tokens
          iteration-cost   :cost} iteration-result
@@ -3743,6 +3772,7 @@
                                   (:custom-bindings @state-atom)))
         env {:environment-id  environment-id
              :conversation-id conversation-id
+             :channel         (or channel :tui)
              :depth-atom      depth-atom
              :db-info         db-info
              :var-index-atom  var-index-atom

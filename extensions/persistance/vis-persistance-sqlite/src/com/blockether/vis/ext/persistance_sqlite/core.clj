@@ -2057,7 +2057,9 @@
 (defn- lifecycle-child-events
   [parent-provenance exec]
   (let [parent-ref (:ref parent-provenance)
-        result (:result exec)]
+        result (:result exec)
+        running-tool-events (when-not (structural-tool-result? result)
+                              (seq (:tool-events exec)))]
     (cond-> []
       (structural-tool-result? result)
       (conj
@@ -2079,6 +2081,21 @@
              :started-at-ms (:started-at-ms tool-prov)
              :finished-at-ms (:finished-at-ms tool-prov)
              :metadata (dissoc tool-prov :op :duration-ms :started-at-ms :finished-at-ms)})))
+
+      running-tool-events
+      (into
+        (map (fn [{:keys [op id started-at-ms tool] :as event}]
+               (prov-life/start-event
+                 {:ref (prov-life/child-ref parent-ref {:op op :id id})
+                  :parent-ref parent-ref
+                  :op (or op :v/tool)
+                  :rendering-kind :vis/tool
+                  :started-at-ms started-at-ms
+                  :metadata (cond-> {:state :running
+                                     :proof-note "This event proves only that a tool was started, not that it completed."}
+                              tool (assoc :tool tool)
+                              (seq event) (assoc :event (dissoc event :op :id :started-at-ms :tool)))}))
+          running-tool-events))
 
       (instance? java.util.concurrent.Future result)
       (conj

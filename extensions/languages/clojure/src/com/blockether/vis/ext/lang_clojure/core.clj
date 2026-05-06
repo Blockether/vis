@@ -11,7 +11,10 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.lang-clojure.lsp :as lsp]
    [com.blockether.vis.ext.lang-clojure.patch :as patch]
+   [com.blockether.vis.ext.lang-clojure.repair :as repair]
+   [com.blockether.vis.ext.lang-clojure.xref :as xref]
    [rewrite-clj.zip]
    [rewrite-clj.zip.subedit])
   (:import
@@ -116,12 +119,12 @@
 
 (defn- clojure-environment-info
   [_environment]
-  "Clojure/EDN workspace detected. Prefer structural editing through the `z/` alias before raw text edits: use `z/locators` or `z/symbols` to discover rewrite-clj locator rows, then `z/patch` for Clojure/EDN changes. Locator rows include `:path`, `:index`, `:tag`, `:value`, `:locator`, `:source`, and `:span`; add `:replace` to a row to turn it into a patch edit. Use `v/patch` only for comments/plain text or non-Clojure files.")
+  "Clojure/EDN workspace detected. Prefer the `z/` alias before raw text edits: use `z/xref-analyze!`, `z/who-calls`, `z/calls-who`, and `z/context-for` for semantic graph context; use `z/locators`, `z/symbols`, `z/locators-for-symbol`, or `z/locator-for-ref` for rewrite-clj locator rows; use `z/repair-range`, `z/repair-locator`, or `z/repair-file` for parse repair over row/col ranges; use `z/diagnostics`, `z/rename-plan`, or `z/clean-ns-plan` for clojure-lsp dry-run semantic checks; then use `z/patch` for structural Clojure/EDN changes. Locator rows include `:path`, `:index`, `:tag`, `:value`, `:locator`, `:source`, and `:span`; add `:replace` to a row to turn it into a patch edit. Use `v/patch` only for comments/plain text or non-Clojure files.")
 
 (def clojure-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core
-     :ext/doc       "Clojure/EDN editing under the `z/` alias: z/patch zipper edits, z/locators/z/symbols discovery, and rewrite-clj zipper API."
+     :ext/doc       "Clojure/EDN intelligence under the `z/` alias: clj-xref graph queries, z/patch zipper edits, z/locators/z/symbols discovery, and rewrite-clj zipper API."
      :ext/version   "0.7.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"
@@ -132,6 +135,6 @@
      :ext/environment-info-fn clojure-environment-info
      :ext/prompt    patch/z-prompt
      :ext/symbols   (into [patch/patch-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol]
-                      rewrite-clj-zip-symbols)}))
+                      (concat repair/symbols xref/symbols lsp/symbols rewrite-clj-zip-symbols))}))
 
 (vis/register-extension! clojure-extension)

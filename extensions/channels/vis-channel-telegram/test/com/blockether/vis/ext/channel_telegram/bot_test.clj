@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-telegram.bot-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [com.blockether.vis.ext.channel-telegram.bot]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -15,6 +16,16 @@
              :from {:username "alice"}
              :text text}})
 
+(defn- telegram-voice-update [chat-id file-id]
+  {:message {:chat {:id chat-id}
+             :from {:username "alice"}
+             :voice {:file_id file-id}}})
+
+(defn- telegram-callback-update [chat-id data]
+  {:callback_query {:id "cb-1"
+                    :data data
+                    :message {:chat {:id chat-id}}}})
+
 (defdescribe bot-menu-test
   (it "installs every Telegram command in the bot menu"
     (let [installed (atom nil)
@@ -24,15 +35,29 @@
                                           {:ok true})]
         (install-bot-menu! "token")
         (expect (= "token" (:token @installed)))
-        (expect (= ["start" "help" "status" "model" "models" "reasoning" "verbosity" "cancel" "export"]
-                  (mapv #(get % "command") (:commands @installed))))))))
+        (expect (= ["help" "status" "model" "models" "reasoning" "verbosity" "voice" "cancel" "restart" "export"]
+                  (mapv #(get % "command") (:commands @installed)))))))
+
+  (it "omits voice from the Telegram command menu when voice extensions are not loaded"
+    (let [installed         (atom nil)
+          install-bot-menu! (private-var 'install-bot-menu!)]
+      (with-redefs [clojure.core/requiring-resolve (fn [_sym] nil)
+                    tg/set-my-commands! (fn [_token commands]
+                                          (reset! installed commands)
+                                          {:ok true})]
+        (install-bot-menu! "token")
+        (expect (= ["help" "status" "model" "models" "reasoning" "verbosity" "cancel" "restart" "export"]
+                  (mapv #(get % "command") @installed)))))))
 
 (defdescribe command-test
   (it "sets reasoning and verbosity through Telegram slash commands"
     (reset-chat-state!)
     (let [sent (atom [])
           handle-command! (private-var 'handle-command!)]
-      (with-redefs [tg/send-message! (fn [_token chat-id text & _opts]
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    vis/save-config! (fn [& _] nil)
+                    vis/reload-config! (fn [] nil)
+                    tg/send-message! (fn [_token chat-id text & _opts]
                                        (swap! sent conj [chat-id text]))]
         (expect (true? (handle-command! "token" 42 "/reasoning deep")))
         (expect (true? (handle-command! "token" 42 "/verbosity high")))
@@ -40,18 +65,80 @@
                     [42 "Codex verbosity: high"]]
                   @sent))
         (expect (= {:reasoning-level :deep
-                    :openai-codex-verbosity :high}
+                    :openai-codex-verbosity :high
+                    :voice-mode :off}
                   (get-in @(private-var 'chat-state) [42 :settings]))))))
 
-  (it "/start opens the same help as the menu"
+  (it "reports unavailable voice command when no voice extensions are loaded"
+    (let [handle-command! (private-var 'handle-command!)
+          sent            (atom nil)]
+      (with-redefs [clojure.core/requiring-resolve (fn [_sym] nil)
+                    tg/send-message! (fn [_token chat-id text & _opts]
+                                       (reset! sent [chat-id text]))]
+        (expect (true? (handle-command! "token" 42 "/voice duplex")))
+        (expect (= [42 "Voice extensions are not loaded. Install/load vis-voice or vis-voice-parakeet, then restart Telegram."]
+                  @sent)))))
+
+  (it "/voice lists choices with an inline keyboard"
+    (reset-chat-state!)
+    (let [sent            (atom nil)
+          handle-command! (private-var 'handle-command!)]
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    tg/send-message! (fn [_token _chat-id text & [{:keys [reply-markup]}]]
+                                       (reset! sent {:text text :reply-markup reply-markup}))]
+        (expect (true? (handle-command! "token" 42 "/voice")))
+        (expect (= "Voice modes\nCurrent: off\n\n1. ✅ off\n2. input\n3. output\n4. duplex\n\ninput = voice messages transcribe to text answers.\noutput = text prompts receive audio answers.\nduplex = voice in, audio out.\n\nTap a button, or send /voice duplex.\nAvailable: input=yes, output=yes"
+                  (:text @sent)))
+        (expect (= {"inline_keyboard" [[{"text" "✅ off" "callback_data" "voice:off"}]
+                                       [{"text" "input" "callback_data" "voice:input"}]
+                                       [{"text" "output" "callback_data" "voice:output"}]
+                                       [{"text" "duplex" "callback_data" "voice:duplex"}]]}
+                  (:reply-markup @sent))))))
+
+  (it "persists Telegram voice mode under the chat settings config key"
+    (reset-chat-state!)
+    (let [saved           (atom nil)
+          sent            (atom nil)
+          handle-command! (private-var 'handle-command!)]
+      (with-redefs [vis/load-config-raw (fn [] {:telegram {:allowed-chat-ids ["42"]}})
+                    vis/save-config! (fn [config & _] (reset! saved config))
+                    vis/reload-config! (fn [] @saved)
+                    tg/send-message! (fn [_token chat-id text & _opts]
+                                       (reset! sent [chat-id text]))]
+        (expect (true? (handle-command! "token" 42 "/voice on")))
+        (expect (= [42 "Voice mode: duplex"] @sent))
+        (expect (= :duplex (get-in @saved [:telegram :chat-settings "42" :voice-mode]))))))
+
+  (it "selects voice mode from inline keyboard callbacks"
+    (reset-chat-state!)
+    (let [saved          (atom nil)
+          answered       (atom nil)
+          sent           (atom nil)
+          handle-update! (private-var 'handle-update!)]
+      (with-redefs [vis/load-config-raw (fn [] {:telegram {:allowed-chat-ids ["42"]}})
+                    vis/save-config! (fn [config & _] (reset! saved config))
+                    vis/reload-config! (fn [] @saved)
+                    tg/answer-callback-query! (fn [_token callback-id text]
+                                                (reset! answered [callback-id text]))
+                    tg/send-message! (fn [_token chat-id text & _opts]
+                                       (reset! sent [chat-id text]))]
+        (expect (true? (handle-update! "token" (telegram-callback-update 42 "voice:duplex"))))
+        (expect (= ["cb-1" "Voice mode: duplex"] @answered))
+        (expect (= [42 "Voice mode: duplex"] @sent))
+        (expect (= :duplex (get-in @saved [:telegram :chat-settings "42" :voice-mode]))))))
+
+  (it "/help opens the command help"
     (reset-chat-state!)
     (let [sent (atom nil)
           handle-command! (private-var 'handle-command!)]
       (with-redefs [tg/send-message! (fn [_token chat-id text & _opts]
                                        (reset! sent [chat-id text]))]
-        (expect (true? (handle-command! "token" 42 "/start")))
+        (expect (true? (handle-command! "token" 42 "/help")))
         (expect (= 42 (first @sent)))
+        (expect (re-find #"/help — show this help" (second @sent)))
+        (expect (not (re-find #"/start" (second @sent))))
         (expect (re-find #"/models — list models" (second @sent)))
+        (expect (re-find #"/restart — restart" (second @sent)))
         (expect (re-find #"/export — export" (second @sent))))))
 
   (it "cancels the active Telegram turn"
@@ -126,6 +213,96 @@
                                          "callback_data" "model:1"}]]}
                   (:reply-markup @sent)))))))
 
+(defdescribe allowance-test
+  (it "approves chat ids into persisted Telegram config"
+    (let [saved            (atom nil)
+          approve-chat-id! (private-var 'approve-chat-id!)]
+      (with-redefs [vis/load-config-raw (fn [] {:providers []
+                                                :telegram {:allowed-chat-ids ["1"]}})
+                    vis/save-config! (fn [config] (reset! saved config))
+                    vis/reload-config! (fn [] @saved)]
+        (expect (= ["1" "42"] (approve-chat-id! 42)))
+        (expect (= {:providers []
+                    :telegram {:allowed-chat-ids ["1" "42"]}}
+                  @saved)))))
+
+  (it "rejects unapproved chat ids before commands or sends run"
+    (let [sent           (atom nil)
+          send-called?   (atom false)
+          handle-update! (private-var 'handle-update!)]
+      (with-redefs [vis/load-config-raw (fn [] {:telegram {:allowed-chat-ids ["7"]}})
+                    vis/send! (fn [& _] (reset! send-called? true))
+                    tg/send-message! (fn [_token chat-id text & _opts]
+                                       (reset! sent [chat-id text]))]
+        (expect (true? (handle-update! "token" (telegram-update 42 "hello"))))
+        (expect (= 42 (first @sent)))
+        (expect (re-find #"vis channels telegram approve --chat-id 42" (second @sent)))
+        (expect (false? @send-called?))))))
+
+(defdescribe voice-asr-test
+  (it "transcribes Telegram voice messages through the shared Parakeet ASR path without noisy progress messages"
+    (let [sent           (atom [])
+          forwarded      (promise)
+          handle-update! (private-var 'handle-update!)]
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    tg/get-file (fn [_token file-id]
+                                  (expect (= "file-1" file-id))
+                                  {:file_path "voice/file.ogg"})
+                    tg/download-file! (fn [_token file-path dest]
+                                        (expect (= "voice/file.ogg" file-path))
+                                        (spit dest "fake audio")
+                                        dest)
+                    tg/send-chat-action! (fn [_token _chat-id _action])
+                    tg/send-message! (fn [_token _chat-id text & _opts]
+                                       (swap! sent conj text))
+                    com.blockether.vis.ext.channel-telegram.bot/transcribe-audio-file!
+                    (fn [_file] "voice prompt")
+                    com.blockether.vis.ext.channel-telegram.bot/handle-user-text!
+                    (fn [_token chat-id text sender opts]
+                      (deliver forwarded [chat-id text sender opts]))]
+        (expect (true? (handle-update! "token" (telegram-voice-update 42 "file-1"))))
+        (expect (= [42 "voice prompt" "alice" {:transcript "voice prompt"}]
+                  (deref forwarded 1000 :timeout)))
+        (expect (empty? @sent)))))
+
+  (it "converts Telegram OGA voice files to WAV before Parakeet ASR reads them"
+    (let [input           (java.io.File/createTempFile "vis-telegram-voice-test" ".oga")
+          transcribed     (promise)
+          converted-file  (atom nil)
+          transcribe-file! (private-var 'transcribe-audio-file!)]
+      (try
+        (spit input "fake oga")
+        (with-redefs [clojure.core/requiring-resolve
+                      (fn [sym]
+                        (case sym
+                          com.blockether.vis.ext.voice-parakeet.sherpa/transcribe-file!
+                          (fn [file]
+                            (deliver transcribed file)
+                            "raw transcript")
+
+                          com.blockether.vis.ext.voice-parakeet.rewrite/rewrite-transcript!
+                          nil))
+                      com.blockether.vis.ext.channel-telegram.bot/ffmpeg-audio->wav!
+                      (fn [_audio-file wav-file]
+                        (reset! converted-file wav-file)
+                        (spit wav-file "fake wav")
+                        wav-file)]
+          (expect (= "raw transcript" (transcribe-file! input)))
+          (let [wav (deref transcribed 1000 :timeout)]
+            (expect (= @converted-file wav))
+            (expect (str/ends-with? (.getName wav) ".wav"))
+            (expect (false? (.exists wav)))))
+        (finally
+          (.delete input))))))
+
+(defdescribe answer-rendering-test
+  (it "renders needs-input payloads as their user-facing text"
+    (let [answer-text (private-var 'answer-text)]
+      (expect (= "Please describe the task."
+                (answer-text {:answer {:vis/answer-mode :needs-input
+                                       :answer/text "Please describe the task."
+                                       :missing "a specific request"}}))))))
+
 (defdescribe turn-parity-test
   (it "forwards TUI-equivalent reasoning, Codex verbosity, and cancellation opts"
     (reset-chat-state!)
@@ -136,7 +313,8 @@
           sent      (promise)
           token     {:cancel (atom false) :future (atom nil)}
           handle-update! (private-var 'handle-update!)]
-      (with-redefs [vis/cancellation-token (fn [] token)
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    vis/cancellation-token (fn [] token)
                     vis/cancellation-atom (fn [t]
                                             (expect (= token t))
                                             (:cancel t))
@@ -168,4 +346,36 @@
           (expect (= :deep (:reasoning-default opts)))
           (expect (= {:text {:verbosity "high"}} (:extra-body opts)))
           (expect (= (:cancel token) (:cancel-atom opts)))
-          (expect (not (contains? opts :max-context-tokens))))))))
+          (expect (not (contains? opts :max-context-tokens)))))))
+
+  (it "marks voice-output Telegram turns for spoken-answer prompting and sends audio after DB text answer"
+    (reset-chat-state!)
+    (swap! (private-var 'chat-state) assoc-in [42 :settings]
+      {:reasoning-level :balanced
+       :openai-codex-verbosity :low
+       :voice-mode :output})
+    (let [seen-send (promise)
+          audio-sent (promise)
+          token     {:cancel (atom false) :future (atom nil)}
+          handle-update! (private-var 'handle-update!)]
+      (with-redefs [vis/load-config-raw (fn [] {})
+                    vis/cancellation-token (fn [] token)
+                    vis/cancellation-atom (fn [_] (:cancel token))
+                    vis/cancellation-set-future! (fn [_ fut] (reset! (:future token) fut))
+                    vis/get-router (fn [] :router)
+                    vis/resolve-effective-model (fn [_] {:provider :openai :name "gpt-5"})
+                    vis/for-telegram-chat! (fn [_] {:id "c1"})
+                    vis/send! (fn [id text opts]
+                                (deliver seen-send [id text opts])
+                                {:answer "spoken ok"})
+                    tg/send-chat-action! (fn [_token _chat-id _action])
+                    tg/send-message! (fn [& _] nil)
+                    com.blockether.vis.ext.channel-telegram.bot/send-answer-audio!
+                    (fn [_token chat-id answer]
+                      (deliver audio-sent [chat-id answer]))]
+        (handle-update! "token" (telegram-update 42 "hello"))
+        (expect (= [42 "spoken ok"] (deref audio-sent 1000 :timeout)))
+        (let [[id text opts] (deref seen-send 1000 :timeout)]
+          (expect (= "c1" id))
+          (expect (= "hello" text))
+          (expect (= {:voice-response? true} (:turn/features opts))))))))

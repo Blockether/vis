@@ -49,4 +49,42 @@
     (let [out (:lines (mermaid/render-mermaid
                         {:width 24
                          :source "flowchart LR\n  A[Start with very long label] --> B[End with very long label]"}))]
-      (expect (every? #(<= (count %) 24) out)))))
+      (expect (every? #(<= (count %) 24) out))))
+
+  (it "uses the supplied terminal width for flowchart spacing"
+    (let [source "flowchart LR\n  A[Start] --> B{Choice}\n  B -->|Yes| C[Do thing]\n  B -->|No| D[Skip]"
+          w60 (apply max (map count (:lines (mermaid/render-mermaid {:width 60 :source source}))))
+          w120 (apply max (map count (:lines (mermaid/render-mermaid {:width 120 :source source}))))]
+      (expect (<= w60 60))
+      (expect (<= w120 120))
+      (expect (> w120 w60))))
+
+  (it "recognizes every documented Mermaid diagram family with a pure JVM renderer"
+    (let [samples [{:type :class :source "classDiagram\n  Animal <|-- Duck\n  class Animal"}
+                   {:type :state :source "stateDiagram-v2\n  [*] --> Still\n  Still --> Moving: go"}
+                   {:type :er :source "erDiagram\n  CUSTOMER ||--o{ ORDER : places"}
+                   {:type :journey :source "journey\n  title My day\n  section Go\n  Wake up: 5: Me"}
+                   {:type :gantt :source "gantt\n  title Plan\n  section Build\n  Task A :a1, 2026-01-01, 1d"}
+                   {:type :pie :source "pie title Pets\n  \"Dogs\" : 386\n  \"Cats\" : 85"}
+                   {:type :gitgraph :source "gitGraph\n  commit\n  branch dev\n  checkout dev\n  commit"}
+                   {:type :mindmap :source "mindmap\n  root\n    A\n    B"}
+                   {:type :timeline :source "timeline\n  title Releases\n  2024 : Alpha\n  2025 : Beta"}
+                   {:type :quadrant :source "quadrantChart\n  title Reach\n  A: [0.3, 0.6]"}
+                   {:type :requirement :source "requirementDiagram\n  requirement test_req {\n    id: 1\n  }"}
+                   {:type :c4 :source "C4Context\n  Person(user, User)\n  System(app, App)\n  Rel(user, app, Uses)"}
+                   {:type :sankey :source "sankey-beta\n  A,B,10\n  B,C,5"}
+                   {:type :xychart :source "xyChart-beta\n  title Sales\n  x-axis [jan, feb]\n  line [1, 2]"}
+                   {:type :block :source "block-beta\n  columns 2\n  A B"}
+                   {:type :architecture :source "architecture-beta\n  group api(cloud)[API]\n  service db(database)[DB]"}
+                   {:type :packet :source "packet-beta\n  0-15: Source Port"}
+                   {:type :kanban :source "kanban\n  Todo\n    Task"}
+                   {:type :treemap :source "treemap-beta\n  Root\n    Child: 10"}
+                   {:type :radar :source "radar-beta\n  axis A\n  curve X [1]"}
+                   {:type :ishikawa :source "ishikawa\n  Problem\n    Cause"}
+                   {:type :tree :source "treeView\n  root\n    child"}]]
+      (doseq [{:keys [type source]} samples]
+        (let [ast (mermaid/parse-mermaid source)
+              out (:lines (mermaid/render-mermaid {:width 100 :source source}))]
+          (expect (= type (:diagram/type ast)))
+          (expect (seq out))
+          (expect (str/includes? (first out) "Mermaid")))))))

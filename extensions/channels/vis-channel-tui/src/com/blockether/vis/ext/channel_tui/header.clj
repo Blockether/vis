@@ -115,9 +115,9 @@
   [level]
   (case level
     :success t/footer-fg-strong
-    :warn    t/footer-fg-strong
-    :error   t/footer-fg-strong
-    :info    t/footer-fg
+    :warn    t/footer-warning-fg
+    :error   t/footer-error-fg
+    :info    t/footer-spinner-fg
     t/footer-fg-muted))
 
 (defn- draw-rule!

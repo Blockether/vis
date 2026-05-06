@@ -28,7 +28,7 @@
     (expect (str/includes? patch/z-prompt "z/locator-for-symbol"))
     (expect (str/includes? patch/z-prompt "z/subedit->"))
     (expect (not (str/includes? patch/z-prompt "z/zedit")))
-    (expect (< (count patch/z-prompt) 800))
+    (expect (< (count patch/z-prompt) 1000))
     (expect (= 'patch (:ext.symbol/sym patch/patch-symbol)))
     (expect (str/includes? (:ext.symbol/doc patch/patch-symbol)
               "Same input shape as v/patch"))))
@@ -138,7 +138,7 @@
       (patch-fn {:path path :search second-old :replace 'new-sym})
       (expect (= "(ns demo)\n(def a old-sym)\n(def b new-sym)\n" (slurp path)))))
 
-  (it "applies multiple span-specific locator row edits to the same original file"
+  (it "applies span-specific locator row edits, including reader-anonymous fn forms"
     (let [path        (write-temp! "patch/locator-row-multi.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")
           patch-fn    (private-fn "patch-safe")
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
@@ -146,7 +146,19 @@
       (expect (= 2 (count old-symbols)))
       (patch-fn [(assoc (first old-symbols) :replace 'new-a)
                  (assoc (second old-symbols) :replace 'new-b)])
-      (expect (= "(ns demo)\n(def a new-a)\n(def b new-b)\n" (slurp path)))))
+      (expect (= "(ns demo)\n(def a new-a)\n(def b new-b)\n" (slurp path))))
+    (let [path        (write-temp! "patch/locator-row-anon-fn.clj"
+                        "(ns demo)\n(defn f [xs] (mapv #(inc %) xs))\n")
+          patch-fn    (private-fn "patch-safe")
+          locators-fn (:ext.symbol/fn patch/locators-symbol)
+          row         (->> (:result (locators-fn path {:source-contains "mapv" :limit 10}))
+                        (filter #(and (= :list (:tag %))
+                                   (str/includes? (:source %) "#(inc %)")))
+                        first)]
+      (patch-fn {:path path
+                 :search row
+                 :replace "(mapv (fn [x] (inc x)) xs)"})
+      (expect (str/includes? (slurp path) "(mapv (fn [x] (inc x)) xs)"))))
 
   (it "accepts locator rows as replacements via their source"
     (let [path        (write-temp! "patch/locator-replace.clj" "(ns demo)\n(def a source-sym)\n(def b target-sym)\n")

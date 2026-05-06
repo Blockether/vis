@@ -10,10 +10,14 @@
    - `set-my-commands!` install the slash-command menu shown by Telegram"
   (:require [babashka.http-client :as http]
             [charred.api :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]))
 
 (defn- base-url [token]
   (str "https://api.telegram.org/bot" token))
+
+(defn- file-base-url [token]
+  (str "https://api.telegram.org/file/bot" token))
 
 (defn- parse-body [resp]
   (json/read-json (:body resp) :key-fn keyword))
@@ -62,133 +66,102 @@
           (.append sb ch)
           (recur (inc i) sb))))))
 
-(defn- escape-markdown-v2-code
-  "Escape code content inside MarkdownV2 inline/fenced code."
-  [^String text]
-  (-> text
-    (str/replace "\\" "\\\\")
-    (str/replace "`" "\\`")))
+(defn- escape-html
+  [text]
+  (-> (str text)
+    (str/replace "&" "&amp;")
+    (str/replace "<" "&lt;")
+    (str/replace ">" "&gt;")
+    (str/replace "\"" "&quot;")))
 
-(defn- advance-to-line-end [^String text start]
-  (or (str/index-of text \newline start) (.length text)))
+(defn- markdown-table-separator? [line]
+  (let [cells (->> (str/split (str/trim (str/replace line #"^\||\|$" "")) #"\|")
+                (map str/trim)
+                (remove str/blank?))]
+    (and (seq cells)
+      (every? #(re-matches #":?-{3,}:?" %) cells))))
 
-(defn- convert-md-to-markdown-v2
-  "Best-effort normalization of common markdown to Telegram MarkdownV2.
+(defn- markdown-table-line? [line]
+  (str/includes? line "|"))
 
-   Handles:
-   - fenced code blocks (```...```)
-   - inline code (`...`)
-   - bold (**...**)
-   - italic (_..._ or *...*)
-   - strikethrough (~~...~~)
-   - blockquote lines (> ...)
-   - plain text escaped for MarkdownV2
+(defn- table-cells [line]
+  (->> (str/split (str/trim (str/replace line #"^\||\|$" "")) #"\|")
+    (mapv str/trim)))
 
-   Only processes formatting outside fenced code blocks."
-  [^String text]
-  (let [len (long (.length text))]
-    (loop [i  (long 0)
-           sb (StringBuilder. (* 2 len))]
-      (if (>= i len)
-        (.toString sb)
-        (cond
-          ;; Fenced code block: ```lang\n...\n```
-          (.startsWith text "```" i)
-          (let [after-fence (long (+ i 3))
-                lang-end    (long (advance-to-line-end text after-fence))
-                code-start  (if (< lang-end len) (inc lang-end) lang-end)
-                close-idx   (str/index-of text "```" code-start)]
-            (if close-idx
-              (let [close-idx (long close-idx)
-                    code (subs text code-start close-idx)]
-                (.append sb "```\n")
-                (.append sb (escape-markdown-v2-code code))
-                (.append sb "\n```")
-                (recur (+ close-idx 3) sb))
-              (do
-                (.append sb "```\n")
-                (.append sb (escape-markdown-v2-code (subs text code-start)))
-                (.append sb "\n```")
-                (recur len sb))))
+(defn- pad-right [s width]
+  (let [s (str s)]
+    (str s (apply str (repeat (max 0 (- width (count s))) " ")))))
 
-          ;; Inline code: `...`
-          (= (.charAt text i) \`)
-          (let [close (str/index-of text \` (inc i))]
-            (if close
-              (let [close (long close)
-                    inner (subs text (inc i) close)]
-                (.append sb "`")
-                (.append sb (escape-markdown-v2-code inner))
-                (.append sb "`")
-                (recur (inc close) sb))
-              (do (.append sb (escape-markdown-v2 "`"))
-                (recur (inc i) sb))))
+(defn- markdown-table->text [lines]
+  (let [rows   (mapv table-cells (remove markdown-table-separator? lines))
+        cols   (apply max 0 (map count rows))
+        rows   (mapv #(into [] (take cols (concat % (repeat "")))) rows)
+        widths (mapv (fn [idx]
+                       (apply max 1 (map #(count (nth % idx "")) rows)))
+                 (range cols))
+        fmt-row (fn [row]
+                  (str/join "  "
+                    (map-indexed (fn [idx cell]
+                                   (pad-right cell (nth widths idx)))
+                      row)))
+        sep     (str/join "  " (map #(apply str (repeat % "─")) widths))]
+    (str/join "\n"
+      (concat
+        (when-let [header (first rows)] [(fmt-row header) sep])
+        (map fmt-row (rest rows))))))
 
-          ;; Strikethrough: ~~...~~
-          (.startsWith text "~~" i)
-          (let [close (str/index-of text "~~" (+ i 2))]
-            (if (and close (not= close (+ i 2)))
-              (let [close (long close)
-                    inner (subs text (+ i 2) close)]
-                (.append sb "~~")
-                (.append sb (escape-markdown-v2 inner))
-                (.append sb "~~")
-                (recur (+ close 2) sb))
-              (do (.append sb (escape-markdown-v2 "~"))
-                (recur (inc i) sb))))
+(defn- html-inline [text]
+  (let [parts (str/split (str text) #"`" -1)]
+    (apply str
+      (map-indexed
+        (fn [idx part]
+          (if (odd? idx)
+            (str "<code>" (escape-html part) "</code>")
+            (-> (escape-html part)
+              (str/replace #"\[([^\]\n]+)\]\((https?://[^\s)]+)\)" "<a href=\"$2\">$1</a>")
+              (str/replace #"\*\*([^*\n]+)\*\*" "<b>$1</b>")
+              (str/replace #"(?<!\*)\*([^*\n]+)\*(?!\*)" "<i>$1</i>")
+              (str/replace #"_([^_\n]+)_" "<i>$1</i>"))))
+        parts))))
 
-          ;; Bold: **...**
-          (.startsWith text "**" i)
-          (let [close (str/index-of text "**" (+ i 2))]
-            (if (and close (not= close (+ i 2)))
-              (let [close (long close)
-                    inner (subs text (+ i 2) close)]
-                (.append sb "**")
-                (.append sb (escape-markdown-v2 inner))
-                (.append sb "**")
-                (recur (+ close 2) sb))
-              (do (.append sb (escape-markdown-v2 "*"))
-                (recur (inc i) sb))))
+(defn- convert-md-to-html
+  "Best-effort Telegram HTML rendering for common LLM Markdown.
+   Telegram has no headings or tables, so headings become bold lines and
+   Markdown tables become aligned <pre> blocks."
+  [text]
+  (let [lines (str/split-lines (or text ""))]
+    (loop [remaining lines
+           out       []]
+      (if-not (seq remaining)
+        (str/join "\n" out)
+        (let [line      (first remaining)
+              next-line (second remaining)]
+          (cond
+            (str/starts-with? line "```")
+            (let [[code-lines rest-lines] (split-with #(not (str/starts-with? % "```")) (rest remaining))
+                  rest-lines              (if (seq rest-lines) (rest rest-lines) rest-lines)]
+              (recur rest-lines
+                (conj out (str "<pre>" (escape-html (str/join "\n" code-lines)) "</pre>"))))
 
-          ;; Italic: *...* (single star, not double)
-          (= (.charAt text i) \*)
-          (let [close (str/index-of text \* (inc i))]
-            (if (and close (> (long close) (inc i)))
-              (let [close (long close)
-                    inner (subs text (inc i) close)]
-                (.append sb "*")
-                (.append sb (escape-markdown-v2 inner))
-                (.append sb "*")
-                (recur (inc close) sb))
-              (do (.append sb (escape-markdown-v2 "*"))
-                (recur (inc i) sb))))
+            (and (markdown-table-line? line) (markdown-table-separator? (or next-line "")))
+            (let [[table-lines rest-lines] (split-with markdown-table-line? remaining)]
+              (recur rest-lines
+                (conj out (str "<pre>" (escape-html (markdown-table->text table-lines)) "</pre>"))))
 
-          ;; Italic: _..._ (single underscore)
-          (= (.charAt text i) \_)
-          (let [close (str/index-of text \_ (inc i))]
-            (if (and close (> (long close) (inc i)))
-              (let [close (long close)
-                    inner (subs text (inc i) close)]
-                (.append sb "_")
-                (.append sb (escape-markdown-v2 inner))
-                (.append sb "_")
-                (recur (inc close) sb))
-              (do (.append sb (escape-markdown-v2 "_"))
-                (recur (inc i) sb))))
+            (re-matches #"\s*#{1,6}\s+.+" line)
+            (recur (rest remaining)
+              (conj out (str "<b>" (escape-html (str/replace line #"^\s*#{1,6}\s+" "")) "</b>")))
 
-          ;; Blockquote line: > ...
-          (and (= (.charAt text i) \>)
-            (or (zero? i) (= (.charAt text (dec i)) \newline)))
-          (let [line-end   (long (advance-to-line-end text i))
-                prefix-len (long (if (.startsWith text "> " i) 2 1))
-                quote-text (subs text (+ i prefix-len) line-end)]
-            (.append sb "> ")
-            (.append sb (escape-markdown-v2 quote-text))
-            (recur (if (< line-end len) (inc line-end) line-end) sb))
+            (re-matches #"\s*(-{3,}|_{3,}|\*{3,})\s*" line)
+            (recur (rest remaining) (conj out "────────"))
 
-          :else
-          (do (.append sb (escape-markdown-v2 (str (.charAt text i))))
-            (recur (inc i) sb)))))))
+            (str/starts-with? (str/triml line) ">")
+            (recur (rest remaining)
+              (conj out (str "<blockquote>" (html-inline (str/trim (str/replace line #"^\s*>\s?" ""))) "</blockquote>")))
+
+            :else
+            (recur (rest remaining)
+              (conj out (html-inline line)))))))))
 
 (defn- chunk-text
   "Split text into <=4000-char pieces along paragraph/line boundaries so
@@ -208,7 +181,7 @@
             (conj chunks (subs remaining 0 cut-at))))))))
 
 (defn send-message!
-  "Send a text reply using Telegram MarkdownV2 parse mode.
+  "Send a text reply using Telegram HTML parse mode.
    Falls back to plain text if Telegram rejects the payload.
    Auto-splits at 4096 chars.
 
@@ -218,10 +191,10 @@
    (send-message! token chat-id text nil))
   ([token chat-id text {:keys [reply-markup]}]
    (doseq [raw-chunk (chunk-text (or text ""))]
-     (let [md-chunk (convert-md-to-markdown-v2 raw-chunk)
+     (let [html-chunk (convert-md-to-html raw-chunk)
            payload (cond-> {"chat_id"    chat-id
-                            "text"       md-chunk
-                            "parse_mode" "MarkdownV2"}
+                            "text"       html-chunk
+                            "parse_mode" "HTML"}
                      reply-markup (assoc "reply_markup" reply-markup))
            resp    (post-json! token "/sendMessage" payload)]
        (when-not (:ok resp)
@@ -264,3 +237,63 @@
     (post-json! token "/sendChatAction"
       {"chat_id" chat-id "action" action})
     (catch Exception _ nil)))
+
+(defn get-file
+  "Return Telegram File metadata for `file-id`, including `:file_path`."
+  [token file-id]
+  (let [resp (post-json! token "/getFile" {"file_id" file-id})]
+    (when-not (:ok resp)
+      (throw (ex-info (str "Telegram getFile failed: " (:description resp))
+               {:body resp})))
+    (:result resp)))
+
+(defn download-file!
+  "Download Telegram file `file-path` into `dest-file`. Returns dest-file."
+  [token file-path dest-file]
+  (let [url (str (file-base-url token) "/" file-path)]
+    (try
+      (let [resp (http/get url {:as :stream :throw false :timeout 60000})]
+        (if (<= 200 (long (:status resp 0)) 299)
+          (with-open [in  (:body resp)
+                      out (io/output-stream dest-file)]
+            (io/copy in out)
+            dest-file)
+          (throw (ex-info (str "Telegram file download failed for " file-path)
+                   {:file-path file-path
+                    :status (:status resp)}))))
+      (catch Throwable t
+        (if (and (= file-path (:file-path (ex-data t)))
+              (contains? (ex-data t) :status))
+          (throw t)
+          (throw (ex-info (str "Telegram file download failed for " file-path)
+                   {:file-path file-path}
+                   t)))))))
+
+(defn- post-multipart! [token path fields]
+  (let [resp (http/post (str (base-url token) path)
+               {:multipart fields
+                :timeout 60000
+                :throw false})]
+    (parse-body resp)))
+
+(defn send-voice!
+  "Send an OGG/Opus voice-note file to Telegram."
+  [token chat-id voice-file]
+  (let [resp (post-multipart! token "/sendVoice"
+               [{:name "chat_id" :content (str chat-id)}
+                {:name "voice" :content (io/file voice-file)}])]
+    (when-not (:ok resp)
+      (throw (ex-info (str "Telegram sendVoice failed: " (:description resp))
+               {:body resp})))
+    resp))
+
+(defn send-audio!
+  "Send an audio file to Telegram as a generic audio attachment."
+  [token chat-id audio-file]
+  (let [resp (post-multipart! token "/sendAudio"
+               [{:name "chat_id" :content (str chat-id)}
+                {:name "audio" :content (io/file audio-file)}])]
+    (when-not (:ok resp)
+      (throw (ex-info (str "Telegram sendAudio failed: " (:description resp))
+               {:body resp})))
+    resp))

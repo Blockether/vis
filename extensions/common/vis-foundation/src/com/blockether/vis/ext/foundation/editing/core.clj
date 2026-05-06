@@ -143,7 +143,7 @@
     :v/create-dirs :op/create
     (:v/delete :v/delete-if-exists) :op/delete
     (:v/move :v/copy) :op/move
-    :v/bash :op/shell
+    (:v/bash :v/bash-strict) :op/shell
     :op/meta))
 
 (defn tool-op->presentation-kind
@@ -742,6 +742,15 @@
     (when (some? stdin)
       (.write writer ^String stdin))))
 
+(defn- bash-warnings
+  [exit stderr]
+  (cond-> []
+    (and (zero? (long exit))
+      (string? stderr)
+      (re-find #"(?m)^Traceback \(most recent call last\):" stderr))
+    (conj {:type :stderr-traceback-with-zero-exit
+           :message "stderr contains a Python Traceback even though bash exited 0; a swallowed script error may have occurred. Prefer v/bash-strict or set -euo pipefail for multi-step scripts."})))
+
 (defn- run-bash-safe
   ([command]
    (run-bash-safe command nil))
@@ -749,42 +758,52 @@
    (when-not (string? command)
      (throw (ex-info "v/bash command must be a string"
               {:type :ext.foundation.editing/invalid-bash-command
-               :got  (type command)})))
+               :got (type command)})))
    (when (str/blank? command)
      (throw (ex-info "v/bash command must be non-blank"
               {:type :ext.foundation.editing/invalid-bash-command})))
+   (when (and (re-find #"(?i)\.(clj|cljc|cljs|edn)(['\"\s]|$)" command)
+           (or (re-find #"(?i)\bpython3?\b|\bperl\b|\bruby\b" command)
+             (re-find #"(?i)\bsed\s+-i\b" command))
+           (re-find #"(?is)(write_text|open\s*\([^)]*['\"]w|perl\s+-p?i|ruby\s+-p?i|sed\s+-i|>\s*[^\n]*\.(clj|cljc|cljs|edn))" command))
+     (throw (ex-info "Refusing v/bash shell edit of Clojure/EDN source; use z/patch after z/locators or z/symbols."
+              {:type :ext.foundation.editing/bash-clojure-source-edit-blocked
+               :reason :use-z-patch
+               :command-preview (subs command 0 (min 240 (count command)))})))
    (let [{:keys [cwd timeout-ms max-output-chars stdin]} (coerce-bash-opts opts)
          cwd-file (ensure-existing-dir! (safe-path cwd))
-         cwd-rel  (display-path cwd-file)
-         argv     (java.util.ArrayList. ^java.util.Collection ["/usr/bin/env" "bash" "-lc" command])
-         pb       (doto (ProcessBuilder. ^java.util.List argv)
-                    (.directory cwd-file))
-         started  (now-ms)
+         cwd-rel (display-path cwd-file)
+         argv (java.util.ArrayList. ^java.util.Collection ["/usr/bin/env" "bash" "-lc" command])
+         pb (doto (ProcessBuilder. ^java.util.List argv)
+              (.directory cwd-file))
+         started (now-ms)
          ^Process process (.start pb)
          stdout-f (future (read-stream-limited (.getInputStream process) max-output-chars))
          stderr-f (future (read-stream-limited (.getErrorStream process) max-output-chars))
-         stdin-f  (future (write-stdin-and-close! process stdin))]
+         stdin-f (future (write-stdin-and-close! process stdin))]
      (try
-       (let [done?    (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
-             _        (when-not done?
-                        (.destroyForcibly process)
-                        (.waitFor process 1000 TimeUnit/MILLISECONDS))
+       (let [done? (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
+             _ (when-not done?
+                 (.destroyForcibly process)
+                 (.waitFor process 1000 TimeUnit/MILLISECONDS))
              finished (now-ms)
-             stdout   @stdout-f
-             stderr   @stderr-f
-             _        (try @stdin-f (catch Throwable _ nil))]
-         {:command           command
-          :cwd               cwd-rel
-          :exit              (if done? (.exitValue process) 124)
-          :timed-out?        (not done?)
-          :timeout-ms        timeout-ms
-          :duration-ms       (long (max 0 (- finished started)))
-          :stdout            (:text stdout)
-          :stderr            (:text stderr)
-          :stdout-chars      (:chars stdout)
-          :stderr-chars      (:chars stderr)
+             stdout @stdout-f
+             stderr @stderr-f
+             exit (if done? (.exitValue process) 124)
+             _ (try @stdin-f (catch Throwable _ nil))]
+         {:command command
+          :cwd cwd-rel
+          :exit exit
+          :timed-out? (not done?)
+          :timeout-ms timeout-ms
+          :duration-ms (long (max 0 (- finished started)))
+          :stdout (:text stdout)
+          :stderr (:text stderr)
+          :stdout-chars (:chars stdout)
+          :stderr-chars (:chars stderr)
           :stdout-truncated? (:truncated? stdout)
-          :stderr-truncated? (:truncated? stderr)})
+          :stderr-truncated? (:truncated? stderr)
+          :warnings (bash-warnings exit (:text stderr))})
        (catch InterruptedException e
          (.destroyForcibly process)
          (future-cancel stdout-f)
@@ -1135,26 +1154,45 @@
        :result exists?
        :provenance {:exists? exists?}})))
 
+(defn- strict-bash-command
+  [command]
+  (str "set -euo pipefail\n" command))
+
+(defn- bash-tool-result
+  [op command opts]
+  (let [strict? (= :v/bash-strict op)
+        out     (run-bash-safe (if strict? (strict-bash-command command) command) opts)]
+    (tool-success
+      {:op op
+       :path (:cwd out)
+       :kind :dir
+       :result (cond-> out strict? (assoc :strict? true :original-command command))
+       :provenance (cond-> {:command command
+                            :cwd (:cwd out)
+                            :exit (:exit out)
+                            :status (if (:timed-out? out) :timeout :done)
+                            :timed-out? (:timed-out? out)
+                            :timeout-ms (:timeout-ms out)
+                            :duration-ms (:duration-ms out)
+                            :stdout-truncated? (:stdout-truncated? out)
+                            :stderr-truncated? (:stderr-truncated? out)
+                            :warnings (:warnings out)
+                            :opts (dissoc opts :stdin)}
+                     strict? (assoc :strict? true
+                               :strict-command (:command out)))
+       :presentation {:kind :diagnostic}})))
+
 (defn- bash-tool
   ([command]
    (bash-tool command nil))
   ([command opts]
-   (let [out (run-bash-safe command opts)]
-     (tool-success
-       {:op :v/bash
-        :path (:cwd out)
-        :kind :dir
-        :result out
-        :provenance {:command command
-                     :cwd (:cwd out)
-                     :exit (:exit out)
-                     :status (if (:timed-out? out) :timeout :done)
-                     :timed-out? (:timed-out? out)
-                     :timeout-ms (:timeout-ms out)
-                     :stdout-truncated? (:stdout-truncated? out)
-                     :stderr-truncated? (:stderr-truncated? out)
-                     :opts (dissoc opts :stdin)}
-        :presentation {:kind :diagnostic}}))))
+   (bash-tool-result :v/bash command opts)))
+
+(defn- bash-strict-tool
+  ([command]
+   (bash-strict-tool command nil))
+  ([command opts]
+   (bash-tool-result :v/bash-strict command opts)))
 
 ;; =============================================================================
 ;; Structured renderers
@@ -1566,8 +1604,13 @@
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
     (let [{:keys [command cwd exit timed-out? timeout-ms duration-ms stdout stderr
-                  stdout-truncated? stderr-truncated?]} (:result tool-result)
+                  stdout-truncated? stderr-truncated? warnings]} (:result tool-result)
+          warning-text (when (seq warnings)
+                         (md/join "warnings:"
+                           (md/ul (map :message warnings))))
           out (cond-> []
+                (seq warning-text)
+                (conj warning-text)
                 (not (str/blank? stdout))
                 (conj (md/join "stdout:" (md/code-block "text" (bounded-render-text stdout))))
                 (not (str/blank? stderr))
@@ -1576,6 +1619,7 @@
         (md/p "Ran bash in" (md/code cwd) "- exit" (md/code exit) "," duration-ms "ms"
           (when timed-out? (str ", timed out after " timeout-ms "ms"))
           (when (or stdout-truncated? stderr-truncated?) ", output truncated")
+          (when (seq warnings) (str ", " (count warnings) " warning(s)"))
           ".")
         (md/p "Command:" (md/code command))
         (when (seq out) (apply md/join out))))))
@@ -1712,7 +1756,7 @@
 
 (def bash-symbol
   (vis/symbol 'bash bash-tool
-    {:doc "Run bounded `/usr/bin/env bash -lc` in worktree. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run) or (:exit run)."
+    {:doc "Run bounded `/usr/bin/env bash -lc` in worktree. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run) or (:exit run). Refuses shell-driven Clojure/EDN source edits; use z/patch for those. Emits :warnings when stderr looks like a swallowed failure."
      :arglists '([command] [command opts])
      :examples ["(def run (v/bash \"./verify.sh --quick\"))"
                 "(get-in run [:result :stdout])"
@@ -1721,6 +1765,15 @@
      :result-spec tool-result-spec
      :render-fn render-bash
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
+
+(def bash-strict-symbol
+  (vis/symbol 'bash-strict bash-strict-tool
+    {:doc "Run bounded bash with `set -euo pipefail` prepended. Same result envelope as v/bash."
+     :arglists '([command] [command opts])
+     :examples ["(v/bash-strict \"./verify.sh --quick\")"]
+     :result-spec tool-result-spec
+     :render-fn render-bash
+     :on-error-fn (tool-failure-on-error :v/bash-strict :dir nil)}))
 
 (def editing-symbols
   [cat-symbol
@@ -1736,7 +1789,8 @@
    delete-symbol
    delete-if-exists-symbol
    exists?-symbol
-   bash-symbol])
+   bash-symbol
+   bash-strict-symbol])
 
 (def editing-prompt
   (str
@@ -1751,7 +1805,7 @@
     "Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. "
     "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Use (v/patch-check edits) to preflight match counts without writing. Read exact bytes first; keep searches small and unique; do not invent long paragraphs. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
     "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).\n"
-    "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}).
+    "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). Use `v/bash-strict` for multi-step scripts; it prepends `set -euo pipefail`. `v/bash` and `v/bash-strict` refuse shell-driven Clojure/EDN source edits; use z/patch for those.
 "
     "Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\") [:result :lines]), (get-in (v/bash \"pwd\") [:result :stdout]), (-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits). "
     "Tools own rendering metadata; preview preserves it. Provenance/lifecycle metadata stays unchanged and remains the proof substrate. For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))

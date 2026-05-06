@@ -210,6 +210,33 @@
                      build)]
     (OfflineRecognizer. config)))
 
+(def min-audio-seconds
+  "Minimum microphone audio length sent to Parakeet ASR.
+   Very short clips either transcribe blank or trigger opaque ONNX Conv_quant
+   shape errors, so reject them before inference."
+  1.0)
+
+(defn- audio-stats
+  [^WaveReader reader]
+  (let [samples     (alength ^floats (.getSamples reader))
+        sample-rate (.getSampleRate reader)
+        duration    (if (pos? sample-rate)
+                      (/ samples (double sample-rate))
+                      0.0)]
+    {:samples samples
+     :sample-rate sample-rate
+     :duration-seconds duration}))
+
+(defn- assert-audio-long-enough!
+  [audio-path ^WaveReader reader]
+  (let [{:keys [duration-seconds] :as stats} (audio-stats reader)]
+    (when (< duration-seconds min-audio-seconds)
+      (throw (ex-info "Voice recording too short — try again"
+               (assoc stats
+                 :type :voice-parakeet/audio-too-short
+                 :path (str audio-path)
+                 :min-duration-seconds min-audio-seconds))))))
+
 (defn transcribe-file!
   "Transcribe `audio-path` with local Parakeet TDT int8 through the sherpa-onnx
    Java API. Auto-downloads the model on first use. Returns plain text."
@@ -222,8 +249,9 @@
        (throw (ex-info (str "Missing audio file: " audio-path)
                 {:type :voice-parakeet/missing-audio-file
                  :path (str audio-path)})))
-     (let [r      (recognizer files)
-           reader (WaveReader. (str audio-file))
+     (let [reader (WaveReader. (str audio-file))
+           _      (assert-audio-long-enough! audio-path reader)
+           r      (recognizer files)
            stream (.createStream r)]
        (try
          (.acceptWaveform ^OfflineStream stream (.getSamples reader) (.getSampleRate reader))

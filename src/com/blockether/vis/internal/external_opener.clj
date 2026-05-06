@@ -20,7 +20,8 @@
    Pure-ish: every step except `open!` itself is a function of its
    args plus `os.name` and the current working directory. `open!`
    shells out and never throws; errors land in the returned result map."
-  (:require [clojure.string :as str])
+  (:require [babashka.process :as process]
+            [clojure.string :as str])
   (:import (java.io File)
            (java.nio.file Path Paths)))
 
@@ -216,12 +217,10 @@
    success, otherwise the Throwable for the caller to inspect."
   [argv]
   (try
-    (let [pb (ProcessBuilder. ^java.util.List argv)
-          dn java.lang.ProcessBuilder$Redirect/DISCARD]
-      (.redirectOutput pb dn)
-      (.redirectError pb dn)
-      (.start pb)
-      nil)
+    (process/process {:cmd argv
+                      :out :discard
+                      :err :discard})
+    nil
     (catch Throwable t t)))
 
 (declare open!)

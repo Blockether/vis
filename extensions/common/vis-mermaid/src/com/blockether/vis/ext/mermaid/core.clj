@@ -13,6 +13,7 @@
 (def ^:private max-source-chars 20000)
 (def ^:private max-source-lines 400)
 (def ^:private max-output-lines 100)
+(def ^:private max-render-width 320)
 (def ^:private max-flow-nodes 80)
 (def ^:private max-flow-edges 140)
 (def ^:private max-label-width 28)
@@ -325,16 +326,251 @@
        :warnings []}
       statements)))
 
+(def ^:private diagram-kind->type
+  {"architecture" :architecture
+   "architecture-beta" :architecture
+   "block" :block
+   "block-beta" :block
+   "c4component" :c4
+   "c4container" :c4
+   "c4context" :c4
+   "c4deployment" :c4
+   "classdiagram" :class
+   "classdiagram-v2" :class
+   "erd" :er
+   "erdiagram" :er
+   "gantt" :gantt
+   "gitgraph" :gitgraph
+   "graph" :flowchart
+   "flowchart" :flowchart
+   "ishikawa" :ishikawa
+   "journey" :journey
+   "kanban" :kanban
+   "kanban-beta" :kanban
+   "mindmap" :mindmap
+   "packet" :packet
+   "packet-beta" :packet
+   "pie" :pie
+   "quadrantchart" :quadrant
+   "radar" :radar
+   "radar-beta" :radar
+   "requirementdiagram" :requirement
+   "sankey" :sankey
+   "sankey-beta" :sankey
+   "sequencediagram" :sequence
+   "statediagram" :state
+   "statediagram-v2" :state
+   "timeline" :timeline
+   "treeview" :tree
+   "treemap" :treemap
+   "treemap-beta" :treemap
+   "userjourney" :journey
+   "xychart" :xychart
+   "xychart-beta" :xychart})
+
+(def ^:private diagram-type-label
+  {:architecture "architecture"
+   :block "block"
+   :c4 "C4"
+   :class "class"
+   :er "ER"
+   :flowchart "flowchart"
+   :gantt "gantt"
+   :gitgraph "gitGraph"
+   :ishikawa "ishikawa"
+   :journey "journey"
+   :kanban "kanban"
+   :mindmap "mindmap"
+   :packet "packet"
+   :pie "pie"
+   :quadrant "quadrant"
+   :radar "radar"
+   :requirement "requirement"
+   :sankey "sankey"
+   :sequence "sequence"
+   :state "state"
+   :timeline "timeline"
+   :tree "treeView"
+   :treemap "treemap"
+   :xychart "xyChart"})
+
+(defn- source-body-lines
+  [source]
+  (vec (rest (content-lines source))))
+
+(defn- raw-body-lines
+  [source]
+  (->> (str/split-lines (or source ""))
+    rest
+    (map strip-comment)
+    (remove str/blank?)
+    vec))
+
+(defn- title-line?
+  [line]
+  (str/starts-with? (str/lower-case (str/trim line)) "title"))
+
+(defn- line-title
+  [line]
+  (some-> line
+    (str/replace #"(?i)^title\s*:??\s*" "")
+    clean-label))
+
+(defn- parse-title
+  [lines]
+  (some (fn [line]
+          (when (title-line? line)
+            (line-title line)))
+    lines))
+
+(defn- drop-title-lines
+  [lines]
+  (remove title-line? lines))
+
+(defn- structured-diagram
+  [type source & {:keys [items title warnings]}]
+  (let [lines (source-body-lines source)]
+    {:diagram/type type
+     :title (or title (parse-title lines))
+     :items (vec (or items (drop-title-lines lines)))
+     :warnings (vec warnings)}))
+
+(defn- parse-class-diagram
+  [source]
+  (let [lines (source-body-lines source)
+        classes (vec (keep (fn [line]
+                             (or (some-> (re-matches #"^class\s+([A-Za-z0-9_.$:-]+).*" line) second)
+                               (some-> (re-matches #"^([A-Za-z0-9_.$:-]+)\s*[:{].*" line) second)))
+                       lines))
+        relations (vec (filter #(re-find #"(<\|--|--\|>|\*--|o--|-->|--|\.\.)" %) lines))]
+    (assoc (structured-diagram :class source)
+      :classes classes
+      :relations relations)))
+
+(defn- parse-state-diagram
+  [source]
+  (let [lines (source-body-lines source)
+        transitions (vec (keep (fn [line]
+                                 (when-let [[_ a b label] (re-matches #"^(.+?)\s*-->\s*(.+?)(?:\s*:\s*(.*))?$" line)]
+                                   {:from (clean-label a) :to (clean-label b) :label (some-> label clean-label)}))
+                           lines))]
+    (assoc (structured-diagram :state source)
+      :transitions transitions)))
+
+(defn- parse-er-diagram
+  [source]
+  (let [lines (source-body-lines source)
+        relationships (vec (keep (fn [line]
+                                   (when-let [[_ a rel b label] (re-matches #"^([A-Za-z0-9_.$:-]+)\s+([|}{o\-]+--[|}{o\-]+)\s+([A-Za-z0-9_.$:-]+)\s*:?\s*(.*)$" line)]
+                                     {:from a :rel rel :to b :label (clean-label label)}))
+                             lines))]
+    (assoc (structured-diagram :er source)
+      :relationships relationships)))
+
+(defn- parse-number
+  [s]
+  (try
+    (Double/parseDouble (str/trim (str s)))
+    (catch Throwable _ nil)))
+
+(defn- parse-pie-diagram
+  [source]
+  (let [lines (source-body-lines source)
+        slices (vec (keep (fn [line]
+                            (when-let [[_ label value] (re-matches #"^\s*[\"']?([^\"':]+)[\"']?\s*:\s*([0-9.]+)\s*$" line)]
+                              {:label (clean-label label) :value (or (parse-number value) 0)}))
+                      lines))]
+    (assoc (structured-diagram :pie source)
+      :slices slices)))
+
+(defn- parse-sankey-diagram
+  [source]
+  (let [rows (vec (keep (fn [line]
+                          (let [[a b v] (map str/trim (str/split line #","))]
+                            (when (and a b v)
+                              {:from (clean-label a) :to (clean-label b) :value (clean-label v)})))
+                    (source-body-lines source)))]
+    (assoc (structured-diagram :sankey source)
+      :links rows)))
+
+(defn- leading-space-count
+  [s]
+  (count (take-while #(Character/isWhitespace ^char %) (str s))))
+
+(defn- parse-indent-diagram
+  [type source]
+  (let [lines (raw-body-lines source)
+        title (parse-title (map str/trim lines))
+        items (->> lines
+                (remove #(title-line? (str/trim %)))
+                (mapv (fn [line]
+                        {:indent (leading-space-count line)
+                         :text (clean-label (str/trim line))})))]
+    {:diagram/type type
+     :title title
+     :items items
+     :warnings []}))
+
+(defn- parse-quadrant-diagram
+  [source]
+  (let [lines (source-body-lines source)
+        points (vec (keep (fn [line]
+                            (when-let [[_ label x y] (re-matches #"^(.+?)\s*:\s*\[\s*([0-9.]+)\s*,\s*([0-9.]+)\s*\]\s*$" line)]
+                              {:label (clean-label label) :x (parse-number x) :y (parse-number y)}))
+                      lines))]
+    (assoc (structured-diagram :quadrant source)
+      :points points)))
+
+(defn- parse-c4-diagram
+  [source]
+  (let [lines (source-body-lines source)
+        nodes (vec (keep (fn [line]
+                           (when-let [[_ kind args] (re-matches #"^(Person|System|Container|Component|Boundary|System_Boundary|Container_Boundary)\s*\((.*)\)\s*$" line)]
+                             {:kind kind :args args}))
+                     lines))
+        rels (vec (keep (fn [line]
+                          (when-let [[_ args] (re-matches #"^Rel\s*\((.*)\)\s*$" line)]
+                            {:args args}))
+                    lines))]
+    (assoc (structured-diagram :c4 source)
+      :nodes nodes
+      :relations rels)))
+
+(defn- parse-xy-diagram
+  [source]
+  (let [lines (source-body-lines source)
+        series (vec (filter #(re-matches #"^(line|bar)\s+.*" %) lines))]
+    (assoc (structured-diagram :xychart source)
+      :series series)))
+
+(defn- parse-generic-known-diagram
+  [type source]
+  (if (#{:mindmap :tree :timeline :kanban :treemap :ishikawa :architecture :block :packet} type)
+    (parse-indent-diagram type source)
+    (structured-diagram type source)))
+
 (defn parse-mermaid
   "Parse Mermaid source into a pure Clojure AST. Never evaluates JS."
   [source]
-  (case (diagram-kind source)
-    "graph" (parse-flowchart source)
-    "flowchart" (parse-flowchart source)
-    "sequencediagram" (parse-sequence source)
-    {:diagram/type :unsupported
-     :kind (or (diagram-kind source) "unknown")
-     :warnings [(str "Unsupported diagram type: " (or (diagram-kind source) "unknown"))]}))
+  (let [kind (diagram-kind source)
+        type (get diagram-kind->type kind)]
+    (case type
+      :flowchart (parse-flowchart source)
+      :sequence (parse-sequence source)
+      :class (parse-class-diagram source)
+      :state (parse-state-diagram source)
+      :er (parse-er-diagram source)
+      :pie (parse-pie-diagram source)
+      :sankey (parse-sankey-diagram source)
+      :mindmap (parse-indent-diagram :mindmap source)
+      :tree (parse-indent-diagram :tree source)
+      :quadrant (parse-quadrant-diagram source)
+      :c4 (parse-c4-diagram source)
+      :xychart (parse-xy-diagram source)
+      nil {:diagram/type :unsupported
+           :kind (or kind "unknown")
+           :warnings [(str "Unsupported diagram type: " (or kind "unknown"))]}
+      (parse-generic-known-diagram type source))))
 
 (defn- node-size
   [{:keys [label shape]}]
@@ -435,18 +671,22 @@
        (str "└" (repeat-str \─ (- w 2)) "┘")])))
 
 (defn- flow-positions-lr
-  [ast groups]
+  [ast groups width]
   (let [nodes (:nodes ast)
         col-widths (mapv (fn [{:keys [ids]}]
                            (apply max 7 (map #(:w (node-size (get nodes %))) ids)))
                      groups)
-        col-x (reductions + 2 (map #(+ % 5) col-widths))]
+        gaps (max 1 (dec (count col-widths)))
+        used (reduce + col-widths)
+        h-gap (max 6 (quot (max 0 (- (long width) used 8)) gaps))
+        v-gap 6
+        col-x (reductions + 2 (map #(+ % h-gap) col-widths))]
     (into {}
       (mapcat (fn [col {:keys [ids]}]
                 (map-indexed
                   (fn [row id]
                     [id {:x (nth col-x col)
-                         :y (+ 1 (* row 5))
+                         :y (+ 1 (* row v-gap))
                          :w (:w (node-size (get nodes id)))
                          :h 3}])
                   ids))
@@ -454,7 +694,7 @@
         groups))))
 
 (defn- flow-positions-td
-  [ast groups]
+  [ast groups width]
   (let [nodes (:nodes ast)
         max-cols (apply max 1 (map #(count (:ids %)) groups))
         col-widths (mapv (fn [idx]
@@ -464,13 +704,17 @@
                                    :when id]
                                (:w (node-size (get nodes id))))))
                      (range max-cols))
-        col-x (vec (reductions + 2 (map #(+ % 5) col-widths)))]
+        gaps (max 1 (dec (count col-widths)))
+        used (reduce + col-widths)
+        h-gap (max 5 (quot (max 0 (- (long width) used 8)) gaps))
+        v-gap 5
+        col-x (vec (reductions + 2 (map #(+ % h-gap) col-widths)))]
     (into {}
       (mapcat (fn [rank {:keys [ids]}]
                 (map-indexed
                   (fn [col id]
                     [id {:x (nth col-x col)
-                         :y (+ 1 (* rank 5))
+                         :y (+ 1 (* rank v-gap))
                          :w (:w (node-size (get nodes id)))
                          :h 3}])
                   ids))
@@ -486,54 +730,76 @@
   [a b]
   (quot (+ a b) 2))
 
+(defn- edge-label-text
+  [label]
+  (when (seq label)
+    (clip-line 22 (str "─ " (clean-label label) " ─"))))
+
 (defn- draw-edge-label!
   [canvas x y label]
-  (when (seq label)
-    (put-str! canvas x y (clip-line 18 (str " " label " ")))))
+  (when-let [text (edge-label-text label)]
+    (put-str! canvas x y text)))
 
 (defn- draw-edge-lr!
-  [canvas positions {:keys [source-id target-id label style directed? bidir?]}]
-  (let [a (get positions source-id)
-        b (get positions target-id)]
-    (when (and a b)
-      (let [ay (+ (:y a) 1)
-            by (+ (:y b) 1)
-            ax (+ (:x a) (:w a))
-            bx (dec (:x b))
-            ch (case style :dotted \╌ :thick \═ \─)
-            arrow (if (< ax bx) \▶ \◀)
-            midx (midpoint ax bx)]
-        (if (= ay by)
-          (draw-h! canvas ax bx ay ch)
-          (do
-            (draw-h! canvas ax midx ay ch)
-            (draw-v! canvas midx ay by \│)
-            (draw-h! canvas midx bx by ch)))
-        (when bidir? (put-char! canvas ax ay (if (< ax bx) \◀ \▶)))
-        (when directed? (put-char! canvas bx by arrow))
-        (draw-edge-label! canvas (min midx (max 0 (- (alength ^chars (first canvas)) 20))) (max 0 (dec (midpoint ay by))) label)))))
+  ([canvas positions edge]
+   (draw-edge-lr! canvas positions edge false))
+  ([canvas positions {:keys [source-id target-id label style directed? bidir?]} label-only?]
+   (let [a (get positions source-id)
+         b (get positions target-id)]
+     (when (and a b)
+       (let [ay (+ (:y a) 1)
+             by (+ (:y b) 1)
+             ax (+ (:x a) (:w a))
+             bx (dec (:x b))
+             ch (case style :dotted \╌ :thick \═ \─)
+             arrow (if (< ax bx) \▶ \◀)
+             midx (midpoint ax bx)
+             label-text (edge-label-text label)
+             label-w (count (or label-text ""))]
+         (when-not label-only?
+           (if (= ay by)
+             (draw-h! canvas ax bx ay ch)
+             (do
+               (draw-h! canvas ax midx ay ch)
+               (draw-v! canvas midx ay by \│)
+               (draw-h! canvas midx bx by ch)))
+           (when bidir? (put-char! canvas ax ay (if (< ax bx) \◀ \▶)))
+           (when directed? (put-char! canvas bx by arrow)))
+         (when (and label-only? label-text)
+           (let [line-y (if (= ay by) ay (if (< ay by) (inc ay) (dec ay)))
+                 gap-start (inc (min ax bx))
+                 gap-end (dec (max ax bx))
+                 available (max 0 (- gap-end gap-start -1))
+                 label-x (if (>= available label-w)
+                           (+ gap-start (quot (- available label-w) 2))
+                           (min midx (max 0 (- (alength ^chars (first canvas)) label-w 1))))]
+             (draw-edge-label! canvas label-x line-y label))))))))
 
 (defn- draw-edge-td!
-  [canvas positions {:keys [source-id target-id label style directed? bidir?]}]
-  (let [a (get positions source-id)
-        b (get positions target-id)]
-    (when (and a b)
-      (let [ax (+ (:x a) (quot (:w a) 2))
-            bx (+ (:x b) (quot (:w b) 2))
-            ay (+ (:y a) (:h a))
-            by (dec (:y b))
-            ch (case style :dotted \╌ :thick \║ \│)
-            arrow (if (< ay by) \▼ \▲)
-            midy (midpoint ay by)]
-        (if (= ax bx)
-          (draw-v! canvas ax ay by ch)
-          (do
-            (draw-v! canvas ax ay midy ch)
-            (draw-h! canvas ax bx midy \─)
-            (draw-v! canvas bx midy by ch)))
-        (when bidir? (put-char! canvas ax ay (if (< ay by) \▲ \▼)))
-        (when directed? (put-char! canvas bx by arrow))
-        (draw-edge-label! canvas (inc (min ax bx)) midy label)))))
+  ([canvas positions edge]
+   (draw-edge-td! canvas positions edge false))
+  ([canvas positions {:keys [source-id target-id label style directed? bidir?]} label-only?]
+   (let [a (get positions source-id)
+         b (get positions target-id)]
+     (when (and a b)
+       (let [ax (+ (:x a) (quot (:w a) 2))
+             bx (+ (:x b) (quot (:w b) 2))
+             ay (+ (:y a) (:h a))
+             by (dec (:y b))
+             ch (case style :dotted \╌ :thick \║ \│)
+             arrow (if (< ay by) \▼ \▲)
+             midy (midpoint ay by)]
+         (when-not label-only?
+           (if (= ax bx)
+             (draw-v! canvas ax ay by ch)
+             (do
+               (draw-v! canvas ax ay midy ch)
+               (draw-h! canvas ax bx midy \─)
+               (draw-v! canvas bx midy by ch)))
+           (when bidir? (put-char! canvas ax ay (if (< ay by) \▲ \▼)))
+           (when directed? (put-char! canvas bx by arrow)))
+         (when (and label-only? label)
+           (draw-edge-label! canvas (+ 2 (min ax bx)) midy label)))))))
 
 (defn- render-flow-edge-list
   [{:keys [nodes edges warnings]}]
@@ -547,25 +813,41 @@
               edges))
     (seq warnings) (conj (str "Warnings: " (count warnings)))))
 
+(defn- flow-layout-candidate
+  [ast groups direction width]
+  (let [horizontal? (#{"LR" "RL"} direction)
+        positions (if horizontal?
+                    (flow-positions-lr ast groups width)
+                    (flow-positions-td ast groups width))
+        max-x (apply max 40 (map (fn [[_ {:keys [x w]}]] (+ x w 3)) positions))
+        max-y (apply max 8 (map (fn [[_ {:keys [y h]}]] (+ y h 3)) positions))]
+    {:layout/type :canvas
+     :direction direction
+     :ast ast
+     :positions positions
+     :w max-x
+     :h max-y}))
+
+(defn- preferred-fallback-directions
+  [direction]
+  (if (#{"LR" "RL"} direction)
+    [direction "TD"]
+    [direction "LR"]))
+
 (defn- layout-flowchart
-  [{:keys [nodes edges direction] :as ast}]
-  (if (or (empty? edges)
-        (> (count nodes) max-flow-nodes)
-        (> (count edges) max-flow-edges))
-    {:layout/type :edge-list :ast ast}
-    (let [groups (grouped-ranks ast)
-          horizontal? (#{"LR" "RL"} direction)
-          positions (if horizontal?
-                      (flow-positions-lr ast groups)
-                      (flow-positions-td ast groups))
-          max-x (apply max 40 (map (fn [[_ {:keys [x w]}]] (+ x w 3)) positions))
-          max-y (apply max 8 (map (fn [[_ {:keys [y h]}]] (+ y h 3)) positions))]
-      {:layout/type :canvas
-       :direction direction
-       :ast ast
-       :positions positions
-       :w max-x
-       :h max-y})))
+  ([ast]
+   (layout-flowchart ast {}))
+  ([{:keys [nodes edges direction] :as ast} {:keys [width]}]
+   (let [width (max 20 (long (or width 80)))]
+     (if (or (empty? edges)
+           (> (count nodes) max-flow-nodes)
+           (> (count edges) max-flow-edges))
+       {:layout/type :edge-list :ast ast}
+       (let [groups (grouped-ranks ast)
+             candidates (mapv #(flow-layout-candidate ast groups % width)
+                          (preferred-fallback-directions direction))]
+         (or (first (filter #(<= (:w %) width) candidates))
+           (first candidates)))))))
 
 (defn- render-flowchart-layout
   [{:keys [layout/type ast positions w h direction]}]
@@ -575,8 +857,12 @@
           horizontal? (#{"LR" "RL"} direction)]
       (doseq [edge (:edges ast)]
         (if horizontal?
-          (draw-edge-lr! canvas positions edge)
-          (draw-edge-td! canvas positions edge)))
+          (draw-edge-lr! canvas positions edge false)
+          (draw-edge-td! canvas positions edge false)))
+      (doseq [edge (:edges ast)]
+        (if horizontal?
+          (draw-edge-lr! canvas positions edge true)
+          (draw-edge-td! canvas positions edge true)))
       (doseq [id (:order ast)]
         (draw-node! canvas (get positions id) (get-in ast [:nodes id])))
       (into ["Mermaid (flowchart)"] (canvas-lines canvas)))))
@@ -619,13 +905,102 @@
       (map #(render-sequence-event layout %) events))
     ["Mermaid (sequence)" "No renderable messages found."]))
 
+(defn- diagram-heading
+  [ast]
+  (str "Mermaid (" (get diagram-type-label (:diagram/type ast) (name (:diagram/type ast))) ")"))
+
+(defn- title-lines
+  [{:keys [title]}]
+  (when (seq title)
+    [(str "Title: " title)]))
+
+(defn- bar-line
+  [label value max-value width]
+  (let [bar-width (max 1 (min 40 (- width 24)))
+        n (if (pos? max-value)
+            (long (Math/round (* bar-width (/ (double value) max-value))))
+            0)]
+    (str "• " label " " (repeat-str \█ n) " " value)))
+
+(defn- render-indent-items
+  [items]
+  (mapv (fn [{:keys [indent text]}]
+          (str (repeat-str \space (quot indent 2)) "• " text))
+    items))
+
+(defn- render-structured-layout
+  [{:keys [ast width]}]
+  (let [{:keys [diagram/type items warnings]} ast
+        base (cond-> [(diagram-heading ast)]
+               (:title ast) (into (title-lines ast)))]
+    (cond->
+      (into base
+        (case type
+          :class
+          (concat
+            (when (seq (:classes ast))
+              [(str "Classes: " (str/join ", " (distinct (:classes ast))))])
+            (map #(str "• " %) (or (seq (:relations ast)) items)))
+
+          :state
+          (or (seq (map (fn [{:keys [from to label]}]
+                          (str "• " from " → " to (when label (str ": " label))))
+                     (:transitions ast)))
+            (map #(str "• " %) items))
+
+          :er
+          (or (seq (map (fn [{:keys [from rel to label]}]
+                          (str "• " from " " rel " " to (when-not (str/blank? label) (str ": " label))))
+                     (:relationships ast)))
+            (map #(str "• " %) items))
+
+          :pie
+          (let [slices (:slices ast)
+                max-value (apply max 0 (map :value slices))]
+            (if (seq slices)
+              (map #(bar-line (:label %) (:value %) max-value width) slices)
+              (map #(str "• " %) items)))
+
+          :sankey
+          (or (seq (map (fn [{:keys [from to value]}]
+                          (str "• " from " ── " value " ──▶ " to))
+                     (:links ast)))
+            (map #(str "• " %) items))
+
+          :quadrant
+          (concat
+            (map #(str "• " %) (remove #(re-matches #".*:\s*\[[^]]+\]\s*" %) items))
+            (map (fn [{:keys [label x y]}]
+                   (str "• " label " @ [" x ", " y "]"))
+              (:points ast)))
+
+          :c4
+          (concat
+            (map (fn [{:keys [kind args]}] (str "• " kind "(" args ")")) (:nodes ast))
+            (map (fn [{:keys [args]}] (str "• Rel(" args ")")) (:relations ast)))
+
+          :xychart
+          (or (seq (map #(str "• " %) (:series ast)))
+            (map #(str "• " %) items))
+
+          (:mindmap :tree :timeline :kanban :treemap :ishikawa :architecture :block :packet)
+          (render-indent-items items)
+
+          (map #(str "• " %) items)))
+      (seq warnings) (conj (str "Warnings: " (count warnings))))))
+
 (defn layout-diagram
   "Lay out a parsed Mermaid AST into terminal-renderable geometry."
-  [ast]
-  (case (:diagram/type ast)
-    :flowchart (layout-flowchart ast)
-    :sequence (sequence-layout ast)
-    {:layout/type :unsupported :ast ast}))
+  ([ast]
+   (layout-diagram ast {}))
+  ([ast opts]
+   (case (:diagram/type ast)
+     :flowchart (layout-flowchart ast opts)
+     :sequence (sequence-layout ast)
+     :unsupported {:layout/type :unsupported :ast ast}
+     {:layout/type :structured
+      :ast ast
+      :width (:width opts)})))
 
 (defn render-layout
   "Render Mermaid layout to terminal lines."
@@ -634,13 +1009,14 @@
     :canvas (render-flowchart-layout layout)
     :edge-list (render-flowchart-layout layout)
     :sequence (render-sequence-layout layout)
+    :structured (render-structured-layout layout)
     ["Mermaid" (first (or (get-in layout [:ast :warnings]) ["Unsupported diagram"]))]))
 
 (defn render-mermaid
   "Fenced renderer entry point. Pure JVM, bounded, terminal-safe.
    Returns `{:lines [...]}` for Vis' generic fenced renderer API."
   [{:keys [source width]}]
-  (let [width (max 20 (min 180 (long (or width 80))))
+  (let [width (max 20 (min max-render-width (long (or width 80))))
         lines (str/split-lines (or source ""))]
     {:lines
      (clip-lines width
@@ -652,7 +1028,10 @@
          ["Mermaid" (str "Source too large (" (count lines) " lines).")]
 
          :else
-         (-> source parse-mermaid layout-diagram render-layout)))}))
+         (-> source
+           parse-mermaid
+           (layout-diagram {:width width})
+           render-layout)))}))
 
 (def mermaid-extension
   (vis/extension

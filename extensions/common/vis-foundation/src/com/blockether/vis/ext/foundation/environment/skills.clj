@@ -21,7 +21,7 @@
    fields) is preserved under `:extra` (plan §1 Q10/a5). Files
    that fail YAML parsing or are missing required fields are
    DROPPED from the catalog and recorded in scan-warnings, so
-   the user sees them at startup and during `vis doctor`."
+   the user sees them at startup and during `vis extensions doctor`."
   (:require
    [clojure.string :as str]
    [taoensso.telemere :as tel]
