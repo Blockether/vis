@@ -3,7 +3,7 @@
    Single app-db atom, pure event handlers, side effects via reg-fx."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.theme :as shared-theme]
+            [com.blockether.vis.internal.theme :as shared-theme]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]

@@ -209,18 +209,36 @@
 (defn send-message!
   "Send a text reply using Telegram MarkdownV2 parse mode.
    Falls back to plain text if Telegram rejects the payload.
-   Auto-splits at 4096 chars."
-  [token chat-id text]
-  (doseq [raw-chunk (chunk-text (or text ""))]
-    (let [md-chunk (convert-md-to-markdown-v2 raw-chunk)
-          payload {"chat_id"    chat-id
-                   "text"       md-chunk
-                   "parse_mode" "MarkdownV2"}
-          resp    (post-json! token "/sendMessage" payload)]
-      (when-not (:ok resp)
-        (post-json! token "/sendMessage"
-          {"chat_id" chat-id
-           "text" raw-chunk})))))
+   Auto-splits at 4096 chars.
+
+   `opts` supports:
+   - `:reply-markup` — Telegram reply_markup map, e.g. inline keyboard."
+  ([token chat-id text]
+   (send-message! token chat-id text nil))
+  ([token chat-id text {:keys [reply-markup]}]
+   (doseq [raw-chunk (chunk-text (or text ""))]
+     (let [md-chunk (convert-md-to-markdown-v2 raw-chunk)
+           payload (cond-> {"chat_id"    chat-id
+                            "text"       md-chunk
+                            "parse_mode" "MarkdownV2"}
+                     reply-markup (assoc "reply_markup" reply-markup))
+           resp    (post-json! token "/sendMessage" payload)]
+       (when-not (:ok resp)
+         (post-json! token "/sendMessage"
+           (cond-> {"chat_id" chat-id
+                    "text" raw-chunk}
+             reply-markup (assoc "reply_markup" reply-markup))))))))
+
+(defn answer-callback-query!
+  "Acknowledge a Telegram inline-keyboard callback. Best-effort."
+  ([token callback-query-id]
+   (answer-callback-query! token callback-query-id nil))
+  ([token callback-query-id text]
+   (try
+     (post-json! token "/answerCallbackQuery"
+       (cond-> {"callback_query_id" callback-query-id}
+         (seq text) (assoc "text" text)))
+     (catch Exception _ nil))))
 
 (defn send-chat-action!
   "Show a transient indicator in the chat (e.g. 'typing…'). Best-effort: errors

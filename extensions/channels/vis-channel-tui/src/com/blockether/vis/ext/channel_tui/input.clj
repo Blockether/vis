@@ -708,16 +708,26 @@
 
 (defn- file-mention->prompt-block
   [path]
-  (if (resolve-local-file path)
-    (let [binding (file-mention-binding-symbol path)
-          path-lit (pr-str (str path))]
+  (if-let [file (resolve-local-file path)]
+    (let [binding     (file-mention-binding-symbol path)
+          path-lit    (pr-str (str path))
+          line-count  (try
+                        (with-open [r (io/reader file)]
+                          (count (line-seq r)))
+                        (catch Throwable _ nil))
+          small-file? (and line-count (<= line-count file-mention-preview-lines))]
       (str "[Attached File: " path "]\n"
         "IMPORTANT: READ IT NOW. This is a focused attached file reference, not file contents.\n"
-        "Before answering about it, acquire runtime truth with `v/cat`, bind the result, and preview the relevant lines.\n"
+        (if small-file?
+          (str "Before answering about it, acquire runtime truth with `v/cat`, bind the result, and preview the whole file because it appears small ("
+            line-count " lines <= " file-mention-preview-lines "). If `v/cat` reports that it grew, switch to focused relevant lines.\n")
+          "Before answering about it, acquire runtime truth with `v/cat`, bind the result, and preview the relevant lines.\n")
         "Use this exact first-observation pattern:\n"
         "```clojure\n"
         "(def " binding " (v/cat " path-lit "))\n"
-        "(v/preview " binding " {:result [[:lines {:from 1 :to " file-mention-preview-lines "}]]})\n"
+        (if small-file?
+          (str "(v/preview " binding ")\n")
+          (str "(v/preview " binding " {:result [[:lines {:from 1 :to " file-mention-preview-lines "}]]})\n"))
         "```\n"
         "Do not answer about this file from memory, the path name, or stale context; answer only after the `v/cat` result is observed."))
     (format-file-mention path)))
@@ -728,7 +738,8 @@
    The visible chat transcript keeps the concise `@path` token. The outbound
    agent prompt gets an explicit attached-file directive that tells the agent
    to acquire runtime truth with `v/cat`, bind it with `def`, then `v/preview`
-   relevant lines before answering. Unknown paths pass through unchanged."
+   the whole file when it is small or focused lines when it is larger. Unknown
+   paths pass through unchanged."
   [^String text]
   (str/replace text file-mention-regex
     (fn [[_ quoted-path bare-path]]

@@ -395,15 +395,34 @@
       (expect (= "see <FILE:src/foo.clj> please"
                 (input/expand-file-mentions "see @src/foo.clj please")))))
 
-  (it "expands local @mentions to mandatory v/cat + preview directives"
-    (with-redefs [com.blockether.vis.ext.channel-tui.input/resolve-local-file
-                  (fn [_path] :file)]
-      (let [expanded (input/expand-file-mentions "inspect @src/foo.clj now")]
-        (expect (str/includes? expanded "[Attached File: src/foo.clj]"))
-        (expect (str/includes? expanded "IMPORTANT: READ IT NOW"))
-        (expect (str/includes? expanded "(def attached-file-src-foo-clj (v/cat \"src/foo.clj\"))"))
-        (expect (str/includes? expanded "(v/preview attached-file-src-foo-clj {:result [[:lines {:from 1 :to 120}]]})"))
-        (expect (str/includes? expanded "Do not answer about this file from memory")))))
+  (it "expands large local @mentions to mandatory v/cat + ranged preview directives"
+    (let [file (java.io.File/createTempFile "vis-input-large" ".clj")]
+      (spit file (str/join "\n" (repeat 121 "x")))
+      (try
+        (with-redefs [com.blockether.vis.ext.channel-tui.input/resolve-local-file
+                      (fn [_path] file)]
+          (let [expanded (input/expand-file-mentions "inspect @src/foo.clj now")]
+            (expect (str/includes? expanded "[Attached File: src/foo.clj]"))
+            (expect (str/includes? expanded "IMPORTANT: READ IT NOW"))
+            (expect (str/includes? expanded "(def attached-file-src-foo-clj (v/cat \"src/foo.clj\"))"))
+            (expect (str/includes? expanded "(v/preview attached-file-src-foo-clj {:result [[:lines {:from 1 :to 120}]]})"))
+            (expect (str/includes? expanded "Do not answer about this file from memory"))))
+        (finally
+          (.delete file)))))
+
+  (it "expands small local @mentions to whole-file preview directives"
+    (let [file (java.io.File/createTempFile "vis-input-small" ".md")]
+      (spit file (str/join "\n" ["# Readme" "" "Tiny."]))
+      (try
+        (with-redefs [com.blockether.vis.ext.channel-tui.input/resolve-local-file
+                      (fn [_path] file)]
+          (let [expanded (input/expand-file-mentions "inspect @README.md now")]
+            (expect (str/includes? expanded "preview the whole file because it appears small (3 lines <= 120)"))
+            (expect (str/includes? expanded "(def attached-file-readme-md (v/cat \"README.md\"))"))
+            (expect (str/includes? expanded "(v/preview attached-file-readme-md)"))
+            (expect (not (str/includes? expanded "[:lines {:from 1 :to 120}]")))))
+        (finally
+          (.delete file)))))
 
   (it "supports quoted @mentions for paths with spaces"
     (with-redefs [com.blockether.vis.ext.channel-tui.input/file-mention->prompt-block
