@@ -293,6 +293,21 @@
       (expect (some #(str/includes? % "\u001b[") bodies))
       (expect (some #(str/includes? (strip-ansi %) "(def x {:a 1})") bodies))))
 
+  (it "syntax-colors diff fences like git additions and deletions"
+    (let [diff-text  (str "--- a/README.md\n"
+                       "+++ b/README.md\n"
+                       "@@ -1 +1 @@\n"
+                       "-old\n"
+                       "+new\n"
+                       " context")
+          lines      (md->lines (md/code-block "diff" diff-text) 80)
+          code-lines (filter #(= p/MARKER_MD_CODE (marker-of %)) lines)
+          bodies     (map body-of code-lines)]
+      (expect (some #(str/includes? % "\u001b[91m-old\u001b[0m") bodies))
+      (expect (some #(str/includes? % "\u001b[92m+new\u001b[0m") bodies))
+      (expect (some #(str/includes? % "\u001b[36m@@ -1 +1 @@\u001b[0m") bodies))
+      (expect (some #(= " context" %) bodies))))
+
   (it "leaves unqualified plain fences uncolored"
     (let [lines  (md->lines (md/code-block "plain text") 80)
           bodies (map body-of (filter #(= p/MARKER_MD_CODE (marker-of %)) lines))]

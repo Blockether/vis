@@ -744,6 +744,8 @@
     36 t/code-syntax-keyword-fg
     37 t/text-fg
     90 t/code-syntax-comment-fg
+    91 t/code-error-fg
+    92 t/code-success-fg
     current-fg))
 
 (defn- parse-ansi-codes [s]
@@ -766,6 +768,24 @@
 (defn- clojure-lang? [lang]
   (contains? #{"clj" "cljc" "cljs" "clojure" "edn"}
     (str/lower-case (str/trim (or lang "")))))
+
+(defn- diff-lang? [lang]
+  (contains? #{"diff" "patch" "udiff"}
+    (str/lower-case (str/trim (or lang "")))))
+
+(defn- ansi-fg
+  [code s]
+  (str "\u001b[" code "m" s "\u001b[0m"))
+
+(defn- diff-line-ansi-code
+  [line]
+  (cond
+    (str/starts-with? line "+") 92
+    (str/starts-with? line "-") 91
+    (str/starts-with? line "@@") 36
+    (or (str/starts-with? line "diff --git")
+      (str/starts-with? line "index ")) 90
+    :else nil))
 
 (defn- fence-lang [line]
   (let [trimmed (str/trim (or line ""))]
@@ -812,8 +832,18 @@
    (let [prefix-w   (p/display-width prefix)
          code-w     (max 1 (- (long max-w) prefix-w))
          code-text  (str/join "\n" code-lines)
-         body-lines (if (clojure-lang? lang)
+         body-lines (cond
+                      (clojure-lang? lang)
                       (str/split-lines (format-clojure-ansi code-text code-w))
+
+                      (diff-lang? lang)
+                      (mapcat (fn [line]
+                                (let [code (diff-line-ansi-code line)]
+                                  (map #(cond->> % code (ansi-fg code))
+                                    (wrap-text line code-w))))
+                        code-lines)
+
+                      :else
                       (mapcat #(wrap-text % code-w) code-lines))]
      (vec (concat [(str (:code m) prefix)]
             (map #(str (:code m) prefix %) body-lines)

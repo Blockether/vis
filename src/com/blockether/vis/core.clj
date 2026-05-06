@@ -57,7 +57,7 @@
    [com.blockether.vis.internal.prompt       :as prompt]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry     :as registry]
-   [com.blockether.vis.theme                 :as theme]))
+   [com.blockether.vis.internal.theme        :as theme]))
 
 ;; =============================================================================
 ;; Cancellation

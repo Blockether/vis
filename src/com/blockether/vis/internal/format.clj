@@ -198,15 +198,43 @@
   "Render a dollar cost as '~$0.006954' (six decimal places, US
    locale). Returns nil when `cost` is nil, zero, negative, or
    non-numeric. Accepts either the bare number or a `:total-cost`
-   map; the map form lets call sites pass `:cost` straight through."
+   map; detailed cost maps append input-cache split: not cached, cached,
+   cache write, and output."
   [cost]
-  (let [n (cond
-            (number? cost)              cost
-            (and (map? cost)
-              (number? (:total-cost cost))) (:total-cost cost)
-            :else                        nil)]
-    (when (and n (pos? n))
-      (String/format Locale/US "~$%.6f" (into-array Object [(double n)])))))
+  (letfn [(cost-number [k]
+            (let [v (get cost k)]
+              (when (number? v) v)))
+          (positive-cost-number [k]
+            (let [v (cost-number k)]
+              (when (and v (pos? v)) v)))
+          (format-cost-number [n]
+            (String/format Locale/US "~$%.6f" (into-array Object [(double n)])))]
+    (let [n (cond
+              (number? cost) cost
+              (and (map? cost)
+                (number? (:total-cost cost))) (:total-cost cost)
+              :else nil)]
+      (when (and n (pos? n))
+        (let [details (when (map? cost)
+                        (cond-> []
+                          (positive-cost-number :input-uncached-cost)
+                          (conj (str "not cached "
+                                  (format-cost-number (positive-cost-number :input-uncached-cost))))
+
+                          (positive-cost-number :input-cached-cost)
+                          (conj (str "cached "
+                                  (format-cost-number (positive-cost-number :input-cached-cost))))
+
+                          (positive-cost-number :input-cache-write-cost)
+                          (conj (str "cache write "
+                                  (format-cost-number (positive-cost-number :input-cache-write-cost))))
+
+                          (positive-cost-number :output-cost)
+                          (conj (str "output "
+                                  (format-cost-number (positive-cost-number :output-cost))))))]
+          (str (format-cost-number n)
+            (when (seq details)
+              (str " (" (str/join ", " details) ")"))))))))
 
 (defn format-iterations
   "Render an iteration count as '1 iter' or '3 iters'. Returns nil

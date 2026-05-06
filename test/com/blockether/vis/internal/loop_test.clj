@@ -7,6 +7,7 @@
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as loop]
+   [com.blockether.vis.internal.persistance :as persistance]
    [lazytest.core :refer [defdescribe expect it]]
    [sci.core :as sci])
   (:import
@@ -17,11 +18,49 @@
   [prefix]
   (str (Files/createTempDirectory prefix (make-array FileAttribute 0))))
 
-(defdescribe normalize-reasoning-level-test
-  (it "accepts the UI reasoning vocabulary and OpenAI aliases"
-    (expect (= :quick (loop/normalize-reasoning-level :quick)))
-    (expect (= :balanced (loop/normalize-reasoning-level "medium")))
-    (expect (= :deep (loop/normalize-reasoning-level "HIGH")))))
+(do
+  (defdescribe normalize-reasoning-level-test
+    (it "accepts the UI reasoning vocabulary and OpenAI aliases"
+      (expect (= :quick (loop/normalize-reasoning-level :quick)))
+      (expect (= :balanced (loop/normalize-reasoning-level "medium")))
+      (expect (= :deep (loop/normalize-reasoning-level "HIGH")))))
+
+  (defdescribe cost-estimation-test
+    (it "subtracts cached input tokens and keeps the cached/non-cached cost split"
+      (let [cost (#'loop/estimate-token-cost "gpt-4o" 1000 200 {:cached-tokens 700})]
+        (expect (= 300 (:input-uncached-tokens cost)))
+        (expect (= 700 (:input-cached-tokens cost)))
+        (expect (pos? (:input-uncached-cost cost)))
+        (expect (pos? (:input-cached-cost cost)))
+        (expect (pos? (:output-cost cost)))
+        (expect (= (:input-cached-cost cost) (:cache-read-cost cost)))))
+
+    (it "merges every detailed cost slot across iterations and tool calls"
+      (expect (= {:input-cost 7
+                  :input-uncached-cost 3
+                  :input-cached-cost 1
+                  :input-cache-write-cost 5
+                  :cache-read-cost 1
+                  :cache-write-cost 5
+                  :output-cost 2
+                  :total-cost 9}
+                (#'loop/merge-cost-maps
+                 {:input-cost 4
+                  :input-uncached-cost 2
+                  :input-cached-cost 0
+                  :input-cache-write-cost 2
+                  :cache-read-cost 0
+                  :cache-write-cost 2
+                  :output-cost 1
+                  :total-cost 5}
+                 {:input-cost 3
+                  :input-uncached-cost 1
+                  :input-cached-cost 1
+                  :input-cache-write-cost 3
+                  :cache-read-cost 1
+                  :cache-write-cost 3
+                  :output-cost 1
+                  :total-cost 4}))))))
 
 (defdescribe zai-preserved-thinking-test
   (it "echoes prior Z.ai assistant reasoning_content only for Z.ai thinking models"
@@ -152,6 +191,25 @@
                   {:iteration 0 :messages [] :routing {} :reasoning-level :balanced})]
       (expect (some? (get result (keyword "com.blockether.vis.internal.loop" "iteration-error"))))
       (expect (nil? (get result (keyword "com.blockether.vis.internal.loop" "fatal-iteration-error")))))))
+
+(defdescribe telegram-conversation-test
+  (it "reuses an existing Telegram conversation by UUID external lookup"
+    (let [id (java.util.UUID/randomUUID)]
+      (with-redefs [loop/db-info (fn [] ::db)
+                    vis/db-find-conversation-by-external (fn [& _]
+                                                           (throw (ex-info "wrong facade" {})))
+                    persistance/db-find-conversation-by-external (fn [db channel external-id]
+                                                                   (expect (= ::db db))
+                                                                   (expect (= :telegram channel))
+                                                                   (expect (= "42" external-id))
+                                                                   id)
+                    loop/by-id (fn [id-str]
+                                 (expect (= (str id) id-str))
+                                 {:id id-str :channel :telegram})
+                    loop/create! (fn [& _]
+                                   (throw (ex-info "should not create" {})))]
+        (expect (= {:id (str id) :channel :telegram}
+                  (loop/for-telegram-chat! 42)))))))
 
 (defdescribe answer-str-test
   (it "repairs glued fence boundaries before the answer leaves the loop"

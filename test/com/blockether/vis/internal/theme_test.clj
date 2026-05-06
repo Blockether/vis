@@ -1,5 +1,5 @@
-(ns com.blockether.vis.theme-test
-  (:require [com.blockether.vis.theme :as theme]
+(ns com.blockether.vis.internal.theme-test
+  (:require [com.blockether.vis.internal.theme :as theme]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe theme-data-test

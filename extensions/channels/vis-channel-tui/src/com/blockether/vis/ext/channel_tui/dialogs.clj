@@ -5,7 +5,7 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.theme :as shared-theme]
+            [com.blockether.vis.internal.theme :as shared-theme]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.file-picker :as picker])
   (:import [com.googlecode.lanterna Symbols]
@@ -967,7 +967,7 @@
     :type :choice
     :choices (theme-choice-order)
     :label "Theme"
-    :description "Reusable channel theme from com.blockether.vis.theme and extension :ext/theme maps"}
+    :description "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}
    {:key :show-thinking
     :type :toggle
     :label "Show thinking / reasoning"

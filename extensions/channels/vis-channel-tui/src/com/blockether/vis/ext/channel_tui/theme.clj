@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.theme
-  "Lanterna adapter for public `com.blockether.vis.theme` tokens."
-  (:require [com.blockether.vis.theme :as theme])
+  "Lanterna adapter for internal `com.blockether.vis.internal.theme` tokens."
+  (:require [com.blockether.vis.internal.theme :as theme])
   (:import [com.googlecode.lanterna TextColor$RGB]))
 
 (def active-theme-id (atom theme/default-theme-id))
