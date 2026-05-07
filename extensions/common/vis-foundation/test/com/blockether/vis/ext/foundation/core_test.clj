@@ -40,4 +40,28 @@
   (it "documents markdown builders on the extension descriptor"
     (let [doc (:ext/doc foundation/vis-extension)]
       (expect (str/includes? doc "markdown answer builders"))
-      (expect (str/includes? doc "file-link")))))
+      (expect (str/includes? doc "file-link"))))
+
+  (it "defers doctor and reproduction command namespaces until command execution"
+    (let [commands (into {} (map (juxt :cmd/name identity) (:ext/cli foundation/vis-extension)))
+          calls    (atom [])]
+      (expect (contains? commands "doctor"))
+      (expect (contains? commands "reproduction"))
+      (with-redefs [clojure.core/requiring-resolve
+                    (fn [sym]
+                      (swap! calls conj sym)
+                      (case sym
+                        com.blockether.vis.ext.foundation.doctor/cli-command
+                        (fn [] {:cmd/run-fn (fn [parsed residual]
+                                              [:doctor parsed residual])})
+                        com.blockether.vis.ext.foundation.transcript/cli-command
+                        (fn [] {:cmd/run-fn (fn [parsed residual]
+                                              [:reproduction parsed residual])})))]
+        (expect (= [] @calls))
+        (expect (= [:doctor {:p true} ["x"]]
+                  ((get-in commands ["doctor" :cmd/run-fn]) {:p true} ["x"])))
+        (expect (= [:reproduction {:p true} ["y"]]
+                  ((get-in commands ["reproduction" :cmd/run-fn]) {:p true} ["y"])))
+        (expect (= ['com.blockether.vis.ext.foundation.doctor/cli-command
+                    'com.blockether.vis.ext.foundation.transcript/cli-command]
+                  @calls))))))
