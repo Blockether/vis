@@ -451,12 +451,37 @@
           plan   (vis/db-store-plan! s {:intent-id (:id intent)
                                         :summary "Legacy plan"})
           gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :question "Legacy proof?"})]
-      (vis/db-prove-gate! s {:gate-id (:id gate)
-                             :summary "Legacy proven."
-                             :refs [ref]})
-      (vis/db-fulfill-intent! s (:id intent) {:summary "Legacy fulfilled."
-                                              :refs [ref]})
+                                        :question "Legacy proof?"})
+          slot-owner (random-uuid)]
+      (vis/db-store-provenance-event! s {:conversation-id cid
+                                         :conversation-turn-id tid
+                                         :ref ref
+                                         :kind :tool
+                                         :op :v/bash
+                                         :status :done
+                                         :payload {:result {:exit 0}}})
+      (let [gate-bundle (vis/db-create-evidence-bundle! s
+                          {:conversation-id cid
+                           :kind :proof
+                           :subject-kind :gate
+                           :subject-id (:id gate)
+                           :requirements [{:evidence/slot [slot-owner :proof]
+                                           :evidence/from-ref ref
+                                           :evidence/extract [:result :exit]
+                                           :evidence/guard [:= [:value] 0]
+                                           :event/kind :tool
+                                           :event/op :v/bash}]})]
+        (vis/db-attest-gate! s {:gate-id (:id gate)
+                                :evidence-bundle-id (:id gate-bundle)
+                                :kind :gate/proven
+                                :reason "Gate accepted."}))
+      (jdbc/execute! (:datasource s)
+        (sql/format {:update :conversation_intent
+                     :set {:status "fulfilled"
+                           :fulfillment_summary "Legacy fulfilled."
+                           :abandonment_reason nil
+                           :resolved_at (vis/now-ms)}
+                     :where [:= :id (str (:id intent))]}))
       (let [audit (vis/db-audit-proof s {:conversation-id cid})]
         (expect (= false (:success? audit)))
         (expect (contains? (set (map :type (:violations audit)))
