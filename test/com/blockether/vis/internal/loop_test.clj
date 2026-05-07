@@ -299,26 +299,36 @@
                                 :answer/text "Please paste the ideas you want reviewed."})))))
 
 (defdescribe runtime-proof-appendix-test
-  (it "appends proofs to accepted normal answers in the runtime, not model boilerplate"
-    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "<proofs>ok</proofs>")}
+  (it "appends proof audit to accepted normal answers in the runtime, not model boilerplate"
+    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "## Proof audit\n\n- Proof audit: ok")}
       (fn []
-        (expect (= "Done.\n\n<proofs>ok</proofs>"
+        (expect (= "Done.\n\n## Proof audit\n\n- Proof audit: ok"
                   (loop/append-runtime-proofs {} "Done." "Done."))))))
 
-  (it "does not duplicate an existing proofs block"
-    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "<proofs>new</proofs>")}
+  (it "does not duplicate an existing proof audit block"
+    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "## Proof audit\n\n- Proof audit: new")}
       (fn []
-        (expect (= "Done.\n\n<proofs>old</proofs>"
-                  (loop/append-runtime-proofs {} "Done.\n\n<proofs>old</proofs>" "Done."))))))
+        (expect (= "Done.\n\n## Proof audit\n\n- Proof audit: old"
+                  (loop/append-runtime-proofs {} "Done.\n\n## Proof audit\n\n- Proof audit: old" "Done."))))))
 
-  (it "does not append proofs to needs-input clarification answers"
-    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "<proofs>ok</proofs>")}
+  (it "does not append proof audit to needs-input clarification answers"
+    (with-redefs-fn {#'loop/runtime-proof-appendix (fn [_] "## Proof audit\n\n- Proof audit: ok")}
       (fn []
         (expect (= "Please paste the ideas."
                   (loop/append-runtime-proofs {}
                     "Please paste the ideas."
                     {:vis/answer-mode :needs-input
-                     :answer/text "Please paste the ideas."})))))))
+                     :answer/text "Please paste the ideas."}))))))
+
+  (it "does not append an empty successful audit with no attestations"
+    (with-redefs-fn {#'clojure.core/requiring-resolve (fn [sym]
+                                                        (case sym
+                                                          com.blockether.vis.ext.foundation.introspection/foundation-audit
+                                                          (fn [_] {:success? true :counts {:attestations 0} :violations []})
+                                                          com.blockether.vis.ext.foundation.introspection/foundation-audit-report
+                                                          (fn [_] "## Proof audit\n\n- empty")))}
+      (fn []
+        (expect (= nil (#'loop/runtime-proof-appendix {})))))))
 
 (defdescribe intent-required-test
   (it "requires intents for pasted-content inspection and terminal demonstrations"
