@@ -18,6 +18,11 @@
    ;; this require, `resolve` returns nil and `deref` throws NPE because
    ;; the backend is normally loaded lazily by extension scanning.
    [com.blockether.vis.ext.persistance-sqlite.core]
+   ;; Register the extension in the persistance facade. Production loads
+   ;; this via classpath manifest discovery; tests need it explicit
+   ;; because requiring `core` no longer self-registers (see
+   ;; `registrar.clj` for the lazy-load split rationale).
+   [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]

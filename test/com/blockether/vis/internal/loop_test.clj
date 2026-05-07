@@ -5,6 +5,10 @@
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.persistance-sqlite.core]
+   ;; The SQLite extension is now registered by the lightweight
+   ;; `registrar` ns; requiring the heavy `core` no longer
+   ;; self-registers. See `registrar.clj` for the split rationale.
+   [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as loop]

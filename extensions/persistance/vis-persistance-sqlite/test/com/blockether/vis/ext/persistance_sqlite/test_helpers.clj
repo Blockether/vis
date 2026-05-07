@@ -11,6 +11,12 @@
    Each test gets an isolated in-memory DB. No manual setup/teardown."
   (:require
    [com.blockether.vis.core :as vis]
+   ;; Register the SQLite backend so `vis/db-create-connection!` can
+   ;; dispatch to it. Production wires this through classpath manifest
+   ;; discovery; tests need it explicit because requiring `core` no
+   ;; longer self-registers (see `registrar.clj` for the lazy-load
+   ;; split rationale + load-cost numbers).
+   [com.blockether.vis.ext.persistance-sqlite.registrar]
    [honey.sql :as sql]
    [lazytest.core :as lt]
    [next.jdbc :as jdbc]

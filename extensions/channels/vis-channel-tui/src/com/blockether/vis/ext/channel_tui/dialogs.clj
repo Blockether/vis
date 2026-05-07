@@ -1091,6 +1091,41 @@
     (map titleize-token)
     (str/join " ")))
 
+(def ^:private namespace-noise-segments
+  ;; Trailing/marketing segments we drop when deriving a display label
+  ;; from a namespace symbol. `core` / `bot` / `main` are the
+  ;; vis-extension convention for "the registrar entry point". The
+  ;; vendor prefix `com.blockether.vis.ext` (and the per-extension
+  ;; family prefixes underneath) carry no information for the user, so
+  ;; we strip them too.
+  #{"com" "blockether" "vis" "ext" "core" "bot" "main"})
+
+(defn- meaningful-namespace-segment
+  "Pick a human-friendly leaf from a fully-qualified namespace symbol.
+
+   The previous implementation called `(name sym)` on a non-aliased
+   symbol, which returns the whole dotted string
+   (`\"com.blockether.vis.ext.voice.core\"`). `titleize-label` only
+   splits on `[-_\\s]+`, so the whole thing was treated as ONE token and
+   the user saw `\"Com.blockether.vis.ext.voice.core\"` in the dialog.
+
+   We split on dots, drop vendor / 'core' / 'bot' / 'main' noise, and
+   return the last surviving segment. Caller is expected to feed it
+   through `titleize-label` for normal Title-Case rendering, so e.g.
+   `voice` -> `Voice`, `mermaid` -> `Mermaid`, `channel-tui` ->
+   `Channel Tui`. Falls back to the full string if nothing useful
+   survives."
+  [sym-or-str]
+  (let [raw       (str sym-or-str)
+        segments  (->> (str/split raw #"\.")
+                    (remove str/blank?)
+                    vec)
+        cleaned   (vec (remove #(contains? namespace-noise-segments %) segments))
+        leaf      (or (last cleaned)
+                    (last (remove #{"com" "blockether"} segments))
+                    (last segments))]
+    (or leaf raw)))
+
 (defn- extension-kind
   [ext]
   (cond
@@ -1105,7 +1140,15 @@
         channel-label  (or (some-> (first (:ext/channels ext)) :channel/cmd titleize-label)
                          (some-> (first (:ext/channels ext)) :channel/id name titleize-label))
         alias-label    (some-> (get-in ext [:ext/ns-alias :alias]) name titleize-label)
-        ns-label       (some-> (:ext/namespace ext) name titleize-label)]
+        ;; Take the meaningful tail segment of the namespace (drop
+        ;; `com.blockether.vis.ext` vendor prefix and the trailing
+        ;; `core` / `bot` / `main` registrar entry-point convention)
+        ;; and titleize THAT, so `voice` -> `Voice`, `mermaid` ->
+        ;; `Mermaid`, `channel-tui` -> `Channel Tui` instead of the
+        ;; previous `Com.blockether.vis.ext.voice.core`.
+        ns-label       (some-> (:ext/namespace ext)
+                         meaningful-namespace-segment
+                         titleize-label)]
     (or (not-empty provider-label)
       (not-empty channel-label)
       (not-empty alias-label)
