@@ -269,44 +269,47 @@
         s (answer-value-string v)]
     (markdown/normalize-chat-markdown s)))
 
-(defn- contains-proof-appendix?
+(defn- contains-runtime-audit-appendix?
   [answer-text]
   (boolean
     (and (string? answer-text)
-      (re-find #"(?is)<proofs(?:\s[^>]*)?>.*</proofs>" answer-text))))
+      (or (re-find #"(?is)<proofs(?:\s[^>]*)?>.*</proofs>" answer-text)
+        (str/includes? answer-text "## Proof audit")))))
 
 (defn- runtime-proof-appendix
-  "Optional runtime proof appendix supplied by vis-foundation when present.
+  "Optional runtime proof-audit appendix supplied by vis-foundation when present.
 
    Core must not statically require foundation: foundation is an extension and
    already requires core. Dynamic resolution keeps the dependency optional while
-   still letting accepted answers get the canonical proof projection appended by
-   the runtime instead of by model-authored boilerplate."
+   still letting accepted answers get the canonical audit projection appended by
+   the runtime instead of legacy proof-check/proofs boilerplate."
   [environment]
   (try
-    (let [proof-checks-fn (requiring-resolve
-                            'com.blockether.vis.ext.foundation.introspection/foundation-proof-checks)
-          proofs-fn       (requiring-resolve
-                            'com.blockether.vis.ext.foundation.introspection/foundation-proofs)
-          checks          (when proof-checks-fn (proof-checks-fn environment))]
-      (when (and proofs-fn (:success? checks))
-        (let [appendix (proofs-fn environment checks)]
+    (let [audit-fn        (requiring-resolve
+                            'com.blockether.vis.ext.foundation.introspection/foundation-audit)
+          audit-report-fn (requiring-resolve
+                            'com.blockether.vis.ext.foundation.introspection/foundation-audit-report)
+          audit           (when audit-fn (audit-fn environment))]
+      (when (and audit-report-fn
+              (:success? audit)
+              (pos? (long (or (get-in audit [:counts :attestations]) 0))))
+        (let [appendix (audit-report-fn environment)]
           (when (and (string? appendix) (not (str/blank? appendix)))
             appendix))))
     (catch Throwable _
       nil)))
 
 (defn append-runtime-proofs
-  "Append proof disclosure to accepted final answers.
+  "Append proof-audit disclosure to accepted final answers.
 
    Skips explicit needs-input answers and answers that already contain a
-   `<proofs>` block. If proof checks are not available or not ok, returns the
+   runtime proof/audit appendix. If audit is not available or not ok, returns the
    original answer text; answer rejection remains owned by the final-answer
    gate."
   [environment answer-text answer-value]
   (let [answer-text (str answer-text)]
     (if (or (needs-input-answer? answer-value)
-          (contains-proof-appendix? answer-text))
+          (contains-runtime-audit-appendix? answer-text))
       answer-text
       (if-let [appendix (runtime-proof-appendix environment)]
         (str answer-text "\n\n" appendix)
