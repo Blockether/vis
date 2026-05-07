@@ -1,0 +1,117 @@
+From: vis-autoresearch session
+Subject: [PATCH] Fix log_experiment "must be object" for models that emit object args as JSON strings
+
+Cause:
+PR #44 changed `metrics` and `asi` from `Type.Record(...)` to
+`Type.Object({}, { additionalProperties: ... })` to fix Cloud Code Assist
+validation. That schema is correct, but TypeBox's `Value.Convert` does NOT
+auto-parse JSON strings into objects, and several models (Anthropic Opus
+4.6/4.7, GLM-5.1, …) emit object-shaped tool arguments as JSON strings.
+The validator then fails with `metrics: must be object` / `asi: must be
+object` even though the payload is structurally correct.
+
+Fix:
+Add a `prepareArguments` hook to the `log_experiment` tool that
+JSON-parses string `metrics` and `asi` before schema validation.
+Mirrors the same workaround already used by the built-in `edit` tool
+for its `edits` array (see `pi-coding-agent/dist/core/tools/edit.js`,
+`prepareEditArguments`).
+
+The hook is a no-op for well-shaped inputs, so callers that already send
+proper objects are unaffected.
+---
+ extensions/pi-autoresearch/index.ts          | 35 +++++++++++++++++-
+ tests/log-params-prepare-arguments.test.mjs  | 41 ++++++++++++++++++++
+ 2 files changed, 75 insertions(+), 1 deletion(-)
+ create mode 100644 tests/log-params-prepare-arguments.test.mjs
+
+diff --git a/extensions/pi-autoresearch/index.ts b/extensions/pi-autoresearch/index.ts
+@@ around `LogParams`:
+ 
++/**
++ * Some models (Opus 4.6/4.7, GLM-5.1, …) emit object-shaped tool
++ * arguments as a JSON string instead of a JSON object. TypeBox's
++ * `Value.Convert` does NOT auto-parse JSON strings into objects, so the
++ * schema check then fails with `must be object` even though the payload
++ * is structurally correct.
++ *
++ * Mirrors the same workaround already used by the built-in `edit` tool
++ * for its `edits` array (see
++ * `pi-coding-agent/dist/core/tools/edit.js` `prepareEditArguments`).
++ *
++ * Returns the input args object with `metrics` and `asi` parsed when
++ * they arrive as JSON strings; non-string / non-JSON-object values pass
++ * through unchanged so the schema validator reports the original shape
++ * problem.
++ */
++export function prepareLogArguments(input: unknown): unknown {
++  if (!input || typeof input !== "object") {
++    return input;
++  }
++  const args = input as Record<string, unknown>;
++
++  for (const key of ["metrics", "asi"] as const) {
++    const value = args[key];
++    if (typeof value !== "string") continue;
++    try {
++      const parsed = JSON.parse(value);
++      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
++        args[key] = parsed;
++      }
++    } catch {
++      // Leave as-is; the validator will produce its normal error message.
++    }
++  }
++
++  return args;
++}
++
+ export const LogParams = Type.Object({
+@@ around `pi.registerTool({ name: "log_experiment" ...`:
+     parameters: LogParams,
++    prepareArguments: prepareLogArguments,
+ 
+     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+
+diff --git a/tests/log-params-prepare-arguments.test.mjs b/tests/log-params-prepare-arguments.test.mjs
+new file mode 100644
++import assert from "node:assert/strict";
++import test from "node:test";
++
++import { prepareLogArguments } from "../extensions/pi-autoresearch/index.ts";
++
++test("prepareLogArguments JSON-parses string metrics into an object", () => {
++  const input = { metrics: '{"a":1,"b":2}', asi: { hypothesis: "x" } };
++  const out = prepareLogArguments(input);
++  assert.deepEqual(out.metrics, { a: 1, b: 2 });
++  assert.deepEqual(out.asi, { hypothesis: "x" });
++});
++
++test("prepareLogArguments JSON-parses string asi into an object", () => {
++  const input = { metrics: { x: 1 }, asi: '{"hypothesis":"y","next":"z"}' };
++  const out = prepareLogArguments(input);
++  assert.deepEqual(out.metrics, { x: 1 });
++  assert.deepEqual(out.asi, { hypothesis: "y", next: "z" });
++});
++
++test("prepareLogArguments leaves well-shaped objects alone", () => {
++  const input = { metrics: { a: 1 }, asi: { h: "k" } };
++  const out = prepareLogArguments(input);
++  assert.deepEqual(out.metrics, { a: 1 });
++  assert.deepEqual(out.asi, { h: "k" });
++});
++
++test("prepareLogArguments leaves invalid JSON strings alone for the validator", () => {
++  const input = { metrics: "not json" };
++  const out = prepareLogArguments(input);
++  assert.equal(out.metrics, "not json");
++});
++
++test("prepareLogArguments rejects JSON arrays / primitives parsed from string", () => {
++  // We only auto-parse OBJECTS for `metrics`/`asi`; arrays and scalars are
++  // schema errors and the validator should report them.
++  const input = { metrics: '[1,2,3]', asi: '"oops"' };
++  const out = prepareLogArguments(input);
++  assert.equal(out.metrics, '[1,2,3]');
++  assert.equal(out.asi, '"oops"');
++});

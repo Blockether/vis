@@ -74,6 +74,35 @@
         (finally
           (.stopScreen screen))))))
 
+(deftest extension-display-label-namespace-test
+  (testing "namespace-derived labels titleize the meaningful tail segment, NEVER the vendor prefix"
+    (let [label (var-get #'dlg/extension-display-label)]
+      (is (= "Voice"
+            (label {:ext/namespace 'com.blockether.vis.ext.voice.core}))
+        "plain ns -> tail segment titleized; vendor prefix dropped")
+      (is (= "Mermaid"
+            (label {:ext/namespace 'com.blockether.vis.ext.mermaid.core}))
+        "trailing 'core' segment is dropped")
+      (is (= "Channel Tui"
+            (label {:ext/namespace 'com.blockether.vis.ext.channel-tui.core}))
+        "hyphenated segment is split + titleized like other labels")
+      (is (not (str/starts-with?
+                 (label {:ext/namespace 'com.blockether.vis.ext.voice.core})
+                 "Com.blockether"))
+        "regression: was rendered as 'Com.blockether.vis.ext.voice.core'")))
+
+  (testing "provider / channel / alias labels still take precedence"
+    (let [label (var-get #'dlg/extension-display-label)]
+      (is (= "Anthropic"
+            (label {:ext/providers [{:provider/label "Anthropic (API Key)"}]
+                    :ext/namespace 'com.blockether.vis.ext.provider-anthropic})))
+      (is (= "Tui"
+            (label {:ext/channels [{:channel/cmd "tui"}]
+                    :ext/namespace 'com.blockether.vis.ext.channel-tui.core})))
+      (is (= "V"
+            (label {:ext/ns-alias {:ns 'vis.ext.v :alias 'v}
+                    :ext/namespace 'com.blockether.vis.ext.foundation.core}))))))
+
 (deftest resource-dialog-items-test
   (testing "resources popup rows keep click target fields and rendered labels"
     (is (= [{:text "Book"

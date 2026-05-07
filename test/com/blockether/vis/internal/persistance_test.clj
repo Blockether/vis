@@ -5,6 +5,10 @@
    [babashka.fs :as fs]
    [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.core]
+   ;; The SQLite extension is now registered by the lightweight
+   ;; `registrar` ns; requiring the heavy `core` no longer
+   ;; self-registers. See `registrar.clj` for the split rationale.
+   [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [lazytest.core :refer [defdescribe expect it]])

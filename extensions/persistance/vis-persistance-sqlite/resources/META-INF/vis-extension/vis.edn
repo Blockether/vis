@@ -1,5 +1,12 @@
-;; SQLite persistence backend. Loading the ns registers an extension with
-;; an :ext/persistance entry; the host mounts it in the backend registry.
+;; SQLite persistence backend.
+;;
+;; Manifest discovery loads ONLY the lightweight `registrar` ns; that ns
+;; registers `:ext/persistance` pointing at the heavyweight
+;; `com.blockether.vis.ext.persistance-sqlite.core` namespace. The
+;; facade's `resolve-impl` uses `requiring-resolve` so the heavy ns
+;; auto-loads on the first real DB op — commands that never touch the DB
+;; (e.g. `vis providers list`, `vis --help`) skip the ~480 ms load.
+;;
 ;; Non-LLM-facing.
 {sqlite
- {:nses [com.blockether.vis.ext.persistance-sqlite.core]}}
+ {:nses [com.blockether.vis.ext.persistance-sqlite.registrar]}}

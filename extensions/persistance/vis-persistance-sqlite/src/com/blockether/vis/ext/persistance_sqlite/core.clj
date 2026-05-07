@@ -4414,20 +4414,16 @@
 ;; =============================================================================
 ;; Backend registration
 ;;
-;; Loading this namespace plugs the SQLite backend into the persistence
-;; facade. `vis-persistance` itself never references this ns directly —
-;; it resolves vars by name at call time, so as long as this file is
-;; on the classpath and has been required somewhere, every facade fn
-;; routes here.
+;; The extension is registered by the lightweight
+;; `com.blockether.vis.ext.persistance-sqlite.registrar` namespace, which
+;; manifest discovery loads on every Vis startup. That registrar declares
+;; `:persistance/ns` as THIS ns; the persistance facade calls
+;; `requiring-resolve` on backend fns, so this heavyweight ns is loaded
+;; on demand on the first real DB op (and not at all when the user runs
+;; commands that never touch the DB — see `registrar.clj` for the
+;; rationale and the load-cost numbers).
+;;
+;; Tests that need the SQLite backend registered should require the
+;; `registrar` ns; tests that only need the fns can require this ns
+;; directly without registering the extension.
 ;; =============================================================================
-
-(vis/register-extension!
-  (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.persistance-sqlite.core
-     :ext/doc       "SQLite + Flyway persistence backend."
-     :ext/version   "0.3.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/persistance [{:persistance/id :sqlite
-                        :persistance/ns 'com.blockether.vis.ext.persistance-sqlite.core}]}))
