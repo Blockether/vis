@@ -1947,19 +1947,6 @@
     (when (pos? @exit-code)
       (System/exit @exit-code))))
 
-;;; ── Channel registration (auto-discovered via META-INF/vis-extension/vis.edn) ──
-
-(vis/register-extension!
-  (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.channel-tui.screen
-     :ext/doc       "Lanterna-based terminal UI channel."
-     :ext/version   "0.3.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/channels  [{:channel/id        :tui
-                      :channel/cmd       "tui"
-                      :channel/doc       "Interactive terminal UI."
-                      :channel/usage     tui-usage
-                      :channel/owns-tty? true
-                      :channel/main-fn   #'channel-main}]}))
+;;; Channel registration lives in com.blockether.vis.ext.channel-tui.core.
+;;; Keep this namespace as the heavyweight runtime implementation loaded only
+;;; when the TUI channel actually runs.
