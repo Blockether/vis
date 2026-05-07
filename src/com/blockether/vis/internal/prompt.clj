@@ -703,14 +703,14 @@ State → decision matrix → observed new state:
 | OBSERVE | Did the previous probe prove, disprove, or error? | Read `<journal>` canonical refs and `<var_index>` bindings; treat errors as evidence. | Chosen facts/refs can be summarized with `def`. | EXPLORE, ACT, VERIFY, or STUCK. |
 | ACT | Is a change justified by observed facts? | Edit/write the minimal change; keep effects at leaves. | Change result appears as a canonical journal block. | VERIFY. |
 | VERIFY | Can the proposition be checked? | Run targeted checks, or capture exact impediment. | Terminal success/failure/timeout ref exists. | PROVE or STUCK. |
-| PROVE | Can a gate proposition be decided from terminal evidence? | Fill `v/offer-proof!` slots when evidence is partial; `v/prove-gate!` with observed `:done` refs and expected-proof slots; `v/impede-gate!` with terminal failure/timeout/cancel refs. For Future/deferred values, prefer `v/await-proof!` before proof. | Gate status is visible via `(v/intents)` and journal refs. | RESOLVE, EXPLORE, or STUCK. |
-| RESOLVE | Is the focused intent satisfied or impossible? | `v/fulfill-intent!` or `v/abandon-intent!` with observed refs. | `(v/intents)` returns ok for focused work. | ANSWER. |
+| PROVE | Can a gate proposition be decided from terminal evidence? | Prefer `v/attest-gate!` with `:requirements` over observed `provenance_event` refs; `v/impede-gate!` with terminal failure/timeout/cancel refs only when blocked. For Future/deferred values, prefer `v/await-proof!` before attestation. | Gate status is visible via `(v/intents)`, `v/audit`, and journal refs. | RESOLVE, EXPLORE, or STUCK. |
+| RESOLVE | Is the focused intent satisfied or impossible? | Prefer `v/attest-intent!` with closure/blocker requirements over observed refs; use abandonment only when impossible. | `(v/intents)` and `(v/audit)` return ok for focused work. | ANSWER. |
 | STUCK | Are probes repeating, required data unavailable, tools unavailable, or constraints conflicting? | Stop looping. Surface impediment refs, impede gate or abandon intent when required, then ask the user or answer with the exact impediment. | Impediment/error refs and `(v/intents)` state are in journal. | ANSWER to user with impediment/clarifying ask. |
 | NEEDS_INPUT | Is required user material absent before work can start? | `(answer (v/needs-input {:missing \"…\" :ask \"…\"}))`; do not create/abandon an intent just to ask for missing input. | Turn ends as a clarification request. | done. |
 | ANSWER | Is work resolved or explicitly impeded with evidence? | One final Markdown answer-bearing form; after iteration 1 it is the only top-level form. It may wrap final intent resolution plus `(answer ...)` when every cited ref is already observed. | Turn ends; answer cites observed evidence when evidence was used. | done. |
 
 Host-enforced gates before final answer:
-  focused intents are checked via db-intents / `(v/intents)`; every focused intent must be fulfilled or abandoned; active focused work must have one active plan with gates; required open gates prevent final answer; required impeded gates require re-plan or abandon; proof/fulfillment refs must be observed canonical refs with lifecycle status :done; impediment refs must be terminal non-running error/timeout/cancel evidence; running future/deferred refs prove only start, never completion.
+  focused intents are checked via db-intents / `(v/intents)` and persisted proof audit / `(v/audit)`; every focused intent must be fulfilled or abandoned through attestation-backed closure or explicit blocker evidence; active focused work must have one active plan with gates; required open gates prevent final answer; required impeded gates require re-plan or abandonment; evidence refs must be observed canonical refs with lifecycle status :done; impediment refs must be terminal non-running error/timeout/cancel evidence; running future/deferred refs prove only start, never completion.
 
 Evidence taxonomy:
   evidence producers create observed journal facts with canonical refs: eval results, tool results, `provider-limits`, runtime snapshots. Diagnostic enrichers explain evidence: `parse-diagnose`, error classifiers, doctor checks; they are not proof unless their own observed diagnostic ref is cited. Resolution state consumes refs: intents, plans, gates, proof slots. A proof slot is a gate/plan expectation, not a separate proof object and not evidence until filled with an observed ref. Do not call this a standalone proof layer.
@@ -766,13 +766,17 @@ Ref discipline:
   Deferred/future refs with `:status :running` prove only that work started. Do not cite them as proof. Use `(v/await-proof! f {:timeout-ms ...})` as the canonical Vis await when the result will be proof; cite the await block if it is `:done`, or impede with its terminal error/timeout/cancellation ref.
   Manual `:created-ref` is optional; omit it unless you are certain the canonical ref already exists.
 
-Prove or impede gates with observed evidence:
+Attest or impede gates with observed evidence:
 ```clojure
-(v/prove-gate! (:id verify-gate)
-  {:summary \"Targeted verification passed.\"
-   :refs [\"turn/3f2a91c0/iteration/5/block/2\"]
-   :slots {verification-slot
-           {:ref \"turn/3f2a91c0/iteration/5/block/2\"}}})
+(v/attest-gate! (:id verify-gate)
+  {:kind :gate/proven
+   :reason \"Targeted verification passed.\"
+   :requirements [{:evidence/slot verification-slot
+                   :evidence/from-ref \"turn/3f2a91c0/iteration/5/block/2\"
+                   :evidence/extract [:result :exit]
+                   :evidence/guard [:= [:value] 0]
+                   :event/kind :tool
+                   :event/op :v/bash}]})
 ```
 
 ```clojure
@@ -783,27 +787,40 @@ Prove or impede gates with observed evidence:
 
 Resolve the focused intent before `(answer ...)`, either in its own iteration or inside the single final wrapper when all refs are already observed:
 ```clojure
-(v/fulfill-intent! (:id intent)
-  {:summary \"User objective satisfied.\"
-   :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})
+(v/attest-intent! (:id intent)
+  {:kind :intent/fulfilled
+   :summary \"User objective satisfied.\"
+   :requirements [{:evidence/slot [(:id intent) :closure]
+                   :evidence/from-ref \"turn/3f2a91c0/iteration/5/block/2\"
+                   :evidence/extract [:result :exit]
+                   :evidence/guard [:= [:value] 0]
+                   :event/kind :tool
+                   :event/op :v/bash}]})
 ```
 
 ```clojure
-(let [_ (v/fulfill-intent! (:id intent)
-          {:summary \"User objective satisfied.\"
-           :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})]
+(let [_ (v/attest-intent! (:id intent)
+          {:kind :intent/fulfilled
+           :summary \"User objective satisfied.\"
+           :requirements [{:evidence/slot [(:id intent) :closure]
+                           :evidence/from-ref \"turn/3f2a91c0/iteration/5/block/2\"
+                           :evidence/extract [:result :exit]
+                           :evidence/guard [:= [:value] 0]
+                           :event/kind :tool
+                           :event/op :v/bash}]})]
   (answer (v/join (v/h2 \"Summary\")
                   (v/p \"User objective satisfied.\"))))
 ```
 
 ```clojure
 (def checks
-  {:intents   (v/intents)
-   :refs      (v/latest-provenance-refs)
+  {:intents (v/intents)
+   :audit   (v/audit)
+   :refs    (v/latest-provenance-refs)
    :provenance (v/provenance-guards)})
 checks
 ```
-If `(:success? (:intents checks))` is false, fix the plan/gates, re-plan, prove/impede gates, or abandon the intent. If the runtime rejects an answer, read the validation error, run `(v/intents)` and `(v/latest-provenance-refs)`, then fulfill/abandon focused intents with observed canonical refs.
+If `(:success? (:intents checks))` or `(:success? (:audit checks))` is false, fix the plan/gates, re-plan, attest/impede gates, or attest/abandon the intent. If the runtime rejects an answer, read the validation error, run `(v/intents)`, `(v/audit)`, and `(v/latest-provenance-refs)`, then close focused intents with observed canonical refs through attestation helpers.
 
 Scratch values are still useful, but they are not proof. Persist and surface observations with `def`, then cite their refs after observing them:
 ```clojure
@@ -836,10 +853,16 @@ checks
 ```clojure
 ;; iteration N+1: final turn-finisher after observed evidence, exactly one top-level form.
 ;; If intent resolution is still pending, do it inside this one wrapper with observed refs only.
-(let [_ (when-not (get-in (v/intents) [:success?])
-          (v/fulfill-intent! (:id intent)
-            {:summary \"User objective satisfied.\"
-             :refs [\"turn/3f2a91c0/iteration/5/block/2\"]}))]
+(let [_ (when-not (get-in (v/audit) [:success?])
+          (v/attest-intent! (:id intent)
+            {:kind :intent/fulfilled
+             :summary \"User objective satisfied.\"
+             :requirements [{:evidence/slot [(:id intent) :closure]
+                             :evidence/from-ref \"turn/3f2a91c0/iteration/5/block/2\"
+                             :evidence/extract [:result :exit]
+                             :evidence/guard [:= [:value] 0]
+                             :event/kind :tool
+                             :event/op :v/bash}]}))]
   (answer
     (v/join
       (v/h2 \"Summary\")
