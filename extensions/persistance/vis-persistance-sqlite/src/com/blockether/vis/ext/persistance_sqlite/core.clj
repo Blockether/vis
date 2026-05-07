@@ -1583,6 +1583,113 @@
                                  :where [:= :id (->ref attestation-id)]})
       row->attestation)))
 
+(defn- accepted-attestation-row
+  [db-info subject-kind subject-id kind]
+  (query-one! db-info {:select [:*]
+                       :from :attestation
+                       :where [:and
+                               [:= :subject_kind (subject-kind-sql subject-kind)]
+                               [:= :subject_id (->ref subject-id)]
+                               [:= :kind (kw-sql kind)]
+                               [:= :status "accepted"]]
+                       :order-by [[:created_at :desc]]}))
+
+(defn- audit-violation
+  [type attrs]
+  (assoc attrs :type type :blocking? true))
+
+(defn db-audit-proof
+  "Audit persisted proof state from ledger-derived attestations to entity state.
+   This is a read-only validation surface: it reports state transitions that
+   bypassed accepted attestations or no longer match their required aggregate
+   state. It intentionally does not mutate old rows."
+  [db-info {:keys [conversation-id]}]
+  (if-not (ds db-info)
+    {:success? true :violations [] :counts {}}
+    (let [intent-rows (query! db-info
+                        (cond-> {:select [:*]
+                                 :from :conversation_intent
+                                 :order-by [[:created_at :asc]]}
+                          conversation-id (assoc :where [:= :conversation_soul_id (->ref conversation-id)])))
+          intent-ids (set (map :id intent-rows))
+          plan-rows (if (seq intent-ids)
+                      (query! db-info {:select [:*]
+                                       :from :conversation_intent_plan
+                                       :where [:in :intent_id intent-ids]})
+                      [])
+          plan-ids (set (map :id plan-rows))
+          gate-rows (if (seq plan-ids)
+                      (query! db-info {:select [:*]
+                                       :from :conversation_intent_gate
+                                       :where [:in :plan_id plan-ids]})
+                      [])
+          plans-by-intent (group-by :intent_id plan-rows)
+          gates-by-plan (group-by :plan_id gate-rows)
+          gate-violations (mapcat
+                            (fn [{:keys [id status plan_id]}]
+                              (case status
+                                "proven"
+                                (when-not (accepted-attestation-row db-info :gate id :gate/proven)
+                                  [(audit-violation :missing-gate-proof-attestation
+                                     {:gate-id (->uuid id)
+                                      :plan-id (->uuid plan_id)})])
+                                "impeded"
+                                (when-not (accepted-attestation-row db-info :gate id :gate/impeded)
+                                  [(audit-violation :missing-gate-impediment-attestation
+                                     {:gate-id (->uuid id)
+                                      :plan-id (->uuid plan_id)})])
+                                nil))
+                            gate-rows)
+          plan-violations (mapcat
+                            (fn [{:keys [id intent_id status]}]
+                              (let [required-gates (filter #(= 1 (long (:required %))) (get gates-by-plan id []))]
+                                (case status
+                                  "completed"
+                                  (when-let [unproven (seq (remove #(= "proven" (:status %)) required-gates))]
+                                    [(audit-violation :completed-plan-has-unproven-required-gates
+                                       {:plan-id (->uuid id)
+                                        :intent-id (->uuid intent_id)
+                                        :gate-ids (mapv #(->uuid (:id %)) unproven)})])
+                                  "abandoned"
+                                  (when-not (some #(= "impeded" (:status %)) required-gates)
+                                    [(audit-violation :abandoned-plan-has-no-impeded-required-gate
+                                       {:plan-id (->uuid id)
+                                        :intent-id (->uuid intent_id)})])
+                                  nil)))
+                            plan-rows)
+          intent-violations (mapcat
+                              (fn [{:keys [id status]}]
+                                (let [plans (get plans-by-intent id [])]
+                                  (case status
+                                    "fulfilled"
+                                    (concat
+                                      (when-not (accepted-attestation-row db-info :intent id :intent/fulfilled)
+                                        [(audit-violation :missing-intent-closure-attestation
+                                           {:intent-id (->uuid id)})])
+                                      (when-not (some #(= "completed" (:status %)) plans)
+                                        [(audit-violation :fulfilled-intent-has-no-completed-plan
+                                           {:intent-id (->uuid id)})]))
+                                    "abandoned"
+                                    (concat
+                                      (when-not (accepted-attestation-row db-info :intent id :intent/abandoned)
+                                        [(audit-violation :missing-intent-abandonment-attestation
+                                           {:intent-id (->uuid id)})])
+                                      (when-not (some #(= "abandoned" (:status %)) plans)
+                                        [(audit-violation :abandoned-intent-has-no-abandoned-plan
+                                           {:intent-id (->uuid id)})]))
+                                    nil)))
+                              intent-rows)
+          violations (vec (concat gate-violations plan-violations intent-violations))]
+      {:success? (empty? violations)
+       :violations violations
+       :counts {:intents (count intent-rows)
+                :plans (count plan-rows)
+                :gates (count gate-rows)
+                :attestations (:c (query-one! db-info
+                                    (cond-> {:select [[:%count.* :c]]
+                                             :from :attestation}
+                                      conversation-id (assoc :where [:= :conversation_soul_id (->ref conversation-id)]))))}})))
+
 (defn- canonical-ref-or-throw! [ref]
   (when-not (proof/canonical-ref? ref)
     (throw (ex-info "provenance ref must be canonical"

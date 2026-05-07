@@ -190,8 +190,9 @@ No task is DONE if:
 | Task 8 attestation storage | DONE | Added `attestation` V1 table, attestation persistence/read facade, and `db-attest-gate!` writer that requires an accepted evidence bundle and updates gate status as an attestation-derived projection. Rejected bundles cannot prove gates. Verified: attestation in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. Note: full SQLite core test still hits pre-existing multiprocess child timeout assertions after passing proof/attestation cases. |
 | Task 9 plan completion transition | DONE | Plan status now transitions to `completed` only when all required gates are proven by accepted gate attestations; one proven gate does not complete a multi-gate plan, and intent remains active. Verified: task9 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
 | Task 10 intent fulfillment/abandonment | DONE | Added intent closure attestation writer. Intent fulfillment now has an attestation-backed path requiring an accepted closure evidence bundle plus a completed plan; early closure over an open plan fails and leaves the intent active. Verified: task10 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
-| Task 11 audit/hooks/rendering | NEXT | Promote audit as primary validation surface over ledger, bundles, attestations, gates, plans, and intents. |
-| Task 12+ hooks/rendering | TODO | Must proceed only with regression tests and fresh runtime gates after Task 11 audit. |
+| Task 11 audit surface | DONE | Added `db-audit-proof` read-only audit over gates, plans, intents, and accepted attestations. The audit passes for the attestation-ledger closure path and reports legacy closure that bypasses accepted intent closure attestation. Verified: task11 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
+| Task 12 hooks/rendering | NEXT | Render audit/attestation reports and add extension lifecycle hooks without scraping prompt prose. |
+| Task 13+ cleanup | TODO | Remove stale legacy proof semantics only after audit/report callers migrate. |
 | Legacy removal | TODO / REQUIRED | Final purge task must delete old files and stale names after all callers move. |
 
 
@@ -590,7 +591,7 @@ Acceptance criteria:
 - Fake extension test observes hook events in order.
 - Audit can distinguish user-facing unresolved intents from system/extension guardrails.
 
-## Task 11 — Replace proof checks with audit as the primary validation surface
+## Task 11 — DONE — Replace proof checks with audit as the primary validation surface
 
 Work:
 
