@@ -599,6 +599,34 @@
     [(+ input-pad-x cursor-vcol)
      (+ text-top (- cursor-vrow v-scroll))]))
 
+(defn- slash-suggestion-line
+  [suggestion cols]
+  (let [usage-w (max 18 (min 42 (quot (* cols 2) 5)))
+        usage   (p/truncate-cols (:slash/usage suggestion) usage-w)
+        label-w (max 0 (- cols usage-w 5))
+        label   (p/truncate-cols (or (:label suggestion) "") label-w)]
+    (str " " usage (repeat-str \space (max 1 (- usage-w (p/display-width usage)))) " " label)))
+
+(defn draw-slash-command-suggestions!
+  "Overlay fuzzy slash-command suggestions immediately above the input box."
+  [^TextGraphics g suggestions input-top cols]
+  (when (seq suggestions)
+    (let [visible (take (max 0 (min 6 (dec input-top))) suggestions)
+          n       (count visible)
+          top     (max 0 (- input-top n 1))
+          width   (max 1 cols)]
+      (when (pos? n)
+        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+        (p/put-str! g 0 top
+          (p/truncate-cols " Slash commands · ↑↓/wheel select · Tab complete · Enter run " width))
+        (doseq [[i suggestion] (map-indexed vector visible)]
+          (if (:slash/selected? suggestion)
+            (p/set-colors! g t/dialog-bg t/dialog-title-bg)
+            (p/set-colors! g t/dialog-fg t/dialog-bg))
+          (p/fill-rect! g 0 (+ top i 1) width 1)
+          (p/put-str! g 0 (+ top i 1)
+            (p/truncate-cols (slash-suggestion-line suggestion width) width)))))))
+
 ;;; ── Background fill ────────────────────────────────────────────────────────
 
 (defn fill-background!

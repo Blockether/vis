@@ -5,6 +5,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.theme :as shared-theme]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
+            [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]))
@@ -71,6 +72,8 @@
    :input-history
    :input-history-index
    :input-history-draft
+   :slash-command-index
+   :slash-command-hidden?
    :submitted-input
    :pastes
    :paste-counter
@@ -92,6 +95,8 @@
    :input-history []
    :input-history-index nil
    :input-history-draft nil
+   :slash-command-index 0
+   :slash-command-hidden? false
    :submitted-input nil
    :pastes {}
    :paste-counter 0
@@ -544,6 +549,8 @@
                     :input-history []
                     :input-history-index nil
                     :input-history-draft nil
+                    :slash-command-index 0
+                    :slash-command-hidden? false
                     :submitted-input nil
                   ;; Paste registry. Each multi-line / large
                   ;; clipboard payload lands here keyed by an auto-
@@ -765,7 +772,19 @@
 
 (reg-event-db :update-input
   (fn [db [_ new-input]]
-    (assoc db :input new-input)))
+    (let [text (input/input->text new-input)]
+      (cond-> (assoc db :input new-input)
+        (not (str/starts-with? (str/triml text) "/"))
+        (assoc :slash-command-hidden? false)))))
+
+(reg-event-db :hide-slash-command-suggestions
+  (fn [db _]
+    (assoc db :slash-command-hidden? true)))
+
+(reg-event-db :move-slash-command-selection
+  (fn [db [_ delta total]]
+    (assoc db :slash-command-index
+      (slash/move-index (:slash-command-index db) delta total))))
 
 (defn- text->input-state [text]
   (let [lines (vec (or (seq (str/split (or text "") #"\n" -1)) [""]))
@@ -792,7 +811,9 @@
                     current)]
       (assoc db :input next
         :input-history-index nil
-        :input-history-draft nil))))
+        :input-history-draft nil
+        :slash-command-index 0
+        :slash-command-hidden? false))))
 
 (reg-event-db :channel-status-set
   (fn [db [_ id status]]
@@ -828,6 +849,8 @@
       :input-history (vec (or input-history []))
       :input-history-index nil
       :input-history-draft nil
+      :slash-command-index 0
+      :slash-command-hidden? false
       :pastes (or pastes {})
       :paste-counter (or paste-counter 0)
       :loading? false
@@ -877,6 +900,8 @@
       :input (input/empty-input)
       :input-history-index nil
       :input-history-draft nil
+      :slash-command-index 0
+      :slash-command-hidden? false
       ;; A new empty input has no placeholder tokens, so the paste
       ;; registry is dead state. Clearing it here keeps memory
       ;; bounded across long sessions — every send + every history
@@ -980,7 +1005,9 @@
                                  :paste-counter (:paste-counter db)
                                  :input-history (vec (or (:input-history db) []))}
                :input-history-index nil
-               :input-history-draft nil))
+               :input-history-draft nil
+               :slash-command-index 0
+               :slash-command-hidden? false))
        :fx [[:rlm-turn workspace-id (:conversation db) agent-text token
              reasoning-level extra-body turn-features]]})))
 
