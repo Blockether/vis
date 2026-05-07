@@ -320,6 +320,8 @@
 (def deregister-extension!               extension/deregister-extension!)
 (def extension-source-markers-of         extension/extension-source-markers-of)
 (def channel-hooks-for                   extension/channel-hooks-for)
+(def proof-event-kinds                   extension/proof-event-kinds)
+(def emit-proof-event!                   extension/emit-proof-event!)
 (def reload-extensions!                  lp/reload-extensions!)
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;

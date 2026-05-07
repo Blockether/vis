@@ -422,6 +422,18 @@
 (s/def :ext/on-iteration-end-fn   fn?)
 (s/def :ext/on-turn-end-fn        fn?)
 
+(def proof-event-kinds
+  "Structured proof lifecycle events emitted by persistence writes and audit.
+   Extensions receive these through `:ext/on-proof-event-fn`; they must observe
+   data, not scrape audit/proof Markdown."
+  #{:proof/event-appended
+    :proof/evidence-bundle-created
+    :proof/attestation-accepted
+    :proof/audit-violation})
+
+(s/def :proof/event proof-event-kinds)
+(s/def :ext/on-proof-event-fn fn?)
+
 ;; Channel-local hooks let extensions contribute UI commands/status behavior to
 ;; concrete channels without requiring those channel namespaces. The TUI uses
 ;; this for voice commands; other channels may ignore the surface.
@@ -619,7 +631,8 @@
             :ext/channel-hooks
             :ext/doctor-check-fn
             :ext/on-turn-start-fn :ext/on-iteration-start-fn
-            :ext/on-iteration-end-fn :ext/on-turn-end-fn])
+            :ext/on-iteration-end-fn :ext/on-turn-end-fn
+            :ext/on-proof-event-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
 
@@ -1551,6 +1564,29 @@
 (defn registered-extensions []
   (let [registry @extension-registry]
     (into [] (keep registry) @extension-order)))
+
+(defn emit-proof-event!
+  "Broadcast one structured proof lifecycle event to registered extensions.
+   Payload must contain `:proof/event`. Listener failures are logged and never
+   prevent the persistence operation that emitted the event."
+  [{:proof/keys [event] :as payload}]
+  (when-not (contains? proof-event-kinds event)
+    (throw (ex-info "unsupported proof lifecycle event" {:proof/event event})))
+  (doseq [ext (registered-extensions)
+          :let [listener (:ext/on-proof-event-fn ext)]
+          :when listener]
+    (try
+      (binding [*current-extension* ext
+                *current-symbol* nil]
+        (listener payload))
+      (catch Throwable t
+        (tel/log! {:level :warn :id ::proof-event-listener-threw
+                   :data {:ext (:ext/namespace ext)
+                          :proof-event event
+                          :error (ex-message t)
+                          :ex-class (.getName (class t))}
+                   :msg "proof lifecycle listener threw; broadcast continues"}))))
+  nil)
 
 (defn channel-hooks-for
   "Return registered extension channel hooks for `channel-id` in extension
