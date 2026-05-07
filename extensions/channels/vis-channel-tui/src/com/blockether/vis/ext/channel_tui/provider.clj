@@ -200,7 +200,7 @@
       (.setCursorPosition screen (p/cursor-pos 0 0))
       (.refresh screen Screen$RefreshType/DELTA)
 
-      (let [key (.readInput screen)]
+      (let [key (dlg/read-modal-key! screen)]
         (when key
           (cond
             (instance? MouseAction key)
@@ -687,7 +687,7 @@
           (.setCursorPosition screen (p/cursor-pos 0 0))
           (.refresh screen Screen$RefreshType/DELTA)
 
-          (let [key (.readInput screen)]
+          (let [key (dlg/read-modal-key! screen)]
             (when key
               (cond
                 (instance? MouseAction key)
@@ -1229,7 +1229,7 @@
 
          (let [key (if (provider-diagnostics-loading? @statuses @limits)
                      (.pollInput screen)
-                     (.readInput screen))]
+                     (dlg/read-modal-key! screen))]
            (if (nil? key)
              (do
                (Thread/sleep 100)

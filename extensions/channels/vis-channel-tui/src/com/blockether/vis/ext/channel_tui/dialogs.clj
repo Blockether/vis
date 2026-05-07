@@ -8,8 +8,8 @@
             [com.blockether.vis.internal.theme :as shared-theme]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.file-picker :as picker])
-  (:import [com.googlecode.lanterna Symbols]
-           [com.googlecode.lanterna.input KeyType MouseAction MouseActionType]
+  (:import [com.googlecode.lanterna Symbols TerminalPosition]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [java.text SimpleDateFormat]
            [java.util Locale TimeZone]))
@@ -108,6 +108,59 @@
       (< idx start) idx
       (>= idx (+ start visible-count)) (max 0 (- idx (dec visible-count)))
       :else start)))
+
+(defn modal-wheel-delta
+  "Return list-selection delta for a wheel mouse event, else nil.
+   Negative moves up; positive moves down."
+  [key]
+  (when (instance? MouseAction key)
+    (let [action (.getActionType ^MouseAction key)]
+      (cond
+        (= action MouseActionType/SCROLL_UP) -1
+        (= action MouseActionType/SCROLL_DOWN) 1
+        :else nil))))
+
+(defn modal-wheel-step
+  "Return wheel delta multiplied by any coalesced event count."
+  [key]
+  (when-let [delta (modal-wheel-delta key)]
+    (* (long delta)
+      (max 1 (long (.getButton ^MouseAction key))))))
+
+(def ^:private modal-pending-key
+  (ThreadLocal/withInitial #(atom nil)))
+
+(defn read-modal-input!
+  "Read one modal input event. Consecutive pending wheel events are drained
+   and returned as one `:scroll-delta`, so a wheel flood costs one redraw.
+   The first non-wheel event encountered while draining is held for the next
+   modal read on this thread."
+  [^TerminalScreen screen]
+  (let [pending-key (.get ^ThreadLocal modal-pending-key)
+        key         (or @pending-key (.readInput screen))]
+    (reset! pending-key nil)
+    (if-let [delta (modal-wheel-delta key)]
+      (loop [acc (long delta)]
+        (if-let [next-key (.pollInput screen)]
+          (if-let [next-delta (modal-wheel-delta next-key)]
+            (recur (+ acc (long next-delta)))
+            (do
+              (reset! pending-key next-key)
+              {:scroll-delta acc}))
+          {:scroll-delta acc}))
+      {:key key})))
+
+(defn read-modal-key!
+  "Like `Screen/readInput`, but drains wheel floods into one synthetic wheel
+   event. Existing modal loops can use it without bespoke scroll-delta code."
+  ^KeyStroke [^TerminalScreen screen]
+  (let [{:keys [key scroll-delta]} (read-modal-input! screen)]
+    (or key
+      (when scroll-delta
+        (MouseAction.
+          (if (neg? (long scroll-delta)) MouseActionType/SCROLL_UP MouseActionType/SCROLL_DOWN)
+          1
+          (TerminalPosition. 0 0))))))
 
 (defn draw-hint-bar!
   "Draw hint bar. `hint` can be:
@@ -293,14 +346,17 @@
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
-        (let [key (.readInput screen)]
+        (let [key (read-modal-key! screen)]
           (when key
-            (condp = (.getKeyType key)
-              KeyType/Escape    nil
-              KeyType/ArrowUp   (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-              KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
-              KeyType/Enter     (when (pos? total) (nth items @selected))
-              (recur))))))))
+            (if-let [wheel-step (modal-wheel-step key)]
+              (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total))))
+                (recur))
+              (condp = (.getKeyType key)
+                KeyType/Escape    nil
+                KeyType/ArrowUp   (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                KeyType/Enter     (when (pos? total) (nth items @selected))
+                (recur)))))))))
 
 ;;; ── Resources dialog ────────────────────────────────────────────────────────
 
@@ -389,7 +445,7 @@
           (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter/click" "open"] ["Esc" "cancel"]])
           (.setCursorPosition screen (p/cursor-pos 0 0))
           (.refresh screen Screen$RefreshType/DELTA)
-          (let [key (.readInput screen)]
+          (let [key (read-modal-key! screen)]
             (when key
               (cond
                 (= KeyType/Escape (.getKeyType key)) nil
@@ -452,7 +508,7 @@
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "scroll"] ["Enter/Esc" "close"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
-        (let [key (.readInput screen)]
+        (let [key (read-modal-key! screen)]
           (when key
             (condp = (.getKeyType key)
               KeyType/Escape nil
@@ -662,7 +718,7 @@
           (.setCursorPosition screen cursor-pos))
         (.refresh screen Screen$RefreshType/DELTA)
 
-        (let [key (.readInput screen)]
+        (let [key (read-modal-key! screen)]
           (when key
             (cond
               (instance? MouseAction key)
@@ -794,7 +850,7 @@
         (.setCursorPosition screen cursor-pos)
         (.refresh screen Screen$RefreshType/DELTA)
 
-        (let [key (.readInput screen)]
+        (let [key (read-modal-key! screen)]
           (when key
             (cond
               ;; ── Bracketed paste ──────────────────────────────
@@ -907,7 +963,7 @@
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
-        (let [key (.readInput screen)]
+        (let [key (read-modal-key! screen)]
           (when key
             (condp = (.getKeyType key)
               KeyType/Escape     nil
@@ -1336,7 +1392,7 @@
           (.setCursorPosition screen (p/cursor-pos 0 0))
           (.refresh screen Screen$RefreshType/DELTA)
 
-          (let [key (.readInput screen)]
+          (let [key (read-modal-key! screen)]
             (when key
               (condp = (.getKeyType key)
                 KeyType/Escape
@@ -1565,7 +1621,7 @@
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
 
-         (let [key          (.readInput screen)
+         (let [key          (read-modal-key! screen)
                selected-row (nth rows @selected)]
            (when key
              (cond
@@ -1803,20 +1859,23 @@
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
-        (let [key (.readInput screen)]
+        (let [key (read-modal-key! screen)]
           (when key
-            (condp = (.getKeyType key)
-              KeyType/Escape    nil
-              KeyType/ArrowUp   (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
-              KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
-              KeyType/Enter     (when (pos? total) (select-keys (nth items @selected) [:action :id]))
-              KeyType/Character (let [raw-c (.getCharacter key)
-                                      c     (when raw-c (Character/toLowerCase raw-c))]
-                                  (case c
-                                    \n {:action :new}
-                                    \f {:action :fork}
-                                    (recur)))
-              (recur))))))))
+            (if-let [wheel-step (modal-wheel-step key)]
+              (do (swap! selected #(clamp (+ % wheel-step) 0 (max 0 (dec total))))
+                (recur))
+              (condp = (.getKeyType key)
+                KeyType/Escape    nil
+                KeyType/ArrowUp   (do (swap! selected #(clamp (dec %) 0 (max 0 (dec total)))) (recur))
+                KeyType/ArrowDown (do (swap! selected #(clamp (inc %) 0 (max 0 (dec total)))) (recur))
+                KeyType/Enter     (when (pos? total) (select-keys (nth items @selected) [:action :id]))
+                KeyType/Character (let [raw-c (.getCharacter key)
+                                        c     (when raw-c (Character/toLowerCase raw-c))]
+                                    (case c
+                                      \n {:action :new}
+                                      \f {:action :fork}
+                                      (recur)))
+                (recur)))))))))
 
 ;;; ── Command palette ─────────────────────────────────────────────────────────
 
@@ -1921,7 +1980,7 @@
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
-        (let [key (.readInput screen)]
+        (let [key (read-modal-key! screen)]
           (when key
             (condp = (.getKeyType key)
               KeyType/Escape nil
@@ -1986,7 +2045,7 @@
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
-        (let [key (.readInput screen)]
+        (let [key (read-modal-key! screen)]
           (when key
             (let [ktype (.getKeyType key)]
               (condp = ktype

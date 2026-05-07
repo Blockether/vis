@@ -378,12 +378,17 @@
       (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_UP
                 (.getActionType ma)))))
 
-  (it "wheel-down button (65) maps to SCROLL_DOWN"
+  (it "wheel-down button (65) maps to SCROLL_DOWN without reflection warnings"
     (let [m  (.match input/sgr-mouse-pattern (mk-chars (sgr 65 10 5 \M)))
           ma ^com.googlecode.lanterna.input.MouseAction
           (.-fullMatch ^com.googlecode.lanterna.input.CharacterPattern$Matching m)]
       (expect (= com.googlecode.lanterna.input.MouseActionType/SCROLL_DOWN
-                (.getActionType ma)))))
+                (.getActionType ma))))
+    (let [err (java.io.StringWriter.)]
+      (binding [*warn-on-reflection* true
+                *err* err]
+        (require 'com.blockether.vis.ext.channel-tui.input :reload))
+      (expect (not (str/includes? (str err) "input.clj")))))
 
   (it "drag with button held (32) maps to DRAG"
     (let [m  (.match input/sgr-mouse-pattern (mk-chars (sgr 32 10 5 \M)))
