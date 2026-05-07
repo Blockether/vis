@@ -2,9 +2,7 @@
   "Local voice output through sherpa-onnx Piper/VITS TTS."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.voice.asr :as asr]
-            [com.blockether.vis.ext.voice.input :as input])
+            [com.blockether.vis.core :as vis])
   (:import [java.io File FileInputStream FileOutputStream]
            [java.net URL]
            [org.apache.commons.compress.archivers.tar TarArchiveInputStream]
@@ -13,6 +11,7 @@
 (def model-dir-env "VIS_PIPER_MODEL_DIR")
 (def voice-env "VIS_PIPER_VOICE")
 (def player-env "VIS_VOICE_PLAYER")
+(def parakeet-model-dir-env "VIS_PARAKEET_MODEL_DIR")
 
 (def default-piper-voice
   "Sharp default Piper voice selected for clarity and pleasant prosody."
@@ -285,9 +284,20 @@
   [s]
   (.println ^java.io.PrintStream vis/original-stdout (str s)))
 
+(defn- voice-asr-var
+  [sym]
+  (or (requiring-resolve (symbol "com.blockether.vis.ext.voice.asr" (name sym)))
+    (throw (ex-info "Voice ASR namespace did not expose expected var"
+             {:type :voice-asr/missing-var
+              :var sym}))))
+
+(defn- voice-asr-call!
+  [sym & args]
+  (apply (voice-asr-var sym) args))
+
 (defn- parakeet-status
   []
-  {:installed? (boolean (asr/model-installed?))})
+  {:installed? (boolean (voice-asr-call! 'model-installed?))})
 
 (defn model-status
   []
@@ -302,7 +312,14 @@
     (cli-out! (str "Parakeet: " (if (:installed? parakeet) "installed" "missing")))))
 
 (defn- ensure-parakeet! []
-  (asr/ensure-model!))
+  (voice-asr-call! 'ensure-model!))
+
+(defn- voice-input-tui-commands
+  [ctx]
+  ((or (requiring-resolve 'com.blockether.vis.ext.voice.input/tui-commands)
+     (throw (ex-info "Voice input namespace did not expose TUI commands"
+              {:type :voice-input/missing-tui-commands})))
+   ctx))
 
 (defn- voice-models-status-command [_parsed _residual]
   (vis/init-cli!)
@@ -361,7 +378,7 @@
                       :label "Voice playback command"
                       :description "Optional local audio playback command. Defaults to afplay/paplay/aplay/ffplay discovery."
                       :required? false}
-                     {:name asr/model-dir-env
+                     {:name parakeet-model-dir-env
                       :label "Parakeet model directory"
                       :description "Directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, and tokens.txt. Missing files can be downloaded with vis extensions voice models download --parakeet."
                       :required? false}]
@@ -389,6 +406,6 @@
                           :cmd/run-fn #'voice-models-download-command}]}]}]
      :ext/channel-hooks [{:channel-id :tui
                           :hook-id :voice/input
-                          :commands-fn input/tui-commands}]}))
+                          :commands-fn #'voice-input-tui-commands}]}))
 
 (vis/register-extension! voice-extension)
