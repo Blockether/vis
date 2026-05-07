@@ -416,16 +416,22 @@ pi_tool_success_count = max(0, pi_tool_result_count - pi_tool_error_count)
 vis_blocks = []
 for iteration in vis_result.get("trace") or []:
     vis_blocks.extend(iteration.get("blocks") or [])
-vis_provenance_refs_count = sum(1 for b in vis_blocks if ((b.get("provenance") or {}).get("ref")))
-vis_done_provenance_refs_count = sum(1 for b in vis_blocks if ((b.get("provenance") or {}).get("status") == "done"))
-vis_running_provenance_refs_count = sum(1 for b in vis_blocks if ((b.get("provenance") or {}).get("status") == "running"))
-vis_error_blocks_count = sum(1 for b in vis_blocks if b.get("error"))
-vis_answer_blocks_count = sum(1 for b in vis_blocks if ((b.get("provenance") or {}).get("op") == "vis/answer"))
+def prov(block, key):
+    return (block.get("provenance") or {}).get(key)
+
+def rendering_kind(block):
+    return block.get("rendering-kind") or block.get("rendering_kind")
+
+vis_provenance_refs_count = sum(1 for b in vis_blocks if prov(b, "ref"))
+vis_done_provenance_refs_count = sum(1 for b in vis_blocks if prov(b, "status") in {"done", ":done"})
+vis_running_provenance_refs_count = sum(1 for b in vis_blocks if prov(b, "status") in {"running", ":running"})
+vis_error_blocks_count = sum(1 for b in vis_blocks if b.get("error") or rendering_kind(b) in {"error", "vis/error"})
+vis_answer_blocks_count = sum(1 for b in vis_blocks if prov(b, "op") in {"answer", "vis/answer"} or rendering_kind(b) in {"answer", "vis/answer"})
 vis_tool_events = []
 for b in vis_blocks:
     vis_tool_events.extend(b.get("tool-events") or b.get("tool_events") or [])
 vis_tool_event_count = len(vis_tool_events)
-vis_tool_block_count = sum(1 for b in vis_blocks if str((b.get("provenance") or {}).get("op") or "").startswith("v/"))
+vis_tool_block_count = sum(1 for b in vis_blocks if str(prov(b, "op") or "").startswith("v/") or rendering_kind(b) in {"tool", "vis/tool"})
 vis_tool_call_count = max(vis_tool_event_count, vis_tool_block_count)
 vis_tool_error_count = 0
 for ev in vis_tool_events:
