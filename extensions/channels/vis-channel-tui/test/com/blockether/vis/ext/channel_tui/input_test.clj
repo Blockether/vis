@@ -94,6 +94,15 @@
 (defn- special-key [ktype]
   (KeyStroke. ktype false false))
 
+(defn- alt-key [^Character ch]
+  (KeyStroke. ch false true))
+
+(defn- alt-special-key [ktype]
+  (KeyStroke. ktype false true))
+
+(defn- ctrl-special-key [ktype]
+  (KeyStroke. ktype true false))
+
 (defn- alt-shift-special-key [ktype]
   (KeyStroke. ktype false true true))
 
@@ -192,7 +201,69 @@
       (expect (= {:action :continue :state state}
                 (input/handle-key (ctrl-key (Character. \1)) state)))
       (expect (= {:action :continue :state state}
-                (input/handle-key (ctrl-key (Character. \9)) state))))))
+                (input/handle-key (ctrl-key (Character. \9)) state)))))
+
+  (it "Alt+Left/Right and Meta-b/f move by whitespace-delimited words"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "hello   world"))]
+      (expect (= {:action :continue
+                  :state  (assoc state :ccol 8)}
+                (input/handle-key (alt-special-key KeyType/ArrowLeft) state)))
+      (expect (= {:action :continue
+                  :state  (assoc state :ccol 8)}
+                (input/handle-key (alt-key (Character. \b)) state)))
+      (expect (= {:action :continue
+                  :state  (assoc state :ccol 5)}
+                (input/handle-key (alt-special-key KeyType/ArrowRight)
+                  (assoc state :ccol 0))))
+      (expect (= {:action :continue
+                  :state  (assoc state :ccol 13)}
+                (input/handle-key (alt-key (Character. \f))
+                  (assoc state :ccol 5))))))
+
+  (it "Home/End and Ctrl+A/E move to current line bounds"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "first\nsecond"))]
+      (expect (= {:action :continue
+                  :state  (assoc state :ccol 0)}
+                (input/handle-key (special-key KeyType/Home) state)))
+      (expect (= {:action :continue
+                  :state  state}
+                (input/handle-key (special-key KeyType/End)
+                  (assoc state :ccol 0))))
+      (expect (= {:action :continue
+                  :state  (assoc state :ccol 0)}
+                (input/handle-key (ctrl-key (Character. \a)) state)))
+      (expect (= {:action :continue
+                  :state  state}
+                (input/handle-key (ctrl-key (Character. \e))
+                  (assoc state :ccol 0))))))
+
+  (it "Alt+Backspace deletes a word and Ctrl+Backspace/Ctrl+U delete to line start"
+    (let [state      (-> (input/empty-input)
+                       (input/paste-text "hello world"))
+          word-gone  (-> state
+                       (assoc-in [:lines 0] "hello ")
+                       (assoc :ccol 6))
+          line-gone  (-> state
+                       (assoc-in [:lines 0] "")
+                       (assoc :ccol 0))]
+      (expect (= {:action :continue :state word-gone}
+                (input/handle-key (alt-special-key KeyType/Backspace) state)))
+      (expect (= {:action :continue :state line-gone}
+                (input/handle-key (ctrl-special-key KeyType/Backspace) state)))
+      (expect (= {:action :continue :state line-gone}
+                (input/handle-key (ctrl-key (Character. \u)) state))))))
+
+(defdescribe alt-backspace-pattern-test
+  (it "ESC+DEL and ESC+Ctrl-H decode as Alt+Backspace"
+    (doseq [ch [(Character. (char 0x7f)) (Character. (char 0x08))]]
+      (let [match (.match input/alt-backspace-pattern
+                    (java.util.ArrayList. [(Character. (char 0x1b)) ch]))
+            key   (.-fullMatch match)]
+        (expect (= KeyType/Backspace (.getKeyType key)))
+        (expect (.isAltDown key))
+        (expect (not (.isCtrlDown key)))))))
 
 (defdescribe bracketed-paste-helpers-test
   (it "paste-start? is true ONLY for a KeyStroke carrying PASTE_START_CHAR"
