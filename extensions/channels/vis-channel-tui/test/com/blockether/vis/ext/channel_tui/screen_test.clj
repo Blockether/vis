@@ -14,7 +14,8 @@
    [com.blockether.vis.ext.channel-tui.selection :as selection]
    [com.blockether.vis.internal.external-opener :as opener]
    [com.blockether.vis.ext.channel-tui.state :as state]
-   [lazytest.core :refer [defdescribe it expect]]))
+   [lazytest.core :refer [defdescribe it expect]])
+  (:import [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
 
 (def ^:private parse-args
   (deref #'screen/parse-args))
@@ -75,6 +76,9 @@
 
 (def ^:private pre-resolve-conversation-id!
   (deref #'screen/pre-resolve-conversation-id!))
+
+(def ^:private terminal-ctrl-c-behaviour
+  (deref #'screen/terminal-ctrl-c-behaviour))
 
 (def ^:private terminal-interrupt-action
   (deref #'screen/terminal-interrupt-action))
@@ -174,6 +178,10 @@
       (expect (= [false] @refreshes)))))
 
 (defdescribe terminal-interrupt-test
+  (it "configures Lanterna to trap Ctrl+C instead of exiting inside pollInput"
+    (expect (= UnixLikeTerminal$CtrlCBehaviour/TRAP
+              (terminal-ctrl-c-behaviour))))
+
   (it "clears a non-empty draft before quitting on terminal interrupts"
     (expect (= :clear-input
               (terminal-interrupt-action

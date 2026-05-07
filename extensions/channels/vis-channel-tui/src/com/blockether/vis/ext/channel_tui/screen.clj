@@ -20,7 +20,7 @@
             MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
            [com.googlecode.lanterna.terminal MouseCaptureMode]
-           [com.googlecode.lanterna.terminal.ansi UnixTerminal]
+           [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour UnixTerminal]
            [java.io PrintWriter StringWriter]
            [java.nio.charset Charset]
            [java.util.concurrent TimeUnit]
@@ -927,9 +927,19 @@
     (state/dispatch [:set-title title]))
   (subscribe-title-listener! id))
 
+(defn- terminal-ctrl-c-behaviour
+  "Lanterna's 3-arg UnixTerminal constructor defaults to
+   CTRL_C_KILLS_APPLICATION. In raw mode Ctrl+C is decoded as a
+   KeyStroke, then UnixLikeTerminal calls System/exit from pollInput
+   before our input handler can clear the draft. TRAP preserves the
+   KeyStroke so `input/handle-key` owns the first-Ctrl+C contract."
+  []
+  UnixLikeTerminal$CtrlCBehaviour/TRAP)
+
 (defn- create-terminal!
   [_opts]
-  (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset)))
+  (UnixTerminal. @vis/tty-in @vis/tty-out (Charset/defaultCharset)
+    (terminal-ctrl-c-behaviour)))
 
 (defn- configure-terminal-input!
   [terminal _opts]

@@ -68,4 +68,19 @@
   (it "mounts voice model commands under vis extensions voice"
     (let [cli (-> voice/voice-extension :ext/cli first)]
       (expect (= "voice" (:cmd/name cli)))
-      (expect (= ["models"] (mapv :cmd/name (:cmd/subcommands cli)))))))
+      (expect (= ["models"] (mapv :cmd/name (:cmd/subcommands cli))))))
+
+  (it "defers TUI voice input namespace until the channel hook is invoked"
+    (let [hook  (first (:ext/channel-hooks voice/voice-extension))
+          calls (atom [])]
+      (with-redefs [clojure.core/requiring-resolve
+                    (fn [sym]
+                      (swap! calls conj sym)
+                      (expect (= 'com.blockether.vis.ext.voice.input/tui-commands sym))
+                      (fn [ctx]
+                        [{:id :test/voice-command
+                          :ctx ctx}]))]
+        (expect (= [{:id :test/voice-command
+                     :ctx {:source :test}}]
+                  ((:commands-fn hook) {:source :test})))
+        (expect (= ['com.blockether.vis.ext.voice.input/tui-commands] @calls))))))
