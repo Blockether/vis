@@ -98,6 +98,12 @@ vis_duration_ms = float(vis_result.get("duration-ms") or vis_result.get("duratio
 vis_task = vis_duration_ms / 1000.0
 pi_usage = load_json("pi/metrics.tokens.json", {})
 vis_tokens_obj = load_json("vis/metrics.tokens.json", {})
+pi_events = []
+for line in read("pi/events.jsonl").splitlines():
+    try:
+        pi_events.append(json.loads(line))
+    except Exception:
+        pass
 pi_total_tokens = float(pi_usage.get("totalTokens") or pi_usage.get("total_tokens") or 0)
 pi_input_tokens = float(pi_usage.get("input") or pi_usage.get("input_tokens") or 0)
 pi_output_tokens = float(pi_usage.get("output") or pi_usage.get("output_tokens") or 0)
@@ -112,6 +118,27 @@ context_input_ratio = (vis_input_tokens / pi_input_tokens) if pi_input_tokens > 
 context_total_overhead_tokens = max(0.0, vis_total_tokens - pi_total_tokens)
 context_input_overhead_tokens = max(0.0, vis_input_tokens - pi_input_tokens)
 
+pi_tool_event_count = sum(1 for e in pi_events if "tool" in str(e.get("type", "")).lower())
+pi_tool_call_count = 0
+pi_tool_result_count = 0
+pi_tool_error_count = 0
+for e in pi_events:
+    msg = e.get("message") or {}
+    for item in msg.get("content") or []:
+        typ = item.get("type")
+        if typ in {"tool_use", "server_tool_use"}:
+            pi_tool_call_count += 1
+        if typ == "tool_result":
+            pi_tool_result_count += 1
+            if item.get("is_error") or item.get("error"):
+                pi_tool_error_count += 1
+    tool_results = e.get("toolResults") or e.get("tool_results") or []
+    pi_tool_result_count += len(tool_results)
+    for result in tool_results:
+        if isinstance(result, dict) and (result.get("error") or result.get("isError") or result.get("is_error") or result.get("status") in {"error", "failed", "timeout"}):
+            pi_tool_error_count += 1
+pi_tool_success_count = max(0, pi_tool_result_count - pi_tool_error_count)
+
 vis_blocks = []
 for iteration in vis_result.get("trace") or []:
     vis_blocks.extend(iteration.get("blocks") or [])
@@ -120,6 +147,17 @@ vis_done_provenance_refs_count = sum(1 for b in vis_blocks if ((b.get("provenanc
 vis_running_provenance_refs_count = sum(1 for b in vis_blocks if ((b.get("provenance") or {}).get("status") == "running"))
 vis_error_blocks_count = sum(1 for b in vis_blocks if b.get("error"))
 vis_answer_blocks_count = sum(1 for b in vis_blocks if ((b.get("provenance") or {}).get("op") == "vis/answer"))
+vis_tool_events = []
+for b in vis_blocks:
+    vis_tool_events.extend(b.get("tool-events") or b.get("tool_events") or [])
+vis_tool_event_count = len(vis_tool_events)
+vis_tool_block_count = sum(1 for b in vis_blocks if str((b.get("provenance") or {}).get("op") or "").startswith("v/"))
+vis_tool_call_count = max(vis_tool_event_count, vis_tool_block_count)
+vis_tool_error_count = 0
+for ev in vis_tool_events:
+    if isinstance(ev, dict) and (ev.get("error") or ev.get("timeout?") or ev.get("timeout") or ev.get("status") in {"error", "failed", "timeout"}):
+        vis_tool_error_count += 1
+vis_tool_success_count = max(0, vis_tool_call_count - vis_tool_error_count)
 vis_iteration_count = float(vis_result.get("iteration-count") or vis_result.get("iteration_count") or 0)
 # Minimal proof/evidence health metric from the Vis trace. Hard proof tasks can add an Opus judge later,
 # but this catches prompt/context optimizations that strip all provenance from the JSON result.
@@ -174,6 +212,16 @@ metrics = {
     "context_input_ratio": context_input_ratio,
     "context_total_overhead_tokens": context_total_overhead_tokens,
     "context_input_overhead_tokens": context_input_overhead_tokens,
+    "pi_tool_event_count": pi_tool_event_count,
+    "pi_tool_call_count": pi_tool_call_count,
+    "pi_tool_result_count": pi_tool_result_count,
+    "pi_tool_success_count": pi_tool_success_count,
+    "pi_tool_error_count": pi_tool_error_count,
+    "vis_tool_event_count": vis_tool_event_count,
+    "vis_tool_call_count": vis_tool_call_count,
+    "vis_tool_success_count": vis_tool_success_count,
+    "vis_tool_error_count": vis_tool_error_count,
+    "vis_tool_block_count": vis_tool_block_count,
     "vis_iteration_count": vis_iteration_count,
     "vis_provenance_refs_count": vis_provenance_refs_count,
     "vis_done_provenance_refs_count": vis_done_provenance_refs_count,

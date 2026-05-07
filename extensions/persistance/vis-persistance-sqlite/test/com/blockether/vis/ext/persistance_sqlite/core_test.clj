@@ -1506,6 +1506,241 @@
         (expect (= :non-successful-event (-> proof-bundle :members first :error-code)))))))
 
 ;; =============================================================================
+;; PROOF.md Tasks 28–34 — intent lifecycle persistence end-to-end
+;; =============================================================================
+
+(defdescribe intent-lifecycle-persistence-test
+  (it "db-store-intent! requires owner-extension-id when source is :extension"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})]
+      (let [thrown (try (vis/db-store-intent! s {:conversation-id cid :title "x"
+                                                 :rationale "r" :source :extension})
+                     nil (catch Exception e e))]
+        (expect (some? thrown))
+        (expect (str/includes? (ex-message thrown) ":owner-extension-id")))
+      (let [thrown (try (vis/db-store-intent! s {:conversation-id cid :title "x"
+                                                 :rationale "r" :source :user
+                                                 :owner-extension-id "vis.ext.x"})
+                     nil (catch Exception e e))]
+        (expect (some? thrown))
+        (expect (str/includes? (ex-message thrown) ":owner-extension-id")))))
+
+  (it "db-suggest-intent! creates :suggested extension-owned intent without focus"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "telegram" :status :running})
+          sug (vis/db-suggest-intent! s {:conversation-id cid :conversation-turn-id tid
+                                         :title "Telegram bot" :rationale "setup"
+                                         :source :extension
+                                         :owner-extension-id "vis.ext.telegram"})]
+      (expect (= :suggested (:status sug)))
+      (expect (= :extension (:source sug)))
+      (expect (= "vis.ext.telegram" (:owner-extension-id sug)))
+      (expect (zero? (raw-count s :conversation_intent_focus)))))
+
+  (it "db-accept-intent! rejects extensions and accepts :user / :system-policy actors"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          sug (vis/db-suggest-intent! s {:conversation-id cid :title "x"
+                                         :rationale "r" :source :user})
+          ext-thrown (try (vis/db-accept-intent! s (:id sug) {:actor-kind :extension})
+                       nil (catch Exception e e))
+          accepted   (vis/db-accept-intent! s (:id sug) {:actor-kind :user :reason "ok"})]
+      (expect (some? ext-thrown))
+      (expect (str/includes? (ex-message ext-thrown) "extensions cannot self-accept"))
+      (expect (= :active (:status accepted)))
+      (expect (= :user (:accepted-by-kind accepted)))
+      (expect (some? (:accepted-at accepted)))
+      (expect (= 1 (raw-count s :attestation)))
+      (expect (some? (:transition-attestation accepted)))))
+
+  (it "db-accept-intent! :defer routes straight to :deferred with trigger metadata"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          sug (vis/db-suggest-intent! s {:conversation-id cid :title "y"
+                                         :rationale "r" :source :user})
+          deferred (vis/db-accept-intent! s (:id sug)
+                     {:actor-kind :user
+                      :defer {:trigger-kind :defer/user-input
+                              :sibling-policy :defer/block-parent}})]
+      (expect (= :deferred (:status deferred)))
+      (expect (= :defer/user-input (:defer-trigger-kind deferred)))
+      (expect (= :defer/block-parent (:defer-sibling-policy deferred)))))
+
+  (it "defer/resume requires resumable mark and rejects extension resume actor"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          sug (vis/db-suggest-intent! s {:conversation-id cid :title "z"
+                                         :rationale "r" :source :user})
+          _   (vis/db-accept-intent! s (:id sug) {:actor-kind :user})
+          _   (vis/db-defer-intent! s (:id sug) {:actor-kind :user
+                                                 :trigger-kind :defer/extension-signal})
+          early-thrown (try (vis/db-resume-intent! s (:id sug) {:actor-kind :user})
+                         nil (catch Exception e e))
+          _   (vis/db-mark-intent-resumable! s (:id sug) {})
+          ext-thrown (try (vis/db-resume-intent! s (:id sug) {:actor-kind :extension})
+                       nil (catch Exception e e))
+          resumed (vis/db-resume-intent! s (:id sug) {:actor-kind :user})]
+      (expect (some? early-thrown))
+      (expect (str/includes? (ex-message early-thrown) "not resumable"))
+      (expect (some? ext-thrown))
+      (expect (str/includes? (ex-message ext-thrown) "extensions cannot self-accept"))
+      (expect (= :active (:status resumed)))
+      (expect (= :user (:resumed-by-kind resumed)))))
+
+  (it "intent lifecycle rejects illegal transitions (terminal states are sticky)"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "close" :status :running})
+          _   (vis/db-store-iteration! s {:conversation-turn-id tid
+                                          :blocks [{:code "(v/bash \"false\")"
+                                                    :result :vis/error
+                                                    :rendering-kind :vis/system}]})
+          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          sug (vis/db-suggest-intent! s {:conversation-id cid :title "x"
+                                         :rationale "r" :source :user})
+          _   (vis/db-accept-intent! s (:id sug) {:actor-kind :user})
+          _   (vis/db-abandon-intent! s (:id sug) {:reason "changed mind" :refs [ref]})
+          to-active   (try (vis/db-accept-intent! s (:id sug) {:actor-kind :user})
+                        nil (catch Exception e e))
+          to-deferred (try (vis/db-defer-intent! s (:id sug)
+                             {:actor-kind :user :trigger-kind :defer/user-input})
+                        nil (catch Exception e e))]
+      (expect (some? to-active))
+      (expect (str/includes? (ex-message to-active) "illegal intent lifecycle transition"))
+      (expect (some? to-deferred))
+      (expect (str/includes? (ex-message to-deferred) "illegal intent lifecycle transition"))))
+
+  (it "db-list-intents filters by status / source / owner / parent / resumable + tree DFS"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          parent (vis/db-suggest-intent! s {:conversation-id cid :title "p"
+                                            :rationale "r" :source :user})
+          _ (vis/db-accept-intent! s (:id parent) {:actor-kind :user})
+          _ext-sug (vis/db-suggest-intent! s {:conversation-id cid :title "e"
+                                              :rationale "r" :source :extension
+                                              :owner-extension-id "vis.ext.telegram"})
+          ext-def (vis/db-suggest-intent! s {:conversation-id cid :title "d"
+                                             :rationale "r" :source :extension
+                                             :owner-extension-id "vis.ext.telegram"})
+          _ (vis/db-accept-intent! s (:id ext-def) {:actor-kind :user
+                                                    :defer {:trigger-kind :defer/time}})
+          child (vis/db-suggest-intent! s {:conversation-id cid :title "c"
+                                           :rationale "r" :source :user
+                                           :parent-intent-id (:id parent)})]
+      (expect (= 1 (count (vis/db-list-intents s {:conversation-id cid :status :active}))))
+      (expect (= 2 (count (vis/db-list-intents s {:conversation-id cid :status :suggested}))))
+      (expect (= 1 (count (vis/db-list-intents s {:conversation-id cid :status :deferred}))))
+      (expect (= 2 (count (vis/db-list-intents s {:conversation-id cid :source :extension}))))
+      (expect (= 2 (count (vis/db-list-intents s {:conversation-id cid
+                                                  :owner-extension-id "vis.ext.telegram"}))))
+      (expect (= 1 (count (vis/db-list-intents s {:conversation-id cid
+                                                  :parent-intent-id (:id parent)}))))
+      (expect (= 4 (count (vis/db-list-intents s {:conversation-id cid
+                                                  :status #{:suggested :active :deferred}}))))
+      (expect (zero? (count (vis/db-list-intents s {:conversation-id cid :resumable? true}))))
+      (vis/db-mark-intent-resumable! s (:id ext-def) {})
+      (expect (= 1 (count (vis/db-list-intents s {:conversation-id cid :resumable? true}))))
+      (expect (zero? (count (vis/db-list-intents s {:conversation-id cid :resumable? false}))))
+      (expect (= (:id child) (:id (vis/db-get-intent s (:id child)))))
+      (let [tree (vis/db-intent-tree s (:id parent))]
+        (expect (= 2 (count tree)))
+        (expect (= (:id parent) (:id (:intent (first tree)))))
+        (expect (zero? (:depth (first tree))))
+        (expect (= (:id child) (:id (:intent (second tree)))))
+        (expect (= 1 (:depth (second tree)))))))
+
+  (it "db-set-intent-cursor! enforces single running intent per conversation"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          a   (vis/db-suggest-intent! s {:conversation-id cid :title "a"
+                                         :rationale "r" :source :user})
+          _   (vis/db-accept-intent! s (:id a) {:actor-kind :user})
+          b   (vis/db-suggest-intent! s {:conversation-id cid :title "b"
+                                         :rationale "r" :source :user})
+          _   (vis/db-accept-intent! s (:id b) {:actor-kind :user})
+          first-cursor  (vis/db-set-intent-cursor! s cid (:id a))
+          second-cursor (vis/db-set-intent-cursor! s cid (:id b))
+          cleared       (vis/db-set-intent-cursor! s cid nil)]
+      (expect (= (:id a) (:intent-id first-cursor)))
+      (expect (= (:id b) (:intent-id second-cursor)))
+      (expect (nil? (:intent-id cleared)))
+      (expect (= 1 (raw-count s :conversation_intent_cursor)))
+      (let [sug (vis/db-suggest-intent! s {:conversation-id cid :title "sugg"
+                                           :rationale "r" :source :user})
+            thrown (try (vis/db-set-intent-cursor! s cid (:id sug))
+                     nil (catch Exception e e))]
+        (expect (some? thrown))
+        (expect (str/includes? (ex-message thrown) "only :active intents")))))
+
+  (it "abandon-with-scope cascades to descendants and clears the cursor"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "abandon" :status :running})
+          _   (vis/db-store-iteration! s {:conversation-turn-id tid
+                                          :blocks [{:code "(v/bash \"false\")"
+                                                    :result :vis/error
+                                                    :rendering-kind :vis/system}]})
+          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          parent (vis/db-suggest-intent! s {:conversation-id cid :title "p"
+                                            :rationale "r" :source :user})
+          _ (vis/db-accept-intent! s (:id parent) {:actor-kind :user})
+          child  (vis/db-suggest-intent! s {:conversation-id cid :title "c"
+                                            :rationale "r" :source :user
+                                            :parent-intent-id (:id parent)})
+          _ (vis/db-accept-intent! s (:id child) {:actor-kind :user})
+          grandchild (vis/db-suggest-intent! s {:conversation-id cid :title "g"
+                                                :rationale "r" :source :user
+                                                :parent-intent-id (:id child)})
+          _ (vis/db-accept-intent! s (:id grandchild) {:actor-kind :user})
+          _ (vis/db-set-intent-cursor! s cid (:id grandchild))
+          result (vis/db-abandon-intent-with-scope! s (:id parent)
+                   {:scope :abandon/current-branch
+                    :reason "user changed direction"
+                    :refs [ref]})]
+      (expect (= :abandon/current-branch (:scope result)))
+      (expect (= 2 (count (:cascaded-intent-ids result))))
+      (expect (= :abandoned (:status (vis/db-get-intent s (:id parent)))))
+      (expect (= :abandoned (:status (vis/db-get-intent s (:id child)))))
+      (expect (= :abandoned (:status (vis/db-get-intent s (:id grandchild)))))
+      (expect (nil? (:intent-id (vis/db-get-intent-cursor s cid))))
+      (expect (= :abandon/current-branch (:abandonment-scope (vis/db-get-intent s (:id parent)))))
+      (expect (= :abandon/current-branch (:abandonment-scope (vis/db-get-intent s (:id child)))))))
+
+  (it "deferred-intent report categorizes active / suggested / deferred / extension-owned"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          a (vis/db-suggest-intent! s {:conversation-id cid :title "a"
+                                       :rationale "r" :source :user})
+          _ (vis/db-accept-intent! s (:id a) {:actor-kind :user})
+          _suggested (vis/db-suggest-intent! s {:conversation-id cid :title "sugg"
+                                                :rationale "r" :source :user})
+          ext-resumable (vis/db-suggest-intent! s {:conversation-id cid :title "ext-r"
+                                                   :rationale "r" :source :extension
+                                                   :owner-extension-id "vis.ext.x"})
+          _ (vis/db-accept-intent! s (:id ext-resumable)
+              {:actor-kind :user :defer {:trigger-kind :defer/extension-signal}})
+          _ (vis/db-mark-intent-resumable! s (:id ext-resumable) {})
+          ext-waiting (vis/db-suggest-intent! s {:conversation-id cid :title "ext-w"
+                                                 :rationale "r" :source :extension
+                                                 :owner-extension-id "vis.ext.x"})
+          _ (vis/db-accept-intent! s (:id ext-waiting)
+              {:actor-kind :user :defer {:trigger-kind :defer/time
+                                         :sibling-policy :defer/block-parent}})
+          report (vis/db-deferred-intent-report s {:conversation-id cid})]
+      (expect (= 1 (count (:active report))))
+      (expect (= 1 (count (:suggested report))))
+      (expect (= 1 (count (:deferred-resumable report))))
+      (expect (= 1 (count (:deferred-waiting report))))
+      (expect (= 1 (count (:sibling-blocking report))))
+      (expect (= 2 (count (:extension-owned report))))
+      (expect (zero? (count (:fulfilled (:resolved report)))))
+      (expect (zero? (count (:abandoned (:resolved report))))))))
+
+;; =============================================================================
 ;; Retry
 ;; =============================================================================
 
