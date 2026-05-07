@@ -1187,7 +1187,7 @@
         (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
         (expect (= 1 (raw-count s :conversation_intent_ref))))))
 
-  (it "rejects compact provenance refs"
+  (it "rejects compact provenance refs in evidence bundles"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
@@ -1199,17 +1199,29 @@
           plan   (vis/db-store-plan! s {:intent-id (:id intent)
                                         :summary "Plan"})
           gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :question "Verified?"})]
-      (let [thrown (try
-                     (vis/db-prove-gate! s {:gate-id (:id gate)
-                                            :summary "Nope"
-                                            :refs ["i1.1"]})
-                     nil
-                     (catch Exception e e))]
-        (expect (some? thrown))
-        (expect (str/includes? (ex-message thrown) "canonical")))))
+                                        :question "Verified?"})
+          bundle (vis/db-create-evidence-bundle! s
+                   {:conversation-id cid
+                    :kind :proof
+                    :subject-kind :gate
+                    :subject-id (:id gate)
+                    :requirements [{:evidence/slot [(:id intent) :proof]
+                                    :evidence/from-ref "i1.1"
+                                    :evidence/extract [:result]
+                                    :evidence/guard [:= [:value] 3]}]})
+          thrown (try
+                   (vis/db-attest-gate! s {:gate-id (:id gate)
+                                           :evidence-bundle-id (:id bundle)
+                                           :kind :gate/proven
+                                           :reason "Nope"})
+                   nil
+                   (catch Exception e e))]
+      (expect (= :rejected (:status bundle)))
+      (expect (= :invalid-requirement (-> bundle :members first :error-code)))
+      (expect (some? thrown))
+      (expect (str/includes? (ex-message thrown) "accepted evidence bundle"))))
 
-  (it "explains canonical refs that are not observed yet and suggests nearest observed refs"
+  (it "rejects unobserved canonical refs in evidence bundles"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
@@ -1218,7 +1230,6 @@
           _iid   (vis/db-store-iteration! s {:conversation-turn-id tid
                                              :blocks [{:code "(+ 1 2)"
                                                        :result 3}]})
-          observed-ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
           future-ref   (str "turn/" (subs (str tid) 0 8) "/iteration/2/block/1")
           intent (vis/db-store-intent! s {:conversation-turn-id tid
                                           :title "Ship it"
@@ -1227,19 +1238,18 @@
                                         :summary "Plan"})
           gate   (vis/db-store-gate! s {:plan-id (:id plan)
                                         :question "Verified?"})
-          thrown (try
-                   (vis/db-prove-gate! s {:gate-id (:id gate)
-                                          :summary "Future ref guessed."
-                                          :refs [future-ref]})
-                   nil
-                   (catch Exception e e))]
-      (expect (some? thrown))
-      (expect (str/includes? (ex-message thrown) "syntactically valid but is not observed yet"))
-      (expect (str/includes? (ex-message thrown) "Current iteration refs are not valid until the next iteration"))
-      (expect (str/includes? (ex-message thrown) "(v/latest-provenance-refs)"))
-      (expect (str/includes? (ex-message thrown) observed-ref))
-      (expect (= :not-observed-yet (:reason (ex-data thrown))))
-      (expect (= observed-ref (-> thrown ex-data :nearest-observed first :ref)))))
+          bundle (vis/db-create-evidence-bundle! s
+                   {:conversation-id cid
+                    :kind :proof
+                    :subject-kind :gate
+                    :subject-id (:id gate)
+                    :requirements [{:evidence/slot [(:id intent) :proof]
+                                    :evidence/from-ref future-ref
+                                    :evidence/extract [:result]
+                                    :evidence/guard [:= [:value] 3]}]})]
+      (expect (= :rejected (:status bundle)))
+      (expect (= future-ref (-> bundle :members first :from-ref)))
+      (expect (= :non-successful-event (-> bundle :members first :error-code)))))
 
   (it "supersedes the previous active plan for an intent"
     (let [s      (h/store)
@@ -1313,62 +1323,84 @@
                                         :summary "Plan"})
           gate   (vis/db-store-gate! s {:plan-id (:id plan)
                                         :question "Did deferred work complete?"})
-          [block] (vis/db-list-iteration-blocks s iid)
-          thrown (try
-                   (vis/db-prove-gate! s {:gate-id (:id gate)
-                                          :summary "Future completed."
-                                          :refs [future-ref]})
-                   nil
-                   (catch Exception e e))]
-      (future-cancel fut)
-      (expect (= {:vis/ref :expr} (:result block)))
-      (expect (= future-ref (get-in block [:events 0 :provenance :ref])))
-      (expect (= :running (get-in block [:events 0 :provenance :status])))
-      (expect (some? thrown))
-      (expect (str/includes? (ex-message thrown) "completed successful lifecycle event")))))
+          [block] (vis/db-list-iteration-blocks s iid)]
+      (vis/db-store-provenance-event! s {:conversation-id cid
+                                         :conversation-turn-id tid
+                                         :ref future-ref
+                                         :kind :lifecycle
+                                         :op :future
+                                         :status :running
+                                         :payload {:result {:vis/ref :expr}}})
+      (let [bundle (vis/db-create-evidence-bundle! s
+                     {:conversation-id cid
+                      :kind :proof
+                      :subject-kind :gate
+                      :subject-id (:id gate)
+                      :requirements [{:evidence/slot [(:id intent) :proof]
+                                      :evidence/from-ref future-ref
+                                      :evidence/extract [:result]
+                                      :event/kind :lifecycle
+                                      :event/op :future}]})]
+        (future-cancel fut)
+        (expect (= {:vis/ref :expr} (:result block)))
+        (expect (= future-ref (get-in block [:events 0 :provenance :ref])))
+        (expect (= :running (get-in block [:events 0 :provenance :status])))
+        (expect (= :rejected (:status bundle)))
+        (expect (= :non-successful-event (-> bundle :members first :error-code))))))
 
-(it "persists await-proof timeout as terminal blocker-compatible lifecycle evidence"
-  (let [s      (h/store)
-        cid    (vis/db-store-conversation! s {:channel :tui})
-        tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                   :user-request "ship it"
-                                                   :status :running})
-        timeout-result {:success? false
-                        :result nil
-                        :provenance {:op :future/await
-                                     :status :timeout
-                                     :started-at-ms 10
-                                     :finished-at-ms 15
-                                     :duration-ms 5}
-                        :error {:type "java.util.concurrent.TimeoutException"
-                                :message "Timed out"
-                                :trace []}}
-        iid    (vis/db-store-iteration! s {:conversation-turn-id tid
-                                           :blocks [{:code "(v/await-proof! f {:timeout-ms 1})"
-                                                     :result timeout-result}]})
-        await-ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/tool/future.await")
-        intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                        :title "Ship it"
-                                        :rationale "User asked for it."})
-        plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                      :summary "Plan"})
-        gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                      :question "Did deferred work complete?"})
-        [block] (vis/db-list-iteration-blocks s iid)
-        impeded (vis/db-impede-gate! s {:gate-id (:id gate)
-                                        :reason "Deferred work timed out."
-                                        :refs [await-ref]})
-        proof-thrown (try
-                       (vis/db-prove-gate! s {:gate-id (:id gate)
-                                              :summary "Future completed."
-                                              :refs [await-ref]})
-                       nil
-                       (catch Exception e e))]
-    (expect (= await-ref (get-in block [:events 0 :provenance :ref])))
-    (expect (= :timeout (get-in block [:events 0 :provenance :status])))
-    (expect (= :impeded (:status impeded)))
-    (expect (some? proof-thrown))
-    (expect (str/includes? (ex-message proof-thrown) "completed successful lifecycle event"))))
+  (it "persists await-proof timeout as terminal blocker-compatible lifecycle evidence"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "ship it"
+                                                     :status :running})
+          timeout-result {:success? false
+                          :result nil
+                          :provenance {:op :future/await
+                                       :status :timeout
+                                       :started-at-ms 10
+                                       :finished-at-ms 15
+                                       :duration-ms 5}
+                          :error {:type "java.util.concurrent.TimeoutException"
+                                  :message "Timed out"
+                                  :trace []}}
+          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(v/await-proof! f {:timeout-ms 1})"
+                                                       :result timeout-result}]})
+          await-ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/tool/future.await")
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Ship it"
+                                          :rationale "User asked for it."})
+          plan   (vis/db-store-plan! s {:intent-id (:id intent)
+                                        :summary "Plan"})
+          gate   (vis/db-store-gate! s {:plan-id (:id plan)
+                                        :question "Did deferred work complete?"})
+          [block] (vis/db-list-iteration-blocks s iid)
+          impeded (vis/db-impede-gate! s {:gate-id (:id gate)
+                                          :reason "Deferred work timed out."
+                                          :refs [await-ref]})]
+      (vis/db-store-provenance-event! s {:conversation-id cid
+                                         :conversation-turn-id tid
+                                         :ref await-ref
+                                         :kind :lifecycle
+                                         :op :future/await
+                                         :status :timeout
+                                         :payload timeout-result})
+      (let [proof-bundle (vis/db-create-evidence-bundle! s
+                           {:conversation-id cid
+                            :kind :proof
+                            :subject-kind :gate
+                            :subject-id (:id gate)
+                            :requirements [{:evidence/slot [(:id intent) :proof]
+                                            :evidence/from-ref await-ref
+                                            :evidence/extract [:result]
+                                            :event/kind :lifecycle
+                                            :event/op :future/await}]})]
+        (expect (= await-ref (get-in block [:events 0 :provenance :ref])))
+        (expect (= :timeout (get-in block [:events 0 :provenance :status])))
+        (expect (= :impeded (:status impeded)))
+        (expect (= :rejected (:status proof-bundle)))
+        (expect (= :non-successful-event (-> proof-bundle :members first :error-code)))))))
 
 ;; =============================================================================
 ;; Retry
