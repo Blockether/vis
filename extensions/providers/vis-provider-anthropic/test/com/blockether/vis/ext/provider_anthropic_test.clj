@@ -22,7 +22,8 @@
       (expect (ifn? (:provider/logout-fn oauth-provider)))
       (expect (ifn? (:provider/detect-fn oauth-provider)))
       (expect (ifn? (:provider/auth-fn oauth-provider)))
-      (expect (ifn? (:provider/get-token-fn oauth-provider)))))
+      (expect (ifn? (:provider/get-token-fn oauth-provider)))
+      (expect (ifn? (:provider/limits-fn oauth-provider)))))
 
   (it "parses callback URL, code#state, query string, and bare code"
     (expect (= {:code "abc" :state "s1"}
@@ -76,4 +77,40 @@
         (expect (throws? clojure.lang.ExceptionInfo
                   #(anthropic/login! (constantly nil)
                      {:open-browser-fn (constantly true)
-                      :manual-code-fn  (fn [_] "code123#wrong")})))))))
+                      :manual-code-fn  (fn [_] "code123#wrong")}))))))
+
+  (it "reports live Claude subscription usage limits from Anthropic OAuth endpoint"
+    (let [provider (vis/provider-by-id :anthropic-coding-plan)
+          called   (atom nil)]
+      (with-redefs-fn {#'anthropic/get-anthropic-token! (fn [] {:token "sk-ant-oat01-test"})
+                       #'http/get (fn [url opts]
+                                    (reset! called {:url url :opts opts})
+                                    {:status 200
+                                     :body (json/write-json-str
+                                             {:five_hour {:utilization 72.5
+                                                          :resets_at "2026-05-07T12:00:00Z"}
+                                              :seven_day {:utilization 25}
+                                              :seven_day_opus {:utilization 10}})})}
+        (fn []
+          (let [report ((:provider/limits-fn provider))
+                rows   (get-in report [:dynamic :limits])]
+            (expect (= "https://api.anthropic.com/api/oauth/usage" (:url @called)))
+            (expect (= "Bearer sk-ant-oat01-test" (get-in @called [:opts :headers "Authorization"])))
+            (expect (= :ok (:status report)))
+            (expect (= [:claude-5h :claude-7d :claude-opus-7d] (mapv :id rows)))
+            (expect (= 72.5 (:used (first rows))))
+            (expect (= 27.5 (:remaining (first rows))))
+            (expect (= 100.0 (:limit (first rows))))
+            (expect (int? (get-in (first rows) [:window :resets-at-ms]))))))))
+
+  (it "returns unauthenticated limits report when Claude subscription OAuth is missing"
+    (let [provider (vis/provider-by-id :anthropic-coding-plan)]
+      (with-redefs-fn {#'anthropic/get-anthropic-token!
+                       (fn []
+                         (throw (ex-info "missing" {:type :vis/anthropic-not-authenticated})))
+                       #'http/get (fn [& _] (throw (ex-info "should not call" {})))}
+        (fn []
+          (let [report ((:provider/limits-fn provider))]
+            (expect (= :unauthenticated (:status report)))
+            (expect (= [] (get-in report [:dynamic :limits])))
+            (expect (str/includes? (get-in report [:dynamic :note]) "providers auth anthropic-coding-plan"))))))))

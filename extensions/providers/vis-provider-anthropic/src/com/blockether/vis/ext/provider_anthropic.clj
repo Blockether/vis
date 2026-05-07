@@ -16,6 +16,7 @@
             [com.blockether.vis.internal.external-opener :as opener])
   (:import [java.net URLDecoder URLEncoder]
            [java.security MessageDigest SecureRandom]
+           [java.time Instant]
            [java.util Base64]))
 
 (def ^:private client-id
@@ -25,6 +26,7 @@
 
 (def ^:private authorize-url "https://claude.ai/oauth/authorize")
 (def ^:private token-url "https://platform.claude.com/v1/oauth/token")
+(def ^:private usage-url "https://api.anthropic.com/api/oauth/usage")
 (def ^:private redirect-uri "http://localhost:53692/callback")
 (def ^:private scopes "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload")
 (def ^:private auth-file (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
@@ -111,6 +113,11 @@
      :state    verifier
      :url      (str authorize-url "?" query)}))
 
+(defn- read-json-body [text]
+  (try
+    (json/read-json (or text "") :key-fn keyword)
+    (catch Exception _ nil)))
+
 (defn- post-token [body]
   (let [resp (http/post token-url
                {:headers {"Accept" "application/json"
@@ -121,8 +128,7 @@
         text (:body resp)]
     {:status (:status resp)
      :body   text
-     :json   (try (json/read-json text :key-fn keyword)
-               (catch Exception _ nil))}))
+     :json   (read-json-body text)}))
 
 (defn- credentials-result [json]
   (let [access-token  (:access_token json)
@@ -220,6 +226,113 @@
       (throw (ex-info "No Anthropic OAuth credentials found. Run `vis providers auth anthropic-coding-plan` to authenticate."
                {:type :vis/anthropic-not-authenticated})))))
 
+(defn- parse-instant-ms [s]
+  (when-not (str/blank? (str s))
+    (try
+      (.toEpochMilli (Instant/parse (str s)))
+      (catch Exception _ nil))))
+
+(defn- clamp-percent [n]
+  (when (number? n)
+    (-> (double n)
+      (max 0.0)
+      (min 100.0))))
+
+(defn- percentage-limit-row
+  [id label window-unit window-size usage]
+  (when-let [used (clamp-percent (:utilization usage))]
+    (cond-> {:id         id
+             :label      label
+             :scope      :plan
+             :kind       :rate
+             :precision  :estimate
+             :source     :provider-api
+             :unlimited? false
+             :used       used
+             :limit      100.0
+             :remaining  (- 100.0 used)
+             :window     {:kind :rolling
+                          :unit window-unit
+                          :size window-size}}
+      (:resets_at usage)
+      (assoc-in [:window :resets-at-ms] (parse-instant-ms (:resets_at usage))))))
+
+(defn- usage-limit-rows [usage]
+  (->> [(percentage-limit-row :claude-5h "Claude 5h" :hour 5 (:five_hour usage))
+        (percentage-limit-row :claude-7d "Claude 7d" :day 7 (:seven_day usage))
+        (percentage-limit-row :claude-sonnet-7d "Claude Sonnet 7d" :day 7 (:seven_day_sonnet usage))
+        (percentage-limit-row :claude-opus-7d "Claude Opus 7d" :day 7 (:seven_day_opus usage))]
+    (remove nil?)
+    vec))
+
+(defn- fetch-usage! [token]
+  (let [resp (http/get usage-url
+               {:headers {"Accept" "application/json"
+                          "Authorization" (str "Bearer " token)
+                          "anthropic-beta" "oauth-2025-04-20"
+                          "Content-Type" "application/json"}
+                :timeout 10000
+                :throw   false})
+        text (:body resp)]
+    {:status (:status resp)
+     :body   text
+     :json   (read-json-body text)}))
+
+(defn- limits-error-report [type message data]
+  {:provider-id :anthropic-coding-plan
+   :status      :error
+   :dynamic     {:limits []}
+   :error       {:type type
+                 :message message
+                 :data data}})
+
+(defn- limits []
+  (try
+    (let [{:keys [token]} (get-anthropic-token!)
+          {:keys [status body json]} (fetch-usage! token)]
+      (cond
+        (= 200 status)
+        (let [rows (usage-limit-rows json)]
+          (if (seq rows)
+            {:provider-id :anthropic-coding-plan
+             :status      :ok
+             :dynamic     {:limits rows
+                           :note "Live Claude subscription usage from Anthropic OAuth usage API."}}
+            {:provider-id :anthropic-coding-plan
+             :status      :unsupported
+             :dynamic     {:limits []
+                           :note "Anthropic usage endpoint returned no Claude subscription limit fields."}}))
+
+        (contains? #{401 403} status)
+        {:provider-id :anthropic-coding-plan
+         :status      :unauthenticated
+         :dynamic     {:limits []
+                       :note "Anthropic OAuth token was rejected. Run `vis providers auth anthropic-coding-plan --force` to re-authenticate."}}
+
+        (= 429 status)
+        (limits-error-report :vis/anthropic-usage-rate-limited
+          "Anthropic usage endpoint rate limited the limits check."
+          {:status status})
+
+        :else
+        (limits-error-report :vis/anthropic-usage-failed
+          (str "Anthropic usage endpoint failed: HTTP " status)
+          {:status status
+           :body body})))
+    (catch clojure.lang.ExceptionInfo e
+      (if (= :vis/anthropic-not-authenticated (:type (ex-data e)))
+        {:provider-id :anthropic-coding-plan
+         :status      :unauthenticated
+         :dynamic     {:limits []
+                       :note "Run `vis providers auth anthropic-coding-plan` to authenticate with Claude subscription."}}
+        (limits-error-report :vis/anthropic-limits-error
+          (or (ex-message e) "Anthropic limits check failed")
+          (dissoc (ex-data e) :access-token :refresh-token :token))))
+    (catch Throwable t
+      (limits-error-report :vis/anthropic-limits-error
+        (or (ex-message t) (.getName (class t)))
+        {:class (.getName (class t))}))))
+
 (defn authenticated? []
   (some? (detect-credentials)))
 
@@ -313,4 +426,5 @@
                       :provider/detect-fn      #'detect-credentials
                       :provider/auth-fn        #'login!
                       :provider/auth-prompt-fn #'auth-instruction-lines
-                      :provider/get-token-fn   #'get-anthropic-token!}]}))
+                      :provider/get-token-fn   #'get-anthropic-token!
+                      :provider/limits-fn      #'limits}]}))

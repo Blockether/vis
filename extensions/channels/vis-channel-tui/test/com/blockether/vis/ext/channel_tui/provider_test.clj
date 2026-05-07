@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.provider :as provider]
+            [com.blockether.vis.ext.provider-anthropic :as anthropic]
             [com.blockether.vis.ext.provider-github-copilot :as copilot]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -26,6 +27,14 @@
     (let [swap-items @#'provider/swap-items]
       (expect (= [:a :c :b :d]
                 (swap-items [:a :b :c :d] 1 2))))))
+
+(defdescribe remove-provider-by-id-test
+  (it "removes a logged-out provider from the router list"
+    (let [remove-provider-by-id @#'provider/remove-provider-by-id]
+      (expect (= [{:id :openai}]
+                (remove-provider-by-id [{:id :anthropic-coding-plan}
+                                        {:id :openai}]
+                  :anthropic-coding-plan))))))
 
 (defdescribe move-model-to-front-test
   (it "moves the selected model to the first slot"
@@ -147,6 +156,27 @@
                                                               :api-key "sk-test"}))))
       (expect (= [:models :status]
                 (mapv :id (provider/provider-action-items {:id :ollama})))))))
+
+(defdescribe logout-provider-test
+  (it "clears provider token storage and removes the persisted provider entry"
+    (let [logout-called? (atom false)
+          removed        (atom nil)
+          message        (atom nil)]
+      (with-redefs [vis/provider-by-id (fn [provider-id]
+                                         (when (= :anthropic-coding-plan provider-id)
+                                           {:provider/logout-fn #(reset! logout-called? true)}))
+                    vis/remove-config-provider! (fn [provider-id source]
+                                                  (reset! removed {:provider-id provider-id :source source})
+                                                  true)
+                    dlg/confirm-dialog! (fn [& _] true)
+                    dlg/text-view-dialog! (fn [& args]
+                                            (reset! message args))]
+        (expect (= true (provider/logout-provider! nil {:id :anthropic-coding-plan})))
+        (expect (= true @logout-called?))
+        (expect (= {:provider-id :anthropic-coding-plan
+                    :source :tui-provider-logout}
+                  @removed))
+        (expect (str/includes? (str @message) "Provider removed from config"))))))
 
 (defdescribe api-key-auth-prompt-test
   (it "feeds static provider auth guidance into the API-key input dialog"
@@ -352,3 +382,149 @@
                     :models [{:name "gpt-5.1"} {:name "gpt-5.2"}]}
                   (@#'provider/add-provider! nil #{})))
         (expect (= false @model-picker-called?))))))
+
+;; ---------------------------------------------------------------------------
+;; Regression: success popups MUST stay silent.
+;;
+;; User feedback (Anthropic dialog session): the redundant
+;; "✓ Authenticated!" / "<provider> authenticated." toast on top of an
+;; already-closed auth dialog was confusing. Anthropic was fixed first; this
+;; suite asserts the same silence for Copilot, Codex, and the generic
+;; api-key auth path that providers like zai-coding use.
+;; ---------------------------------------------------------------------------
+
+(defn- text-view-recorder
+  [sink]
+  (fn [_ title lines]
+    (swap! sink conj {:title title :lines (vec lines)})
+    nil))
+
+(defn- text-viewer-recorder
+  [sink]
+  (fn [_ title text]
+    (swap! sink conj {:title title :text (str text)})
+    nil))
+
+(defdescribe silent-auth-success-test
+  (it "copilot OAuth success closes silently (no ✓ Authenticated! popup)"
+    (let [popups (atom [])]
+      (with-redefs [copilot/detect-oauth-token (constantly nil)
+                    copilot/start-device-flow! (fn [& _]
+                                                 {:user-code        "AAAA-BBBB"
+                                                  :verification-uri "https://github.com/login/device"
+                                                  :device-code      "dev"
+                                                  :interval         0
+                                                  :expires-in       1})
+                    copilot/poll-for-token!    (fn [& _] {:status :ok})
+                    copilot/get-copilot-token! (fn [& _] {:token "api-token"})
+                    copilot/logout!            (fn [] nil)
+                    vis/worker-future          (fn [_label thunk]
+                                                 (let [v (thunk)]
+                                                   (reify clojure.lang.IDeref
+                                                     (deref [_] v)
+                                                     clojure.lang.IPending
+                                                     (isRealized [_] true))))
+                    provider/copilot-auth-instructions! (fn [& _] true)
+                    dlg/text-view-dialog!      (text-view-recorder popups)
+                    dlg/text-viewer-dialog!    (text-viewer-recorder popups)]
+        (expect (= "api-token" (@#'provider/copilot-oauth-flow! nil :individual)))
+        (expect (empty? (filter #(some (fn [l] (str/includes? (str l) "Authenticated"))
+                                   (or (:lines %) [(:text %)]))
+                          @popups))))))
+
+  (it "codex OAuth success closes silently (no ✓ Authenticated! popup)"
+    (let [popups (atom [])]
+      (with-redefs [vis/provider-by-id      (constantly {:provider/detect-fn (constantly nil)})
+                    codex/login!            (fn [& _] :ok)
+                    dlg/confirm-dialog!     (fn [& _] true)
+                    dlg/text-input-dialog!  (fn [& _] "http://localhost:1455/auth/callback?code=abc&state=s")
+                    dlg/text-view-dialog!   (text-view-recorder popups)
+                    dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+        (expect (= true (@#'provider/codex-oauth-ready! nil)))
+        (expect (empty? (filter #(some (fn [l] (str/includes? (str l) "Authenticated"))
+                                   (or (:lines %) [(:text %)]))
+                          @popups))))))
+
+  (it "anthropic OAuth success closes silently (parity with copilot/codex)"
+    (let [popups (atom [])]
+      (with-redefs [vis/provider-by-id      (constantly {:provider/detect-fn (constantly nil)})
+                    dlg/confirm-dialog!     (fn [& _] true)
+                    dlg/text-input-dialog!  (fn [& _] "http://localhost:53692/callback?code=abc&state=s")
+                    dlg/text-view-dialog!   (text-view-recorder popups)
+                    dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+        (with-redefs [anthropic/login! (fn [& _] :ok)]
+          (expect (= true (@#'provider/anthropic-oauth-ready! nil)))
+          (expect (empty? (filter #(some (fn [l] (str/includes? (str l) "Authenticated"))
+                                     (or (:lines %) [(:text %)]))
+                            @popups)))))))
+
+  (it "generic api-key provider (zai-coding-style) shows no success toast when auth-fn is silent"
+    (let [popups   (atom [])
+          provider {:id :zai-coding :api-key nil}]
+      (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn (fn [_print!] :ok)})
+                    vis/display-label       (fn [_] "Z.AI Coding")
+                    dlg/text-view-dialog!   (text-view-recorder popups)
+                    dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+        (expect (= provider (@#'provider/run-generic-provider-auth! nil provider)))
+        (expect (empty? @popups)))))
+
+  (it "zai-coding-style :already-authenticated success stays silent even when auth-fn prints lines"
+    ;; Real regression: zai's make-auth-fn prints \"Already authenticated with X.\"
+    ;; on the success path. The previous \"silent unless lines collected\" rule
+    ;; let those lines through as a popup — the exact \"success dialog\" the user
+    ;; vetoed for typical/standard providers. Now success keywords suppress
+    ;; printed output regardless.
+    (let [popups   (atom [])
+          provider {:id :zai-coding :api-key nil}]
+      (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
+                                                         (fn [print!]
+                                                           (print! "  Already authenticated with Z.AI Coding.")
+                                                           (print! "  Source: config.")
+                                                           :already-authenticated)})
+                    vis/display-label       (fn [_] "Z.AI Coding")
+                    dlg/text-view-dialog!   (text-view-recorder popups)
+                    dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+        (expect (= provider (@#'provider/run-generic-provider-auth! nil provider)))
+        (expect (empty? @popups)))))
+
+  (it "zai-coding-style :ok success (env-var persisted) stays silent even with printed lines"
+    (let [popups   (atom [])
+          provider {:id :zai-coding :api-key nil}]
+      (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
+                                                         (fn [print!]
+                                                           (print! "  Persisted Z.ai key from env var.")
+                                                           (print! "  Z.AI Coding is ready.")
+                                                           :ok)})
+                    vis/display-label       (fn [_] "Z.AI Coding")
+                    dlg/text-view-dialog!   (text-view-recorder popups)
+                    dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+        (expect (= provider (@#'provider/run-generic-provider-auth! nil provider)))
+        (expect (empty? @popups)))))
+
+  (it "action-required result (:no-credentials) DOES surface auth-fn instructions"
+    ;; The mirror case: when auth-fn cannot complete on its own, the user must
+    ;; read what to do next. Keep that path live.
+    (let [popups   (atom [])
+          provider {:id :zai-coding :api-key nil}]
+      (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
+                                                         (fn [print!]
+                                                           (print! "Set ZAI_CODING_API_KEY=\u2026 and re-run.")
+                                                           :no-credentials)})
+                    vis/display-label       (fn [_] "Z.AI Coding")
+                    dlg/text-view-dialog!   (text-view-recorder popups)
+                    dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+        (expect (= provider (@#'provider/run-generic-provider-auth! nil provider)))
+        (expect (= 1 (count @popups)))
+        (expect (str/includes? (:text (first @popups)) "ZAI_CODING_API_KEY")))))
+
+  (it "generic api-key provider failure still surfaces a dialog"
+    (let [popups   (atom [])
+          provider {:id :zai-coding :api-key nil}]
+      (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
+                                                         (fn [_print!] (throw (ex-info "boom" {})))})
+                    vis/display-label       (fn [_] "Z.AI Coding")
+                    dlg/text-view-dialog!   (text-view-recorder popups)
+                    dlg/text-viewer-dialog! (text-viewer-recorder popups)]
+        (expect (nil? (@#'provider/run-generic-provider-auth! nil provider)))
+        (expect (= 1 (count @popups)))
+        (expect (str/includes? (:text (first @popups)) "Authentication failed: boom"))))))

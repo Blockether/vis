@@ -30,7 +30,7 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]
-   [zprint.core :as zp]))
+   [com.blockether.vis.internal.format :as fmt]))
 
 ;; =============================================================================
 ;; Tunables
@@ -121,7 +121,7 @@
 (defn- value-pr-str
   [v bounded-print?]
   (if (and (zprintable-data? v) (not bounded-print?))
-    (zp/zprint-str v {:width 80})
+    (fmt/safe-zprint-str v {:width 80})
     (pr-str v)))
 
 (defn safe-pr-str

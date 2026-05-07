@@ -321,6 +321,33 @@
         (expect (some #(str/includes? % "Catalog TPM:    2000000") lines))
         (expect (some #(str/includes? % "not live account quota usage") lines))))))
 
+(defdescribe cli-providers-logout-test
+  (it "clears provider token storage and removes the provider from config"
+    (let [logout-called? (atom false)
+          removed        (atom nil)
+          out            (java.io.ByteArrayOutputStream.)
+          ps             (java.io.PrintStream. out true "UTF-8")]
+      (with-redefs [shutdown-agents (fn [] nil)
+                    config/init-cli! (fn [] nil)
+                    config/original-stdout ps
+                    config/load-config-raw (fn [] {:providers [{:id :anthropic-coding-plan
+                                                                :models [{:name "claude-sonnet-4-6"}]}]})
+                    config/remove-config-provider! (fn [provider-id source]
+                                                     (reset! removed {:provider-id provider-id :source source})
+                                                     true)
+                    registry/provider-by-id (fn [provider-id]
+                                              (when (= :anthropic-coding-plan provider-id)
+                                                {:provider/id :anthropic-coding-plan
+                                                 :provider/label "Anthropic (Claude Subscription)"
+                                                 :provider/logout-fn #(reset! logout-called? true)}))]
+        (@#'main/cli-providers-logout! {} ["anthropic-coding-plan"])
+        (.flush ps)
+        (expect (= true @logout-called?))
+        (expect (= {:provider-id :anthropic-coding-plan
+                    :source :cli-provider-logout}
+                  @removed))
+        (expect (str/includes? (.toString out "UTF-8") "Tokens and config cleared"))))))
+
 (defdescribe providers-list-rows-test
   (it "marks config-backed providers as authenticated in the CLI list"
     (with-redefs [config/current-config (fn [] {:providers [{:id :zai
