@@ -1022,7 +1022,7 @@
 ;; =============================================================================
 
 (defdescribe conversation-intent-test
-  (it "persists conversation-scoped intent plan gate and exactly one proof ref"
+  (it "persists conversation-scoped intent plan gate through attestations"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
@@ -1049,40 +1049,109 @@
                                                          :guard [:exists [:slot slot :ref]]}})
           _candidate (vis/db-offer-proof! s {:gate-id (:id gate)
                                              :slots {slot {:ref ref}}
-                                             :refs [ref]})
-          proven (vis/db-prove-gate! s {:gate-id (:id gate)
-                                        :summary "Verification passed."
-                                        :refs [ref]})
-          fulfilled (vis/db-fulfill-intent! s (:id intent)
-                      {:summary "Done."
-                       :refs [ref]})
-          proven-again (vis/db-prove-gate! s {:gate-id (:id gate)
-                                              :summary "Verification passed again."
-                                              :refs [ref]
-                                              :slots {slot {:ref ref}}})
-          fulfilled-again (vis/db-fulfill-intent! s (:id intent)
-                            {:summary "Done again."
-                             :refs [ref ref-2]})
-          state  (vis/db-intents s {:conversation-turn-id tid})]
-      (expect (= 1 (raw-count s :conversation_intent)))
-      (expect (= 1 (raw-count s :conversation_intent_plan)))
-      (expect (= 1 (raw-count s :conversation_intent_gate)))
-      (expect (= 1 (raw-count s :conversation_intent_gate_ref)))
-      (expect (= 2 (raw-count s :conversation_intent_ref)))
-      (expect (= :verify (get-in plan-dsl [:steps 0 :id])))
-      (expect (= :proven (:status proven)))
-      (expect (= :proven (:status proven-again)))
-      (expect (= "Verification passes." (:proposition gate)))
-      (expect (= ref (get-in proven [:proof :slots slot :ref])))
-      (expect (= :fulfilled (:status fulfilled)))
-      (expect (= :fulfilled (:status fulfilled-again)))
-      (expect (= "Done." (:fulfillment-summary fulfilled-again)))
-      (expect (= ref (-> fulfilled :refs first :ref)))
-      (expect (= :fulfillment-evidence (-> fulfilled :refs first :role)))
-      (expect (= true (:success? state)))
-      (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
-      (expect (= ref-2 (-> fulfilled-again :refs last :ref)))
-      (expect (= :vis/sci (get-in (vis/db-list-iteration-blocks s iid) [0 :rendering-kind])))))
+                                             :refs [ref]})]
+      (doseq [ref [ref ref-2]]
+        (vis/db-store-provenance-event! s {:conversation-id cid
+                                           :conversation-turn-id tid
+                                           :ref ref
+                                           :kind :tool
+                                           :op :v/bash
+                                           :status :done
+                                           :payload {:result {:exit 0}}}))
+      (let [gate-bundle (vis/db-create-evidence-bundle! s
+                          {:conversation-id cid
+                           :kind :proof
+                           :subject-kind :gate
+                           :subject-id (:id gate)
+                           :requirements [{:evidence/slot slot
+                                           :evidence/from-ref ref
+                                           :evidence/extract [:result :exit]
+                                           :evidence/guard [:= [:value] 0]
+                                           :event/kind :tool
+                                           :event/op :v/bash}]})
+            proven (vis/db-attest-gate! s {:gate-id (:id gate)
+                                           :evidence-bundle-id (:id gate-bundle)
+                                           :kind :gate/proven
+                                           :reason "Verification passed."})
+            closure-bundle (vis/db-create-evidence-bundle! s
+                             {:conversation-id cid
+                              :kind :closure
+                              :subject-kind :intent
+                              :subject-id (:id intent)
+                              :requirements [{:evidence/slot [(:id intent) :closure]
+                                              :evidence/from-ref ref
+                                              :evidence/extract [:result :exit]
+                                              :evidence/guard [:= [:value] 0]
+                                              :event/kind :tool
+                                              :event/op :v/bash}]})
+            fulfilled (vis/db-attest-intent! s {:intent-id (:id intent)
+                                                :evidence-bundle-id (:id closure-bundle)
+                                                :kind :intent/fulfilled
+                                                :summary "Done."})
+            gate-bundle-again (vis/db-create-evidence-bundle! s
+                                {:conversation-id cid
+                                 :kind :proof
+                                 :subject-kind :gate
+                                 :subject-id (:id gate)
+                                 :requirements [{:evidence/slot slot
+                                                 :evidence/from-ref ref
+                                                 :evidence/extract [:result :exit]
+                                                 :evidence/guard [:= [:value] 0]
+                                                 :event/kind :tool
+                                                 :event/op :v/bash}]})
+            proven-again (vis/db-attest-gate! s {:gate-id (:id gate)
+                                                 :evidence-bundle-id (:id gate-bundle-again)
+                                                 :kind :gate/proven
+                                                 :reason "Verification passed again."})
+            closure-bundle-again (vis/db-create-evidence-bundle! s
+                                   {:conversation-id cid
+                                    :kind :closure
+                                    :subject-kind :intent
+                                    :subject-id (:id intent)
+                                    :requirements [{:evidence/slot [(:id intent) :closure]
+                                                    :evidence/from-ref ref
+                                                    :evidence/extract [:result :exit]
+                                                    :evidence/guard [:= [:value] 0]
+                                                    :event/kind :tool
+                                                    :event/op :v/bash}
+                                                   {:evidence/slot [(:id intent) :closure-2]
+                                                    :evidence/from-ref ref-2
+                                                    :evidence/extract [:result :exit]
+                                                    :evidence/guard [:= [:value] 0]
+                                                    :event/kind :tool
+                                                    :event/op :v/bash}]})
+            fulfilled-again (vis/db-attest-intent! s {:intent-id (:id intent)
+                                                      :evidence-bundle-id (:id closure-bundle-again)
+                                                      :kind :intent/fulfilled
+                                                      :summary "Done again."})
+            state  (vis/db-intents s {:conversation-turn-id tid})
+            state-intent (-> state :intents first)
+            state-gate (-> state-intent :plans first :gates first)]
+        (expect (= 1 (raw-count s :conversation_intent)))
+        (expect (= 1 (raw-count s :conversation_intent_plan)))
+        (expect (= 1 (raw-count s :conversation_intent_gate)))
+        (expect (= 0 (raw-count s :conversation_intent_gate_ref)))
+        (expect (= 0 (raw-count s :conversation_intent_ref)))
+        (expect (= 4 (raw-count s :evidence_bundle)))
+        (expect (= 5 (raw-count s :evidence_bundle_member)))
+        (expect (= 4 (raw-count s :attestation)))
+        (expect (= :verify (get-in plan-dsl [:steps 0 :id])))
+        (expect (= :gate/proven (:kind proven)))
+        (expect (= :gate/proven (:kind proven-again)))
+        (expect (= :proven (:decision proven)))
+        (expect (= :proven (:status state-gate)))
+        (expect (= "Verification passes." (:proposition gate)))
+        (expect (= (str (:id gate-bundle-again)) (get-in state-gate [:proof :evidence-bundle-id])))
+        (expect (= :intent/fulfilled (:kind fulfilled)))
+        (expect (= :intent/fulfilled (:kind fulfilled-again)))
+        (expect (= :fulfilled (:decision fulfilled)))
+        (expect (= :fulfilled (:status state-intent)))
+        (expect (= "Done again." (:fulfillment-summary state-intent)))
+        (expect (= true (:success? state)))
+        (expect (= true (:success? (vis/db-audit-proof s {:conversation-id cid}))))
+        (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
+        (expect (= ref-2 (:from-ref (last (:members closure-bundle-again)))))
+        (expect (= :vis/sci (get-in (vis/db-list-iteration-blocks s iid) [0 :rendering-kind]))))))
 
   (it "derives abandonment refs from required impeded gates when refs are omitted"
     (let [s      (h/store)
