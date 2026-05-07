@@ -514,7 +514,11 @@
                              :refs [ref]})
       (vis/db-fulfill-intent! s (:id intent) {:summary "Legacy fulfilled."
                                               :refs [ref]})
-      (let [out ((private-fn "foundation-audit-report") (env s conversation-id))]
+      (let [audit ((private-fn "foundation-audit") (env s conversation-id))
+            out ((private-fn "foundation-audit-report") (env s conversation-id))]
+        (expect (= false (:success? audit)))
+        (expect (contains? (set (map :type (:violations audit)))
+                  :missing-intent-closure-attestation))
         (expect (str/includes? out "## Proof audit"))
         (expect (str/includes? out "Proof audit: needs work"))
         (expect (str/includes? out ":missing-intent-closure-attestation")))))
@@ -547,6 +551,7 @@
       (expect (contains? symbols 'intents))
       (expect (not (contains? symbols 'intent!)))
       (expect (not (contains? symbols 'contract)))
+      (expect (contains? symbols 'audit))
       (expect (contains? symbols 'audit-report))
       (expect (contains? symbols 'namespace-docs))
       (expect (contains? symbols 'symbol-doc))
