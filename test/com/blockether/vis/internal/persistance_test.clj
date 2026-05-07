@@ -1,9 +1,6 @@
 (ns com.blockether.vis.internal.persistance-test
-  "Tests for persistence bootstrap error normalization.
-
-   The regression: Flyway migration checksum mismatches were surfaced as
-   fatal stack traces in channel entry points. The fix belongs in the
-   persistence facade so every channel gets the same user-facing error."
+  "Tests for the persistence facade: adapter-owned error translation and
+   process-wide shared connection lifecycle."
   (:require
    [babashka.fs :as fs]
    [clojure.string :as str]
@@ -15,93 +12,33 @@
    (java.nio.file Files)
    (java.nio.file.attribute FileAttribute)))
 
-(def ^:private migration-checksum-mismatch?
-  (deref #'persistance/migration-checksum-mismatch?))
+(defdescribe db-error-translation-test
+  (it "delegates SQLite CANTOPEN translation to the SQLite adapter"
+    (let [message (persistance/db-error->user-message
+                    (ex-info "[SQLITE_CANTOPEN] unable to open database file" {}))]
+      (expect (str/includes? message "Vis database is unavailable"))
+      (expect (str/includes? message "/.vis/vis.mdb/vis.db"))))
 
-(def ^:private maybe-wrap-db-open-error
-  (deref #'persistance/maybe-wrap-db-open-error))
-
-(def ^:private migration-checksum-mismatch-user-message
-  (deref #'persistance/migration-checksum-mismatch-user-message))
-
-(def ^:private shared-conn-stale?
-  (deref #'persistance/shared-conn-stale?))
-
-(defdescribe migration-checksum-detection-test
-  (it "matches Flyway checksum text at top level"
-    (expect (true? (migration-checksum-mismatch?
-                     (ex-info "Validate failed: Migrations have failed validation\nMigration checksum mismatch for migration version 1"
-                       {})))))
-
-  (it "matches Flyway checksum text in a nested cause"
-    (let [cause (ex-info "Migration checksum mismatch for migration version 1" {})
-          e     (ex-info "wrapper" {} cause)]
-      (expect (true? (migration-checksum-mismatch? e)))))
-
-  (it "returns false for unrelated failures"
-    (expect (false? (migration-checksum-mismatch? (ex-info "boom" {}))))))
-
-(defdescribe db-open-error-normalization-test
-  (it "wraps checksum mismatch as :vis/user-error with actionable guidance"
-    (let [root (ex-info "Migration checksum mismatch for migration version 1" {})
-          e    (try
-                 (with-redefs [manifest/scan-extensions! (fn [] nil)
-                               persistance/pick-backend-id (fn [_] :sqlite)
-                               persistance/resolve-impl
-                               (fn [_ fn-name]
-                                 (expect (= 'db-open! fn-name))
-                                 (delay (fn [_] (throw root))))]
-                   (persistance/db-create-connection! :memory)
-                   nil)
-                 (catch Throwable t t))]
-      (expect (instance? clojure.lang.ExceptionInfo e))
-      (expect (true? (:vis/user-error (ex-data e))))
-      (expect (= :vis/db-migration-checksum-mismatch (:type (ex-data e))))
-      (expect (= root (.getCause ^Throwable e)))
-      (expect (str/includes? (.getMessage ^Throwable e) "~/.vis/vis.mdb"))
-      (expect (str/includes? (.getMessage ^Throwable e) "packaged migration resources"))
-      (expect (not (str/includes? (.getMessage ^Throwable e) "Flyway repair")))))
-
-  (it "passes non-migration bootstrap failures through unchanged"
-    (let [root (IllegalStateException. "totally unrelated failure")
-          e    (try
-                 (with-redefs [manifest/scan-extensions! (fn [] nil)
-                               persistance/pick-backend-id (fn [_] :sqlite)
-                               persistance/resolve-impl
-                               (fn [_ _]
-                                 (delay (fn [_] (throw root))))]
-                   (persistance/db-create-connection! :memory)
-                   nil)
-                 (catch Throwable t t))]
-      (expect (= IllegalStateException (class e)))
-      (expect (= "totally unrelated failure" (.getMessage ^Throwable e)))
-      (expect (nil? (ex-data e))))))
-
-(defdescribe wrapped-message-contents-test
-  (it "mentions reset path and does not suggest repair"
-    (expect (str/includes? migration-checksum-mismatch-user-message "schema mismatch"))
-    (expect (str/includes? migration-checksum-mismatch-user-message "~/.vis/vis.mdb"))
-    (expect (str/includes? migration-checksum-mismatch-user-message "packaged migration resources"))
-    (expect (not (str/includes? migration-checksum-mismatch-user-message "Flyway repair"))))
-
-  (it "helper leaves unrelated errors untouched"
-    (let [e (ex-info "x" {})]
-      (expect (identical? e (maybe-wrap-db-open-error e))))))
+  (it "falls back to the exception message when no adapter recognizes it"
+    (expect (= "plain failure"
+              (persistance/db-error->user-message (ex-info "plain failure" {}))))))
 
 (defdescribe shared-connection-refresh-test
-  (it "treats a replaced persistent sqlite file as stale"
-    (let [dir (str (Files/createTempDirectory "vis-persist-test" (make-array FileAttribute 0)))
-          _   (try (persistance/db-dispose-shared-connection!) (catch Throwable _ nil))
-          first-store (with-redefs [manifest/scan-extensions! (fn [] nil)]
-                        (persistance/db-shared-connection! {:backend :sqlite :path dir}))]
+  (it "reopens the shared persistent SQLite store when the db file is replaced"
+    (let [dir (str (Files/createTempDirectory "vis-persist-test" (make-array FileAttribute 0)))]
       (try
-        (let [db-file (:db-file first-store)
-              old-key (:file-key-snapshot first-store)]
-          (persistance/db-dispose-shared-connection!)
+        (try (persistance/db-dispose-shared-connection!) (catch Throwable _ nil))
+        (let [first-store (with-redefs [manifest/scan-extensions! (fn [] nil)]
+                            (persistance/db-shared-connection! {:backend :sqlite :path dir}))
+              db-file     (:db-file first-store)
+              old-ds      (:datasource first-store)
+              old-key     (:file-key-snapshot first-store)]
           (fs/delete db-file)
           (spit db-file "")
-          (expect (true? (shared-conn-stale? (assoc first-store :file-key-snapshot old-key)
-                           {:backend :sqlite :path dir}))))
+          (let [second-store (with-redefs [manifest/scan-extensions! (fn [] nil)]
+                               (persistance/db-shared-connection! {:backend :sqlite :path dir}))]
+            (expect (not (identical? old-ds (:datasource second-store))))
+            (expect (not= old-key (:file-key-snapshot second-store)))))
         (finally
           (try (persistance/db-dispose-shared-connection!) (catch Throwable _ nil))
           (fs/delete-tree dir))))))

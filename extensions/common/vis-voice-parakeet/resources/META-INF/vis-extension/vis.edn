@@ -1,5 +1,0 @@
-{voice-parakeet
- {:nses [com.blockether.vis.ext.voice-parakeet.core]
-  :description "Native voice input extension using local Parakeet ASR."
-  :docs [{:title "Voice Parakeet"
-          :content "Adds TUI command-palette voice recording commands. Transcription uses the sherpa-onnx Java API with Parakeet TDT 0.6B v3 int8. Missing model files auto-download to ~/.vis/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 (or VIS_PARAKEET_MODEL_DIR). Rewrite uses Vis' plain-text helper LLM call with svar routing {:optimize :cost} and reasoning off."}]}}

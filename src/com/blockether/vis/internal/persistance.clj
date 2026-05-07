@@ -1,26 +1,20 @@
 (ns com.blockether.vis.internal.persistance
-  "Persistence facade: backend registry, connection lifecycle, every
-   delegated `store-*`/`db-*` fn, error translation, the process-wide
-   shared connection, and the orphan-sweep that reconciles `:running`
-   turns on process restart.
+  "Persistence facade: backend registry, connection lifecycle, and every
+   delegated `store-*`/`db-*` fn.
 
-   Backends register themselves via `register-backend!` at namespace
-   load. The facade dispatches each delegated call by resolving the
-   matching var on the chosen backend's namespace
-   (`(ns-resolve ns-sym 'db-store-iteration!)` etc.) and applying it to
-   the original args. This keeps the facade dialect-agnostic — every
-   migration runner / driver-specific oddity stays inside the
-   backend.
+   Extensions register backend adapters through `:ext/persistance`. The
+   facade dispatches each delegated call by resolving the matching var on
+   the chosen backend namespace (`(ns-resolve ns-sym 'db-store-iteration!)`
+   etc.) and applying it to the original args. This keeps the facade
+   dialect-agnostic — every migration runner / driver-specific oddity stays
+   inside the backend adapter.
 
-   `db-error->user-message` lives here too. Frontends (TUI, CLI,
-   Telegram) all surface persistence exceptions in chat bubbles; the
-   raw JDBC text is meaningless without context, so the persistence
-   layer owns the translation — not any one frontend, not the
-   conversation runtime above it."
+   Frontends still call `db-error->user-message` here, but the actual
+   translation is offered by backend adapters. Same for store-staleness
+   checks used by the process-wide shared connection."
   (:require
    [com.blockether.vis.internal.manifest :as manifest])
   (:import
-   (java.nio.file Files LinkOption Paths)
    (java.time Instant)
    (java.util Date UUID)))
 
@@ -124,10 +118,9 @@
 ;; There is no backend-specific scanner. The single source of truth
 ;; is `manifest/scan-extensions!`, which scans every
 ;; `META-INF/vis-extension/vis.edn` on the classpath and `require`s the
-;; namespaces listed inside. Any namespace that calls
-;; `(register-backend! ...)` lands in this registry as a side
-;; effect. The facade triggers a scan on the first
-;; `db-create-connection!` so callers reach the registered backend
+;; namespaces listed inside. Any loaded extension with `:ext/persistance`
+;; entries lands in this registry as a side effect. The facade triggers a
+;; scan on the first `db-create-connection!` so callers reach the registered backend
 ;; without wiring discovery themselves.
 ;; ----------------------------------------------------------------------------
 
@@ -178,34 +171,16 @@
       :else                 db-spec)
     :else db-spec))
 
-(declare causal-chain)
-
-(def ^:private migration-checksum-mismatch-user-message
-  (str "Database schema mismatch: local migrations changed since this database was created. "
-    "Close all Vis processes, remove ~/.vis/vis.mdb, then restart Vis to recreate it from packaged migration resources."))
-
-(defn- migration-checksum-mismatch?
-  "True when any throwable in the causal chain looks like Flyway's
-   migration checksum validation failure."
-  [^Throwable e]
-  (boolean
-    (some (fn [^Throwable t]
-            (let [^String m (or (ex-message t) "")]
-              (or (.contains m "Migration checksum mismatch")
-                (.contains m "Migrations have failed validation"))))
-      (causal-chain e))))
-
-(defn- maybe-wrap-db-open-error
-  "Normalize known persistence bootstrap failures into caller-facing
-   user errors. Unknown failures pass through unchanged so fatal
-   startup behavior remains unchanged."
-  [^Throwable e]
-  (if (migration-checksum-mismatch? e)
-    (ex-info migration-checksum-mismatch-user-message
-      {:vis/user-error true
-       :type           :vis/db-migration-checksum-mismatch}
-      e)
-    e))
+(defn- resolve-optional-impl
+  "Resolve an optional backend var. Missing vars return nil; bad backend
+   selection still throws because the store/spec itself is invalid."
+  [db-spec-or-store fn-name]
+  (let [bid    (pick-backend-id db-spec-or-store)
+        ns-sym (get-in @backends [bid :ns])]
+    (when-not ns-sym
+      (throw (ex-info (str "Backend " bid " not registered")
+               {:backend bid :registered (vec (keys @backends))})))
+    (some-> (ns-resolve ns-sym fn-name) deref)))
 
 ;; =============================================================================
 ;; Connection lifecycle
@@ -230,19 +205,16 @@
    any backend-providing namespaces from the classpath."
   [db-spec]
   (manifest/scan-extensions!)
-  (try
-    (let [normalized (normalize-spec db-spec)
-          bid        (pick-backend-id (if (map? normalized)
-                                        normalized
-                                        {:backend (pick-backend-id {})}))
-          f          @(resolve-impl {:backend bid} 'db-open!)
-          store      (f normalized)]
-      (cond
-        (nil? store) nil
-        (map? store) (assoc store :backend bid)
-        :else        store))
-    (catch Throwable e
-      (throw (maybe-wrap-db-open-error e)))))
+  (let [normalized (normalize-spec db-spec)
+        bid        (pick-backend-id (if (map? normalized)
+                                      normalized
+                                      {:backend (pick-backend-id {})}))
+        f          @(resolve-impl {:backend bid} 'db-open!)
+        store      (f normalized)]
+    (cond
+      (nil? store) nil
+      (map? store) (assoc store :backend bid)
+      :else        store)))
 
 (defn db-dispose-connection! [store]
   (when store
@@ -250,10 +222,11 @@
       (f store))))
 
 ;; =============================================================================
-;; Delegated API — every fn delegates to the selected backend's var of
-;; the same name. Each defn is intentionally one-line to keep the
-;; surface obvious; add a new entry here only after the matching fn
-;; lands in at least one backend.
+;; Delegated API
+;;
+;; Every fn delegates to the selected backend adapter's var of the same
+;; name. Keep this as a compact, readable index; add a new entry here only
+;; after the matching fn lands in at least one backend.
 ;; =============================================================================
 
 (defmacro ^:private defdelegate
@@ -265,29 +238,6 @@
     `(defn ~sym ~arglist
        (let [~bsym @(resolve-impl ~(first arglist) (quote ~sym))]
          (~bsym ~@arglist)))))
-
-;; --- Logging ---
-(defdelegate db-log! [db-info opts])
-
-;; --- Conversation lifecycle ---
-(defdelegate db-store-conversation!              [db-info opts])
-(defdelegate db-get-conversation              [db-info ref])
-(defdelegate db-resolve-conversation-id       [db-info sel])
-(defdelegate db-list-conversations            [db-info channel])
-(defdelegate db-find-conversation-by-external [db-info channel ext-id])
-(defdelegate db-update-conversation-title!    [db-info ref title])
-(defdelegate db-delete-conversation-tree!        [db-info id])
-(defdelegate db-fork-conversation!               [db-info conversation-id opts])
-(defdelegate db-list-conversation-states         [db-info conversation-id])
-(defdelegate db-latest-conversation-state-id     [db-info conversation-id])
-
-;; --- Turn lifecycle ---
-(defdelegate db-store-conversation-turn!                  [db-info opts])
-(defdelegate db-update-conversation-turn!                 [db-info conversation-turn-id opts])
-(defdelegate db-list-conversation-turns-by-status     [db-info status])
-(defdelegate db-list-conversation-turns  [db-info conversation-ref])
-(defdelegate db-retry-conversation-turn!                  [db-info conversation-turn-soul-id opts])
-(defdelegate db-list-conversation-turn-states             [db-info conversation-turn-id])
 
 ;; --- Iteration lifecycle ---
 (defn db-store-iteration!
@@ -301,39 +251,61 @@
     (throw (ex-info "db-store-iteration! requires :conversation-turn-id" {:opts (keys opts)})))
   ((deref (resolve-impl db-info 'db-store-iteration!)) db-info opts))
 
-(defdelegate db-list-conversation-turn-iterations     [db-info conversation-turn-ref])
-(defdelegate db-list-iteration-vars       [db-info iteration-ref])
+;; --- Logging ---
+(defdelegate db-log! [db-info opts])
+
+;; --- Conversation lifecycle ---
+(defdelegate db-store-conversation! [db-info opts])
+(defdelegate db-get-conversation [db-info ref])
+(defdelegate db-resolve-conversation-id [db-info sel])
+(defdelegate db-list-conversations [db-info channel])
+(defdelegate db-find-conversation-by-external [db-info channel ext-id])
+(defdelegate db-update-conversation-title! [db-info ref title])
+(defdelegate db-delete-conversation-tree! [db-info id])
+(defdelegate db-fork-conversation! [db-info conversation-id opts])
+(defdelegate db-list-conversation-states [db-info conversation-id])
+(defdelegate db-latest-conversation-state-id [db-info conversation-id])
+
+;; --- Turn lifecycle ---
+(defdelegate db-store-conversation-turn! [db-info opts])
+(defdelegate db-update-conversation-turn! [db-info conversation-turn-id opts])
+(defdelegate db-list-conversation-turns-by-status [db-info status])
+(defdelegate db-list-conversation-turns [db-info conversation-ref])
+(defdelegate db-retry-conversation-turn! [db-info conversation-turn-soul-id opts])
+(defdelegate db-list-conversation-turn-states [db-info conversation-turn-id])
+(defdelegate db-list-conversation-turn-iterations [db-info conversation-turn-ref])
+(defdelegate db-list-iteration-vars [db-info iteration-ref])
 (defdelegate db-list-iteration-blocks [db-info iteration-ref])
 
 ;; --- Conversation-scoped intents, plans, gates, and focus ---
-(defdelegate db-store-intent!       [db-info opts])
-(defdelegate db-store-intent-ref!   [db-info intent-id opts])
-(defdelegate db-focus-intent!       [db-info intent-id opts])
-(defdelegate db-infer-focus!        [db-info conversation-turn-id opts])
-(defdelegate db-relate-intents!     [db-info opts])
-(defdelegate db-store-plan!         [db-info opts])
-(defdelegate db-store-gate!         [db-info opts])
-(defdelegate db-offer-proof!        [db-info opts])
-(defdelegate db-prove-gate!         [db-info opts])
-(defdelegate db-impede-gate!        [db-info opts])
-(defdelegate db-block-gate!         [db-info opts])
-(defdelegate db-fulfill-intent!     [db-info intent-id opts])
-(defdelegate db-abandon-intent!     [db-info intent-id opts])
-(defdelegate db-intents             [db-info opts-or-conversation-turn-id])
+(defdelegate db-store-intent! [db-info opts])
+(defdelegate db-store-intent-ref! [db-info intent-id opts])
+(defdelegate db-focus-intent! [db-info intent-id opts])
+(defdelegate db-infer-focus! [db-info conversation-turn-id opts])
+(defdelegate db-relate-intents! [db-info opts])
+(defdelegate db-store-plan! [db-info opts])
+(defdelegate db-store-gate! [db-info opts])
+(defdelegate db-offer-proof! [db-info opts])
+(defdelegate db-prove-gate! [db-info opts])
+(defdelegate db-impede-gate! [db-info opts])
+(defdelegate db-block-gate! [db-info opts])
+(defdelegate db-fulfill-intent! [db-info intent-id opts])
+(defdelegate db-abandon-intent! [db-info intent-id opts])
+(defdelegate db-intents [db-info opts-or-conversation-turn-id])
 
 ;; --- Var registry & history ---
 (defn db-latest-var-registry
   ([db-info conversation-ref]      ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref))
   ([db-info conversation-ref opts] ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref opts)))
 
-(defdelegate db-var-history-index    [db-info conversation-ref opts])
-(defdelegate db-var-history          [db-info conversation-ref sym])
+(defdelegate db-var-history-index [db-info conversation-ref opts])
+(defdelegate db-var-history [db-info conversation-ref sym])
 (defdelegate db-var-history-timeline [db-info conversation-ref opts])
-(defdelegate db-turn-history         [db-info conversation-ref])
+(defdelegate db-turn-history [db-info conversation-ref])
 
 ;; --- Dependencies ---
-(defdelegate db-store-dependency!     [db-info opts])
-(defdelegate db-list-dependencies  [db-info conversation-state-id])
+(defdelegate db-store-dependency! [db-info opts])
+(defdelegate db-list-dependencies [db-info conversation-state-id])
 
 ;; --- Restore ---
 (defdelegate db-restore-blocks [db-info conversation-id])
@@ -342,113 +314,50 @@
 ;; Error translation
 ;;
 ;; Frontends (TUI, CLI, Telegram) all surface persistence exceptions in
-;; chat bubbles. The raw JDBC text (e.g. `[SQLITE_CANTOPEN] unable to
-;; open the database file`) is meaningless without context, so the
-;; persistence layer owns the translation — not any one frontend, not
-;; the conversation runtime above it. Detection is text-based on
-;; purpose so this jar keeps zero compile-time dep on driver classes.
+;; chat bubbles. The facade stays backend-agnostic: adapters may expose
+;; `db-error->user-message`; the first non-empty translation wins.
 ;; =============================================================================
 
-(defn- causal-chain
-  "Walk `(.getCause e)` until a fixed point or cycle is hit. Returns the
-   chain in causal order (innermost first), bounded so a self-referential
-   cause graph can't loop forever."
-  [^Throwable e]
-  (loop [acc [] cur e seen #{}]
-    (cond
-      (nil? cur)           (reverse acc)
-      (contains? seen cur) (reverse acc)
-      (>= (count acc) 16)  (reverse acc)
-      :else (recur (conj acc cur) (.getCause cur) (conj seen cur)))))
-
-(defn- sqlite-cantopen-message?
-  "True when any link in the cause chain looks like a SQLite open failure."
-  [^Throwable e]
-  (boolean
-    (some (fn [^Throwable t]
-            (let [^String m (or (ex-message t) "")]
-              (or (.contains m "[SQLITE_CANTOPEN]")
-                (.contains m "unable to open database file")
-                (.contains m "Unable to open the database file"))))
-      (causal-chain e))))
+(defn- backend-error-translators
+  []
+  (try (manifest/scan-extensions!) (catch Throwable _ nil))
+  (keep (fn [[_ {:keys [ns]}]]
+          (some-> (ns-resolve ns 'db-error->user-message) deref))
+    @backends))
 
 (defn db-error->user-message
-  "Translate an exception from the persistence layer into something a
-   human reading a chat bubble can act on.
-
-   For most exceptions we surface `(ex-message e)` verbatim — provider
-   errors, validation issues, etc. are often self-explanatory. The one
-   case we rewrite is `SQLITE_CANTOPEN`, because the raw message is
-   meaningless without context: the underlying file at
-   `~/.vis/vis.mdb/vis.db` was either deleted out from under the
-   running JVM, or moved, or the process lost write permissions to the
-   directory. Anyone hitting this on the chat surface needs to know
-   what to inspect, not the JDBC error code."
+  "Translate a persistence exception into something a human can act on.
+   Backend adapters own backend-specific recognition; unknown errors fall
+   back to `(ex-message e)`."
   [^Throwable e]
-  (cond
-    (sqlite-cantopen-message? e)
-    (let [home   (System/getProperty "user.home")
-          dbpath (str home "/.vis/vis.mdb/vis.db")
-          dbdir  (str home "/.vis/vis.mdb")
-          dirf   (java.io.File. dbdir)
-          filef  (java.io.File. dbpath)]
-      (str "Vis database is unavailable. "
-        "Expected file: " dbpath ". "
-        (cond
-          (not (.exists filef))
-          "The file is missing — likely deleted while Vis was running. Restart Vis to recreate it."
-
-          (not (.canWrite dirf))
-          (str "The directory " dbdir " is not writable by this process.")
-
-          :else
-          "The handle was lost mid-session. Restart Vis to reconnect.")))
-
-    :else
-    (or (ex-message e) "Internal error")))
+  (or (some (fn [f]
+              (try
+                (when-let [message (f e)]
+                  (when (seq (str message))
+                    (str message)))
+                (catch Throwable _ nil)))
+        (backend-error-translators))
+    (ex-message e)
+    "Internal error"))
 
 ;; =============================================================================
 ;; Process-wide shared connection (singleton helper)
 ;;
-;; vis runs every channel (TUI, CLI, Telegram) against ONE SQLite DB
-;; per process. Owning the singleton here — instead of in any
-;; particular frontend or in conversation/core — keeps the DB
-;; lifecycle inside the persistence layer where it belongs and lets
-;; multiple frontends share the handle without each maintaining its
-;; own atom.
+;; vis runs every channel (TUI, CLI, Telegram) against one persistence
+;; store per process. Owning the singleton here — instead of in any
+;; particular frontend — keeps the DB lifecycle behind the persistence
+;; facade. Backend adapters may expose `db-store-stale?` for
+;; adapter-specific file/handle replacement detection.
 ;; =============================================================================
 
 (defonce ^:private shared-conn (atom nil))
 
-(defn- stable-db-file-key
-  "Best-effort stable identity for the current SQLite file behind a store.
-   Used to detect when the pathname stayed the same but the file was
-   replaced underneath a long-lived JVM (common in dev when `~/.vis/vis.mdb`
-   gets recreated while nREPL survives)."
-  [store]
-  (when-let [db-file (:db-file store)]
-    (try
-      (let [attrs (Files/readAttributes (Paths/get db-file (make-array String 0))
-                    "basic:fileKey,lastModifiedTime,size"
-                    (make-array LinkOption 0))]
-        {:db-file db-file
-         :file-key (get attrs "fileKey")
-         :last-modified (some-> (get attrs "lastModifiedTime") str)
-         :size (get attrs "size")})
-      (catch Throwable _
-        {:db-file db-file :missing? true}))))
-
-(defn- shared-conn-stale?
+(defn- store-stale?
   [store db-spec]
-  (let [normalized (normalize-spec db-spec)]
-    (and store
-      (= :persistent (:mode store))
-      (or (and (string? normalized)
-            (not= normalized (:path store)))
-        (and (map? normalized)
-          (:path normalized)
-          (not= (:path normalized) (:path store)))
-        (not= (stable-db-file-key store) (:file-key-snapshot store))))))
+  (boolean
+    (when store
+      (when-let [f (resolve-optional-impl store 'db-store-stale?)]
+        (f store (normalize-spec db-spec))))))
 
 (defn db-shared-connection!
   "Return the process-wide shared persistence connection for `db-spec`,
@@ -460,18 +369,16 @@
   Pair with `db-dispose-shared-connection!` on process shutdown."
   [db-spec]
   (or (when-let [cur @shared-conn]
-        (when-not (shared-conn-stale? cur db-spec)
+        (when-not (store-stale? cur db-spec)
           cur))
     (swap! shared-conn
       (fn [cur]
-        (if (and cur (not (shared-conn-stale? cur db-spec)))
+        (if (and cur (not (store-stale? cur db-spec)))
           cur
           (do
             (when cur
               (try (db-dispose-connection! cur) (catch Exception _ nil)))
-            (let [fresh (db-create-connection! db-spec)]
-              (cond-> fresh
-                (map? fresh) (assoc :file-key-snapshot (stable-db-file-key fresh))))))))))
+            (db-create-connection! db-spec)))))))
 
 (defn db-dispose-shared-connection!
   "Close the shared connection if one is open. Idempotent."
@@ -479,29 +386,3 @@
   (when-let [c @shared-conn]
     (try (db-dispose-connection! c) (catch Exception _ nil))
     (reset! shared-conn nil)))
-
-;; =============================================================================
-;; Orphan sweep (process-restart cleanup)
-;; =============================================================================
-
-(def ^:private ORPHAN_INTERRUPTED_ANSWER
-  "Warning: Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry.")
-
-(defn db-sweep-orphaned-running-turns!
-  "Mark every `:running` turn as `:interrupted`. Run at process start
-   to clean up turns that crashed or were killed mid-write so the
-   next turn's handover digest renders the right outcome instead of
-   guessing. Returns the number of turns swept."
-  [db-info]
-  (let [orphans (try (db-list-conversation-turns-by-status db-info :running)
-                  (catch Exception _ []))]
-    (doseq [{:keys [id iteration-count duration-ms]} orphans]
-      (try
-        (db-update-conversation-turn! db-info id
-          {:answer          ORPHAN_INTERRUPTED_ANSWER
-           :iteration-count (or iteration-count 0)
-           :duration-ms     (or duration-ms 0)
-           :status          :interrupted
-           :prior-outcome   :cancelled})
-        (catch Exception _ nil)))
-    (count orphans)))

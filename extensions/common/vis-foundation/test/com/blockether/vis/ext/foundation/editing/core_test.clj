@@ -49,7 +49,7 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 15 (count editing/editing-symbols)))
+    (expect (= 16 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
@@ -64,6 +64,8 @@
       (expect (some #{'bash}
                 (map :ext.symbol/sym editing/editing-symbols)))
       (expect (some #{'bash-strict}
+                (map :ext.symbol/sym editing/editing-symbols)))
+      (expect (some #{'nrepl-eval}
                 (map :ext.symbol/sym editing/editing-symbols))))
     (expect (some #{'preview}
               (map :ext.symbol/sym editing/editing-symbols)))
@@ -118,10 +120,19 @@
                 (:ext.symbol/examples bash-symbol)))))
 
   (it "registers custom structured renderers for rich tool outputs"
-    (doseq [sym-name '[cat preview ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash bash-strict]]
+    (doseq [sym-name '[cat preview ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash bash-strict nrepl-eval]]
       (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
                     editing/editing-symbols)]
         (expect (ifn? (:ext.symbol/render-fn entry))))))
+
+  (it "exposes nrepl-eval as a structured Clojure runtime tool"
+    (let [entry (some #(when (= 'nrepl-eval (:ext.symbol/sym %)) %)
+                  editing/editing-symbols)]
+      (expect (some? entry))
+      (when entry
+        (expect (string/includes? (:ext.symbol/doc entry) "nREPL"))
+        (expect (throws? clojure.lang.ExceptionInfo
+                  #((:ext.symbol/fn entry) ""))))))
 
   (it "teaches the model that file and shell payloads live under the tool envelope :result"
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
@@ -585,7 +596,20 @@
           (expect false)
           (catch clojure.lang.ExceptionInfo e
             (expect (= :ext.foundation.editing/bash-clojure-source-edit-blocked (:type (ex-data e))))
-            (expect (= :use-z-patch (:reason (ex-data e))))))))))
+            (expect (= :use-z-patch (:reason (ex-data e)))))))))
+
+  (it "bash refuses long shell-quoted clj-nrepl-eval in favor of v/nrepl-eval"
+    (let [run-bash (private-fn "run-bash-safe")
+          command (str "clj-nrepl-eval -p 7888 \""
+                    (apply str (repeat 260 "(+ 1 1)"))
+                    "\"")]
+      (expect (throws? clojure.lang.ExceptionInfo #(run-bash command)))
+      (try
+        (run-bash command)
+        (expect false)
+        (catch clojure.lang.ExceptionInfo e
+          (expect (= :ext.foundation.editing/bash-nrepl-eval-discouraged (:type (ex-data e))))
+          (expect (= :use-v-nrepl-eval (:reason (ex-data e)))))))))
 
 (defdescribe editing-renderer-guidance-test
   (it "patch renderer avoids mandatory duplicate read-back and shows fenced diffs"

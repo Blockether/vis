@@ -25,6 +25,7 @@
 (def ^:private conversation-rows       #'main/conversation-rows)
 (def ^:private strip-global-args       #'main/strip-global-args)
 (def ^:private startup-measure?        #'main/startup-measure?)
+(def ^:private config-with-model-override #'main/config-with-model-override)
 
 (defdescribe cli-run-persistence-test
   (it "defaults `vis run` to ephemeral execution and requires --persist for disk writes"
@@ -76,7 +77,46 @@
           (expect (= "saved" (:answer result)))
           (expect (= [[:create :cli {:title "save me"}]
                       [:send cid [(svar/user "save me")] {}]]
-                    @events)))))))
+                    @events))))))
+
+  (it "run! honors provider-qualified model overrides without mutating config order"
+    (let [base-config {:providers [{:id :openai-codex
+                                    :models [{:name "gpt-5.5"}]}
+                                   {:id :zai-coding
+                                    :base-url "https://api.z.ai/api/coding/paas/v4"
+                                    :api-key "tok"
+                                    :models [{:name "glm-5-turbo"}
+                                             {:name "glm-5.1"}]}]}
+          db-spec     {:backend :sqlite :path ".verification/proof-autoresearch/test/vis.db"}
+          events      (atom [])]
+      (expect (= [:openai-codex :zai-coding] (mapv :id (:providers base-config))))
+      (expect (= [:zai-coding :openai-codex]
+                (mapv :id (:providers (config-with-model-override base-config "zai-coding/glm-5.1")))))
+      (expect (= "glm-5.1"
+                (get-in (config-with-model-override base-config "zai-coding/glm-5.1")
+                  [:providers 0 :models 0 :name])))
+      (expect (= [:openai-codex :zai-coding] (mapv :id (:providers base-config))))
+      (with-redefs [config/resolve-config (fn ([] base-config) ([_] base-config))
+                    svar/make-router (fn [providers]
+                                       (swap! events conj [:make-router providers])
+                                       {:providers providers})
+                    lp/create-environment (fn [router opts]
+                                            (swap! events conj [:create-environment router opts])
+                                            :env)
+                    lp/turn! (fn [env messages opts]
+                               (swap! events conj [:turn env messages opts])
+                               {:answer "ok" :iteration-count 1 :duration-ms 2
+                                :cost {:provider :zai-coding :model "glm-5.1"}})
+                    lp/dispose-environment! (fn [env]
+                                              (swap! events conj [:dispose env]))]
+        (let [result (main/run! (main/agent {:name "cli"}) "hi" {:model "zai-coding/glm-5.1"
+                                                                 :db db-spec})
+              router-providers (-> @events first second)]
+          (expect (= "ok" (:answer result)))
+          (expect (= :zai-coding (:id (first router-providers))))
+          (expect (= "glm-5.1" (get-in router-providers [0 :models 0 :name])))
+          (expect (= [:create-environment {:providers router-providers} {:db db-spec}]
+                    (second @events))))))))
 
 (defdescribe global-measure-flag-test
   (it "strips --measure before command dispatch"

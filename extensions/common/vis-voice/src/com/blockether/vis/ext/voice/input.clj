@@ -1,10 +1,10 @@
-(ns com.blockether.vis.ext.voice-parakeet.core
-  "TUI voice-input extension backed by local Parakeet-class ASR."
+(ns com.blockether.vis.ext.voice.input
+  "TUI voice input backed by local Parakeet-class ASR."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.voice-parakeet.recorder :as recorder]
-            [com.blockether.vis.ext.voice-parakeet.rewrite :as rewrite]
-            [com.blockether.vis.ext.voice-parakeet.sherpa :as sherpa]
+            [com.blockether.vis.ext.voice.recorder :as recorder]
+            [com.blockether.vis.ext.voice.rewrite :as rewrite]
+            [com.blockether.vis.ext.voice.asr :as asr]
             [taoensso.telemere :as tel]))
 
 (defonce state
@@ -24,7 +24,7 @@
 (defn- voice-status!
   [text level]
   (publish! {:op :status/set
-             :id :voice/parakeet
+             :id :voice/input
              :text text
              :level level}))
 
@@ -44,9 +44,9 @@
   (tel/log! (voice-asr-failed-signal audio-file throwable message)))
 
 (defn- start-ticker!
-  [started-at-ms]
+  [recorder started-at-ms]
   (future
-    (while (:recorder @state)
+    (while (identical? recorder (:recorder @state))
       (voice-status! (str "● Recording " (elapsed-label started-at-ms)) :warn)
       (Thread/sleep 1000))))
 
@@ -62,9 +62,10 @@
     (publish! {:op :notify :text "Voice recording is already running" :level :warn})
 
     :else
-    (let [rec (recorder/start!)
-          ticker (start-ticker! (:started-at-ms rec))]
-      (reset! state {:recorder rec :ticker ticker :transcribing? false})
+    (let [rec (recorder/start!)]
+      (reset! state {:recorder rec :ticker nil :transcribing? false})
+      (let [ticker (start-ticker! rec (:started-at-ms rec))]
+        (swap! state assoc :ticker ticker))
       (voice-status! "● Recording 00:00" :warn))))
 
 (defn- transcribe-and-insert!
@@ -72,11 +73,11 @@
   (future
     (try
       (voice-status! "● Transcribing…" :info)
-      (let [raw (sherpa/transcribe-file! audio-file)]
+      (let [raw (asr/transcribe-file! audio-file)]
         (voice-status! "● Rewrite…" :info)
         (let [rewritten (rewrite/rewrite-transcript! raw)
               text      (if (str/blank? rewritten) raw rewritten)]
-          (publish! {:op :input/append :text text :source :voice/parakeet})
+          (publish! {:op :input/append :text text :source :voice/input})
           (idle-status!)
           (publish! {:op :notify :text "✓ Voice appended to input" :level :success})))
       (catch Throwable t
@@ -130,26 +131,8 @@
 
 (defn tui-commands
   [_ctx]
-  [{:id :voice-parakeet/toggle
+  [{:id :voice/toggle-recording
     :label "Voice: Toggle Recording (Ctrl+B)"
     :palette? false
     :run-fn toggle-recording!}])
 
-(def parakeet-extension
-  (vis/extension
-    {:ext/namespace 'com.blockether.vis.ext.voice-parakeet.core
-     :ext/doc       "Local Parakeet voice input: TUI recording commands, ASR, dynamic cheap/fast rewrite, input insertion."
-     :ext/version   "0.1.0"
-     :ext/author    "Blockether"
-     :ext/owner     "vis"
-     :ext/license   "Apache-2.0"
-     :ext/kind      "voice"
-     :ext/env       [{:name sherpa/model-dir-env
-                      :label "Parakeet model directory"
-                      :description "Directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, and tokens.txt. Missing files are downloaded automatically on first use."
-                      :required? false}]
-     :ext/channel-hooks [{:channel-id :tui
-                          :hook-id :voice/parakeet
-                          :commands-fn tui-commands}]}))
-
-(vis/register-extension! parakeet-extension)

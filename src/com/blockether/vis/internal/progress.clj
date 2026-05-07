@@ -107,7 +107,9 @@
   [tool-result]
   (when (extension/tool-result? tool-result)
     (let [prov (:provenance tool-result)]
-      (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role])
+      (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role
+                                 :spec :paths :hit-count :truncated-by
+                                 :command :cwd :target])
         (= :v/preview (:op prov))
         (assoc :raw (prompt/safe-pr-str (:result tool-result)))))))
 

@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.voice-parakeet.sherpa
+(ns com.blockether.vis.ext.voice.asr
   "Direct Java sherpa-onnx integration for Parakeet TDT ASR."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
@@ -51,7 +51,7 @@
                (str/includes? os "win") "win"
                (str/includes? os "nux") "linux"
                :else (throw (ex-info "Unsupported OS for sherpa-onnx"
-                              {:type :voice-parakeet/unsupported-native-platform
+                              {:type :voice-asr/unsupported-native-platform
                                :os os
                                :arch arch})))
         arch' (cond
@@ -59,7 +59,7 @@
                   (str/starts-with? arch "x86_64")) "x64"
                 (str/starts-with? arch "aarch64") "aarch64"
                 :else (throw (ex-info "Unsupported architecture for sherpa-onnx"
-                               {:type :voice-parakeet/unsupported-native-platform
+                               {:type :voice-asr/unsupported-native-platform
                                 :os os
                                 :arch arch})))]
     (str os' "-" arch')))
@@ -108,7 +108,7 @@
       (when-not (.isFile target)
         (with-open [in (or (resource-stream resource)
                          (throw (ex-info "ONNX Runtime native library resource not found"
-                                  {:type :voice-parakeet/missing-onnxruntime-native
+                                  {:type :voice-asr/missing-onnxruntime-native
                                    :resource resource
                                    :platform platform})))
                     out (FileOutputStream. target)]
@@ -160,7 +160,7 @@
   ([dir]
    (if (model-installed? dir)
      dir
-     (let [archive (File/createTempFile "vis-parakeet-model-" ".tar.bz2")]
+     (let [archive (File/createTempFile "vis-voice-asr-model-" ".tar.bz2")]
        (try
          (vis/notify! "Downloading Parakeet ASR model (~465MB)…" :level :info :ttl-ms 5000)
          (download! model-url archive)
@@ -168,7 +168,7 @@
          (extract-tar-bz2! archive dir)
          (when-not (model-installed? dir)
            (throw (ex-info "Parakeet model download did not produce expected files"
-                    {:type :voice-parakeet/download-incomplete
+                    {:type :voice-asr/download-incomplete
                      :model-dir dir
                      :expected (model-files dir)})))
          dir
@@ -180,7 +180,7 @@
   (doseq [[k path] files]
     (when-not (.isFile (io/file path))
       (throw (ex-info (str "Missing Parakeet model file: " path)
-               {:type :voice-parakeet/missing-model-file
+               {:type :voice-asr/missing-model-file
                 :key k
                 :path path
                 :model-dir (model-dir)
@@ -233,7 +233,7 @@
     (when (< duration-seconds min-audio-seconds)
       (throw (ex-info "Voice recording too short — try again"
                (assoc stats
-                 :type :voice-parakeet/audio-too-short
+                 :type :voice-asr/audio-too-short
                  :path (str audio-path)
                  :min-duration-seconds min-audio-seconds))))))
 
@@ -247,7 +247,7 @@
          ^File audio-file (io/file audio-path)]
      (when-not (.isFile audio-file)
        (throw (ex-info (str "Missing audio file: " audio-path)
-                {:type :voice-parakeet/missing-audio-file
+                {:type :voice-asr/missing-audio-file
                  :path (str audio-path)})))
      (let [reader (WaveReader. (str audio-file))
            _      (assert-audio-long-enough! audio-path reader)

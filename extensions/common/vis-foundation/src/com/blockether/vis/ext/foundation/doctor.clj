@@ -16,7 +16,7 @@
      ::skills            Skills catalog summary: count + breakdown
                           by source; :error lines per malformed
                           SKILL.md file.
-     ::voice             Optional voice runtime readiness: voice extensions,
+     ::voice             Optional voice runtime readiness: voice feature,
                           ffmpeg, and Piper espeak-ng-data presence.
      ::scan-warnings     Aggregated warnings from agents + skills
                           scanners (already surfaced via
@@ -134,16 +134,16 @@
     (apply f args)))
 
 (defn- voice-extension-message []
-  (let [asr? (resolved? 'com.blockether.vis.ext.voice-parakeet.sherpa/transcribe-file!)
+  (let [asr? (resolved? 'com.blockether.vis.ext.voice.asr/transcribe-file!)
         tts? (resolved? 'com.blockether.vis.ext.voice.core/synthesize-file!)]
     (if (or asr? tts?)
       {:level :info
-       :message (str "Voice extensions:"
+       :message (str "Voice:"
                   " input=" (if asr? "loaded" "missing")
                   ", output=" (if tts? "loaded" "missing"))}
       {:level       :warn
-       :message     "Voice extensions: none loaded; voice menus/commands are disabled."
-       :remediation "Add/load vis-voice for output and/or vis-voice-parakeet for input, then restart the channel."})))
+       :message     "Voice: not loaded; voice menus/commands are disabled."
+       :remediation "Add/load vis-voice, then restart the channel."})))
 
 (defn- ffmpeg-message []
   (if (executable? "ffmpeg")
@@ -164,7 +164,7 @@
            :message     (str "Piper espeak-ng-data: missing — " data-dir)
            :remediation "Run `vis extensions voice models download --piper` or set VIS_PIPER_MODEL_DIR to a complete Piper model directory."}))
       {:level :info
-       :message "Piper espeak-ng-data: skipped; vis-voice output extension is not loaded."})
+       :message "Piper espeak-ng-data: skipped; voice TTS is not loaded."})
     (catch Throwable t
       {:level       :warn
        :message     (str "Piper espeak-ng-data: check failed: " (or (ex-message t) t))

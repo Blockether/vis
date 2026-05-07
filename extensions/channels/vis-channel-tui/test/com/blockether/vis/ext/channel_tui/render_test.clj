@@ -2007,6 +2007,50 @@
       (expect (str/includes? (:text payload) "EDIT patch"))
       (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
 
+  (it "does not duplicate self-describing shell result summaries"
+    (render/invalidate-cache!)
+    (let [huge-result (str "Ran bash in `.` - exit `0`, 1 ms.\n"
+                        "Command: `find . -maxdepth 2 -type f`\n"
+                        (str/join " " (repeat 500 "file.txt")))
+          trace       [{:code ["(v/bash \"find . -maxdepth 2 -type f\")"]
+                        :results [huge-result]
+                        :result-kinds [:tool]
+                        :result-details [{:op :v/bash
+                                          :op-class :op/shell
+                                          :presentation-kind :tool/shell
+                                          :color-role :tool-color/shell}]
+                        :stdouts [""]
+                        :durations [1]
+                        :successes [true]}]
+          payload     (render/format-answer-with-thinking-data
+                        "" trace 96 {:show-iterations true} nil false
+                        {:conversation-id "conversation"
+                         :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          body        (strip-ansi (:text payload))]
+      (expect (= 1 (count (re-seq #"SHELL bash" body))))))
+
+  (it "does not emit vague duplicate search-any rows"
+    (render/invalidate-cache!)
+    (let [trace   [{:code ["(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})"]
+                    :results ["Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)."]
+                    :result-kinds [:tool]
+                    :result-details [{:op :any
+                                      :op-class :op/search
+                                      :presentation-kind :tool/search
+                                      :color-role :tool-color/search
+                                      :spec {:any ["alpha" "beta"] :paths ["src"]}
+                                      :paths ["src"]}]
+                    :stdouts [""]
+                    :durations [1]
+                    :successes [true]}]
+          payload (render/format-answer-with-thinking-data
+                    "" trace 96 {:show-iterations true} nil false
+                    {:conversation-id "conversation"
+                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          body    (strip-ansi (:text payload))]
+      (expect (not (str/includes? body "SEARCH any")))
+      (expect (= 1 (count (re-seq #"Searched" body))))))
+
   (it "paints preview raw controls on the right with underline and translated ANSI"
     (render/invalidate-cache!)
     (let [preview-text (str/join "\n" (map #(str % ": selected line") (range 1 31)))

@@ -38,7 +38,7 @@
         (expect (= ["help" "status" "model" "models" "reasoning" "verbosity" "voice" "cancel" "restart" "export"]
                   (mapv #(get % "command") (:commands @installed)))))))
 
-  (it "omits voice from the Telegram command menu when voice extensions are not loaded"
+  (it "omits voice from the Telegram command menu when voice is not loaded"
     (let [installed         (atom nil)
           install-bot-menu! (private-var 'install-bot-menu!)]
       (with-redefs [clojure.core/requiring-resolve (fn [_sym] nil)
@@ -69,14 +69,14 @@
                     :voice-mode :off}
                   (get-in @(private-var 'chat-state) [42 :settings]))))))
 
-  (it "reports unavailable voice command when no voice extensions are loaded"
+  (it "reports unavailable voice command when voice is not loaded"
     (let [handle-command! (private-var 'handle-command!)
           sent            (atom nil)]
       (with-redefs [clojure.core/requiring-resolve (fn [_sym] nil)
                     tg/send-message! (fn [_token chat-id text & _opts]
                                        (reset! sent [chat-id text]))]
         (expect (true? (handle-command! "token" 42 "/voice duplex")))
-        (expect (= [42 "Voice extensions are not loaded. Install/load vis-voice or vis-voice-parakeet, then restart Telegram."]
+        (expect (= [42 "Voice is not loaded. Install/load vis-voice, then restart Telegram."]
                   @sent)))))
 
   (it "/voice lists choices with an inline keyboard"
@@ -109,7 +109,7 @@
         (expect (= [42 "Voice mode: duplex"] @sent))
         (expect (= :duplex (get-in @saved [:telegram :chat-settings "42" :voice-mode]))))))
 
-  (it "selects voice mode from inline keyboard callbacks"
+  (it "selects voice mode from inline keyboard callbacks without sending a duplicate chat message"
     (reset-chat-state!)
     (let [saved          (atom nil)
           answered       (atom nil)
@@ -124,7 +124,7 @@
                                        (reset! sent [chat-id text]))]
         (expect (true? (handle-update! "token" (telegram-callback-update 42 "voice:duplex"))))
         (expect (= ["cb-1" "Voice mode: duplex"] @answered))
-        (expect (= [42 "Voice mode: duplex"] @sent))
+        (expect (nil? @sent))
         (expect (= :duplex (get-in @saved [:telegram :chat-settings "42" :voice-mode]))))))
 
   (it "/help opens the command help"
@@ -275,12 +275,12 @@
         (with-redefs [clojure.core/requiring-resolve
                       (fn [sym]
                         (case sym
-                          com.blockether.vis.ext.voice-parakeet.sherpa/transcribe-file!
+                          com.blockether.vis.ext.voice.asr/transcribe-file!
                           (fn [file]
                             (deliver transcribed file)
                             "raw transcript")
 
-                          com.blockether.vis.ext.voice-parakeet.rewrite/rewrite-transcript!
+                          com.blockether.vis.ext.voice.rewrite/rewrite-transcript!
                           nil))
                       com.blockether.vis.ext.channel-telegram.bot/ffmpeg-audio->wav!
                       (fn [_audio-file wav-file]

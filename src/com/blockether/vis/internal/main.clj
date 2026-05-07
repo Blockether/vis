@@ -356,6 +356,67 @@
 
 ;;; ── Execution ────────────────────────────────────────────────────────────
 
+(defn- split-provider-model
+  "Return `[provider-id model-name]` for `provider/model`; nil for bare model names."
+  [model]
+  (when-let [model* (some-> model str str/trim not-empty)]
+    (when-let [idx (str/index-of model* "/")]
+      (let [provider-name (subs model* 0 idx)
+            model-name    (subs model* (inc idx))]
+        (when (and (not (str/blank? provider-name)) (not (str/blank? model-name)))
+          [(keyword provider-name) model-name])))))
+
+(defn- select-model
+  [provider model-name]
+  (let [model-name* (str model-name)
+        existing    (some #(when (= (str/lower-case model-name*)
+                                   (some-> (config/model-name %) str/lower-case))
+                             %)
+                      (:models provider))
+        selected    (if (map? existing)
+                      (assoc existing :name model-name*)
+                      {:name model-name*})]
+    (assoc provider :models (vec (cons selected
+                                   (remove #(= (str/lower-case model-name*)
+                                              (some-> (config/model-name %) str/lower-case))
+                                     (:models provider)))))))
+
+(defn- provider-from-template
+  [provider-id]
+  (when-let [template (config/provider-template provider-id)]
+    (select-keys template [:id :base-url :api-style :llm-headers :responses-path])))
+
+(defn- config-with-model-override
+  "Return config with `model` selected first.
+
+   Bare model names select that model on the active provider. Provider-qualified
+   names (`provider/model`) move or synthesize that provider as the one-shot
+   root provider. This does not persist to `~/.vis/config.edn`."
+  [config model]
+  (if-let [model* (some-> model str str/trim not-empty)]
+    (let [providers (vec (:providers config))]
+      (if-let [[provider-id model-name] (split-provider-model model*)]
+        (let [provider (or (some #(when (= provider-id (:id %)) %) providers)
+                         (provider-from-template provider-id)
+                         (throw (ex-info (str "Unknown provider in --model: " (name provider-id))
+                                  {:type :vis.cli/unknown-model-provider
+                                   :provider provider-id
+                                   :model model*})))
+              selected (select-model provider model-name)]
+          (assoc config :providers (vec (cons selected (remove #(= provider-id (:id %)) providers)))))
+        (update config :providers
+          (fn [providers]
+            (if-let [active (first providers)]
+              (vec (cons (select-model active model*) (rest providers)))
+              providers)))))
+    config))
+
+(defn- router-for-run
+  [config use-local-router?]
+  (if use-local-router?
+    (svar/make-router (mapv config/->svar-provider (:providers config)))
+    (lp/get-router)))
+
 (defn run!
   "Execute a one-shot agent turn.
 
@@ -381,6 +442,7 @@
    - :on-chunk    — Streaming callback fn
    - :debug?      — Enable debug logging (default false)
    - :config      — Provider config override (skips ~/.vis/config.edn)
+   - :db          — DB target for ephemeral runs (`:memory`, path, or db spec)
    - :persist?    — Write the run to ~/.vis/vis.mdb as a `:cli`
                     conversation. Default false.
    - :no-persist? — Backward-compatible override; when true, forces
@@ -394,13 +456,14 @@
    the `:cli` channel. Past runs are browsable via
    `(conversations/by-channel :cli)`."
   [agent-def prompt & [{:keys [spec model on-chunk
-                               debug? config persist? no-persist?]
+                               debug? config db persist? no-persist?]
                         :as _opts}]]
-  (let [_cfg      (config/resolve-config config)
+  (let [mdl       (or model (:model agent-def))
+        cfg       (config-with-model-override (config/resolve-config config) mdl)
+        local-router? (boolean (or config mdl))
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
         title     (let [t (str/trim prompt-s)]
                     (if (> (count t) 100) (str (subs t 0 97) "…") t))
-        mdl       (or model (:model agent-def))
         tracker   (when on-chunk
                     (progress/make-progress-tracker {:on-update (fn [_timeline chunk] (on-chunk chunk))}))
         on-chunk* (when tracker (:on-chunk tracker))
@@ -420,7 +483,7 @@
       ;; because the iteration loop requires a non-nil `:db-info` (it
       ;; persists turns + iterations + expression history; nil would
       ;; reject in `prepare-turn-context`).
-      (let [env (lp/create-environment (lp/get-router) {:db :memory})]
+      (let [env (lp/create-environment (router-for-run cfg local-router?) {:db (or db :memory)})]
         (try
           (let [result (lp/turn! env messages q-opts)]
             (cond-> {:conversation-id nil
@@ -442,7 +505,8 @@
       ;; Persistent path: route through the shared conversation cache
       ;; so the run shows up in `(conversations/by-channel :cli)` and
       ;; survives process restarts.
-      (let [{conversation-id :id} (lp/create! :cli {:title title})]
+      (let [_ (when local-router? (lp/rebuild-router! cfg))
+            {conversation-id :id} (lp/create! :cli {:title title})]
         (try
           (let [result (lp/send! conversation-id messages q-opts)]
             (cond-> {:conversation-id conversation-id

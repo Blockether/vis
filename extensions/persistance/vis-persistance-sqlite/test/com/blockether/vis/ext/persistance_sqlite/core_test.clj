@@ -44,6 +44,50 @@
 (defn- private-core-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.persistance-sqlite.core" name))))
 
+(def ^:private migration-checksum-mismatch?
+  (private-core-fn "migration-checksum-mismatch?"))
+
+(def ^:private maybe-wrap-db-open-error
+  (private-core-fn "maybe-wrap-db-open-error"))
+
+(def ^:private migration-checksum-mismatch-user-message
+  (private-core-fn "migration-checksum-mismatch-user-message"))
+
+(defdescribe sqlite-bootstrap-error-normalization-test
+  (it "matches Flyway checksum text at top level"
+    (expect (true? (migration-checksum-mismatch?
+                     (ex-info "Validate failed: Migrations have failed validation\nMigration checksum mismatch for migration version 1"
+                       {})))))
+
+  (it "matches Flyway checksum text in a nested cause"
+    (let [cause (ex-info "Migration checksum mismatch for migration version 1" {})
+          e     (ex-info "wrapper" {} cause)]
+      (expect (true? (migration-checksum-mismatch? e)))))
+
+  (it "returns false for unrelated failures"
+    (expect (false? (migration-checksum-mismatch? (ex-info "boom" {})))))
+
+  (it "wraps checksum mismatch as :vis/user-error with actionable guidance"
+    (let [root (ex-info "Migration checksum mismatch for migration version 1" {})
+          e    (maybe-wrap-db-open-error root)]
+      (expect (instance? clojure.lang.ExceptionInfo e))
+      (expect (true? (:vis/user-error (ex-data e))))
+      (expect (= :vis/db-migration-checksum-mismatch (:type (ex-data e))))
+      (expect (= root (.getCause ^Throwable e)))
+      (expect (str/includes? (.getMessage ^Throwable e) "~/.vis/vis.mdb"))
+      (expect (str/includes? (.getMessage ^Throwable e) "packaged migration resources"))
+      (expect (not (str/includes? (.getMessage ^Throwable e) "Flyway repair")))))
+
+  (it "leaves unrelated bootstrap failures untouched"
+    (let [e (ex-info "x" {})]
+      (expect (identical? e (maybe-wrap-db-open-error e)))))
+
+  (it "mentions reset path and does not suggest repair"
+    (expect (str/includes? migration-checksum-mismatch-user-message "schema mismatch"))
+    (expect (str/includes? migration-checksum-mismatch-user-message "~/.vis/vis.mdb"))
+    (expect (str/includes? migration-checksum-mismatch-user-message "packaged migration resources"))
+    (expect (not (str/includes? migration-checksum-mismatch-user-message "Flyway repair")))))
+
 (def ^:private multiprocess-child-code
   "(require '[com.blockether.vis.core :as vis])
    (let [dir    (System/getProperty \"vis.test.db-dir\")

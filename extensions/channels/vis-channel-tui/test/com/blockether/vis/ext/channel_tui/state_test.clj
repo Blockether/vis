@@ -287,6 +287,22 @@
                 (:messages-scroll
                  (scroll-to-y-fn db [:scroll-to-y 55 0 56 360 56])))))))
 
+(defdescribe cancel-turn-test
+  (it "notifies cancelling instead of relying on footer status"
+    (let [cancelled (atom nil)
+          notified  (atom nil)]
+      (with-redefs [vis/cancel! (fn [token] (reset! cancelled token))
+                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
+        (reset! state/app-db {:loading? true
+                              :cancel-token :token
+                              :cancelling? false
+                              :render-version 0})
+        (state/dispatch [:cancel-turn])
+        (expect (= :token @cancelled))
+        (expect (true? (:cancelling? @state/app-db)))
+        (expect (= ["Cancelling current turn…" [:level :info :ttl-ms 2500]]
+                  @notified))))))
+
 (defdescribe send-message-test
   (it "keeps @mentions compact in chat while expanding them for the agent"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)

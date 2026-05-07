@@ -85,7 +85,7 @@
     (let [msgs     (section-msgs ::doctor/voice {})
           msg-text (mapv :message msgs)]
       (expect (= 3 (count msgs)))
-      (expect (some #(str/starts-with? % "Voice extensions:") msg-text))
+      (expect (some #(str/starts-with? % "Voice:") msg-text))
       (expect (some #(str/starts-with? % "ffmpeg:") msg-text))
       (expect (some #(str/starts-with? % "Piper espeak-ng-data:") msg-text))
       (expect (every? #{:info :warn :error} (mapv :level msgs))))))
