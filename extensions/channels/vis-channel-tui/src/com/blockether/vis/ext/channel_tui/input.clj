@@ -39,6 +39,29 @@
 
           :else nil)))))
 
+(def alt-backspace-pattern
+  "Lanterna's stock Alt+character decoder rejects ISO control chars.
+   Option+Backspace commonly arrives as ESC + DEL (0x7f), with some
+   terminals using ESC + Ctrl-H (0x08). Surface both as Alt+Backspace
+   so the editor can delete one word backward."
+  (reify CharacterPattern
+    (match [_ seq]
+      (let [size (.size seq)]
+        (cond
+          (and (= size 2)
+            (= (.get seq 0) ESC_CHAR)
+            (let [c (.get seq 1)]
+              (or (= c (Character. (char 0x7f)))
+                (= c (Character. (char 0x08))))))
+          (CharacterPattern$Matching.
+            (KeyStroke. KeyType/Backspace false true))
+
+          (and (= size 1)
+            (= (.get seq 0) ESC_CHAR))
+          CharacterPattern$Matching/NOT_YET
+
+          :else nil)))))
+
 ;; ── Bracketed-paste mode ────────────────────────────────────────────────
 ;;
 ;; Modern terminals support "bracketed paste": when the user pastes
@@ -333,7 +356,7 @@
     (catch Throwable _ nil)))
 
 (defn register-custom-patterns!
-  "Register Alt+Enter, bracketed-paste, and SGR-mouse patterns on
+  "Register Alt+Enter, Alt+Backspace, bracketed-paste, and SGR-mouse patterns on
    the terminal's input decoder. Without `sgr-mouse-pattern` the
    stock Lanterna parser handles only legacy X10 mouse events,
    whose raw-byte coordinate encoding clashes with the JVM's
@@ -343,6 +366,7 @@
   (.addProfile (.getInputDecoder terminal)
     (reify KeyDecodingProfile
       (getPatterns [_] [alt-enter-pattern
+                        alt-backspace-pattern
                         paste-start-pattern
                         paste-end-pattern
                         sgr-mouse-pattern]))))
@@ -505,6 +529,39 @@
 
     :else st))
 
+(defn- word-boundary-left
+  [^String line ccol]
+  (let [skip-space (fn [i]
+                     (loop [i i]
+                       (if (and (pos? i)
+                             (Character/isWhitespace (.charAt line (dec i))))
+                         (recur (dec i))
+                         i)))
+        skip-word  (fn [i]
+                     (loop [i i]
+                       (if (and (pos? i)
+                             (not (Character/isWhitespace (.charAt line (dec i)))))
+                         (recur (dec i))
+                         i)))]
+    (skip-word (skip-space ccol))))
+
+(defn- word-boundary-right
+  [^String line ccol]
+  (let [n          (count line)
+        skip-space (fn [i]
+                     (loop [i i]
+                       (if (and (< i n)
+                             (Character/isWhitespace (.charAt line i)))
+                         (recur (inc i))
+                         i)))
+        skip-word  (fn [i]
+                     (loop [i i]
+                       (if (and (< i n)
+                             (not (Character/isWhitespace (.charAt line i))))
+                         (recur (inc i))
+                         i)))]
+    (skip-word (skip-space ccol))))
+
 (defn move-left [{:keys [lines crow ccol] :as st}]
   (cond
     (pos? ccol)  (update st :ccol dec)
@@ -517,6 +574,53 @@
       (< ccol (count line))         (update st :ccol inc)
       (< crow (dec (count lines)))  (-> st (update :crow inc) (assoc :ccol 0))
       :else                         st)))
+
+(defn move-word-left [{:keys [lines crow ccol] :as st}]
+  (cond
+    (pos? ccol)
+    (assoc st :ccol (word-boundary-left (nth lines crow) ccol))
+
+    (pos? crow)
+    (let [new-crow (dec crow)]
+      (recur (assoc st
+               :crow new-crow
+               :ccol (count (nth lines new-crow)))))
+
+    :else st))
+
+(defn move-word-right [{:keys [lines crow ccol] :as st}]
+  (let [line (nth lines crow)]
+    (cond
+      (< ccol (count line))
+      (assoc st :ccol (word-boundary-right line ccol))
+
+      (< crow (dec (count lines)))
+      (recur (assoc st :crow (inc crow) :ccol 0))
+
+      :else st)))
+
+(defn move-line-start [st]
+  (assoc st :ccol 0))
+
+(defn move-line-end [{:keys [lines crow] :as st}]
+  (assoc st :ccol (count (nth lines crow))))
+
+(defn delete-word-backward [{:keys [lines crow ccol] :as st}]
+  (if (pos? ccol)
+    (let [line     (nth lines crow)
+          new-ccol (word-boundary-left line ccol)
+          new-line (str (subs line 0 new-ccol) (subs line ccol))]
+      (-> st
+        (assoc-in [:lines crow] new-line)
+        (assoc :ccol new-ccol)))
+    (delete-backward st)))
+
+(defn delete-line-backward [{:keys [lines crow ccol] :as st}]
+  (if (pos? ccol)
+    (-> st
+      (assoc-in [:lines crow] (subs (nth lines crow) ccol))
+      (assoc :ccol 0))
+    st))
 
 (defn move-up [{:keys [lines crow ccol] :as st}]
   (if (pos? crow)
@@ -779,12 +883,28 @@
 
       KeyType/Character
       (let [c    (.getCharacter key)
-            ctrl (.isCtrlDown key)]
+            ctrl (.isCtrlDown key)
+            alt  (.isAltDown key)]
         (cond
           (and ctrl (= c \c))
           (if (input-empty? state)
             {:action :quit :state state}
             {:action :clear-input :state (empty-input)})
+
+          (and ctrl (= (Character/toLowerCase c) \a))
+          {:action :continue :state (move-line-start state)}
+
+          (and ctrl (= (Character/toLowerCase c) \e))
+          {:action :continue :state (move-line-end state)}
+
+          (and ctrl (= (Character/toLowerCase c) \u))
+          {:action :continue :state (delete-line-backward state)}
+
+          (and alt (= (Character/toLowerCase c) \b))
+          {:action :continue :state (move-word-left state)}
+
+          (and alt (= (Character/toLowerCase c) \f))
+          {:action :continue :state (move-word-right state)}
 
           (and ctrl (= c \v)) (if-let [t (clipboard-paste)]
                                 {:action :continue :state (paste-text state t)}
@@ -813,9 +933,9 @@
           (and ctrl (= (Character/toLowerCase c) \t))
           {:action :cycle-model :state state}
 
-          ;; Unbound control chords are ignored instead of inserting their
+          ;; Unbound control / meta chords are ignored instead of inserting their
           ;; letter payload into the prompt.
-          ctrl {:action :continue :state state}
+          (or ctrl alt) {:action :continue :state state}
 
           (= c \@) {:action :pick-file :state state}
 
@@ -834,9 +954,18 @@
         {:action :send :state state})
 
       KeyType/F2         {:action :continue :state state}
-      KeyType/Backspace  {:action :continue :state (delete-backward state)}
-      KeyType/ArrowLeft  {:action :continue :state (move-left state)}
-      KeyType/ArrowRight {:action :continue :state (move-right state)}
+      KeyType/Backspace  {:action :continue :state (cond
+                                                     (.isAltDown key)  (delete-word-backward state)
+                                                     (.isCtrlDown key) (delete-line-backward state)
+                                                     :else             (delete-backward state))}
+      KeyType/ArrowLeft  {:action :continue :state (if (.isAltDown key)
+                                                     (move-word-left state)
+                                                     (move-left state))}
+      KeyType/ArrowRight {:action :continue :state (if (.isAltDown key)
+                                                     (move-word-right state)
+                                                     (move-right state))}
+      KeyType/Home       {:action :continue :state (move-line-start state)}
+      KeyType/End        {:action :continue :state (move-line-end state)}
       ;; Arrow Up/Down - input history, or Alt+Shift+↑/↓ conversation switcher
       KeyType/ArrowUp    (if (and (.isAltDown key) (.isShiftDown key))
                            {:action :show-conversations :state state}
