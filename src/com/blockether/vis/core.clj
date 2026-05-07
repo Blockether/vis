@@ -248,6 +248,7 @@
 (def db-attest-gate!                 persistance/db-attest-gate!)
 (def db-attest-intent!               persistance/db-attest-intent!)
 (def db-get-attestation              persistance/db-get-attestation)
+(def db-audit-proof                  persistance/db-audit-proof)
 
 ;; Conversation-scoped intents, plans, gates, and focus
 (def db-store-intent!                 persistance/db-store-intent!)
