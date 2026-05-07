@@ -141,15 +141,34 @@
             "`com.blockether.vis.ext.persistance-sqlite.core`?"))
         {:registered (vec (keys @backends))}))))
 
+(defn- require-backend-ns!
+  "Ensure the backend's heavyweight namespace has been loaded. Backends
+   are typically registered through a lightweight `registrar` ns whose
+   `:persistance/ns` points at the heavy ns; this fn does the deferred
+   `(require ...)` so callers don't pay the load cost until they actually
+   dispatch a backend call. `requiring-resolve`-style: silent no-op when
+   the ns is already loaded."
+  [bid ns-sym]
+  (try
+    (require ns-sym)
+    (catch Throwable t
+      (throw (ex-info (str "Backend " bid " (" ns-sym ") failed to load: "
+                        (or (ex-message t) (str t)))
+               {:backend bid :ns ns-sym}
+               t)))))
+
 (defn- resolve-impl
   "Resolve the var implementing `fn-name` on the chosen backend.
-   Throws a useful error when the backend is missing the fn."
+   Auto-loads the backend ns on first call so backends can ship as a
+   tiny registrar + heavy implementation pair. Throws a useful error
+   when the backend is missing the fn."
   [db-spec-or-store fn-name]
   (let [bid     (pick-backend-id db-spec-or-store)
         ns-sym  (get-in @backends [bid :ns])
         _       (when-not ns-sym
                   (throw (ex-info (str "Backend " bid " not registered")
                            {:backend bid :registered (vec (keys @backends))})))
+        _       (require-backend-ns! bid ns-sym)
         v       (ns-resolve ns-sym fn-name)]
     (when-not v
       (throw (ex-info (str "Backend " bid " (" ns-sym ") does not implement '" fn-name "'")
@@ -173,13 +192,15 @@
 
 (defn- resolve-optional-impl
   "Resolve an optional backend var. Missing vars return nil; bad backend
-   selection still throws because the store/spec itself is invalid."
+   selection still throws because the store/spec itself is invalid.
+   Auto-loads the backend ns the same way `resolve-impl` does."
   [db-spec-or-store fn-name]
   (let [bid    (pick-backend-id db-spec-or-store)
         ns-sym (get-in @backends [bid :ns])]
     (when-not ns-sym
       (throw (ex-info (str "Backend " bid " not registered")
                {:backend bid :registered (vec (keys @backends))})))
+    (require-backend-ns! bid ns-sym)
     (some-> (ns-resolve ns-sym fn-name) deref)))
 
 ;; =============================================================================

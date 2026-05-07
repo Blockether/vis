@@ -11,6 +11,15 @@ Optimize four primary dimensions:
 3. **Correctness** — exact/check/judge score from observed artifacts.
 4. **Proof/attestation health** — context optimizations must not break Vis provenance, intents, gates, audit, or honest blocker reporting.
 
+## Out of scope
+
+CLI / TUI startup-speed tasks (`VCLI-*`, `VTUI-*`) are **NO LONGER active
+optimization targets**. The earlier wins (VTUI miss-fast-path,
+lazy-sqlite registrar split) are merged but we do not chase further
+startup speedups. JVM cold-start is acceptable; the agent loop
+speed and context usage on REAL coding work matter, the prelude does
+not.
+
 ## Models
 
 - Pi: `anthropic/claude-opus-4-7`
@@ -104,24 +113,21 @@ bench/opus/run-cli-task.sh  # Vis CLI/TUI startup speed runner
 
 Both runners print `METRIC name=value` lines for pi-autoresearch.
 
-## CLI/TUI Startup Tasks
+## CLI/TUI Startup Tasks (NOT ACTIVE)
 
-Some optimization targets are not model-agent tasks. For example, `vis channels tui` opening speed and general `bin/vis` command latency are Vis runtime tasks. For these, wall time is the task time, because startup/opening is exactly what users feel.
+The `bench/opus/cli-tasks.jsonl` suite (`VCLI-*`, `VTUI-*`) is preserved
+for reproducibility of past wins but is **NO LONGER an active
+optimization target**. The runner script `bench/opus/run-cli-task.sh`
+stays in place; do not delete it. Past wins kept in tree:
 
-Current CLI task suite:
+- VTUI miss-fast-path: validates `--conversation-id` before requiring
+  the heavyweight Lanterna `screen` ns. (commit `e6c59b0`)
+- Lazy-sqlite registrar split: tiny manifest registrar + heavy core ns;
+  persistance facade auto-loads the heavy ns on first DB op.
+  (this commit batch)
 
-- `VCLI-root-help` — root help command startup.
-- `VCLI-providers-list` — provider command startup/discovery.
-- `VTUI-help` — TUI help should use the fast channel descriptor path and avoid full Lanterna runtime.
-- `VTUI-open-missing-conversation` — headless-safe proxy for opening TUI: loads the full TUI channel, initializes Vis with a disposable DB, validates a missing conversation, and exits before interactive Lanterna screen takeover.
-
-Every CLI/TUI task uses:
-
-```bash
-VIS_MEASURE=1 VIS_CRAC=0 VIS_DB_PATH=target/vis-bench/<run-id>/cli/db
-```
-
-and deletes that disposable DB before the run.
+Further speed-ups on these CLI/TUI tasks are explicitly out of scope.
+Focus the loop on the model-agent tasks below.
 
 ## Preflight / Fix Gate
 
@@ -190,13 +196,37 @@ They are intentionally not simple exact-answer tasks. Before running them in aut
 
 ## Current First Optimization Target
 
-The smoke probe showed Vis can answer Opus correctly but uses very large context for a trivial turn.
+Build the **paired-worktree hard-task runner** so judge-required tasks
+can run end-to-end. Once the runner exists, the loop iterates through
+the hard task sequence above, starting with `CTX1`.
 
-Initial observed shape:
+Runner contract (`bench/opus/run-paired-task.sh`):
+
+- For a given `TASK_ID` from `bench/opus/tasks.jsonl`:
+  - Create `target/vis-bench/<run-id>/{pi,vis}/worktree/` via
+    `git worktree add` from the current HEAD.
+  - Drop the task prompt + constraints into each worktree.
+  - Run Pi (`anthropic/claude-opus-4-7`) and Vis
+    (`anthropic-coding-plan/claude-opus-4-7`) on the same prompt with
+    matching tool budgets. Vis writes its disposable DB under
+    `target/vis-bench/<run-id>/vis/db` (deleted before each run).
+  - Capture per-side: `git diff`, `./verify.sh` exit + tail, full
+    stdout/stderr, wall time, internal task time (Vis
+    `.\"duration-ms\"`), tokens, tool-call counts/successes/errors,
+    Vis trace + proof/intent/audit metrics.
+  - Call Opus judge with `bench/opus/judge-prompt.md` over the diffs,
+    requiring strict JSON output (correctness 0–100, blockers,
+    proof_floor_pass, etc.).
+  - Tear down: `git worktree remove --force` after metrics are written.
+  - Emit `METRIC name=value` lines for every metric in the
+    “Metrics” section above.
+
+Earlier observed shape (kept for context):
 
 - Pi Opus works.
 - Vis Opus works through `anthropic-coding-plan/claude-opus-4-7`.
 - Vis internal duration is available in `result.json` at `."duration-ms"`.
-- Vis trivial prompt currently carries high input-token overhead.
+- Vis trivial prompt carries higher input-token overhead than Pi (real
+  context-reduction work waits on `CTX1`).
 
 First likely improvement: introduce or improve a tiny prompt path for trivial/no-tool/no-repo tasks, while preserving full coding-agent context for real work.
