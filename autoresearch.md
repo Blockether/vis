@@ -50,6 +50,13 @@ Correctness metrics:
 - `strict_task_win`
 - `combined_task_win`
 
+Tool-call reliability metrics:
+
+- `pi_tool_call_count`, `pi_tool_result_count`, `pi_tool_success_count`, `pi_tool_error_count`, `pi_tool_event_count`
+- `vis_tool_call_count`, `vis_tool_success_count`, `vis_tool_error_count`, `vis_tool_event_count`, `vis_tool_block_count`
+
+These matter because speed/correctness can be faked by not using tools, failing tools silently, or looping through broken calls. Real tasks should prefer fewer successful calls for equal quality, but any tool error must be visible and judged.
+
 Proof/attestation health metrics:
 
 - `proof_floor_pass`
@@ -69,25 +76,52 @@ Default task:
 ./autoresearch.sh
 ```
 
-Specific task:
+Specific agent-comparison task:
 
 ```bash
 TASK_ID=C2-vis-duration-metric ./autoresearch.sh
 ```
 
+Specific Vis CLI/TUI startup-speed task:
+
+```bash
+TASK_ID=VTUI-open-missing-conversation ./autoresearch.sh
+```
+
 Task definitions live in:
 
 ```text
-bench/opus/tasks.jsonl
+bench/opus/tasks.jsonl      # Pi-vs-Vis Opus agent tasks
+bench/opus/cli-tasks.jsonl  # Vis command/TUI startup speed tasks
 ```
 
-Runner:
+Runners:
 
 ```text
-bench/opus/run-task.sh
+bench/opus/run-task.sh      # Pi-vs-Vis agent task runner
+bench/opus/run-cli-task.sh  # Vis CLI/TUI startup speed runner
 ```
 
-The runner prints `METRIC name=value` lines for pi-autoresearch.
+Both runners print `METRIC name=value` lines for pi-autoresearch.
+
+## CLI/TUI Startup Tasks
+
+Some optimization targets are not model-agent tasks. For example, `vis channels tui` opening speed and general `bin/vis` command latency are Vis runtime tasks. For these, wall time is the task time, because startup/opening is exactly what users feel.
+
+Current CLI task suite:
+
+- `VCLI-root-help` — root help command startup.
+- `VCLI-providers-list` — provider command startup/discovery.
+- `VTUI-help` — TUI help should use the fast channel descriptor path and avoid full Lanterna runtime.
+- `VTUI-open-missing-conversation` — headless-safe proxy for opening TUI: loads the full TUI channel, initializes Vis with a disposable DB, validates a missing conversation, and exits before interactive Lanterna screen takeover.
+
+Every CLI/TUI task uses:
+
+```bash
+VIS_MEASURE=1 VIS_CRAC=0 VIS_DB_PATH=target/vis-bench/<run-id>/cli/db
+```
+
+and deletes that disposable DB before the run.
 
 ## Preflight / Fix Gate
 
@@ -130,6 +164,29 @@ Never delete `~/.vis` automatically.
 - Do not remove intent/gate/audit semantics for speed unless an equal or stronger proof path replaces them and tests prove it.
 - Do not benchmark against unauthenticated or wrong provider paths.
 - Do not claim Vis beats Pi from one task. Use suite rollup once enough tasks exist.
+
+## Real Hard Tasks Added
+
+The suite includes hard tasks that require isolated worktrees and Opus judging over diffs/artifacts:
+
+- `CTX1-context-contract-compact-proof-safe` — reduce prompt/context bloat without hiding proof-critical evidence, intents, audit, tool evidence, or loaded skill bodies.
+- `PRES1-presentation-render-contract` — shared presentation/render contract for Markdown/details/tool/system/provider/audit/Mermaid rendering.
+- `EXTV2-extension-contract` — extension v2 slots: config, toggles, renderers, backgrounds, lifecycle hooks, custom provider descriptors.
+- `CLJEXT1-clojure-test-classpath-tools` — improve the existing Vis Clojure extension with real `z/` helpers for clojure.test/lazytest, deps.edn alias/source-path discovery, Clojure CLI classpath/dependency inspection, JAR entry/source lookup, and classpath source/resource reading. This task is self-contained and carries the completed Tasks 28-34 intent/deferred-intent backbone inline: five-state intent lifecycle, source/owner/parent fields, single intent cursor, query/deferred-report APIs, suggest/accept/defer/resume/abandon APIs, extension cannot self-accept/resume, and lifecycle transitions stay provenance_event -> evidence_bundle -> attestation -> audit.
+- `PYEXT1-python-structured-edit-extension` — after CLJEXT1, implement a real Vis Python language extension with working structured editing, tests, docs, and proof/intents/audit preservation.
+- `GAME1-python-snake` — after PYEXT1, make Pi and Vis implement a Python Snake game in a fixture repo; Opus judges correctness, playability, tests, code quality, context, speed, and proof honesty.
+- `GIT1-single-repo-checkpoints` — single-repo Git checkpoint/time-travel linked to provenance; native workspace/multirepo/submodule scope excluded.
+- `BGNOTIFY1-background-process-agent-end-notify` — background process lifecycle, bounded output, patch preconditions, agent-end notifications, OSC 777 adapter.
+- `PROVIDER1-provider-visibility-custom-provider` — provider trace normalization, provider-error diagnostics, custom OpenAI-compatible provider config.
+- `GUIDANCE1-project-guidance-docs-ux` — compact project guidance/docs/UX cleanup; README stays tiny; Ctrl+Y stays unbound.
+
+These tasks are marked `judge_required: true` and reference:
+
+```text
+bench/opus/judge-prompt.md
+```
+
+They are intentionally not simple exact-answer tasks. Before running them in autoresearch, use a paired-worktree runner that captures diffs, checks, logs, timings, tokens, and asks Opus judge for strict JSON scoring.
 
 ## Current First Optimization Target
 
