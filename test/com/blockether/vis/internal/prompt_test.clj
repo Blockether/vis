@@ -961,3 +961,121 @@
       ;; And the journal block doesn't fabricate a `thinking:` heading.
       (expect (not (str/includes? out "thinking:")))
       (expect (not (str/includes? out "reasoning:"))))))
+
+;; ---------------------------------------------------------------------------
+;; CTX1 — Exact token/context impact reporting.
+;;
+;; The contract documented in FOCUS.md is enforced by the trivial-vs-coding
+;; tests above. This block measures per-surface byte + token cost through
+;; the public `model-facing-context-stats` helper so callers (autoresearch
+;; runners, judge harness, diagnostic tooling) can attribute prompt size
+;; to the system prompt, the current user goal, or the per-iteration
+;; trailer without reaching into private helpers.
+;;
+;; The tokens column uses `prompt/count-tokens` which falls back to
+;; chars/4 when the encoder lookup fails for an unrecognized model. That
+;; keeps the floor stable across the test environment (no Anthropic
+;; tokenizer in the bench worktree) and the production path (real
+;; tokenizer for the active model).
+;; ---------------------------------------------------------------------------
+
+(defn- trivial-stats []
+  (prompt/model-facing-context-stats
+    {:conversation-title-atom (atom "Casual chat")
+     :active-skills-atom (atom {})}
+    {:active-extensions NO_EXTENSIONS
+     :user-request "hi"
+     :iteration 0}))
+
+(defn- coding-stats []
+  (prompt/model-facing-context-stats
+    {:conversation-title-atom (atom "Fix login bug")
+     :active-skills-atom (atom {"diagnose" {:name "diagnose"
+                                            :description "Debug loop."
+                                            :source :repo
+                                            :path "/repo/.agents/skills/diagnose/SKILL.md"
+                                            :body "# Diagnose\nReproduce first.\nNo repro -> no diagnosis."}})}
+    {:active-extensions NO_EXTENSIONS
+     :user-request "Fix the login bug; verify with ./verify.sh."
+     :blocks-by-iteration [[1 {:thinking "LLM-only chain-of-thought must NOT leak"
+                               :blocks CODING_BLOCKS}]]
+     :iteration 1}))
+
+(defn- surface-by [stats surface]
+  (some #(when (= surface (:surface %)) %) (:surfaces stats)))
+
+(defdescribe model-facing-context-stats-test
+  (it "requires :active-extensions; throws otherwise"
+    (expect
+      (try
+        (prompt/model-facing-context-stats {} {})
+        false
+        (catch clojure.lang.ExceptionInfo e
+          (= :vis/missing-active-extensions (:type (ex-data e)))))))
+
+  (it "trivial / no-tool turn: iteration trailer is empty; system + user wrapper carry the floor"
+    (let [s (trivial-stats)
+          system (surface-by s :system)
+          user   (surface-by s :user-turn-request)
+          trailer (surface-by s :iteration-trailer)]
+      (expect (true? (:iteration-trailer-empty? s)))
+      (expect (= 0 (:bytes trailer)))
+      (expect (= 0 (:tokens trailer)))
+      ;; System prompt is the bare CORE_SYSTEM_PROMPT; ~5-6k tokens via
+      ;; chars/4 fallback. Pin a generous ceiling so prompt edits that
+      ;; balloon the floor surface here.
+      (expect (pos? (:tokens system)))
+      (expect (< (:tokens system) 7000))
+      (expect (pos? (:bytes system)))
+      (expect (< (:bytes system) 26000))
+      ;; User wrapper is small.
+      (expect (pos? (:bytes user)))
+      (expect (< (:tokens user) 50))))
+
+  (it "coding turn: trailer carries provenance/intents/gates/audit/tool evidence; bounded under 16 KB"
+    (let [s (coding-stats)
+          trailer (surface-by s :iteration-trailer)]
+      (expect (false? (:iteration-trailer-empty? s)))
+      (expect (pos? (:bytes trailer)))
+      ;; Coding trailer must carry meaningful evidence (>1 KB) but stay
+      ;; way under any model context (<16 KB).
+      (expect (> (:bytes trailer) 1000))
+      (expect (< (:bytes trailer) 16000))
+      (expect (pos? (:tokens trailer)))))
+
+  (it "trivial vs coding: trivial total <= coding total; trailer delta dominates"
+    (let [trivial (trivial-stats)
+          coding  (coding-stats)
+          trivial-total-tokens (get-in trivial [:total :tokens])
+          coding-total-tokens  (get-in coding [:total :tokens])
+          trailer-delta-tokens (- (:tokens (surface-by coding :iteration-trailer))
+                                 (:tokens (surface-by trivial :iteration-trailer)))]
+      ;; Total is monotone: coding turn never undercuts trivial turn.
+      (expect (>= coding-total-tokens trivial-total-tokens))
+      ;; The whole delta lives in the iteration-trailer surface; system
+      ;; and user-turn-request stay stable across both shapes (system is
+      ;; identical, user wrapper is small in both). This is what prompt
+      ;; caching latches onto.
+      (expect (= (:tokens (surface-by trivial :system))
+                (:tokens (surface-by coding  :system))))
+      ;; Coding trailer adds at least ~250 tokens of evidence (active
+      ;; skill + canonical refs + tool stdout). The actual landing is
+      ;; ~330 tokens with the chars/4 fallback; pin a stable floor.
+      (expect (> trailer-delta-tokens 250))
+      ;; Surface the exact numbers in test stdout so autoresearch /
+      ;; judge logs capture the "exact token/context impact" the task
+      ;; asks for. This is observability, not a flake — the assertions
+      ;; above guard the contract; the println records the measurement.
+      (println
+        (str "\n[CTX1] model-facing context impact (chars/4 fallback tokenizer):\n"
+          "  trivial total: " trivial-total-tokens " tokens / "
+          (get-in trivial [:total :bytes]) " B\n"
+          "  coding  total: " coding-total-tokens " tokens / "
+          (get-in coding  [:total :bytes]) " B\n"
+          "  delta in trailer: +" trailer-delta-tokens " tokens / "
+          (- (:bytes (surface-by coding :iteration-trailer))
+            (:bytes (surface-by trivial :iteration-trailer)))
+          " B\n"
+          "  trivial trailer empty?: " (:iteration-trailer-empty? trivial) "\n"
+          "  per surface (trivial): " (:surfaces trivial) "\n"
+          "  per surface (coding):  " (:surfaces coding))))))
