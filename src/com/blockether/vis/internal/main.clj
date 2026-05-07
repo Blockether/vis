@@ -526,8 +526,47 @@
 
 ;;; ── Output Formatting ───────────────────────────────────────────────────
 
+(defn- json-key
+  "Return a stable string key for CLI JSON output. Runtime trace maps can
+   contain non-JSON map keys (for example proof slots keyed by
+   `[intent-id :verification]`). Charred correctly rejects those, so normalize
+   keys before writing the public `vis run --json` envelope."
+  [k]
+  (cond
+    (string? k)  k
+    (keyword? k) (name k)
+    (symbol? k)  (str k)
+    :else        (pr-str k)))
+
+(defn- json-safe
+  [x]
+  (cond
+    (map? x)
+    (reduce-kv (fn [m k v]
+                 (assoc m (json-key k) (json-safe v)))
+      {} x)
+
+    (instance? java.util.Map$Entry x)
+    [(json-safe (.getKey ^java.util.Map$Entry x))
+     (json-safe (.getValue ^java.util.Map$Entry x))]
+
+    (vector? x)  (mapv json-safe x)
+    (set? x)     (mapv json-safe x)
+    (seq? x)     (mapv json-safe x)
+    (keyword? x) (name x)
+    (symbol? x)  (str x)
+    (uuid? x)    (str x)
+    (inst? x)    (str x)
+
+    (instance? Throwable x)
+    {"type"    (str (type x))
+     "message" (ex-message x)
+     "data"    (json-safe (ex-data x))}
+
+    :else        x))
+
 (defn result->json [result]
-  (json/write-json-str result))
+  (json/write-json-str (json-safe result)))
 
 (defn result->edn [result]
   (pr-str result))
