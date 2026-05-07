@@ -1526,6 +1526,43 @@
   (or (empty? args)
     (contains? #{["help"] ["--help"] ["-h"]} (vec args))))
 
+(def ^:private first-party-channel-bootstrap-nses
+  {"tui"      'com.blockether.vis.ext.channel-tui.core
+   "telegram" 'com.blockether.vis.ext.channel-telegram.bot})
+
+(defn- help-request?
+  "True when args request help at any command depth. We can usually render
+   help without initializing runtime resources; if a command is not registered
+   yet, the caller falls back to full extension discovery."
+  [args]
+  (boolean
+    (or (root-help-request? args)
+      (some #{"--help" "-h"} args))))
+
+(defn- channel-help-request?
+  "True for `vis channels <first-party-channel> --help`. These requests need
+   only the selected channel descriptor, not every extension namespace."
+  [args]
+  (let [[parent channel & more] (vec args)]
+    (and (= "channels" parent)
+      (contains? first-party-channel-bootstrap-nses channel)
+      (boolean (some #{"--help" "-h"} more)))))
+
+(defn- discover-fast-help-deps!
+  [args]
+  (when (channel-help-request? args)
+    (when-let [ns-sym (get first-party-channel-bootstrap-nses (second (vec args)))]
+      (require ns-sym))))
+
+(defn- fast-help-dispatched?
+  [_measure? args]
+  (when (help-request? args)
+    (discover-fast-help-deps! args)
+    (let [root      (root-command)
+          full-args (cons "vis" args)
+          {:keys [status]} (commandline/dispatch! root full-args)]
+      (= :help status))))
+
 (defn- unknown-command?
   "True when the user typed something the tree doesn't recognize.
    Detected by walking the tree: if `find-leaf` resolves only to the
@@ -1640,8 +1677,14 @@
       ;; (or set VIS_DEBUG=1).
       (timed-startup! measure? "configure-logging"
         #(configure-logging! args))
-      (if (root-help-request? args)
+      (cond
+        (root-help-request? args)
         (println (commandline/render-tree (root-command)))
+
+        (fast-help-dispatched? measure? args)
+        nil
+
+        :else
         (do
           (timed-startup! measure? "discover-all+extensions"
             #(discover-all!))
