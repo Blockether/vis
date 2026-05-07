@@ -1365,8 +1365,8 @@ _No intents._
 (defn- check-ref-entry
   [event-by-ref owner entry]
   (let [proof-management-symbols #{"v/intents"
-                                   "v/proof-checks"
-                                   "v/proofs"
+                                   "v/audit"
+                                   "v/audit-report"
                                    "v/provenance-guards"
                                    "v/provenance-report"
                                    "v/latest-provenance-refs"
@@ -1376,8 +1376,10 @@ _No intents._
                                    "v/issue-plan!"
                                    "v/issue-gate!"
                                    "v/offer-proof!"
+                                   "v/attest-gate!"
                                    "v/prove-gate!"
                                    "v/impede-gate!"
+                                   "v/attest-intent!"
                                    "v/fulfill-intent!"
                                    "v/abandon-intent!"
                                    "v/proof-slot"}
@@ -2130,23 +2132,6 @@ _No intents._
                  "(answer (v/provenance-report))"]
      :before-fn inject-environment}))
 
-(def proof-checks-symbol
-  (vis/symbol 'proof-checks foundation-proof-checks
-    {:doc       "Deterministic proof validation: intents, gates, expected slots/guards, given proof/impediment data, observed refs, lifecycle compatibility, and provenance guards."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/proof-checks)"
-                 "(:violations (v/proof-checks))"
-                 "(every? :success? (mapcat :ref-checks (:gates (v/proof-checks))))"]
-     :before-fn inject-environment}))
-
-(def proofs-symbol
-  (vis/symbol 'proofs foundation-proofs
-    {:doc       "Clickable `<proofs>` Markdown disclosure for human proof consumption. Projection only; validate with v/proof-checks."
-     :arglists  '([] [conversation-id-or-checks])
-     :examples  ["(answer (v/proofs))"
-                 "(let [checks (v/proof-checks)] (answer (v/proofs checks)))"]
-     :before-fn inject-environment}))
-
 (def await-proof!-symbol
   (vis/symbol 'await-proof! foundation-await-proof!
     {:doc       "Canonical await for Future/blocking deref values when the awaited result will be used as proof. Returns a terminal tool-result envelope; cite the observed await block, not the start ref."
@@ -2362,8 +2347,6 @@ _No intents._
    provenance-guards-symbol
    latest-provenance-refs-symbol
    provenance-report-symbol
-   proof-checks-symbol
-   proofs-symbol
    await-proof!-symbol
    intents-symbol
    issue-intent!-symbol
@@ -2392,7 +2375,7 @@ _No intents._
 
 (def introspection-prompt
   (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown; (v/audit cid?) -> proof audit data; (v/audit-report cid?) -> human audit.\n"
-    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/provenance-event ref) resolves one ref; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/proof-checks cid?) is legacy deterministic gate detail; (v/proofs checks-or-cid?) renders clickable proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
+    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/provenance-event ref) resolves one ref; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
     "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with (v/attest-gate! gate opts)/(v/attest-intent! intent-id opts). Legacy prove/fulfill helpers are compatibility only. Check (v/intents turn-id?) and (:success? (v/audit)) before normal answer.\n"
     "`v/` docs: (v/extensions), (v/extension-docs ref), (v/extension-doc ref), (v/extension-readme ref), (v/namespace-docs ref), (v/symbol-doc ref sym).\n"))
 
