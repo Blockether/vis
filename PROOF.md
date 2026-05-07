@@ -192,8 +192,8 @@ No task is DONE if:
 | Task 10 intent fulfillment/abandonment | DONE | Added intent closure attestation writer. Intent fulfillment now has an attestation-backed path requiring an accepted closure evidence bundle plus a completed plan; early closure over an open plan fails and leaves the intent active. Verified: task10 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
 | Task 11 audit surface | DONE | Added `db-audit-proof` read-only audit over gates, plans, intents, and accepted attestations. The audit passes for the attestation-ledger closure path and reports legacy closure that bypasses accepted intent closure attestation. Verified: task11 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
 | Task 12 audit rendering | DONE | `v/audit-report` now renders the persisted proof audit summary and violations alongside the provenance report, so channels and humans can see attestation-ledger failures without scraping proof prose. Verified: foundation audit-report regression, task12 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, foundation introspection, and `./verify.sh --quick`. |
-| Task 13 extension lifecycle hooks | NEXT | Add structured proof lifecycle hooks (`event-appended`, `bundle-created`, `attestation-accepted`, `audit-violation`) without scraping prompt prose. |
-| Task 14+ cleanup | TODO | Remove stale legacy proof semantics only after audit/report callers migrate. |
+| Task 13 extension lifecycle hooks | DONE | Added structured `:ext/on-proof-event-fn` hook dispatch for `:proof/event-appended`, `:proof/evidence-bundle-created`, `:proof/attestation-accepted`, and `:proof/audit-violation`. Persistence emits hook payloads from ledger, bundle, attestation, and audit paths; listener failures are logged and do not break writes. Verified: extension hook regression, task13 in-memory SQLite hook smoke, fresh REPL reload of `vis.core`, `internal.extension`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
+| Task 14 cleanup | NEXT | Remove stale legacy proof semantics only after audit/report callers migrate. |
 | Legacy removal | TODO / REQUIRED | Final purge task must delete old files and stale names after all callers move. |
 
 
@@ -563,7 +563,7 @@ Acceptance criteria:
 - Fulfillment with open required gates fails.
 - Fulfillment with fake/non-canonical/running refs fails.
 
-## Task 10A — Add system intents and extension proof hooks
+## Task 10A / 13 — DONE — Add system intents and extension proof hooks
 
 Work:
 

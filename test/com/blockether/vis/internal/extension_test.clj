@@ -98,6 +98,41 @@
       (expect (= :tts/slow-tool (:op @started)))
       (expect (= :running (:status @started))))))
 
+(defdescribe proof-lifecycle-hook-test
+  (it "accepts and emits structured proof lifecycle events to registered extensions"
+    (let [seen (atom [])
+          e (ext/extension {:ext/namespace 'test.proof-hook
+                            :ext/doc "Proof hook fixture."
+                            :ext/kind "fixture"
+                            :ext/on-proof-event-fn #(swap! seen conj [(ext/current-extension-id) (:proof/event %)])})]
+      (try
+        (ext/register-extension! e)
+        (ext/emit-proof-event! {:proof/event :proof/attestation-accepted
+                                :attestation {:id :a1}})
+        (expect (= [["test.proof-hook" :proof/attestation-accepted]] @seen))
+        (finally
+          (ext/deregister-extension! 'test.proof-hook)))))
+
+  (it "continues proof lifecycle broadcast when one listener throws"
+    (let [seen (atom [])
+          bad (ext/extension {:ext/namespace 'test.bad-proof-hook
+                              :ext/doc "Bad proof hook fixture."
+                              :ext/kind "fixture"
+                              :ext/on-proof-event-fn (fn [_] (throw (ex-info "boom" {})))})
+          good (ext/extension {:ext/namespace 'test.good-proof-hook
+                               :ext/doc "Good proof hook fixture."
+                               :ext/kind "fixture"
+                               :ext/on-proof-event-fn #(swap! seen conj (:proof/event %))})]
+      (try
+        (ext/register-extension! bad)
+        (ext/register-extension! good)
+        (ext/emit-proof-event! {:proof/event :proof/event-appended
+                                :event {:ref "turn/aaaaaaaa/iteration/1/block/1"}})
+        (expect (= [:proof/event-appended] @seen))
+        (finally
+          (ext/deregister-extension! 'test.bad-proof-hook)
+          (ext/deregister-extension! 'test.good-proof-hook))))))
+
 (defdescribe kind-auto-derivation-test
   (it "derives \"providers\" for extensions exporting :ext/providers"
     (let [e (ext/extension

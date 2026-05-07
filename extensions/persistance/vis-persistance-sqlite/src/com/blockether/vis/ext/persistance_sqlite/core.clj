@@ -1098,6 +1098,12 @@
   [payload]
   (sha256-hex (pr-str payload)))
 
+(defn- emit-proof-event!
+  [event payload]
+  (try
+    (vis/emit-proof-event! (assoc payload :proof/event event))
+    (catch Throwable _ nil)))
+
 (defn- row->provenance-event
   [row]
   (cond-> {:id (->uuid (:id row))
@@ -1153,8 +1159,10 @@
                      :created_at (now-ms)}]
             (execute! tx-info {:insert-into :provenance_event
                                :values [(into {} (remove (comp nil? val) row))]})
-            (row->provenance-event
-              (require-row tx-info :provenance_event id "provenance_event not found after insert"))))))))
+            (let [event-row (row->provenance-event
+                              (require-row tx-info :provenance_event id "provenance_event not found after insert"))]
+              (emit-proof-event! :proof/event-appended {:event event-row})
+              event-row)))))))
 
 (defn db-get-provenance-event
   [db-info conversation-id ref]
@@ -1310,8 +1318,10 @@
                                              :error (:evidence/error binding)
                                              :member_role (member-role-sql (:evidence/member-role binding))
                                              :created_at now}))]}))
-          (row->evidence-bundle tx-info
-            (require-row tx-info :evidence_bundle bundle-id "evidence_bundle not found after insert")))))))
+          (let [bundle (row->evidence-bundle tx-info
+                         (require-row tx-info :evidence_bundle bundle-id "evidence_bundle not found after insert"))]
+            (emit-proof-event! :proof/evidence-bundle-created {:evidence-bundle bundle})
+            bundle))))))
 
 (defn db-get-evidence-bundle
   [db-info bundle-id]
@@ -1543,8 +1553,11 @@
                                          :resolved_at (now-ms)}
                                    :where [:= :id subject-id]})
                 nil))
-            (row->attestation
-              (require-row tx-info :attestation id "attestation not found after insert"))))))))
+            (let [attestation (row->attestation
+                                (require-row tx-info :attestation id "attestation not found after insert"))]
+              (when (= :accepted (:status attestation))
+                (emit-proof-event! :proof/attestation-accepted {:attestation attestation}))
+              attestation)))))))
 
 (defn db-attest-gate!
   [db-info {:keys [gate-id evidence-bundle-id kind] :as opts}]
@@ -1679,16 +1692,19 @@
                                            {:intent-id (->uuid id)})]))
                                     nil)))
                               intent-rows)
-          violations (vec (concat gate-violations plan-violations intent-violations))]
-      {:success? (empty? violations)
-       :violations violations
-       :counts {:intents (count intent-rows)
-                :plans (count plan-rows)
-                :gates (count gate-rows)
-                :attestations (:c (query-one! db-info
-                                    (cond-> {:select [[:%count.* :c]]
-                                             :from :attestation}
-                                      conversation-id (assoc :where [:= :conversation_soul_id (->ref conversation-id)]))))}})))
+          violations (vec (concat gate-violations plan-violations intent-violations))
+          audit {:success? (empty? violations)
+                 :violations violations
+                 :counts {:intents (count intent-rows)
+                          :plans (count plan-rows)
+                          :gates (count gate-rows)
+                          :attestations (:c (query-one! db-info
+                                              (cond-> {:select [[:%count.* :c]]
+                                                       :from :attestation}
+                                                conversation-id (assoc :where [:= :conversation_soul_id (->ref conversation-id)]))))}}]
+      (doseq [violation violations]
+        (emit-proof-event! :proof/audit-violation {:audit audit :violation violation}))
+      audit)))
 
 (defn- canonical-ref-or-throw! [ref]
   (when-not (proof/canonical-ref? ref)
