@@ -283,6 +283,7 @@
 (defdelegate db-get-evidence-bundle [db-info bundle-id])
 (defdelegate db-create-attestation! [db-info opts])
 (defdelegate db-attest-gate! [db-info opts])
+(defdelegate db-attest-intent! [db-info opts])
 (defdelegate db-get-attestation [db-info attestation-id])
 
 ;; --- Conversation-scoped intents, plans, gates, and focus ---

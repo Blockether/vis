@@ -189,8 +189,9 @@ No task is DONE if:
 | Task 7 evidence bundle storage | DONE | Added `evidence_bundle` / `evidence_bundle_member` to V1 only, persistence derivation from `provenance_event`, public facade delegates, and regression proving caller-supplied slot values are ignored. Verified: `clojure -M -e ... :task7-smoke-ok`; fresh REPL reload of `vis.core`, `internal.persistance`, and SQLite core; `./verify.sh --quick`. Note: full `com.blockether.vis.ext.persistance-sqlite.core-test` currently hit pre-existing multiprocess child timeout assertions; non-multiprocess ledger/bundle cases ran before those failures. |
 | Task 8 attestation storage | DONE | Added `attestation` V1 table, attestation persistence/read facade, and `db-attest-gate!` writer that requires an accepted evidence bundle and updates gate status as an attestation-derived projection. Rejected bundles cannot prove gates. Verified: attestation in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. Note: full SQLite core test still hits pre-existing multiprocess child timeout assertions after passing proof/attestation cases. |
 | Task 9 plan completion transition | DONE | Plan status now transitions to `completed` only when all required gates are proven by accepted gate attestations; one proven gate does not complete a multi-gate plan, and intent remains active. Verified: task9 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
-| Task 10 intent fulfillment/abandonment | NEXT | Require intent closure to consume completed-plan/attestation evidence; keep abandonment evidence explicit. |
-| Task 11+ audit/hooks/rendering | TODO | Must proceed only with regression tests and fresh runtime gates after Task 10 intent closure. |
+| Task 10 intent fulfillment/abandonment | DONE | Added intent closure attestation writer. Intent fulfillment now has an attestation-backed path requiring an accepted closure evidence bundle plus a completed plan; early closure over an open plan fails and leaves the intent active. Verified: task10 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
+| Task 11 audit/hooks/rendering | NEXT | Promote audit as primary validation surface over ledger, bundles, attestations, gates, plans, and intents. |
+| Task 12+ hooks/rendering | TODO | Must proceed only with regression tests and fresh runtime gates after Task 11 audit. |
 | Legacy removal | TODO / REQUIRED | Final purge task must delete old files and stale names after all callers move. |
 
 
@@ -539,7 +540,7 @@ Acceptance criteria:
 - Tests show all required gates proven completes the active plan.
 - Tests show impeded required gates block final answer unless replanned or abandoned.
 
-## Task 10 — Tighten intent fulfillment and abandonment
+## Task 10 — DONE — Tighten intent fulfillment and abandonment
 
 Work:
 
