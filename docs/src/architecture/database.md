@@ -10,7 +10,7 @@ conversation_soul
         -> iteration
 ```
 
-Conversation-scoped intent state hangs from `conversation_soul`; per-run focus hangs from `conversation_turn_state`.
+Conversation-scoped intent state hangs from `conversation_soul`; per-run focus hangs from `conversation_turn_state`. Extension-owned sidecar state lives in `extension_aggregate` and points at any relevant scope row.
 
 ```text
 conversation_soul
@@ -22,7 +22,18 @@ conversation_soul
         -> conversation_intent_gate_ref
 conversation_turn_state
   -> conversation_intent_focus
+
+extension_aggregate
+  -> conversation_soul? / conversation_state? / conversation_turn_state? / iteration?
 ```
+
+## Extension aggregate table
+
+`extension_aggregate` stores durable extension-owned sidecars: caches, background status, external ids, notification dedupe, checkpoint refs, and per-iteration/per-block metadata. It is not the installed-extension registry and not the proof ledger.
+
+`extension_id` is runtime-filled from the active extension callback. Normal extension helpers (`ext-create!`, `ext-put!`, `ext-get`, `ext-list`, `ext-delete!`, `ext-swap!`) always scope reads and writes to that extension id and reject caller-supplied extension ids. Public admin facade functions (`db-list-extension-aggregates`, `db-get-extension-aggregate`) may inspect rows across extensions; public cross-extension writes are not exposed.
+
+`scope_key` is the normalized singleton key used by `ext-put!` upserts, for example `global`, `conversation-soul:<id>`, `conversation-state:<id>`, `turn-state:<id>`, `iteration:<id>`, `block:<iteration-id>:<index>`, or `block-id:<id>`. `iteration_block_id` is intentionally soft until `iteration_block` becomes a first-class table; current block-scoped rows use `iteration_id` plus `iteration_block_index`.
 
 ## Intent tables
 

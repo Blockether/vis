@@ -920,6 +920,22 @@
     (record-preview! result)
     result))
 
+(def ^:dynamic *current-extension*
+  "Extension map currently executing on an extension callback thread.
+   Bound by symbol wrappers so extension-owned helper APIs can fill the
+   caller's stable extension identity without accepting user-supplied ids."
+  nil)
+
+(def ^:dynamic *current-symbol*
+  "Sandbox symbol currently executing, when a symbol callback is active."
+  nil)
+
+(defn current-extension []
+  *current-extension*)
+
+(defn current-extension-id []
+  (some-> *current-extension* :ext/namespace str))
+
 (defn invoke-symbol-wrapper
   "Full invocation pipeline for a function symbol entry:
    before-fn → fn → after-fn, with on-error-fn catching :fn errors.
@@ -933,51 +949,53 @@
 
    Returns the final result. Throws on any unrecoverable error."
   [ext sym-entry args env]
-  (let [sym    (:ext.symbol/sym sym-entry)
-        ext-ns (:ext/namespace ext)
-        spec-ref (:ext.symbol/result-spec sym-entry)
-        t0     (System/nanoTime)
-        _      (log-hook! :debug ::invoke ext-ns sym nil nil nil)
-        before-out (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
-    (if (contains? before-out :result)
-      (let [ms (elapsed-ms t0)
-            result (->> (:result before-out)
-                     (enrich-tool-result-provenance ext sym-entry)
-                     (validate-symbol-result! sym spec-ref)
-                     (maybe-record-preview-result!))]
-        (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
-        result)
-      (let [{env  :env
-             f    :fn
-             args :args} before-out
+  (binding [*current-extension* ext
+            *current-symbol* (:ext.symbol/sym sym-entry)]
+    (let [sym    (:ext.symbol/sym sym-entry)
+          ext-ns (:ext/namespace ext)
+          spec-ref (:ext.symbol/result-spec sym-entry)
+          t0     (System/nanoTime)
+          _      (log-hook! :debug ::invoke ext-ns sym nil nil nil)
+          before-out (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
+      (if (contains? before-out :result)
+        (let [ms (elapsed-ms t0)
+              result (->> (:result before-out)
+                       (enrich-tool-result-provenance ext sym-entry)
+                       (validate-symbol-result! sym spec-ref)
+                       (maybe-record-preview-result!))]
+          (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
+          result)
+        (let [{env  :env
+               f    :fn
+               args :args} before-out
 
-            call-result
-            (let [ct0 (System/nanoTime)
-                  call-started-at-ms (now-ms)]
-              (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
-              (try
-                (let [r  (apply f args)
-                      ms (elapsed-ms ct0)]
-                  (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
-                  {:result r})
-                (catch Throwable e
-                  (let [ms (elapsed-ms ct0)]
-                    (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
-                    (let [recovery (run-on-error ext-ns sym-entry e env f args)]
-                      (cond
-                        (contains? recovery :result) recovery
-                        (contains? recovery :error)  (throw (:error recovery))
-                        :else {:result (apply (get recovery :fn f)
-                                         (vec (get recovery :args args)))}))))))
+              call-result
+              (let [ct0 (System/nanoTime)
+                    call-started-at-ms (now-ms)]
+                (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
+                (try
+                  (let [r  (apply f args)
+                        ms (elapsed-ms ct0)]
+                    (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
+                    {:result r})
+                  (catch Throwable e
+                    (let [ms (elapsed-ms ct0)]
+                      (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
+                      (let [recovery (run-on-error ext-ns sym-entry e env f args)]
+                        (cond
+                          (contains? recovery :result) recovery
+                          (contains? recovery :error)  (throw (:error recovery))
+                          :else {:result (apply (get recovery :fn f)
+                                           (vec (get recovery :args args)))}))))))
 
-            {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
-            result (->> result
-                     (enrich-tool-result-provenance ext sym-entry)
-                     (validate-symbol-result! sym spec-ref)
-                     (maybe-record-preview-result!))
-            ms (elapsed-ms t0)]
-        (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
-        result))))
+              {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
+              result (->> result
+                       (enrich-tool-result-provenance ext sym-entry)
+                       (validate-symbol-result! sym spec-ref)
+                       (maybe-record-preview-result!))
+              ms (elapsed-ms t0)]
+          (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
+          result)))))
 
 (def ^:private ^:dynamic *log-writer*
   "Writer that sends output to the log file instead of stdout/stderr.

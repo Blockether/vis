@@ -62,6 +62,21 @@
           (expect (= :pong (#'ext/invoke-symbol-wrapper extension sym-entry [] {})))
           (expect (= [:debug :debug :debug] @levels))))))
 
+  (it "binds current extension context while invoking symbols"
+    (let [seen (atom nil)
+          sym-entry (ext/symbol 'whoami
+                      (fn []
+                        (reset! seen (ext/current-extension-id))
+                        :done)
+                      {:doc "Record current extension." :arglists '([])})
+          extension (ext/extension {:ext/namespace 'test.current-extension
+                                    :ext/doc "Current extension fixture."
+                                    :ext/kind "fixture"
+                                    :ext/ns-alias {:ns 'test.current-extension :alias 'tce}
+                                    :ext/symbols [sym-entry]})]
+      (expect (= :done (#'ext/invoke-symbol-wrapper extension sym-entry [] {})))
+      (expect (= "test.current-extension" @seen))))
+
   (it "records tool-start before the symbol function returns"
     (let [started   (promise)
           can-return (promise)

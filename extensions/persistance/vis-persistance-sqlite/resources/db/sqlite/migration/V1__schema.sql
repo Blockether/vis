@@ -765,6 +765,10 @@ CREATE TABLE extension_aggregate (
 
   metadata                    TEXT,            -- JSON-encoded object/string
   content                     BLOB,            -- Nippy-encoded extension-owned payload
+  scope_key                   TEXT NOT NULL CHECK (trim(scope_key) <> ''),
+                                -- Runtime-normalized singleton key for upsert.
+                                -- Examples: global, conversation-soul:<id>,
+                                -- iteration:<id>, block:<iteration-id>:<index>.
 
   conversation_soul_id        TEXT
                               REFERENCES conversation_soul(id) ON DELETE CASCADE,
@@ -785,7 +789,8 @@ CREATE TABLE extension_aggregate (
   updated_at                  INTEGER NOT NULL CHECK (updated_at >= created_at),
 
   CHECK ((iteration_block_index IS NULL AND iteration_block_id IS NULL)
-         OR iteration_id IS NOT NULL)
+         OR iteration_id IS NOT NULL),
+  UNIQUE (extension_id, aggregate_key, kind, scope_key)
 );
 
 CREATE INDEX idx_extension_aggregate_ext_kind
@@ -793,6 +798,9 @@ CREATE INDEX idx_extension_aggregate_ext_kind
 
 CREATE INDEX idx_extension_aggregate_ext_key
   ON extension_aggregate(extension_id, aggregate_key);
+
+CREATE INDEX idx_extension_aggregate_ext_kind_updated
+  ON extension_aggregate(extension_id, kind, updated_at);
 
 CREATE INDEX idx_extension_aggregate_conversation_soul
   ON extension_aggregate(conversation_soul_id)

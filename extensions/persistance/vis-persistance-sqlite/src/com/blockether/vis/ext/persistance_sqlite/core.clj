@@ -13,6 +13,7 @@
      conversation_turn_soul, conversation_turn_state,
      iteration,
      expression_soul, expression_state, expression_dependency,
+     extension_aggregate,
      conversation_intent, conversation_intent_ref,
      conversation_intent_relation, conversation_intent_plan,
      conversation_intent_gate, conversation_intent_gate_ref,
@@ -23,6 +24,7 @@
      (db-close! store)    → idempotent dispose"
   (:require
    [charred.api :as json]
+   [clojure.edn :as edn]
    [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
    [com.blockether.vis.core :as vis]
@@ -2742,6 +2744,202 @@
                :answer-preview       answer-preview}))
       (range)
       turns)))
+
+;; =============================================================================
+;; Extension aggregate sidecars
+;; =============================================================================
+
+(defn- ->edn-text [v]
+  (pr-str v))
+
+(defn- <-edn-text [s]
+  (when s
+    (try
+      (edn/read-string s)
+      (catch Throwable _ s))))
+
+(defn- extension-scope-key
+  [{:keys [scope-key conversation-soul-id conversation-state-id
+           conversation-turn-state-id iteration-id iteration-block-index
+           iteration-block-id]}]
+  (cond
+    (seq (str scope-key)) scope-key
+    iteration-block-id (str "block-id:" iteration-block-id)
+    (and iteration-id (some? iteration-block-index)) (str "block:" iteration-id ":" iteration-block-index)
+    iteration-id (str "iteration:" iteration-id)
+    conversation-turn-state-id (str "turn-state:" conversation-turn-state-id)
+    conversation-state-id (str "conversation-state:" conversation-state-id)
+    conversation-soul-id (str "conversation-soul:" conversation-soul-id)
+    :else "global"))
+
+(defn- extension-aggregate-sql-row
+  [opts id now]
+  (let [row {:id                          id
+             :extension_id                (str (:extension-id opts))
+             :aggregate_key               (->edn-text (:aggregate-key opts))
+             :kind                        (->edn-text (:kind opts))
+             :metadata                    (->json (:metadata opts))
+             :content                     (->blob (:content opts))
+             :scope_key                   (extension-scope-key opts)
+             :conversation_soul_id        (some-> (:conversation-soul-id opts) ->ref)
+             :conversation_state_id       (some-> (:conversation-state-id opts) ->ref)
+             :conversation_turn_state_id  (some-> (:conversation-turn-state-id opts) ->ref)
+             :iteration_id                (some-> (:iteration-id opts) ->ref)
+             :iteration_block_index       (:iteration-block-index opts)
+             :iteration_block_id          (some-> (:iteration-block-id opts) str)
+             :created_at                  now
+             :updated_at                  now}]
+    (when (str/blank? (:extension_id row))
+      (throw (ex-info "extension aggregate requires extension-id"
+               {:type :extension-aggregate/missing-required
+                :key :extension-id})))
+    (when (nil? (:aggregate-key opts))
+      (throw (ex-info "extension aggregate requires aggregate-key"
+               {:type :extension-aggregate/missing-required
+                :key :aggregate-key})))
+    (when (nil? (:kind opts))
+      (throw (ex-info "extension aggregate requires kind"
+               {:type :extension-aggregate/missing-required
+                :key :kind})))
+    (when (and (or (:iteration_block_index row) (:iteration_block_id row))
+            (nil? (:iteration_id row)))
+      (throw (ex-info "extension aggregate block scope requires iteration-id"
+               {:type :extension-aggregate/block-without-iteration})))
+    row))
+
+(defn- row->extension-aggregate
+  [row]
+  (when row
+    (let [scope (cond-> {}
+                  (:conversation_soul_id row)       (assoc :conversation-soul-id (:conversation_soul_id row))
+                  (:conversation_state_id row)      (assoc :conversation-state-id (:conversation_state_id row))
+                  (:conversation_turn_state_id row) (assoc :conversation-turn-state-id (:conversation_turn_state_id row))
+                  (:iteration_id row)               (assoc :iteration-id (:iteration_id row))
+                  (:iteration_block_index row)      (assoc :iteration-block-index (:iteration_block_index row))
+                  (:iteration_block_id row)         (assoc :iteration-block-id (:iteration_block_id row)))
+          aggregate-key (<-edn-text (:aggregate_key row))]
+      {:id            (:id row)
+       :extension-id  (:extension_id row)
+       :aggregate-key aggregate-key
+       :key           aggregate-key
+       :kind          (<-edn-text (:kind row))
+       :scope-key     (:scope_key row)
+       :scope         scope
+       :metadata      (<-json (:metadata row))
+       :content       (<-blob (:content row))
+       :created-at    (->date (:created_at row))
+       :updated-at    (->date (:updated_at row))})))
+
+(defn- extension-aggregate-clauses
+  [opts]
+  (cond-> []
+    (:id opts)                         (conj [:= :id (->ref (:id opts))])
+    (:extension-id opts)               (conj [:= :extension_id (str (:extension-id opts))])
+    (contains? opts :aggregate-key)    (conj [:= :aggregate_key (->edn-text (:aggregate-key opts))])
+    (contains? opts :kind)             (conj [:= :kind (->edn-text (:kind opts))])
+    (:scope-key opts)                  (conj [:= :scope_key (:scope-key opts)])
+    (:conversation-soul-id opts)       (conj [:= :conversation_soul_id (->ref (:conversation-soul-id opts))])
+    (:conversation-state-id opts)      (conj [:= :conversation_state_id (->ref (:conversation-state-id opts))])
+    (:conversation-turn-state-id opts) (conj [:= :conversation_turn_state_id (->ref (:conversation-turn-state-id opts))])
+    (:iteration-id opts)               (conj [:= :iteration_id (->ref (:iteration-id opts))])
+    (contains? opts :iteration-block-index)
+    (conj [:= :iteration_block_index (:iteration-block-index opts)])
+    (:iteration-block-id opts)         (conj [:= :iteration_block_id (str (:iteration-block-id opts))])))
+
+(defn- extension-aggregate-select
+  [opts]
+  (let [clauses (extension-aggregate-clauses opts)]
+    (cond-> {:select [:*]
+             :from   :extension_aggregate
+             :order-by [[:updated_at :desc] [:created_at :desc]]}
+      (seq clauses) (assoc :where (into [:and] clauses))
+      (pos-int? (:limit opts)) (assoc :limit (:limit opts))
+      (nat-int? (:offset opts)) (assoc :offset (:offset opts)))))
+
+(defn db-create-extension-aggregate!
+  [db-info opts]
+  (when (ds db-info)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [id  (new-id)
+              now (now-ms)]
+          (execute! tx-info
+            {:insert-into :extension_aggregate
+             :values [(extension-aggregate-sql-row opts id now)]})
+          (row->extension-aggregate
+            (query-one! tx-info
+              {:select [:*]
+               :from   :extension_aggregate
+               :where  [:= :id id]})))))))
+
+(defn db-put-extension-aggregate!
+  [db-info opts]
+  (when (ds db-info)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [id  (new-id)
+              now (now-ms)
+              row (extension-aggregate-sql-row opts id now)]
+          (execute! tx-info
+            {:insert-into :extension_aggregate
+             :values [row]
+             :on-conflict [:extension_id :aggregate_key :kind :scope_key]
+             :do-update-set {:metadata                    (:metadata row)
+                             :content                     (:content row)
+                             :conversation_soul_id        (:conversation_soul_id row)
+                             :conversation_state_id       (:conversation_state_id row)
+                             :conversation_turn_state_id  (:conversation_turn_state_id row)
+                             :iteration_id                (:iteration_id row)
+                             :iteration_block_index       (:iteration_block_index row)
+                             :iteration_block_id          (:iteration_block_id row)
+                             :updated_at                  now}})
+          (row->extension-aggregate
+            (query-one! tx-info
+              {:select [:*]
+               :from   :extension_aggregate
+               :where  [:and
+                        [:= :extension_id (:extension_id row)]
+                        [:= :aggregate_key (:aggregate_key row)]
+                        [:= :kind (:kind row)]
+                        [:= :scope_key (:scope_key row)]]})))))))
+
+(defn db-get-extension-aggregate
+  [db-info opts]
+  (when (ds db-info)
+    (row->extension-aggregate
+      (query-one! db-info (assoc (extension-aggregate-select opts) :limit 1)))))
+
+(defn db-list-extension-aggregates
+  [db-info opts]
+  (if (ds db-info)
+    (mapv row->extension-aggregate
+      (query! db-info (extension-aggregate-select (cond-> opts
+                                                    (not (:limit opts)) (assoc :limit 100)))))
+    []))
+
+(defn db-delete-extension-aggregates!
+  [db-info opts]
+  (when (ds db-info)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [clauses (extension-aggregate-clauses opts)
+              result  (jdbc/execute! (ds tx-info)
+                        (sql/format
+                          (cond-> {:delete-from :extension_aggregate}
+                            (seq clauses) (assoc :where (into [:and] clauses)))))]
+          (or (:next.jdbc/update-count (first result)) 0))))))
+
+(defn db-swap-extension-aggregate!
+  [db-info opts f args]
+  (when (ds db-info)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [current     (db-get-extension-aggregate tx-info opts)
+              next-content (apply f (:content current) args)]
+          (db-put-extension-aggregate! tx-info
+            (assoc opts
+              :metadata (or (:metadata opts) (:metadata current))
+              :content next-content)))))))
 
 ;; =============================================================================
 ;; Expression dependencies

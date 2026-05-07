@@ -16,6 +16,7 @@
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.persistance :as persistance]
    [honey.sql :as sql]
    [lazytest.core :refer [defdescribe it expect]]
    [next.jdbc :as jdbc]
@@ -27,6 +28,74 @@
 ;; ─── from db_test.clj ───
 
 (h/use-mem-store!)
+
+(defdescribe sqlite-extension-aggregate-test
+  (it "upserts extension-owned singleton rows by extension, key, kind, and scope"
+    (let [s (h/store)
+          first-row (persistance/db-put-extension-aggregate! s
+                      {:extension-id 'test.ext.alpha
+                       :aggregate-key :index/status
+                       :kind :background/status
+                       :metadata {:schema-version 1}
+                       :content {:state :running}})
+          second-row (persistance/db-put-extension-aggregate! s
+                       {:extension-id 'test.ext.alpha
+                        :aggregate-key :index/status
+                        :kind :background/status
+                        :metadata {:schema-version 1}
+                        :content {:state :done}})]
+      (expect (= (:id first-row) (:id second-row)))
+      (expect (= {:state :done} (:content second-row)))
+      (expect (= 1 (raw-count s :extension_aggregate)))
+      (expect (= "test.ext.alpha" (:extension-id second-row)))
+      (expect (= :index/status (:key second-row)))
+      (expect (= :background/status (:kind second-row)))))
+
+  (it "keeps extension rows isolated by extension id while admin list can inspect all"
+    (let [s (h/store)]
+      (persistance/db-put-extension-aggregate! s
+        {:extension-id 'test.ext.alpha
+         :aggregate-key :shared-key
+         :kind :cache/value
+         :content {:owner :alpha}})
+      (persistance/db-put-extension-aggregate! s
+        {:extension-id 'test.ext.beta
+         :aggregate-key :shared-key
+         :kind :cache/value
+         :content {:owner :beta}})
+      (expect (= [{:owner :alpha}]
+                (mapv :content
+                  (vis/db-list-extension-aggregates s
+                    {:extension-id 'test.ext.alpha
+                     :kind :cache/value}))))
+      (expect (= #{"test.ext.alpha" "test.ext.beta"}
+                (set (map :extension-id
+                       (vis/db-list-extension-aggregates s {:kind :cache/value})))))))
+
+  (it "stores iteration block scope and indexes it"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :cli})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "block scoped"})
+          iid (vis/db-store-iteration! s {:conversation-turn-id tid
+                                          :status :done
+                                          :blocks [{:idx 0 :code "(+ 1 2)"}]})]
+      (persistance/db-create-extension-aggregate! s
+        {:extension-id 'test.ext.alpha
+         :aggregate-key :tool/trace
+         :kind :trace/tool-result
+         :iteration-id iid
+         :iteration-block-index 0
+         :content {:ok true}})
+      (let [rows (vis/db-list-extension-aggregates s
+                   {:extension-id 'test.ext.alpha
+                    :iteration-id iid
+                    :iteration-block-index 0})]
+        (expect (= 1 (count rows)))
+        (expect (= {:iteration-id (str iid)
+                    :iteration-block-index 0}
+                  (select-keys (:scope (first rows)) [:iteration-id :iteration-block-index])))
+        (expect (= {:ok true} (:content (first rows))))))))
 
 (defn- drop-conversation-intent-schema!
   [db-file]

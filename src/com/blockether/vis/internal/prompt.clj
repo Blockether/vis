@@ -544,6 +544,12 @@
       (str/join "\n" (map format-system-nudge nudges))
       "\n</system_nudges>")))
 
+(defn- call-extension-callback
+  [ext f & args]
+  (binding [extension/*current-extension* ext
+            extension/*current-symbol* nil]
+    (apply f args)))
+
 (defn build-iteration-context
   "Assemble the per-iteration context block inserted before the current user goal.
 
@@ -621,7 +627,7 @@
                          (keep (fn [ext]
                                  (when-let [nudge-fn (:ext/nudge-fn ext)]
                                    (try
-                                     (let [result (nudge-fn ctx)]
+                                     (let [result (call-extension-callback ext nudge-fn ctx)]
                                        (if (extension/system-nudge-result? result)
                                          (normalize-system-nudge :normal result)
                                          (do
@@ -936,7 +942,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
     (vec
       (filter (fn [ext]
                 (try
-                  (boolean ((:ext/activation-fn ext) environment))
+                  (boolean (call-extension-callback ext (:ext/activation-fn ext) environment))
                   (catch Throwable t
                     (tel/log! {:level :error :id ::ext-activation-error
                                :data {:ext (:ext/namespace ext)
@@ -1060,7 +1066,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
   [environment ext]
   (try
     (when-let [extra-fn (:ext/prompt ext)]
-      (let [body (extra-fn environment)]
+      (let [body (call-extension-callback ext extra-fn environment)]
         (when (and (string? body) (not (str/blank? body)))
           (let [{ns-sym :ns alias-sym :alias} (:ext/ns-alias ext)]
             (str "<extension namespace=\"" (:ext/namespace ext) "\""
@@ -1109,7 +1115,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
   [environment ext]
   (try
     (when-let [info-fn (:ext/environment-info-fn ext)]
-      (when-let [body (normalize-environment-info-body (info-fn environment))]
+      (when-let [body (normalize-environment-info-body (call-extension-callback ext info-fn environment))]
         (str "<section extension=\"" (:ext/namespace ext) "\">\n"
           body
           (when-not (str/ends-with? body "\n") "\n")
