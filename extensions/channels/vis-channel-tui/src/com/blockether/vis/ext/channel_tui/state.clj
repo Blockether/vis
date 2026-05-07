@@ -178,6 +178,30 @@
 (def ^:private settings-notification-ttl-ms 1500)
 (def ^:private cancel-notification-ttl-ms 2500)
 
+(def ^:private live-progress-render-interval-ms
+  "Minimum wall-clock interval between live reasoning redraws.
+
+   Providers can stream reasoning at token cadence. Rendering every token makes
+   the TUI flicker and burns CPU while the visible elapsed-time line changes too
+   fast to read. Lifecycle chunks still flush immediately so code/result/final
+   boundaries appear without delay."
+  1000)
+
+(defn- make-progress-render-updater
+  ([dispatch-fn]
+   (make-progress-render-updater dispatch-fn #(System/currentTimeMillis)))
+  ([dispatch-fn now-ms-fn]
+   (let [last-render-ms (atom nil)]
+     (fn [timeline chunk]
+       (let [now-ms (long (or (now-ms-fn) 0))
+             reasoning? (= :reasoning (:phase chunk))
+             due? (or (nil? @last-render-ms)
+                    (>= (- now-ms (long @last-render-ms))
+                      live-progress-render-interval-ms))]
+         (when (or (not reasoning?) due?)
+           (reset! last-render-ms now-ms)
+           (dispatch-fn [:set-progress-iterations timeline])))))))
+
 (def ^:private reasoning-level-order
   [:quick :balanced :deep])
 
@@ -1043,11 +1067,13 @@
     (let [fut (vis/worker-future "vis-tui-turn"
                 (fn []
                   (try
-                    (let [{:keys [on-chunk]}
+                    (let [progress-update! (make-progress-render-updater
+                                             (fn [[_ timeline]]
+                                               (try (dispatch [:set-progress-iterations workspace-id timeline])
+                                                 (catch Throwable _ nil))))
+                          {:keys [on-chunk]}
                           (vis/make-progress-tracker
-                            {:on-update (fn [timeline _chunk]
-                                          (try (dispatch [:set-progress-iterations workspace-id timeline])
-                                            (catch Throwable _ nil)))})
+                            {:on-update progress-update!})
                           result (chat/turn! conversation text
                                    {:on-chunk          on-chunk
                                     :cancel-atom       (vis/cancellation-atom token)
