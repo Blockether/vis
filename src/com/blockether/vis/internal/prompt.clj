@@ -23,7 +23,29 @@
    `CONVERSATION_SOUL_ID`, `CONVERSATION_STATE_ID`,
    `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) bound in SCI
    cover everything the model needs. These vars are direct sandbox
-   bindings; reference them by name."
+   bindings; reference them by name.
+
+   Context-floor contract (CTX1; see prompt-test):
+
+     Trivial / no-tool turns produce a NIL per-iteration trailer
+     (no <journal>, no <active_skills>, no <var_index>, no
+     <system_nudges>). The model-facing context for a trivial turn
+     is just the cached system prompt + the current
+     <user_turn_request_main_goal>. Coding / proof turns surface
+     canonical provenance refs, intent / gate / audit-callable APIs,
+     active-skill bodies, var_index entries, and tool evidence
+     through the same XML-tagged surfaces. Prior LLM-only reasoning
+     reaches the model only through the
+     `ITERATION_PREVIOUS_REASONING` SYSTEM var; <journal> stays
+     observed-evidence only.
+
+     Preview / full boundary: <journal> and <var_index> are
+     bounded previews. Full values stay in SCI vars, persisted
+     iteration / block rows, and the provenance ledger. The
+     renderer never emits a full multi-KB tool / file payload
+     into context; it emits a bounded preview plus the canonical
+     ref the model can use to fetch the full value through
+     foundation APIs (`v/inspect`, `v/event`, the var binding)."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.router :as svar-router]

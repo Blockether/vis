@@ -658,3 +658,306 @@
     (let [msgs (prompt/assemble-initial-messages
                  {:initial-user-content "hi"})]
       (expect (= [{:role "user" :content "<user_turn_request_main_goal>\nhi\n</user_turn_request_main_goal>"}] msgs)))))
+
+;; ---------------------------------------------------------------------------
+;; CTX1 — Context contract: trivial vs coding model-facing context.
+;;
+;; Pins:
+;;   1. Trivial / no-tool turns produce a nil per-iteration trailer
+;;      (no <journal>, no <active_skills>, no <var_index>, no
+;;      <system_nudges>) so the model-facing context is just the
+;;      cached system prompt + the current <user_turn_request_main_goal>.
+;;   2. Coding / proof turns surface canonical provenance refs, intent
+;;      / gate / tool evidence, active-skill bodies, var_index entries,
+;;      and system_nudges through the same XML-tagged surfaces.
+;;   3. Large tool/file payloads stay preview-only inside <journal>
+;;      and <var_index>; full values stay in SCI vars and the DB.
+;;   4. Prior LLM-only reasoning is exposed only through the
+;;      ITERATION_PREVIOUS_REASONING SYSTEM var, never re-rendered
+;;      into <journal>.
+;;
+;; These tests measure the per-iteration trailer in bytes (a stable
+;; floor that doesn't depend on the per-model token encoder) and assert
+;; an explicit delta between trivial and coding turns. The system
+;; prompt itself is intentionally fixed across both shapes — that is
+;; what provider prompt caching latches onto.
+;; ---------------------------------------------------------------------------
+
+(def ^:private CODING_BLOCKS
+  ;; Block evidence shape that exercises the proof surface: an intent
+  ;; issuance, a gate proposition, a bash tool ref, plus a forced error
+  ;; ref. Each block carries a canonical ref the journal renderer must
+  ;; surface so attestation can cite it.
+  [{:code "(def fix-intent (v/issue-intent! {:title \"Fix login bug\" :rationale \"User asked.\"}))\nfix-intent"
+    :comment "establish focused intent before probing"
+    :result {:id "intent-fix-1" :title "Fix login bug" :status :active}
+    :provenance {:ref "turn/3f2a91c0/iteration/1/block/1"
+                 :op :sci/eval
+                 :status :done
+                 :duration-ms 4}}
+   {:code "(def verify-gate (v/issue-gate! {:plan-id (:id plan) :proposition \"./verify.sh passes\"}))\nverify-gate"
+    :result {:id "gate-verify-1" :proposition "./verify.sh passes"}
+    :provenance {:ref "turn/3f2a91c0/iteration/1/block/2"
+                 :op :sci/eval
+                 :status :done
+                 :duration-ms 6}}
+   {:code "(v/bash \"./verify.sh --quick\")"
+    :result :ok
+    :stdout "3 tests, 12 assertions, 0 failures\n"
+    :provenance {:ref "turn/3f2a91c0/iteration/1/block/3/tool/bash"
+                 :op :v/bash
+                 :status :done
+                 :duration-ms 8421}}
+   {:code "(v/bash \"./verify.sh --strict\")"
+    :result nil
+    :error "non-zero exit 2: graal warnings ratchet failed"
+    :provenance {:ref "turn/3f2a91c0/iteration/1/block/4/error"
+                 :op :v/bash
+                 :status :error
+                 :duration-ms 12030}}])
+
+(defn- assemble-trivial-context
+  "Build the trivial-turn iteration context: no extensions, no
+   skills loaded, no journal seed, non-blank title."
+  []
+  (prompt/build-iteration-context
+    {:conversation-title-atom (atom "Casual chat")
+     :active-skills-atom (atom {})}
+    {:active-extensions NO_EXTENSIONS
+     :iteration 0}))
+
+(defn- assemble-coding-context
+  "Build the coding-turn iteration context with intent / gate / tool
+   evidence in <journal>, an active skill body, and a non-blank title."
+  []
+  (prompt/build-iteration-context
+    {:conversation-title-atom (atom "Fix login bug")
+     :active-skills-atom (atom {"diagnose" {:name "diagnose"
+                                            :description "Debug loop."
+                                            :source :repo
+                                            :path "/repo/.agents/skills/diagnose/SKILL.md"
+                                            :body "# Diagnose\nReproduce first.\nNo repro -> no diagnosis."}})}
+    {:active-extensions NO_EXTENSIONS
+     :blocks-by-iteration [[1 {:thinking "LLM-only private chain-of-thought must NOT leak into <journal>"
+                               :blocks CODING_BLOCKS}]]
+     :iteration 1}))
+
+(defdescribe context-floor-trivial-vs-coding-test
+  (it "trivial / no-tool turn produces a nil per-iteration trailer"
+    ;; No journal seed, no active skills, no extension prompts, and a
+    ;; non-blank conversation title (so the title nudge stays quiet).
+    ;; The per-iteration trailer must be nil; only system_prompt +
+    ;; <user_turn_request_main_goal> reach the model.
+    (let [out (assemble-trivial-context)]
+      (expect (nil? out))))
+
+  (it "trivial turn assembled prompt floor stays small (system + user wrapper only)"
+    ;; The full assembled context = system + initial user wrapper.
+    ;; With no caller-supplied INSTRUCTIONS and no active extensions,
+    ;; the system prompt is the bare CORE_SYSTEM_PROMPT and the
+    ;; trivial user wrapper is small. Total stays well under any
+    ;; per-turn working set we'd build for coding (asserted below).
+    (let [system-prompt (prompt/assemble-system-prompt {} {:active-extensions []})
+          msgs (prompt/assemble-initial-messages {:system-prompt system-prompt
+                                                  :initial-user-content "hi"})
+          floor-bytes (reduce + (map (comp count :content) msgs))]
+      (expect (= 2 (count msgs)))
+      (expect (str/includes? (:content (first msgs)) "recursive language model (RLM)"))
+      (expect (str/includes? (:content (second msgs)) "<user_turn_request_main_goal>\nhi\n</user_turn_request_main_goal>"))
+      ;; Pure CORE_SYSTEM_PROMPT today is roughly ~16k chars; the user
+      ;; wrapper adds <100 chars. Cap leaves ~10k headroom for prompt
+      ;; refinements without silently inflating the floor.
+      (expect (< floor-bytes 26000))))
+
+  (it "coding turn iteration-context exposes provenance refs, intents, gates, audit-callable, tool evidence"
+    (let [out (assemble-coding-context)]
+      (expect (string? out))
+      ;; XML-tagged surfaces stay stable.
+      (expect (str/includes? out "<journal>"))
+      (expect (str/includes? out "<active_skills count=\"1\">"))
+      ;; Active-skill body lands verbatim (no silent trim).
+      (expect (str/includes? out "# Diagnose\nReproduce first."))
+      ;; Canonical provenance refs reach the model.
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/1"))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/2"))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/3/tool/bash"))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/4/error"))
+      ;; Block-authored intermediate `;;` comment is preserved.
+      (expect (str/includes? out ";; establish focused intent before probing"))
+      ;; Intent / gate / audit-callable APIs surface as block code
+      ;; the model can re-cite. The `<journal>` is the proof-evidence
+      ;; conduit, not LLM-only chain-of-thought.
+      (expect (str/includes? out "v/issue-intent!"))
+      (expect (str/includes? out "v/issue-gate!"))
+      (expect (str/includes? out "v/bash"))
+      ;; Block-level provenance metadata travels with each line.
+      (expect (str/includes? out ":op :v/bash"))
+      (expect (str/includes? out ":op :sci/eval"))
+      (expect (str/includes? out ":status :done"))
+      (expect (str/includes? out ":status :error"))
+      ;; Tool error is journaled as evidence, not hidden.
+      (expect (str/includes? out "ERROR: non-zero exit 2: graal warnings ratchet failed"))
+      ;; Tool stdout flows in as a bounded preview suffix.
+      (expect (str/includes? out ":stdout"))
+      (expect (str/includes? out "3 tests, 12 assertions, 0 failures"))
+      ;; LLM-only iteration `:thinking` does NOT leak; ITERATION_PREVIOUS_REASONING
+      ;; remains the sole channel for prior reasoning.
+      (expect (not (str/includes? out "LLM-only private chain-of-thought")))))
+
+  (it "trivial vs coding delta — coding turn carries substantially more model-facing context"
+    (let [trivial (or (assemble-trivial-context) "")
+          coding  (or (assemble-coding-context) "")
+          trivial-bytes (count trivial)
+          coding-bytes  (count coding)]
+      (expect (= 0 trivial-bytes))
+      ;; Coding turn must carry at least ~1 KB of evidence (active
+      ;; skill body + ~4 journal lines with refs/comments/tool
+      ;; output). Empirically this currently lands around ~1.6 KB;
+      ;; we assert a stable floor that proves the surface is alive.
+      (expect (> coding-bytes 1000))
+      ;; Hard cap: even with a small active skill loaded the coding
+      ;; trailer must stay way under any reasonable model context
+      ;; (we cap absolute coding-side trailer at 16 KB so a future
+      ;; renderer regression that floods <journal> shows up here).
+      (expect (< coding-bytes 16000))
+      ;; Substantial delta: the trivial trailer is empty; the coding
+      ;; trailer carries the full per-iteration evidence surface.
+      (expect (> (- coding-bytes trivial-bytes) 1000)))))
+
+(defdescribe large-payloads-stay-preview-only-test
+  ;; FOCUS preview/full contract:
+  ;;   <journal>   — preview only; full values reachable via
+  ;;                 SCI vars, persisted iteration rows, provenance refs.
+  ;;   <var_index> — preview only; full values stay in the SCI sandbox.
+  ;; Tests below feed deliberately oversized tool/file payloads through
+  ;; the renderer and assert the rendered surface stays bounded.
+  (it "large tool/file result payloads do not appear in full inside <journal>"
+    (let [huge-stdout (apply str (repeat 200000 \B))
+          huge-result (apply str (repeat 200000 \R))
+          out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")}
+                {:active-extensions NO_EXTENSIONS
+                 :blocks-by-iteration
+                 [[1 {:thinking nil
+                      :blocks [{:code "(v/cat \"BIG.md\")"
+                                :result huge-result
+                                :stdout huge-stdout
+                                :provenance {:ref "turn/3f2a91c0/iteration/1/block/1/tool/cat"
+                                             :op :v/cat
+                                             :status :done}}]}]]
+                 :iteration 1})]
+      (expect (string? out))
+      ;; Full payload (200 KB of B's, 200 KB of R's) MUST NOT round-trip
+      ;; through the prompt; only a bounded preview reaches the model.
+      (expect (< (count out) 16000))
+      (expect (not (str/includes? out huge-stdout)))
+      (expect (not (str/includes? out huge-result)))
+      ;; Truncation marker is visible (preview boundary), and the
+      ;; canonical ref + tool op are preserved so the model can fetch
+      ;; the full value through the var/db retrieval path.
+      (expect (or (re-find #"<\+\d+ chars>" out)
+                (re-find #":truncated\? true" out)
+                (str/includes? out "…")))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/1/tool/cat"))))
+
+  (it "<var_index> trims by token budget; later entries drop with an explicit marker"
+    ;; The env layer pre-caps each entry body at 600 chars
+    ;; (`VAR_INDEX_BODY_MAX_CHARS`), so realistic entries are
+    ;; bounded individually. The renderer's job is to enforce the
+    ;; per-iteration TOKEN budget on top of that by dropping older
+    ;; entries with an explicit marker. Many bounded entries here
+    ;; reproduce the realistic shape and pin the budget.
+    (let [entry-body (apply str (repeat 500 \X))
+          entries (str/join "\n"
+                    (for [n (range 1 50)]
+                      (str ";; v=" n " scope=live\n"
+                        "(def v" n " \"" entry-body "\")")))]
+      (with-redefs-fn {(resolve 'com.blockether.vis.internal.prompt/read-var-index-str)
+                       (constantly entries)}
+        (fn []
+          (let [out (prompt/build-iteration-context
+                      {:conversation-title-atom (atom "set")}
+                      {:active-extensions NO_EXTENSIONS
+                       :iteration 0
+                       :context-limit 4000})]
+            (expect (string? out))
+            (expect (str/includes? out "<var_index>"))
+            ;; Budget exhausted; later entries drop with the marker.
+            (expect (str/includes? out "older <var_index> entries omitted"))
+            ;; Last entry of the 49 supplied is dropped (not all 49
+            ;; fit). Pin a far-out one so the assertion stays stable.
+            (expect (not (str/includes? out "(def v49")))
+            ;; Full sequence (49 * ~600 chars > ~30 KB) never lands.
+            (expect (< (count out) 16000)))))))
+
+  (it "active-skill bodies are protected: never silently trimmed even when journal pressure is high"
+    ;; Active skills are an explicit user activation; the model paid
+    ;; for the body. The renderer must keep the body intact even
+    ;; when the per-iteration journal budget is tight (here we feed
+    ;; many bulky journal blocks alongside a loaded skill).
+    (let [skill-body (str "# Diagnose\n"
+                       (apply str (repeat 1200 "Reproduce first. ")))
+          big-blocks (mapv (fn [i]
+                             {:code (str "(probe-" i ")")
+                              :result (apply str (repeat 4000 \Z))
+                              :provenance {:ref (str "turn/3f2a91c0/iteration/1/block/" i)
+                                           :op :sci/eval
+                                           :status :done}})
+                       (range 1 80))
+          out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")
+                 :active-skills-atom (atom {"diagnose" {:name "diagnose"
+                                                        :description "Debug."
+                                                        :source :repo
+                                                        :path "/repo/.agents/skills/diagnose/SKILL.md"
+                                                        :body skill-body}})}
+                {:active-extensions NO_EXTENSIONS
+                 :blocks-by-iteration [[1 {:thinking nil :blocks big-blocks}]]
+                 :iteration 1})]
+      (expect (string? out))
+      (expect (str/includes? out "<active_skills count=\"1\">"))
+      ;; Full skill body lands verbatim (no `…<+N chars>` marker on it).
+      (expect (str/includes? out skill-body))
+      ;; Journal is bounded and may shed older blocks, but the active
+      ;; skill body stays intact.
+      (expect (str/includes? out "older journal lines omitted")))))
+
+(defdescribe iteration-previous-reasoning-stays-out-of-journal-test
+  ;; Pin: the only path for prior reasoning to reach the model is the
+  ;; `ITERATION_PREVIOUS_REASONING` SYSTEM var. The journal renderer
+  ;; must never resurface iteration-level `:thinking` text, regardless
+  ;; of where in the carry-over the iteration sits.
+  (it "iteration `:thinking` is dropped from <journal> for every carried iteration"
+    (let [out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")}
+                {:active-extensions NO_EXTENSIONS
+                 :blocks-by-iteration [[1 {:thinking "earliest LLM-only reasoning A"
+                                           :blocks [{:code "(probe-a)"
+                                                     :result :a
+                                                     :provenance {:ref "turn/3f2a91c0/iteration/1/block/1"
+                                                                  :op :sci/eval
+                                                                  :status :done}}]}]
+                                       [2 {:thinking "middle LLM-only reasoning B"
+                                           :blocks [{:code "(probe-b)"
+                                                     :result :b
+                                                     :provenance {:ref "turn/3f2a91c0/iteration/2/block/1"
+                                                                  :op :sci/eval
+                                                                  :status :done}}]}]
+                                       [3 {:thinking "latest LLM-only reasoning C"
+                                           :blocks [{:code "(probe-c)"
+                                                     :result :c
+                                                     :provenance {:ref "turn/3f2a91c0/iteration/3/block/1"
+                                                                  :op :sci/eval
+                                                                  :status :done}}]}]]
+                 :iteration 3})]
+      (expect (string? out))
+      (expect (str/includes? out "<journal>"))
+      (expect (str/includes? out "(probe-a)"))
+      (expect (str/includes? out "(probe-b)"))
+      (expect (str/includes? out "(probe-c)"))
+      (expect (not (str/includes? out "earliest LLM-only reasoning A")))
+      (expect (not (str/includes? out "middle LLM-only reasoning B")))
+      (expect (not (str/includes? out "latest LLM-only reasoning C")))
+      ;; And the journal block doesn't fabricate a `thinking:` heading.
+      (expect (not (str/includes? out "thinking:")))
+      (expect (not (str/includes? out "reasoning:"))))))

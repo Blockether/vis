@@ -52,11 +52,36 @@ cp "$JUDGE_PROMPT" "$root/eval/judge-prompt.md"
 base_sha="$(git rev-parse HEAD)"
 echo "$base_sha" > "$root/base_sha"
 
+# Capture tracked dirty changes so autoresearch can benchmark an uncommitted
+# candidate before log_experiment commits it. Autoresearch bookkeeping stays out
+# of the benchmark baseline. Clean runs produce an empty patch and use HEAD.
+dirty_patch="$root/eval/dirty-base.patch"
+git diff --binary HEAD -- . \
+  ':(exclude)autoresearch.jsonl' \
+  ':(exclude)autoresearch.ideas.md' \
+  > "$dirty_patch" || true
+
 # -- worktrees ----------------------------------------------------------------
 pi_wt="$root/pi/worktree"
 vis_wt="$root/vis/worktree"
 git worktree add --quiet --detach "$pi_wt" "$base_sha"
 git worktree add --quiet --detach "$vis_wt" "$base_sha"
+
+apply_dirty_baseline() {
+  local wt="$1"
+  if [[ -s "$dirty_patch" ]]; then
+    ( cd "$wt" && git apply "$dirty_patch" && git add -A && \
+      GIT_AUTHOR_NAME="autoresearch" GIT_AUTHOR_EMAIL="autoresearch@example.invalid" \
+      GIT_COMMITTER_NAME="autoresearch" GIT_COMMITTER_EMAIL="autoresearch@example.invalid" \
+      git commit --quiet --no-verify -m "bench dirty baseline" )
+  fi
+}
+apply_dirty_baseline "$pi_wt"
+apply_dirty_baseline "$vis_wt"
+pi_base_sha="$(cd "$pi_wt" && git rev-parse HEAD)"
+vis_base_sha="$(cd "$vis_wt" && git rev-parse HEAD)"
+echo "$pi_base_sha" > "$root/pi/base_sha"
+echo "$vis_base_sha" > "$root/vis/base_sha"
 
 cleanup() {
   git worktree remove --force "$pi_wt" 2>/dev/null || true
@@ -162,8 +187,8 @@ run_checks pi "$pi_wt"
 run_checks vis "$vis_wt"
 
 # -- diffs --------------------------------------------------------------------
-( cd "$pi_wt"  && git diff --binary "$base_sha" -- . > "$root/eval/diff.pi.patch"  ) || true
-( cd "$vis_wt" && git diff --binary "$base_sha" -- . > "$root/eval/diff.vis.patch" ) || true
+( cd "$pi_wt"  && git diff --binary "$pi_base_sha" -- . > "$root/eval/diff.pi.patch"  ) || true
+( cd "$vis_wt" && git diff --binary "$vis_base_sha" -- . > "$root/eval/diff.vis.patch" ) || true
 ( cd "$pi_wt"  && git status --short > "$root/pi/status.txt"  ) || true
 ( cd "$vis_wt" && git status --short > "$root/vis/status.txt" ) || true
 
@@ -496,6 +521,8 @@ metrics = {
 (root / "eval" / "score.json").write_text(json.dumps({
     "task_id": task_id,
     "base_sha": read("base_sha").strip(),
+    "pi_base_sha": read("pi/base_sha").strip(),
+    "vis_base_sha": read("vis/base_sha").strip(),
     "pi_exit": pi_exit,
     "vis_exit": vis_exit,
     "pi_checks_exit": pi_checks_exit,
@@ -514,6 +541,8 @@ cat > "$root/eval/score.md" <<EOF
 # Paired-worktree score: $TASK_ID
 
 - Base: $base_sha
+- Pi baseline: $pi_base_sha
+- Vis baseline: $vis_base_sha
 - Pi model: $PI_MODEL
 - Vis model: $VIS_MODEL
 - Judge model: $JUDGE_MODEL

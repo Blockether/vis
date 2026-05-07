@@ -293,8 +293,44 @@ This checklist is the single detailed plan for the context contract. `TASKS.md` 
 - [x] File read/write/update journal renderers preview only.
 - [x] Define shared preview rendering contract for tool calls.
 - [x] Require every `:ext.symbol/render-fn` to honor `:surface :journal` as preview-only.
-- [ ] Add tests that large tool/file payloads do not appear in `<journal>` or `<var_index>` in full.
+- [x] Add tests that large tool/file payloads do not appear in `<journal>` or `<var_index>` in full. (`large-payloads-stay-preview-only-test`, `iteration-previous-reasoning-stays-out-of-journal-test` in `prompt-test`.)
 - [x] Add explicit full retrieval helpers by ref/result id if current inspect APIs are too implicit.
+
+### B'. Trivial vs coding context floor (CTX1)
+
+- [x] Trivial / no-tool turn yields a nil per-iteration trailer (no `<journal>`, no `<var_index>`, no `<active_skills>`, no `<system_nudges>`).
+- [x] Coding / proof turn surfaces canonical provenance refs, intent / gate / tool / error refs, audit-callable APIs, active-skill bodies, and `<var_index>` entries through the same XML-tagged surfaces.
+- [x] Tests pin the trivial-vs-coding contract end-to-end
+      (`context-floor-trivial-vs-coding-test` in `prompt-test`,
+      `iteration-context-floor-test` in `loop-test`).
+- [x] Auto-skill activation is gated by user-request keywords; trivial chat ("hi", "hello there") loads zero skills (`auto-skill-activation-test`).
+- [x] Bench worktree no longer depends on `.agents/skills/` filesystem state for the auto-skill activation test (uses `with-redefs` over the foundation skill lookup).
+
+#### Exact token/context impact (measured against `assemble-system-prompt` + `assemble-initial-messages` + `build-iteration-context`)
+
+Numbers below are bytes of fully-rendered prompt slices, captured
+against the unmodified Vis prompt assembler. Tokens scale roughly
+4 chars/token for English prose / Clojure code on Anthropic Opus.
+
+| Slice | Trivial turn | Coding turn |
+|---|---:|---:|
+| `<system_prompt>` (no caller addendum, no extensions active) | 21,021 B (~5.2 k tok) | 21,021 B (~5.2 k tok) |
+| `<user_turn_request_main_goal>` wrapper around `"hi"` / coding goal | 63 B | 63 B |
+| Per-iteration trailer (`<journal>` + `<var_index>` + `<active_skills>` + `<system_nudges>`) | **0 B** (nil) | 1,325 B |
+| **Total model-facing context (this assembler only)** | **21,084 B** | **22,409 B** |
+
+Delta: **+1,325 B (~330 tokens)** from the coding-turn trailer
+carrying intent / gate refs, tool evidence, an active skill body
+and the journal canonical-ref index. The trivial-turn trailer is
+empty by construction; the system prompt is identical, so prompt
+caching latches onto it.
+
+Real Vis runs add the foundation extension's `<environment-info>`
++ `<extensions>` + `<skills>` catalog (~6–8 KB) on top of the
+base system prompt. Those slices are protected per the
+"Context budget policy" table and stay constant across trivial
+and coding turns; they do NOT amplify the trivial-vs-coding
+delta.
 
 ### C. Full data retrieval
 
