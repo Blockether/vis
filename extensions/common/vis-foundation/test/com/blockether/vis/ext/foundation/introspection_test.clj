@@ -543,9 +543,11 @@
       (expect (contains? symbols 'issue-plan!))
       (expect (contains? symbols 'issue-gate!))
       (expect (contains? symbols 'offer-proof!))
+      (expect (contains? symbols 'attest-gate!))
       (expect (contains? symbols 'prove-gate!))
       (expect (contains? symbols 'impede-gate!))
       (expect (contains? symbols 'block-gate!))
+      (expect (contains? symbols 'attest-intent!))
       (expect (contains? symbols 'fulfill-intent!))
       (expect (contains? symbols 'abandon-intent!))
       (expect (contains? symbols 'intents))
@@ -764,6 +766,52 @@
         (let [checks ((private-fn "foundation-intents") e)]
           (expect (true? (:success? checks)))
           (expect (str/includes? (:report checks) ref))))))
+
+  (it "attests gate and intent through evidence bundles instead of legacy proof blobs"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          proof-ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1")
+          close-ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/2")
+          e (env s conversation-id)
+          intent (vis/db-store-intent! s {:conversation-turn-id conversation-turn-id
+                                          :title "Attested closure"
+                                          :rationale "Exercise attestation helpers."})
+          plan (vis/db-store-plan! s {:intent-id (:id intent)
+                                      :summary "Attested plan"})
+          gate (vis/db-store-gate! s {:plan-id (:id plan)
+                                      :question "Verified?"})
+          slot-owner (random-uuid)]
+      (doseq [ref [proof-ref close-ref]]
+        (vis/db-store-provenance-event! s {:conversation-id conversation-id
+                                           :conversation-turn-id conversation-turn-id
+                                           :ref ref
+                                           :kind :tool
+                                           :op :v/bash
+                                           :status :done
+                                           :payload {:result {:exit 0}}}))
+      ((private-fn "foundation-attest-gate!") e (:id gate)
+                                              {:kind :gate/proven
+                                               :reason "Gate accepted."
+                                               :requirements [{:evidence/slot [slot-owner :proof]
+                                                               :evidence/from-ref proof-ref
+                                                               :evidence/extract [:result :exit]
+                                                               :evidence/guard [:= [:value] 0]
+                                                               :event/kind :tool
+                                                               :event/op :v/bash}]})
+      ((private-fn "foundation-attest-intent!") e (:id intent)
+                                                {:kind :intent/fulfilled
+                                                 :summary "Done."
+                                                 :requirements [{:evidence/slot [slot-owner :closure]
+                                                                 :evidence/from-ref close-ref
+                                                                 :evidence/extract [:result :exit]
+                                                                 :evidence/guard [:= [:value] 0]
+                                                                 :event/kind :tool
+                                                                 :event/op :v/bash}]})
+      (let [state (vis/db-intents s {:conversation-turn-id conversation-turn-id})
+            audit ((private-fn "foundation-audit") e)]
+        (expect (= :fulfilled (-> state :intents first :status)))
+        (expect (= true (:success? audit)))
+        (expect (= 2 (get-in audit [:counts :attestations]))))))
 
   (it "proof-checks reports what each gate asked for, what proof was given, and renders <proofs> meat"
     (let [s (h/store)
