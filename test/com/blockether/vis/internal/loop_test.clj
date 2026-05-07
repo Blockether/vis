@@ -9,10 +9,12 @@
    ;; `registrar` ns; requiring the heavy `core` no longer
    ;; self-registers. See `registrar.clj` for the split rationale.
    [com.blockether.vis.ext.persistance-sqlite.registrar]
+   [com.blockether.vis.ext.foundation.environment.skills :as foundation-skills]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as loop]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.prompt :as prompt]
    [lazytest.core :refer [defdescribe expect it]]
    [sci.core :as sci])
   (:import
@@ -1167,16 +1169,82 @@
               (loop/dispose-environment! env-2))))))))
 
 (defdescribe auto-skill-activation-test
-  (it "loads diagnose automatically for bug-like user requests"
+  ;; The bench worktree (and CI checkouts) doesn't ship `.agents/skills/`,
+  ;; so we stub the foundation skill lookup via `with-redefs` instead of
+  ;; relying on filesystem state. Trivial chat must NOT load any skill
+  ;; (this is part of the trivial-turn context-floor contract; see
+  ;; `context-floor-trivial-vs-coding-test` in prompt-test).
+  (it "loads diagnose automatically for bug-like user requests, never for trivial chat"
     (let [activate-auto-skills! (var-get (ns-resolve 'com.blockether.vis.internal.loop
                                            'activate-auto-skills!))
-          active-skills (atom {})]
-      (activate-auto-skills! {:active-skills-atom active-skills} "fix duplicate TUI rows")
-      (expect (contains? @active-skills "diagnose"))
-      (expect (true? (:auto? (get @active-skills "diagnose"))))
-      (reset! active-skills {})
-      (activate-auto-skills! {:active-skills-atom active-skills} "hello there")
-      (expect (= {} @active-skills)))))
+          active-skills (atom {})
+          stub-skill {:name "diagnose"
+                      :description "Debug loop."
+                      :path "/tmp/.agents/skills/diagnose/SKILL.md"
+                      :source :repo
+                      :body "# Diagnose\nReproduce first."
+                      :extra {}}]
+      (with-redefs [foundation-skills/lookup
+                    (fn [name]
+                      (if (= name "diagnose")
+                        (assoc stub-skill :found? true)
+                        {:found? false :name name}))]
+        (activate-auto-skills! {:active-skills-atom active-skills} "fix duplicate TUI rows")
+        (expect (contains? @active-skills "diagnose"))
+        (expect (true? (:auto? (get @active-skills "diagnose"))))
+        (reset! active-skills {})
+        (activate-auto-skills! {:active-skills-atom active-skills} "hello there")
+        (expect (= {} @active-skills))))))
+
+(defdescribe iteration-context-floor-test
+  ;; Loop-level smoke proving the trivial vs coding context-floor
+  ;; contract: trivial chat (no extensions, no skills loaded, no
+  ;; journal seed) yields a nil iteration-context, while a coding
+  ;; turn surfaces journal/var_index/active_skills. The richer
+  ;; cases live in `prompt-test`; this loop-test guard prevents a
+  ;; regression in the loop-side activation/seeding plumbing that
+  ;; bypasses `prompt/build-iteration-context`.
+  (it "trivial chat yields nil iteration-context with no skills, no journal, no var_index"
+    (let [out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")
+                 :active-skills-atom (atom {})}
+                {:active-extensions []
+                 :iteration 0})]
+      (expect (nil? out))))
+
+  (it "coding turn iteration-context surfaces journal + tool evidence + active skill body"
+    (let [out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")
+                 :active-skills-atom (atom {"diagnose" {:name "diagnose"
+                                                        :description "Debug."
+                                                        :source :repo
+                                                        :path "/tmp/SKILL.md"
+                                                        :body "# Repro first."}})}
+                {:active-extensions []
+                 :blocks-by-iteration
+                 [[1 {:thinking "LLM-only thoughts must not leak"
+                      :blocks [{:code "(v/issue-intent! {:title \"Fix\"})"
+                                :comment "plan: probe then fix"
+                                :result {:id "intent-1" :title "Fix"}
+                                :provenance {:ref "turn/aabbccdd/iteration/1/block/1"
+                                             :op :sci/eval
+                                             :status :done}}
+                               {:code "(v/bash \"./verify.sh\")"
+                                :result :ok
+                                :provenance {:ref "turn/aabbccdd/iteration/1/block/2/tool/bash"
+                                             :op :v/bash
+                                             :status :done}}]}]]
+                 :iteration 1})]
+      (expect (string? out))
+      (expect (str/includes? out "<journal>"))
+      (expect (str/includes? out "turn/aabbccdd/iteration/1/block/1"))
+      (expect (str/includes? out "turn/aabbccdd/iteration/1/block/2/tool/bash"))
+      (expect (str/includes? out "v/issue-intent!"))
+      (expect (str/includes? out "v/bash"))
+      (expect (str/includes? out "<active_skills count=\"1\">"))
+      (expect (str/includes? out "# Repro first."))
+      ;; LLM-only :thinking is not rendered in <journal>.
+      (expect (not (str/includes? out "LLM-only thoughts must not leak"))))))
 
 (defdescribe router-provider-resolution-test
   (it "resolves OAuth provider credentials before constructing the router"
