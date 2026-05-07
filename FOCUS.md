@@ -305,25 +305,37 @@ This checklist is the single detailed plan for the context contract. `TASKS.md` 
       `iteration-context-floor-test` in `loop-test`).
 - [x] Auto-skill activation is gated by user-request keywords; trivial chat ("hi", "hello there") loads zero skills (`auto-skill-activation-test`).
 - [x] Bench worktree no longer depends on `.agents/skills/` filesystem state for the auto-skill activation test (uses `with-redefs` over the foundation skill lookup).
+- [x] Public `prompt/model-facing-context-stats` reports per-surface
+      bytes + tokens for any turn shape so autoresearch / judge
+      runners and diagnostic tooling can attribute prompt size to
+      `<system_prompt>`, `<user_turn_request_main_goal>`, or the
+      per-iteration trailer without reaching into private helpers.
+      Trivial / no-tool turns return `:iteration-trailer-empty? true`
+      with 0 bytes / 0 tokens for the trailer; coding turns return a
+      bounded trailer carrying provenance / intent / gate / audit /
+      tool evidence.
 
 #### Exact token/context impact (measured against `assemble-system-prompt` + `assemble-initial-messages` + `build-iteration-context`)
 
-Numbers below are bytes of fully-rendered prompt slices, captured
-against the unmodified Vis prompt assembler. Tokens scale roughly
-4 chars/token for English prose / Clojure code on Anthropic Opus.
+Numbers below are bytes + tokens of fully-rendered prompt slices,
+captured by the public `prompt/model-facing-context-stats` helper
+against the unmodified Vis prompt assembler. Tokens are computed
+through `prompt/count-tokens`, which uses `svar-router/count-tokens`
+for known model ids and falls back to chars/4 for unknown models
+(rough English prose / Clojure code rule of thumb on Anthropic Opus).
 
 | Slice | Trivial turn | Coding turn |
 |---|---:|---:|
-| `<system_prompt>` (no caller addendum, no extensions active) | 21,021 B (~5.2 k tok) | 21,021 B (~5.2 k tok) |
-| `<user_turn_request_main_goal>` wrapper around `"hi"` / coding goal | 63 B | 63 B |
-| Per-iteration trailer (`<journal>` + `<var_index>` + `<active_skills>` + `<system_nudges>`) | **0 B** (nil) | 1,325 B |
-| **Total model-facing context (this assembler only)** | **21,084 B** | **22,409 B** |
+| `<system_prompt>` (no caller addendum, no extensions active) | 21,021 B / 5,255 tok | 21,021 B / 5,255 tok |
+| `<user_turn_request_main_goal>` wrapper | 63 B / 15 tok (`"hi"`) | 104 B / 26 tok (coding goal) |
+| Per-iteration trailer (`<journal>` + `<var_index>` + `<active_skills>` + `<system_nudges>`) | **0 B / 0 tok** (nil) | 1,325 B / 331 tok |
+| **Total model-facing context (this assembler only)** | **21,084 B / 5,270 tok** | **22,450 B / 5,612 tok** |
 
-Delta: **+1,325 B (~330 tokens)** from the coding-turn trailer
-carrying intent / gate refs, tool evidence, an active skill body
-and the journal canonical-ref index. The trivial-turn trailer is
-empty by construction; the system prompt is identical, so prompt
-caching latches onto it.
+Iteration-trailer delta: **+1,325 B / +331 tokens** from the coding
+turn carrying intent / gate refs, tool evidence, an active skill
+body and the journal canonical-ref index. The trivial trailer is
+empty by construction; the system prompt is identical across
+shapes, so provider prompt caching latches onto it.
 
 Real Vis runs add the foundation extension's `<environment-info>`
 + `<extensions>` + `<skills>` catalog (~6–8 KB) on top of the
@@ -331,6 +343,10 @@ base system prompt. Those slices are protected per the
 "Context budget policy" table and stay constant across trivial
 and coding turns; they do NOT amplify the trivial-vs-coding
 delta.
+
+These numbers are pinned by `model-facing-context-stats-test` in
+`prompt-test`, which prints the per-surface bytes/tokens on every
+test run so autoresearch / judge logs capture the exact impact.
 
 ### C. Full data retrieval
 
