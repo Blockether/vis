@@ -48,6 +48,7 @@
    the broadcast continues. A misbehaving extension MUST NOT take
    the loop down."
   (:require
+   [com.blockether.vis.internal.extension :as extension]
    [taoensso.telemere :as tel]))
 
 ;; ---------------------------------------------------------------------------
@@ -84,6 +85,18 @@
 ;; ---------------------------------------------------------------------------
 ;; Composition.
 ;; ---------------------------------------------------------------------------
+
+(defn- wrap-extension-listener
+  [ext f]
+  (fn [payload]
+    (binding [extension/*current-extension* ext
+              extension/*current-symbol* nil]
+      (f payload))))
+
+(defn- extension-listener
+  [ext manifest-key]
+  (when-let [f (get ext manifest-key)]
+    (wrap-extension-listener ext f)))
 
 (defn- coerce-listeners
   "A `:hooks` slot may carry nil, a single fn, or a coll of fns. Always
@@ -124,7 +137,7 @@
            (let [hook-key     (phase->hook-key phase)
                  manifest-key (phase->manifest-key phase)
                  from-hooks   (coerce-listeners (get hooks hook-key))
-                 from-exts    (vec (keep manifest-key active-extensions))]
+                 from-exts    (vec (keep #(extension-listener % manifest-key) active-extensions))]
              [phase (into from-hooks from-exts)]))
       phases)))
 

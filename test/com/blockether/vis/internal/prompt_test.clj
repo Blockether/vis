@@ -230,6 +230,19 @@
         ;; Silence the unused alias warning -- present for future tests.
         (when (some? ext) :ok)))
 
+    (it "binds extension context while extension nudges run"
+      (let [seen (atom nil)
+            ext {:ext/namespace 'fake.context
+                 :ext/nudge-fn  (fn [_ctx]
+                                  (reset! seen (extension/current-extension-id))
+                                  nil)}]
+        (prompt/build-iteration-context
+          (env-with-title)
+          {:active-extensions   [ext]
+           :blocks-by-iteration [(->iter 0 [{:code "1" :result 1}])]
+           :iteration           0})
+        (expect (= "fake.context" @seen))))
+
     (it "accepts extension nudge maps with explicit importance"
       (let [ext {:ext/namespace 'fake.important
                  :ext/nudge-fn  (fn [_ctx] {:importance :critical
@@ -489,6 +502,17 @@
       (expect (str/includes? out "<section extension=\"test.env-info.b\">"))
       (expect (str/includes? out "repo: service-a\ndirty: no"))))
 
+  (it "binds extension context while environment-info fragments render"
+    (let [seen (atom nil)
+          ext (extension/extension
+                {:ext/namespace 'test.env-info.context
+                 :ext/doc       "Environment context."
+                 :ext/environment-info-fn (fn [_env]
+                                            (reset! seen (extension/current-extension-id))
+                                            "ok")})]
+      (prompt/assemble-system-prompt {} {:active-extensions [ext]})
+      (expect (= "test.env-info.context" @seen))))
+
   (it "skips blank environment-info fragments"
     (let [ext (extension/extension
                 {:ext/namespace 'test.env-info.blank
@@ -523,6 +547,17 @@
       (expect (str/includes? out "clojure.lang.PersistentArrayMap")))))
 
 (defdescribe extension-prompt-test
+  (it "binds extension context while extension prompt fragments render"
+    (let [seen (atom nil)
+          ext (extension/extension
+                {:ext/namespace 'test.ext.prompt-context
+                 :ext/doc "Prompt context extension."
+                 :ext/prompt (fn [_env]
+                               (reset! seen (extension/current-extension-id))
+                               "ok")})]
+      (prompt/assemble-system-prompt {} {:active-extensions [ext]})
+      (expect (= "test.ext.prompt-context" @seen))))
+
   (it "wraps extension prompt fragments under <extensions>"
     (let [ext (extension/extension
                 {:ext/namespace 'test.ext.prompt

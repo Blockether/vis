@@ -310,6 +310,14 @@
 ;; --- Restore ---
 (defdelegate db-restore-blocks [db-info conversation-id])
 
+;; --- Extension aggregate sidecars ---
+(defdelegate db-create-extension-aggregate! [db-info opts])
+(defdelegate db-put-extension-aggregate! [db-info opts])
+(defdelegate db-get-extension-aggregate [db-info opts])
+(defdelegate db-list-extension-aggregates [db-info opts])
+(defdelegate db-delete-extension-aggregates! [db-info opts])
+(defdelegate db-swap-extension-aggregate! [db-info opts f args])
+
 ;; =============================================================================
 ;; Error translation
 ;;
