@@ -561,6 +561,109 @@
   [g left row width items]
   (put-str! g left row (space-around items width)))
 
+;;; ── Tabs ───────────────────────────────────────────────────────────────────
+
+(def ^:private tab-default-gap 1)
+
+(defn tab-display-label
+  "Compact label for a tab map.
+
+   Supported tab keys:
+   - `:label` / `:id` — visible base label.
+   - `:dirty?` — appends a dirty marker.
+   - `:state` — appends a compact state badge for running / verified /
+     accepted / error tabs.
+
+   This is terminal-column aware when later passed through `tab-layout`, so
+   callers may use emoji or CJK labels without hand-padding."
+  [{:keys [id label dirty? state]}]
+  (let [base (or label id "")]
+    (str (if (keyword? base) (name base) base)
+      (when dirty? " •")
+      (case state
+        :running  " ▶"
+        :verified " ✓"
+        :accepted " ✓"
+        :error    " !"
+        nil))))
+
+(defn tab-layout
+  "Return tab geometry for a horizontal tab strip.
+
+   `tabs` is a seq of maps. Returned maps include `:left`, `:width`,
+   `:active?`, and `:text` truncated to fit `:width`. Width math uses terminal
+   columns, not Java chars. When the strip is too narrow, later tabs may get
+   zero width; draw helpers skip those safely."
+  ([tabs left width active-id]
+   (tab-layout tabs left width active-id {}))
+  ([tabs left width active-id {:keys [gap]}]
+   (let [tabs  (vec tabs)
+         n     (count tabs)
+         left  (long left)
+         width (max 0 (long width))
+         gap   (max 0 (long (or gap tab-default-gap)))]
+     (if (or (zero? n) (zero? width))
+       []
+       (let [gap       (if (>= width (+ n (* gap (dec n)))) gap 0)
+             gap-total (* gap (dec n))
+             content-w (max 0 (- width gap-total))
+             base      (quot content-w n)
+             extra     (rem content-w n)]
+         (loop [idx 0 x left out []]
+           (if (= idx n)
+             out
+             (let [w       (+ base (if (< idx extra) 1 0))
+                   tab     (nth tabs idx)
+                   text    (truncate-cols (tab-display-label tab) w)
+                   active? (if (some? active-id)
+                             (= (:id tab) active-id)
+                             (true? (:active? tab)))
+                   next-x  (+ x w (if (= idx (dec n)) 0 gap))]
+               (recur (inc idx)
+                 next-x
+                 (conj out (assoc tab
+                             :left x
+                             :width w
+                             :active? active?
+                             :text text)))))))))))
+
+(defn tab-at
+  "Return the tab geometry under `col`, or nil. Expects `tab-layout` output."
+  [layout col]
+  (let [col (long col)]
+    (some (fn [{:keys [left width] :as tab}]
+            (when (and (pos? (long width))
+                    (>= col (long left))
+                    (< col (+ (long left) (long width))))
+              tab))
+      layout)))
+
+(defn draw-tabs!
+  "Draw a tab strip and return its geometry.
+
+   Required opts: `:left`, `:row`, `:width`, `:active-id`, `:fg`, `:bg`,
+   `:active-fg`, `:active-bg`, `:inactive-fg`, `:inactive-bg`.
+   Optional: `:gap`.
+
+   This primitive knows layout and drawing only. Callers own domain actions and
+   click-region registration."
+  [g tabs {:keys [left row width active-id gap fg bg active-fg active-bg inactive-fg inactive-bg]}]
+  (let [layout (tab-layout tabs left width active-id {:gap gap})]
+    (set-colors! g (or fg inactive-fg active-fg) (or bg inactive-bg active-bg))
+    (fill-rect! g left row width 1)
+    (doseq [{:keys [left width active? text]} layout
+            :when (pos? (long width))]
+      (clear-styles! g)
+      (if active?
+        (do (set-colors! g active-fg active-bg)
+          (enable! g BOLD))
+        (do (set-colors! g inactive-fg inactive-bg)
+          (enable! g ITALIC)))
+      (fill-rect! g left row width 1)
+      (draw-centered! g left row width text))
+    (clear-styles! g)
+    layout))
+
 ;;; ── Cursor ─────────────────────────────────────────────────────────────────
 
 (defn cursor-pos

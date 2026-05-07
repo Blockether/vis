@@ -177,3 +177,30 @@
     (it "Mixed emoji items keep row width"
       (let [out (p/space-around [(str "📁" "f") "ok"] 12)]
         (expect (= 12 (p/display-width out)))))))
+
+(defdescribe tabs-test
+  (it "builds compact tab labels with dirty and state markers"
+    (expect (= "Lane • ▶"
+              (p/tab-display-label {:label "Lane" :dirty? true :state :running})))
+    (expect (= "done ✓"
+              (p/tab-display-label {:id :done :state :verified}))))
+
+  (it "lays tabs out within the requested terminal width"
+    (let [layout (p/tab-layout [{:id :main :label "Main"}
+                                {:id :work :label "日本" :dirty? true}
+                                {:id :err :label "Broken" :state :error}]
+                   2 18 :work)]
+      (expect (= [2 9 15] (mapv :left layout)))
+      (expect (= [6 5 5] (mapv :width layout)))
+      (expect (= [false true false] (mapv :active? layout)))
+      (expect (every? true?
+                (map (fn [{:keys [text width]}]
+                       (<= (p/display-width text) width))
+                  layout)))
+      (expect (= :work (:id (p/tab-at layout 9))))))
+
+  (it "keeps geometry safe when there are more tabs than columns"
+    (let [layout (p/tab-layout [{:id :a} {:id :b} {:id :c}] 0 2 :a)]
+      (expect (= 3 (count layout)))
+      (expect (= 2 (reduce + (map :width layout))))
+      (expect (= :a (:id (p/tab-at layout 0)))))))

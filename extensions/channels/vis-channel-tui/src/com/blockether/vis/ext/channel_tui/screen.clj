@@ -89,8 +89,8 @@
 ;; Removed from idle: `Enter send` (universally obvious). PageUp/PageDown
 ;; remain available for transcript scrolling. Model/reasoning/verbosity
 ;; shortcuts live in the footer next to the values they change.
-(def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Ctrl+B voice · Ctrl+G conversations · Ctrl+K menu ")
-(def ^:private hint-idle-typed " Ctrl+B voice · Ctrl+G conversations · Ctrl+K menu ")
+(def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Shift+Tab tabs · Ctrl+B voice · Ctrl+G conversations · Ctrl+K menu ")
+(def ^:private hint-idle-typed " Shift+Tab tabs · Ctrl+B voice · Ctrl+G conversations · Ctrl+K menu ")
 (def ^:private hint-loading    " Esc cancel · Ctrl+C quit ")
 (def ^:private hint-cancelling " Cancelling… please wait · Ctrl+C quit ")
 
@@ -213,6 +213,14 @@
          (vis/notify!
            (str "Markdown copy failed: " (or (.getMessage t) (.getName (class t))))
            :level :error :ttl-ms copy-success-ttl-ms)))))
+
+(defn- activate-workspace-tab-hit!
+  "Switch to the workspace tab represented by a header click region."
+  [refresh-active-workspace! hit]
+  (let [before (:active-workspace-id @state/app-db)]
+    (state/dispatch [:select-workspace-tab-index (:index hit)])
+    (when-not (= before (:active-workspace-id @state/app-db))
+      (refresh-active-workspace! false))))
 
 (defn- capture-screen-cells
   "Read the current Lanterna back-buffer as per-cell strings.
@@ -512,14 +520,15 @@
         input-box-h  (+ text-rows 2 (* 2 render/input-pad-y))
         ;; Reserve the bottom-most two rows for the dedicated footer
         ;; (model/status first, provider limits second) and the top-most
-        ;; band for the dedicated header (top rule + title row + bottom
-        ;; rule). The input box sits directly above the footer; the
+        ;; band for the dedicated header. Header height is data-dependent:
+        ;; workspace tabs add one row only when more than one exists. The input
+        ;; box sits directly above the footer; the
         ;; messages area fills everything from `messages-top` down to the
         ;; input-box top.
         header-top   0
         footer-row   (- rows 2)
         input-top    (- rows input-box-h 2)
-        messages-top    header/HEADER_ROWS
+        messages-top    (header/header-rows db)
         messages-bottom input-top
         ;; Single source of truth for the gutter math lives in
         ;; `render.clj` (`MESSAGE_SIDE_PAD`). Reference it directly; do
@@ -745,6 +754,21 @@
 (defn- current-conversation-id
   []
   (some-> @state/app-db :conversation :id str))
+
+(defn- workspace-conversations
+  []
+  (let [db @state/app-db]
+    (->> (concat (keep :conversation (vals (:workspaces db)))
+           [(:conversation db)])
+      (filter :id)
+      (reduce (fn [{:keys [seen out] :as acc} conversation]
+                (let [id (str (:id conversation))]
+                  (if (contains? seen id)
+                    acc
+                    {:seen (conj seen id)
+                     :out  (conj out conversation)})))
+        {:seen #{} :out []})
+      :out)))
 
 (defn- register-conversation-shutdown-hook!
   "Register a JVM shutdown hook that prints the TUI resume command for
@@ -1073,9 +1097,6 @@
                                          (when-let [cleanup @title-listener-cleanup]
                                            (try (cleanup) (catch Throwable _ nil)))
                                          (vreset! title-listener-cleanup nil)
-                                         (when-let [old-conversation (:conversation @state/app-db)]
-                                           (when-not (= (str (:id old-conversation)) (str id))
-                                             (chat/dispose! old-conversation)))
                                          (render/invalidate-cache!)
                                          (virtual/invalidate-heights!)
                                          (vreset! title-listener-cleanup
@@ -1084,6 +1105,22 @@
                                          (when notify?
                                            (vis/notify! "Switched conversation"
                                              :level :success :ttl-ms copy-success-ttl-ms))))
+               refresh-active-workspace! (fn [notify?]
+                                           (when-let [cleanup @title-listener-cleanup]
+                                             (try (cleanup) (catch Throwable _ nil)))
+                                           (vreset! title-listener-cleanup nil)
+                                           (render/invalidate-cache!)
+                                           (virtual/invalidate-heights!)
+                                           (when-let [id (current-conversation-id)]
+                                             (when-let [title (conversation-db-title id)]
+                                               (state/dispatch [:set-title title]))
+                                             (vreset! title-listener-cleanup
+                                               (subscribe-title-listener! id))
+                                             (prewarm-conversation! {:id id
+                                                                     :history (:messages @state/app-db)}))
+                                           (when notify?
+                                             (vis/notify! "Switched tab"
+                                               :level :success :ttl-ms copy-success-ttl-ms)))
                switch-conversation!  (fn [choice]
                                        (cond
                                          (:loading? @state/app-db)
@@ -1099,16 +1136,13 @@
                                            (let [fork-state-id (try (vis/db-fork-conversation! (vis/db-info) current-id {})
                                                                  (catch Throwable _ nil))]
                                              (if fork-state-id
-                                               (do
-                                                 (when-let [old-conversation (:conversation @state/app-db)]
-                                                   (chat/dispose! old-conversation))
-                                                 (if-let [conversation-result (chat/resume-conversation current-id)]
-                                                   (do
-                                                     (install-conversation! conversation-result false)
-                                                     (vis/notify! "Forked current conversation"
-                                                       :level :success :ttl-ms copy-success-ttl-ms))
-                                                   (vis/notify! "Forked, but failed to reload conversation"
-                                                     :level :warn :ttl-ms copy-success-ttl-ms)))
+                                               (if-let [conversation-result (chat/resume-conversation current-id)]
+                                                 (do
+                                                   (install-conversation! conversation-result false)
+                                                   (vis/notify! "Forked current conversation"
+                                                     :level :success :ttl-ms copy-success-ttl-ms))
+                                                 (vis/notify! "Forked, but failed to reload conversation"
+                                                   :level :warn :ttl-ms copy-success-ttl-ms))
                                                (vis/notify! "Could not fork current conversation"
                                                  :level :warn :ttl-ms copy-success-ttl-ms)))
                                            (vis/notify! "No current conversation to fork"
@@ -1117,10 +1151,13 @@
                                          (= :switch (:action choice))
                                          (let [target-id (:id choice)]
                                            (when-not (= (str target-id) (current-conversation-id))
-                                             (if-let [conversation-result (chat/resume-conversation target-id)]
-                                               (install-conversation! conversation-result true)
-                                               (vis/notify! "Conversation no longer exists"
-                                                 :level :warn :ttl-ms copy-success-ttl-ms))))))
+                                             (state/dispatch [:select-workspace-tab-conversation-id target-id])
+                                             (if (= (str target-id) (current-conversation-id))
+                                               (refresh-active-workspace! true)
+                                               (if-let [conversation-result (chat/resume-conversation target-id)]
+                                                 (install-conversation! conversation-result true)
+                                                 (vis/notify! "Conversation no longer exists"
+                                                   :level :warn :ttl-ms copy-success-ttl-ms)))))))
                show-conversations!   (fn []
                                        (when-not (:dialog-open? @state/app-db)
                                          (let [conversations (tui-conversation-summaries)]
@@ -1418,6 +1455,9 @@
                                :switch-conversation
                                (switch-conversation! {:action :switch :id (:text hit)})
 
+                               :workspace-tab
+                               (activate-workspace-tab-hit! refresh-active-workspace! hit)
+
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
 
@@ -1481,6 +1521,9 @@
 
                                :switch-conversation
                                (switch-conversation! {:action :switch :id (:text hit)})
+
+                               :workspace-tab
+                               (activate-workspace-tab-hit! refresh-active-workspace! hit)
 
                                :toggle-details
                                (state/dispatch [:toggle-detail (:conversation-id hit) (:node-id hit)])
@@ -1576,7 +1619,7 @@
                    (recur))
 
                  :else
-                 (let [{:keys [action state]} (input/handle-key key (:input db))]
+                 (let [{:keys [action state tab-index]} (input/handle-key key (:input db))]
                    (state/dispatch [:update-input state])
                    (let [extra-commands (extension-commands screen)
                          palette-commands (palette-extra-commands extra-commands)
@@ -1594,6 +1637,15 @@
                                (case cmd
                                  :new-conversation
                                  (switch-conversation! {:action :new})
+
+                                 :new-tab
+                                 (when-let [config (:config @state/app-db)]
+                                   (let [before-count (count (:workspace-tabs @state/app-db))]
+                                     (state/dispatch [:add-workspace-tab])
+                                     (if (= before-count (count (:workspace-tabs @state/app-db)))
+                                       (vis/notify! "Maximum 8 tabs open"
+                                         :level :warn :ttl-ms copy-success-ttl-ms)
+                                       (install-conversation! (chat/make-conversation config) true))))
 
                                  :fork-conversation
                                  (switch-conversation! {:action :fork})
@@ -1645,6 +1697,13 @@
                              (when-let [cmd (with-dialog-lock #(dlg/command-palette! screen palette-commands))]
                                (run-command! cmd)
                                (recur))))
+                         (recur))
+
+                       :select-workspace-tab
+                       (do (let [before (:active-workspace-id @state/app-db)]
+                             (state/dispatch [:select-workspace-tab-index tab-index])
+                             (when-not (= before (:active-workspace-id @state/app-db))
+                               (refresh-active-workspace! false)))
                          (recur))
 
                        :history-up
@@ -1729,7 +1788,7 @@
              (try (.join ^Thread t 500) (catch Throwable _ nil)))
            (when-let [cleanup @title-listener-cleanup]
              (try (cleanup) (catch Throwable _ nil)))
-           (when-let [conversation (:conversation @state/app-db)]
+           (doseq [conversation (workspace-conversations)]
              (chat/dispose! conversation))
            (.stopScreen screen)))))))
 

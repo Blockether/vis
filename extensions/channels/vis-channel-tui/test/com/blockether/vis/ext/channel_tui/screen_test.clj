@@ -40,6 +40,9 @@
 (def ^:private copy-conversation-as-markdown!
   (deref #'screen/copy-conversation-as-markdown!))
 
+(def ^:private activate-workspace-tab-hit!
+  (deref #'screen/activate-workspace-tab-hit!))
+
 (def ^:private open-click-target!
   (deref #'screen/open-click-target!))
 
@@ -105,10 +108,12 @@
       (expect (some #(= "Code: (+ 1 1)" %) lines)))))
 
 (defdescribe hint-test
-  (it "empty input advertises arrow-key history instead of removed Ctrl+P/N chords"
+  (it "empty input advertises arrow-key history and Shift+Tab tabs"
     (let [hint (current-hint {:input (input/empty-input)})]
       (expect (re-find #"↑↓ history" hint))
-      (expect (not (re-find #"Ctrl\+P/N" hint)))))
+      (expect (re-find #"Shift\+Tab tabs" hint))
+      (expect (not (re-find #"Ctrl\+P/N" hint)))
+      (expect (not (re-find #"Ctrl\+1-9" hint)))))
 
   (it "idle hints leave model/reasoning/verbosity shortcuts to the footer"
     (let [empty-hint (current-hint {:input (input/empty-input)})
@@ -137,6 +142,30 @@
                  {:id :shown
                   :label "Shown"
                   :run-fn identity}])))))
+
+(defdescribe workspace-tab-click-test
+  (it "switches to the clicked workspace tab and refreshes active conversation state"
+    (reset! state/app-db {:workspace-tabs [{:id :main :label "Main" :active? true}
+                                           {:id :tab-1 :label "Tab 1"}]
+                          :active-workspace-id :main
+                          :conversation {:id "main-c"}
+                          :messages [{:role :user :text "main prompt"}]
+                          :input (input/paste-text (input/empty-input) "main draft")
+                          :input-history ["main prompt"]
+                          :workspaces {:tab-1 {:conversation {:id "tab-c"}
+                                               :messages [{:role :user :text "tab prompt"}]
+                                               :input (input/paste-text (input/empty-input) "tab draft")
+                                               :input-history ["tab prompt"]}}})
+    (let [refreshes (atom [])]
+      (activate-workspace-tab-hit! #(swap! refreshes conj %) {:kind :workspace-tab :index 1})
+      (expect (= :tab-1 (:active-workspace-id @state/app-db)))
+      (expect (= {:id "tab-c"} (:conversation @state/app-db)))
+      (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
+      (expect (= "tab draft" (input/input->text (:input @state/app-db))))
+      (expect (= [false] @refreshes))
+
+      (activate-workspace-tab-hit! #(swap! refreshes conj %) {:kind :workspace-tab :index 1})
+      (expect (= [false] @refreshes)))))
 
 (defdescribe startup-resume-test
   (it "--conversation-id sweeps orphaned running turns before rebuilding history"
