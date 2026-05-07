@@ -186,6 +186,13 @@ run_checks() {
 run_checks pi "$pi_wt"
 run_checks vis "$vis_wt"
 
+# BENCH_TASK.md is runner input, not agent output. Remove it before diffing,
+# then mark remaining untracked files intent-to-add so `git diff` includes new
+# source/test/docs files created by the agents.
+rm -f "$pi_wt/BENCH_TASK.md" "$vis_wt/BENCH_TASK.md"
+( cd "$pi_wt"  && git add -N . ) || true
+( cd "$vis_wt" && git add -N . ) || true
+
 # -- diffs --------------------------------------------------------------------
 ( cd "$pi_wt"  && git diff --binary "$pi_base_sha" -- . > "$root/eval/diff.pi.patch"  ) || true
 ( cd "$vis_wt" && git diff --binary "$vis_base_sha" -- . > "$root/eval/diff.vis.patch" ) || true
