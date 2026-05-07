@@ -39,6 +39,128 @@
     (expect (nil? (:input-history-index @state/app-db)))
     (expect (nil? (:input-history-draft @state/app-db)))))
 
+(defdescribe workspace-tabs-test
+  (it "adds a tab and seeds a base tab when none exist"
+    (reset! state/app-db {:title "Current"
+                          :render-version 0})
+    (state/dispatch [:add-workspace-tab])
+    (expect (= [{:id :main :label "Current"}
+                {:id :tab-1 :label "Tab 1" :active? true}]
+              (:workspace-tabs @state/app-db)))
+    (expect (= :tab-1 (:active-workspace-id @state/app-db)))
+    (expect (= 1 (:render-version @state/app-db))))
+
+  (it "adds the next unique tab and makes it active"
+    (reset! state/app-db {:workspace-tabs [{:id :main :label "Main"}
+                                           {:id :tab-1 :label "Tab 1" :active? true}]
+                          :active-workspace-id :tab-1
+                          :render-version 0})
+    (state/dispatch [:add-workspace-tab])
+    (expect (= [{:id :main :label "Main"}
+                {:id :tab-1 :label "Tab 1"}
+                {:id :tab-2 :label "Tab 2" :active? true}]
+              (:workspace-tabs @state/app-db)))
+    (expect (= :tab-2 (:active-workspace-id @state/app-db))))
+
+  (it "caps workspace tabs at eight total tabs"
+    (reset! state/app-db {:title "Main"
+                          :render-version 0})
+    (dotimes [_ 10]
+      (state/dispatch [:add-workspace-tab]))
+    (expect (= 8 (count (:workspace-tabs @state/app-db))))
+    (expect (= [:main :tab-1 :tab-2 :tab-3 :tab-4 :tab-5 :tab-6 :tab-7]
+              (mapv :id (:workspace-tabs @state/app-db))))
+    (expect (= :tab-7 (:active-workspace-id @state/app-db))))
+
+  (it "switches the full transcript, draft, prompt history, and conversation by tab"
+    (reset! state/app-db {:conversation {:id "main-c"}
+                          :messages [{:role :user :text "main prompt"}]
+                          :input (input/paste-text (input/empty-input) "main draft")
+                          :input-history ["main prompt"]
+                          :pastes {}
+                          :paste-counter 0
+                          :detail-expansions {}
+                          :workspace-tabs [{:id :main :label "Main" :active? true}]
+                          :active-workspace-id :main
+                          :workspaces {}
+                          :render-version 0})
+    (state/dispatch [:add-workspace-tab])
+    (state/dispatch [:init-conversation {:id "tab-c"} [{:role :user :text "tab prompt"}]])
+    (state/dispatch [:update-input (input/paste-text (input/empty-input) "tab draft")])
+    (state/dispatch [:select-workspace-tab-index 0])
+    (expect (= {:id "main-c"} (:conversation @state/app-db)))
+    (expect (= [{:role :user :text "main prompt"}] (:messages @state/app-db)))
+    (expect (= "main draft" (input/input->text (:input @state/app-db))))
+    (expect (= ["main prompt"] (:input-history @state/app-db)))
+    (state/dispatch [:select-workspace-tab-index 1])
+    (expect (= {:id "tab-c"} (:conversation @state/app-db)))
+    (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
+    (expect (= "tab draft" (input/input->text (:input @state/app-db))))
+    (expect (= ["tab prompt"] (:input-history @state/app-db))))
+
+  (it "routes background turn results to their originating inactive tab"
+    (reset! state/app-db {:conversation {:id "main-c"}
+                          :messages [{:role :user :text "main prompt"}
+                                     {:role :assistant :text "Sending request to provider…"}]
+                          :loading? true
+                          :progress {:iterations []}
+                          :workspace-tabs [{:id :main :label "Main" :active? true}
+                                           {:id :tab-1 :label "Tab 1"}]
+                          :active-workspace-id :main
+                          :workspaces {}
+                          :render-version 0})
+    (state/dispatch [:select-workspace-tab-index 1])
+    (state/dispatch [:init-conversation {:id "tab-c"} []])
+    (state/dispatch [:message-received :main "main answer" {:model "m"}])
+    (expect (= {:id "tab-c"} (:conversation @state/app-db)))
+    (expect (= [] (:messages @state/app-db)))
+    (state/dispatch [:select-workspace-tab-index 0])
+    (expect (= {:id "main-c"} (:conversation @state/app-db)))
+    (expect (= ["main prompt" "main answer"]
+              (mapv :text (:messages @state/app-db))))
+    (expect (false? (:loading? @state/app-db))))
+
+  (it "selects workspace tabs by zero-based index and cycles to the next tab"
+    (reset! state/app-db {:workspace-tabs [{:id :main :label "Main"}
+                                           {:id :tab-1 :label "Tab 1" :active? true}
+                                           {:id :tab-2 :label "Tab 2"}]
+                          :active-workspace-id :tab-1
+                          :render-version 0})
+    (state/dispatch [:select-workspace-tab-index 0])
+    (expect (= :main (:active-workspace-id @state/app-db)))
+    (expect (= [{:id :main :label "Main" :active? true}
+                {:id :tab-1 :label "Tab 1"}
+                {:id :tab-2 :label "Tab 2"}]
+              (:workspace-tabs @state/app-db)))
+    (state/dispatch [:select-workspace-tab-index :next])
+    (expect (= :tab-1 (:active-workspace-id @state/app-db)))
+    (state/dispatch [:select-workspace-tab-index :next])
+    (expect (= :tab-2 (:active-workspace-id @state/app-db)))
+    (state/dispatch [:select-workspace-tab-index :next])
+    (expect (= :main (:active-workspace-id @state/app-db)))
+    (state/dispatch [:select-workspace-tab-index 99])
+    (expect (= :main (:active-workspace-id @state/app-db))))
+
+  (it "selects an already-open workspace tab by conversation id"
+    (reset! state/app-db {:workspace-tabs [{:id :main :label "Main" :active? true}
+                                           {:id :tab-1 :label "Tab 1"}]
+                          :active-workspace-id :main
+                          :conversation {:id "main-c"}
+                          :messages [{:role :user :text "main prompt"}]
+                          :input (input/paste-text (input/empty-input) "main draft")
+                          :input-history ["main prompt"]
+                          :workspaces {:tab-1 {:conversation {:id "tab-c"}
+                                               :messages [{:role :user :text "tab prompt"}]
+                                               :input (input/paste-text (input/empty-input) "tab draft")
+                                               :input-history ["tab prompt"]}}
+                          :render-version 0})
+    (state/dispatch [:select-workspace-tab-conversation-id "tab-c"])
+    (expect (= :tab-1 (:active-workspace-id @state/app-db)))
+    (expect (= {:id "tab-c"} (:conversation @state/app-db)))
+    (expect (= [{:role :user :text "tab prompt"}] (:messages @state/app-db)))
+    (state/dispatch [:select-workspace-tab-conversation-id "missing"])
+    (expect (= :tab-1 (:active-workspace-id @state/app-db)))))
+
 (defdescribe init-settings-test
   (it "loads the default balanced reasoning level when config has none"
     (with-redefs [vis/load-config-raw (fn [] {})]
@@ -307,6 +429,7 @@
   (it "keeps @mentions compact in chat while expanding them for the agent"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
           db              {:conversation {:id "c1"}
+                           :active-workspace-id :main
                            :messages []
                            :messages-scroll 9
                            :input-history []
@@ -324,7 +447,7 @@
                     (-> db :messages first :text)))
           (expect (= "see @src/core.clj +paste"
                     (last (:input-history db))))
-          (expect (= [[:rlm-turn {:id "c1"}
+          (expect (= [[:rlm-turn :main {:id "c1"}
                        "see @src/core.clj +paste +file"
                        :token
                        :balanced
@@ -335,6 +458,7 @@
   (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
           db              {:conversation {:id "c1"}
+                           :active-workspace-id :main
                            :messages []
                            :messages-scroll 0
                            :input-history []
@@ -351,7 +475,7 @@
                                                          :reasoning-style :zai-thinking
                                                          :reasoning-effort? false})]
         (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])]
-          (expect (= [[:rlm-turn {:id "c1"} "hello" :token nil nil {}]] fx))))))
+          (expect (= [[:rlm-turn :main {:id "c1"} "hello" :token nil nil {}]] fx))))))
 
   (it "restores a cancelled prompt to the input instead of rendering a cancelled answer"
     (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)

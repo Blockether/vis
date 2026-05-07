@@ -354,6 +354,7 @@
 
     (testing "command palette keeps Configure Providers separate from Settings"
       (is (= ["New Conversation"
+              "New Tab"
               "Fork Conversation"
               "Switch Conversation"
               "Configure Providers"

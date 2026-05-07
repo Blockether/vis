@@ -822,6 +822,13 @@
 
           :else {:action :continue :state (insert-char state c)}))
 
+      KeyType/Tab
+      (if (.isShiftDown key)
+        {:action :select-workspace-tab :tab-index :next :state state}
+        {:action :continue :state state})
+
+      KeyType/ReverseTab {:action :select-workspace-tab :tab-index :next :state state}
+
       KeyType/Enter
       (if (.isAltDown key)
         {:action :continue :state (insert-newline state)}

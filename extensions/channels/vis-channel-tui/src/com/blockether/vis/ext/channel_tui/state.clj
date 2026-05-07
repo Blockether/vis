@@ -62,6 +62,69 @@
 (defn- bump-version [db]
   (update db :render-version (fnil inc 0)))
 
+(def ^:private workspace-state-keys
+  [:conversation
+   :title
+   :messages
+   :messages-scroll
+   :input
+   :input-history
+   :input-history-index
+   :input-history-draft
+   :submitted-input
+   :pastes
+   :paste-counter
+   :loading?
+   :cancel-token
+   :cancelling?
+   :progress
+   :turn-start-ms
+   :detail-expansions
+   :mouse-selection])
+
+(defn- empty-workspace-state
+  []
+  {:conversation nil
+   :title nil
+   :messages []
+   :messages-scroll nil
+   :input (input/empty-input)
+   :input-history []
+   :input-history-index nil
+   :input-history-draft nil
+   :submitted-input nil
+   :pastes {}
+   :paste-counter 0
+   :loading? false
+   :cancel-token nil
+   :cancelling? false
+   :progress nil
+   :turn-start-ms nil
+   :detail-expansions {}
+   :mouse-selection nil})
+
+(defn- workspace-snapshot
+  [db]
+  (merge (empty-workspace-state)
+    (select-keys db workspace-state-keys)))
+
+(defn- current-workspace-id
+  [db]
+  (or (:active-workspace-id db)
+    (:id (some #(when (:active? %) %) (:workspace-tabs db)))
+    (:id (first (:workspace-tabs db)))))
+
+(defn- sync-active-workspace
+  [db]
+  (if-let [id (current-workspace-id db)]
+    (assoc-in db [:workspaces id] (workspace-snapshot db))
+    db))
+
+(defn- finalize-db
+  [db]
+  (cond-> db
+    (map? db) sync-active-workspace))
+
 (defn dispatch
   "Dispatch an event vector, e.g. (dispatch [:send-message \"hello\"]).
    Bumps `:render-version` and wakes the render thread for every event
@@ -72,11 +135,12 @@
       (case type
         :db (swap! app-db
               (fn [db]
-                (let [db' ((:fn handler) db event-vec)]
+                (let [db' (finalize-db ((:fn handler) db event-vec))]
                   (if bump? (bump-version db') db'))))
         :fx (let [{:keys [db fx]} ((:fn handler) @app-db event-vec)]
               (when db
-                (reset! app-db (if bump? (bump-version db) db)))
+                (let [db' (finalize-db db)]
+                  (reset! app-db (if bump? (bump-version db') db'))))
               (doseq [[fx-id & args] fx]
                 (when-let [fx-fn (get @fx-registry fx-id)]
                   (apply fx-fn args)))))
@@ -357,6 +421,83 @@
   []
   (:provider (current-model-info)))
 
+(def ^:private ^:const max-workspace-tabs 8)
+
+(defn- workspace-tab-number
+  [tab]
+  (when-let [[_ n] (some->> tab :id name (re-matches #"tab-(\d+)"))]
+    (Long/parseLong n)))
+
+(defn- next-workspace-tab-number
+  [tabs]
+  (inc (reduce max 0 (keep workspace-tab-number tabs))))
+
+(defn- base-workspace-tab
+  [db]
+  {:id    (or (:active-workspace-id db) :main)
+   :label (let [title (:title db)]
+            (if (and (string? title) (not (str/blank? title)))
+              title
+              "Main"))})
+
+(defn- workspace-tabs-or-base
+  [db]
+  (let [tabs (vec (:workspace-tabs db))]
+    (if (seq tabs)
+      tabs
+      [(base-workspace-tab db)])))
+
+(defn- active-tab-label
+  [db fallback]
+  (let [title (:title db)]
+    (if (and (string? title) (not (str/blank? title)))
+      title
+      fallback)))
+
+(defn- ensure-workspace-tabs
+  [db]
+  (let [tabs (workspace-tabs-or-base db)
+        active-id (or (current-workspace-id (assoc db :workspace-tabs tabs))
+                    (:id (first tabs)))]
+    (assoc db
+      :workspace-tabs (mapv (fn [tab]
+                              (cond-> (dissoc tab :active?)
+                                (= (:id tab) active-id) (assoc :active? true)))
+                        tabs)
+      :active-workspace-id active-id)))
+
+(defn- restore-workspace
+  [db workspace-id]
+  (merge db (or (get-in db [:workspaces workspace-id])
+              (empty-workspace-state))))
+
+(defn- activate-workspace
+  [db workspace-id]
+  (-> db
+    sync-active-workspace
+    (assoc :active-workspace-id workspace-id)
+    (update :workspace-tabs
+      (fn [tabs]
+        (mapv (fn [tab]
+                (cond-> (dissoc tab :active?)
+                  (= (:id tab) workspace-id) (assoc :active? true)))
+          tabs)))
+    (restore-workspace workspace-id)))
+
+(defn- update-workspace
+  [db workspace-id f]
+  (let [workspace-id (or workspace-id (current-workspace-id db))]
+    (if (and workspace-id (not= workspace-id (current-workspace-id db)))
+      (update-in db [:workspaces workspace-id]
+        (fn [snapshot]
+          (workspace-snapshot
+            (f (merge db (or snapshot (empty-workspace-state)))))))
+      (f db))))
+
+(defn- workspace-conversation-id
+  [db workspace-id]
+  (some-> (get-in db [:workspaces workspace-id :conversation :id]) str))
+
 (defn- reasoning-effort-configurable?
   []
   (let [info (current-model-info)]
@@ -397,6 +538,9 @@
                     :provider-limits nil
                     :channel-status {}
                     :detail-expansions {}
+                    :workspace-tabs []
+                    :active-workspace-id nil
+                    :workspaces {}
                     :dialog-open? false
                   ;; Render thread coordination — see render-monitor docstring.
                     :render-version 0
@@ -491,6 +635,50 @@
     ;; chrome row repainted with its hover background.
     db))
 
+(reg-event-db :add-workspace-tab
+  (fn [db _]
+    (let [db    (-> db ensure-workspace-tabs sync-active-workspace)
+          tabs  (vec (:workspace-tabs db))
+          n     (next-workspace-tab-number tabs)
+          id    (keyword (str "tab-" n))
+          label (str "Tab " n)
+          tab   {:id id :label label :active? true}]
+      (if (>= (count tabs) max-workspace-tabs)
+        db
+        (-> db
+          (assoc :workspace-tabs (conj (mapv #(dissoc % :active?) tabs) tab)
+            :active-workspace-id id)
+          (merge (empty-workspace-state)))))))
+
+(reg-event-db :select-workspace-tab-index
+  (fn [db [_ idx]]
+    (let [db   (-> db ensure-workspace-tabs sync-active-workspace)
+          tabs (vec (:workspace-tabs db))
+          idx  (if (= :next idx)
+                 (when (seq tabs)
+                   (let [active-id (or (:active-workspace-id db)
+                                     (:id (some #(when (:active? %) %) tabs))
+                                     (:id (first tabs)))
+                         current   (or (first (keep-indexed #(when (= (:id %2) active-id) %1) tabs))
+                                     -1)]
+                     (mod (inc current) (count tabs))))
+                 idx)]
+      (if-let [tab (and (integer? idx) (nth tabs idx nil))]
+        (activate-workspace db (:id tab))
+        db))))
+
+(reg-event-db :select-workspace-tab-conversation-id
+  (fn [db [_ conversation-id]]
+    (let [target-id (some-> conversation-id str)
+          db        (-> db ensure-workspace-tabs sync-active-workspace)
+          tabs      (vec (:workspace-tabs db))
+          tab       (when target-id
+                      (some #(when (= target-id (workspace-conversation-id db (:id %))) %)
+                        tabs))]
+      (if tab
+        (activate-workspace db (:id tab))
+        db))))
+
 (reg-event-db :set-mouse-selection
   (fn [db [_ selection]]
     (assoc db :mouse-selection selection)))
@@ -518,27 +706,38 @@
     (let [user-history (->> (or history [])
                          (filter #(= :user (:role %)))
                          (mapv :text))]
-      (assoc db
-        :conversation conversation
-        :title nil
-        :messages (or history [])
-        :messages-scroll nil
-        :input (input/empty-input)
-        :input-history user-history
-        :input-history-index nil
-        :input-history-draft nil
-        :submitted-input nil
-        :pastes {}
-        :paste-counter 0
-        :loading? false
-        :cancel-token nil
-        :cancelling? false
-        :progress nil
-        :detail-expansions {}))))
+      (-> db
+        ensure-workspace-tabs
+        (assoc :conversation conversation
+          :title nil
+          :messages (or history [])
+          :messages-scroll nil
+          :input (input/empty-input)
+          :input-history user-history
+          :input-history-index nil
+          :input-history-draft nil
+          :submitted-input nil
+          :pastes {}
+          :paste-counter 0
+          :loading? false
+          :cancel-token nil
+          :cancelling? false
+          :progress nil
+          :detail-expansions {})))))
 
 (reg-event-db :set-title
   (fn [db [_ title]]
-    (assoc db :title title)))
+    (let [db' (assoc db :title title)
+          active-id (current-workspace-id db')]
+      (cond-> db'
+        active-id
+        (update :workspace-tabs
+          (fn [tabs]
+            (mapv (fn [tab]
+                    (cond-> tab
+                      (= (:id tab) active-id)
+                      (assoc :label (active-tab-label db' (:label tab)))))
+              tabs)))))))
 
 (reg-event-db :update-input
   (fn [db [_ new-input]]
@@ -735,6 +934,7 @@
           agent-text   (input/expand-file-mentions visible-text)
           token        (vis/cancellation-token)
           extra-body   (turn-extra-body db)
+          workspace-id (current-workspace-id db)
           turn-features (cond-> {}
                           (get-in db [:settings :voice/respond?])
                           (assoc :voice-response? true))
@@ -757,7 +957,7 @@
                                  :input-history (vec (or (:input-history db) []))}
                :input-history-index nil
                :input-history-draft nil))
-       :fx [[:rlm-turn (:conversation db) agent-text token
+       :fx [[:rlm-turn workspace-id (:conversation db) agent-text token
              reasoning-level extra-body turn-features]]})))
 
 (reg-event-fx :cancel-turn
@@ -773,35 +973,46 @@
          :fx [[:notify "Cancelling current turn…" :info cancel-notification-ttl-ms]]}))))
 
 (reg-event-db :set-progress-iterations
-  (fn [db [_ iterations]]
-    (if-not (:loading? db)
-      db
-      (assoc-in db [:progress :iterations] (vec (or iterations []))))))
+  (fn [db [_ a b]]
+    (let [[workspace-id iterations] (if (keyword? a)
+                                      [a b]
+                                      [(current-workspace-id db) a])]
+      (update-workspace db workspace-id
+        (fn [workspace]
+          (if-not (:loading? workspace)
+            workspace
+            (assoc-in workspace [:progress :iterations] (vec (or iterations [])))))))))
 
 (reg-event-db :message-received
-  (fn [db [_ answer & [{:keys [model iteration-count duration-ms tokens cost confidence conversation-turn-id status]}]]]
-    (if (and (= :cancelled status) (:submitted-input db))
-      (restore-submitted-input db (:submitted-input db))
-      (let [start    (:turn-start-ms db)
-            wall-ms  (when start (- (System/currentTimeMillis) start))
-            trace    (get-in db [:progress :iterations])
-            response (-> (chat/assistant-message (or answer ""))
-                       (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
-                         (seq trace)
-                         (assoc :trace trace :raw-answer (or answer ""))
-                         (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
-                         model      (assoc :model model)
-                         iteration-count (assoc :iteration-count iteration-count)
-                         tokens     (assoc :tokens tokens)
-                         cost       (assoc :cost cost)
-                         confidence (assoc :confidence confidence)
-                         status     (assoc :status status)))]
-        (-> db
-          (update :messages pop)
-          (update :messages conj response)
-          (assoc :messages-scroll nil :loading? false :progress nil
-            :cancel-token nil :cancelling? false)
-          (dissoc :turn-start-ms :submitted-input))))))
+  (fn [db [_ a b c]]
+    (let [[workspace-id answer {:keys [model iteration-count duration-ms tokens cost confidence conversation-turn-id status]}]
+          (if (keyword? a)
+            [a b c]
+            [(current-workspace-id db) a b])]
+      (update-workspace db workspace-id
+        (fn [workspace]
+          (if (and (= :cancelled status) (:submitted-input workspace))
+            (restore-submitted-input workspace (:submitted-input workspace))
+            (let [start    (:turn-start-ms workspace)
+                  wall-ms  (when start (- (System/currentTimeMillis) start))
+                  trace    (get-in workspace [:progress :iterations])
+                  response (-> (chat/assistant-message (or answer ""))
+                             (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
+                               (seq trace)
+                               (assoc :trace trace :raw-answer (or answer ""))
+                               (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
+                               model      (assoc :model model)
+                               iteration-count (assoc :iteration-count iteration-count)
+                               tokens     (assoc :tokens tokens)
+                               cost       (assoc :cost cost)
+                               confidence (assoc :confidence confidence)
+                               status     (assoc :status status)))]
+              (-> workspace
+                (update :messages pop)
+                (update :messages conj response)
+                (assoc :messages-scroll nil :loading? false :progress nil
+                  :cancel-token nil :cancelling? false)
+                (dissoc :turn-start-ms :submitted-input)))))))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 
@@ -828,14 +1039,14 @@
         (vis/refresh-cached-routers! router)))))
 
 (reg-fx :rlm-turn
-  (fn [conversation text token reasoning-level extra-body turn-features]
+  (fn [workspace-id conversation text token reasoning-level extra-body turn-features]
     (let [fut (vis/worker-future "vis-tui-turn"
                 (fn []
                   (try
                     (let [{:keys [on-chunk]}
                           (vis/make-progress-tracker
                             {:on-update (fn [timeline _chunk]
-                                          (try (dispatch [:set-progress-iterations timeline])
+                                          (try (dispatch [:set-progress-iterations workspace-id timeline])
                                             (catch Throwable _ nil)))})
                           result (chat/turn! conversation text
                                    {:on-chunk          on-chunk
@@ -844,9 +1055,9 @@
                                     :extra-body        extra-body
                                     :turn-features     turn-features})]
                       (if (:error result)
-                        (dispatch [:message-received (vis/format-error (:error result))])
+                        (dispatch [:message-received workspace-id (vis/format-error (:error result))])
                         (do
-                          (dispatch [:message-received (:answer result)
+                          (dispatch [:message-received workspace-id (:answer result)
                                      (select-keys result
                                        [:model :iteration-count :duration-ms :tokens
                                         :cost :confidence :conversation-turn-id :status])])
@@ -860,7 +1071,7 @@
                     ;; renderer dims the result based on `:status
                     ;; :cancelled`, so we attach it explicitly here.
                       (if (vis/cancellation? t)
-                        (dispatch [:message-received "Cancelled by user."
+                        (dispatch [:message-received workspace-id "Cancelled by user."
                                    {:status :cancelled}])
-                        (dispatch [:message-received (vis/format-error (or (ex-message t) (str t)))]))))))]
+                        (dispatch [:message-received workspace-id (vis/format-error (or (ex-message t) (str t)))]))))))]
       (vis/cancellation-set-future! token fut))))
