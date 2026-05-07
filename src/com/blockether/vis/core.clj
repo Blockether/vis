@@ -246,6 +246,7 @@
 (def db-get-evidence-bundle          persistance/db-get-evidence-bundle)
 (def db-create-attestation!          persistance/db-create-attestation!)
 (def db-attest-gate!                 persistance/db-attest-gate!)
+(def db-attest-intent!               persistance/db-attest-intent!)
 (def db-get-attestation              persistance/db-get-attestation)
 
 ;; Conversation-scoped intents, plans, gates, and focus

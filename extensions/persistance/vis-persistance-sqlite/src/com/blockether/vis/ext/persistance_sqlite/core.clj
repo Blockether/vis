@@ -1406,10 +1406,57 @@
 
       :else nil)))
 
+(defn- completed-plan-for-intent
+  [db-info intent-id]
+  (query-one! db-info {:select [:*]
+                       :from :conversation_intent_plan
+                       :where [:and
+                               [:= :intent_id (->ref intent-id)]
+                               [:= :status "completed"]]
+                       :order-by [[:created_at :desc]]}))
+
+(defn- abandoned-plan-for-intent
+  [db-info intent-id]
+  (query-one! db-info {:select [:*]
+                       :from :conversation_intent_plan
+                       :where [:and
+                               [:= :intent_id (->ref intent-id)]
+                               [:= :status "abandoned"]]
+                       :order-by [[:created_at :desc]]}))
+
+(defn- impeded-required-gate-for-intent
+  [db-info intent-id]
+  (some (fn [plan]
+          (query-one! db-info {:select [:*]
+                               :from :conversation_intent_gate
+                               :where [:and
+                                       [:= :plan_id (:id plan)]
+                                       [:= :required 1]
+                                       [:= :status "impeded"]]}))
+    (query! db-info {:select [:*]
+                     :from :conversation_intent_plan
+                     :where [:= :intent_id (->ref intent-id)]})))
+
+(defn- require-intent-closure-preconditions!
+  [db-info kind intent-id]
+  (case kind
+    :intent/fulfilled
+    (when-not (completed-plan-for-intent db-info intent-id)
+      (throw (ex-info "fulfilled intent attestation requires a completed plan"
+               {:intent-id (->uuid (->ref intent-id))})))
+
+    :intent/abandoned
+    (when-not (or (abandoned-plan-for-intent db-info intent-id)
+                (impeded-required-gate-for-intent db-info intent-id))
+      (throw (ex-info "abandoned intent attestation requires an abandoned plan or impeded required gate"
+               {:intent-id (->uuid (->ref intent-id))})))
+
+    nil))
+
 (defn db-create-attestation!
-  "Persist an explicit decision over an accepted evidence bundle. Gate proof and
-   impediment attestations update gate status as an attestation-derived
-   projection; the legacy proof/impediment blobs are not the authority."
+  "Persist an explicit decision over an accepted evidence bundle. Gate and intent
+   attestations update entity status as attestation-derived projections; the
+   legacy proof/impediment/ref blobs are not the authority."
   [db-info {:keys [evidence-bundle-id kind subject-kind subject-id decision status reason
                    policy-version attester-kind attester-id schema-version payload payload-sha256]}]
   (when (ds db-info)
@@ -1426,13 +1473,14 @@
             (throw (ex-info "attestation subject id must match evidence bundle"
                      {:attestation-subject-id subject-id
                       :bundle-subject-id (:subject_id bundle-row)})))
-          (let [id (new-id)
+          (let [kind-kw (input-keyword kind)
+                id (new-id)
                 status-s (attestation-status-sql status)
                 row (into {}
                       (remove (comp nil? val)
                         {:id id
                          :conversation_soul_id (:conversation_soul_id bundle-row)
-                         :kind (attestation-kind-sql kind)
+                         :kind (attestation-kind-sql kind-kw)
                          :subject_kind (subject-kind-sql subject-kind)
                          :subject_id subject-id
                          :evidence_bundle_id (->ref evidence-bundle-id)
@@ -1446,10 +1494,12 @@
                          :payload (when (some? payload) (->blob payload))
                          :payload_sha256 (or payload-sha256 (when (some? payload) (payload-digest payload)))
                          :created_at (now-ms)}))]
+            (when (and (= :intent subject-kind) (= "accepted" status-s))
+              (require-intent-closure-preconditions! tx-info kind-kw subject-id))
             (execute! tx-info {:insert-into :attestation
                                :values [row]})
             (when (and (= :gate subject-kind) (= "accepted" status-s))
-              (case (input-keyword kind)
+              (case kind-kw
                 :gate/proven
                 (execute! tx-info {:update :conversation_intent_gate
                                    :set {:status "proven"
@@ -1474,6 +1524,25 @@
                                    :where [:= :id subject-id]})
                 nil)
               (update-plan-resolution-after-gate! tx-info subject-id))
+            (when (and (= :intent subject-kind) (= "accepted" status-s))
+              (case kind-kw
+                :intent/fulfilled
+                (execute! tx-info {:update :conversation_intent
+                                   :set {:status "fulfilled"
+                                         :fulfillment_summary (or (:summary payload) reason)
+                                         :abandonment_reason nil
+                                         :resolved_ref nil
+                                         :resolved_at (now-ms)}
+                                   :where [:= :id subject-id]})
+                :intent/abandoned
+                (execute! tx-info {:update :conversation_intent
+                                   :set {:status "abandoned"
+                                         :fulfillment_summary nil
+                                         :abandonment_reason reason
+                                         :resolved_ref nil
+                                         :resolved_at (now-ms)}
+                                   :where [:= :id subject-id]})
+                nil))
             (row->attestation
               (require-row tx-info :attestation id "attestation not found after insert"))))))))
 
@@ -1489,6 +1558,22 @@
          :decision (case kind
                      :gate/impeded :impeded
                      :gate/proven :proven)}))))
+
+(defn db-attest-intent!
+  [db-info {:keys [intent-id evidence-bundle-id kind summary reason] :as opts}]
+  (let [kind (input-keyword (or kind :intent/fulfilled))]
+    (db-create-attestation! db-info
+      (merge opts
+        {:subject-kind :intent
+         :subject-id intent-id
+         :evidence-bundle-id evidence-bundle-id
+         :kind kind
+         :decision (case kind
+                     :intent/abandoned :abandoned
+                     :intent/fulfilled :fulfilled)
+         :reason (or reason summary)
+         :payload (cond-> (:payload opts)
+                    summary (assoc :summary summary))}))))
 
 (defn db-get-attestation
   [db-info attestation-id]

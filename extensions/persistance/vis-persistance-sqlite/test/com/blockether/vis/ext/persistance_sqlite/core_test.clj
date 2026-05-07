@@ -350,7 +350,89 @@
                                                              :where [:= :id (str (:id plan))]})))))
         (expect (= "active" (:status (first (raw-query s {:select [:status]
                                                           :from :conversation_intent
-                                                          :where [:= :id (str (:id intent))]})))))))))
+                                                          :where [:= :id (str (:id intent))]}))))))))
+
+  (it "fulfills an intent only from accepted closure attestation after plan completion"
+    (let [s          (h/store)
+          cid        (vis/db-store-conversation! s {:channel :tui})
+          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                         :user-request "close intent"
+                                                         :status :running})
+          intent     (vis/db-store-intent! s {:conversation-turn-id tid
+                                              :title "Close intent"
+                                              :rationale "User commitment boundary."})
+          plan       (vis/db-store-plan! s {:intent-id (:id intent)
+                                            :summary "One gate plan"})
+          gate       (vis/db-store-gate! s {:plan-id (:id plan)
+                                            :question "Verified?"})
+          slot-owner (random-uuid)
+          proof-ref  (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          close-ref  (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/2")]
+      (doseq [[ref exit] [[proof-ref 0] [close-ref 0]]]
+        (vis/db-store-provenance-event! s {:conversation-id cid
+                                           :conversation-turn-id tid
+                                           :ref ref
+                                           :kind :tool
+                                           :op :v/bash
+                                           :status :done
+                                           :payload {:result {:exit exit}}}))
+      (let [early-bundle (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                            :kind :closure
+                                                            :subject-kind :intent
+                                                            :subject-id (:id intent)
+                                                            :requirements [{:evidence/slot [slot-owner :close]
+                                                                            :evidence/from-ref close-ref
+                                                                            :evidence/extract [:result :exit]
+                                                                            :evidence/guard [:= [:value] 0]
+                                                                            :event/kind :tool
+                                                                            :event/op :v/bash}]})
+            early-thrown (try
+                           (vis/db-attest-intent! s {:intent-id (:id intent)
+                                                     :evidence-bundle-id (:id early-bundle)
+                                                     :kind :intent/fulfilled
+                                                     :summary "Too early."})
+                           nil
+                           (catch Exception e e))]
+        (expect (= :accepted (:status early-bundle)))
+        (expect (some? early-thrown))
+        (expect (= "active" (:status (first (raw-query s {:select [:status]
+                                                          :from :conversation_intent
+                                                          :where [:= :id (str (:id intent))]}))))))
+      (let [gate-bundle (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                           :kind :proof
+                                                           :subject-kind :gate
+                                                           :subject-id (:id gate)
+                                                           :requirements [{:evidence/slot [slot-owner :proof]
+                                                                           :evidence/from-ref proof-ref
+                                                                           :evidence/extract [:result :exit]
+                                                                           :evidence/guard [:= [:value] 0]
+                                                                           :event/kind :tool
+                                                                           :event/op :v/bash}]})]
+        (vis/db-attest-gate! s {:gate-id (:id gate)
+                                :evidence-bundle-id (:id gate-bundle)
+                                :kind :gate/proven
+                                :reason "Gate accepted."}))
+      (let [closure-bundle (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                              :kind :closure
+                                                              :subject-kind :intent
+                                                              :subject-id (:id intent)
+                                                              :requirements [{:evidence/slot [slot-owner :close]
+                                                                              :evidence/from-ref close-ref
+                                                                              :evidence/extract [:result :exit]
+                                                                              :evidence/guard [:= [:value] 0]
+                                                                              :event/kind :tool
+                                                                              :event/op :v/bash}]})
+            attestation    (vis/db-attest-intent! s {:intent-id (:id intent)
+                                                     :evidence-bundle-id (:id closure-bundle)
+                                                     :kind :intent/fulfilled
+                                                     :summary "Done."})
+            state          (vis/db-intents s {:conversation-turn-id tid})]
+        (expect (= :intent/fulfilled (:kind attestation)))
+        (expect (= :fulfilled (:decision attestation)))
+        (expect (= :accepted (:status attestation)))
+        (expect (= :fulfilled (-> state :intents first :status)))
+        (expect (= true (:success? state)))
+        (expect (= 2 (raw-count s :attestation)))))))
 
 (defn- drop-conversation-intent-schema!
   [db-file]
