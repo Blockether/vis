@@ -496,6 +496,29 @@
         (expect (str/includes? out (str "conversation `" conversation-id "`")))
         (expect (str/includes? out "User request:** what's the plan?")))))
 
+  (it "renders proof audit violations in the audit report"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          _iteration (db-store-iteration! s conversation-turn-id
+                       {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
+          ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1")
+          intent (vis/db-store-intent! s {:conversation-turn-id conversation-turn-id
+                                          :title "Legacy audit"
+                                          :rationale "Exercise report."})
+          plan (vis/db-store-plan! s {:intent-id (:id intent)
+                                      :summary "Legacy plan"})
+          gate (vis/db-store-gate! s {:plan-id (:id plan)
+                                      :question "Legacy proof?"})]
+      (vis/db-prove-gate! s {:gate-id (:id gate)
+                             :summary "Legacy proven."
+                             :refs [ref]})
+      (vis/db-fulfill-intent! s (:id intent) {:summary "Legacy fulfilled."
+                                              :refs [ref]})
+      (let [out ((private-fn "foundation-audit-report") (env s conversation-id))]
+        (expect (str/includes? out "## Proof audit"))
+        (expect (str/includes? out "Proof audit: needs work"))
+        (expect (str/includes? out ":missing-intent-closure-attestation")))))
+
   (it "exports inspect/report, provenance helpers, plus extension discovery symbols for introspection"
     (let [symbols (set (map :ext.symbol/sym com.blockether.vis.ext.foundation.introspection/all-symbols))]
       (expect (contains? symbols 'inspect))

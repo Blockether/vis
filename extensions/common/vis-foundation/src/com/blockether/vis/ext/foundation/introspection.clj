@@ -1664,17 +1664,52 @@ _No intents._
        (render-proof-violations (:violations checks))
        "\n\n</proofs>"))))
 
+(defn- proof-audit-status-line
+  [audit]
+  (str "- Proof audit: " (if (:success? audit) "ok" "needs work")
+    " — " (count (:violations audit)) " violation(s)"
+    ", " (get-in audit [:counts :intents] 0) " intent(s)"
+    ", " (get-in audit [:counts :plans] 0) " plan(s)"
+    ", " (get-in audit [:counts :gates] 0) " gate(s)"
+    ", " (get-in audit [:counts :attestations] 0) " attestation(s)"))
+
+(defn- render-proof-audit-violation
+  [{:keys [type intent-id plan-id gate-id gate-ids]}]
+  (str "- " (code-ish (pr-str type))
+    (when intent-id (str " intent " (code-ish (str intent-id))))
+    (when plan-id (str " plan " (code-ish (str plan-id))))
+    (when gate-id (str " gate " (code-ish (str gate-id))))
+    (when (seq gate-ids) (str " gates " (str/join ", " (map code-ish (map str gate-ids)))))))
+
+(defn- render-proof-audit
+  [audit]
+  (str "## Proof audit\n\n"
+    (proof-audit-status-line audit) "\n\n"
+    "### Violations\n\n"
+    (if (seq (:violations audit))
+      (str/join "\n" (map render-proof-audit-violation (:violations audit)))
+      "- none")
+    "\n"))
+
 (defn- foundation-audit-report
   ([env]
    (foundation-audit-report env (:conversation-id env)))
   ([env conversation-id]
-   (str "# Audit Report
+   (let [proof-audit (try
+                       (vis/db-audit-proof (:db-info env) {:conversation-id conversation-id})
+                       (catch Throwable e
+                         {:success? false
+                          :counts {}
+                          :violations [{:type :proof-audit-error
+                                        :blocking? true
+                                        :message (ex-message e)}]}))]
+     (str "# Audit Report
 
 "
-     "- Conversation: `" conversation-id "`
-
-"
-     (foundation-provenance-report env conversation-id))))
+       "- Conversation: `" conversation-id "`\n"
+       (proof-audit-status-line proof-audit) "\n\n"
+       (render-proof-audit proof-audit) "\n"
+       (foundation-provenance-report env conversation-id)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Extension catalog + README / doc access
