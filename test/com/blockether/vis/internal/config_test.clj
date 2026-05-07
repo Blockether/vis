@@ -54,6 +54,27 @@
         (expect (= :unset (:source (config/extension-env-status "EXA_API_KEY"))))
         (expect (nil? (:environment (config/load-config-raw))))))))
 
+(defdescribe remove-provider-test
+  (it "removes persisted provider entries while preserving unrelated config"
+    (let [dir  (.toString (Files/createTempDirectory "vis-remove-provider-test" (make-array java.nio.file.attribute.FileAttribute 0)))
+          path (str dir "/config.edn")]
+      (with-redefs [config/config-dir dir
+                    config/config-path path]
+        (config/save-config! {:environment {"EXA_API_KEY" "secret"}
+                              :providers [{:id :anthropic-coding-plan
+                                           :models [{:name "claude-sonnet-4-6"}]}
+                                          {:id :openai
+                                           :api-key "sk-test"
+                                           :models [{:name "gpt-5"}]}]})
+        (expect (= true (config/remove-config-provider! :anthropic-coding-plan :test)))
+        (expect (= {:environment {"EXA_API_KEY" "secret"}
+                    :providers [{:id :openai
+                                 :api-key "sk-test"
+                                 :models [{:name "gpt-5"}]}]}
+                  (config/load-config-raw)))
+        (expect (nil? (some #(= :anthropic-coding-plan (:id %))
+                        (:providers (config/load-config-raw)))))))))
+
 (defdescribe load-config-test
   (it "adds catalog metadata without rewriting provider-specific fields"
     (with-redefs [config/load-config-raw (fn [] {:providers [{:id :openai-codex

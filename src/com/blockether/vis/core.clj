@@ -266,6 +266,20 @@
 (def db-abandon-intent!               persistance/db-abandon-intent!)
 (def db-intents                       persistance/db-intents)
 
+;; Intent lifecycle (PROOF.md Tasks 28–34)
+(def db-list-intents                  persistance/db-list-intents)
+(def db-get-intent                    persistance/db-get-intent)
+(def db-intent-tree                   persistance/db-intent-tree)
+(def db-suggest-intent!               persistance/db-suggest-intent!)
+(def db-accept-intent!                persistance/db-accept-intent!)
+(def db-defer-intent!                 persistance/db-defer-intent!)
+(def db-mark-intent-resumable!        persistance/db-mark-intent-resumable!)
+(def db-resume-intent!                persistance/db-resume-intent!)
+(def db-get-intent-cursor             persistance/db-get-intent-cursor)
+(def db-set-intent-cursor!            persistance/db-set-intent-cursor!)
+(def db-abandon-intent-with-scope!    persistance/db-abandon-intent-with-scope!)
+(def db-deferred-intent-report        persistance/db-deferred-intent-report)
+
 ;; Var registry & turn history
 (def db-latest-var-registry              persistance/db-latest-var-registry)
 (def db-var-history-index                persistance/db-var-history-index)
@@ -363,6 +377,7 @@
 (def load-config-raw                     config/load-config-raw)
 (def load-config                         config/load-config)
 (def save-config!                        config/save-config!)
+(def remove-config-provider!             config/remove-config-provider!)
 (def extension-env-overrides             config/extension-env-overrides)
 (def extension-env-status                config/extension-env-status)
 (def extension-env-value                 config/extension-env-value)

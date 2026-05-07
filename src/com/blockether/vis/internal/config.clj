@@ -385,6 +385,22 @@
                                  :config            config
                                  :source            source})))))
 
+(defn remove-config-provider!
+  "Remove every persisted provider entry for `provider-id` from
+   `~/.vis/config.edn`, preserving unrelated config keys. Returns true
+   when the file changed."
+  ([provider-id] (remove-config-provider! provider-id nil))
+  ([provider-id source]
+   (let [raw        (or (load-config-raw) {})
+         providers  (vec (:providers raw))
+         providers* (vec (remove #(= provider-id (:id %)) providers))]
+     (when (not= providers providers*)
+       (save-config! (if (seq providers*)
+                       (assoc raw :providers providers*)
+                       (dissoc raw :providers))
+         source)
+       true))))
+
 (defn resolve-config
   "Resolve provider config: explicit → `~/.vis/config.edn`.
    Throws when nothing is available."

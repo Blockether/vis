@@ -381,6 +381,11 @@ CREATE INDEX idx_evidence_bundle_subject
 CREATE TABLE evidence_bundle_member (
   id              TEXT PRIMARY KEY NOT NULL,
   bundle_id       TEXT NOT NULL REFERENCES evidence_bundle(id) ON DELETE CASCADE,
+  -- `position` records insertion order so reads return members in requirement
+  -- order. Without this, ORDER BY created_at + id was non-deterministic
+  -- inside one transaction and tests that asserted on `(last members)` flaked
+  -- depending on UUID alpha collation. See PROOF.md Task 26 / 29.
+  position        INTEGER NOT NULL DEFAULT 0,
   slot            BLOB NOT NULL,
   event_ref       TEXT NOT NULL CHECK (trim(event_ref) <> ''),
   extract_path    BLOB NOT NULL,
@@ -391,7 +396,8 @@ CREATE TABLE evidence_bundle_member (
   error           TEXT CHECK (error IS NULL OR trim(error) <> ''),
   member_role     TEXT NOT NULL DEFAULT 'observation'
                   CHECK (member_role IN ('observation', 'support', 'blocker', 'artifact', 'context')),
-  created_at      INTEGER NOT NULL
+  created_at      INTEGER NOT NULL,
+  UNIQUE (bundle_id, position)
 );
 
 CREATE INDEX idx_evidence_bundle_member_bundle
@@ -404,17 +410,29 @@ CREATE TABLE attestation (
   id                    TEXT PRIMARY KEY NOT NULL,
   conversation_soul_id  TEXT NOT NULL
                         REFERENCES conversation_soul(id) ON DELETE CASCADE,
+  -- PROOF.md Tasks 28–34 add intent lifecycle attestations: every commitment
+  -- transition (suggest/accept/defer/resume) writes an attestation row so
+  -- audit can replay the chain without prompt scraping.
   kind                  TEXT NOT NULL
-                        CHECK (kind IN ('gate/proven', 'gate/impeded', 'plan/completed', 'plan/blocked', 'intent/fulfilled', 'intent/abandoned')),
+                        CHECK (kind IN ('gate/proven', 'gate/impeded',
+                                        'plan/completed', 'plan/blocked',
+                                        'intent/suggested', 'intent/accepted',
+                                        'intent/deferred', 'intent/resumed',
+                                        'intent/fulfilled', 'intent/abandoned')),
   subject_kind          TEXT NOT NULL CHECK (subject_kind IN ('gate', 'plan', 'intent')),
   subject_id            TEXT NOT NULL CHECK (trim(subject_id) <> ''),
   evidence_bundle_id    TEXT NOT NULL REFERENCES evidence_bundle(id) ON DELETE RESTRICT,
   decision              TEXT NOT NULL
-                        CHECK (decision IN ('proven', 'impeded', 'completed', 'blocked', 'fulfilled', 'abandoned')),
+                        CHECK (decision IN ('proven', 'impeded',
+                                            'completed', 'blocked',
+                                            'suggested', 'accepted', 'deferred', 'resumed',
+                                            'fulfilled', 'abandoned')),
   status                TEXT NOT NULL CHECK (status IN ('accepted', 'rejected', 'superseded')),
   reason                TEXT CHECK (reason IS NULL OR trim(reason) <> ''),
   policy_version        TEXT CHECK (policy_version IS NULL OR trim(policy_version) <> ''),
-  attester_kind         TEXT CHECK (attester_kind IS NULL OR attester_kind IN ('runtime', 'model', 'user', 'migration')),
+  -- `:user` and `:system-policy` are also legitimate attesters for the
+  -- new intent lifecycle transitions; allow them alongside the legacy set.
+  attester_kind         TEXT CHECK (attester_kind IS NULL OR attester_kind IN ('runtime', 'model', 'user', 'migration', 'system-policy')),
   attester_id           TEXT CHECK (attester_id IS NULL OR trim(attester_id) <> ''),
   schema_version        TEXT CHECK (schema_version IS NULL OR trim(schema_version) <> ''),
   payload               BLOB,
@@ -443,7 +461,44 @@ CREATE TABLE conversation_intent (
   conversation_soul_id TEXT NOT NULL REFERENCES conversation_soul(id) ON DELETE CASCADE,
   title TEXT NOT NULL CHECK (trim(title) <> ''),
   rationale TEXT NOT NULL CHECK (trim(rationale) <> ''),
-  status TEXT NOT NULL CHECK (status IN ('active', 'fulfilled', 'abandoned')),
+  -- PROOF.md Task 29: lifecycle expanded with `:suggested` (extension/system
+  -- proposal, not yet a Vis commitment) and `:deferred` (commitment waiting
+  -- on a Defer Trigger). Existing `active`/`fulfilled`/`abandoned` semantics
+  -- preserved; new states pre-date the running cursor.
+  status TEXT NOT NULL CHECK (status IN ('suggested', 'active', 'deferred', 'fulfilled', 'abandoned')),
+  -- PROOF.md Task 28: source = who proposed. `:user`, `:system`, `:extension`.
+  -- Default `'user'` keeps every existing call site backward-compatible.
+  source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'system', 'extension')),
+  -- Optional extension owner id when source = 'extension'.
+  owner_extension_id TEXT CHECK (owner_extension_id IS NULL OR trim(owner_extension_id) <> ''),
+  -- Real intent-tree parent (subintent edge stored on the child for cheap
+  -- depth-first traversal). Distinct from `conversation_intent_relation`,
+  -- which still records non-tree relations like :related, :supports, :blocks.
+  parent_intent_id TEXT REFERENCES conversation_intent(id) ON DELETE SET NULL,
+  -- Acceptance: who/when moved a `:suggested` intent into a commitment.
+  -- `:user` and `:system-policy` are the only legal kinds; extensions cannot
+  -- self-accept.
+  accepted_by_kind TEXT CHECK (accepted_by_kind IS NULL OR accepted_by_kind IN ('user', 'system-policy')),
+  accepted_by_id TEXT CHECK (accepted_by_id IS NULL OR trim(accepted_by_id) <> ''),
+  accepted_at INTEGER,
+  -- Defer trigger and sibling policy. Filled when status = 'deferred'.
+  defer_trigger_kind TEXT CHECK (defer_trigger_kind IS NULL OR defer_trigger_kind IN
+    ('user-input', 'time', 'extension-signal', 'intent')),
+  defer_trigger_payload BLOB,
+  defer_sibling_policy TEXT CHECK (defer_sibling_policy IS NULL OR defer_sibling_policy IN
+    ('continue-siblings', 'block-parent')),
+  -- Resume bookkeeping. `resumable_at` is set when the trigger has been
+  -- observed; `resumed_*` are set when a separate Resume Decision moves the
+  -- cursor.
+  resumable_at INTEGER,
+  resumed_by_kind TEXT CHECK (resumed_by_kind IS NULL OR resumed_by_kind IN ('user', 'system-policy')),
+  resumed_by_id TEXT CHECK (resumed_by_id IS NULL OR trim(resumed_by_id) <> ''),
+  resumed_at INTEGER,
+  -- Abandonment scope: `:abandon/current-intent` (default), `:current-branch`,
+  -- or `:all-running`. `NULL` means "legacy / not specified" so existing
+  -- abandonments keep the implicit `current-intent` semantics.
+  abandonment_scope TEXT CHECK (abandonment_scope IS NULL OR abandonment_scope IN
+    ('current-intent', 'current-branch', 'all-running')),
   fulfillment_summary TEXT CHECK (fulfillment_summary IS NULL OR trim(fulfillment_summary) <> ''),
   abandonment_reason TEXT CHECK (abandonment_reason IS NULL OR trim(abandonment_reason) <> ''),
   created_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
@@ -459,11 +514,103 @@ CREATE TABLE conversation_intent (
   CHECK (status <> 'abandoned' OR
          (abandonment_reason IS NOT NULL AND fulfillment_summary IS NULL AND resolved_at IS NOT NULL)),
   CHECK (status <> 'active' OR
-         (fulfillment_summary IS NULL AND abandonment_reason IS NULL AND resolved_at IS NULL))
+         (fulfillment_summary IS NULL AND abandonment_reason IS NULL AND resolved_at IS NULL)),
+  -- New states are pre-resolution: never carry a fulfillment/abandonment
+  -- summary or resolved_at.
+  CHECK (status NOT IN ('suggested', 'deferred') OR
+         (fulfillment_summary IS NULL AND abandonment_reason IS NULL AND resolved_at IS NULL)),
+  -- A `:deferred` intent must record at least the trigger kind so the audit
+  -- can explain WHY it was deferred. Sibling policy is recommended; default
+  -- (NULL) means `:continue-siblings`.
+  CHECK (status <> 'deferred' OR defer_trigger_kind IS NOT NULL),
+  -- Extension-owned intents must name the extension; user/system intents
+  -- must NOT.
+  CHECK ((source <> 'extension' AND owner_extension_id IS NULL) OR
+         (source = 'extension' AND owner_extension_id IS NOT NULL))
 );
 
 CREATE INDEX idx_conversation_intent_soul_status
   ON conversation_intent(conversation_soul_id, status, created_at);
+
+CREATE INDEX idx_conversation_intent_parent
+  ON conversation_intent(parent_intent_id);
+
+CREATE INDEX idx_conversation_intent_owner
+  ON conversation_intent(owner_extension_id) WHERE owner_extension_id IS NOT NULL;
+
+CREATE INDEX idx_conversation_intent_resumable
+  ON conversation_intent(conversation_soul_id, status, resumable_at)
+  WHERE status = 'deferred' AND resumable_at IS NOT NULL;
+
+-- Same-conversation parent-tree integrity: a child intent's parent_intent_id
+-- must point at an intent in the same conversation, and trees cannot be
+-- created across conversation_soul boundaries.
+CREATE TRIGGER trg_conversation_intent_parent_same_soul_ai
+BEFORE INSERT ON conversation_intent
+WHEN NEW.parent_intent_id IS NOT NULL
+BEGIN
+  SELECT CASE
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.parent_intent_id) IS NULL
+    THEN RAISE(ABORT, 'conversation_intent parent intent not found')
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.parent_intent_id) <> NEW.conversation_soul_id
+    THEN RAISE(ABORT, 'conversation_intent parent must belong to same conversation_soul')
+  END;
+END;
+
+CREATE TRIGGER trg_conversation_intent_parent_same_soul_au
+BEFORE UPDATE ON conversation_intent
+WHEN NEW.parent_intent_id IS NOT NULL
+BEGIN
+  SELECT CASE
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.parent_intent_id) IS NULL
+    THEN RAISE(ABORT, 'conversation_intent parent intent not found')
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.parent_intent_id) <> NEW.conversation_soul_id
+    THEN RAISE(ABORT, 'conversation_intent parent must belong to same conversation_soul')
+  END;
+END;
+
+-- PROOF.md Task 32: exactly one Intent Cursor per conversation. The cursor
+-- points at the currently-running intent (or NULL when nothing is running).
+-- This is a single-row-per-conversation table so cardinality is enforced by
+-- the PRIMARY KEY rather than a partial unique index.
+CREATE TABLE conversation_intent_cursor (
+  conversation_soul_id TEXT PRIMARY KEY NOT NULL
+    REFERENCES conversation_soul(id) ON DELETE CASCADE,
+  intent_id TEXT REFERENCES conversation_intent(id) ON DELETE SET NULL,
+  updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX idx_conversation_intent_cursor_intent
+  ON conversation_intent_cursor(intent_id) WHERE intent_id IS NOT NULL;
+
+-- Cursor integrity: the intent it points at must live in the same
+-- conversation, must be `:active`, and must not be a descendant of an
+-- abandoned ancestor. SQLite triggers cover the same-conversation rule
+-- structurally; the runtime enforces the active-status rule because
+-- intent state is not always known at cursor-set time.
+CREATE TRIGGER trg_conversation_intent_cursor_same_soul_ai
+BEFORE INSERT ON conversation_intent_cursor
+WHEN NEW.intent_id IS NOT NULL
+BEGIN
+  SELECT CASE
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
+    THEN RAISE(ABORT, 'conversation_intent_cursor intent not found')
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) <> NEW.conversation_soul_id
+    THEN RAISE(ABORT, 'conversation_intent_cursor intent must belong to same conversation_soul')
+  END;
+END;
+
+CREATE TRIGGER trg_conversation_intent_cursor_same_soul_au
+BEFORE UPDATE ON conversation_intent_cursor
+WHEN NEW.intent_id IS NOT NULL
+BEGIN
+  SELECT CASE
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
+    THEN RAISE(ABORT, 'conversation_intent_cursor intent not found')
+    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) <> NEW.conversation_soul_id
+    THEN RAISE(ABORT, 'conversation_intent_cursor intent must belong to same conversation_soul')
+  END;
+END;
 
 CREATE TABLE conversation_intent_ref (
   id TEXT PRIMARY KEY NOT NULL,
