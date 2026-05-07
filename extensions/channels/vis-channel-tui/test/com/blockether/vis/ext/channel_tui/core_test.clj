@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.core-test
-  (:require [com.blockether.vis.ext.channel-tui.core :as tui]
+  (:require [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.channel-tui.core :as tui]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe tui-channel-registration-test
@@ -24,4 +25,46 @@
         (expect (= [] @calls))
         (expect (= {:screen-args ["--resume"]}
                   (tui/channel-main ["--resume"])))
-        (expect (= ['com.blockether.vis.ext.channel-tui.screen/channel-main] @calls))))))
+        (expect (= ['com.blockether.vis.ext.channel-tui.screen/channel-main] @calls)))))
+
+  (it "loads the screen ns when --conversation-id resolves"
+    (let [resolve-calls (atom [])
+          init-calls    (atom 0)
+          by-id-calls   (atom [])
+          exit-calls    (atom [])]
+      (with-redefs [clojure.core/requiring-resolve
+                    (fn [sym]
+                      (swap! resolve-calls conj sym)
+                      (fn [args] {:screen-args args}))
+                    vis/init!      (fn [] (swap! init-calls inc))
+                    vis/shutdown!  (fn [] nil)
+                    vis/by-id      (fn [id] (swap! by-id-calls conj id) {:id id})
+                    vis/by-channel (fn [_] [])
+                    com.blockether.vis.ext.channel-tui.core/exit-not-found!
+                    (fn [cid] (swap! exit-calls conj cid))]
+        (expect (= {:screen-args ["--conversation-id" "abcd1234"]}
+                  (tui/channel-main ["--conversation-id" "abcd1234"]))))
+      (expect (= 1 @init-calls))
+      (expect (= ["abcd1234"] @by-id-calls))
+      (expect (= [] @exit-calls))
+      (expect (= ['com.blockether.vis.ext.channel-tui.screen/channel-main]
+                @resolve-calls))))
+
+  (it "skips loading the screen ns when --conversation-id misses"
+    (let [resolve-calls  (atom [])
+          init-calls     (atom 0)
+          shutdown-calls (atom 0)
+          exit-calls     (atom [])]
+      (with-redefs [clojure.core/requiring-resolve
+                    (fn [sym] (swap! resolve-calls conj sym) (fn [_] nil))
+                    vis/init!      (fn [] (swap! init-calls inc))
+                    vis/shutdown!  (fn [] (swap! shutdown-calls inc))
+                    vis/by-id      (fn [_] nil)
+                    vis/by-channel (fn [_] [])
+                    com.blockether.vis.ext.channel-tui.core/exit-not-found!
+                    (fn [cid] (swap! exit-calls conj cid))]
+        (tui/channel-main ["--conversation-id" "deadbeef"]))
+      ;; The screen channel-main MUST NOT have been required on the miss path.
+      (expect (= [] @resolve-calls))
+      (expect (= 1 @init-calls))
+      (expect (= ["deadbeef"] @exit-calls)))))
