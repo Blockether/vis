@@ -25,6 +25,7 @@
 (def ^:private conversation-rows       #'main/conversation-rows)
 (def ^:private strip-global-args       #'main/strip-global-args)
 (def ^:private startup-measure?        #'main/startup-measure?)
+(def ^:private root-help-request?      #'main/root-help-request?)
 (def ^:private config-with-model-override #'main/config-with-model-override)
 
 (defdescribe cli-run-persistence-test
@@ -125,7 +126,13 @@
               (strip-global-args ["providers" "--measure" "list"]))))
 
   (it "enables startup measurement from the global flag"
-    (expect (startup-measure? ["--measure" "help"]))))
+    (expect (startup-measure? ["--measure" "help"])))
+
+  (it "recognizes root-only help requests before extension discovery"
+    (doseq [args [[] ["help"] ["--help"] ["-h"]]]
+      (expect (true? (root-help-request? args))))
+    (doseq [args [["channels"] ["channels" "tui" "--help"] ["providers" "list"]]]
+      (expect (false? (root-help-request? args))))))
 
 (defdescribe short-ext-ns-test
   (it "rewrites the canonical extension package as `v/`"
