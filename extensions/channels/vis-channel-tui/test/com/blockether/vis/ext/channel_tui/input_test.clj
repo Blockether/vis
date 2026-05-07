@@ -180,7 +180,19 @@
       (expect (= {:action :cycle-model :state state}
                 (input/handle-key (ctrl-key (Character. \t)) state)))
       (expect (= {:action :cycle-model :state state}
-                (input/handle-key (ctrl-key (Character. \T)) state))))))
+                (input/handle-key (ctrl-key (Character. \T)) state)))))
+
+  (it "Shift+Tab cycles workspace tabs and Ctrl+numbers are unbound"
+    (let [state (-> (input/empty-input)
+                  (input/paste-text "keep"))]
+      (expect (= {:action :select-workspace-tab :tab-index :next :state state}
+                (input/handle-key (special-key KeyType/ReverseTab) state)))
+      (expect (= {:action :select-workspace-tab :tab-index :next :state state}
+                (input/handle-key (KeyStroke. KeyType/Tab false false true) state)))
+      (expect (= {:action :continue :state state}
+                (input/handle-key (ctrl-key (Character. \1)) state)))
+      (expect (= {:action :continue :state state}
+                (input/handle-key (ctrl-key (Character. \9)) state))))))
 
 (defdescribe bracketed-paste-helpers-test
   (it "paste-start? is true ONLY for a KeyStroke carrying PASTE_START_CHAR"

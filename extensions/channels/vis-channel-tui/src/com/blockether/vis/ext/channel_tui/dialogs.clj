@@ -1830,6 +1830,7 @@
    Whole-conversation Markdown copy lives in the header as an icon,
    not in Ctrl+K."
   [{:id :new-conversation    :label "New Conversation"}
+   {:id :new-tab             :label "New Tab"}
    {:id :fork-conversation   :label "Fork Conversation"}
    {:id :switch-conversation :label "Switch Conversation"}
    {:id :providers           :label "Configure Providers"}

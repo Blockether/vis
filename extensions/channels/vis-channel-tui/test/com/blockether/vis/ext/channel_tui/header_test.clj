@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.header-test
-  (:require [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -123,3 +124,36 @@
           (expect (= t/header-hover-fg (:fg (write-by-text "⧉ 123e4567"))))
           (expect (= t/header-fg (:fg (write-by-text " | "))))
           (expect (= t/header-fg (:fg (write-by-text "⧉ Transcript")))))))))
+
+(defdescribe draw-header-workspace-tabs-test
+  (it "adds one header row and renders workspace tabs only when more than one exists"
+    (cr/reset!)
+    (let [writes (atom [])
+          g      (dummy-text-graphics writes)
+          db     {:title "Chat"
+                  :conversation {:id "123e4567-e89b-12d3-a456-426614174000"}
+                  :active-workspace-id :feature
+                  :workspace-tabs [{:id :main :label "Main"}
+                                   {:id :feature :label "Feature" :dirty? true}
+                                   {:id :verify :label "Verify" :state :running}]}]
+      (expect (= 3 (header/header-rows (assoc db :workspace-tabs [{:id :main}]))))
+      (expect (= 4 (header/header-rows db)))
+      (cr/begin-frame!)
+      (header/draw-header! g db 0 80)
+      (cr/commit-frame!)
+      (let [tab-writes (filter #(= 0 (:row %)) @writes)
+            title      (some #(when (= "Chat" (:text %)) %) @writes)
+            layout     (p/tab-layout (:workspace-tabs db) 1 78 :feature)
+            expected   (nth layout 1)
+            tab-hit    (some #(when (and (= :workspace-tab (:kind %))
+                                      (= 1 (:index %)))
+                                %)
+                         (cr/current))]
+        (expect (some #(= "Main" (str/trim (:text %))) tab-writes))
+        (expect (some #(= "Feature •" (str/trim (:text %))) tab-writes))
+        (expect (some #(= "Verify ▶" (str/trim (:text %))) tab-writes))
+        (expect (= 2 (:row title)))
+        (expect (= {:row 0 :col (:left expected) :width (:width expected)}
+                  (:bounds tab-hit)))
+        (expect (= :feature (:workspace-id tab-hit)))
+        (expect (= tab-hit (cr/lookup (:left expected) 0)))))))

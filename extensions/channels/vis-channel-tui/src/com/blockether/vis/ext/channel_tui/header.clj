@@ -45,10 +45,9 @@
   8)
 
 (def ^:const HEADER_ROWS
-  "Total rows reserved by the header band: top rule + content + bottom
-   rule. Single source of truth; `screen.clj` derives `messages-top`
-   from this so adding a fourth row later (e.g. breadcrumb) is a
-   one-line change here."
+  "Minimum rows reserved by the header band: top rule + content + bottom
+   rule. Use `header-rows` for a concrete app-db, because workspace tabs add
+   one row only when there is more than one tab."
   3)
 
 (def ^:private placeholder-title
@@ -71,6 +70,24 @@
 (def ^:private markdown-copy-label
   "Compact Markdown transcript export affordance painted after the conversation-id copy block."
   (str copy-icon " Transcript"))
+
+(defn- workspace-tabs
+  [db]
+  (let [tabs (:workspace-tabs db)]
+    (when (> (count tabs) 1)
+      (vec tabs))))
+
+(defn- active-workspace-tab-id
+  [db tabs]
+  (or (:active-workspace-id db)
+    (:id (some #(when (:active? %) %) tabs))
+    (:id (first tabs))))
+
+(defn header-rows
+  "Rows needed by the header for this app-db. Workspace tabs are persistent in
+   the header only when more than one workspace tab exists."
+  [db]
+  (+ HEADER_ROWS (if (seq (workspace-tabs db)) 1 0)))
 
 (defn- short-id [conversation]
   (when-let [id (some-> conversation :id str)]
@@ -167,8 +184,11 @@
    corresponding payload, then pushes a host notification that this band
    surfaces in the LEFT slot."
   [g db header-top cols]
-  (let [content-row  (+ header-top 1)
-        bottom-row   (+ header-top 2)
+  (let [tabs         (workspace-tabs db)
+        tabs-row     (when (seq tabs) header-top)
+        separator-row (if (seq tabs) (inc header-top) header-top)
+        content-row  (+ header-top (if (seq tabs) 2 1))
+        bottom-row   (dec (+ header-top (header-rows db)))
         edge-pad     1
         id-short     (short-id (:conversation db))
         full-uuid    (full-id  (:conversation db))
@@ -213,7 +233,36 @@
                        :else
                        title-col-raw)]
 
-    (draw-rule! g header-top cols)
+    ;; Optional Workspace tabs. They live in the header, but only when there is
+    ;; more than one Workspace tab to choose from. Tabs occupy the top row;
+    ;; the rule below them separates workspace navigation from conversation
+    ;; title/id actions.
+    (when (seq tabs)
+      (p/clear-styles! g)
+      (p/set-colors! g t/header-fg t/terminal-bg)
+      (p/fill-rect! g 0 tabs-row cols 1)
+      (let [layout (p/draw-tabs! g tabs
+                     {:left        edge-pad
+                      :row         tabs-row
+                      :width       (max 0 (- cols (* 2 edge-pad)))
+                      :active-id   (active-workspace-tab-id db tabs)
+                      :fg          t/header-fg
+                      :bg          t/terminal-bg
+                      :active-fg   t/header-hover-fg
+                      :active-bg   t/terminal-bg
+                      :inactive-fg t/footer-fg-muted
+                      :inactive-bg t/terminal-bg})]
+        (doseq [[idx {:keys [id left width]}] (map-indexed vector layout)
+                :when (pos? (long width))]
+          (cr/register!
+            {:bounds       {:row tabs-row :col left :width width}
+             :kind         :workspace-tab
+             :index        idx
+             :workspace-id id
+             :text         id
+             :enabled?     true}))))
+
+    (draw-rule! g separator-row cols)
 
     ;; Wipe content row to terminal-bg first so the previous frame's
     ;; characters can't bleed through the gaps between LEFT/CENTER/RIGHT.
