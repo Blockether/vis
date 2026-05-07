@@ -276,6 +276,11 @@
 (defdelegate db-list-conversation-turn-iterations [db-info conversation-turn-ref])
 (defdelegate db-list-iteration-vars [db-info iteration-ref])
 (defdelegate db-list-iteration-blocks [db-info iteration-ref])
+(defdelegate db-store-provenance-event! [db-info opts])
+(defdelegate db-get-provenance-event [db-info conversation-id ref])
+(defdelegate db-list-provenance-events [db-info opts])
+(defdelegate db-create-evidence-bundle! [db-info opts])
+(defdelegate db-get-evidence-bundle [db-info bundle-id])
 
 ;; --- Conversation-scoped intents, plans, gates, and focus ---
 (defdelegate db-store-intent! [db-info opts])

@@ -307,6 +307,100 @@ BEGIN
 END;
 
 -- =============================================================================
+-- Provenance event ledger — immutable runtime observations.
+-- =============================================================================
+CREATE TABLE provenance_event (
+  id                         TEXT PRIMARY KEY NOT NULL,
+  conversation_soul_id       TEXT NOT NULL
+                             REFERENCES conversation_soul(id) ON DELETE CASCADE,
+  conversation_turn_soul_id  TEXT
+                             REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
+  conversation_turn_state_id TEXT
+                             REFERENCES conversation_turn_state(id) ON DELETE SET NULL,
+  iteration_id               TEXT
+                             REFERENCES iteration(id) ON DELETE SET NULL,
+  ref                        TEXT NOT NULL CHECK (trim(ref) <> ''),
+  parent_ref                 TEXT CHECK (parent_ref IS NULL OR trim(parent_ref) <> ''),
+  kind                       TEXT NOT NULL
+                             CHECK (kind IN ('eval', 'tool', 'error', 'answer', 'system', 'diagnostic', 'lifecycle')),
+  op                         TEXT NOT NULL CHECK (trim(op) <> ''),
+  status                     TEXT NOT NULL
+                             CHECK (status IN ('running', 'done', 'error', 'interrupted', 'timeout', 'cancelled')),
+  rendering_kind             TEXT CHECK (rendering_kind IS NULL OR trim(rendering_kind) <> ''),
+  payload                    BLOB,
+  payload_sha256             TEXT CHECK (payload_sha256 IS NULL OR trim(payload_sha256) <> ''),
+  summary                    TEXT CHECK (summary IS NULL OR trim(summary) <> ''),
+  metadata                   BLOB,
+  created_at                 INTEGER NOT NULL,
+
+  UNIQUE (conversation_soul_id, ref)
+);
+
+CREATE INDEX idx_provenance_event_soul_created
+  ON provenance_event(conversation_soul_id, created_at);
+
+CREATE INDEX idx_provenance_event_ref
+  ON provenance_event(ref);
+
+CREATE INDEX idx_provenance_event_iteration
+  ON provenance_event(iteration_id, created_at);
+
+CREATE TRIGGER trg_provenance_event_immutable_au
+BEFORE UPDATE ON provenance_event
+BEGIN
+  SELECT RAISE(ABORT, 'provenance_event rows are immutable');
+END;
+
+CREATE TRIGGER trg_provenance_event_immutable_ad
+BEFORE DELETE ON provenance_event
+BEGIN
+  SELECT RAISE(ABORT, 'provenance_event rows are immutable');
+END;
+
+CREATE TABLE evidence_bundle (
+  id                    TEXT PRIMARY KEY NOT NULL,
+  conversation_soul_id  TEXT NOT NULL
+                        REFERENCES conversation_soul(id) ON DELETE CASCADE,
+  kind                  TEXT NOT NULL
+                        CHECK (kind IN ('candidate', 'proof', 'impediment', 'completion', 'closure')),
+  subject_kind          TEXT NOT NULL CHECK (subject_kind IN ('gate', 'plan', 'intent')),
+  subject_id            TEXT NOT NULL CHECK (trim(subject_id) <> ''),
+  source                TEXT NOT NULL CHECK (source IN ('manual', 'derived', 'automatic')),
+  status                TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')),
+  summary               TEXT CHECK (summary IS NULL OR trim(summary) <> ''),
+  metadata              BLOB,
+  created_at            INTEGER NOT NULL
+);
+
+CREATE INDEX idx_evidence_bundle_soul_created
+  ON evidence_bundle(conversation_soul_id, created_at);
+
+CREATE INDEX idx_evidence_bundle_subject
+  ON evidence_bundle(subject_kind, subject_id, created_at);
+
+CREATE TABLE evidence_bundle_member (
+  id              TEXT PRIMARY KEY NOT NULL,
+  bundle_id       TEXT NOT NULL REFERENCES evidence_bundle(id) ON DELETE CASCADE,
+  slot            BLOB NOT NULL,
+  event_ref       TEXT NOT NULL CHECK (trim(event_ref) <> ''),
+  extract_path    BLOB NOT NULL,
+  derived_value   BLOB,
+  guard           BLOB,
+  guard_ok        INTEGER NOT NULL CHECK (guard_ok IN (0, 1)),
+  error_code      TEXT CHECK (error_code IS NULL OR trim(error_code) <> ''),
+  error           TEXT CHECK (error IS NULL OR trim(error) <> ''),
+  member_role     TEXT NOT NULL DEFAULT 'observation'
+                  CHECK (member_role IN ('observation', 'support', 'blocker', 'artifact', 'context')),
+  created_at      INTEGER NOT NULL
+);
+
+CREATE INDEX idx_evidence_bundle_member_bundle
+  ON evidence_bundle_member(bundle_id);
+
+CREATE INDEX idx_evidence_bundle_member_ref
+  ON evidence_bundle_member(event_ref);
+
+-- =============================================================================
 -- Conversation-scoped intents, plans, blocking gates, and turn focus.
 --
 -- Intents belong to conversation_soul. Focus belongs to one
