@@ -400,6 +400,37 @@ CREATE INDEX idx_evidence_bundle_member_bundle
 CREATE INDEX idx_evidence_bundle_member_ref
   ON evidence_bundle_member(event_ref);
 
+CREATE TABLE attestation (
+  id                    TEXT PRIMARY KEY NOT NULL,
+  conversation_soul_id  TEXT NOT NULL
+                        REFERENCES conversation_soul(id) ON DELETE CASCADE,
+  kind                  TEXT NOT NULL
+                        CHECK (kind IN ('gate/proven', 'gate/impeded', 'plan/completed', 'plan/blocked', 'intent/fulfilled', 'intent/abandoned')),
+  subject_kind          TEXT NOT NULL CHECK (subject_kind IN ('gate', 'plan', 'intent')),
+  subject_id            TEXT NOT NULL CHECK (trim(subject_id) <> ''),
+  evidence_bundle_id    TEXT NOT NULL REFERENCES evidence_bundle(id) ON DELETE RESTRICT,
+  decision              TEXT NOT NULL
+                        CHECK (decision IN ('proven', 'impeded', 'completed', 'blocked', 'fulfilled', 'abandoned')),
+  status                TEXT NOT NULL CHECK (status IN ('accepted', 'rejected', 'superseded')),
+  reason                TEXT CHECK (reason IS NULL OR trim(reason) <> ''),
+  policy_version        TEXT CHECK (policy_version IS NULL OR trim(policy_version) <> ''),
+  attester_kind         TEXT CHECK (attester_kind IS NULL OR attester_kind IN ('runtime', 'model', 'user', 'migration')),
+  attester_id           TEXT CHECK (attester_id IS NULL OR trim(attester_id) <> ''),
+  schema_version        TEXT CHECK (schema_version IS NULL OR trim(schema_version) <> ''),
+  payload               BLOB,
+  payload_sha256        TEXT CHECK (payload_sha256 IS NULL OR trim(payload_sha256) <> ''),
+  created_at            INTEGER NOT NULL
+);
+
+CREATE INDEX idx_attestation_soul_created
+  ON attestation(conversation_soul_id, created_at);
+
+CREATE INDEX idx_attestation_subject
+  ON attestation(subject_kind, subject_id, created_at);
+
+CREATE INDEX idx_attestation_bundle
+  ON attestation(evidence_bundle_id);
+
 -- =============================================================================
 -- Conversation-scoped intents, plans, blocking gates, and turn focus.
 --

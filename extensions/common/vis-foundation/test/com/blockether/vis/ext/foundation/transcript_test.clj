@@ -342,6 +342,17 @@
           (expect (str/includes? out "Conversation not found")))
         (finally (vis/db-dispose-connection! s)))))
 
+  (it "exposes a flag-free reproduction CLI command"
+    (let [cmd  (transcript/cli-command)
+          help (vis/render-command cmd ["vis" "extensions" (:cmd/name cmd)])]
+      (expect (= "reproduction" (:cmd/name cmd)))
+      (expect (= "vis extensions reproduction <CONVERSATION-ID>" (:cmd/usage cmd)))
+      (expect (not (str/includes? (:cmd/usage cmd) "--")))
+      (expect (not (str/includes? help "FLAGS")))
+      (expect (not (str/includes? help "--prompts")))
+      (expect (not (str/includes? help "--dialog")))
+      (expect (str/includes? help "always complete"))))
+
   (it "accepts an unambiguous string prefix in the Markdown renderer too"
     (let [s (vis/db-create-connection! :memory)]
       (try
@@ -444,10 +455,9 @@
           ;; The final answer text renders under a `#### Final answer`
           ;; section after every iteration of its turn.
           (expect (str/includes? out "#### Final answer"))
-          ;; Default forensic report omits prompt bodies; use
-          ;; :system-prompts / :prompts modes for DB-backed prompt
-          ;; snapshots without ballooning every normal report.
-          (expect (not (str/includes? out "SYS_PROMPT_TEXT_FIXTURE")))
-          (expect (not (str/includes? out "<details><summary>LLM messages (")))
-          (expect (not (str/includes? out "USER_TURN_TEXT_FIXTURE"))))
+          ;; Reproduction report is deliberately complete: prompt
+          ;; bodies and message envelopes render by default. No flags.
+          (expect (str/includes? out "SYS_PROMPT_TEXT_FIXTURE"))
+          (expect (str/includes? out "<details><summary>LLM messages ("))
+          (expect (str/includes? out "USER_TURN_TEXT_FIXTURE")))
         (finally (vis/db-dispose-connection! s))))))

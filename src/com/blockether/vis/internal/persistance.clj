@@ -281,6 +281,9 @@
 (defdelegate db-list-provenance-events [db-info opts])
 (defdelegate db-create-evidence-bundle! [db-info opts])
 (defdelegate db-get-evidence-bundle [db-info bundle-id])
+(defdelegate db-create-attestation! [db-info opts])
+(defdelegate db-attest-gate! [db-info opts])
+(defdelegate db-get-attestation [db-info attestation-id])
 
 ;; --- Conversation-scoped intents, plans, gates, and focus ---
 (defdelegate db-store-intent! [db-info opts])
