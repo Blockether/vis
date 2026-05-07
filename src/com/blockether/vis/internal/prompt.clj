@@ -420,6 +420,16 @@
           (catch Throwable _ nil))
       (long (quot (count text) 4)))))
 
+(defn count-tokens
+  "Public token counter mirroring the loop's internal accounting. Used
+   by tests + diagnostics that want to report exact `<journal>` /
+   `<var_index>` / iteration-trailer token impact without depending on
+   the private encoder var. nil/blank inputs return 0 so callers can
+   sum surfaces without nil-checking each one."
+  ([text] (count-tokens nil text))
+  ([model text]
+   (long (or (count-prompt-tokens model text) 0))))
+
 (defn- model-context-limit
   "Best-effort lookup of `model`'s context window. Falls back to a
    conservative 32k when the table doesn't know the model id, which
@@ -1239,3 +1249,89 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                           ext-ps     (conj ext-ps)
                           provider-p (conj provider-p)))]
     (str/join "\n\n" blocks)))
+
+;; =============================================================================
+;; Model-facing context impact (CTX1)
+;;
+;; Reports the exact byte/token cost of every surface that lands in the
+;; provider prompt for a given turn shape. Used by:
+;;   - tests that assert trivial / no-tool turns carry substantially less
+;;     model-facing context than coding / proof turns;
+;;   - diagnostic tooling that wants to attribute prompt size to a
+;;     specific surface (system / user goal / iteration trailer) without
+;;     reaching into private helpers;
+;;   - autoresearch + judge runners that need a single, reproducible
+;;     "exact token/context impact" number per turn.
+;;
+;; Surfaces, in send order:
+;;   :system                 system prompt (cached per turn)
+;;   :user-turn-request      <user_turn_request_main_goal> wrapper
+;;   :iteration-trailer      per-iteration <journal> + <var_index> +
+;;                           <active_skills> + <system_nudges> bundle
+;;
+;; Trivial / no-tool turns produce a nil iteration trailer; the function
+;; returns 0 bytes / 0 tokens for that surface so callers see the floor
+;; explicitly instead of having to special-case nil.
+;; =============================================================================
+
+(defn- surface-stats
+  [model surface text]
+  {:surface surface
+   :bytes  (long (count (or text "")))
+   :tokens (count-tokens model (or text ""))})
+
+(defn model-facing-context-stats
+  "Compute byte + token cost of each model-facing surface for one turn.
+
+   Required opts:
+     `:active-extensions` — vec from `(active-extensions env)`. Same
+       contract as `assemble-system-prompt` / `build-iteration-context`.
+     `:user-request` — the exact user text for the current turn.
+
+   Optional opts:
+     `:system-prompt` — caller addendum threaded into the core prompt.
+     `:provider-prompt-context` — provider/model-specific prompt block.
+     `:blocks-by-iteration` — same shape `build-iteration-context` takes.
+     `:iteration` / `:context-limit` / `:title-refresh?` — forwarded.
+     `:model` — model id used for the tokenizer; falls back to chars/4.
+
+   Returns:
+     {:model …
+      :surfaces [{:surface :system            :bytes N :tokens T}
+                 {:surface :user-turn-request :bytes N :tokens T}
+                 {:surface :iteration-trailer :bytes N :tokens T}]
+      :total {:bytes N :tokens T}
+      :iteration-trailer-empty? bool}
+
+   The returned map is plain data; the assembler is the source of
+   truth, this function only measures."
+  [environment {:keys [active-extensions system-prompt provider-prompt-context
+                       user-request blocks-by-iteration iteration context-limit
+                       title-refresh? model] :as opts}]
+  (when-not (contains? opts :active-extensions)
+    (throw (ex-info "model-facing-context-stats requires :active-extensions"
+             {:type :vis/missing-active-extensions})))
+  (let [system (assemble-system-prompt environment
+                 {:active-extensions active-extensions
+                  :system-prompt system-prompt
+                  :provider-prompt-context provider-prompt-context})
+        user   (when (and user-request (not (str/blank? user-request)))
+                 (prompt-block "user_turn_request_main_goal" user-request))
+        trailer (build-iteration-context environment
+                  {:active-extensions active-extensions
+                   :blocks-by-iteration blocks-by-iteration
+                   :iteration iteration
+                   :model model
+                   :system-prompt system
+                   :current-user-content user
+                   :context-limit context-limit
+                   :title-refresh? title-refresh?})
+        surfaces [(surface-stats model :system system)
+                  (surface-stats model :user-turn-request user)
+                  (surface-stats model :iteration-trailer trailer)]
+        total-bytes (reduce + (map :bytes surfaces))
+        total-tokens (reduce + (map :tokens surfaces))]
+    {:model model
+     :surfaces surfaces
+     :total {:bytes total-bytes :tokens total-tokens}
+     :iteration-trailer-empty? (nil? trailer)}))

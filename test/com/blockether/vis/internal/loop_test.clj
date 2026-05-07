@@ -1212,6 +1212,57 @@
                  :iteration 0})]
       (expect (nil? out))))
 
+  (it "public model-facing-context-stats reports zero trailer for trivial chat and a bounded trailer for coding turns"
+    (let [trivial (prompt/model-facing-context-stats
+                    {:conversation-title-atom (atom "Casual chat")
+                     :active-skills-atom (atom {})}
+                    {:active-extensions []
+                     :user-request "hi"
+                     :iteration 0})
+          coding (prompt/model-facing-context-stats
+                   {:conversation-title-atom (atom "Fix login bug")
+                    :active-skills-atom (atom {"diagnose" {:name "diagnose"
+                                                           :description "Debug."
+                                                           :source :repo
+                                                           :path "/tmp/SKILL.md"
+                                                           :body "# Repro first."}})}
+                   {:active-extensions []
+                    :user-request "Fix the login bug; verify with ./verify.sh."
+                    :blocks-by-iteration
+                    [[1 {:thinking "LLM-only thoughts must not leak"
+                         :blocks [{:code "(v/issue-intent! {:title \"Fix\"})"
+                                   :result {:id "intent-1"}
+                                   :provenance {:ref "turn/aabbccdd/iteration/1/block/1"
+                                                :op :sci/eval
+                                                :status :done}}
+                                  {:code "(v/bash \"./verify.sh\")"
+                                   :result :ok
+                                   :provenance {:ref "turn/aabbccdd/iteration/1/block/2/tool/bash"
+                                                :op :v/bash
+                                                :status :done}}]}]]
+                    :iteration 1})
+          trivial-trailer (some #(when (= :iteration-trailer (:surface %)) %)
+                            (:surfaces trivial))
+          coding-trailer (some #(when (= :iteration-trailer (:surface %)) %)
+                           (:surfaces coding))]
+      ;; Trivial: trailer empty.
+      (expect (true? (:iteration-trailer-empty? trivial)))
+      (expect (= 0 (:bytes trivial-trailer)))
+      (expect (= 0 (:tokens trivial-trailer)))
+      ;; Coding: trailer carries evidence; bounded under 16 KB.
+      (expect (false? (:iteration-trailer-empty? coding)))
+      (expect (pos? (:bytes coding-trailer)))
+      (expect (< (:bytes coding-trailer) 16000))
+      ;; System prompt is identical across shapes (prompt-cache friendly).
+      (let [system-tokens (fn [s]
+                            (:tokens (some #(when (= :system (:surface %)) %)
+                                       (:surfaces s))))]
+        (expect (= (system-tokens trivial) (system-tokens coding))))
+      ;; Total tokens of coding turn must be >= trivial; no shape can
+      ;; undercut the floor.
+      (expect (>= (get-in coding [:total :tokens])
+                (get-in trivial [:total :tokens])))))
+
   (it "coding turn iteration-context surfaces journal + tool evidence + active skill body"
     (let [out (prompt/build-iteration-context
                 {:conversation-title-atom (atom "set")
