@@ -26,6 +26,8 @@
 (def ^:private strip-global-args       #'main/strip-global-args)
 (def ^:private startup-measure?        #'main/startup-measure?)
 (def ^:private root-help-request?      #'main/root-help-request?)
+(def ^:private help-request?           #'main/help-request?)
+(def ^:private channel-help-request?   #'main/channel-help-request?)
 (def ^:private config-with-model-override #'main/config-with-model-override)
 
 (defdescribe cli-run-persistence-test
@@ -132,7 +134,15 @@
     (doseq [args [[] ["help"] ["--help"] ["-h"]]]
       (expect (true? (root-help-request? args))))
     (doseq [args [["channels"] ["channels" "tui" "--help"] ["providers" "list"]]]
-      (expect (false? (root-help-request? args))))))
+      (expect (false? (root-help-request? args)))))
+
+  (it "recognizes help at any command depth for fast help dispatch"
+    (doseq [args [[] ["help"] ["providers" "--help"] ["channels" "tui" "--help"]]]
+      (expect (true? (help-request? args))))
+    (expect (false? (help-request? ["providers" "list"])))
+    (expect (true? (channel-help-request? ["channels" "tui" "--help"])))
+    (expect (true? (channel-help-request? ["channels" "telegram" "-h"])))
+    (expect (false? (channel-help-request? ["channels" "other" "--help"])))))
 
 (defdescribe short-ext-ns-test
   (it "rewrites the canonical extension package as `v/`"
