@@ -28,7 +28,6 @@
   com.blockether/vis-exa                      {:local/root "extensions/common/vis-exa"}
   com.blockether/vis-mermaid                  {:local/root "extensions/common/vis-mermaid"}
   com.blockether/vis-voice                   {:local/root "extensions/common/vis-voice"}
-  com.blockether/vis-voice-parakeet           {:local/root "extensions/common/vis-voice-parakeet"}
   com.blockether/vis-language-clojure         {:local/root "extensions/languages/clojure"}
 
   ;; Core runtime deps. Each one supports a specific surface in this
@@ -120,7 +119,6 @@
                         "extensions/common/vis-exa/test"
                         "extensions/common/vis-mermaid/test"
                         "extensions/common/vis-voice/test"
-                        "extensions/common/vis-voice-parakeet/test"
                         "extensions/languages/clojure/test"]
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
                         com.blockether/vis-persistance-sqlite      {:local/root "extensions/persistance/vis-persistance-sqlite"}
@@ -132,7 +130,6 @@
                         com.blockether/vis-exa                     {:local/root "extensions/common/vis-exa"}
                         com.blockether/vis-mermaid                 {:local/root "extensions/common/vis-mermaid"}
                         com.blockether/vis-voice                  {:local/root "extensions/common/vis-voice"}
-                        com.blockether/vis-voice-parakeet          {:local/root "extensions/common/vis-voice-parakeet"}
                         ;; Microbenchmarks. Pulled into `:test` so a
                         ;; `*_bench_test.clj` file can `(require
                         ;; '[criterium.core :refer [quick-benchmark]])`
@@ -155,7 +152,6 @@
                         "--dir" "extensions/common/vis-exa/test"
                         "--dir" "extensions/common/vis-mermaid/test"
                         "--dir" "extensions/common/vis-voice/test"
-                        "--dir" "extensions/common/vis-voice-parakeet/test"
                         "--dir" "extensions/languages/clojure/test"]}
 
   ;; Development entry path. Starts an nREPL on `$NREPL_PORT` (default

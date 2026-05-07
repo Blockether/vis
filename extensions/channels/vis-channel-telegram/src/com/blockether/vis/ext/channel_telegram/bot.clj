@@ -57,7 +57,7 @@
    {"command" "export"  "description" "Export conversation as Markdown"}])
 
 (defn- voice-input-extension? []
-  (boolean (requiring-resolve 'com.blockether.vis.ext.voice-parakeet.sherpa/transcribe-file!)))
+  (boolean (requiring-resolve 'com.blockether.vis.ext.voice.asr/transcribe-file!)))
 
 (defn- voice-output-extension? []
   (boolean (requiring-resolve 'com.blockether.vis.ext.voice.core/synthesize-file!)))
@@ -251,9 +251,9 @@
       {:file wav :delete? true})))
 
 (defn- transcribe-audio-file! [audio-file]
-  (let [asr-fn     (or (requiring-resolve 'com.blockether.vis.ext.voice-parakeet.sherpa/transcribe-file!)
-                     (throw (ex-info "Parakeet ASR extension is not on the classpath" {})))
-        rewrite-fn (requiring-resolve 'com.blockether.vis.ext.voice-parakeet.rewrite/rewrite-transcript!)
+  (let [asr-fn     (or (requiring-resolve 'com.blockether.vis.ext.voice.asr/transcribe-file!)
+                     (throw (ex-info "Parakeet ASR model is not on the classpath" {})))
+        rewrite-fn (requiring-resolve 'com.blockether.vis.ext.voice.rewrite/rewrite-transcript!)
         {:keys [file delete?]} (asr-ready-audio-file! audio-file)]
     (try
       (let [raw       (asr-fn file)
@@ -516,7 +516,7 @@
     "/verbosity [low|medium|high] — show/set OpenAI Codex verbosity, same as TUI Ctrl+L\n"
     (when (voice-extension?)
       (str "/voice [off|input|output|duplex|on] — configure voice input/output for this chat\n"
-        "Voice messages — transcribe with the Parakeet ASR extension, then send as text\n"))
+        "Voice messages — transcribe with the Parakeet ASR model, then send as text\n"))
     "/cancel — cancel current request\n"
     "/restart — restart the bot in a fresh Java process\n"
     "/export — export this conversation as Markdown"))
@@ -583,16 +583,16 @@
 (defn- set-voice-mode! [chat-id mode]
   (cond
     (not (voice-extension?))
-    "Voice extensions are not loaded. Install/load vis-voice or vis-voice-parakeet, then restart Telegram."
+    "Voice is not loaded. Install/load vis-voice, then restart Telegram."
 
     (not (some #{mode} voice-mode-order))
     "Unknown voice mode. Use off, input, output, duplex, or on."
 
     (and (contains? #{:input :duplex} mode) (not (voice-input-extension?)))
-    "Voice input is unavailable: vis-voice-parakeet is not loaded."
+    "Voice input is unavailable: voice ASR is not loaded."
 
     (and (contains? #{:output :duplex} mode) (not (voice-output-extension?)))
-    "Voice output is unavailable: vis-voice is not loaded."
+    "Voice output is unavailable: voice TTS is not loaded."
 
     :else
     (do
@@ -601,7 +601,7 @@
 
 (defn- command-voice [chat-id arg]
   (if-not (voice-extension?)
-    {:message "Voice extensions are not loaded. Install/load vis-voice or vis-voice-parakeet, then restart Telegram."}
+    {:message "Voice is not loaded. Install/load vis-voice, then restart Telegram."}
     (if (str/blank? (or arg ""))
       (let [active (:voice-mode (chat-settings chat-id))
             modes  (available-voice-modes)]
@@ -680,12 +680,38 @@
       (string? answer) answer
       :else (pr-str answer))))
 
+(defn- voice-config-flag
+  [k default]
+  (let [raw       (try (vis/load-config-raw) (catch Throwable _ nil))
+        qualified (keyword "voice" (name k))
+        voice-map (:voice raw)]
+    (cond
+      (contains? raw qualified) (boolean (get raw qualified))
+      (and (map? voice-map) (contains? voice-map k)) (boolean (get voice-map k))
+      :else default)))
+
+(defn- markdown-quote
+  [s]
+  (str "> " (str/replace (str/trim (str s)) #"\n" "\n> ")))
+
+(defn- transcript-message
+  [transcript]
+  (str "*Transcription*\n" (markdown-quote transcript)))
+
+(defn- html-escape
+  [s]
+  (str/escape (str s) {\& "&amp;" \< "&lt;" \> "&gt;" \" "&quot;" \' "&#39;"}))
+
+(defn- answer-details-message
+  [answer]
+  (str "<b>Answer</b>\n<blockquote expandable>" (html-escape answer) "</blockquote>"))
+
 (defn- voice-output-mode? [settings]
   (contains? #{:output :duplex} (:voice-mode settings)))
 
 (defn- synthesize-answer-wav! [answer]
   (let [synthesize-fn (or (requiring-resolve 'com.blockether.vis.ext.voice.core/synthesize-file!)
-                        (throw (ex-info "Piper TTS extension is not on the classpath" {})))
+                        (throw (ex-info "Voice TTS is not on the classpath" {})))
         wav (java.io.File/createTempFile "vis-telegram-answer-" ".wav")]
     (synthesize-fn answer {:out-file wav})
     wav))
@@ -742,12 +768,13 @@
                          answer       (answer-text result)]
                      (if voice-response?
                        (do
+                         (when (and (voice-config-flag :telegram-send-transcript? true)
+                                 (not (str/blank? (str transcript))))
+                           (tg/send-message! token chat-id (transcript-message transcript)))
                          (tg/send-chat-action! token chat-id "record_voice")
                          (send-answer-audio! token chat-id answer)
-                         (when-not (str/blank? (str transcript))
-                           (tg/send-message! token chat-id
-                             (str "> Transcribed text\n> "
-                               (str/replace (str/trim (str transcript)) #"\n" "\n> ")))))
+                         (when (voice-config-flag :telegram-send-answer-text? true)
+                           (tg/send-message! token chat-id (answer-details-message answer) {:html? true})))
                        (tg/send-message! token chat-id
                          (str (transcript-answer-text transcript answer)
                            (format-footer result)))))
@@ -811,7 +838,6 @@
                       (set-voice-mode! chat-id raw)
                       "Voice selection failed.")]
         (tg/answer-callback-query! token callback-id message)
-        (tg/send-message! token chat-id message)
         true))))
 
 (defn- handle-update! [token update]

@@ -128,6 +128,19 @@
       (expect (= :z/locator-for-symbol (get-in out [:provenance :op])))
       (expect (= 'target-sym (get-in out [:result :value])))))
 
+  (it "renders one locator as a compact patch-oriented hint"
+    (let [render-fn (private-fn "render-locators-result")
+          out (render-fn {:tool-result {:success? true
+                                        :result [{:path "src/demo.clj"
+                                                  :tag :list
+                                                  :locator "(defn f [] :ok)"
+                                                  :source "(defn f []\n  :ok)"
+                                                  :span [[1 1] [2 6]]}]}})]
+      (expect (str/includes? out "Patch hint"))
+      (expect (str/includes? out "(z/patch"))
+      (expect (str/includes? out "src/demo.clj"))
+      (expect (not (str/includes? out " <- ")))))
+
   (it "accepts locator rows from z/symbols as span-specific search locators"
     (let [path        (write-temp! "patch/locator-row.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")
           patch-fn    (private-fn "patch-safe")

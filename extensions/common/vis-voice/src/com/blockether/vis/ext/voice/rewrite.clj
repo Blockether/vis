@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.voice-parakeet.rewrite
+(ns com.blockether.vis.ext.voice.rewrite
   "Speech-transcript cleanup for Vis prompts. Uses Vis' dynamic helper LLM
    selector; no voice-specific rewrite model is persisted."
   (:require [clojure.string :as str]

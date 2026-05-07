@@ -1,10 +1,194 @@
-# PLAN.md — Documentation-first proof.clj consolidation plan
+# PROOF.md — proof.clj consolidation and attestation-ledger implementation plan
 
-Status: planned.
+Status: implementation started. First slice installed the canonical proof-domain namespace. Legacy provenance namespaces still exist only as blockers to delete; storage/audit migration remains staged work.
 
 Scope: attestation ledger, provenance references, lifecycle events, intent/plan/gate proof semantics, and audit surface.
 
-Primary objective: make `src/com/blockether/vis/internal/proof.clj` the canonical internal namespace for proof-domain shape, specs, lifecycle transitions, evidence derivation, attestations, and audit. Existing focused files must be folded into it and then hard-removed; no legacy shims, no old proof/provenance internals kept alive.
+## Fit in the Vis framework
+
+Vis already uses an OODA-shaped loop: observe runtime, orient through transcript/journal/vars, decide through intents/plans/gates, act through SCI/tools, then verify before final answer. This proof work gives that loop a durable trust spine:
+
+```text
+OODA observation -> provenance_event ledger -> evidence bundle -> attestation -> audit -> answer permission
+```
+
+Right spot: internal proof semantics belong in `com.blockether.vis.internal.proof`; persistence writes durable rows; foundation `v/` functions expose event/bundle/attestation/audit reads; channels render reports only. Prompt text should stay thin and point the model at functions instead of dumping proof state into context.
+
+Attestation things are not UI decoration. They become the decision layer between observed runtime facts and user-facing lifecycle transitions:
+
+- gate proof/impediment attestations decide one proposition;
+- plan completion/blocking attestations aggregate required gates;
+- intent closure/abandonment attestations decide the user commitment;
+- audit checks that every transition is backed by ledger events, bundles, and attestations.
+
+## Difference from Codex goal/plan model
+
+Codex guidance centers on durable goals, plans, validation commands, and status docs. That is execution hygiene: keep long-horizon work scoped, steerable, and verifiable. Vis proof goes below that into runtime evidence semantics. A Codex-style goal can say "done when tests pass"; Vis proof must record which observed event showed the test exit, which extraction/guard checked it, which attestation accepted it, and which intent closure consumed it.
+
+Short version:
+
+| Model | Primary object | Done means | Weakness this plan fixes |
+|---|---|---|---|
+| Codex goals/plans | task plan + validation status | agent/user agree acceptance criteria passed | mostly document/process truth |
+| Vis proof | ledger + bundle + attestation + audit | runtime evidence justifies lifecycle transition | no caller-injected fake proof |
+
+## Difference from Ralph loop
+
+Ralph is loop + fresh context + verifier + persistence through files/git. It is a control strategy for making progress after failures. Vis already shares the loop instinct, but proof adds typed evidence and lifecycle boundaries inside each loop. Ralph asks "did verifier pass; if not, loop again?" Vis proof asks "which immutable event proves verifier pass, which gate did it prove, did the plan complete, and may the intent close?"
+
+Short version:
+
+| Model | Strength | Stop condition | Vis delta |
+|---|---|---|---|
+| Ralph loop | persistence and repeated repair with fresh context | external verifier/marker says done | add explicit evidence graph and audit before answer |
+| Vis proof | trustable state transitions | focused intents fulfilled/abandoned with attestations | use Ralph/autoresearch as outer loop, not proof source |
+
+## What is missing / wrong in current state
+
+Missing:
+
+- first-class immutable `provenance_event` rows;
+- evidence bundles with runtime-derived values;
+- attestation rows for gate, plan, and intent decisions;
+- audit over ledger, bundles, attestations, gates, plans, and intents;
+- automatic plan completion transition;
+- intent closure over completed plan instead of repeated raw refs.
+
+Wrong today:
+
+- proof slots can still be caller-supplied claims;
+- guards validate supplied slot maps instead of extracted event facts;
+- proof-critical checks can depend on reconstructed projections;
+- old names (`proof checks`, `provenance guards`) blur layers;
+- compact display refs must remain display-only and never proof writes.
+
+## Impact from `ANALYSIS.md`
+
+`ANALYSIS.md` changes this plan from "build proof objects" to "build proof objects that force a tight feedback loop." The failed Vis run had tools, intents, gates, and skills, but no deterministic repro artifact. Therefore proof work must include workflow proof, not only data proof.
+
+Required changes from the analysis:
+
+- Repro before proof ceremony for bug work. Bug mode order is `UNDERSTAND -> REPRO -> INTENT -> GATES -> PATCH -> VERIFY -> ATTEST`.
+- A proof ref is not enough. Each gate needs a runnable reproduction/verification seam and a regression test plan.
+- Every task must end with fresh-runtime verification: targeted test in a fresh JVM, REPL restart/reload check, then `./verify.sh --quick` for code edits.
+- Tool output must be bounded. Audit/proof reports cite counts, refs, and selected rows, not giant transcript dumps.
+- Guards/gates must become testable objects: guard expression shape tests, guard evaluation tests over derived values, persistence tests rejecting fake caller slots, audit tests catching stale/missing evidence.
+- Legacy proof/provenance names are not part of the target design. During an active migration slice they may exist only as failing blockers to remove; semantic ownership is `proof.clj`, then `ledger`, `bundle`, `attestation`, and `audit` namespaces.
+- System intents are first-class: user intents, system intents, and extension-owned intents need explicit source/owner fields so extensions can hook proof lifecycle events without scraping prose.
+
+## Execution discipline for every implementation task
+
+Each task below has three completion gates:
+
+1. **Task test gate** — run the smallest target test that proves the changed seam.
+2. **Fresh runtime gate** — restart or recreate runtime before declaring done.
+   - Fresh JVM default: run the targeted `clojure -M:test -n ...` command in a new process.
+   - REPL check when REPL state matters:
+
+     ```bash
+     clj-nrepl-eval --discover-ports
+     clj-nrepl-eval -p 7888 "(require '[changed.namespace :as x] :reload) :fresh-ok"
+     ```
+
+   - Full REPL restart when requested for the task:
+
+     ```bash
+     clj-nrepl-eval -p 7888 "(require '[com.blockether.vis.dev :as dev] :reload) (dev/stop-nrepl!)"
+     NREPL_PORT=7888 bin/dev > .nrepl.log 2>&1 &
+     clj-nrepl-eval -p 7888 "(require '[changed.namespace :as x] :reload) :fresh-ok"
+     ```
+
+3. **Progress marker gate** — edit this file immediately:
+   - mark completed task as `DONE` with verification commands;
+   - mark exactly one next task as `NEXT`;
+   - record blockers as `BLOCKED` with a concrete question or failing command.
+
+During code edits run `./verify.sh --quick`. Before commit-ready handoff run full `./verify.sh`.
+
+## User decision checkpoints from ANALYSIS implementation
+
+Do not turn every analysis proposal into production code automatically. Some ideas are policy/product choices and must stay explicit decision points for the user.
+
+Current decisions to hold for user review:
+
+Completed implementation from `ANALYSIS.md` proposals:
+
+- duplicate executable fenced blocks are rejected before SCI eval;
+- `z/locators` rendering is compact and patch-oriented;
+- `TURN_ACTIVE_EXTENSIONS` is compact model-facing metadata only;
+- active skill bodies render under `<active_skills>`, not `<extensions>`;
+- bug/fix/debug requests auto-load the `diagnose` skill;
+- `v/nrepl-eval` exists for Clojure runtime checks;
+- long shell-quoted `clj-nrepl-eval` through `v/bash` is refused in favor of `v/nrepl-eval`.
+
+Rejected / user-decision items:
+
+1. **TUI render diagnostic helper** — rejected as production `chat.clj` code for now.
+   - We already have transcript API/CLI surfaces for conversation reports.
+   - A hard-coded helper counting `SHELL bash` / `SEARCH any` in runtime chat projection is too task-specific.
+   - If wanted, implement as dev/test diagnostic tooling or a generic report command with caller-supplied matchers, not as TUI chat runtime logic.
+
+2. **Bug-mode repro nudge** — rejected as generic iteration-2 prompt nag for now.
+   - Many tool tasks complete in one iteration, so an iteration-2 nudge is late or useless.
+   - More prompt nudges can worsen the same noise problem `ANALYSIS.md` criticized.
+   - If wanted, enforce reproduction earlier through harness/intent/proof workflow, not another soft model-facing reminder.
+
+3. **UUID/transcript-before-grep prompt nudge** — not implemented by default.
+   - We already have transcript API and CLI/report surfaces for conversation evidence.
+   - A prompt nag that says "inspect transcript before grep" may be right for some work, but should be a user decision because it changes model behavior globally.
+   - Prefer explicit user/workflow instruction or a dev/report command over always-on prompt noise.
+
+4. **Tool/prompt nudges generally** — require user approval when they change model behavior.
+   - Prefer concrete artifacts: transcript commands, regression tests, proof slots, and verification logs.
+   - Add nudges only when they are tied to a specific observed failure and have tests proving they reduce bad behavior without bloating normal one-shot tasks.
+
+Rule: proposals that alter production runtime, model prompts, or tool refusal behavior need reproduction + regression + user-visible tradeoff note before being marked DONE.
+
+These are current decisions, not permanent bans. Revisit a rejected/user-decision item only with:
+
+1. concrete reproduction;
+2. generic design, not task-specific hard-code;
+3. regression test;
+4. token/UX/proof tradeoff note;
+5. explicit user approval.
+
+## Roll protocol for PROOF work
+
+Default next implementation target is the first `NEXT`/`IN PROGRESS` row in the progress board, unless `PROOF_AUTORESEARCH.md` is running the comparison loop. Autoresearch must optimize the whole proof-task suite: no "Vis beats Pi" claim from one task; quality/proof parity must hold on every completed task and combined win rate must be at least 60% unless the user explicitly raises the bar to all tasks.
+
+Before starting any task:
+
+1. Read this file's progress board.
+2. Confirm one task is selected.
+3. State the task gate:
+   - repro/verification seam;
+   - target tests;
+   - fresh runtime check;
+   - proof/provenance invariant being protected.
+4. Do the smallest slice.
+5. Mark the task `DONE`, `BLOCKED`, or keep `IN PROGRESS` with exact commands.
+6. Mark the next task `NEXT`.
+
+No task is DONE if:
+
+- old proof/provenance files survive when that task was deletion-scoped;
+- test namespace is missing for a changed Clojure namespace;
+- fresh runtime check is skipped without a written reason;
+- proof-facing writes accept compact refs, running events, or caller-injected slot facts.
+
+## Progress board
+
+| Task | Status | Verification / note |
+|---|---|---|
+| Task 1 docs/model fit | DONE | `PROOF.md` updated with framework fit, Codex/Ralph comparison, ANALYSIS impact. Docs-only. |
+| Task 2 proof spec first slice | DONE | `clojure -M:test -n com.blockether.vis.internal.proof-test -n com.blockether.vis.internal.provenance-ref-test -n com.blockether.vis.internal.provenance-lifecycle-test -n com.blockether.vis.internal.intent-spec-test`; `./verify.sh --quick`. |
+| Task 3 canonical proof namespace migration | IN PROGRESS / NOT DONE | `proof.clj` owns refs/lifecycle/specs, but legacy files still exist. Next: migrate all callers to `proof.clj`, delete `provenance_ref.clj` / `provenance_lifecycle.clj` and their tests. |
+| PROOF_AUTORESEARCH boss plan | DONE | `PROOF_AUTORESEARCH.md` added. Pi and Vis `zai-coding/GLM-5.1` smoke-checked headlessly; P0 provider-qualified `vis run --model zai-coding/glm-5.1` fixed and verified. |
+| Task 4+ ledger/bundle/attestation/storage/audit | TODO | Must proceed only with regression tests and fresh runtime gates. |
+| Legacy removal | TODO / REQUIRED | Final purge task must delete old files and stale names after all callers move. |
+
+
+Primary objective: make `src/com/blockether/vis/internal/proof.clj` the canonical internal namespace for proof-domain shape, specs, lifecycle transitions, evidence derivation, attestations, and audit. Existing focused files must be folded into it and hard-removed; no legacy proof semantics, delegates, facades, shims, or old proof/provenance internals kept alive in the final state.
 
 - `src/com/blockether/vis/internal/provenance_ref.clj`
 - `src/com/blockether/vis/internal/provenance_lifecycle.clj`
@@ -32,19 +216,19 @@ Vocabulary to use from here onward:
 
 Removal vocabulary:
 
-- Hard-remove legacy internal proof/provenance paths; do not preserve old internals for nostalgia, theoretical migration comfort, or alias-first churn.
+- Hard-remove legacy internal proof/provenance paths. Temporary files are allowed only while a migration slice is actively moving callers; they are not an accepted end state and Task 3 cannot be DONE while they exist.
 - Remove old proof-facing names from implementation surfaces as callers move; implementation language is `attestation`, `audit`, `ledger`, and `bundle`.
 - Keep `guard` only for local boolean requirements.
 - Compact refs may remain display labels only; persisted proof-facing refs must be canonical.
 
-## Task 1 — Update documentation before source changes
+## Task 1 — DONE — Update documentation before source changes
 
 Work:
 
 - Add or refine docs that describe the target `proof.clj` model before changing runtime code.
 - Document the exact flow: runtime observation -> event ledger -> evidence bundle -> attestation -> audit.
 - Document why gate proof, plan completion, and intent fulfillment remain distinct lifecycle boundaries.
-- Document hard-removal boundaries: old internal paths are deleted after callers move; no legacy shim plan.
+- Document hard-removal boundaries: old internal paths are deleted after callers move; no delegate/shim/facade survives the migration.
 
 Rationale:
 
@@ -56,9 +240,9 @@ Acceptance criteria:
 
 - `PLAN.md` starts from documentation tasks before runtime code tasks.
 - Every task has a rationale.
-- The plan explicitly says legacy internals are hard-removed, not preserved as shims.
+- The plan explicitly says legacy internals are hard-removed after migration, not preserved as semantic shims.
 
-## Task 2 — Design the Clojure spec model first
+## Task 2 — DONE FIRST SLICE — Design the Clojure spec model first
 
 Work:
 
@@ -94,10 +278,10 @@ Rationale:
 Acceptance criteria:
 
 - `proof.clj` has public specs or predicates for all proof-domain data shapes.
-- Old specs either delegate to `proof.clj` or are removed after callers move.
+- Old proof-domain specs move to `proof.clj`; old proof/provenance spec owners are deleted after callers move.
 - Tests cover valid and invalid shapes, including fake compact refs and running events.
 
-## Task 3 — Make `proof.clj` the canonical internal proof-domain namespace
+## Task 3 — NEXT — Make `proof.clj` the canonical internal proof-domain namespace
 
 Work:
 
@@ -149,7 +333,7 @@ Acceptance criteria:
 
 Work:
 
-- Move or delegate lifecycle sets and predicates into `proof.clj`:
+- Move lifecycle sets and predicates into `proof.clj`:
   - terminal statuses;
   - successful statuses;
   - blocker statuses;
@@ -167,6 +351,34 @@ Acceptance criteria:
 - Running events fail proof adequacy checks.
 - Terminal `:done` events may satisfy success guards.
 - Terminal blocker events may support impediment/abandonment attestations.
+
+## Task 5A — Add guard/gate test harness before storage writes
+
+Work:
+
+- Implement pure guard evaluation over derived binding maps only.
+- Add fixtures for event payloads, extraction paths, derived bindings, and guard outcomes.
+- Add a gate proof harness that takes `{event fixtures -> evidence requirement -> derived binding -> attestation decision}` without SQLite.
+- Add adversarial cases:
+  - caller supplies fake slot value;
+  - compact ref is used;
+  - running event is used;
+  - event kind/op mismatches requirement;
+  - extract path is missing;
+  - guard returns false.
+
+Rationale:
+
+- `ANALYSIS.md` shows ceremony without a tight pass/fail seam wastes iterations.
+- Guard/gate behavior must be testable before persistence makes failures harder to localize.
+- Pure tests give fast red/green proof that fake evidence cannot pass.
+
+Acceptance criteria:
+
+- `test/com/blockether/vis/internal/proof_test.clj` covers guard shape and pure guard evaluation.
+- New gate harness test proves fake caller slots cannot satisfy a gate.
+- Target command is documented in this task when complete.
+- Fresh JVM test passes before any SQLite storage work begins.
 
 ## Task 6 — Add first-class event ledger storage
 
@@ -283,6 +495,35 @@ Acceptance criteria:
 - Fulfillment with open required gates fails.
 - Fulfillment with fake/non-canonical/running refs fails.
 
+## Task 10A — Add system intents and extension proof hooks
+
+Work:
+
+- Extend intent shape with source/owner fields:
+  - `:intent/source` one of `:user`, `:system`, `:extension`;
+  - `:intent/owner-extension-id` optional for extension-owned intents;
+  - `:intent/system-kind` optional stable keyword for host/system intents.
+- Define hook events extensions can subscribe to:
+  - `:proof/event-appended`;
+  - `:proof/evidence-bundle-created`;
+  - `:proof/attestation-accepted`;
+  - `:proof/audit-violation`;
+  - `:proof/final-answer-blocked`.
+- Ensure system intents can create gates and receive attestations without scraping prompt prose.
+- Add tests with a fake extension hook observing proof lifecycle events.
+
+Rationale:
+
+- Extensions need structured proof lifecycle hooks, not markdown/prose parsing.
+- System constraints such as final-answer blocking, repro-required, and provider-selection checks are intents too.
+- This connects proof semantics to Vis extensibility.
+
+Acceptance criteria:
+
+- Specs cover system and extension intent source/owner fields.
+- Fake extension test observes hook events in order.
+- Audit can distinguish user-facing unresolved intents from system/extension guardrails.
+
 ## Task 11 — Replace proof checks with audit as the primary validation surface
 
 Work:
@@ -292,7 +533,7 @@ Work:
   - `provenance guards` -> `ledger checks`;
   - `proof checks` -> `audit`;
   - `proof rendering` -> `audit/attestation rendering`.
-- Keep any unavoidable public API aliases only at the boundary and make them delegate to the new audit functions.
+- During migration only, keep unavoidable public aliases at the outer boundary. Final state removes stale internal names and routes user-facing reads through audit/attestation names.
 
 Rationale:
 
@@ -333,6 +574,8 @@ Work:
 
 - Update SQLite schema for new ledger/bundle/attestation tables directly in `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`.
 - Do not add `V2__...sql`, `V3__...sql`, or any separate migration file for this work unless the user explicitly asks for real upgrade migrations.
+- For local/autoresearch development, prefer a dedicated disposable DB path under `target/proof-autoresearch/` via `VIS_DB_PATH` or `--db`; delete/recreate that DB freely between schema iterations.
+- If the default `~/.vis/vis.mdb` or another persistent Vis DB must be removed after editing V1, first close all Vis processes that may have it open, including TUI/CLI child JVMs. Then delete only after confirming no process owns it.
 - Identify all persistence functions that read/write proof blobs, refs, gates, plans, intents, and transcript provenance.
 - Convert write paths to create ledger events, bundles, and attestations.
 - Hard-remove old proof blob read/write paths after attestations are wired; update callers instead of preserving old semantics.
@@ -341,6 +584,8 @@ Work:
 Rationale:
 
 - AGENTS.md explicitly says SQLite schema changes are inline in `V1__schema.sql` until told otherwise.
+- User explicitly allows removing/recreating local dev DBs during this inline schema phase; multiprocess safety still requires closing all processes before deleting any DB they may have open.
+- Autoresearch should use disposable per-run DBs so schema experiments never risk user data.
 - Persistence currently stores iteration blocks and intent/gate proof blobs but lacks first-class event/bundle/attestation tables.
 - Multiprocess SQLite rules are explicit in AGENTS.md and must not regress.
 - Focused regression tests lower migration risk without preserving legacy proof semantics.
@@ -351,6 +596,8 @@ Acceptance criteria:
 - New persistence tests prove first-class records are written.
 - No forbidden raw SQL or `next.jdbc.sql` helper usage is introduced.
 - No new migration file is added for this work.
+- Schema tests run against a disposable DB created from the edited V1 schema.
+- Autoresearch/runtime benchmark DBs are safe to delete because they live under `target/proof-autoresearch/`, not user-owned default state.
 
 ## Task 14 — Add regression tests for every changed namespace
 
@@ -385,7 +632,7 @@ Work:
 - Recommended implementation order:
   1. Docs and PLAN.md.
   2. `proof.clj` specs and tests only.
-  3. Move/delegate canonical ref and lifecycle helpers.
+  3. Move canonical ref and lifecycle helpers into `proof.clj`, then delete old namespaces.
   4. Add ledger persistence and ledger checks.
   5. Add evidence bundle derivation.
   6. Add attestation writes.
@@ -409,12 +656,45 @@ Acceptance criteria:
 - The repository never sits with source namespace changes lacking tests.
 - Deprecated names are removed only after all callers have migrated.
 
+## Task 15A — Hard-remove legacy proof/provenance bullshit
+
+Work:
+
+- Delete old proof/provenance files after all callers migrate:
+  - `src/com/blockether/vis/internal/provenance_ref.clj`;
+  - `src/com/blockether/vis/internal/provenance_lifecycle.clj`.
+- Remove internal uses of legacy names:
+  - `provenance guards` as semantic API;
+  - `proof checks` as semantic API;
+  - proof blobs as authoritative write/read source;
+  - compact refs in proof-facing writes.
+- Keep public aliases only if explicitly documented as deprecated and implemented at the outermost boundary.
+- Add a legacy-purge regression command:
+
+  ```bash
+  rg -n "provenance[-_]guards|proof[-_]checks|proof blob|conversation_intent_gate_ref|provenance_ref|provenance_lifecycle" src extensions test docs
+  ```
+
+  Every match must be either a migration note, a deprecated public alias test, or removed.
+
+Rationale:
+
+- Temporary files are migration debt. Leaving them alive recreates the old ambiguous model.
+- User explicitly requested removal of legacy bullshit.
+
+Acceptance criteria:
+
+- No internal caller requires deleted legacy namespaces.
+- No persistence write path treats old proof blobs or gate ref rows as authoritative.
+- Legacy search command has only approved compatibility/documentation hits.
+- Full `./verify.sh` passes after deletion.
+
 ## Task 16 — Final audit before declaring the work done
 
 Work:
 
 - Run full repository verification.
-- Inspect `v/audit` / compatibility `v/proof-checks` behavior on at least one real focused-intent workflow.
+- Inspect `v/audit` behavior on at least one real focused-intent workflow and confirm stale `v/proof-checks` is gone or only an explicitly deprecated outer-boundary alias during migration.
 - Confirm final answer blocking still requires intent resolution.
 - Confirm audit report can cite canonical refs and explain blockers.
 
@@ -429,19 +709,19 @@ Acceptance criteria:
 - Audit can trace event -> bundle -> attestation -> gate/plan/intent.
 - No proof-facing code accepts compact refs, running futures, or caller-injected slot facts as proof.
 
-## Open design decisions to resolve before code
+## Resolved migration decisions for the first implementation slice
 
-1. Should `provenance_ref.clj` and `provenance_lifecycle.clj` be deleted after migration, or kept as tiny compatibility namespaces that delegate to `proof.clj` for one release window?
-   - Recommended answer: keep thin delegates first, then delete once internal callers and tests prove no dependency remains.
+1. `provenance_ref.clj` and `provenance_lifecycle.clj` must be deleted.
+   - Why: semantic ownership belongs only in `proof.clj`. Task 3 is not DONE until all callers require `proof.clj` directly and both old files/tests are removed.
 
-2. Should `intent_spec.clj` disappear entirely?
-   - Recommended answer: not immediately. First move proof-domain specs to `proof.clj`; then leave intent entity specs in `intent_spec.clj` only if they are truly intent-only. If most remaining specs are proof-domain, fold the file fully.
+2. `intent_spec.clj` stays for intent entity/writer specs and imports proof-domain truth from `proof.clj`.
+   - Why: intent shape and proof evidence shape are related but not identical seams. Delete/fold only if remaining intent specs become pass-through.
 
-3. Should plan `:abandoned` be renamed to `:blocked`?
-   - Recommended answer: defer schema-visible rename. Define `:abandoned` narrowly for now, add audit language `blocked`, and migrate status names only when schema migration policy is ready.
+3. Plan DB status stays `:abandoned` for now; audit language may render blocked semantics.
+   - Why: schema-visible status rename is a later persistence migration decision.
 
-4. Should old public API names be removed now?
-   - Recommended answer: no. Add primary names first and keep deprecated aliases until docs, prompts, TUI, and tests are fully migrated.
+4. Old public API names are migration debt, not target API.
+   - Why: if an outer-boundary alias is needed briefly to avoid breaking a running session, it must be marked deprecated with a removal task. Internal proof/provenance implementation language must disappear.
 
-5. Should evidence bundles store extracted values or only derivation recipe plus hash?
-   - Recommended answer: store derivation recipe, result shape/value for audit readability, and enough source event identity to recompute or detect drift. Avoid storing huge payload duplicates.
+5. Evidence bundles should store derivation recipe plus extracted value/result shape and digest.
+   - Why: audit must be human-readable and recomputable enough to detect drift without duplicating giant payloads.

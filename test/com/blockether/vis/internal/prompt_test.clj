@@ -158,6 +158,25 @@
       (expect (str/includes? out "journal cap <= 50% model context"))
       (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/119"))))
 
+  (it "keeps huge-window models on a hard journal budget"
+    (let [blocks (mapv (fn [idx]
+                         {:code (str "(huge-probe " idx ")")
+                          :result (apply str (repeat 6000 \x))
+                          :provenance {:ref (str "turn/3f2a91c0/iteration/1/block/" idx)
+                                       :op :sci/eval
+                                       :status :done}})
+                   (range 1 401))
+          out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")}
+                {:active-extensions   NO_EXTENSIONS
+                 :blocks-by-iteration [[1 {:thinking nil :blocks blocks}]]
+                 :context-limit       1050000
+                 :iteration           1})]
+      (expect (string? out))
+      (expect (< (count out) 160000))
+      (expect (str/includes? out "older journal lines omitted"))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/400"))))
+
   ;; Helpers ------------------------------------------------------------------
   ;;
   ;; New `:blocks-by-iteration` shape is `[[pos {:thinking :blocks}]]`
@@ -280,7 +299,7 @@
         (expect (str/includes? out "<system_nudge importance=\"low\">"))
         (expect (str/includes? out (str "You're " period " iterations"))))))
 
-  (it "renders loaded skill bodies under <extensions>/<active_skills>"
+  (it "renders loaded skill bodies under a dedicated <active_skills> block"
     (let [out (prompt/build-iteration-context
                 {:conversation-title-atom (atom "already set")
                  :active-skills-atom (atom {"diagnose" {:name "diagnose"
@@ -290,7 +309,8 @@
                                                         :body "# Full skill body\nDo repro first."}})}
                 {:active-extensions NO_EXTENSIONS
                  :iteration 0})]
-      (expect (str/includes? out "<extensions>\n<active_skills count=\"1\">"))
+      (expect (str/includes? out "<active_skills count=\"1\">"))
+      (expect (not (str/includes? out "<extensions>\n<active_skills")))
       (expect (str/includes? out "<skill name=\"diagnose\" source=\"repo\">\n# Full skill body\nDo repro first.\n</skill>"))
       (expect (not (str/includes? out "Debug loop.")))
       (expect (not (str/includes? out "/repo/.agents/skills/diagnose/SKILL.md")))))
@@ -314,18 +334,30 @@
             (expect (not (str/includes? out "(def v19")))))))))
 
 (defdescribe extensions-snapshot-test
-  (it "includes full extension provenance plus symbols/docs"
-    (let [ext (or (some #(when (= 'com.blockether.vis.core (:ext/namespace %)) %)
-                    (extension/registered-extensions))
-                (extension/extension {:ext/namespace 'com.blockether.vis.core
-                                      :ext/doc       "vis core"}))
+  (it "keeps model-facing extension snapshot compact while retaining callable symbols/docs"
+    (let [sym (extension/symbol 'ping (constantly nil)
+                {:doc "ping"
+                 :arglists '([])})
+          ext (extension/extension {:ext/namespace 'test.ext.snapshot
+                                    :ext/doc "Snapshot test."
+                                    :ext/kind "test"
+                                    :ext/version "1.2.3"
+                                    :ext/author "Example Author"
+                                    :ext/owner "example-owner"
+                                    :ext/license "Apache-2.0"
+                                    :ext/ns-alias {:ns 'test.ext.snapshot
+                                                   :alias 'snap}
+                                    :ext/symbols [sym]})
           [entry] (prompt/extensions-snapshot [ext])]
-      (expect (= 'com.blockether.vis.core (:namespace entry)))
-      (expect (contains? entry :source-paths))
-      (expect (contains? entry :source-mtime-max))
-      (expect (contains? entry :source-hash-sha256))
-      (expect (contains? entry :symbols))
-      (expect (contains? entry :docs)))))
+      (expect (= 'test.ext.snapshot (:namespace entry)))
+      (expect (= 'snap (:alias entry)))
+      (expect (= "test" (:kind entry)))
+      (expect (= "Snapshot test." (:doc entry)))
+      (expect (= ['ping] (:symbols entry)))
+      (expect (contains? entry :docs))
+      (doseq [noisy-key [:source-paths :source-mtime-max :source-hash-sha256
+                         :version :author :owner :license]]
+        (expect (not (contains? entry noisy-key)))))))
 
 (defdescribe core-system-prompt-test
   (it "front-loads the RLM control-flow contract"

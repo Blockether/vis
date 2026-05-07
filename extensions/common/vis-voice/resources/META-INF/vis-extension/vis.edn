@@ -1,5 +1,5 @@
 {voice
  {:nses [com.blockether.vis.ext.voice.core]
-  :description "Native local voice extension: Piper/VITS TTS through sherpa-onnx."
+  :description "Native local voice extension: Piper TTS output and Parakeet ASR input through sherpa-onnx."
   :docs [{:title "Voice"
-          :content "Adds local text-to-speech with the default sharp Piper voice en_US-ryan-high. Model directory defaults to ~/.vis/models/sherpa-onnx-vits-piper-en_US-ryan-high and can be overridden with VIS_PIPER_MODEL_DIR. Voice can be overridden with VIS_PIPER_VOICE."}]}}
+          :content "Adds local text-to-speech with Piper and local voice input with Parakeet ASR. Piper model directory defaults to ~/.vis/models/sherpa-onnx-vits-piper-en_US-ryan-high and can be overridden with VIS_PIPER_MODEL_DIR. Parakeet model directory defaults to ~/.vis/models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 and can be overridden with VIS_PARAKEET_MODEL_DIR. Missing model files can be downloaded with vis extensions voice models download."}]}}

@@ -130,7 +130,7 @@
   (it "hides direct-only extension commands from Ctrl+K palette"
     (expect (= [{:id :shown :label "Shown" :run-fn identity}]
               (palette-extra-commands
-                [{:id :voice-parakeet/toggle
+                [{:id :voice/toggle-recording
                   :label "Voice: Toggle Recording (Ctrl+B)"
                   :palette? false
                   :run-fn identity}

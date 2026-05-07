@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.voice-parakeet.recorder
+(ns com.blockether.vis.ext.voice.recorder
   "Small Java Sound WAV recorder for push-to-talk voice input."
   (:require [clojure.java.io :as io])
   (:import [javax.sound.sampled AudioFileFormat$Type AudioFormat AudioInputStream AudioSystem DataLine$Info TargetDataLine]
@@ -13,7 +13,7 @@
 
 (defn default-output-file
   []
-  (doto (File/createTempFile "vis-parakeet-" ".wav")
+  (doto (File/createTempFile "vis-voice-asr-" ".wav")
     (.deleteOnExit)))
 
 (defn start!
@@ -31,7 +31,7 @@
                       (AudioSystem/write stream AudioFileFormat$Type/WAVE file))))]
      (.open line format)
      (.start line)
-     (doto (Thread. task "vis-parakeet-recorder")
+     (doto (Thread. task "vis-voice-asr-recorder")
        (.setDaemon true)
        (.start))
      {:file file

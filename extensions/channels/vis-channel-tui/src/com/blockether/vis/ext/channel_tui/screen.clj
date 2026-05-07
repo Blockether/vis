@@ -1668,7 +1668,7 @@
                          (recur))
 
                        :toggle-voice-recording
-                       (do (run-command! :voice-parakeet/toggle)
+                       (do (run-command! :voice/toggle-recording)
                          (recur))
 
                        :show-conversations

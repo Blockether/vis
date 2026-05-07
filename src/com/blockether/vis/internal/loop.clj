@@ -1083,17 +1083,47 @@
     (map #(str ";; " %))
     (str/join "\n")))
 
+(defn- executable-block-source
+  [block]
+  (when (map? block)
+    (some-> (or (:source block)
+              (:code block)
+              (:text block)
+              (:content block))
+      str
+      str/trim)))
+
+(defn- duplicate-fenced-block-error
+  [blocks]
+  (let [sources (->> (or blocks [])
+                  (keep executable-block-source)
+                  (remove str/blank?)
+                  vec)
+        duplicate? (< (count (distinct sources)) (count sources))]
+    (when duplicate?
+      (str "Provider returned duplicate executable fenced blocks. "
+        "Aborting before evaluation; emit exactly one clojure fence."))))
+
 (defn- code-entries-preflight
   ([iteration-position raw-code]
-   (code-entries-preflight iteration-position raw-code nil))
+   (code-entries-preflight iteration-position raw-code nil nil))
   ([iteration-position raw-code repeat-state]
+   (code-entries-preflight iteration-position raw-code repeat-state nil))
+  ([iteration-position raw-code repeat-state opts]
    (let [raw-code (or raw-code "")
-         raw-fence-error (raw-markdown-fence-leak-error raw-code)
-         [forms parse-error] (if raw-fence-error
-                               [nil (ex-info raw-fence-error
-                                      {:vis/error :raw-markdown-fence-leak})]
+         duplicate-block-error (duplicate-fenced-block-error (:blocks opts))
+         raw-fence-error (when-not duplicate-block-error
+                           (raw-markdown-fence-leak-error raw-code))
+         [forms parse-error] (if (or duplicate-block-error raw-fence-error)
+                               [nil (when raw-fence-error
+                                      (ex-info raw-fence-error
+                                        {:vis/error :raw-markdown-fence-leak}))]
                                (split-top-level-forms raw-code))
          parsed-code-entries (cond
+                               duplicate-block-error
+                               [{:expr "(vis/preflight-error :duplicate-fenced-blocks)"
+                                 :preflight-error duplicate-block-error}]
+
                                raw-fence-error
                                [{:expr "(vis/preflight-error :raw-markdown-fence-leak)"
                                  :preflight-error raw-fence-error}]
@@ -1104,13 +1134,14 @@
                                :else
                                (vec (filter #(not (str/blank? (:expr %)))
                                       (or forms []))))
-         plain-prose-error (when-not (or raw-fence-error parse-error)
+         plain-prose-error (when-not (or duplicate-block-error raw-fence-error parse-error)
                              (plain-prose-code-error raw-code parsed-code-entries))
          parsed-total-blocks (count parsed-code-entries)
          normalized-code (normalized-code-source parsed-code-entries)
          code-hash (when-not (str/blank? normalized-code)
                      (sha256-hex normalized-code))
-         answer-preflight-form-idx (when (and (not raw-fence-error)
+         answer-preflight-form-idx (when (and (not duplicate-block-error)
+                                           (not raw-fence-error)
                                            (not plain-prose-error)
                                            (pos? parsed-total-blocks))
                                      (answer-position-preflight-form-idx
@@ -1120,9 +1151,12 @@
                                   (answer-position-preflight-error-message
                                     answer-preflight-form-idx
                                     parsed-total-blocks))
-         repeat-error (when-not (or raw-fence-error parse-error plain-prose-error answer-preflight-error)
+         repeat-error (when-not (or duplicate-block-error raw-fence-error parse-error plain-prose-error answer-preflight-error)
                         (repeat-preflight-error repeat-state code-hash))]
      {:code-entries (cond
+                      duplicate-block-error
+                      parsed-code-entries
+
                       plain-prose-error
                       [{:expr "(vis/preflight-error :plain-prose-code)"
                         :comment (prose->comment raw-code)
@@ -1143,6 +1177,7 @@
       :repeat-preflight-error repeat-error
       :plain-prose-preflight-error plain-prose-error
       :raw-fence-preflight-error raw-fence-error
+      :duplicate-block-preflight-error duplicate-block-error
       :normalized-code normalized-code
       :code-hash code-hash
       :original-total-blocks parsed-total-blocks})))
@@ -1492,7 +1527,8 @@
           repeat-atom (:repeat-preflight-atom environment)
           {:keys [code-entries answer-preflight-error repeat-preflight-error
                   code-hash]}
-          (code-entries-preflight iteration-position raw-code (some-> repeat-atom deref))
+          (code-entries-preflight iteration-position raw-code (some-> repeat-atom deref)
+            {:blocks (:blocks ask-result)})
           direct-answer-entry (when (= 1 (count code-entries))
                                 (first code-entries))
           final-answer-preflight-error
@@ -1761,6 +1797,23 @@
 ;; Core helpers
 ;; -----------------------------------------------------------------------------
 
+(defn- stream-output-overflow?
+  [err]
+  (let [data (:data err)]
+    (and (= :svar.core/stream-incomplete (:type data))
+      (= "max_output_tokens" (str (:reason data))))))
+
+(defn- iteration-error-feedback
+  [iteration iteration-error-data user-request]
+  (if (stream-output-overflow? iteration-error-data)
+    (str "[Iteration " (inc (long iteration)) "]\n"
+      "<error>Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens).</error>\n"
+      "Recovery policy: do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, proofs, or repeated diagnostics.\n"
+      "Original request: " user-request)
+    (str "[Iteration " (inc iteration) "]\n"
+      "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
+      "Adjust your approach or emit :final with what you have.")))
+
 (defn- format-iteration-error
   "Render one trace `:error` map as a Markdown bullet for the user.
    Always includes the wrapper message; appends the raw provider
@@ -1775,8 +1828,10 @@
         raw     (some-> (:raw-data data) str)
         recv    (:received-type data)
         body    (when (and raw (not (str/blank? raw)))
-                  (truncate raw 400))]
+                  (truncate raw 400))
+        overflow? (stream-output-overflow? err)]
     (cond-> (str "- " message)
+      overflow? (str " Reason: max_output_tokens. Vis will retry with compact working memory and an explicit compact-recovery instruction.")
       body (str "\n  provider returned"
              (when recv (str " (" recv ")"))
              ": " body))))
@@ -2253,6 +2308,31 @@
       (select-keys acc cost-map-keys)
       (select-keys extra-cost cost-map-keys))))
 
+(def ^:private auto-diagnose-request-pattern
+  #"(?i)\b(fix|bug|broken|failing|failure|duplicate|wrong|stuck|debug|diagnose|regression|throwing|crash|error)\b")
+
+(defn- auto-skill-names
+  [user-request]
+  (cond-> []
+    (re-find auto-diagnose-request-pattern (str user-request))
+    (conj "diagnose")))
+
+(defn- activate-auto-skills!
+  [environment user-request]
+  (when-let [active-skills-atom (:active-skills-atom environment)]
+    (doseq [skill-name (auto-skill-names user-request)]
+      (try
+        (when-let [lookup (requiring-resolve
+                            'com.blockether.vis.ext.foundation.environment.skills/lookup)]
+          (let [skill (lookup skill-name)]
+            (when (:found? skill)
+              (swap! active-skills-atom assoc (:name skill) (assoc skill :auto? true)))))
+        (catch Throwable t
+          (tel/log! {:level :warn :id ::auto-skill-activation-failed
+                     :data {:skill skill-name
+                            :error (ex-message t)}}))))
+    @active-skills-atom))
+
 (defn iteration-loop
   "The core iteration loop. Runs assemble → ask LLM → execute → persist
    until the model emits `:answer`, the user cancels, or the
@@ -2282,6 +2362,9 @@
         ;; ext nudge collector — activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         _             (sync-active-extension-symbols! environment active-exts)
+        _             (when-let [a (:active-skills-atom environment)]
+                        (reset! a {}))
+        _             (activate-auto-skills! environment user-request)
         system-prompt (prompt/assemble-system-prompt environment
                         {:system-prompt            system-prompt
                          :active-extensions        active-exts
@@ -2436,8 +2519,6 @@
     ;; prompt/accessible-skills-snapshot for the per-element shape.
     (env/bind-and-bump! environment 'TURN_ACCESSIBLE_SKILLS
       (prompt/accessible-skills-snapshot))
-    (when-let [a (:active-skills-atom environment)]
-      (reset! a {}))
     ;; Reset ITERATION_ID to nil at turn start; rebound by
     ;; `update-iteration-id!` after each iteration row commits.
     (env/bind-and-bump! environment 'ITERATION_ID nil)
@@ -2635,9 +2716,7 @@
                                :answer          nil
                                :error           nil}))
                           result))
-                      (let [error-feedback (str "[Iteration " (inc iteration) "]\n"
-                                             "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
-                                             "Adjust your approach or emit :final with what you have.")
+                      (let [error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
                             trace-entry {:iteration iteration :error iteration-error-data :final? false}
                             empty-reasoning (when (= :svar.llm/empty-content (:type iteration-error-data))
                                               (:reasoning (:data iteration-error-data)))
@@ -4193,12 +4272,28 @@
     (try (persistance/db-delete-conversation-tree! d id)
       (catch Exception _ nil))))
 
+(def ^:private ORPHAN_INTERRUPTED_ANSWER
+  "Warning: Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry.")
+
 (defn db-sweep-orphaned-running-turns!
-  "Convenience wrapper: run the persistence-layer sweep against the
-   shared DB handle. Frontends call this on startup to mark turns
-   that crashed mid-write as `:interrupted`."
-  ([] (persistance/db-sweep-orphaned-running-turns! (db-info)))
-  ([db] (persistance/db-sweep-orphaned-running-turns! db)))
+  "Mark every `:running` turn as `:interrupted`. Run at process start
+   to clean up turns that crashed or were killed mid-write so the next
+   turn's handover digest renders the right outcome instead of guessing.
+   Returns the number of turns swept."
+  ([] (db-sweep-orphaned-running-turns! (db-info)))
+  ([db]
+   (let [orphans (try (persistance/db-list-conversation-turns-by-status db :running)
+                   (catch Exception _ []))]
+     (doseq [{:keys [id iteration-count duration-ms]} orphans]
+       (try
+         (persistance/db-update-conversation-turn! db id
+           {:answer          ORPHAN_INTERRUPTED_ANSWER
+            :iteration-count (or iteration-count 0)
+            :duration-ms     (or duration-ms 0)
+            :status          :interrupted
+            :prior-outcome   :cancelled})
+         (catch Exception _ nil)))
+     (count orphans))))
 
 (defn close-all!
   []

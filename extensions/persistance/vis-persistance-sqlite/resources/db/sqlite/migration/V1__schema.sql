@@ -746,6 +746,79 @@ BEGIN
 END;
 
 -- =============================================================================
+-- Extension aggregate — extension-owned durable sidecar state.
+--
+-- extension_id is filled by runtime extension helpers from the registered
+-- extension identity. Extension callers should not supply or spoof it.
+--
+-- iteration_block_id is a logical block id for future first-class block rows /
+-- provenance ids. Current block payloads still live in iteration.blocks BLOB, so
+-- iteration_block_id is intentionally not a foreign key yet. Use
+-- iteration_block_index with iteration_id for current block-scoped state.
+-- =============================================================================
+CREATE TABLE extension_aggregate (
+  id                          TEXT PRIMARY KEY NOT NULL,
+
+  extension_id                TEXT NOT NULL CHECK (trim(extension_id) <> ''),
+  aggregate_key               TEXT NOT NULL CHECK (trim(aggregate_key) <> ''),
+  kind                        TEXT NOT NULL CHECK (trim(kind) <> ''),
+
+  metadata                    TEXT,            -- JSON-encoded object/string
+  content                     BLOB,            -- Nippy-encoded extension-owned payload
+
+  conversation_soul_id        TEXT
+                              REFERENCES conversation_soul(id) ON DELETE CASCADE,
+  conversation_state_id       TEXT
+                              REFERENCES conversation_state(id) ON DELETE CASCADE,
+  conversation_turn_state_id  TEXT
+                              REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
+  iteration_id                TEXT
+                              REFERENCES iteration(id) ON DELETE CASCADE,
+  iteration_block_index       INTEGER CHECK (
+                                iteration_block_index IS NULL OR iteration_block_index >= 0
+                              ),
+  iteration_block_id          TEXT CHECK (
+                                iteration_block_id IS NULL OR trim(iteration_block_id) <> ''
+                              ),
+
+  created_at                  INTEGER NOT NULL,
+  updated_at                  INTEGER NOT NULL CHECK (updated_at >= created_at),
+
+  CHECK ((iteration_block_index IS NULL AND iteration_block_id IS NULL)
+         OR iteration_id IS NOT NULL)
+);
+
+CREATE INDEX idx_extension_aggregate_ext_kind
+  ON extension_aggregate(extension_id, kind);
+
+CREATE INDEX idx_extension_aggregate_ext_key
+  ON extension_aggregate(extension_id, aggregate_key);
+
+CREATE INDEX idx_extension_aggregate_conversation_soul
+  ON extension_aggregate(conversation_soul_id)
+  WHERE conversation_soul_id IS NOT NULL;
+
+CREATE INDEX idx_extension_aggregate_conversation_state
+  ON extension_aggregate(conversation_state_id)
+  WHERE conversation_state_id IS NOT NULL;
+
+CREATE INDEX idx_extension_aggregate_conversation_turn_state
+  ON extension_aggregate(conversation_turn_state_id)
+  WHERE conversation_turn_state_id IS NOT NULL;
+
+CREATE INDEX idx_extension_aggregate_iteration
+  ON extension_aggregate(iteration_id)
+  WHERE iteration_id IS NOT NULL;
+
+CREATE INDEX idx_extension_aggregate_iteration_block
+  ON extension_aggregate(iteration_id, iteration_block_index)
+  WHERE iteration_id IS NOT NULL AND iteration_block_index IS NOT NULL;
+
+CREATE INDEX idx_extension_aggregate_iteration_block_id
+  ON extension_aggregate(iteration_block_id)
+  WHERE iteration_block_id IS NOT NULL;
+
+-- =============================================================================
 -- Log — structured logs.
 -- Event envelope:
 --   - event: machine-stable event key (e.g. "iteration.llm.error")

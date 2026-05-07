@@ -2127,24 +2127,49 @@
       summary
       (str proof-summary-icon " " summary))))
 
+(defn- search-spec-summary
+  [{:keys [spec paths]}]
+  (when (map? spec)
+    (let [needles (or (:all spec) (:any spec))
+          n       (count needles)
+          needle  (some-> needles first str)
+          paths   (or (seq paths) (seq (:paths spec)))
+          in      (when-let [p (first paths)]
+                    (str " in " p (when (next paths) "…")))]
+      (str
+        (cond
+          (= 1 n) (str " “" (ellipsize-cols needle 32) "”")
+          (pos? n) (str " " n " terms")
+          :else nil)
+        in))))
+
 (defn- tool-detail-badge
   [detail]
   (when (map? detail)
-    (let [op     (:op detail)
-          cls    (:op-class detail)
-          label  (case cls
-                   :op/read "READ"
-                   :op/search "SEARCH"
-                   :op/preview "PREVIEW"
-                   :op/edit "EDIT"
-                   :op/create "CREATE"
-                   :op/delete "DELETE"
-                   :op/move "MOVE"
-                   :op/shell "SHELL"
-                   :op/meta "META"
-                   nil)]
+    (let [op      (:op detail)
+          cls     (:op-class detail)
+          op-name (when-not (and (= :op/search cls) (#{:all :any} op))
+                    (some-> op name))
+          label   (case cls
+                    :op/read "READ"
+                    :op/search "SEARCH"
+                    :op/preview "PREVIEW"
+                    :op/edit "EDIT"
+                    :op/create "CREATE"
+                    :op/delete "DELETE"
+                    :op/move "MOVE"
+                    :op/shell "SHELL"
+                    :op/meta "META"
+                    nil)]
       (when label
-        (str label (when op (str " " (name op))))))))
+        (str label
+          (or (when (= :op/search cls)
+                (search-spec-summary detail))
+            (when op-name (str " " op-name))))))))
+
+(defn- self-describing-tool-result?
+  [detail]
+  (contains? #{:op/search :op/shell} (:op-class detail)))
 
 (defn- preview-switcher-entry
   [{:keys [marker active-mode conversation-id node-id max-w summary-left summary-suffix
@@ -2811,7 +2836,8 @@
                                         body-entries         (mapv #(line-entry (str r-marker %)) mode-lines)]
                                     (vec (concat [switcher-entry] body-entries)))
                                   (let [color-role (when (map? result-detail) (:color-role result-detail))
-                                        badge-entry (when tool-badge
+                                        badge-entry (when (and tool-badge
+                                                            (not (self-describing-tool-result? result-detail)))
                                                       {:line (str md-summary-marker tool-badge)
                                                        :meta {:kind :tool-badge
                                                               :color-role color-role}})]

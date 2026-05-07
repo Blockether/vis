@@ -62,6 +62,26 @@
    older entries with an explicit marker."
   0.15)
 
+(def ^:const MAX_ITERATION_CONTEXT_TOKENS
+  "Hard cap for Vis' model-facing working memory, independent of provider
+   advertised context size. Huge-window models can accept hundreds of thousands
+   of input tokens, but the RLM loop gets worse there: output budgets are
+   consumed by reasoning/tool planning and Responses streams can end as
+   `max_output_tokens`. Durable evidence stays in the DB; each iteration only
+   needs a compact working set."
+  64000)
+
+(def ^:const MAX_JOURNAL_TOKENS
+  "Absolute token cap for rendered <journal>. This is layered on top of
+   JOURNAL_CONTEXT_FRACTION so 1M-token models cannot inherit a 500k-token
+   journal window."
+  24000)
+
+(def ^:const MAX_VAR_INDEX_TOKENS
+  "Absolute token cap for rendered <var_index>. Live vars can contain large
+   tool outputs; the model sees a compact index, not the full sandbox heap."
+  12000)
+
 (def ^:const CONTEXT_PRESSURE_THRESHOLD
   "Fraction of the model's effective input-token budget at which the
    loop fires a context-pressure nudge. 60% leaves headroom for the
@@ -136,12 +156,18 @@
 
 (declare count-prompt-tokens model-context-limit)
 
+(defn- effective-context-limit
+  [model context-limit]
+  (max 1 (min (long (or context-limit (model-context-limit model)))
+           (long MAX_ITERATION_CONTEXT_TOKENS))))
+
 (defn- journal-token-budget
   ([model]
    (journal-token-budget model nil))
   ([model context-limit]
-   (max 1 (long (Math/floor (* JOURNAL_CONTEXT_FRACTION
-                              (double (or context-limit (model-context-limit model)))))))))
+   (max 1 (min (long MAX_JOURNAL_TOKENS)
+            (long (Math/floor (* JOURNAL_CONTEXT_FRACTION
+                                (double (effective-context-limit model context-limit)))))))))
 
 (defn- tool-result-journal-text
   [v]
@@ -304,8 +330,9 @@
 (defn- var-index-token-budget
   [context-limit remaining-budget]
   (let [fraction-budget (long (Math/floor (* VAR_INDEX_CONTEXT_FRACTION
-                                            (double context-limit))))]
-    (max 1 (min fraction-budget (max 1 (long (or remaining-budget fraction-budget)))))))
+                                            (double context-limit))))
+        capped-budget   (min fraction-budget (long MAX_VAR_INDEX_TOKENS))]
+    (max 1 (min capped-budget (max 1 (long (or remaining-budget capped-budget)))))))
 
 (defn- var-index-entry-start? [line]
   (str/starts-with? (str line) ";; v="))
@@ -483,11 +510,9 @@
 (defn- active-skills-block
   [environment]
   (when-let [skills (some-> (:active-skills-atom environment) deref vals seq)]
-    (str "<extensions>\n"
-      "<active_skills count=\"" (count skills) "\">\n"
+    (str "<active_skills count=\"" (count skills) "\">\n"
       (str/join "\n\n" (map format-active-skill (sort-by :name skills)))
-      "\n</active_skills>\n"
-      "</extensions>")))
+      "\n</active_skills>")))
 
 (defn- normalize-system-nudge
   [default-importance nudge]
@@ -558,7 +583,7 @@
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [ctx-limit (long (or context-limit (model-context-limit model)))
+  (let [ctx-limit (effective-context-limit model context-limit)
         active-skills-block (active-skills-block environment)
         pinned-text (str/join "\n\n" (keep identity [system-prompt current-user-content active-skills-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
@@ -940,14 +965,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                   languages, persistance, …) used as the section
                   label both in this snapshot and in `vis extensions
                   list` (when set).
-     :version   — semver string (when set).
-     :author    — original author of the extension package (when set).
-     :owner     — distribution / package owner (when set).
-     :license   — SPDX license identifier (when set).
      :registry-id — canonical manifest/docs id, usually the alias symbol.
-     :source-paths / :source-mtime-max / :source-hash-sha256
-                — deterministic source markers resolved from the
-                  classpath entry for this extension.
      :symbols   — vec of bare symbol names the extension intern'd into
                   the sandbox (just the names; signatures + doc come
                   from `(v/symbol-doc ...)` if the model wants them).
@@ -974,9 +992,17 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                                      (extension/extension-doc-names registry-id)
                                      [])
                                 (catch Throwable _ []))]
-              (assoc provenance
-                :symbols (mapv :ext.symbol/sym (:ext/symbols ext))
-                :docs    (vec doc-names)))))))
+              (cond-> {:namespace   (:namespace provenance)
+                       :alias       (:alias provenance)
+                       :doc         (:doc provenance)
+                       :kind        (:kind provenance)
+                       :registry-id registry-id
+                       :symbols     (mapv :ext.symbol/sym (:ext/symbols ext))
+                       :docs        (vec doc-names)}
+                (nil? (:alias provenance)) (dissoc :alias)
+                (nil? (:doc provenance)) (dissoc :doc)
+                (nil? (:kind provenance)) (dissoc :kind)
+                (nil? registry-id) (dissoc :registry-id)))))))
 
 (def active-extensions-snapshot
   "Public alias for `extensions-snapshot`."

@@ -1,5 +1,5 @@
-(ns com.blockether.vis.ext.voice-parakeet.recorder-test
-  (:require [com.blockether.vis.ext.voice-parakeet.recorder :as recorder]
+(ns com.blockether.vis.ext.voice.recorder-test
+  (:require [com.blockether.vis.ext.voice.recorder :as recorder]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe recorder-test
