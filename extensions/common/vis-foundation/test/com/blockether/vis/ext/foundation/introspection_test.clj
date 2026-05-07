@@ -7,6 +7,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.introspection :as introspection]
+   [com.blockether.vis.ext.persistance-sqlite.core :as sqlite]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
    [lazytest.core :refer [defdescribe it expect]]))
 
@@ -537,12 +538,36 @@
           plan (vis/db-store-plan! s {:intent-id (:id intent)
                                       :summary "Legacy plan"})
           gate (vis/db-store-gate! s {:plan-id (:id plan)
-                                      :question "Legacy proof?"})]
-      (vis/db-prove-gate! s {:gate-id (:id gate)
-                             :summary "Legacy proven."
-                             :refs [ref]})
-      (vis/db-fulfill-intent! s (:id intent) {:summary "Legacy fulfilled."
-                                              :refs [ref]})
+                                      :question "Legacy proof?"})
+          slot-owner (random-uuid)]
+      (vis/db-store-provenance-event! s {:conversation-id conversation-id
+                                         :conversation-turn-id conversation-turn-id
+                                         :ref ref
+                                         :kind :tool
+                                         :op :v/bash
+                                         :status :done
+                                         :payload {:result {:exit 0}}})
+      (let [gate-bundle (vis/db-create-evidence-bundle! s
+                          {:conversation-id conversation-id
+                           :kind :proof
+                           :subject-kind :gate
+                           :subject-id (:id gate)
+                           :requirements [{:evidence/slot [slot-owner :proof]
+                                           :evidence/from-ref ref
+                                           :evidence/extract [:result :exit]
+                                           :evidence/guard [:= [:value] 0]
+                                           :event/kind :tool
+                                           :event/op :v/bash}]})]
+        (vis/db-attest-gate! s {:gate-id (:id gate)
+                                :evidence-bundle-id (:id gate-bundle)
+                                :kind :gate/proven
+                                :reason "Gate accepted."}))
+      (sqlite/execute! s {:update :conversation_intent
+                          :set {:status "fulfilled"
+                                :fulfillment_summary "Legacy fulfilled."
+                                :abandonment_reason nil
+                                :resolved_at (vis/now-ms)}
+                          :where [:= :id (str (:id intent))]})
       (let [audit ((private-fn "foundation-audit") (env s conversation-id))
             out ((private-fn "foundation-audit-report") (env s conversation-id))]
         (expect (= false (:success? audit)))
