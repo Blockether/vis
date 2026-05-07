@@ -19,6 +19,47 @@
   [prefix]
   (str (Files/createTempDirectory prefix (make-array FileAttribute 0))))
 
+(defn- attest-successful-gate-and-intent!
+  [s cid tid intent-id gate-id ref]
+  (let [slot-owner (random-uuid)]
+    (vis/db-store-provenance-event! s {:conversation-id cid
+                                       :conversation-turn-id tid
+                                       :ref ref
+                                       :kind :tool
+                                       :op :v/bash
+                                       :status :done
+                                       :payload {:result {:exit 0}}})
+    (let [gate-bundle (vis/db-create-evidence-bundle! s
+                        {:conversation-id cid
+                         :kind :proof
+                         :subject-kind :gate
+                         :subject-id gate-id
+                         :requirements [{:evidence/slot [slot-owner :proof]
+                                         :evidence/from-ref ref
+                                         :evidence/extract [:result :exit]
+                                         :evidence/guard [:= [:value] 0]
+                                         :event/kind :tool
+                                         :event/op :v/bash}]})]
+      (vis/db-attest-gate! s {:gate-id gate-id
+                              :evidence-bundle-id (:id gate-bundle)
+                              :kind :gate/proven
+                              :reason "Verified."}))
+    (let [closure-bundle (vis/db-create-evidence-bundle! s
+                           {:conversation-id cid
+                            :kind :closure
+                            :subject-kind :intent
+                            :subject-id intent-id
+                            :requirements [{:evidence/slot [slot-owner :closure]
+                                            :evidence/from-ref ref
+                                            :evidence/extract [:result :exit]
+                                            :evidence/guard [:= [:value] 0]
+                                            :event/kind :tool
+                                            :event/op :v/bash}]})]
+      (vis/db-attest-intent! s {:intent-id intent-id
+                                :evidence-bundle-id (:id closure-bundle)
+                                :kind :intent/fulfilled
+                                :summary "Done."}))))
+
 (do
   (defdescribe llm-text-helper-test
     (it "uses svar cost optimization and returns plain text"
@@ -491,10 +532,7 @@
                                                            :result 3
                                                            :execution-time-ms 1}]})
               ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")]
-          (vis/db-prove-gate! s {:gate-id (:id gate)
-                                 :summary "Verified."
-                                 :refs [ref]})
-          (vis/db-fulfill-intent! s (:id intent) {:summary "Done." :refs [ref]})
+          (attest-successful-gate-and-intent! s cid tid (:id intent) (:id gate) ref)
           (expect (nil? (loop/final-answer-gate-error
                           {:db-info s :current-conversation-turn-id-atom (atom tid)}
                           1 (vis/db-list-iteration-blocks s iid)))))
@@ -821,17 +859,16 @@
                                                        :result 3
                                                        :execution-time-ms 1}]})
           ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          code   "(let [_ (v/fulfill-intent! (:id intent) {:summary \"Done.\" :refs [ref]})] (answer \"done\"))"
+          code   "(let [_ :already-attested] (answer \"done\"))"
           environment {:router ::router
                        :db-info s
                        :current-conversation-turn-id-atom (atom tid)
                        :answer-atom (atom nil)
                        :current-form-idx-atom (atom nil)}]
       (try
-        (vis/db-prove-gate! s {:gate-id (:id gate)
-                               :summary "Verified."
-                               :refs [ref]})
-        (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+        (attest-successful-gate-and-intent! s cid tid (:id intent) (:id gate) ref)
+        (with-redefs-fn {#'loop/runtime-proof-appendix (constantly nil)
+                         #'svar/ask-code! (fn [_ _]
                                             {:raw (str "```clojure\n" code "\n```")
                                              :blocks [{:lang "clojure" :source code}]
                                              :result code
@@ -839,9 +876,6 @@
                                              :duration-ms 1})
                          #'loop/execute-code (fn [env actual-code]
                                                (expect (= code actual-code))
-                                               (vis/db-fulfill-intent! s (:id intent)
-                                                 {:summary "Done."
-                                                  :refs [ref]})
                                                (reset! (:answer-atom env)
                                                  {:value "done"
                                                   :form-idx @(:current-form-idx-atom env)})
