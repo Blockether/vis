@@ -39,6 +39,28 @@
     (expect (nil? (:input-history-index @state/app-db)))
     (expect (nil? (:input-history-draft @state/app-db)))))
 
+(defdescribe slash-command-selection-test
+  (it "cycles selected slash suggestion index for arrows and mouse wheel"
+    (reset! state/app-db {:slash-command-index 0
+                          :render-version 0})
+    (state/dispatch [:move-slash-command-selection 1 3])
+    (expect (= 1 (:slash-command-index @state/app-db)))
+    (state/dispatch [:move-slash-command-selection -1 3])
+    (expect (= 0 (:slash-command-index @state/app-db)))
+    (state/dispatch [:move-slash-command-selection -1 3])
+    (expect (= 2 (:slash-command-index @state/app-db))))
+
+  (it "can hide slash suggestions after tab completion until input is cleared"
+    (reset! state/app-db {:input (input/paste-text (input/empty-input) "/new-tab ")
+                          :slash-command-hidden? false
+                          :render-version 0})
+    (state/dispatch [:hide-slash-command-suggestions])
+    (expect (true? (:slash-command-hidden? @state/app-db)))
+    (state/dispatch [:update-input (input/paste-text (input/empty-input) "/new-tab arg")])
+    (expect (true? (:slash-command-hidden? @state/app-db)))
+    (state/dispatch [:reset-input])
+    (expect (false? (:slash-command-hidden? @state/app-db)))))
+
 (defdescribe workspace-tabs-test
   (it "adds a tab and seeds a base tab when none exist"
     (reset! state/app-db {:title "Current"

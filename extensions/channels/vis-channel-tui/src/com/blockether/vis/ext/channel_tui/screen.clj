@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
+            [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.footer :as footer]
             [com.blockether.vis.ext.channel-tui.header :as header]
             [com.blockether.vis.ext.channel-tui.input :as input]
@@ -194,6 +195,37 @@
 (defn- palette-extra-commands
   [commands]
   (filterv #(not= false (:palette? %)) commands))
+
+(defn- menu-commands
+  [screen]
+  (vec (concat dlg/palette-commands
+         (palette-extra-commands (extension-commands screen)))))
+
+(defn- slash-command-for-input
+  [screen input-state]
+  (slash/exact-command (input/input->text input-state) (menu-commands screen)))
+
+(defn- slash-suggestions-for-input
+  ([screen input-state]
+   (slash-suggestions-for-input screen input-state 0))
+  ([screen input-state selected-index]
+   (slash/suggestions (input/input->text input-state) (menu-commands screen)
+     {:selected-index selected-index})))
+
+(defn- active-slash-suggestions
+  [screen {:keys [input slash-command-index slash-command-hidden?]}]
+  (when-not slash-command-hidden?
+    (slash-suggestions-for-input screen input slash-command-index)))
+
+(defn- command-argv
+  [args]
+  (if (str/blank? args)
+    []
+    (str/split (str/trim args) #"\s+")))
+
+(defn- input-state-from-text
+  [text]
+  (input/paste-text (input/empty-input) (or text "")))
 
 (defn- copy-conversation-as-markdown! [conversation-id]
   (vis/worker-future "vis-tui-copy-conversation-markdown"
@@ -513,7 +545,7 @@
    it twice per frame, which doubled cost on long traces."
   [^TerminalScreen screen cols rows
    {:keys [messages messages-scroll input progress loading? cancelling?
-           turn-start-ms settings] :as db}
+           turn-start-ms settings slash-command-index] :as db}
    now-ms]
   (let [now-ms       (long now-ms)
         g            (.newTextGraphics screen)
@@ -562,7 +594,8 @@
         transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)
         transcript-bubble-copy-regions (bubble-copy-regions layout messages text-top inner-h cols)
         input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
-        selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)]
+        selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)
+        slash-suggestions (slash-suggestions-for-input screen input slash-command-index)]
     (render/fill-background! g cols rows)
     ;; Messages area draws FIRST. It opens a new click-region staging
     ;; pass via `cr/begin-frame!` and registers every painted chrome
@@ -579,6 +612,7 @@
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)
+      (render/draw-slash-command-suggestions! g slash-suggestions input-top cols)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     ;; Atomically publish every chrome region painted above. Until
     ;; this swap runs the input thread sees the PREVIOUS frame's
@@ -1358,8 +1392,20 @@
                        transcript-bubble-copy-regions (get-in db [:layout :transcript-bubble-copy-regions])
                        input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
                        selection-viewport {:viewport-top bar-top
-                                           :eff-scroll   (get-in db [:layout :eff-scroll])}]
+                                           :eff-scroll   (get-in db [:layout :eff-scroll])}
+                       slash-suggestions (slash-suggestions-for-input screen (:input db)
+                                           (:slash-command-index db))]
                    (cond
+                     (and (seq slash-suggestions)
+                       (= atype MouseActionType/SCROLL_UP))
+                     (do (state/dispatch [:move-slash-command-selection -1 (count slash-suggestions)])
+                       (recur))
+
+                     (and (seq slash-suggestions)
+                       (= atype MouseActionType/SCROLL_DOWN))
+                     (do (state/dispatch [:move-slash-command-selection 1 (count slash-suggestions)])
+                       (recur))
+
                      (= atype MouseActionType/SCROLL_UP)
                      (do (state/dispatch [:scroll-up 3 total-h inner-h])
                        (recur))
@@ -1674,6 +1720,30 @@
                      (state/dispatch [:remove-paste paste-id]))
                    (recur))
 
+                 (and (instance? KeyStroke key)
+                   (seq (slash-suggestions-for-input screen (:input db) (:slash-command-index db)))
+                   (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/Tab KeyType/ReverseTab}
+                    (.getKeyType ^KeyStroke key)))
+                 (let [suggestions (slash-suggestions-for-input screen (:input db)
+                                     (:slash-command-index db))
+                       ktype       (.getKeyType ^KeyStroke key)]
+                   (cond
+                     (= ktype KeyType/ArrowUp)
+                     (state/dispatch [:move-slash-command-selection -1 (count suggestions)])
+
+                     (= ktype KeyType/ArrowDown)
+                     (state/dispatch [:move-slash-command-selection 1 (count suggestions)])
+
+                     (= ktype KeyType/ReverseTab)
+                     (state/dispatch [:move-slash-command-selection -1 (count suggestions)])
+
+                     (= ktype KeyType/Tab)
+                     (when-let [suggestion (slash/selected-suggestion suggestions)]
+                       (state/dispatch
+                         [:update-input
+                          (input-state-from-text (slash/completion-text suggestion))])))
+                   (recur))
+
                  :else
                  (let [{:keys [action state tab-index]} (input/handle-key key (:input db))]
                    (state/dispatch [:update-input state])
@@ -1681,58 +1751,62 @@
                          palette-commands (palette-extra-commands extra-commands)
                          extra-by-id    (into {} (map (juxt :id identity)) extra-commands)
                          run-command!
-                         (fn [cmd]
-                           (if-let [ext-cmd (get extra-by-id cmd)]
-                             (when-not (:dialog-open? @state/app-db)
-                               ((:run-fn ext-cmd)
-                                {:channel/id :tui
-                                 :screen screen
-                                 :app-db state/app-db
-                                 :publish! #(vis/publish-channel-event! :tui %)}))
-                             (when-not (:dialog-open? @state/app-db)
-                               (case cmd
-                                 :new-conversation
-                                 (switch-conversation! {:action :new})
+                         (fn [cmd & [args]]
+                           (let [cmd-id (if (map? cmd) (:id cmd) cmd)
+                                 args   (or args (:slash/args cmd) "")]
+                             (if-let [ext-cmd (get extra-by-id cmd-id)]
+                               (when-not (:dialog-open? @state/app-db)
+                                 ((:run-fn ext-cmd)
+                                  {:channel/id :tui
+                                   :screen screen
+                                   :app-db state/app-db
+                                   :command/args args
+                                   :command/argv (command-argv args)
+                                   :publish! #(vis/publish-channel-event! :tui %)}))
+                               (when-not (:dialog-open? @state/app-db)
+                                 (case cmd-id
+                                   :new-conversation
+                                   (switch-conversation! {:action :new})
 
-                                 :new-tab
-                                 (when-let [config (:config @state/app-db)]
-                                   (let [before-count (count (:workspace-tabs @state/app-db))]
-                                     (state/dispatch [:add-workspace-tab])
-                                     (if (= before-count (count (:workspace-tabs @state/app-db)))
-                                       (vis/notify! "Maximum 8 tabs open"
-                                         :level :warn :ttl-ms copy-success-ttl-ms)
-                                       (install-conversation! (chat/make-conversation config) true))))
+                                   :new-tab
+                                   (when-let [config (:config @state/app-db)]
+                                     (let [before-count (count (:workspace-tabs @state/app-db))]
+                                       (state/dispatch [:add-workspace-tab])
+                                       (if (= before-count (count (:workspace-tabs @state/app-db)))
+                                         (vis/notify! "Maximum 8 tabs open"
+                                           :level :warn :ttl-ms copy-success-ttl-ms)
+                                         (install-conversation! (chat/make-conversation config) true))))
 
-                                 :fork-conversation
-                                 (switch-conversation! {:action :fork})
+                                   :fork-conversation
+                                   (switch-conversation! {:action :fork})
 
-                                 :switch-conversation
-                                 (show-conversations!)
+                                   :switch-conversation
+                                   (show-conversations!)
 
-                                 :providers
-                                 (when-let [c (with-dialog-lock
-                                                #(provider/show-provider-dialog! screen (:config @state/app-db)))]
-                                   (state/dispatch [:set-config c]))
+                                   :providers
+                                   (when-let [c (with-dialog-lock
+                                                  #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                                     (state/dispatch [:set-config c]))
 
-                                 :settings
-                                 (let [redraw-ui! (fn []
-                                                    (let [size   (screen-size screen)
-                                                          cols   (.getColumns size)
-                                                          rows   (.getRows size)
-                                                          layout (render-frame! screen cols rows @state/app-db
-                                                                   (System/currentTimeMillis))]
-                                                      (state/dispatch [:set-layout layout])))]
-                                   (when-let [s (with-dialog-lock
-                                                  #(dlg/settings-dialog! screen
-                                                     (:settings @state/app-db)
-                                                     {:on-change (fn [settings]
-                                                                   (state/dispatch [:update-settings settings]))
-                                                      :redraw-ui redraw-ui!}))]
-                                     (state/dispatch [:update-settings s])))
+                                   :settings
+                                   (let [redraw-ui! (fn []
+                                                      (let [size   (screen-size screen)
+                                                            cols   (.getColumns size)
+                                                            rows   (.getRows size)
+                                                            layout (render-frame! screen cols rows @state/app-db
+                                                                     (System/currentTimeMillis))]
+                                                        (state/dispatch [:set-layout layout])))]
+                                     (when-let [s (with-dialog-lock
+                                                    #(dlg/settings-dialog! screen
+                                                       (:settings @state/app-db)
+                                                       {:on-change (fn [settings]
+                                                                     (state/dispatch [:update-settings settings]))
+                                                        :redraw-ui redraw-ui!}))]
+                                       (state/dispatch [:update-settings s])))
 
                             ;; No :quit branch — the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
-                                 nil))))]
+                                   nil)))))]
                      (case action
                        :quit nil
 
@@ -1801,7 +1875,13 @@
                          (recur))
 
                        :send
-                       (do (submit-input! @state/app-db state)
+                       (do (if-let [cmd (or (slash/selected-suggestion
+                                              (active-slash-suggestions screen
+                                                (assoc @state/app-db :input state)))
+                                          (slash-command-for-input screen state))]
+                             (do (run-command! cmd (:slash/args cmd))
+                               (state/dispatch [:reset-input]))
+                             (submit-input! @state/app-db state))
                          (recur))
 
                        :cancel
