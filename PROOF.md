@@ -191,8 +191,9 @@ No task is DONE if:
 | Task 9 plan completion transition | DONE | Plan status now transitions to `completed` only when all required gates are proven by accepted gate attestations; one proven gate does not complete a multi-gate plan, and intent remains active. Verified: task9 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
 | Task 10 intent fulfillment/abandonment | DONE | Added intent closure attestation writer. Intent fulfillment now has an attestation-backed path requiring an accepted closure evidence bundle plus a completed plan; early closure over an open plan fails and leaves the intent active. Verified: task10 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
 | Task 11 audit surface | DONE | Added `db-audit-proof` read-only audit over gates, plans, intents, and accepted attestations. The audit passes for the attestation-ledger closure path and reports legacy closure that bypasses accepted intent closure attestation. Verified: task11 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
-| Task 12 hooks/rendering | NEXT | Render audit/attestation reports and add extension lifecycle hooks without scraping prompt prose. |
-| Task 13+ cleanup | TODO | Remove stale legacy proof semantics only after audit/report callers migrate. |
+| Task 12 audit rendering | DONE | `v/audit-report` now renders the persisted proof audit summary and violations alongside the provenance report, so channels and humans can see attestation-ledger failures without scraping proof prose. Verified: foundation audit-report regression, task12 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, foundation introspection, and `./verify.sh --quick`. |
+| Task 13 extension lifecycle hooks | NEXT | Add structured proof lifecycle hooks (`event-appended`, `bundle-created`, `attestation-accepted`, `audit-violation`) without scraping prompt prose. |
+| Task 14+ cleanup | TODO | Remove stale legacy proof semantics only after audit/report callers migrate. |
 | Legacy removal | TODO / REQUIRED | Final purge task must delete old files and stale names after all callers move. |
 
 
@@ -614,7 +615,7 @@ Acceptance criteria:
 - Audit reports unresolved refs, running refs, missing bundles, failed guards, state mismatch, and stale proof-blob dependencies.
 - Tests assert old internal proof-check/provenance-guard names are not reintroduced.
 
-## Task 12 — Update rendering after the data model changes
+## Task 12 — DONE — Update rendering after the data model changes
 
 Work:
 
