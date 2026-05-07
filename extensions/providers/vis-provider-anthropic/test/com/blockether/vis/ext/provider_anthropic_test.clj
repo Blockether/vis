@@ -12,7 +12,7 @@
           oauth-provider (vis/provider-by-id :anthropic-coding-plan)]
       (expect (= :anthropic (:provider/id api-provider)))
       (expect (= "Anthropic (API Key)" (:provider/label api-provider)))
-      (expect (= "claude-opus-4-6" (first (get-in api-provider [:provider/preset :default-models]))))
+      (expect (= "claude-opus-4-7" (first (get-in api-provider [:provider/preset :default-models]))))
       (expect (nil? (:provider/auth-fn api-provider)))
       (expect (= :anthropic-coding-plan (:provider/id oauth-provider)))
       (expect (= "Anthropic (Claude Subscription)" (:provider/label oauth-provider)))
@@ -26,7 +26,7 @@
 
   (it "parses callback URL, code#state, query string, and bare code"
     (expect (= {:code "abc" :state "s1"}
-              (anthropic/parse-authorization-input "https://console.anthropic.com/oauth/code/callback?code=abc&state=s1")))
+              (anthropic/parse-authorization-input "http://localhost:53692/callback?code=abc&state=s1")))
     (expect (= {:code "abc" :state "s1"}
               (anthropic/parse-authorization-input "abc#s1")))
     (expect (= {:code "abc" :state "s1"}
@@ -40,7 +40,9 @@
       (expect (= (:verifier flow) (:state flow)))
       (expect (str/starts-with? (:url flow) "https://claude.ai/oauth/authorize?"))
       (expect (str/includes? (:url flow) "code_challenge="))
-      (expect (str/includes? (:url flow) "scope=org%3Acreate_api_key"))))
+      (expect (str/includes? (:url flow) "redirect_uri=http%3A%2F%2Flocalhost%3A53692%2Fcallback"))
+      (expect (str/includes? (:url flow) "scope=org%3Acreate_api_key"))
+      (expect (str/includes? (:url flow) "user%3Asessions%3Aclaude_code"))))
 
   (it "login exchanges code and persists credentials"
     (let [saved (atom nil)
@@ -61,7 +63,7 @@
                           :manual-code-fn  (fn [_] "code123")})
                 body (json/read-json (get-in @saved [:opts :body]) :key-fn keyword)]
             (expect (= :ok result))
-            (expect (= "https://console.anthropic.com/v1/oauth/token" (:url @saved)))
+            (expect (= "https://platform.claude.com/v1/oauth/token" (:url @saved)))
             (expect (= "authorization_code" (:grant_type body)))
             (expect (= "code123" (:code body)))
             (expect (= "sk-ant-oat01-access" (get-in @saved [:credentials :access-token])))

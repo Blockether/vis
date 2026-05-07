@@ -24,12 +24,12 @@
     java.nio.charset.StandardCharsets/UTF_8))
 
 (def ^:private authorize-url "https://claude.ai/oauth/authorize")
-(def ^:private token-url "https://console.anthropic.com/v1/oauth/token")
-(def ^:private redirect-uri "https://console.anthropic.com/oauth/code/callback")
-(def ^:private scopes "org:create_api_key user:profile user:inference")
+(def ^:private token-url "https://platform.claude.com/v1/oauth/token")
+(def ^:private redirect-uri "http://localhost:53692/callback")
+(def ^:private scopes "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload")
 (def ^:private auth-file (str (System/getProperty "user.home") "/.vis/anthropic-auth.json"))
 (def ^:private anthropic-base-url "https://api.anthropic.com/v1")
-(def ^:private default-models ["claude-opus-4-6" "claude-sonnet-4-6" "claude-haiku-4-5"])
+(def ^:private default-models ["claude-opus-4-7" "claude-opus-4-6" "claude-sonnet-4-6" "claude-haiku-4-5"])
 (def ^:private ^:const refresh-margin-ms 300000)
 (def ^:private secure-random (delay (SecureRandom.)))
 
