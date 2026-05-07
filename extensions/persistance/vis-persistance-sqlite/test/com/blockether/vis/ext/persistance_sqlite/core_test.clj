@@ -17,6 +17,7 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
+   [com.blockether.vis.internal.proof :as proof]
    [honey.sql :as sql]
    [lazytest.core :refer [defdescribe it expect]]
    [next.jdbc :as jdbc]
@@ -96,6 +97,118 @@
                     :iteration-block-index 0}
                   (select-keys (:scope (first rows)) [:iteration-id :iteration-block-index])))
         (expect (= {:ok true} (:content (first rows))))))))
+
+(defdescribe provenance-event-ledger-test
+  (it "stores and reads immutable runtime observations by canonical ref"
+    (let [s            (h/store)
+          cid          (vis/db-store-conversation! s {:channel :tui})
+          tid          (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                           :user-request "prove ledger"
+                                                           :status :running})
+          iid          (vis/db-store-iteration! s {:conversation-turn-id tid
+                                                   :status :done
+                                                   :blocks [{:code "(v/bash \"true\")"}]})
+          turn-state-id (:state-id (first (vis/db-list-conversation-turn-states s tid)))
+          ref          (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          event        (vis/db-store-provenance-event! s {:conversation-id cid
+                                                          :conversation-turn-id tid
+                                                          :conversation-turn-state-id turn-state-id
+                                                          :iteration-id iid
+                                                          :ref ref
+                                                          :kind :tool
+                                                          :op :v/bash
+                                                          :status :done
+                                                          :rendering-kind :vis/tool
+                                                          :payload {:result {:exit 0}}
+                                                          :summary "bash true passed"})
+          fetched      (vis/db-get-provenance-event s cid ref)
+          listed       (vis/db-list-provenance-events s {:conversation-id cid})]
+      (expect (= ref (:ref event)))
+      (expect (= :tool (:kind fetched)))
+      (expect (= :done (:status fetched)))
+      (expect (= {:result {:exit 0}} (:payload fetched)))
+      (expect (string? (:payload-sha256 fetched)))
+      (expect (= [ref] (mapv :ref listed)))
+      (expect (= 1 (raw-count s :provenance_event)))))
+
+  (it "rejects duplicate canonical refs in one conversation ledger"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "duplicate ref"
+                                                  :status :running})
+          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")]
+      (vis/db-store-provenance-event! s {:conversation-id cid
+                                         :conversation-turn-id tid
+                                         :ref ref
+                                         :kind :eval
+                                         :op :sci/eval
+                                         :status :done})
+      (let [thrown (try
+                     (vis/db-store-provenance-event! s {:conversation-id cid
+                                                        :conversation-turn-id tid
+                                                        :ref ref
+                                                        :kind :eval
+                                                        :op :sci/eval
+                                                        :status :done})
+                     nil
+                     (catch Exception e e))]
+        (expect (some? thrown))
+        (expect (= 1 (raw-count s :provenance_event))))))
+
+  (it "stores running events but they do not satisfy proof compatibility"
+    (let [s       (h/store)
+          cid     (vis/db-store-conversation! s {:channel :tui})
+          tid     (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                      :user-request "future"
+                                                      :status :running})
+          ref     (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/tool/future")
+          running (vis/db-store-provenance-event! s {:conversation-id cid
+                                                     :conversation-turn-id tid
+                                                     :ref ref
+                                                     :kind :lifecycle
+                                                     :op :future
+                                                     :status :running})]
+      (expect (= :running (:status running)))
+      (expect (= [ref] (mapv :ref (vis/db-list-provenance-events s {:conversation-id cid
+                                                                    :status :running}))))
+      (expect (false? (proof/proof-compatible? {:provenance {:status (:status running)}})))))
+
+  (it "derives evidence bundle members from ledger events, not fake caller slots"
+    (let [s          (h/store)
+          cid        (vis/db-store-conversation! s {:channel :tui})
+          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                         :user-request "derive bundle"
+                                                         :status :running})
+          gate-id    (random-uuid)
+          slot-owner (random-uuid)
+          ref        (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          _event     (vis/db-store-provenance-event! s {:conversation-id cid
+                                                        :conversation-turn-id tid
+                                                        :ref ref
+                                                        :kind :tool
+                                                        :op :v/bash
+                                                        :status :done
+                                                        :payload {:result {:exit 1}}})
+          bundle     (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                        :kind :proof
+                                                        :subject-kind :gate
+                                                        :subject-id gate-id
+                                                        :requirements [{:evidence/slot [slot-owner :exit]
+                                                                        :evidence/from-ref ref
+                                                                        :evidence/extract [:result :exit]
+                                                                        :evidence/value 0
+                                                                        :evidence/guard [:= [:value] 0]
+                                                                        :event/kind :tool
+                                                                        :event/op :v/bash}]})
+          member     (first (:members bundle))]
+      (expect (= :rejected (:status bundle)))
+      (expect (= false (:accepted? bundle)))
+      (expect (= 1 (:value member)))
+      (expect (= :guard-false (:error-code member)))
+      (expect (= 1 (raw-count s :evidence_bundle)))
+      (expect (= 1 (raw-count s :evidence_bundle_member)))
+      (expect (= bundle (vis/db-get-evidence-bundle s (:id bundle)))))))
 
 (defn- drop-conversation-intent-schema!
   [db-file]

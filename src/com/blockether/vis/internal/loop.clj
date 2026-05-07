@@ -44,7 +44,7 @@
    [com.blockether.vis.internal.markdown :as markdown]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.provenance-lifecycle :as prov-life]
+   [com.blockether.vis.internal.proof :as proof]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.registry :as registry]
    [edamame.core :as edamame]
@@ -1311,9 +1311,9 @@
        :iteration      iteration
        :form-position  form-position
        :form-count     form-count
-       :ref            (prov-life/block-ref {:turn-prefix turn-prefix
-                                             :iteration iteration
-                                             :block form-position})
+       :ref            (proof/block-ref {:turn-prefix turn-prefix
+                                         :iteration iteration
+                                         :block form-position})
        :timeout?       (boolean (:timeout? result))
        :repaired?      (boolean (:repaired? result))})))
 
@@ -1454,9 +1454,9 @@
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
           form-ref (fn [idx]
-                     (prov-life/block-ref {:turn-prefix turn-prefix
-                                           :iteration iteration-position
-                                           :block (inc idx)}))
+                     (proof/block-ref {:turn-prefix turn-prefix
+                                       :iteration iteration-position
+                                       :block (inc idx)}))
           effective-reasoning (when (and (some? reasoning-level)
                                       (reasoning-effort-configurable? resolved-model))
                                 (or (normalize-reasoning-level reasoning-level)

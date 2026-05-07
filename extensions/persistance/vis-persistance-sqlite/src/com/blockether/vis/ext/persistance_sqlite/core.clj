@@ -28,8 +28,7 @@
    [clojure.string :as str]
    [com.blockether.vis.ext.persistance-sqlite.migration :as migration]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.provenance-lifecycle :as prov-life]
-   [com.blockether.vis.internal.provenance-ref :as prov-ref]
+   [com.blockether.vis.internal.proof :as proof]
    [honey.sql :as sql]
    [next.jdbc :as jdbc]
    [next.jdbc.result-set :as rs]
@@ -1065,8 +1064,265 @@
      (:resolved_ref row)    (assoc :resolved-ref (:resolved_ref row))
      (:resolved_at row)     (assoc :resolved-at (->date (:resolved_at row))))))
 
+(defn- kw-sql
+  [x]
+  (cond
+    (keyword? x) (if (namespace x) (str (namespace x) "/" (name x)) (name x))
+    (symbol? x) (if (namespace x) (str (namespace x) "/" (name x)) (name x))
+    (some? x) (str x)
+    :else nil))
+
+(defn- input-keyword
+  [x]
+  (cond
+    (keyword? x) x
+    (symbol? x) (keyword (namespace x) (name x))
+    (string? x) (keyword x)
+    :else x))
+
+(defn- proof-kind-sql
+  [kind]
+  (let [kind (input-keyword kind)]
+    (when-not (contains? proof/event-kinds kind)
+      (throw (ex-info "provenance event kind is not supported" {:kind kind})))
+    (name kind)))
+
+(defn- proof-status-sql
+  [status]
+  (let [status (input-keyword status)]
+    (when-not (contains? proof/lifecycle-statuses status)
+      (throw (ex-info "provenance event status is not supported" {:status status})))
+    (name status)))
+
+(defn- payload-digest
+  [payload]
+  (sha256-hex (pr-str payload)))
+
+(defn- row->provenance-event
+  [row]
+  (cond-> {:id (->uuid (:id row))
+           :conversation-id (->uuid (:conversation_soul_id row))
+           :ref (:ref row)
+           :kind (->kw-back (:kind row))
+           :op (:op row)
+           :status (->kw-back (:status row))
+           :created-at (->date (:created_at row))}
+    (:conversation_turn_soul_id row) (assoc :conversation-turn-id (->uuid (:conversation_turn_soul_id row)))
+    (:conversation_turn_state_id row) (assoc :conversation-turn-state-id (->uuid (:conversation_turn_state_id row)))
+    (:iteration_id row) (assoc :iteration-id (->uuid (:iteration_id row)))
+    (:parent_ref row) (assoc :parent-ref (:parent_ref row))
+    (:rendering_kind row) (assoc :rendering-kind (->kw-back (:rendering_kind row)))
+    (:payload row) (assoc :payload (<-blob (:payload row)))
+    (:payload_sha256 row) (assoc :payload-sha256 (:payload_sha256 row))
+    (:summary row) (assoc :summary (:summary row))
+    (:metadata row) (assoc :metadata (<-blob (:metadata row)))))
+
+(defn db-store-provenance-event!
+  "Append one immutable provenance_event row.
+
+   This is the first proof-grade ledger slice. It records runtime observations;
+   evidence bundles and attestations consume these rows later."
+  [db-info {:keys [conversation-id conversation-turn-id conversation-turn-state-id iteration-id
+                   ref parent-ref kind op status rendering-kind payload payload-sha256 summary metadata]}]
+  (when (ds db-info)
+    (let [ref (str ref)]
+      (when-not (proof/canonical-ref? ref)
+        (throw (ex-info "provenance ref must be canonical"
+                 {:ref ref
+                  :accepted "turn/<turn8>/iteration/<n>/block/<k>[/tool/<tool-id>|/error]"})))
+      (when (and parent-ref (not (proof/canonical-ref? parent-ref)))
+        (throw (ex-info "provenance parent ref must be canonical" {:parent-ref parent-ref})))
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (let [id (new-id)
+                row {:id id
+                     :conversation_soul_id (->ref conversation-id)
+                     :conversation_turn_soul_id (some-> conversation-turn-id ->ref)
+                     :conversation_turn_state_id (some-> conversation-turn-state-id ->ref)
+                     :iteration_id (some-> iteration-id ->ref)
+                     :ref ref
+                     :parent_ref parent-ref
+                     :kind (proof-kind-sql kind)
+                     :op (or (kw-sql op) "event")
+                     :status (proof-status-sql status)
+                     :rendering_kind (kw-sql rendering-kind)
+                     :payload (when (some? payload) (->blob payload))
+                     :payload_sha256 (or payload-sha256 (when (some? payload) (payload-digest payload)))
+                     :summary summary
+                     :metadata (when (some? metadata) (->blob metadata))
+                     :created_at (now-ms)}]
+            (execute! tx-info {:insert-into :provenance_event
+                               :values [(into {} (remove (comp nil? val) row))]})
+            (row->provenance-event
+              (require-row tx-info :provenance_event id "provenance_event not found after insert"))))))))
+
+(defn db-get-provenance-event
+  [db-info conversation-id ref]
+  (when (ds db-info)
+    (some-> (query-one! db-info
+              {:select [:*]
+               :from :provenance_event
+               :where [:and
+                       [:= :conversation_soul_id (->ref conversation-id)]
+                       [:= :ref (str ref)]]})
+      row->provenance-event)))
+
+(defn db-list-provenance-events
+  [db-info {:keys [conversation-id iteration-id status kind limit] :or {limit 100}}]
+  (if-not (ds db-info)
+    []
+    (mapv row->provenance-event
+      (query! db-info
+        (cond-> {:select [:*]
+                 :from :provenance_event
+                 :order-by [[:created_at :asc] [:id :asc]]
+                 :limit limit}
+          conversation-id (assoc :where [:= :conversation_soul_id (->ref conversation-id)])
+          iteration-id (update :where (fn [where]
+                                        (if where
+                                          [:and where [:= :iteration_id (->ref iteration-id)]]
+                                          [:= :iteration_id (->ref iteration-id)])))
+          status (update :where (fn [where]
+                                  (if where
+                                    [:and where [:= :status (proof-status-sql status)]]
+                                    [:= :status (proof-status-sql status)])))
+          kind (update :where (fn [where]
+                                (if where
+                                  [:and where [:= :kind (proof-kind-sql kind)]]
+                                  [:= :kind (proof-kind-sql kind)]))))))))
+
+(defn- bundle-kind-sql
+  [kind]
+  (let [kind (input-keyword kind)]
+    (when-not (contains? proof/bundle-kinds kind)
+      (throw (ex-info "evidence bundle kind is not supported" {:kind kind})))
+    (name kind)))
+
+(defn- subject-kind-sql
+  [kind]
+  (let [kind (input-keyword kind)]
+    (when-not (contains? proof/subject-kinds kind)
+      (throw (ex-info "evidence bundle subject kind is not supported" {:subject-kind kind})))
+    (name kind)))
+
+(defn- bundle-source-sql
+  [source]
+  (let [source (input-keyword (or source :derived))]
+    (when-not (contains? proof/bundle-sources source)
+      (throw (ex-info "evidence bundle source is not supported" {:source source})))
+    (name source)))
+
+(defn- member-role-sql
+  [role]
+  (let [role (input-keyword (or role :observation))]
+    (when-not (contains? proof/member-roles role)
+      (throw (ex-info "evidence bundle member role is not supported" {:role role})))
+    (name role)))
+
+(defn- row->evidence-member
+  [row]
+  (cond-> {:id (->uuid (:id row))
+           :bundle-id (->uuid (:bundle_id row))
+           :slot (<-blob (:slot row))
+           :from-ref (:event_ref row)
+           :extract (<-blob (:extract_path row))
+           :guard-ok (= 1 (long (:guard_ok row)))
+           :member-role (->kw-back (:member_role row))}
+    (:derived_value row) (assoc :value (<-blob (:derived_value row)))
+    (:guard row) (assoc :guard (<-blob (:guard row)))
+    (:error_code row) (assoc :error-code (->kw-back (:error_code row)))
+    (:error row) (assoc :error (:error row))))
+
+(defn- row->evidence-bundle
+  [db-info row]
+  (let [members (mapv row->evidence-member
+                  (query! db-info {:select [:*]
+                                   :from :evidence_bundle_member
+                                   :where [:= :bundle_id (:id row)]
+                                   :order-by [[:created_at :asc] [:id :asc]]}))]
+    (cond-> {:id (->uuid (:id row))
+             :conversation-id (->uuid (:conversation_soul_id row))
+             :kind (->kw-back (:kind row))
+             :subject-kind (->kw-back (:subject_kind row))
+             :subject-id (->uuid (:subject_id row))
+             :source (->kw-back (:source row))
+             :status (->kw-back (:status row))
+             :accepted? (= "accepted" (:status row))
+             :members members
+             :created-at (->date (:created_at row))}
+      (:summary row) (assoc :summary (:summary row))
+      (:metadata row) (assoc :metadata (<-blob (:metadata row))))))
+
+(defn- event-row->proof-event
+  [row]
+  {:event/ref (:ref row)
+   :event/status (->kw-back (:status row))
+   :event/kind (->kw-back (:kind row))
+   :event/op (:op row)
+   :event/rendering-kind (some-> (:rendering_kind row) ->kw-back)
+   :event/payload (<-blob (:payload row))})
+
+(defn db-create-evidence-bundle!
+  "Derive and persist an evidence bundle from provenance_event rows. Caller-supplied slot values are ignored."
+  [db-info {:keys [conversation-id kind subject-kind subject-id source summary metadata requirements]}]
+  (when (ds db-info)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [events (mapv (fn [requirement]
+                             (or (query-one! tx-info {:select [:*]
+                                                      :from :provenance_event
+                                                      :where [:and
+                                                              [:= :conversation_soul_id (->ref conversation-id)]
+                                                              [:= :ref (:evidence/from-ref requirement)]]})
+                               {:ref (:evidence/from-ref requirement)}))
+                       requirements)
+              proof-events (mapv event-row->proof-event events)
+              gate-result (proof/evaluate-gate proof-events requirements)
+              accepted? (:gate/proven? gate-result)
+              bundle-id (new-id)
+              now (now-ms)]
+          (execute! tx-info {:insert-into :evidence_bundle
+                             :values [{:id bundle-id
+                                       :conversation_soul_id (->ref conversation-id)
+                                       :kind (bundle-kind-sql (or kind :proof))
+                                       :subject_kind (subject-kind-sql subject-kind)
+                                       :subject_id (->ref subject-id)
+                                       :source (bundle-source-sql source)
+                                       :status (if accepted? "accepted" "rejected")
+                                       :summary summary
+                                       :metadata (when (some? metadata) (->blob metadata))
+                                       :created_at now}]})
+          (doseq [binding (:bundle/bindings gate-result)]
+            (execute! tx-info {:insert-into :evidence_bundle_member
+                               :values [(into {}
+                                          (remove (comp nil? val)
+                                            {:id (new-id)
+                                             :bundle_id bundle-id
+                                             :slot (->blob (:evidence/slot binding))
+                                             :event_ref (:evidence/from-ref binding)
+                                             :extract_path (->blob (:evidence/extract binding))
+                                             :derived_value (when (contains? binding :evidence/value)
+                                                              (->blob (:evidence/value binding)))
+                                             :guard (when (contains? binding :evidence/guard)
+                                                      (->blob (:evidence/guard binding)))
+                                             :guard_ok (if (:evidence/guard-ok binding) 1 0)
+                                             :error_code (some-> (:evidence/error-code binding) name)
+                                             :error (:evidence/error binding)
+                                             :member_role (member-role-sql (:evidence/member-role binding))
+                                             :created_at now}))]}))
+          (row->evidence-bundle tx-info
+            (require-row tx-info :evidence_bundle bundle-id "evidence_bundle not found after insert")))))))
+
+(defn db-get-evidence-bundle
+  [db-info bundle-id]
+  (when (ds db-info)
+    (some->> (query-one! db-info {:select [:*]
+                                  :from :evidence_bundle
+                                  :where [:= :id (->ref bundle-id)]})
+      (row->evidence-bundle db-info))))
+
 (defn- canonical-ref-or-throw! [ref]
-  (when-not (prov-ref/canonical-ref? ref)
+  (when-not (proof/canonical-ref? ref)
     (throw (ex-info "provenance ref must be canonical"
              {:ref ref
               :accepted "turn/<turn8>/iteration/<n>/block/<k>[/tool/<tool-id>|/error]"})))
@@ -1074,7 +1330,7 @@
 
 (defn- observed-event-at-canonical-ref
   [db-info conversation-soul-id canonical-ref]
-  (when-let [{:keys [conversation-prefix turn-prefix iteration block child]} (prov-ref/parse-ref canonical-ref)]
+  (when-let [{:keys [conversation-prefix turn-prefix iteration block child]} (proof/parse-ref canonical-ref)]
     (let [turn-row (query-one! db-info
                      (cond-> {:select [[:ct.id :turn_id]
                                        [:cs.conversation_soul_id :conversation_soul_id]]
@@ -1150,7 +1406,7 @@
 
 (defn- nearest-observed-refs
   [db-info conversation-soul-id canonical-ref]
-  (let [parsed      (prov-ref/parse-ref canonical-ref)
+  (let [parsed      (proof/parse-ref canonical-ref)
         turn-prefix (:turn-prefix parsed)
         events      (observed-event-summaries db-info conversation-soul-id)
         same-turn   (when turn-prefix
@@ -1160,7 +1416,7 @@
 
 (defn- not-observed-reason
   [nearest canonical-ref]
-  (let [parsed (prov-ref/parse-ref canonical-ref)]
+  (let [parsed (proof/parse-ref canonical-ref)]
     (cond
       (empty? nearest) :no-observed-refs
       (and (:iteration parsed)
@@ -1196,11 +1452,11 @@
                     :reason (not-observed-reason nearest canonical)
                     :hint "Run `(v/latest-provenance-refs)` or `(v/provenance-timeline)` and cite an observed ref."
                     :nearest-observed nearest}))))
-      (when (and (= :proof role) (not (prov-life/proof-compatible? event)))
+      (when (and (= :proof role) (not (proof/proof-compatible? event)))
         (throw (ex-info "proof provenance must cite a completed successful lifecycle event"
                  {:ref canonical
                   :status (get-in event [:provenance :status])})))
-      (when (and (= :blocker role) (not (prov-life/blocker-compatible? event)))
+      (when (and (= :blocker role) (not (proof/blocker-compatible? event)))
         (throw (ex-info "blocker provenance cannot cite a running lifecycle event"
                  {:ref canonical
                   :status (get-in event [:provenance :status])}))))))
@@ -2158,10 +2414,10 @@
                :vis/error :sci/eval
                :sci/eval))]
     (:provenance
-     (prov-life/event
-       {:ref (prov-life/block-ref {:turn-prefix (subs turn-id-s 0 8)
-                                   :iteration iteration-position
-                                   :block (inc block-pos)})
+     (proof/event
+       {:ref (proof/block-ref {:turn-prefix (subs turn-id-s 0 8)
+                               :iteration iteration-position
+                               :block (inc block-pos)})
         :op op
         :status status
         :rendering-kind rendering-kind
@@ -2192,8 +2448,8 @@
                          (false? (:success? result)) :error
                          :else :done))
               op (or (:op tool-prov) :v/tool)
-              ref (prov-life/child-ref parent-ref {:op op})]
-          (prov-life/event
+              ref (proof/child-ref parent-ref {:op op})]
+          (proof/event
             {:ref ref
              :parent-ref parent-ref
              :op op
@@ -2207,8 +2463,8 @@
       running-tool-events
       (into
         (map (fn [{:keys [op id started-at-ms tool] :as event}]
-               (prov-life/start-event
-                 {:ref (prov-life/child-ref parent-ref {:op op :id id})
+               (proof/start-event
+                 {:ref (proof/child-ref parent-ref {:op op :id id})
                   :parent-ref parent-ref
                   :op (or op :v/tool)
                   :rendering-kind :vis/tool
@@ -2221,8 +2477,8 @@
 
       (instance? java.util.concurrent.Future result)
       (conj
-        (prov-life/start-event
-          {:ref (prov-life/child-ref parent-ref {:id :future})
+        (proof/start-event
+          {:ref (proof/child-ref parent-ref {:id :future})
            :parent-ref parent-ref
            :op :future/deferred
            :rendering-kind :vis/tool

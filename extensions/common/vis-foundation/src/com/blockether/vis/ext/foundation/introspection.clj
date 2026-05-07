@@ -49,8 +49,7 @@
    [com.blockether.vis.ext.foundation.transcript :as transcript]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.markdown :as md]
-   [com.blockether.vis.internal.provenance-lifecycle :as prov-life]
-   [com.blockether.vis.internal.provenance-ref :as prov-ref])
+   [com.blockether.vis.internal.proof :as proof])
   (:import
    [clojure.lang IBlockingDeref IDeref IPending]
    [java.util.concurrent CancellationException ExecutionException Future TimeUnit TimeoutException]))
@@ -886,7 +885,7 @@
 
 (defn- fast-provenance-event
   [env conversation-id ref]
-  (when-let [{:keys [turn-prefix iteration block]} (prov-ref/parse-ref ref)]
+  (when-let [{:keys [turn-prefix iteration block]} (proof/parse-ref ref)]
     (let [db-info (:db-info env)
           turn    (some #(when (id-prefix-match? (:id %) turn-prefix) %)
                     (safe-call #(vis/db-list-conversation-turns db-info conversation-id) []))
@@ -949,9 +948,9 @@
    (foundation-latest-provenance-refs env (:conversation-id env)))
   ([env conversation-id]
    (let [events          (filterv event-ref (foundation-provenance-timeline env conversation-id))
-         done?           #(prov-life/successful? (:status %))
-         terminal?       #(prov-life/terminal? (:status %))
-         blocker?        #(prov-life/blocker? (:status %))
+         done?           #(proof/successful? (:status %))
+         terminal?       #(proof/terminal? (:status %))
+         blocker?        #(proof/blocker? (:status %))
          error?          #(= :error (:status %))
          proof-refs      (refs-where done? events)
          terminal-refs   (refs-where terminal? events)
@@ -1286,10 +1285,10 @@ _No intents._
 (defn- ref-compatible?
   [role status]
   (case role
-    (:proof :fulfillment-evidence) (prov-life/successful? status)
-    (:impediment :abandonment-evidence) (prov-life/terminal? status)
-    (:candidate :context) (prov-life/terminal? status)
-    (prov-life/terminal? status)))
+    (:proof :fulfillment-evidence) (proof/successful? status)
+    (:impediment :abandonment-evidence) (proof/terminal? status)
+    (:candidate :context) (proof/terminal? status)
+    (proof/terminal? status)))
 
 (defn- ref-incompatibility-type
   [role]
@@ -1336,7 +1335,7 @@ _No intents._
         evidence-required-role?    #(contains? #{:proof :fulfillment-evidence} %)
         ref        (ref-value entry)
         role       (:role entry)
-        canonical? (boolean (and ref (prov-ref/canonical-ref? ref)))
+        canonical? (boolean (and ref (proof/canonical-ref? ref)))
         event      (when canonical? (get event-by-ref ref))
         status     (:status event)
         observed?  (some? event)

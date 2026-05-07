@@ -244,7 +244,7 @@
   (terminal? (get-in event-projection [:provenance :status])))
 
 ;; -----------------------------------------------------------------------------
-;; Proof-domain specs
+;; Proof-domain enums and predicates used by specs and pure harnesses
 ;; -----------------------------------------------------------------------------
 
 (def event-kinds #{:eval :tool :error :answer :system :diagnostic :lifecycle})
@@ -297,6 +297,217 @@
         (guard-leaf? (second x))
         (or (guard-leaf? (nth x 2)) (vector? (nth x 2))))
       false)))
+
+;; -----------------------------------------------------------------------------
+;; Pure evidence derivation and guard evaluation
+;; -----------------------------------------------------------------------------
+
+(def ^:private missing ::missing)
+
+(def disallowed-proof-event-kinds
+  "Mutable sidecar kinds that may be useful runtime state but can never be proof
+   evidence. Extension aggregates/cache/status/checkpoint must be observed by
+   runtime first and converted into immutable provenance events before proof."
+  #{:extension-aggregate :extension_aggregate :extension/aggregate
+    :extension-cache :extension_cache :extension/cache
+    :extension-status :extension_status :extension/status
+    :extension-checkpoint :extension_checkpoint :extension/checkpoint
+    :aggregate :cache :status :checkpoint})
+
+(defn- map-get-flex
+  [m k]
+  (cond
+    (contains? m k) (get m k)
+    (and (keyword? k) (contains? m (name k))) (get m (name k))
+    (and (string? k) (contains? m (keyword k))) (get m (keyword k))
+    :else missing))
+
+(defn- path-value
+  [x path]
+  (reduce
+    (fn [v segment]
+      (cond
+        (identical? missing v) (reduced missing)
+        (map? v) (map-get-flex v segment)
+        (and (sequential? v) (integer? segment) (<= 0 segment) (< segment (count v))) (nth v segment)
+        :else (reduced missing)))
+    x
+    path))
+
+(defn- event-ref
+  [event]
+  (or (:event/ref event) (get-in event [:provenance :ref]) (:ref event)))
+
+(defn- event-status
+  [event]
+  (or (:event/status event) (get-in event [:provenance :status]) (:status event)))
+
+(defn- event-kind
+  [event]
+  (or (:event/kind event) (get-in event [:provenance :kind]) (:kind event)))
+
+(defn- event-op
+  [event]
+  (or (:event/op event) (get-in event [:provenance :op]) (:op event)))
+
+(defn- event-payload
+  [event]
+  (cond
+    (contains? event :event/payload) (:event/payload event)
+    (contains? event :payload) (:payload event)
+    (contains? event :result) {:result (:result event)}
+    :else event))
+
+(defn- same-op?
+  [expected actual]
+  (= (op-slug expected) (op-slug actual)))
+
+(defn- compare-values
+  [op left right]
+  (case op
+    := (= left right)
+    :!= (not= left right)
+    :< (and (number? left) (number? right) (< left right))
+    :<= (and (number? left) (number? right) (<= left right))
+    :> (and (number? left) (number? right) (> left right))
+    :>= (and (number? left) (number? right) (>= left right))
+    false))
+
+(defn- contains-value?
+  [container value]
+  (cond
+    (string? container) (str/includes? container (str value))
+    (map? container) (contains? container value)
+    (set? container) (contains? container value)
+    (sequential? container) (boolean (some #(= value %) container))
+    :else false))
+
+(defn- resolve-operand
+  [env operand]
+  (if (extract-path? operand)
+    (path-value env operand)
+    operand))
+
+(defn- evaluate-guard*
+  [guard env]
+  (if-not (guard-expr? guard)
+    false
+    (let [[op a b] guard]
+      (case op
+        :and (every? #(evaluate-guard* % env) (rest guard))
+        :or (boolean (some #(evaluate-guard* % env) (rest guard)))
+        :not (not (evaluate-guard* a env))
+        :exists (not (identical? missing (resolve-operand env a)))
+        (:= :!= :< :<= :> :>=) (compare-values op (resolve-operand env a) (resolve-operand env b))
+        :contains (contains-value? (resolve-operand env a) (resolve-operand env b))
+        :in (contains-value? (resolve-operand env b) (resolve-operand env a))
+        :matches (let [left (resolve-operand env a)
+                       pattern (resolve-operand env b)]
+                   (boolean (and (some? left) (some? pattern) (re-find (re-pattern (str pattern)) (str left)))))
+        false))))
+
+(defn evaluate-guard
+  "Evaluate a data-only guard expression over a derived binding.
+
+   Guard operands that are extract paths read from an environment containing
+   `:value`, `:binding`, and `:event`. Invalid guard shapes evaluate false; no
+   guard execution path can call arbitrary code."
+  [guard derived-binding]
+  (let [env {:value (:evidence/value derived-binding)
+             :binding derived-binding
+             :event (:evidence/event derived-binding)}]
+    (boolean (evaluate-guard* guard env))))
+
+(defn- binding-error
+  [requirement code message]
+  (cond-> {:evidence/slot (:evidence/slot requirement)
+           :evidence/from-ref (:evidence/from-ref requirement)
+           :evidence/extract (:evidence/extract requirement)
+           :evidence/error message
+           :evidence/error-code code}
+    (:evidence/guard requirement) (assoc :evidence/guard (:evidence/guard requirement)
+                                    :evidence/guard-ok false)))
+
+(defn derive-binding
+  "Derive one evidence binding from an immutable runtime event and an evidence
+   requirement. Caller-supplied `:evidence/value` is ignored by design.
+
+   Returns a derived binding map. Failures are data (`:evidence/error` and
+   `:evidence/error-code`) so tests, bundle writers, and audit can explain why a
+   gate was not proven."
+  [requirement event]
+  (let [from-ref (:evidence/from-ref requirement)
+        ref (event-ref event)
+        status (event-status event)
+        kind (event-kind event)
+        op (event-op event)
+        extract (:evidence/extract requirement)
+        guard (:evidence/guard requirement)]
+    (cond
+      (not (s/valid? ::evidence-requirement (dissoc requirement :evidence/value)))
+      (binding-error requirement :invalid-requirement "Evidence requirement shape is invalid")
+
+      (not (canonical-ref? from-ref))
+      (binding-error requirement :non-canonical-ref "Evidence requirement must cite a canonical ref")
+
+      (not= from-ref ref)
+      (binding-error requirement :ref-mismatch "Runtime event ref does not match evidence requirement")
+
+      (contains? disallowed-proof-event-kinds kind)
+      (binding-error requirement :mutable-extension-state "Mutable extension state cannot be proof evidence")
+
+      (and kind (not (contains? event-kinds kind)))
+      (binding-error requirement :unsupported-event-kind "Runtime event kind is not proof evidence")
+
+      (not (successful? status))
+      (binding-error requirement :non-successful-event "Only terminal successful runtime observations can prove evidence")
+
+      (and (:event/kind requirement) (not= (:event/kind requirement) kind))
+      (binding-error requirement :event-kind-mismatch "Runtime event kind does not match evidence requirement")
+
+      (and (:event/op requirement) (not (same-op? (:event/op requirement) op)))
+      (binding-error requirement :event-op-mismatch "Runtime event op does not match evidence requirement")
+
+      :else
+      (let [value (path-value (event-payload event) extract)]
+        (if (identical? missing value)
+          (binding-error requirement :missing-extract "Evidence extraction path did not resolve in runtime payload")
+          (let [binding (cond-> {:evidence/slot (:evidence/slot requirement)
+                                 :evidence/from-ref from-ref
+                                 :evidence/extract extract
+                                 :evidence/value value
+                                 :evidence/event event}
+                          guard (assoc :evidence/guard guard))
+                guard-ok (if guard (evaluate-guard guard binding) true)]
+            (cond-> (assoc binding :evidence/guard-ok guard-ok)
+              (false? guard-ok) (assoc :evidence/error "Evidence guard evaluated false"
+                                  :evidence/error-code :guard-false))))))))
+
+(defn evaluate-gate
+  "Pure pre-storage gate harness.
+
+   `events` are immutable runtime event observations. `requirements` are evidence
+   extraction requests. The harness derives every binding from events by ref and
+   accepts the gate only when every required binding derives cleanly and all
+   guards pass."
+  [events requirements]
+  (let [by-ref (into {} (map (juxt event-ref identity) events))
+        bindings (mapv (fn [requirement]
+                         (if-let [event (get by-ref (:evidence/from-ref requirement))]
+                           (derive-binding requirement event)
+                           (binding-error requirement :missing-event "No runtime event exists for evidence requirement ref")))
+                   requirements)
+        failures (filterv :evidence/error bindings)
+        accepted? (empty? failures)]
+    {:gate/proven? accepted?
+     :attestation/status (if accepted? :accepted :rejected)
+     :attestation/decision (if accepted? :proven :impeded)
+     :bundle/bindings bindings
+     :gate/errors failures}))
+
+;; -----------------------------------------------------------------------------
+;; Proof-domain specs
+;; -----------------------------------------------------------------------------
 
 (s/def ::uuid uuid-string?)
 (s/def ::non-blank-string non-blank-string?)
