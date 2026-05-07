@@ -1162,6 +1162,50 @@ _No intents._
     (map? gate) (:id gate)
     :else gate))
 
+(defn- create-attestation-bundle!
+  [env {:keys [evidence-bundle-id conversation-id kind subject-kind subject-id requirements summary metadata source]}]
+  (if evidence-bundle-id
+    evidence-bundle-id
+    (do
+      (when-not (seq requirements)
+        (throw (ex-info "attestation helper requires :requirements or :evidence-bundle-id"
+                 {:subject-kind subject-kind
+                  :subject-id subject-id})))
+      (:id (vis/db-create-evidence-bundle! (:db-info env)
+             {:conversation-id (or conversation-id (current-conversation-id env))
+              :kind kind
+              :subject-kind subject-kind
+              :subject-id subject-id
+              :source source
+              :summary summary
+              :metadata metadata
+              :requirements requirements})))))
+
+(defn- foundation-attest-gate!
+  "Attestation-ledger gate resolution. Prefer this over legacy prove-gate! when
+   you have evidence requirements over provenance_event rows."
+  ([env opts]
+   (let [state (current-turn-intents env)
+         kind (or (:kind opts) :gate/proven)
+         gate-id (or (:gate-id opts)
+                   (resolve-current-gate-id state (:gate opts)))
+         bundle-kind (case kind
+                       :gate/impeded :impediment
+                       :gate/proven :proof)
+         bundle-id (create-attestation-bundle! env
+                     (assoc opts
+                       :kind (or (:bundle-kind opts) bundle-kind)
+                       :subject-kind :gate
+                       :subject-id gate-id))]
+     (vis/db-attest-gate! (:db-info env)
+       (-> opts
+         (dissoc :gate :requirements :conversation-id :bundle-kind :source :metadata)
+         (assoc :gate-id gate-id
+           :evidence-bundle-id bundle-id
+           :kind kind)))))
+  ([env gate opts]
+   (foundation-attest-gate! env (assoc opts :gate gate))))
+
 (defn- foundation-prove-gate!
   ([env opts]
    (let [state (current-turn-intents env)
@@ -1187,6 +1231,26 @@ _No intents._
    (foundation-impede-gate! env opts))
   ([env gate opts]
    (foundation-impede-gate! env gate opts)))
+
+(defn- foundation-attest-intent!
+  "Attestation-ledger intent resolution. Fulfillment requires an accepted closure
+   bundle and a completed plan; abandonment requires blocker/impediment state."
+  [env intent-id opts]
+  (let [kind (or (:kind opts) :intent/fulfilled)
+        bundle-kind (case kind
+                      :intent/abandoned :impediment
+                      :intent/fulfilled :closure)
+        bundle-id (create-attestation-bundle! env
+                    (assoc opts
+                      :kind (or (:bundle-kind opts) bundle-kind)
+                      :subject-kind :intent
+                      :subject-id intent-id))]
+    (vis/db-attest-intent! (:db-info env)
+      (-> opts
+        (dissoc :requirements :conversation-id :bundle-kind :source :metadata)
+        (assoc :intent-id intent-id
+          :evidence-bundle-id bundle-id
+          :kind kind)))))
 
 (defn- foundation-fulfill-intent!
   [env intent-id opts]
@@ -2157,9 +2221,16 @@ _No intents._
      :examples  ["(v/offer-proof! {:gate-id (:id gate) :slots {[(str (:id intent)) :test-run] {:ref \"turn/3f2a91c0/iteration/5/block/2\"}}})"]
      :before-fn inject-environment}))
 
+(def attest-gate!-symbol
+  (vis/symbol 'attest-gate! foundation-attest-gate!
+    {:doc       "Attestation-ledger gate resolution. Provide :requirements over provenance_event refs, or :evidence-bundle-id for an accepted bundle. Prefer over legacy prove-gate!."
+     :arglists  '([opts] [gate opts])
+     :examples  ["(v/attest-gate! (:id gate) {:kind :gate/proven :reason \"Verification passed.\" :requirements [{:evidence/slot [(:id intent) :exit] :evidence/from-ref ref :evidence/extract [:result :exit] :evidence/guard [:= [:value] 0] :event/kind :tool :event/op :v/bash}]})"]
+     :before-fn inject-environment}))
+
 (def prove-gate!-symbol
   (vis/symbol 'prove-gate! foundation-prove-gate!
-    {:doc       "Mark a gate proven. Requires :summary, observed canonical proof refs, and slots satisfying the gate's expected-proof guard."
+    {:doc       "Legacy gate proof writer. Prefer v/attest-gate! so proof authority is an accepted evidence bundle + attestation."
      :arglists  '([opts] [gate opts])
      :examples  ["(v/prove-gate! (:id gate) {:summary \"Targeted verification passed.\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"] :slots {[(str (:id intent)) :exit-code] {:value 0}}})"]
      :before-fn inject-environment}))
@@ -2178,9 +2249,16 @@ _No intents._
      :examples  ["(v/impede-gate! (:id gate) {:reason \"Verification cannot run.\" :refs [\"turn/3f2a91c0/iteration/5/block/2/error\"]})"]
      :before-fn inject-environment}))
 
+(def attest-intent!-symbol
+  (vis/symbol 'attest-intent! foundation-attest-intent!
+    {:doc       "Attestation-ledger intent closure. Fulfillment requires a completed plan and accepted closure bundle. Prefer over legacy fulfill-intent!."
+     :arglists  '([intent-id {:keys [kind summary reason requirements evidence-bundle-id]}])
+     :examples  ["(v/attest-intent! (:id intent) {:kind :intent/fulfilled :summary \"User objective satisfied.\" :requirements [{:evidence/slot [(:id intent) :closure] :evidence/from-ref ref :evidence/extract [:result :exit] :evidence/guard [:= [:value] 0] :event/kind :tool :event/op :v/bash}]})"]
+     :before-fn inject-environment}))
+
 (def fulfill-intent!-symbol
   (vis/symbol 'fulfill-intent! foundation-fulfill-intent!
-    {:doc       "Resolve an intent as fulfilled after required gates are proven. Requires :summary and canonical provenance refs."
+    {:doc       "Legacy intent fulfillment writer. Prefer v/attest-intent! so closure authority is an accepted evidence bundle + attestation."
      :arglists  '([intent-id {:keys [summary refs resolved-ref metadata]}])
      :examples  ["(v/fulfill-intent! (:id intent) {:summary \"User objective satisfied.\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})"]
      :before-fn inject-environment}))
@@ -2296,9 +2374,11 @@ _No intents._
    issue-plan!-symbol
    issue-gate!-symbol
    offer-proof!-symbol
+   attest-gate!-symbol
    prove-gate!-symbol
    impede-gate!-symbol
    block-gate!-symbol
+   attest-intent!-symbol
    fulfill-intent!-symbol
    abandon-intent!-symbol
    audit-symbol
@@ -2313,7 +2393,7 @@ _No intents._
 (def introspection-prompt
   (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown; (v/audit cid?) -> proof audit data; (v/audit-report cid?) -> human audit.\n"
     "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/provenance-event ref) resolves one ref; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/proof-checks cid?) is legacy deterministic gate detail; (v/proofs checks-or-cid?) renders clickable proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
-    "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with attestation-backed gate/intent APIs where available. Check (v/intents turn-id?) and (:success? (v/audit)) before normal answer.\n"
+    "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with (v/attest-gate! gate opts)/(v/attest-intent! intent-id opts). Legacy prove/fulfill helpers are compatibility only. Check (v/intents turn-id?) and (:success? (v/audit)) before normal answer.\n"
     "`v/` docs: (v/extensions), (v/extension-docs ref), (v/extension-doc ref), (v/extension-readme ref), (v/namespace-docs ref), (v/symbol-doc ref sym).\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
