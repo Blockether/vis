@@ -66,6 +66,45 @@ Two conditional rules apply on top of the spec:
 | `:ext/providers`         | ✗              | `[]`                  | Vector of LLM provider descriptors (`{:provider/id :provider/label :provider/auth-fn :provider/get-token-fn …}`). Each entry is forwarded to `register-provider!`. |
 | `:ext/persistance`       | ✗              | `[]`                  | Vector of persistence-backend descriptors (`{:persistance/id <kw> :persistance/ns <fq-symbol>}`). Each entry is forwarded to `com.blockether.vis.core/register-backend!`. |
 
+## Extension aggregate persistence
+
+Extensions that need durable private sidecar state use the host facade helpers:
+
+```clojure
+(vis/ext-create! env row) ;; append history/snapshot row
+(vis/ext-put! env row)    ;; upsert singleton row for key/kind/scope
+(vis/ext-get env query)   ;; read one own row/latest match
+(vis/ext-list env query)  ;; list own rows
+(vis/ext-delete! env q)   ;; delete own rows only
+(vis/ext-swap! env q f & args)
+```
+
+Normal extension code never passes `:extension-id`. The symbol/callback wrapper binds the currently executing extension, and the helper fills `extension_id` from `:ext/namespace`. Supplying `:extension-id` or `:extension_id` throws `:extension-aggregate/extension-id-forbidden`.
+
+Rows use extension-level keys, not SQL columns:
+
+```clojure
+{:key      :workspace/index
+ :kind     :background/status
+ :scope    :conversation-state
+ :metadata {:schema-version 1}
+ :content  {:state :running :files 1200}}
+```
+
+Scopes accepted by helpers:
+
+- `:global`
+- `:conversation`
+- `:conversation-state`
+- `:turn-state`
+- `:iteration`
+- `:block`
+- explicit maps like `{:iteration-id "..." :iteration-block-index 2}`
+
+Helper reads and writes always include `WHERE extension_id = current-extension`. Public admin facade functions (`db-list-extension-aggregates`, `db-get-extension-aggregate`) may inspect rows across extensions for reports and diagnostics. Public cross-extension writes are not exposed; writes go through extension-context helpers.
+
+Aggregate rows are durable extension state, not prompt context. Extensions intentionally project small summaries through `:ext/environment-info-fn`, `:ext/prompt`, nudges, lifecycle hooks, or symbols. They must not store secrets or proof-critical truth here; use config/secret storage and future provenance/evidence/attestation tables instead.
+
 ## CLI command slot
 
 `:ext/cli` is the slot for commands an extension contributes to

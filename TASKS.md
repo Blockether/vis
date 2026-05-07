@@ -295,6 +295,7 @@ CREATE TABLE extension_aggregate (
   kind TEXT NOT NULL,
   metadata TEXT,
   content BLOB,
+  scope_key TEXT NOT NULL,
   conversation_soul_id TEXT NULL,
   conversation_state_id TEXT NULL,
   conversation_turn_state_id TEXT NULL,
@@ -338,7 +339,7 @@ Correct split:
 - [ ] Make settings dialog larger.
 - [ ] Split Settings into separate UI / Provider / Extension config / Extension toggles sections.
 - [ ] Move extension env vars into Extension config box.
-- [ ] Add extension aggregate persistence using HoneySQL in app code.
+- [x] Add extension aggregate persistence using HoneySQL in app code.
 - [ ] Keep SQLite schema changes inline in V1 unless migration policy changes.
 - [x] Remove PI mentions, PI aliases, PI config paths, or mark migration-only internally.
 - [ ] Add custom provider-by-URL config shape.

@@ -11,12 +11,20 @@ Committed artifact rule:
 - Do not add separate committed `autoresearch.md`, `autoresearch.sh`, score docs, or prompt docs unless the user explicitly asks. If the pi-autoresearch extension insists on its normal files, keep them as runtime/uncommitted loop files or derive them from this file.
 - Final proof architecture means `proof.clj` owns proof-domain semantics. Old provenance/proof namespaces, delegates, shims, facades, proof blobs, and stale API names are migration debt to delete, not target design.
 
+## One-command handoff
+
+Run this from the Vis repo root to hand off the proof campaign to `pi-autoresearch`:
+
+```bash
+pi --model zai-coding/GLM-5.1 '/autoresearch Use PROOF_AUTORESEARCH.md as the boss session document and read PROOF.md before choosing work. Do not create extra committed markdown artifacts. Do not use a restrictive --tools allowlist because pi-autoresearch needs its extension tools: init_experiment, run_experiment, and log_experiment. Run headless Pi vs headless Vis benchmarks on zai-coding/GLM-5.1. Compare quality, elapsed time, and tokens. Store runtime artifacts only under target/proof-autoresearch/. Start gates: Pi model smoke, Vis JSON model smoke, ./verify.sh --quick or documented unrelated blocker, selected NEXT/IN PROGRESS proof task in PROOF.md. Known current blocker may be unrelated dirty formatting in extensions/channels/vis-channel-tui/test/com/blockether/vis/ext/channel_tui/footer_test.clj; document it instead of hiding it. Start with P1 unless PROOF.md says otherwise. For each task: run the same prompt in Pi and Vis, write required artifacts, score quality/speed/tokens/proof, include quality_floor_pass strict_task_win combined_task_win, update suite rollup, implement exactly one Vis improvement with tests, fresh runtime check, ./verify.sh --quick, then rerun the exact same task. Optimize the whole proof-task suite, not one cherry-picked task: quality/proof parity must pass on every completed task and suite_combined_win_rate must be >= 0.60 before any Vis-beats-Pi claim. Preserve the trust boundary: extension_aggregate/cache/status/checkpoint is mutable extension state, not proof evidence; iteration.blocks BLOB/projections are not proof-grade block identity; secret storage is separate confidentiality work and secrets must not go in aggregate/proof blobs; :agent/end is a future terminal lifecycle boundary, not running proof; declarative :ext.symbol/aggregate is sidecar convenience only. Runtime writes immutable provenance_event observations; evidence_bundle derives facts from events; attestation decides gate/plan/intent; audit validates the chain. No TUI. No default DB deletion. V1 schema only during this phase. Stop and ask if a user-owned DB reset, real V2 migration, proof-hiding optimization, or model/provider failure is required.'
+```
+
 ## Entry prompt for pi-autoresearch
 
 Use this prompt in Pi interactive mode after the `pi-autoresearch` package is installed:
 
 ```text
-/autoresearch Use PROOF_AUTORESEARCH.md as the boss session document. Do not create extra committed markdown artifacts. Run headless Pi vs headless Vis benchmarks on zai-coding/GLM-5.1. Compare quality, elapsed time, and tokens. Store runtime artifacts under target/proof-autoresearch/. After each comparison, implement one Vis improvement with tests, restart/fresh-check runtime, then rerun the exact same problem. Optimize the whole proof-task suite, not one cherry-picked task: Vis must keep quality/proof parity on every attempted task and win the combined quality/speed/token score on at least 60% of completed tasks before claiming it beats Pi. Preserve proof/provenance/attestation semantics.
+/autoresearch Use PROOF_AUTORESEARCH.md as the boss session document and read PROOF.md before choosing work. Do not create extra committed markdown artifacts. Run headless Pi vs headless Vis benchmarks on zai-coding/GLM-5.1. Compare quality, elapsed time, and tokens. Store runtime artifacts under target/proof-autoresearch/. After each comparison, implement one Vis improvement with tests, restart/fresh-check runtime, then rerun the exact same problem. Optimize the whole proof-task suite, not one cherry-picked task: Vis must keep quality/proof parity on every attempted task and win the combined quality/speed/token score on at least 60% of completed tasks before claiming it beats Pi. Preserve proof/provenance/attestation semantics. Preserve the trust boundary: extension aggregate sidecars are mutable state, not proof evidence; iteration.blocks BLOB/projections are not proof-grade block identity; secret storage is separate confidentiality work; :agent/end is a future terminal lifecycle boundary; declarative aggregate sugar is sidecar convenience only. Evidence must derive from immutable provenance_event rows through evidence_bundle and attestation.
 ```
 
 If using the skill directly:
@@ -27,7 +35,7 @@ Goal: Make Vis beat Pi on hard proof/debug tasks using headless benchmarks on za
 Command: derive from PROOF_AUTORESEARCH.md; runtime artifacts only under target/proof-autoresearch/.
 Metric: vis_loss lower is better per task; suite_win_rate must be >= 60% before claiming Vis beats Pi.
 Files in scope: PROOF.md, PROOF_AUTORESEARCH.md, src/com/blockether/vis/**, extensions/**, test/**.
-Constraints: no TUI, no secrets in logs, no extra committed autoresearch docs, tests after every code change, fresh runtime check after every done task.
+Constraints: no TUI, no secrets in logs, no extra committed autoresearch docs, tests after every code change, fresh runtime check after every done task, extension aggregate state is not proof evidence.
 ```
 
 ## Confirmed model status
@@ -76,6 +84,41 @@ P0 fixed:
 - `bin/vis run --model zai-coding/glm-5.1 ...` now builds a one-shot router rooted at the requested provider/model.
 - The command does not reorder or persist `~/.vis/config.edn`.
 - Verification used active global provider `:openai-codex` and still returned JSON cost provider/model `zai-coding/glm-5.1`.
+
+## Extension state versus proof evidence
+
+Autoresearch must preserve this distinction while implementing PROOF.md:
+
+```text
+extension symbol runs
+  -> writes extension_aggregate cache/status/checkpoint sidecar
+  -> runtime writes provenance_event immutable observation
+  -> evidence_bundle derives facts from events
+  -> attestation decides gate/plan/intent
+  -> audit validates whole chain
+```
+
+Rules:
+
+- Extension persistence substrate is mutable state: aggregate, cache, status, checkpoint.
+- PROOF.md ledger is immutable evidence: `provenance_event` observations.
+- Evidence bundles derive values from events only. They must not trust caller-supplied extension aggregate payloads as proof.
+- Attestations decide over accepted bundles.
+- Audit validates the full chain and flags any shortcut from extension state directly to proof.
+- `iteration.blocks` BLOB and extension aggregate projections are not proof-grade block identity. Proof-grade identity needs immutable rows/refs, terminal lifecycle status, op, and digest/summary.
+- Secret storage/encryption is a separate confidentiality layer. Do not store secrets in extension aggregate blobs or proof payloads, but do not conflate secret-store work with attestation-ledger work.
+- `:agent/end` is a future terminal lifecycle boundary for final-answer permission, audit finalization, notifications, and extension idle hooks. Until first-class, running/partial lifecycle phases still cannot prove completion.
+- Declarative `:ext.symbol/aggregate` sugar, if added later, is sidecar-write convenience only. It must not become proof guard/attestation semantics.
+
+Boundary-gap classification:
+
+| Gap | Autoresearch treatment |
+|---|---|
+| `iteration_block` table missing | Fold into ledger identity design when implementing `provenance_event`; not required for P1 pure harness. |
+| Secret storage missing | Security backlog unless a proof task touches secret material; never put secrets in generic aggregate/proof blobs. |
+| Proof-ledger semantics missing | Core PROOF.md work. Start with P1, then ledger/bundle/attestation/audit. |
+| `:agent/end` missing | Related lifecycle terminal event; add only when task reaches lifecycle/audit/final-answer boundary. |
+| Declarative aggregate sugar missing | Lower-priority extension ergonomics; do not mix with proof semantics. |
 
 ## Headless-only rule
 
@@ -270,10 +313,12 @@ Shared task rules:
   - exact files changed/proposed;
   - tests to run;
   - proof/provenance/attestation implications;
+  - whether the change touches extension state, proof evidence, or both;
   - legacy deletion impact.
 - Vis implementation side must update `PROOF.md` progress board after each completed task.
 - Any SQLite task uses disposable DB directory under `target/proof-autoresearch/<run-id>/vis/db/` and may delete/recreate it.
 - Do not report "Vis beats Pi" from a single task. Report per-task result plus suite aggregate.
+- Do not collapse extension aggregate state into proof evidence. Runtime must append immutable observations before bundles/attestations can prove anything.
 
 ## Gates for running autoresearch
 
@@ -388,7 +433,7 @@ Note: `clojure -M:test -n ...` is currently blocked by unrelated dirty test name
 Prompt:
 
 ```text
-Implement PROOF.md Task 5A. Add pure guard evaluation over runtime-derived bindings only. Add tests proving fake caller slot payloads, compact refs, running events, wrong event kind/op, missing extraction paths, and false guards cannot prove a gate. Do not add SQLite storage yet.
+Implement PROOF.md Task 5A. Add pure guard evaluation over runtime-derived bindings only. Add tests proving fake caller slot payloads, fake extension aggregate proof payloads, compact refs, running events, wrong event kind/op, missing extraction paths, and false guards cannot prove a gate. Do not add SQLite storage yet. Preserve the boundary: extension_aggregate/cache/status/checkpoint is mutable state; only runtime-derived immutable event observations may feed evidence bundles.
 ```
 
 Why hard:
@@ -408,7 +453,8 @@ Expected proof artifacts:
 - `proof/evaluate-guard` or equivalent pure API;
 - `proof/derive-binding` or equivalent extraction API;
 - gate harness function that consumes events + requirements and returns accepted/rejected decision data;
-- tests named around fake slot payload, running event, compact ref, wrong op, missing extract, false guard.
+- explicit rejection case showing `extension_aggregate` / sidecar payloads cannot stand in for evidence;
+- tests named around fake slot payload, fake extension aggregate proof, running event, compact ref, wrong op, missing extract, false guard.
 
 ### P2 — Canonical proof namespace purge
 
@@ -442,7 +488,7 @@ Expected proof artifacts:
 Prompt:
 
 ```text
-Implement the first SQLite ledger slice from PROOF.md Task 6 and Task 13. Add `provenance_event` to V1__schema.sql only. Add persistence helpers to insert/query immutable events using HoneySQL. Tests must create a disposable DB from V1, insert done/running/error events, reject duplicate canonical refs, and prove proof-visible refs resolve through the ledger. Do not add V2/V3 migrations.
+Implement the first SQLite ledger slice from PROOF.md Task 6 and Task 13. Add `provenance_event` to V1__schema.sql only. Treat current iteration.blocks BLOB and extension aggregate projections as non-proof-grade projections. Add persistence helpers to insert/query immutable events using HoneySQL. Tests must create a disposable DB from V1, insert done/running/error events, reject duplicate canonical refs, and prove proof-visible refs resolve through the ledger. Do not add V2/V3 migrations.
 ```
 
 Why hard:
@@ -462,6 +508,7 @@ Expected proof artifacts:
 - V1 schema change only;
 - disposable DB can be deleted/recreated;
 - ledger row has canonical ref, kind, op, status, payload digest;
+- clear note whether `iteration_block` identity is still soft/projected or now proof-grade;
 - running events query but do not satisfy proof compatibility.
 
 ### P4 — Evidence bundle derivation
@@ -663,25 +710,6 @@ Expected verification:
 
 ```bash
 clojure -M:test -n com.blockether.vis.internal.prompt-test -n com.blockether.vis.internal.extension-test
-./verify.sh --quick
-```
-
-### P3 — System intents and extension proof hooks
-
-Prompt:
-
-```text
-Implement PROOF.md Task 10A. Add system/extension-owned intent shape and proof lifecycle hook events so extensions can observe event append, bundle creation, attestation accepted, audit violation, and final-answer-blocked without scraping prose. Add fake extension tests.
-```
-
-Why hard:
-
-- Crosses intent model, extension API, proof lifecycle, and audit semantics.
-
-Expected verification:
-
-```bash
-clojure -M:test -n com.blockether.vis.internal.proof-test -n com.blockether.vis.internal.extension-test
 ./verify.sh --quick
 ```
 

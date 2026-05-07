@@ -46,6 +46,7 @@
    [com.blockether.vis.internal.env          :as env]
    [com.blockether.vis.internal.error        :as error]
    [com.blockether.vis.internal.extension    :as extension]
+   [com.blockether.vis.internal.extension-aggregate :as extension-aggregate]
    [com.blockether.vis.internal.format       :as fmt]
    [com.blockether.vis.internal.loop         :as lp]
    [com.blockether.vis.internal.main         :as binary]
@@ -269,6 +270,11 @@
 ;; Restore
 (def db-restore-blocks              persistance/db-restore-blocks)
 
+;; Extension aggregate admin/read facade.
+;; Writes go through ext-* helpers so extension_id is runtime-owned.
+(def db-get-extension-aggregate        persistance/db-get-extension-aggregate)
+(def db-list-extension-aggregates      persistance/db-list-extension-aggregates)
+
 ;; Process-restart cleanup
 (def db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!)
 
@@ -305,6 +311,16 @@
 (def extension-source-markers-of         extension/extension-source-markers-of)
 (def channel-hooks-for                   extension/channel-hooks-for)
 (def reload-extensions!                  lp/reload-extensions!)
+
+;; Extension-owned durable sidecar helpers. These are for extension callbacks;
+;; they fill extension id from the current extension context and reject caller-
+;; supplied :extension-id.
+(def ext-create!                         extension-aggregate/ext-create!)
+(def ext-put!                            extension-aggregate/ext-put!)
+(def ext-get                             extension-aggregate/ext-get)
+(def ext-list                            extension-aggregate/ext-list)
+(def ext-delete!                         extension-aggregate/ext-delete!)
+(def ext-swap!                           extension-aggregate/ext-swap!)
 
 ;; =============================================================================
 ;; Doctor protocol

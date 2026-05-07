@@ -3,6 +3,7 @@
    SQLite, no SCI; just composition + broadcast. The integration with
    the real iteration loop is exercised separately."
   (:require
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.lifecycle :as lc]
    [lazytest.core :refer [defdescribe it expect]]))
 
@@ -43,32 +44,47 @@
       (expect (= [a] (:iteration-end out)))))
 
   (it "wires extension manifest fns under the matching phase"
-    (let [ext-fn (fn [_])
+    (let [seen (atom [])
+          ext-fn (fn [_] (swap! seen conj :called))
           ext    (mk-ext 'fixture.ext :ext/on-iteration-end-fn ext-fn)
           out    (lc/compose-listeners nil [ext])]
-      (expect (= [ext-fn] (:iteration-end out)))))
+      (expect (= 1 (count (:iteration-end out))))
+      ((first (:iteration-end out)) {})
+      (expect (= [:called] @seen))))
 
   (it "fans out across multiple extensions in registration order"
-    (let [a (fn [_])
-          b (fn [_])
-          c (fn [_])
+    (let [seen (atom [])
+          a (fn [_] (swap! seen conj :a))
+          b (fn [_] (swap! seen conj :b))
+          c (fn [_] (swap! seen conj :c))
           out (lc/compose-listeners nil
                 [(mk-ext 'a :ext/on-iteration-end-fn a)
                  (mk-ext 'b :ext/on-iteration-end-fn b)
                  (mk-ext 'c :ext/on-iteration-end-fn c)])]
-      (expect (= [a b c] (:iteration-end out)))))
+      (doseq [f (:iteration-end out)] (f {}))
+      (expect (= [:a :b :c] @seen))))
 
   (it "fires per-call listeners BEFORE extension listeners"
     ;; Channels run first so the user-facing UI updates immediately,
     ;; then extension side effects (logging, billing) trail. This
     ;; ordering is part of the contract; downstream tests rely on it.
-    (let [hook (fn [_])
-          ext1 (fn [_])
-          ext2 (fn [_])
+    (let [seen (atom [])
+          hook (fn [_] (swap! seen conj :hook))
+          ext1 (fn [_] (swap! seen conj :ext1))
+          ext2 (fn [_] (swap! seen conj :ext2))
           out  (lc/compose-listeners {:on-iteration-end hook}
                  [(mk-ext 'a :ext/on-iteration-end-fn ext1)
                   (mk-ext 'b :ext/on-iteration-end-fn ext2)])]
-      (expect (= [hook ext1 ext2] (:iteration-end out)))))
+      (doseq [f (:iteration-end out)] (f {}))
+      (expect (= [:hook :ext1 :ext2] @seen))))
+
+  (it "binds extension context while extension lifecycle listeners run"
+    (let [seen (atom nil)
+          ext  (mk-ext 'lifecycle.ext
+                 :ext/on-turn-end-fn (fn [_]
+                                       (reset! seen (extension/current-extension-id))))]
+      (lc/emit! (lc/compose-listeners nil [ext]) :turn-end {})
+      (expect (= "lifecycle.ext" @seen))))
 
   (it "wires every phase independently \u2014 unrelated phases stay empty"
     (let [ts  (fn [_])

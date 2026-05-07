@@ -205,10 +205,69 @@ Grounding observations:
 - `TASKS.md` and `docs/adr/0002-attestation-ledger.md` both say current proofing is weak because caller-supplied slot payloads can satisfy guards without runtime-derived evidence extraction.
 - `PLAN.md` did not exist before this planning pass; this file is the requested documentation-first plan.
 
+## Extension state versus proof evidence
+
+Recent extension persistence work built an extension persistence substrate. That substrate is state: cache, status, checkpoint, and aggregate sidecars owned by extension execution. It can help runtime operate, but it is not proof evidence by itself.
+
+PROOF.md builds a separate immutable proof/evidence substrate:
+
+```text
+extension symbol runs
+  -> writes extension_aggregate cache/status/checkpoint sidecar
+  -> runtime writes provenance_event immutable observation
+  -> evidence_bundle derives facts from events
+  -> attestation decides gate/plan/intent
+  -> audit validates whole chain
+```
+
+Boundary rule:
+
+- `extension_aggregate` / extension sidecars are mutable operational state.
+- `provenance_event` rows are immutable observations.
+- `evidence_bundle` may derive facts from `provenance_event`, not from caller-supplied extension aggregate claims.
+- `attestation` may decide from accepted bundles only.
+- `audit` validates the chain from observation to bundle to attestation to entity state.
+- Extension aggregate may link to proof refs for navigation, but cannot itself prove a gate, plan, or intent.
+
+Same architectural shape, different trust level: extension aggregate is state; PROOF.md ledger is evidence.
+
+Boundary-contract gaps to keep distinct:
+
+| Missing thing | Similar to PROOF.md how? | Same thing? | PROOF rollout handling |
+|---|---|---|---|
+| `iteration_block` table | Needed for first-class event/block identity instead of `iteration.blocks` BLOB projection. | Almost; likely part of provenance ledger work. | Treat as part of ledger identity design when adding `provenance_event`; do not claim proof-grade block identity until immutable rows/refs exist. |
+| Secret storage/encryption | Same "do not abuse generic blobs" discipline. | No; confidentiality layer, not attestation ledger. | Keep secrets out of extension aggregates and proof payloads; do not block P1/P3 ledger work on a secret store unless touched. |
+| Proof-ledger semantics | Direct PROOF.md core. | Yes. | Extension aggregate writes like `{:kind :proof/gate-passed}` must not prove anything. Runtime must append observation -> bundle -> attestation. |
+| `:agent/end` lifecycle | Terminal lifecycle boundary for notifications, final-answer permission, audit finalization, and extension idle hooks. | Related. | Model as a future first-class terminal lifecycle/provenance event; running/partial phases still cannot prove completion. |
+| Declarative `:ext.symbol/aggregate` sugar | Declarative side-effect contract resembles guard/bundle declarations. | No; convenience only. | Keep separate from trust-critical proof guards/attestations. Do not mix aggregate sugar with proof semantics. |
+
+Concrete examples:
+
+```clojure
+;; Sidecar state: allowed, not proof.
+{:kind :checkpoint/ref
+ :content {:git-ref "..."}}
+
+;; Fake proof sidecar: may be displayed/debugged, but proves nothing.
+{:kind :proof/gate-passed
+ :content {:gate-id "G1"}}
+```
+
+Proof-grade equivalent later:
+
+```text
+command/runtime observation completed
+  -> provenance_event with canonical ref, terminal status, op, digest/summary
+  -> evidence_bundle derives git-ref/result from event
+  -> attestation accepts bundle for gate G1
+  -> audit validates event -> bundle -> attestation -> gate
+```
+
 Vocabulary to use from here onward:
 
 | Layer | Primary noun | Meaning |
 |---|---|---|
+| Extension state | extension aggregate / sidecar | Mutable operational cache/status/checkpoint; useful runtime state, not proof evidence. |
 | Observation | event / ledger | Immutable runtime observation with canonical ref and lifecycle status. |
 | Evidence | bundle / derived binding | Runtime-derived facts extracted from ledger events. |
 | Decision | attestation / guard / policy | Structured decision over derived evidence. |
