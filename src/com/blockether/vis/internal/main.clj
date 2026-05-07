@@ -1193,7 +1193,10 @@
   (config/init-cli!)
   (let [provider-name (or (get parsed "provider") (first residual))
         provider-id   (some-> provider-name keyword)
-        provider      (when provider-id (registry/provider-by-id provider-id))]
+        provider      (when provider-id (registry/provider-by-id provider-id))
+        configured?   (boolean
+                        (some #(= provider-id (:id %))
+                          (:providers (config/load-config-raw))))]
     (cond
       (nil? provider-id)
       (do (stdout! "Usage: vis providers logout <provider>")
@@ -1205,13 +1208,15 @@
         (stdout! "")
         (print-registered-providers!))
 
-      (nil? (:provider/logout-fn provider))
+      (and (nil? (:provider/logout-fn provider)) (not configured?))
       (stdout! (str "Provider " (:provider/label provider) " does not persist credentials."))
 
       :else
       (do
-        ((:provider/logout-fn provider))
-        (stdout! (str "  Logged out of " (:provider/label provider) ". Tokens cleared.")))))
+        (when-let [logout-fn (:provider/logout-fn provider)]
+          (logout-fn))
+        (config/remove-config-provider! provider-id :cli-provider-logout)
+        (stdout! (str "  Logged out of " (:provider/label provider) ". Tokens and config cleared.")))))
   (shutdown-agents))
 
 ;;; ── `vis doctor` ────────────────────────────────────────────────────────

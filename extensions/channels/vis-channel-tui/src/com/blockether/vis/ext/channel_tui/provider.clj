@@ -281,7 +281,9 @@
                  (if (realized? result)
                    (let [_poll-result @result
                          {:keys [token]} (exchange-fn opts)]
-                     (dlg/text-view-dialog! screen "GitHub Copilot" ["✓ Authenticated!"])
+                     ;; Success is silent: surfacing a redundant "Authenticated!" toast
+                     ;; on top of the just-closed device-flow dialog confused users
+                     ;; (cf. anthropic dialog feedback). Failure dialogs remain.
                      token)
                    (do
                      (Thread/sleep 2000)
@@ -315,15 +317,14 @@
                 "Fallback if needed:"
                 "  vis providers auth openai-codex"])
          (try
-           (let [result (codex/login! (constantly nil)
-                          {:originator     "vis-tui"
-                           :force?         force?
-                           :manual-code-fn (fn [_]
-                                             (dlg/text-input-dialog! screen
-                                               "OpenAI Codex"
-                                               "Paste the final browser URL or authorization code:"))})]
-             (when (= result :ok)
-               (dlg/text-view-dialog! screen "OpenAI Codex" ["✓ Authenticated!"]))
+           (let [_result (codex/login! (constantly nil)
+                           {:originator     "vis-tui"
+                            :force?         force?
+                            :manual-code-fn (fn [_]
+                                              (dlg/text-input-dialog! screen
+                                                "OpenAI Codex"
+                                                "Paste the final browser URL or authorization code:"))})]
+             ;; Success is silent: parity with anthropic + copilot flows.
              true)
            (catch Exception e
              (dlg/text-view-dialog! screen "OpenAI Codex"
@@ -351,14 +352,12 @@
                 "Fallback if needed:"
                 "  vis providers auth anthropic-coding-plan"])
          (try
-           (let [result (anthropic/login! (constantly nil)
-                          {:force?         force?
-                           :manual-code-fn (fn [_]
-                                             (dlg/text-input-dialog! screen
-                                               "Anthropic"
-                                               "Paste the final browser URL or authorization code:"))})]
-             (when (= result :ok)
-               (dlg/text-view-dialog! screen "Anthropic" ["✓ Authenticated!"]))
+           (let [_result (anthropic/login! (constantly nil)
+                           {:force?         force?
+                            :manual-code-fn (fn [_]
+                                              (dlg/text-input-dialog! screen
+                                                "Anthropic"
+                                                "Paste the final browser URL or authorization code:"))})]
              true)
            (catch Exception e
              (dlg/text-view-dialog! screen "Anthropic"
@@ -606,6 +605,10 @@
   (-> items
     (assoc i (nth items j))
     (assoc j (nth items i))))
+
+(defn- remove-provider-by-id
+  [items provider-id]
+  (vec (remove #(= provider-id (:id %)) items)))
 
 (defn- move-model-to-front
   [models idx]
@@ -1035,6 +1038,13 @@
       (str/blank? raw) nil
       :else (assoc provider :api-key raw))))
 
+(def ^:private auth-fn-success-results
+  "Return values that signal auth-fn completed successfully and the user does
+   not need to read printed instructions. Any other return value (or `nil`)
+   means \"user must act\" and printed lines (e.g. instructions, env-var hints)
+   should be surfaced. Throwing is always a failure, handled separately."
+  #{:ok :already-authenticated :authenticated true})
+
 (defn- run-generic-provider-auth!
   [^TerminalScreen screen provider]
   (let [registered (vis/provider-by-id (:id provider))]
@@ -1042,11 +1052,19 @@
       (let [lines (atom [])
             print! #(swap! lines conj %)]
         (try
-          (auth-fn print!)
-          (dlg/text-viewer-dialog! screen
-            (str (vis/display-label (:id provider)) " Authentication")
-            (str/join "\n" (or (seq @lines)
-                             [(str (vis/display-label (:id provider)) " authenticated.")])))
+          (let [result (auth-fn print!)]
+            ;; Success is silent: typical/standard providers (zai-coding, etc.)
+            ;; print "Already authenticated with X." or "Persisted X key from
+            ;; env var.\" on the success path — surfacing those as a popup is
+            ;; exactly the noise the user vetoed (cf. anthropic/copilot/codex).
+            ;; Lines are surfaced ONLY when auth-fn signals it could not
+            ;; complete on its own (`:no-credentials`, `nil`, `false`,
+            ;; or any non-success keyword) so the user knows what to do next.
+            (when-not (contains? auth-fn-success-results result)
+              (when-let [collected (seq @lines)]
+                (dlg/text-viewer-dialog! screen
+                  (str (vis/display-label (:id provider)) " Authentication")
+                  (str/join "\n" collected)))))
           provider
           (catch Throwable e
             (dlg/text-viewer-dialog! screen
@@ -1079,17 +1097,18 @@
 
 (defn logout-provider!
   [^TerminalScreen screen provider]
-  (let [registered (vis/provider-by-id (:id provider))]
+  (let [provider-id (:id provider)
+        registered  (vis/provider-by-id provider-id)]
     (when (dlg/confirm-dialog! screen
-            (str (vis/display-label (:id provider)) " Authentication")
-            [(str "Log out of " (vis/display-label (:id provider)) "?")])
+            (str (vis/display-label provider-id) " Authentication")
+            [(str "Log out of " (vis/display-label provider-id) "?")])
       (when-let [logout-fn (:provider/logout-fn registered)]
         (logout-fn))
-      (let [updated (dissoc provider :api-key)]
-        (dlg/text-view-dialog! screen
-          (str (vis/display-label (:id provider)) " Authentication")
-          [(str "Logged out of " (vis/display-label (:id provider)) ".")])
-        updated))))
+      (vis/remove-config-provider! provider-id :tui-provider-logout)
+      (dlg/text-view-dialog! screen
+        (str (vis/display-label provider-id) " Authentication")
+        [(str "Logged out of " (vis/display-label provider-id) ". Provider removed from config.")])
+      true)))
 
 (defn auth-provider-items
   []
@@ -1128,10 +1147,13 @@
                 print! #(swap! lines conj %)]
             (try
               (let [result (auth-fn print!)]
-                (dlg/text-viewer-dialog! screen
-                  (str (:provider/label provider) " Authentication")
-                  (str/join "\n" (or (seq @lines)
-                                   [(str (:provider/label provider) " authenticated.")])))
+                ;; Same silent-success rule as run-generic-provider-auth!.
+                ;; Lines surface only when auth-fn signals the user must act.
+                (when-not (contains? auth-fn-success-results result)
+                  (when-let [collected (seq @lines)]
+                    (dlg/text-viewer-dialog! screen
+                      (str (:provider/label provider) " Authentication")
+                      (str/join "\n" collected))))
                 result)
               (catch Throwable e
                 (dlg/text-viewer-dialog! screen
@@ -1294,11 +1316,14 @@
                                (get @limits (:id provider)))
 
                              :logout
-                             (when-let [updated (logout-provider! screen provider)]
-                               (swap! items assoc @selected updated))
+                             (when (logout-provider! screen provider)
+                               (swap! items remove-provider-by-id (:id provider))
+                               (swap! statuses dissoc (:id provider))
+                               (swap! limits dissoc (:id provider))
+                               (swap! selected #(dlg/clamp % 0 (max 0 (dec (count @items))))))
 
                              nil)
-                           (let [provider* (nth @items @selected)]
+                           (when-let [provider* (get @items @selected)]
                              (refresh-provider-diagnostics! provider* statuses limits)))))
                      (recur))
 

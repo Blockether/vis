@@ -74,7 +74,7 @@ Required changes from the analysis:
 - Tool output must be bounded. Audit/proof reports cite counts, refs, and selected rows, not giant transcript dumps.
 - Guards/gates must become testable objects: guard expression shape tests, guard evaluation tests over derived values, persistence tests rejecting fake caller slots, audit tests catching stale/missing evidence.
 - Legacy proof/provenance names are not part of the target design. During an active migration slice they may exist only as failing blockers to remove; semantic ownership is `proof.clj`, then `ledger`, `bundle`, `attestation`, and `audit` namespaces.
-- System intents are first-class: user intents, system intents, and extension-owned intents need explicit source/owner fields so extensions can hook proof lifecycle events without scraping prose.
+- System intents are first-class: user intents, system intents, and extension-owned intents need explicit source/owner fields so extensions can query durable intent state and hook proof lifecycle events without scraping prose.
 
 ## Execution discipline for every implementation task
 
@@ -152,6 +152,41 @@ These are current decisions, not permanent bans. Revisit a rejected/user-decisio
 4. token/UX/proof tradeoff note;
 5. explicit user approval.
 
+## Intent tree and deferred-intent decisions
+
+Recorded in `CONTEXT.md` and ADR `docs/adr/0003-intent-tree-and-deferred-intents.md`.
+
+Canonical model:
+
+- An **Intent** lifecycle has `:suggested`, `:deferred`, `:active`, `:fulfilled`, and `:abandoned` states.
+- Only `:active` blocks current completion/final answer.
+- A conversation has exactly one **Intent Cursor** and therefore at most one **Running Intent** at a time.
+- **Subintents** are real intent nodes in an **Intent Tree**, not plan steps and not parallel same-level work.
+- The cursor executes depth-first: descend into one subintent, finish/defer/abandon that branch, then move to an adjacent sibling.
+- An intent is either decomposed into subintents or resolved by its own plan/gates, not both.
+- **Suggested Intents** live in the same intent lifecycle/table as other intents; extension-created work starts suggested, not committed.
+- **Intent Acceptance** is user or host-owned system policy only. Extensions may suggest but may not silently accept their own suggestion.
+- Extensions discover suggested/deferred work through **Intent Queries**, not an intent transition event bus. DB state is truth; events/nudges are advisory.
+- **Deferred Intents** wait on exactly one minimal **Defer Trigger** kind: `:defer/user-input`, `:defer/time`, `:defer/extension-signal`, or `:defer/intent`.
+- A deferred subintent records **Defer Sibling Policy**: `:defer/continue-siblings` or `:defer/block-parent`.
+- Trigger observation makes a **Resumable Intent**; a separate **Resume Decision** by user or host-owned system policy moves the cursor. Extensions may query/nudge but may not move the cursor themselves.
+- Direction changes use an **Abandonment Gate** with explicit **Abandonment Scope**: `:abandon/current-intent`, `:abandon/current-branch`, or `:abandon/all-running`; if unclear, ask.
+
+Proof boundary:
+
+```text
+extension suggestion/query/nudge/sidecar != proof authority
+user/system/extension observation -> provenance_event -> evidence_bundle -> attestation -> audit
+```
+
+Implementation implications:
+
+- Replace plural focused-intent semantics with one running cursor, or keep existing shapes only as compatibility projections with cardinality <= 1.
+- Add source/owner/acceptance/defer/resume/tree fields to intent persistence.
+- Add intent query filters for status, source, owner extension, resumable state, parent, and conversation.
+- Add defer/resume/abandon APIs whose state transitions are attestation/audit visible.
+- Keep extension auto-accept/resume out of scope until a future explicit permission model exists.
+
 ## Roll protocol for PROOF work
 
 Default next implementation target is the first `NEXT`/`IN PROGRESS` row in the progress board, unless `PROOF_AUTORESEARCH.md` is running the comparison loop. Autoresearch must optimize the whole proof-task suite: no "Vis beats Pi" claim from one task; quality/proof parity must hold on every completed task and combined win rate must be at least 60% unless the user explicitly raises the bar to all tasks.
@@ -207,6 +242,13 @@ No task is DONE if:
 | Task 25 persistence happy-path migration | DONE | Migrated the conversation-intent happy path/idempotency regression from `db-prove-gate!` / `db-fulfill-intent!` to provenance events, evidence bundles, `db-attest-gate!`, and `db-attest-intent!`. Raw proof/intent-ref expectations now assert attestation/evidence rows instead of legacy ref rows. Verified: persistence SQLite aggregate regression, foundation introspection regression, task25 grep smoke, fresh REPL reload of `vis.core` and SQLite core, and `./verify.sh --quick`. |
 | Task 26 persistence ref-rejection migration | DONE | Migrated the remaining persistence core `db-prove-gate!` ref-rejection regressions to evidence-bundle/attestation behavior: compact refs and unobserved refs reject bundles, running/timeout lifecycle events remain blocker-compatible but proof-bundle rejected. Persistence tests no longer call `db-prove-gate!` or `db-fulfill-intent!`. Verified: persistence SQLite aggregate regression, foundation introspection regression, task26 grep smoke, fresh REPL reload of `vis.core` and SQLite core, and `./verify.sh --quick`. |
 | Task 27 legacy write-authority hard-error | NEXT / REQUIRED | Hard-error or delete underlying legacy `db-prove-gate!` / `db-fulfill-intent!` write authority and remove public core/delegate exports after final grep confirms no internal tests/callers depend on them. |
+| Task 28 intent lifecycle spec | PLANNED | Add proof/intent specs for `:suggested`, `:deferred`, `:active`, `:fulfilled`, `:abandoned`, intent source/owner, acceptance/resume decision actors, defer trigger kinds, defer sibling policy, abandonment scope, parent/subintent relationships, and single running cursor cardinality. |
+| Task 29 intent persistence schema | PLANNED | Extend inline V1 `conversation_intent` storage with source/owner/acceptance/defer/resume/tree metadata and add a single cursor representation. Preserve migration rule: edit V1 directly unless user asks for backward migrations. |
+| Task 30 intent query surface | PLANNED | Add DB/foundation query filters for status, source, owner extension, resumable state, parent, and conversation so extensions use durable intent queries instead of prompt scraping or an intent event bus. |
+| Task 31 defer/resume APIs | PLANNED | Add APIs for suggesting, accepting, deferring, marking resumable, and resuming intents. User/host policy may accept/resume; extensions may suggest/query/nudge but cannot self-accept or move the cursor. |
+| Task 32 intent tree cursor enforcement | PLANNED | Replace plural focused-intent behavior with one intent cursor per conversation, depth-first subintent execution, no same-level parallel running work, and no mixing direct gates with subintents on the same intent. |
+| Task 33 abandonment gate/scope | PLANNED | Add abandonment gate/scope state transitions and audit checks so user direction changes abandon current intent/current branch/all running work explicitly with evidence, not silent deletion or cursor jumps. |
+| Task 34 deferred-intent audit/reporting | PLANNED | Extend audit/reporting to distinguish active blockers, suggested non-commitments, deferred commitments, resumable intents, sibling-blocking deferred branches, and extension-owned suggested/deferred work. |
 
 
 Primary objective: make `src/com/blockether/vis/internal/proof.clj` the canonical internal namespace for proof-domain shape, specs, lifecycle transitions, evidence derivation, attestations, and audit. Existing focused files must be folded into it and hard-removed; no legacy proof semantics, delegates, facades, shims, or old proof/provenance internals kept alive in the final state.

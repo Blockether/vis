@@ -38,7 +38,13 @@
 ;; Entity and public key specs
 ;; -----------------------------------------------------------------------------
 
-(def intent-statuses #{:active :fulfilled :abandoned})
+;; PROOF.md Tasks 28–34: `proof.clj` is the canonical owner of the intent
+;; lifecycle vocabulary. `intent_spec.clj` is now a thin alias for the keys
+;; the persistence layer publishes (`::issue-intent-opts`, etc.). Defining
+;; an independent set here would silently shadow the canonical set during
+;; the second `s/def` registration; tests against `::proof/intent` would
+;; fail with `:suggested`/`:deferred` even though proof.clj allows them.
+(def intent-statuses proof/intent-statuses)
 (def relation-kinds #{:subintent :related :supports :blocks})
 (def intent-ref-roles #{:fulfillment-evidence :abandonment-evidence :context})
 (def plan-statuses #{:active :completed :superseded :abandoned})
@@ -85,11 +91,12 @@
 
 ;; Entity-focused registry entries. These explicit keywords preserve the plan's
 ;; short entity aliases without relying on auto-resolved nested namespaces.
-(s/def :intent/id uuid-string?)
-(s/def :intent/title non-blank-string?)
-(s/def :intent/rationale non-blank-string?)
-(s/def :intent/status intent-statuses)
 (s/def :intent/relation relation-kinds)
+;; `:intent/id`, `:intent/title`, `:intent/rationale`, `:intent/status` are
+;; owned by `com.blockether.vis.internal.proof` (PROOF.md Tasks 28–34).
+;; Re-registering them here would silently shadow the canonical specs during
+;; load order, dropping `:suggested` / `:deferred` from `:intent/status`.
+;; They are intentionally not redefined; require `proof` to use them.
 (s/def :plan/id uuid-string?)
 (s/def :plan/status plan-statuses)
 (s/def :plan/summary non-blank-string?)

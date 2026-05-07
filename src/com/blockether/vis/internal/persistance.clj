@@ -303,6 +303,20 @@
 (defdelegate db-abandon-intent! [db-info intent-id opts])
 (defdelegate db-intents [db-info opts-or-conversation-turn-id])
 
+;; --- Intent lifecycle (PROOF.md Tasks 28–34) ---
+(defdelegate db-list-intents [db-info opts])
+(defdelegate db-get-intent [db-info intent-id])
+(defdelegate db-intent-tree [db-info root-intent-id])
+(defdelegate db-suggest-intent! [db-info opts])
+(defdelegate db-accept-intent! [db-info intent-id opts])
+(defdelegate db-defer-intent! [db-info intent-id opts])
+(defdelegate db-mark-intent-resumable! [db-info intent-id opts])
+(defdelegate db-resume-intent! [db-info intent-id opts])
+(defdelegate db-get-intent-cursor [db-info conversation-id])
+(defdelegate db-set-intent-cursor! [db-info conversation-id intent-id])
+(defdelegate db-abandon-intent-with-scope! [db-info intent-id opts])
+(defdelegate db-deferred-intent-report [db-info opts])
+
 ;; --- Var registry & history ---
 (defn db-latest-var-registry
   ([db-info conversation-ref]      ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref))

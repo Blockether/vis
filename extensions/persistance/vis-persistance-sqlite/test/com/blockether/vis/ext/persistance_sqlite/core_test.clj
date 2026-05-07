@@ -13,6 +13,11 @@
    [babashka.fs :as fs]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   ;; Force-load the SQLite backend ns so the `private-core-fn` helper
+   ;; below can resolve its private vars at top-level def time. Without
+   ;; this require, `resolve` returns nil and `deref` throws NPE because
+   ;; the backend is normally loaded lazily by extension scanning.
+   [com.blockether.vis.ext.persistance-sqlite.core]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
@@ -209,6 +214,91 @@
       (expect (= 1 (raw-count s :evidence_bundle)))
       (expect (= 1 (raw-count s :evidence_bundle_member)))
       (expect (= bundle (vis/db-get-evidence-bundle s (:id bundle))))))
+
+  (it "rejects empty-requirements bundles as a fake-proof bypass"
+    ;; Persistence-side regression for the attestation ledger: a caller could
+    ;; previously submit `:requirements []` and receive an `:accepted` bundle
+    ;; (because `(every? guard-ok [])` is trivially true), then attest the
+    ;; gate from it. PROOF.md's whole event → bundle → attestation → audit
+    ;; chain assumes every bundle derives at least one runtime fact.
+    (let [s          (h/store)
+          cid        (vis/db-store-conversation! s {:channel :tui})
+          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                         :user-request "empty bundle"
+                                                         :status :running})
+          intent     (vis/db-store-intent! s {:conversation-turn-id tid
+                                              :title "Empty bundle"
+                                              :rationale "Repro fake-proof bypass."})
+          plan       (vis/db-store-plan! s {:intent-id (:id intent) :summary "Plan"})
+          gate       (vis/db-store-gate! s {:plan-id (:id plan) :question "Anything?"})
+          empty-bundle (vis/db-create-evidence-bundle! s
+                         {:conversation-id cid :kind :proof :subject-kind :gate
+                          :subject-id (:id gate) :source :derived :requirements []})
+          attest-thrown (try
+                          (vis/db-attest-gate! s {:gate-id (:id gate)
+                                                  :evidence-bundle-id (:id empty-bundle)
+                                                  :kind :gate/proven
+                                                  :reason "Should reject."})
+                          nil
+                          (catch Exception e e))
+          [gate-row] (raw-query s {:select [:status]
+                                   :from :conversation_intent_gate
+                                   :where [:= :id (str (:id gate))]})]
+      (expect (= :rejected (:status empty-bundle)))
+      (expect (= false (:accepted? empty-bundle)))
+      (expect (zero? (count (:members empty-bundle))))
+      (expect (some? attest-thrown))
+      (expect (= "open" (:status gate-row)))
+      (expect (zero? (raw-count s :attestation)))))
+
+  (it "distinguishes missing-event from cross-conversation-ref in bundle members"
+    ;; Persistence-side regression: previously both \"event ref does not exist\"
+    ;; and \"event lives in another conversation\" collapsed to
+    ;; `:non-successful-event` because the SQL lookup synthesised a stub row.
+    ;; Audit could not tell forgotten observations from cross-conversation
+    ;; leakage — both are real attestation-attempt categories that PROOF.md
+    ;; needs to surface separately.
+    (let [s          (h/store)
+          cid        (vis/db-store-conversation! s {:channel :tui})
+          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                         :user-request "distinguish"
+                                                         :status :running})
+          intent     (vis/db-store-intent! s {:conversation-turn-id tid
+                                              :title "distinguish" :rationale "r"})
+          plan       (vis/db-store-plan! s {:intent-id (:id intent) :summary "P"})
+          gate       (vis/db-store-gate! s {:plan-id (:id plan) :question "q"})
+          slot-owner (random-uuid)
+          ;; Plant an event in another conversation. Same bare ref shape on
+          ;; purpose so the only difference between PROBE-C and PROBE-D is
+          ;; whether it lives under this conversation.
+          other-cid  (vis/db-store-conversation! s {:channel :tui})
+          other-tid  (vis/db-store-conversation-turn! s {:parent-conversation-id other-cid
+                                                         :user-request "other"
+                                                         :status :running})
+          cross-ref  (str "turn/" (subs (str other-tid) 0 8) "/iteration/1/block/1")
+          _other-ev  (vis/db-store-provenance-event! s {:conversation-id other-cid
+                                                        :conversation-turn-id other-tid
+                                                        :ref cross-ref
+                                                        :kind :tool :op :v/bash
+                                                        :status :done
+                                                        :payload {:result {:exit 0}}})
+          missing-ref "turn/00000000/iteration/9/block/9"
+          missing-bundle (vis/db-create-evidence-bundle! s
+                           {:conversation-id cid :kind :proof :subject-kind :gate
+                            :subject-id (:id gate) :source :derived
+                            :requirements [{:evidence/slot [slot-owner :verify]
+                                            :evidence/from-ref missing-ref
+                                            :evidence/extract [:result :exit]}]})
+          cross-bundle (vis/db-create-evidence-bundle! s
+                         {:conversation-id cid :kind :proof :subject-kind :gate
+                          :subject-id (:id gate) :source :derived
+                          :requirements [{:evidence/slot [slot-owner :verify]
+                                          :evidence/from-ref cross-ref
+                                          :evidence/extract [:result :exit]}]})]
+      (expect (= :rejected (:status missing-bundle)))
+      (expect (= :missing-event (:error-code (first (:members missing-bundle)))))
+      (expect (= :rejected (:status cross-bundle)))
+      (expect (= :cross-conversation-ref (:error-code (first (:members cross-bundle)))))))
 
   (it "accepts gate attestations only from accepted evidence bundles"
     (let [s          (h/store)
@@ -1217,7 +1307,14 @@
                    nil
                    (catch Exception e e))]
       (expect (= :rejected (:status bundle)))
-      (expect (= :invalid-requirement (-> bundle :members first :error-code)))
+      ;; PROOF.md § \"compact display refs may remain display-only\" —
+      ;; persistence must emit the precise `:non-canonical-ref` code so
+      ;; audit can explain WHY the ref was rejected. Previously this
+      ;; collapsed to the generic `:invalid-requirement` because the
+      ;; spec on `:evidence/from-ref` (typed as ::canonical-ref) shadowed
+      ;; the dedicated runtime branch in `derive-binding`. Tightened in
+      ;; the proof spec-ordering fix.
+      (expect (= :non-canonical-ref (-> bundle :members first :error-code)))
       (expect (some? thrown))
       (expect (str/includes? (ex-message thrown) "accepted evidence bundle"))))
 
@@ -1249,7 +1346,13 @@
                                     :evidence/guard [:= [:value] 3]}]})]
       (expect (= :rejected (:status bundle)))
       (expect (= future-ref (-> bundle :members first :from-ref)))
-      (expect (= :non-successful-event (-> bundle :members first :error-code)))))
+      ;; A canonical ref that points at no recorded event must surface as
+      ;; `:missing-event`, not the misleading `:non-successful-event`. The
+      ;; old code synthesised a stub event row when the SQL lookup missed,
+      ;; so audit could not distinguish forgotten observations from
+      ;; cross-conversation ref leakage. Both are real attestation-attempt
+      ;; categories the new persistence ingest separates explicitly.
+      (expect (= :missing-event (-> bundle :members first :error-code)))))
 
   (it "supersedes the previous active plan for an intent"
     (let [s      (h/store)

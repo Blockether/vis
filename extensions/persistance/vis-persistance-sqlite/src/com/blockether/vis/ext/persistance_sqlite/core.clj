@@ -1014,12 +1014,29 @@
             :title                (:title row)
             :rationale            (:rationale row)
             :status               (->kw-back (:status row))
+            :source               (or (->kw-back (:source row)) :user)
             :refs                 refs
             :plans                plans
             :relations            relations
             :created-at           (->date (:created_at row))}
+     (:owner_extension_id row)  (assoc :owner-extension-id (:owner_extension_id row))
+     (:parent_intent_id row)    (assoc :parent-intent-id (->uuid (:parent_intent_id row)))
      (:fulfillment_summary row) (assoc :fulfillment-summary (:fulfillment_summary row))
      (:abandonment_reason row)  (assoc :abandonment-reason (:abandonment_reason row))
+     (:abandonment_scope row)   (assoc :abandonment-scope
+                                  (keyword "abandon" (:abandonment_scope row)))
+     (:accepted_by_kind row)    (assoc :accepted-by-kind (->kw-back (:accepted_by_kind row)))
+     (:accepted_by_id row)      (assoc :accepted-by-id (:accepted_by_id row))
+     (:accepted_at row)         (assoc :accepted-at (->date (:accepted_at row)))
+     (:defer_trigger_kind row)  (assoc :defer-trigger-kind
+                                  (keyword "defer" (:defer_trigger_kind row)))
+     (:defer_trigger_payload row) (assoc :defer-trigger-payload (<-blob (:defer_trigger_payload row)))
+     (:defer_sibling_policy row) (assoc :defer-sibling-policy
+                                   (keyword "defer" (:defer_sibling_policy row)))
+     (:resumable_at row)        (assoc :resumable-at (->date (:resumable_at row)))
+     (:resumed_by_kind row)     (assoc :resumed-by-kind (->kw-back (:resumed_by_kind row)))
+     (:resumed_by_id row)       (assoc :resumed-by-id (:resumed_by_id row))
+     (:resumed_at row)          (assoc :resumed-at (->date (:resumed_at row)))
      (:created_conversation_turn_id row) (assoc :created-conversation-turn-id (->uuid (:created_conversation_turn_id row)))
      (:resolved_conversation_turn_id row) (assoc :resolved-conversation-turn-id (->uuid (:resolved_conversation_turn_id row)))
      (:created_ref row)         (assoc :created-ref (:created_ref row))
@@ -1247,7 +1264,10 @@
                   (query! db-info {:select [:*]
                                    :from :evidence_bundle_member
                                    :where [:= :bundle_id (:id row)]
-                                   :order-by [[:created_at :asc] [:id :asc]]}))]
+                                   ;; Position is the persisted insertion order;
+                                   ;; without it tests that read `(last members)`
+                                   ;; flake on UUID alpha collation in one tx.
+                                   :order-by [[:position :asc] [:created_at :asc] [:id :asc]]}))]
     (cond-> {:id (->uuid (:id row))
              :conversation-id (->uuid (:conversation_soul_id row))
              :kind (->kw-back (:kind row))
@@ -1270,22 +1290,91 @@
    :event/rendering-kind (some-> (:rendering_kind row) ->kw-back)
    :event/payload (<-blob (:payload row))})
 
+(defn- bundle-event-lookup
+  "Resolve a canonical ref to a `provenance_event` row scoped to the bundle's
+   conversation. Returns one of:
+     {:status :found  :event <row>}
+     {:status :non-canonical}           ; ref is not canonical-shaped at all
+     {:status :missing}                 ; canonical ref but no event anywhere
+     {:status :cross-conversation}      ; canonical ref, event in another conversation
+   The caller maps each status onto a precise binding-error code so audit can
+   distinguish \"compact display alias\" from \"never observed\" from
+   \"observed under another conversation\" instead of collapsing them."
+  [tx-info conversation-id ref]
+  (cond
+    (not (proof/canonical-ref? ref))
+    {:status :non-canonical}
+
+    :else
+    (if-let [scoped (query-one! tx-info {:select [:*]
+                                         :from :provenance_event
+                                         :where [:and
+                                                 [:= :conversation_soul_id (->ref conversation-id)]
+                                                 [:= :ref ref]]})]
+      {:status :found :event scoped}
+      (if (query-one! tx-info {:select [:id]
+                               :from :provenance_event
+                               :where [:= :ref ref]})
+        {:status :cross-conversation}
+        {:status :missing}))))
+
+(defn- bundle-precise-binding-error
+  [requirement lookup-status]
+  (case lookup-status
+    :missing
+    {:evidence/slot (:evidence/slot requirement)
+     :evidence/from-ref (:evidence/from-ref requirement)
+     :evidence/extract (:evidence/extract requirement)
+     :evidence/error "No runtime event exists for evidence requirement ref"
+     :evidence/error-code :missing-event
+     :evidence/guard-ok false}
+    :cross-conversation
+    {:evidence/slot (:evidence/slot requirement)
+     :evidence/from-ref (:evidence/from-ref requirement)
+     :evidence/extract (:evidence/extract requirement)
+     :evidence/error "Evidence ref points at an event in another conversation"
+     :evidence/error-code :cross-conversation-ref
+     :evidence/guard-ok false}))
+
 (defn db-create-evidence-bundle!
-  "Derive and persist an evidence bundle from provenance_event rows. Caller-supplied slot values are ignored."
+  "Derive and persist an evidence bundle from provenance_event rows. Caller-supplied slot values are ignored.
+
+   Bundles with no requirements, no resolvable events, or events from
+   another conversation are stored as `:rejected` so audit can see the
+   attempt, but they cannot back any attestation."
   [db-info {:keys [conversation-id kind subject-kind subject-id source summary metadata requirements]}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
       (fn [tx-info]
-        (let [events (mapv (fn [requirement]
-                             (or (query-one! tx-info {:select [:*]
-                                                      :from :provenance_event
-                                                      :where [:and
-                                                              [:= :conversation_soul_id (->ref conversation-id)]
-                                                              [:= :ref (:evidence/from-ref requirement)]]})
-                               {:ref (:evidence/from-ref requirement)}))
-                       requirements)
-              proof-events (mapv event-row->proof-event events)
-              gate-result (proof/evaluate-gate proof-events requirements)
+        (let [lookups       (mapv (fn [r] (bundle-event-lookup tx-info conversation-id (:evidence/from-ref r)))
+                              requirements)
+              ;; Build a binding for each requirement:
+              ;;   :non-canonical    — hand to `derive-binding` so it emits
+              ;;                       the precise `:non-canonical-ref` code
+              ;;                       and other shape diagnostics.
+              ;;   :found            — derive against the runtime row.
+              ;;   :missing | :cross-conversation — emit precise persistence
+              ;;                                    binding-error codes.
+              precise-bindings
+              (mapv (fn [requirement {:keys [status event]}]
+                      (case status
+                        :non-canonical    (proof/derive-binding requirement
+                                            {:event/ref (:evidence/from-ref requirement)})
+                        :found            (proof/derive-binding requirement (event-row->proof-event event))
+                        (:missing :cross-conversation)
+                        (bundle-precise-binding-error requirement status)))
+                requirements lookups)
+              ;; If `requirements` is empty, evaluate-gate returns the
+              ;; `:empty-requirements` rejection on its own.
+              gate-result   (if (empty? requirements)
+                              (proof/evaluate-gate [] [])
+                              {:gate/proven? (every? #(true? (:evidence/guard-ok %)) precise-bindings)
+                               :attestation/status (if (every? #(true? (:evidence/guard-ok %)) precise-bindings)
+                                                     :accepted :rejected)
+                               :attestation/decision (if (every? #(true? (:evidence/guard-ok %)) precise-bindings)
+                                                       :proven :impeded)
+                               :bundle/bindings precise-bindings
+                               :gate/errors (filterv :evidence/error precise-bindings)})
               accepted? (:gate/proven? gate-result)
               bundle-id (new-id)
               now (now-ms)]
@@ -1300,24 +1389,29 @@
                                        :summary summary
                                        :metadata (when (some? metadata) (->blob metadata))
                                        :created_at now}]})
-          (doseq [binding (:bundle/bindings gate-result)]
-            (execute! tx-info {:insert-into :evidence_bundle_member
-                               :values [(into {}
-                                          (remove (comp nil? val)
-                                            {:id (new-id)
-                                             :bundle_id bundle-id
-                                             :slot (->blob (:evidence/slot binding))
-                                             :event_ref (:evidence/from-ref binding)
-                                             :extract_path (->blob (:evidence/extract binding))
-                                             :derived_value (when (contains? binding :evidence/value)
-                                                              (->blob (:evidence/value binding)))
-                                             :guard (when (contains? binding :evidence/guard)
-                                                      (->blob (:evidence/guard binding)))
-                                             :guard_ok (if (:evidence/guard-ok binding) 1 0)
-                                             :error_code (some-> (:evidence/error-code binding) name)
-                                             :error (:evidence/error binding)
-                                             :member_role (member-role-sql (:evidence/member-role binding))
-                                             :created_at now}))]}))
+          (doseq [[idx binding] (map-indexed vector (:bundle/bindings gate-result))]
+            ;; Skip pseudo-bindings (e.g. the `:empty-requirements` marker)
+            ;; that have no slot/from-ref/extract — they describe a top-level
+            ;; proof-shape failure, not a real evidence requirement.
+            (when (and (:evidence/slot binding) (:evidence/from-ref binding))
+              (execute! tx-info {:insert-into :evidence_bundle_member
+                                 :values [(into {}
+                                            (remove (comp nil? val)
+                                              {:id (new-id)
+                                               :bundle_id bundle-id
+                                               :position idx
+                                               :slot (->blob (:evidence/slot binding))
+                                               :event_ref (:evidence/from-ref binding)
+                                               :extract_path (->blob (:evidence/extract binding))
+                                               :derived_value (when (contains? binding :evidence/value)
+                                                                (->blob (:evidence/value binding)))
+                                               :guard (when (contains? binding :evidence/guard)
+                                                        (->blob (:evidence/guard binding)))
+                                               :guard_ok (if (:evidence/guard-ok binding) 1 0)
+                                               :error_code (some-> (:evidence/error-code binding) name)
+                                               :error (:evidence/error binding)
+                                               :member_role (member-role-sql (:evidence/member-role binding))
+                                               :created_at now}))]})))
           (let [bundle (row->evidence-bundle tx-info
                          (require-row tx-info :evidence_bundle bundle-id "evidence_bundle not found after insert"))]
             (emit-proof-event! :proof/evidence-bundle-created {:evidence-bundle bundle})
@@ -1954,33 +2048,113 @@
           {:conversation-turn-state-id (->uuid turn-state-id)
            :focused-intent-ids (mapv ->uuid ids)})))))
 
+(defn- intent-status-sql
+  [status]
+  (let [status (input-keyword (or status :active))]
+    (when-not (contains? proof/intent-statuses status)
+      (throw (ex-info "intent status is not supported"
+               {:status status :allowed proof/intent-statuses})))
+    (name status)))
+
+(defn- intent-source-sql
+  [source]
+  (let [source (input-keyword (or source :user))]
+    (when-not (contains? proof/intent-sources source)
+      (throw (ex-info "intent source is not supported"
+               {:source source :allowed proof/intent-sources})))
+    (name source)))
+
+(defn- defer-trigger-kind-sql
+  [k]
+  (when k
+    (let [k (input-keyword k)]
+      (when-not (contains? proof/defer-trigger-kinds k)
+        (throw (ex-info "defer trigger kind is not supported" {:trigger-kind k})))
+      (name k))))
+
+(defn- defer-sibling-policy-sql
+  [k]
+  (when k
+    (let [k (input-keyword k)]
+      (when-not (contains? proof/defer-sibling-policies k)
+        (throw (ex-info "defer sibling policy is not supported" {:policy k})))
+      (name k))))
+
+(defn- abandonment-scope-sql
+  [k]
+  (when k
+    (let [k (input-keyword k)]
+      (when-not (contains? proof/abandonment-scopes k)
+        (throw (ex-info "abandonment scope is not supported" {:scope k})))
+      (name k))))
+
+(defn- intent-actor-kind-sql
+  [k]
+  (when k
+    (let [k (input-keyword k)]
+      (when-not (contains? proof/intent-acceptance-actor-kinds k)
+        (throw (ex-info "intent actor kind is not supported (extensions cannot self-accept/resume)"
+                 {:actor-kind k})))
+      (name k))))
+
 (defn db-store-intent!
-  [db-info {:keys [conversation-id conversation-turn-id title rationale created-ref metadata]}]
+  "Persist a new intent.
+
+   PROOF.md Tasks 28–29: in addition to the legacy fields, this writer accepts:
+     :status              — one of #{:suggested :active :deferred}.
+                            Defaults to :active for back-compat.
+     :source              — :user (default), :system, :extension.
+     :owner-extension-id  — required when source = :extension; forbidden
+                            otherwise (DB CHECK enforces).
+     :parent-intent-id    — real intent-tree parent (subintent edge).
+   The schema rejects illegal combinations (e.g. extension source without
+   owner). Acceptance/defer/resume bookkeeping is set by db-accept-intent!,
+   db-defer-intent!, etc., not by this writer."
+  [db-info {:keys [conversation-id conversation-turn-id title rationale
+                   created-ref metadata
+                   status source owner-extension-id parent-intent-id]}]
   (when (ds db-info)
     (when-not (seq (str title))
       (throw (ex-info "issue-intent requires :title" {})))
     (when-not (seq (str rationale))
       (throw (ex-info "issue-intent requires :rationale" {})))
     (when created-ref (canonical-ref-or-throw! created-ref))
+    (let [status-kw (input-keyword (or status :active))]
+      (when-not (contains? #{:suggested :active :deferred} status-kw)
+        (throw (ex-info "db-store-intent! only creates :suggested, :active, or :deferred intents"
+                 {:status status-kw})))
+      (let [src-kw (input-keyword (or source :user))]
+        (when (and (= :extension src-kw) (not (seq (str owner-extension-id))))
+          (throw (ex-info "extension-sourced intent requires :owner-extension-id" {})))
+        (when (and (not= :extension src-kw) (seq (str owner-extension-id)))
+          (throw (ex-info ":owner-extension-id only allowed when :source = :extension" {})))))
     (sqlite-write-tx! db-info
       (fn [tx-info]
         (let [ctx (when conversation-turn-id (turn-state-context tx-info conversation-turn-id))
               conversation-soul-id (or (:conversation_soul_id ctx)
                                      (conversation-soul-id-for-conversation tx-info conversation-id))
               id  (new-id)
-              now (now-ms)]
+              now (now-ms)
+              status-kw (input-keyword (or status :active))
+              status-name (intent-status-sql status-kw)
+              source-name (intent-source-sql source)]
           (execute! tx-info
             {:insert-into :conversation_intent
              :values [(cond-> {:id id
                                :conversation_soul_id conversation-soul-id
                                :title title
                                :rationale rationale
-                               :status "active"
+                               :status status-name
+                               :source source-name
                                :metadata (->json metadata)
                                :created_at now}
+                        owner-extension-id (assoc :owner_extension_id owner-extension-id)
+                        parent-intent-id (assoc :parent_intent_id (->ref parent-intent-id))
                         conversation-turn-id (assoc :created_conversation_turn_id (->ref conversation-turn-id))
                         created-ref (assoc :created_ref created-ref))]})
-          (when (:conversation_turn_state_id ctx)
+          ;; Suggested/deferred intents do NOT touch the legacy focus table
+          ;; (focus implies active commitment); only :active intents do.
+          (when (and (= :active status-kw) (:conversation_turn_state_id ctx))
             (db-focus-intent! tx-info id {:conversation-turn-state-id (:conversation_turn_state_id ctx)
                                           :rationale rationale
                                           :source :created}))
@@ -2486,6 +2660,536 @@
             (intent-refs tx-info intent-id)
             []
             []))))))
+
+;; ============================================================================
+;; PROOF.md Tasks 30–34 — intent query surface, defer/resume, cursor, audit
+;; ============================================================================
+
+(defn- require-intent-row!
+  [tx-info intent-id]
+  (require-row tx-info :conversation_intent intent-id "conversation_intent not found"))
+
+(defn- check-intent-transition!
+  [from-row to-status]
+  (let [from-status (->kw-back (:status from-row))]
+    (when-not (proof/legal-intent-transition? from-status to-status)
+      (throw (ex-info "illegal intent lifecycle transition"
+               {:intent-id (->uuid (:id from-row))
+                :from from-status
+                :to to-status
+                :legal-from-current
+                (filterv #(proof/legal-intent-transition? from-status %)
+                  proof/intent-statuses)})))))
+
+(defn- legacy-intent-resolution-event-row!
+  "Append a `:lifecycle` provenance_event so the new intent transition has a
+   canonical ref to bundle/attest against. Used for the new defer/resume
+   suite where callers do not always have a runtime block to cite. Returns
+   the canonical ref string."
+  [tx-info conversation-soul-id transition payload]
+  (let [ref (str "turn/" (subs (str (java.util.UUID/randomUUID)) 0 8)
+              "/iteration/1/block/1/tool/intent." (name transition))]
+    (execute! tx-info
+      {:insert-into :provenance_event
+       :values [{:id (new-id)
+                 :conversation_soul_id (->ref conversation-soul-id)
+                 :ref ref
+                 :status "done"
+                 :kind "lifecycle"
+                 :op (str "intent." (name transition))
+                 :rendering_kind "vis/system"
+                 :payload (->blob payload)
+                 :payload_sha256 (payload-digest payload)
+                 :created_at (now-ms)}]})
+    ref))
+
+;; ----------------------------------------------------------------------------
+;; Task 30 — Intent query surface
+;; ----------------------------------------------------------------------------
+
+(defn db-list-intents
+  "Durable intent query for extensions and host UIs. Replaces prompt scraping
+   and event-bus subscription with a SQL-backed read.
+
+   Filters (all optional, all AND-combined):
+     :conversation-id        — scope to one conversation soul.
+     :status                 — keyword or set of intent-statuses.
+     :source                 — keyword or set of intent-sources.
+     :owner-extension-id     — string; finds extension-owned suggestions.
+     :parent-intent-id       — direct subintents only.
+     :resumable?             — true: only deferred intents whose trigger has
+                                been observed (resumable_at IS NOT NULL).
+                                false: deferred intents NOT yet resumable.
+     :limit / :offset        — pagination.
+
+   Returns a vector of intent maps in created_at ASC order. Refs / plans /
+   relations are NOT eagerly hydrated; use `db-intents` for the aggregate
+   shape callers used to consume."
+  [db-info {:keys [conversation-id status source owner-extension-id
+                   parent-intent-id resumable? limit offset]}]
+  (when (ds db-info)
+    (let [status-set (cond
+                       (nil? status) nil
+                       (set? status) (set (map (comp name input-keyword) status))
+                       :else #{(name (input-keyword status))})
+          source-set (cond
+                       (nil? source) nil
+                       (set? source) (set (map (comp name input-keyword) source))
+                       :else #{(name (input-keyword source))})
+          where (cond-> [:and]
+                  conversation-id (conj [:= :conversation_soul_id (->ref conversation-id)])
+                  status-set     (conj [:in :status status-set])
+                  source-set     (conj [:in :source source-set])
+                  owner-extension-id (conj [:= :owner_extension_id owner-extension-id])
+                  parent-intent-id (conj [:= :parent_intent_id (->ref parent-intent-id)])
+                  (true? resumable?)  (conj [:and
+                                             [:= :status "deferred"]
+                                             [:is-not :resumable_at nil]])
+                  (false? resumable?) (conj [:and
+                                             [:= :status "deferred"]
+                                             [:is :resumable_at nil]]))
+          query (cond-> {:select [:*]
+                         :from :conversation_intent
+                         :where (if (= 1 (count where)) [:= 1 1] where)
+                         :order-by [[:created_at :asc]]}
+                  limit  (assoc :limit limit)
+                  offset (assoc :offset offset))]
+      (mapv row->intent (query! db-info query)))))
+
+(defn db-get-intent
+  "Fetch one intent by id. Returns the lightweight `row->intent` shape. Use
+   `db-intents` for the full aggregate (plans/gates/relations) when needed."
+  [db-info intent-id]
+  (when (ds db-info)
+    (when-let [row (query-one! db-info {:select [:*]
+                                        :from :conversation_intent
+                                        :where [:= :id (->ref intent-id)]})]
+      (row->intent row))))
+
+(defn db-intent-tree
+  "Return the depth-first subintent tree rooted at `root-intent-id` as a
+   vector of `{:intent <intent-map> :depth <n>}` rows. PROOF.md Task 32:
+   `:active` intents in this tree are the cursor's execution candidates."
+  [db-info root-intent-id]
+  (when (ds db-info)
+    (let [root (db-get-intent db-info root-intent-id)]
+      (when root
+        (loop [stack [{:intent root :depth 0}] acc []]
+          (if (empty? stack)
+            acc
+            (let [{:keys [intent depth] :as node} (peek stack)
+                  rest (pop stack)
+                  children (mapv (fn [r] (row->intent r))
+                             (query! db-info {:select [:*]
+                                              :from :conversation_intent
+                                              :where [:= :parent_intent_id (->ref (:id intent))]
+                                              :order-by [[:created_at :asc]]}))
+                  child-nodes (mapv (fn [c] {:intent c :depth (inc depth)}) children)]
+              (recur (into rest (reverse child-nodes))
+                (conj acc node)))))))))
+
+;; ----------------------------------------------------------------------------
+;; Task 31 — defer/resume APIs (and acceptance for suggested intents)
+;;
+;; All transitions go through the attestation ledger so audit can replay every
+;; commitment hop. Each transition:
+;;   1) appends a `:lifecycle` provenance_event with op = "intent.<verb>";
+;;   2) creates an evidence_bundle citing that event;
+;;   3) writes an attestation row;
+;;   4) updates conversation_intent fields atomically in one tx.
+;; ----------------------------------------------------------------------------
+
+(defn- attest-intent-transition!
+  [tx-info intent-id from-row {:keys [transition decision actor-kind actor-id
+                                      reason payload conversation-soul-id]}]
+  ;; Build a small intra-tx evidence bundle so audit gets a real attestation
+  ;; chain. Reusing db-create-evidence-bundle! would re-open a tx; we inline
+  ;; the writes for atomicity.
+  (let [ref (legacy-intent-resolution-event-row! tx-info conversation-soul-id transition
+              (merge {:intent-id (str (->uuid (:id from-row)))
+                      :transition transition} payload))
+        slot [(str (->uuid (:id from-row))) :lifecycle]
+        bundle-id (new-id)
+        member-id (new-id)
+        att-id (new-id)
+        now (now-ms)]
+    (execute! tx-info {:insert-into :evidence_bundle
+                       :values [{:id bundle-id
+                                 :conversation_soul_id (->ref conversation-soul-id)
+                                 :kind "closure"
+                                 :subject_kind "intent"
+                                 :subject_id (->ref intent-id)
+                                 :source "derived"
+                                 :status "accepted"
+                                 :summary (str "intent " (name transition))
+                                 :created_at now}]})
+    (execute! tx-info {:insert-into :evidence_bundle_member
+                       :values [{:id member-id
+                                 :bundle_id bundle-id
+                                 :position 0
+                                 :slot (->blob slot)
+                                 :event_ref ref
+                                 :extract_path (->blob [:transition])
+                                 :derived_value (->blob (name transition))
+                                 :guard_ok 1
+                                 :member_role "observation"
+                                 :created_at now}]})
+    (execute! tx-info {:insert-into :attestation
+                       :values [{:id att-id
+                                 :conversation_soul_id (->ref conversation-soul-id)
+                                 :kind (str "intent/" (name transition))
+                                 :subject_kind "intent"
+                                 :subject_id (->ref intent-id)
+                                 :evidence_bundle_id bundle-id
+                                 :decision (name decision)
+                                 :status "accepted"
+                                 :reason reason
+                                 :attester_kind (when actor-kind (name (input-keyword actor-kind)))
+                                 :attester_id  actor-id
+                                 :created_at now}]})
+    {:ref ref :bundle-id bundle-id :attestation-id att-id}))
+
+(defn db-suggest-intent!
+  "Convenience writer: store an intent with `:status :suggested`. Extensions
+   should use this rather than `db-store-intent!` so audit can read the
+   `:suggested` lifecycle without inferring from `:source`."
+  [db-info opts]
+  (db-store-intent! db-info (assoc opts :status :suggested)))
+
+(defn db-accept-intent!
+  "Move a `:suggested` intent into a commitment. `actor-kind` must be
+   `:user` or `:system-policy`; extensions cannot self-accept.
+
+   Options:
+     :actor-kind   — :user | :system-policy   (REQUIRED)
+     :actor-id     — string id of the actor    (optional)
+     :defer        — nil to accept directly into :active.
+                     Map `{:trigger-kind ... :trigger-payload ... :sibling-policy ...}`
+                     to accept directly into :deferred (commits the intent
+                     and immediately defers it on the same trigger).
+     :reason       — short rationale for audit."
+  [db-info intent-id {:keys [actor-kind actor-id defer reason]}]
+  (when (ds db-info)
+    (when-not (intent-actor-kind-sql actor-kind)
+      (throw (ex-info "db-accept-intent! requires :actor-kind :user or :system-policy"
+               {:actor-kind actor-kind})))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [from-row (require-intent-row! tx-info intent-id)
+              soul-id  (->uuid (:conversation_soul_id from-row))
+              to       (if defer :deferred :active)]
+          (check-intent-transition! from-row to)
+          (when (= to :deferred)
+            (when-not (defer-trigger-kind-sql (:trigger-kind defer))
+              (throw (ex-info ":defer requires :trigger-kind" {:defer defer}))))
+          (let [now (now-ms)
+                update-set
+                (cond-> {:status (intent-status-sql to)
+                         :accepted_by_kind (intent-actor-kind-sql actor-kind)
+                         :accepted_at now}
+                  actor-id (assoc :accepted_by_id actor-id)
+                  (= to :deferred) (assoc :defer_trigger_kind
+                                     (defer-trigger-kind-sql (:trigger-kind defer))
+                                     :defer_trigger_payload
+                                     (some-> (:trigger-payload defer) ->blob)
+                                     :defer_sibling_policy
+                                     (defer-sibling-policy-sql
+                                       (or (:sibling-policy defer) :defer/continue-siblings))))]
+            (execute! tx-info
+              {:update :conversation_intent
+               :set update-set
+               :where [:= :id (->ref intent-id)]})
+            (let [audit (attest-intent-transition! tx-info intent-id from-row
+                          {:transition (if (= to :deferred) :deferred :accepted)
+                           :decision (if (= to :deferred) :deferred :accepted)
+                           :actor-kind actor-kind
+                           :actor-id actor-id
+                           :reason (or reason
+                                     (if (= to :deferred)
+                                       "intent accepted into deferred state"
+                                       "intent accepted into active state"))
+                           :payload (cond-> {:to (name to)}
+                                      defer (assoc :defer-trigger-kind
+                                              (name (:trigger-kind defer))))
+                           :conversation-soul-id soul-id})]
+              (assoc (row->intent (require-intent-row! tx-info intent-id))
+                :transition-attestation (:attestation-id audit)
+                :transition-event-ref (:ref audit)))))))))
+
+(defn db-defer-intent!
+  "Move an `:active` (or `:suggested`) intent to `:deferred`. The trigger and
+   sibling policy are recorded so audit can explain WHY the cursor stalled."
+  [db-info intent-id {:keys [actor-kind actor-id trigger-kind trigger-payload
+                             sibling-policy reason]}]
+  (when (ds db-info)
+    (when-not (intent-actor-kind-sql actor-kind)
+      (throw (ex-info "db-defer-intent! requires :actor-kind :user or :system-policy"
+               {:actor-kind actor-kind})))
+    (when-not (defer-trigger-kind-sql trigger-kind)
+      (throw (ex-info "db-defer-intent! requires :trigger-kind"
+               {:trigger-kind trigger-kind})))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [from-row (require-intent-row! tx-info intent-id)
+              soul-id  (->uuid (:conversation_soul_id from-row))]
+          (check-intent-transition! from-row :deferred)
+          (let [_now (now-ms)]
+            (execute! tx-info
+              {:update :conversation_intent
+               :set {:status "deferred"
+                     :defer_trigger_kind (defer-trigger-kind-sql trigger-kind)
+                     :defer_trigger_payload (some-> trigger-payload ->blob)
+                     :defer_sibling_policy (defer-sibling-policy-sql
+                                             (or sibling-policy :defer/continue-siblings))
+                     ;; Re-deferring clears any prior resumable mark.
+                     :resumable_at nil}
+               :where [:= :id (->ref intent-id)]})
+            (let [audit (attest-intent-transition! tx-info intent-id from-row
+                          {:transition :deferred
+                           :decision :deferred
+                           :actor-kind actor-kind
+                           :actor-id actor-id
+                           :reason (or reason "intent deferred")
+                           :payload {:trigger-kind (name trigger-kind)
+                                     :sibling-policy (name (or sibling-policy
+                                                             :defer/continue-siblings))}
+                           :conversation-soul-id soul-id})]
+              (assoc (row->intent (require-intent-row! tx-info intent-id))
+                :transition-attestation (:attestation-id audit)
+                :transition-event-ref (:ref audit)))))))))
+
+(defn db-mark-intent-resumable!
+  "Mark a `:deferred` intent as resumable (its Defer Trigger has been
+   observed). This does NOT move the cursor; a separate Resume Decision
+   does. Extensions may call this when they observe their trigger."
+  [db-info intent-id {:keys [observed-at observation-payload]}]
+  (when (ds db-info)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [from-row (require-intent-row! tx-info intent-id)]
+          (when-not (= "deferred" (:status from-row))
+            (throw (ex-info "only :deferred intents can be marked resumable"
+                     {:intent-id intent-id
+                      :status (->kw-back (:status from-row))})))
+          (execute! tx-info
+            {:update :conversation_intent
+             :set {:resumable_at (or observed-at (now-ms))}
+             :where [:= :id (->ref intent-id)]})
+          ;; This is an observation, not a Resume Decision. We append a
+          ;; provenance_event so the resume audit chain has data, but we do
+          ;; NOT write an attestation (no decision yet).
+          (legacy-intent-resolution-event-row! tx-info
+            (->uuid (:conversation_soul_id from-row))
+            :resumable
+            (cond-> {:intent-id (str (->uuid (:id from-row)))}
+              observation-payload (assoc :observation observation-payload)))
+          (row->intent (require-intent-row! tx-info intent-id)))))))
+
+(defn db-resume-intent!
+  "Move a resumable `:deferred` intent back to `:active`. Requires a Resume
+   Decision actor; extensions may not move the cursor themselves."
+  [db-info intent-id {:keys [actor-kind actor-id reason]}]
+  (when (ds db-info)
+    (when-not (intent-actor-kind-sql actor-kind)
+      (throw (ex-info "db-resume-intent! requires :actor-kind :user or :system-policy"
+               {:actor-kind actor-kind})))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [from-row (require-intent-row! tx-info intent-id)
+              soul-id  (->uuid (:conversation_soul_id from-row))]
+          (when-not (= "deferred" (:status from-row))
+            (throw (ex-info "only :deferred intents can be resumed"
+                     {:intent-id intent-id})))
+          (when-not (:resumable_at from-row)
+            (throw (ex-info "intent is not resumable; mark it resumable first"
+                     {:intent-id intent-id})))
+          (check-intent-transition! from-row :active)
+          (let [now (now-ms)]
+            (execute! tx-info
+              {:update :conversation_intent
+               :set {:status "active"
+                     :resumed_by_kind (intent-actor-kind-sql actor-kind)
+                     :resumed_by_id actor-id
+                     :resumed_at now}
+               :where [:= :id (->ref intent-id)]})
+            (let [audit (attest-intent-transition! tx-info intent-id from-row
+                          {:transition :resumed
+                           :decision :resumed
+                           :actor-kind actor-kind
+                           :actor-id actor-id
+                           :reason (or reason "deferred intent resumed")
+                           :payload {}
+                           :conversation-soul-id soul-id})]
+              (assoc (row->intent (require-intent-row! tx-info intent-id))
+                :transition-attestation (:attestation-id audit)
+                :transition-event-ref (:ref audit)))))))))
+
+;; ----------------------------------------------------------------------------
+;; Task 32 — Intent cursor enforcement
+;; ----------------------------------------------------------------------------
+
+(defn db-get-intent-cursor
+  "Return `{:conversation-id ... :intent-id ... :updated-at ...}` for the
+   conversation cursor, or nil when no cursor row exists."
+  [db-info conversation-id]
+  (when (ds db-info)
+    (when-let [row (query-one! db-info {:select [:*]
+                                        :from :conversation_intent_cursor
+                                        :where [:= :conversation_soul_id (->ref conversation-id)]})]
+      {:conversation-id (->uuid (:conversation_soul_id row))
+       :intent-id (some-> (:intent_id row) ->uuid)
+       :updated-at (->date (:updated_at row))})))
+
+(defn db-set-intent-cursor!
+  "Set the running-intent cursor for `conversation-id` to `intent-id` (or nil
+   to clear). The intent must be `:active` and live in the same conversation;
+   the cursor row enforces single-running cardinality structurally."
+  [db-info conversation-id intent-id]
+  (when (ds db-info)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (when intent-id
+          (let [row (require-intent-row! tx-info intent-id)]
+            (when-not (= (:conversation_soul_id row) (->ref conversation-id))
+              (throw (ex-info "intent does not belong to that conversation"
+                       {:intent-id intent-id :conversation-id conversation-id})))
+            (when-not (= "active" (:status row))
+              (throw (ex-info "only :active intents may be the cursor"
+                       {:intent-id intent-id
+                        :status (->kw-back (:status row))})))))
+        (let [now (now-ms)]
+          (execute! tx-info
+            {:insert-into :conversation_intent_cursor
+             :values [{:conversation_soul_id (->ref conversation-id)
+                       :intent_id (some-> intent-id ->ref)
+                       :updated_at now}]
+             :on-conflict :conversation_soul_id
+             :do-update-set {:intent_id (some-> intent-id ->ref)
+                             :updated_at now}})
+          (db-get-intent-cursor tx-info conversation-id))))))
+
+;; ----------------------------------------------------------------------------
+;; Task 33 — Abandonment gate / scope
+;; ----------------------------------------------------------------------------
+
+(defn- collect-branch-descendants
+  [tx-info root-id]
+  (loop [stack [(->ref root-id)] acc #{}]
+    (if (empty? stack)
+      acc
+      (let [head (peek stack)
+            children (mapv :id (query! tx-info
+                                 {:select [:id]
+                                  :from :conversation_intent
+                                  :where [:and
+                                          [:= :parent_intent_id head]
+                                          [:not-in :status ["fulfilled" "abandoned"]]]}))]
+        (recur (into (pop stack) children) (conj acc head))))))
+
+(defn db-abandon-intent-with-scope!
+  "Abandonment with explicit scope. PROOF.md Task 33 says direction changes
+   need an Abandonment Gate that names which intents are affected:
+     :abandon/current-intent  (default) — only this intent.
+     :abandon/current-branch            — this intent + descendants.
+     :abandon/all-running               — every active/deferred intent in
+                                          the conversation.
+   This writes per-intent abandonment_scope so audit can read the decision
+   later. It does NOT replace `db-abandon-intent!`'s evidence-ref contract
+   for the primary intent: a non-empty `:refs` list is still required."
+  [db-info intent-id {:keys [scope] :as opts}]
+  (when (ds db-info)
+    (let [scope-kw (or scope :abandon/current-intent)]
+      (when-not (proof/abandonment-scope? scope-kw)
+        (throw (ex-info "unknown abandonment scope"
+                 {:scope scope-kw :allowed proof/abandonment-scopes})))
+      (sqlite-write-tx! db-info
+        (fn [tx-info]
+          (let [from-row (require-intent-row! tx-info intent-id)
+                soul-id  (->uuid (:conversation_soul_id from-row))
+                scope-name (abandonment-scope-sql scope-kw)
+                now (now-ms)
+                ;; Other intents to abandon under this scope decision.
+                ;; Collected BEFORE the primary abandonment so descendant
+                ;; queries see their pre-abandonment status.
+                others (case scope-kw
+                         :abandon/current-intent #{}
+                         :abandon/current-branch (disj (collect-branch-descendants
+                                                         tx-info intent-id)
+                                                   (->ref intent-id))
+                         :abandon/all-running
+                         (set (mapv :id (query! tx-info
+                                          {:select [:id]
+                                           :from :conversation_intent
+                                           :where [:and
+                                                   [:= :conversation_soul_id (->ref soul-id)]
+                                                   [:in :status ["active" "deferred"]]
+                                                   [:not= :id (->ref intent-id)]]}))))]
+            ;; Primary intent first — reuse legacy abandon writer for the
+            ;; evidence-ref contract; then stamp scope on top.
+            (db-abandon-intent! tx-info intent-id (select-keys opts [:reason :refs :metadata
+                                                                     :resolved-ref :conversation-turn-id]))
+            (execute! tx-info
+              {:update :conversation_intent
+               :set {:abandonment_scope scope-name}
+               :where [:= :id (->ref intent-id)]})
+            ;; Cascade scope to others without re-running the evidence-ref
+            ;; contract (these are scope-cascaded, not separately attested).
+            (doseq [other-id others]
+              (execute! tx-info
+                {:update :conversation_intent
+                 :set {:status "abandoned"
+                       :abandonment_reason (str "cascade-from "
+                                             (->uuid (:id from-row))
+                                             " scope=" (name scope-kw))
+                       :abandonment_scope scope-name
+                       :resolved_at now}
+                 :where [:and
+                         [:= :id other-id]
+                         [:not-in :status ["fulfilled" "abandoned"]]]}))
+            ;; If the cursor pointed at any abandoned intent, clear it.
+            (let [abandoned-set (conj others (->ref intent-id))]
+              (execute! tx-info
+                {:update :conversation_intent_cursor
+                 :set {:intent_id nil :updated_at now}
+                 :where [:and
+                         [:= :conversation_soul_id (->ref soul-id)]
+                         [:in :intent_id abandoned-set]]}))
+            {:intent (row->intent (require-intent-row! tx-info intent-id))
+             :scope scope-kw
+             :cascaded-intent-ids (mapv ->uuid others)}))))))
+
+;; ----------------------------------------------------------------------------
+;; Task 34 — Deferred-intent audit / reporting
+;; ----------------------------------------------------------------------------
+
+(defn db-deferred-intent-report
+  "Categorized snapshot of intent lifecycle state for one conversation.
+   PROOF.md Task 34 says audit must distinguish:
+     :active            — currently blocking the cursor.
+     :suggested         — not yet committed; awaiting Intent Acceptance.
+     :deferred-waiting  — deferred, trigger NOT yet observed.
+     :deferred-resumable— deferred, trigger observed, awaiting Resume Decision.
+     :sibling-blocking  — deferred subintents whose `:defer/block-parent`
+                          policy stalls a sibling branch.
+     :extension-owned   — suggested or deferred work owned by some extension."
+  [db-info {:keys [conversation-id]}]
+  (when (ds db-info)
+    (let [intents (db-list-intents db-info {:conversation-id conversation-id})
+          by-status (group-by :status intents)
+          deferred  (get by-status :deferred [])]
+      {:conversation-id (some-> conversation-id ->uuid)
+       :active            (vec (get by-status :active []))
+       :suggested         (vec (get by-status :suggested []))
+       :deferred-waiting  (vec (filter #(nil? (:resumable-at %)) deferred))
+       :deferred-resumable (vec (filter #(some? (:resumable-at %)) deferred))
+       :sibling-blocking  (vec (filter #(= :defer/block-parent
+                                          (:defer-sibling-policy %)) deferred))
+       :extension-owned   (vec (filter #(= :extension (:source %))
+                                 (concat (get by-status :suggested [])
+                                   deferred)))
+       :resolved
+       {:fulfilled (vec (get by-status :fulfilled []))
+        :abandoned (vec (get by-status :abandoned []))}})))
 
 (defn- rows-by [k rows]
   (group-by k rows))

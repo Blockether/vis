@@ -110,7 +110,42 @@
     (let [event (assoc (successful-tool-event) :event/ref "i4.2")
           result (proof/evaluate-gate [event] [(verification-requirement {:evidence/from-ref "i4.2"})])]
       (expect (false? (:gate/proven? result)))
+      ;; Compact display aliases must surface the precise `:non-canonical-ref`
+      ;; error code instead of being swallowed by the spec catch-all.
+      ;; This is the bug autoresearch Task 26 hit when the persistence
+      ;; ref-rejection regression saw `:invalid-requirement` instead of
+      ;; the expected canonical-ness diagnostic. The runtime branch in
+      ;; `derive-binding` is the source of truth for ref shape; the spec
+      ;; on `:evidence/from-ref` no longer pre-empts it.
+      (expect (= :non-canonical-ref (get-in result [:gate/errors 0 :evidence/error-code])))))
+
+  (it "still surfaces :invalid-requirement for genuinely malformed requirements"
+    ;; Sanity: when the ref is canonical but a required key is missing, the
+    ;; spec catch-all must still fire so authors get a structural error.
+    (let [event (successful-tool-event)
+          ;; Drop :evidence/slot to break the spec, keep canonical from-ref.
+          bad-req (dissoc (verification-requirement) :evidence/slot)
+          result (proof/evaluate-gate [event] [bad-req])]
+      (expect (false? (:gate/proven? result)))
       (expect (= :invalid-requirement (get-in result [:gate/errors 0 :evidence/error-code])))))
+
+  (it "rejects empty requirements as a fake-proof bypass (PROOF.md trust spine)"
+    ;; A bundle with zero requirements would otherwise be trivially proven
+    ;; (`every? guard-ok []` = true). PROOF.md's evidence-bundle layer must
+    ;; not let a caller satisfy a gate by pointing at no evidence at all.
+    ;; Reproduces the persistence-side fake-proof bypass found while finishing
+    ;; the attestation ledger work: `(v/db-create-evidence-bundle! ... :requirements [])`
+    ;; combined with `db-attest-gate!` could prove ANY gate.
+    (let [result (proof/evaluate-gate [(successful-tool-event)] [])]
+      (expect (false? (:gate/proven? result)))
+      (expect (= :rejected (:attestation/status result)))
+      (expect (= :impeded (:attestation/decision result)))
+      (expect (= [] (:bundle/bindings result)))
+      (expect (= :empty-requirements (get-in result [:gate/errors 0 :evidence/error-code]))))
+    ;; Empty-requirements rejection holds even with NO events present.
+    (let [result (proof/evaluate-gate [] [])]
+      (expect (false? (:gate/proven? result)))
+      (expect (= :empty-requirements (get-in result [:gate/errors 0 :evidence/error-code])))))
 
   (it "rejects running events as proof"
     (let [event (assoc (successful-tool-event) :event/status :running)
@@ -199,3 +234,151 @@
       (expect (s/valid? ::proof/gate-resolution resolution))
       (expect (false? (s/valid? ::proof/plan-resolution resolution)))
       (expect (s/valid? ::proof/audit-result audit)))))
+
+;; ---------------------------------------------------------------------------
+;; PROOF.md Task 28 — intent lifecycle vocabulary specs
+;;
+;; The intent tree decisions in ADR-0003 add suggested / deferred states, an
+;; explicit acceptance/resume actor model that excludes extensions, a tiny
+;; defer-trigger vocabulary, sibling policy, abandonment scope, and a strict
+;; transition table. These tests lock all of that in at the data-shape level
+;; before any persistence work can drift away from it.
+;; ---------------------------------------------------------------------------
+
+(def ^:private intent-uuid "22222222-2222-2222-2222-222222222222")
+(def ^:private parent-uuid "33333333-3333-3333-3333-333333333333")
+(def ^:private conversation-uuid "44444444-4444-4444-4444-444444444444")
+
+(defn- valid-intent
+  ([] (valid-intent {}))
+  ([overrides]
+   (merge {:intent/id intent-uuid
+           :intent/conversation-id conversation-uuid
+           :intent/title "Configure telegram bot"
+           :intent/rationale "User asked to add Telegram channel"
+           :intent/status :suggested
+           :intent/source :extension
+           :intent/owner-extension-id "vis.ext.telegram"}
+     overrides)))
+
+(defdescribe intent-lifecycle-vocabulary-test
+  (it "enumerates intent lifecycle states with `:active` as the only blocker"
+    (expect (= #{:suggested :deferred :active :fulfilled :abandoned}
+              proof/intent-statuses))
+    (expect (= #{:active} proof/intent-blocking-statuses))
+    (expect (= #{:fulfilled :abandoned} proof/intent-resolved-statuses))
+    (expect (= #{:suggested :deferred} proof/intent-pending-commitment-statuses)))
+
+  (it "caps intent acceptance/resume actors so extensions cannot self-accept"
+    ;; PROOF.md Task 28: only `:user` and `:system-policy` may accept
+    ;; suggestions or resume deferred intents. The presence of `:extension`
+    ;; in this set would be the silent-self-acceptance bypass the ADR
+    ;; explicitly forbids.
+    (expect (= #{:user :system-policy} proof/intent-acceptance-actor-kinds))
+    (expect (false? (proof/intent-acceptance-actor-kind? :extension)))
+    (expect (false? (proof/intent-acceptance-actor-kind? nil)))
+    (expect (true? (proof/intent-acceptance-actor-kind? :user)))
+    (expect (true? (proof/intent-acceptance-actor-kind? :system-policy))))
+
+  (it "enumerates the minimal Defer Trigger and Sibling Policy vocabulary"
+    (expect (= #{:defer/user-input :defer/time :defer/extension-signal :defer/intent}
+              proof/defer-trigger-kinds))
+    (expect (= #{:defer/continue-siblings :defer/block-parent}
+              proof/defer-sibling-policies))
+    (expect (true? (proof/defer-trigger-kind? :defer/user-input)))
+    (expect (false? (proof/defer-trigger-kind? :defer/random-thing))))
+
+  (it "enumerates Abandonment Scope choices (current-intent, branch, all-running)"
+    (expect (= #{:abandon/current-intent :abandon/current-branch :abandon/all-running}
+              proof/abandonment-scopes))
+    (expect (true? (proof/abandonment-scope? :abandon/current-branch)))
+    (expect (false? (proof/abandonment-scope? :abandon/whatever))))
+
+  (it "validates the intent shape against ::proof/intent"
+    (expect (true? (s/valid? ::proof/intent (valid-intent))))
+    ;; Status must be one of the allowed lifecycle states.
+    (expect (false? (s/valid? ::proof/intent (valid-intent {:intent/status :weird}))))
+    ;; Source must be enumerated.
+    (expect (false? (s/valid? ::proof/intent (valid-intent {:intent/source :random}))))
+    ;; Title and rationale must be non-blank.
+    (expect (false? (s/valid? ::proof/intent (valid-intent {:intent/title ""})))))
+
+  (it "validates defer / resume / abandonment / acceptance decision shapes"
+    (expect (true? (s/valid? ::proof/defer-decision
+                     {:intent/id intent-uuid
+                      :intent/defer-trigger-kind :defer/user-input
+                      :intent/defer-sibling-policy :defer/block-parent})))
+    (expect (true? (s/valid? ::proof/resume-decision
+                     {:intent/id intent-uuid
+                      :intent/resumed-by-kind :user
+                      :intent/resumed-by-id "alice"})))
+    (expect (true? (s/valid? ::proof/abandonment-decision
+                     {:intent/id intent-uuid
+                      :intent/abandonment-scope :abandon/current-branch
+                      :intent/abandonment-reason "user changed direction"})))
+    (expect (true? (s/valid? ::proof/acceptance-decision
+                     {:intent/id intent-uuid :intent/accepted-by-kind :user})))
+    ;; A resume decision with `:extension` actor is shape-invalid.
+    (expect (false? (s/valid? ::proof/resume-decision
+                      {:intent/id intent-uuid :intent/resumed-by-kind :extension}))))
+
+  (it "enforces the intent lifecycle transition table"
+    ;; Creation transitions.
+    (expect (true? (proof/legal-intent-transition? nil :suggested)))
+    (expect (true? (proof/legal-intent-transition? nil :active)))
+    (expect (true? (proof/legal-intent-transition? nil :deferred)))
+    (expect (false? (proof/legal-intent-transition? nil :fulfilled)))
+    (expect (false? (proof/legal-intent-transition? nil :abandoned)))
+    ;; Suggested moves into a commitment or abandonment, never directly to
+    ;; fulfilled (that requires an `:active` plan first).
+    (expect (true? (proof/legal-intent-transition? :suggested :active)))
+    (expect (true? (proof/legal-intent-transition? :suggested :deferred)))
+    (expect (true? (proof/legal-intent-transition? :suggested :abandoned)))
+    (expect (false? (proof/legal-intent-transition? :suggested :fulfilled)))
+    ;; Deferred can only become active or abandoned (not back to suggested).
+    (expect (true? (proof/legal-intent-transition? :deferred :active)))
+    (expect (true? (proof/legal-intent-transition? :deferred :abandoned)))
+    (expect (false? (proof/legal-intent-transition? :deferred :suggested)))
+    (expect (false? (proof/legal-intent-transition? :deferred :fulfilled)))
+    ;; Active can defer, fulfill, or abandon — not jump back to suggested.
+    (expect (true? (proof/legal-intent-transition? :active :deferred)))
+    (expect (true? (proof/legal-intent-transition? :active :fulfilled)))
+    (expect (true? (proof/legal-intent-transition? :active :abandoned)))
+    (expect (false? (proof/legal-intent-transition? :active :suggested)))
+    ;; Terminal states cannot transition. Closing this loophole is the whole
+    ;; reason `db-attest-intent!` requires evidence; the lifecycle spec
+    ;; mirrors that invariant at the pure layer.
+    (doseq [from #{:fulfilled :abandoned}
+            to   proof/intent-statuses]
+      (expect (false? (proof/legal-intent-transition? from to))))))
+
+(defdescribe intent-cursor-spec-test
+  (it "specs intent cursor as one row per conversation"
+    (expect (true? (s/valid? ::proof/intent-cursor
+                     {:intent-cursor/conversation-id conversation-uuid
+                      :intent-cursor/intent-id intent-uuid})))
+    (expect (true? (s/valid? ::proof/intent-cursor
+                     {:intent-cursor/conversation-id conversation-uuid
+                      :intent-cursor/intent-id nil})))
+    (expect (false? (s/valid? ::proof/intent-cursor
+                      {:intent-cursor/intent-id intent-uuid})))))
+
+(defdescribe intent-attestation-vocab-test
+  (it "adds intent lifecycle attestation kinds without dropping legacy ones"
+    (let [legacy #{:gate/proven :gate/impeded :plan/completed :plan/blocked
+                   :intent/fulfilled :intent/abandoned}
+          new    #{:intent/suggested :intent/accepted :intent/deferred :intent/resumed}]
+      (expect (every? proof/attestation-kinds legacy))
+      (expect (every? proof/attestation-kinds new))))
+
+  (it "adds matching attestation decisions and includes :system-policy in attesters"
+    (expect (contains? proof/attestation-decisions :accepted))
+    (expect (contains? proof/attestation-decisions :deferred))
+    (expect (contains? proof/attestation-decisions :resumed))
+    (expect (contains? proof/attester-kinds :system-policy))))
+
+(defdescribe intent-tree-parent-test
+  (it "a child intent points at its parent via :intent/parent-intent-id"
+    (let [child (valid-intent {:intent/parent-intent-id parent-uuid})]
+      (expect (true? (s/valid? ::proof/intent child)))
+      (expect (= parent-uuid (:intent/parent-intent-id child))))))

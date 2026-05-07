@@ -17,6 +17,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.prompt :as prompt]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -42,6 +43,41 @@
       (expect (str/includes? out "\n"))
       (expect (str/includes? out ":alpha"))
       (expect (str/includes? out ":beta"))))
+
+  (it "shares the process-wide zprint lock with source formatting"
+    (let [gate     (java.util.concurrent.CountDownLatch. 1)
+          failures (atom [])
+          spawn    (fn [label thunk]
+                     (doto (Thread.
+                             ^Runnable
+                             (fn []
+                               (.await gate)
+                               (try
+                                 (thunk)
+                                 (catch Throwable t
+                                   (swap! failures conj
+                                     {:label label
+                                      :class (.getName (class t))
+                                      :message (ex-message t)})))))
+                       (.start)))
+          code     "(defn f[x](let[a 1](+ a x)))"
+          threads  (doall
+                     (concat
+                       (for [_ (range 4)]
+                         (spawn :safe-pr-str
+                           #(dotimes [i 300]
+                              (let [s (prompt/safe-pr-str {:i i :data (vec (range 300))}
+                                        {:max-chars 10000})]
+                                (when (str/includes? s "<unprintable:")
+                                  (throw (ex-info s {})))))))
+                       (for [_ (range 4)]
+                         (spawn :format-clojure
+                           #(dotimes [_ 300]
+                              (fmt/format-clojure code 20))))))]
+      (.countDown gate)
+      (doseq [^Thread thread threads]
+        (.join thread))
+      (expect (= [] @failures))))
 
   (it "swallows unprintable values instead of throwing"
     (let [bomb (reify Object (toString [_] (throw (ex-info "boom" {}))))]
