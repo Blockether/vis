@@ -472,7 +472,7 @@ To author your own extension, see [Extension System](extensions/overview.md).
 | `vis providers …`          | Provider auth / status / limits / logout commands.                       |
 | `vis conversations [ch]`   | List conversations, optionally filtered by channel.                      |
 | `vis extensions doctor`    | Environment diagnostics.                                                 |
-| `vis extensions report <conv-id>` | Forensic Markdown report for a persisted conversation.             |
+| `vis extensions reproduction <conv-id>` | Complete flag-free Markdown reproduction artifact for a persisted conversation. |
 | `vis extensions list`      | List registered extensions.                                              |
 | `vis extensions <cmd> […]` | Run an extension-provided CLI command.                                   |
 | `vis channels <name> […]`  | Run any registered channel by `:channel/cmd` name.                       |

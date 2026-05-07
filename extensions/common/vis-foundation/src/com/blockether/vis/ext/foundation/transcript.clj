@@ -22,7 +22,7 @@
      `(transcript->md  data)`             → Markdown string
      `(transcript-md   db-info conv-id)`  → DB lookup + Markdown string
 
-     `cli-command` mounts `vis extensions report <CONVERSATION-ID>`
+     `cli-command` mounts `vis extensions reproduction <CONVERSATION-ID>`
      through `:ext/cli`, keeping extension-owned commands under
      `vis extensions`.
 
@@ -62,9 +62,8 @@
 
    The Markdown renderer renders thinking, iteration-level errors,
    vars, the per-block forensic dump, final answer text, plus a compact
-   raw-response diagnostics section. Full prompts stay in DATA only so
-   programmatic readers can opt in without every report ballooning
-   (e.g. `(:llm-system-prompt (first (:iterations turn)))`)."
+   raw-response diagnostics section. Prompt bodies render inline too:
+   the reproduction artifact is intentionally complete and flag-free."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis])
@@ -924,7 +923,7 @@
 
 (defn- render-full-md
   ([data]
-   (render-full-md data {:include-prompts? false}))
+   (render-full-md data {:include-prompts? true}))
   ([data {:keys [include-prompts?] :or {include-prompts? false}}]
    (str (render-header data)
      (render-raw-diagnostics (:turns data))
@@ -936,8 +935,8 @@
    `transcript`'s canonical data shape. Returns a string.
 
    Modes:
-   - `:full`               — forensic transcript without prompt bodies (default).
-   - `:debug`              — full transcript including prompt bodies.
+   - `:full`               — complete forensic transcript, including prompt bodies (default).
+   - `:debug`              — alias for the complete forensic transcript.
    - `:dialog`             — user/assistant dialog only.
    - `:system-prompts`     — persisted system prompt snapshots only.
    - `:prompts`            — exact persisted provider prompt envelopes."
@@ -965,7 +964,7 @@
      (str "Conversation not found: " conversation-id "\n"))))
 
 ;; =============================================================================
-;; CLI command — `vis extensions report <CONVERSATION-ID>`. Foundation owns
+;; CLI command — `vis extensions reproduction <CONVERSATION-ID>`. Foundation owns
 ;; it, mounted through `:ext/cli` rather than direct global registration.
 ;; =============================================================================
 
@@ -974,48 +973,43 @@
   (.println ^java.io.PrintStream vis/original-stdout s)
   (.flush ^java.io.PrintStream vis/original-stdout))
 
-(def ^:private report-modes
-  {"--dialog" :dialog
-   "--prompts" :prompts
-   "--system-prompts" :system-prompts})
-
-(defn- report-usage! []
-  (println-original! "Usage: vis extensions report [--dialog|--prompts|--system-prompts] <CONVERSATION-ID>")
+(defn- reproduction-usage! []
+  (println-original! "Usage: vis extensions reproduction <CONVERSATION-ID>")
   (println-original! "")
-  (println-original! "Modes:")
-  (println-original! "  --dialog          User/assistant dialog only")
-  (println-original! "  --system-prompts  Persisted system prompt snapshots from DB")
-  (println-original! "  --prompts         Full persisted provider prompt envelopes from DB")
+  (println-original! "Prints one complete Markdown reproduction artifact:")
+  (println-original! "  every turn, iteration, prompt body, message envelope, executed code block,")
+  (println-original! "  vars, reasoning trace, final answer, and raw LLM diagnostics.")
+  (println-original! "")
+  (println-original! "No mode flags are supported. The artifact is always complete.")
   (println-original! "")
   (println-original! "List conversations with:  vis conversations"))
 
-(defn- parse-report-residual
+(defn- parse-reproduction-residual
   [residual]
   (reduce (fn [acc token]
             (let [s (str token)]
               (cond
                 (:error acc) acc
-                (contains? report-modes s) (assoc acc :mode (get report-modes s))
-                (str/starts-with? s "--") (assoc acc :error (str "Unknown report flag: " s))
+                (str/starts-with? s "--") (assoc acc :error (str "Flags are not supported: " s))
                 (:conversation-id acc) (assoc acc :error (str "Unexpected extra argument: " s))
                 :else (assoc acc :conversation-id (str/trim s)))))
-    {:mode :full}
+    {}
     residual))
 
-(defn- cli-report-run!
+(defn- cli-reproduction-run!
   [_parsed residual]
   (vis/init-cli!)
-  (let [{:keys [conversation-id mode error]} (parse-report-residual residual)
+  (let [{:keys [conversation-id error]} (parse-reproduction-residual residual)
         cid-input (some-> conversation-id str/trim not-empty)]
     (cond
       error
       (do (println-original! error)
         (println-original! "")
-        (report-usage!)
+        (reproduction-usage!)
         (System/exit 1))
 
       (nil? cid-input)
-      (do (report-usage!)
+      (do (reproduction-usage!)
         (System/exit 1))
 
       :else
@@ -1025,18 +1019,16 @@
         (if (nil? resolved)
           (do (println-original! (str "Conversation not found: " cid-input))
             (System/exit 1))
-          (do (println-original! (transcript-md d resolved {:mode mode}))
+          (do (println-original! (transcript-md d resolved))
             (System/exit 0)))))))
 
 (defn cli-command []
-  {:cmd/name  "report"
-   :cmd/doc   "Print a forensic Markdown report for a conversation. Default mode includes every turn, iteration, executed code block, vars, reasoning trace, final answer, and raw LLM diagnostics. Use --system-prompts for DB-backed system prompt snapshots or --prompts for full provider prompt envelopes (including journal snapshots). Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
-   :cmd/usage "vis extensions report [--dialog|--prompts|--system-prompts] <CONVERSATION-ID>"
+  {:cmd/name  "reproduction"
+   :cmd/doc   "Print a complete, flag-free Markdown reproduction artifact for a conversation. It is always complete: every turn, iteration, prompt body, message envelope, executed code block, var, reasoning trace, final answer, and raw LLM diagnostic. Resolves an unambiguous id prefix the same way `vis conversations --fork` does."
+   :cmd/usage "vis extensions reproduction <CONVERSATION-ID>"
    :cmd/args  [{:name "conversation-id" :kind :positional :type :string
                 :doc  "Conversation id (full UUID or unambiguous prefix)."}]
-   :cmd/examples ["vis extensions report eeaf9651-06c7-4dda-9e97-877fcef06337"
-                  "vis extensions report eeaf9651"
-                  "vis extensions report --system-prompts eeaf9651"
-                  "vis extensions report --prompts eeaf9651 > PROMPTS.md"
-                  "vis extensions report eeaf9651 > REPRODUCTION.md"]
-   :cmd/run-fn cli-report-run!})
+   :cmd/examples ["vis extensions reproduction eeaf9651-06c7-4dda-9e97-877fcef06337"
+                  "vis extensions reproduction eeaf9651"
+                  "vis extensions reproduction eeaf9651 > REPRODUCTION.md"]
+   :cmd/run-fn cli-reproduction-run!})
