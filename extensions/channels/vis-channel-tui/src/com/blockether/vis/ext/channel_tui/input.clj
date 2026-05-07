@@ -120,7 +120,8 @@
   [^KeyStroke key marker]
   (and (= KeyType/Character (.getKeyType key))
     (some? (.getCharacter key))
-    (= (long marker) (long (.charValue ^Character (.getCharacter key))))))
+    (= (long (int marker))
+      (long (int (.charValue ^Character (.getCharacter key)))))))
 
 (defn paste-start? [key] (paste-marker? key PASTE_START_CHAR))
 (defn paste-end?   [key] (paste-marker? key PASTE_END_CHAR))
@@ -162,16 +163,6 @@
 ;; `MouseAction`, then send `ESC [ ? 1006 h` alongside the legacy
 ;; mode-1003 enable that Lanterna already does, so the terminal
 ;; switches over to the ASCII format.
-
-(defn- digits->int ^long [digits]
-  ;; Parses a non-empty decimal sequence held in a vector of
-  ;; java.lang.Character. Used for the SGR Cb / Cx / Cy fields.
-  ;; Allocation-free over the input - no temp String created.
-  (loop [i 0 acc 0]
-    (if (>= i (count digits))
-      acc
-      (let [c (long (.charValue ^Character (nth digits i)))]
-        (recur (inc i) (+ (* 10 acc) (- c 48)))))))
 
 (defn- sgr-mouse-decode
   "Given the parsed SGR fields `[button col row final-char]`, return
@@ -224,69 +215,77 @@
    `M` / `m` byte arrives."
   (reify CharacterPattern
     (match [_ chars]
-      (let [n (.size ^java.util.List chars)]
+      (let [^java.util.List chars chars
+            n     (.size chars)]
         (cond
           (zero? n) CharacterPattern$Matching/NOT_YET
 
           ;; chars[0] must be ESC (0x1B); chars[1] '['; chars[2] '<'.
           (or (and (>= n 1)
-                (not= 0x1B (long (.charValue ^Character (.get ^java.util.List chars 0)))))
+                (not= \u001B (.charValue ^Character (.get chars 0))))
             (and (>= n 2)
-              (not= \[ (.charValue ^Character (.get ^java.util.List chars 1))))
+              (not= \[ (.charValue ^Character (.get chars 1))))
             (and (>= n 3)
-              (not= \< (.charValue ^Character (.get ^java.util.List chars 2)))))
+              (not= \< (.charValue ^Character (.get chars 2)))))
           nil
 
           (< n 4) CharacterPattern$Matching/NOT_YET
 
           :else
           ;; Walk chars[3..] as: digits ';' digits ';' digits final.
-          (let [seen (volatile! [])      ;; collected digits for the
-                                         ;; field currently being read
-                fields (volatile! [])]   ;; completed fields so far
-            (loop [i 3]
-              (if (>= i n)
-                CharacterPattern$Matching/NOT_YET
-                (let [c (.charValue ^Character (.get ^java.util.List chars i))]
+          ;; Keep primitive numeric accumulators. This path runs once
+          ;; per received byte while the user scrolls; persistent
+          ;; vectors here used to peg a core under SGR wheel floods.
+          (loop [i (long 3)
+                 field (long 0)
+                 acc (long 0)
+                 have-digit? false
+                 button (long 0)
+                 col (long 0)]
+            (if (>= i n)
+              CharacterPattern$Matching/NOT_YET
+              (let [c  (.charValue ^Character (.get chars i))
+                    ci (long (int c))]
+                (cond
+                  ;; ASCII digit: accumulate current numeric field.
+                  (and (>= ci 48) (<= ci 57))
+                  (recur (unchecked-inc i)
+                    field
+                    (unchecked-add (unchecked-multiply acc 10)
+                      (unchecked-subtract ci 48))
+                    true
+                    button
+                    col)
+
+                  ;; Field separator. Need at least one digit collected,
+                  ;; and exactly button/col separators before row.
+                  (= c \;)
                   (cond
-                    ;; ASCII digit: accumulate.
-                    (and (>= (long c) 48) (<= (long c) 57))
-                    (do (vswap! seen conj (Character. c))
-                      (recur (inc i)))
+                    (not have-digit?) nil
+                    (>= field 2) nil
+                    (zero? field)
+                    (recur (unchecked-inc i) (long 1) (long 0) false acc col)
+                    :else
+                    (recur (unchecked-inc i) (long 2) (long 0) false button acc))
 
-                    ;; Field separator. Need at least one digit
-                    ;; collected, and at most 2 fields finished
-                    ;; before this one.
-                    (= c \;)
-                    (cond
-                      (empty? @seen) nil
-                      (>= (count @fields) 2) nil
-                      :else
-                      (do (vswap! fields conj (digits->int @seen))
-                        (vreset! seen [])
-                        (recur (inc i))))
+                  ;; Terminator. Must be `M` or `m`, must arrive with
+                  ;; button + col completed and row in progress.
+                  (or (= c \M) (= c \m))
+                  (if (and (= field 2) have-digit?)
+                    (let [row   acc
+                          atype (sgr-mouse-decode button col row ci)
+                          btn   (sgr-button-number button)
+                          ;; SGR is 1-indexed, Lanterna's 0-indexed.
+                          pos   (TerminalPosition. (max 0 (dec col))
+                                  (max 0 (dec row)))]
+                      (CharacterPattern$Matching.
+                        (MouseAction. atype (int btn) pos)))
+                    nil)
 
-                    ;; Terminator. Must be `M` or `m`, must arrive
-                    ;; with exactly two completed fields plus one
-                    ;; in-progress (button, col, row).
-                    (or (= c \M) (= c \m))
-                    (if (and (= (count @fields) 2) (seq @seen))
-                      (let [button (long (nth @fields 0))
-                            col    (long (nth @fields 1))
-                            row    (digits->int @seen)
-                            atype  (sgr-mouse-decode button col row (long (int c)))
-                            btn    (sgr-button-number button)
-                            ;; SGR is 1-indexed, Lanterna's 0-indexed.
-                            pos    (TerminalPosition. (max 0 (dec col))
-                                     (max 0 (dec row)))]
-                        (CharacterPattern$Matching.
-                          (MouseAction. atype (int btn) pos)))
-                      nil)
-
-                    ;; Anything else - stray byte mid-sequence -
-                    ;; rejects this pattern. Lanterna will hand the
-                    ;; chars to the next pattern in the profile.
-                    :else nil))))))))))
+                  ;; Anything else - stray byte mid-sequence - rejects
+                  ;; this pattern. Lanterna will hand the chars to the
+                  ;; next pattern in the profile.
+                  :else nil)))))))))
 
 (defn enable-sgr-mouse!
   "Send `ESC [ ? 1006 h`. Asks the terminal to deliver subsequent

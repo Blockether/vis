@@ -5,16 +5,74 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.external-opener :as opener])
-  (:import [com.googlecode.lanterna.input MouseActionType]))
+  (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
+           [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
+           [com.googlecode.lanterna.screen TerminalScreen]
+           [com.googlecode.lanterna.terminal.virtual DefaultVirtualTerminal]))
 
-;; The dialog functions require a live TerminalScreen, so direct unit
-;; testing is impractical. The bracketed-paste fix in text-input-dialog!
+;; Most dialog functions require a live TerminalScreen, so direct unit
+;; testing is narrow. The bracketed-paste fix in text-input-dialog!
 ;; is verified indirectly: pasting into the API key field no longer
 ;; leaks PUA marker chars (\uE200, \uE201) into the stored value.
 
 (deftest smoke-test
   (testing "dialogs namespace loads and text-input-dialog! is public"
     (is (fn? (var-get #'dlg/text-input-dialog!)))))
+
+(defn- virtual-screen
+  []
+  (let [terminal (DefaultVirtualTerminal. (TerminalSize. 80 30))
+        screen   (TerminalScreen. terminal)]
+    (.startScreen screen)
+    {:terminal terminal :screen screen}))
+
+(defn- wheel-down
+  []
+  (MouseAction. MouseActionType/SCROLL_DOWN 0 (TerminalPosition. 10 10)))
+
+(deftest modal-wheel-input-test
+  (testing "modal input coalesces wheel floods and preserves the next non-wheel key"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          read-modal-input! (var-get #'dlg/read-modal-input!)]
+      (try
+        (dotimes [_ 300]
+          (.addInput terminal (wheel-down)))
+        (.addInput terminal (KeyStroke. KeyType/Enter))
+        (is (= {:scroll-delta 300}
+              (read-modal-input! screen)))
+        (is (= KeyType/Enter
+              (-> (read-modal-input! screen) :key .getKeyType)))
+        (finally
+          (.stopScreen screen))))))
+
+(deftest select-dialog-wheel-test
+  (testing "selection menu applies a wheel burst as one scroll movement"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          items (mapv #(hash-map :label (str "Item " %) :id %) (range 20))]
+      (try
+        (dotimes [_ 5]
+          (.addInput terminal (wheel-down)))
+        (.addInput terminal (KeyStroke. KeyType/Enter))
+        (is (= 1 (:id (dlg/select-dialog! screen "Items" items))))
+        (finally
+          (.stopScreen screen))))))
+
+(deftest conversation-dialog-wheel-test
+  (testing "conversation picker coalesces wheel floods and moves selection"
+    (let [{:keys [^DefaultVirtualTerminal terminal ^TerminalScreen screen]} (virtual-screen)
+          conversations (mapv (fn [idx]
+                                {:id idx
+                                 :title (str "Conversation " idx)
+                                 :turn-count idx})
+                          (range 20))]
+      (try
+        (dotimes [_ 5]
+          (.addInput terminal (wheel-down)))
+        (.addInput terminal (KeyStroke. KeyType/Enter))
+        (is (= {:action :switch :id "1"}
+              (dlg/conversation-picker-dialog! screen conversations nil)))
+        (finally
+          (.stopScreen screen))))))
 
 (deftest resource-dialog-items-test
   (testing "resources popup rows keep click target fields and rendered labels"
