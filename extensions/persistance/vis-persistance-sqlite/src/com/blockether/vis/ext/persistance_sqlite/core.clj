@@ -1321,6 +1321,155 @@
                                   :where [:= :id (->ref bundle-id)]})
       (row->evidence-bundle db-info))))
 
+(defn- attestation-kind-sql
+  [kind]
+  (let [kind (input-keyword kind)
+        stored (kw-sql kind)]
+    (when-not (contains? proof/attestation-kinds kind)
+      (throw (ex-info "attestation kind is not supported" {:kind kind})))
+    stored))
+
+(defn- attestation-decision-sql
+  [decision]
+  (let [decision (input-keyword decision)]
+    (when-not (contains? proof/attestation-decisions decision)
+      (throw (ex-info "attestation decision is not supported" {:decision decision})))
+    (name decision)))
+
+(defn- attestation-status-sql
+  [status]
+  (let [status (input-keyword (or status :accepted))]
+    (when-not (contains? proof/attestation-statuses status)
+      (throw (ex-info "attestation status is not supported" {:status status})))
+    (name status)))
+
+(defn- attester-kind-sql
+  [kind]
+  (when kind
+    (let [kind (input-keyword kind)]
+      (when-not (contains? proof/attester-kinds kind)
+        (throw (ex-info "attester kind is not supported" {:attester-kind kind})))
+      (name kind))))
+
+(defn- row->attestation
+  [row]
+  (cond-> {:id (->uuid (:id row))
+           :conversation-id (->uuid (:conversation_soul_id row))
+           :kind (->kw-back (:kind row))
+           :subject-kind (->kw-back (:subject_kind row))
+           :subject-id (->uuid (:subject_id row))
+           :evidence-bundle-id (->uuid (:evidence_bundle_id row))
+           :decision (->kw-back (:decision row))
+           :status (->kw-back (:status row))
+           :created-at (->date (:created_at row))}
+    (:reason row) (assoc :reason (:reason row))
+    (:policy_version row) (assoc :policy-version (:policy_version row))
+    (:attester_kind row) (assoc :attester-kind (->kw-back (:attester_kind row)))
+    (:attester_id row) (assoc :attester-id (:attester_id row))
+    (:schema_version row) (assoc :schema-version (:schema_version row))
+    (:payload row) (assoc :payload (<-blob (:payload row)))
+    (:payload_sha256 row) (assoc :payload-sha256 (:payload_sha256 row))))
+
+(defn- accepted-bundle-row!
+  [db-info bundle-id]
+  (let [bundle-row (require-row db-info :evidence_bundle bundle-id "evidence_bundle not found")]
+    (when-not (= "accepted" (:status bundle-row))
+      (throw (ex-info "attestation requires an accepted evidence bundle"
+               {:evidence-bundle-id (->ref bundle-id)
+                :bundle-status (:status bundle-row)})))
+    bundle-row))
+
+(defn db-create-attestation!
+  "Persist an explicit decision over an accepted evidence bundle. Gate proof and
+   impediment attestations update gate status as an attestation-derived
+   projection; the legacy proof/impediment blobs are not the authority."
+  [db-info {:keys [evidence-bundle-id kind subject-kind subject-id decision status reason
+                   policy-version attester-kind attester-id schema-version payload payload-sha256]}]
+  (when (ds db-info)
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (let [bundle-row (accepted-bundle-row! tx-info evidence-bundle-id)
+              subject-kind (input-keyword subject-kind)
+              subject-id (->ref subject-id)]
+          (when-not (= (subject-kind-sql subject-kind) (:subject_kind bundle-row))
+            (throw (ex-info "attestation subject kind must match evidence bundle"
+                     {:attestation-subject-kind subject-kind
+                      :bundle-subject-kind (:subject_kind bundle-row)})))
+          (when-not (= subject-id (:subject_id bundle-row))
+            (throw (ex-info "attestation subject id must match evidence bundle"
+                     {:attestation-subject-id subject-id
+                      :bundle-subject-id (:subject_id bundle-row)})))
+          (let [id (new-id)
+                status-s (attestation-status-sql status)
+                row (into {}
+                      (remove (comp nil? val)
+                        {:id id
+                         :conversation_soul_id (:conversation_soul_id bundle-row)
+                         :kind (attestation-kind-sql kind)
+                         :subject_kind (subject-kind-sql subject-kind)
+                         :subject_id subject-id
+                         :evidence_bundle_id (->ref evidence-bundle-id)
+                         :decision (attestation-decision-sql decision)
+                         :status status-s
+                         :reason reason
+                         :policy_version policy-version
+                         :attester_kind (attester-kind-sql attester-kind)
+                         :attester_id attester-id
+                         :schema_version schema-version
+                         :payload (when (some? payload) (->blob payload))
+                         :payload_sha256 (or payload-sha256 (when (some? payload) (payload-digest payload)))
+                         :created_at (now-ms)}))]
+            (execute! tx-info {:insert-into :attestation
+                               :values [row]})
+            (when (and (= :gate subject-kind) (= "accepted" status-s))
+              (case (input-keyword kind)
+                :gate/proven
+                (execute! tx-info {:update :conversation_intent_gate
+                                   :set {:status "proven"
+                                         :proof (->blob {:authority :attestation
+                                                         :attestation-id id
+                                                         :evidence-bundle-id (->ref evidence-bundle-id)
+                                                         :reason reason})
+                                         :impediment nil
+                                         :resolved_ref nil
+                                         :resolved_at (now-ms)}
+                                   :where [:= :id subject-id]})
+                :gate/impeded
+                (execute! tx-info {:update :conversation_intent_gate
+                                   :set {:status "impeded"
+                                         :impediment (->blob {:authority :attestation
+                                                              :attestation-id id
+                                                              :evidence-bundle-id (->ref evidence-bundle-id)
+                                                              :reason reason})
+                                         :proof nil
+                                         :resolved_ref nil
+                                         :resolved_at (now-ms)}
+                                   :where [:= :id subject-id]})
+                nil))
+            (row->attestation
+              (require-row tx-info :attestation id "attestation not found after insert"))))))))
+
+(defn db-attest-gate!
+  [db-info {:keys [gate-id evidence-bundle-id kind] :as opts}]
+  (let [kind (input-keyword (or kind :gate/proven))]
+    (db-create-attestation! db-info
+      (merge opts
+        {:subject-kind :gate
+         :subject-id gate-id
+         :evidence-bundle-id evidence-bundle-id
+         :kind kind
+         :decision (case kind
+                     :gate/impeded :impeded
+                     :gate/proven :proven)}))))
+
+(defn db-get-attestation
+  [db-info attestation-id]
+  (when (ds db-info)
+    (some-> (query-one! db-info {:select [:*]
+                                 :from :attestation
+                                 :where [:= :id (->ref attestation-id)]})
+      row->attestation)))
+
 (defn- canonical-ref-or-throw! [ref]
   (when-not (proof/canonical-ref? ref)
     (throw (ex-info "provenance ref must be canonical"

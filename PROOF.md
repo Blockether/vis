@@ -187,8 +187,9 @@ No task is DONE if:
 | PROOF_AUTORESEARCH boss plan | DONE | `PROOF_AUTORESEARCH.md` added. Pi and Vis `zai-coding/GLM-5.1` smoke-checked headlessly; P0 provider-qualified `vis run --model zai-coding/glm-5.1` fixed and verified. |
 | Task 6 ledger storage | DONE | Added `provenance_event` to V1 only, HoneySQL insert/query helpers, public facade delegates, duplicate canonical-ref rejection, and running-event non-proof test. Verified: `clojure -M:test -n com.blockether.vis.ext.persistance-sqlite.core-test`; `clojure -M:test -n com.blockether.vis.core-test -n com.blockether.vis.internal.persistance-test`; fresh REPL reload of `vis.core`, `internal.persistance`, and SQLite core; `./verify.sh --quick`. |
 | Task 7 evidence bundle storage | DONE | Added `evidence_bundle` / `evidence_bundle_member` to V1 only, persistence derivation from `provenance_event`, public facade delegates, and regression proving caller-supplied slot values are ignored. Verified: `clojure -M -e ... :task7-smoke-ok`; fresh REPL reload of `vis.core`, `internal.persistance`, and SQLite core; `./verify.sh --quick`. Note: full `com.blockether.vis.ext.persistance-sqlite.core-test` currently hit pre-existing multiprocess child timeout assertions; non-multiprocess ledger/bundle cases ran before those failures. |
-| Task 8 attestation storage | NEXT | Add attestation rows/writers for gate proof and impediment, requiring accepted evidence bundles; old proof blobs must not be authoritative. |
-| Task 9+ plan/intent/audit | TODO | Must proceed only with regression tests and fresh runtime gates after Task 8 attestation storage. |
+| Task 8 attestation storage | DONE | Added `attestation` V1 table, attestation persistence/read facade, and `db-attest-gate!` writer that requires an accepted evidence bundle and updates gate status as an attestation-derived projection. Rejected bundles cannot prove gates. Verified: attestation in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. Note: full SQLite core test still hits pre-existing multiprocess child timeout assertions after passing proof/attestation cases. |
+| Task 9 plan completion transition | NEXT | Add plan completion transition from accepted gate attestations; keep intent fulfillment separate. |
+| Task 10+ intent/audit/hooks | TODO | Must proceed only with regression tests and fresh runtime gates after Task 9 plan completion. |
 | Legacy removal | TODO / REQUIRED | Final purge task must delete old files and stale names after all callers move. |
 
 
@@ -489,7 +490,7 @@ Acceptance criteria:
 - Missing extraction paths produce audit violations.
 - Guard failures produce structured evidence failures, not vague proof errors.
 
-## Task 8 — Add attestation storage and writers
+## Task 8 — DONE — Add attestation storage and writers
 
 Work:
 

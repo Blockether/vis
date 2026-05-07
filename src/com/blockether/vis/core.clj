@@ -244,6 +244,9 @@
 (def db-list-provenance-events       persistance/db-list-provenance-events)
 (def db-create-evidence-bundle!      persistance/db-create-evidence-bundle!)
 (def db-get-evidence-bundle          persistance/db-get-evidence-bundle)
+(def db-create-attestation!          persistance/db-create-attestation!)
+(def db-attest-gate!                 persistance/db-attest-gate!)
+(def db-get-attestation              persistance/db-get-attestation)
 
 ;; Conversation-scoped intents, plans, gates, and focus
 (def db-store-intent!                 persistance/db-store-intent!)

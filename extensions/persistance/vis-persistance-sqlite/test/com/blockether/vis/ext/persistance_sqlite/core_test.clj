@@ -208,7 +208,82 @@
       (expect (= :guard-false (:error-code member)))
       (expect (= 1 (raw-count s :evidence_bundle)))
       (expect (= 1 (raw-count s :evidence_bundle_member)))
-      (expect (= bundle (vis/db-get-evidence-bundle s (:id bundle)))))))
+      (expect (= bundle (vis/db-get-evidence-bundle s (:id bundle))))))
+
+  (it "accepts gate attestations only from accepted evidence bundles"
+    (let [s          (h/store)
+          cid        (vis/db-store-conversation! s {:channel :tui})
+          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                         :user-request "attest gate"
+                                                         :status :running})
+          intent     (vis/db-store-intent! s {:conversation-turn-id tid
+                                              :title "Attest gate"
+                                              :rationale "User needs proof."})
+          plan       (vis/db-store-plan! s {:intent-id (:id intent)
+                                            :summary "Plan"})
+          gate       (vis/db-store-gate! s {:plan-id (:id plan)
+                                            :question "Did bash pass?"})
+          slot-owner (random-uuid)
+          pass-ref   (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          fail-ref   (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/2")
+          _pass      (vis/db-store-provenance-event! s {:conversation-id cid
+                                                        :conversation-turn-id tid
+                                                        :ref pass-ref
+                                                        :kind :tool
+                                                        :op :v/bash
+                                                        :status :done
+                                                        :payload {:result {:exit 0}}})
+          _fail      (vis/db-store-provenance-event! s {:conversation-id cid
+                                                        :conversation-turn-id tid
+                                                        :ref fail-ref
+                                                        :kind :tool
+                                                        :op :v/bash
+                                                        :status :done
+                                                        :payload {:result {:exit 1}}})
+          accepted   (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                        :kind :proof
+                                                        :subject-kind :gate
+                                                        :subject-id (:id gate)
+                                                        :requirements [{:evidence/slot [slot-owner :exit]
+                                                                        :evidence/from-ref pass-ref
+                                                                        :evidence/extract [:result :exit]
+                                                                        :evidence/guard [:= [:value] 0]
+                                                                        :event/kind :tool
+                                                                        :event/op :v/bash}]})
+          rejected   (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                        :kind :proof
+                                                        :subject-kind :gate
+                                                        :subject-id (:id gate)
+                                                        :requirements [{:evidence/slot [slot-owner :exit]
+                                                                        :evidence/from-ref fail-ref
+                                                                        :evidence/extract [:result :exit]
+                                                                        :evidence/guard [:= [:value] 0]
+                                                                        :event/kind :tool
+                                                                        :event/op :v/bash}]})
+          rejected-thrown (try
+                            (vis/db-attest-gate! s {:gate-id (:id gate)
+                                                    :evidence-bundle-id (:id rejected)
+                                                    :kind :gate/proven
+                                                    :reason "Should reject."})
+                            nil
+                            (catch Exception e e))
+          attestation (vis/db-attest-gate! s {:gate-id (:id gate)
+                                              :evidence-bundle-id (:id accepted)
+                                              :kind :gate/proven
+                                              :reason "Runtime evidence accepted."})
+          [gate-row] (raw-query s {:select [:status :proof :impediment]
+                                   :from :conversation_intent_gate
+                                   :where [:= :id (str (:id gate))]})]
+      (expect (= :accepted (:status accepted)))
+      (expect (= :rejected (:status rejected)))
+      (expect (some? rejected-thrown))
+      (expect (= :gate/proven (:kind attestation)))
+      (expect (= :proven (:decision attestation)))
+      (expect (= :accepted (:status attestation)))
+      (expect (= "proven" (:status gate-row)))
+      (expect (some? (:proof gate-row)))
+      (expect (nil? (:impediment gate-row)))
+      (expect (= 1 (raw-count s :attestation))))))
 
 (defn- drop-conversation-intent-schema!
   [db-file]
