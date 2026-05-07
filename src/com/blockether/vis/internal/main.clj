@@ -1517,6 +1517,15 @@
 ;; Main
 ;; =============================================================================
 
+(defn- root-help-request?
+  "True when args ask only for the root help screen. This path can skip
+   extension discovery because the root tree lists built-in parent commands
+   only; extension-owned commands are mounted below `extensions` after
+   discovery when that subtree is requested."
+  [args]
+  (or (empty? args)
+    (contains? #{["help"] ["--help"] ["-h"]} (vec args))))
+
 (defn- unknown-command?
   "True when the user typed something the tree doesn't recognize.
    Detected by walking the tree: if `find-leaf` resolves only to the
@@ -1631,46 +1640,40 @@
       ;; (or set VIS_DEBUG=1).
       (timed-startup! measure? "configure-logging"
         #(configure-logging! args))
-      (timed-startup! measure? "discover-all+extensions"
-        #(discover-all!))
-      (when measure?
-        (summarize-startup-registries!))
-      (timed-startup! measure? "pre-redirect-stderr"
-        #(pre-redirect-stderr! args))
-      (let [root      (root-command)
-            full-args (cons "vis" args)]
-        (cond
-          (empty? args)
-          (println (commandline/render-tree root))
+      (if (root-help-request? args)
+        (println (commandline/render-tree (root-command)))
+        (do
+          (timed-startup! measure? "discover-all+extensions"
+            #(discover-all!))
+          (when measure?
+            (summarize-startup-registries!))
+          (timed-startup! measure? "pre-redirect-stderr"
+            #(pre-redirect-stderr! args))
+          (let [root      (root-command)
+                full-args (cons "vis" args)]
+            (cond
+              (unknown-command? root args)
+              (do
+                (println (commandline/render-tree root))
+                (println)
+                (println (str "Unknown command: " (str/join " " args)))
+                (System/exit 1))
 
-        ;; `vis help` is a universal synonym for `vis --help`. Without
-        ;; this branch the dispatcher would treat `help` as an unknown
-        ;; command, print the tree, AND tag it with "Unknown command:
-        ;; help" + exit 1 -- which surprised everyone who tried it.
-          (= ["help"] (vec args))
-          (println (commandline/render-tree root))
-
-          (unknown-command? root args)
-          (do (println (commandline/render-tree root))
-            (println)
-            (println (str "Unknown command: " (str/join " " args)))
-            (System/exit 1))
-
-          :else
-        ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match …}`.
-        ;; `:error` covers spec-validation failures (missing required
-        ;; args, unknown flags). Without an explicit `System/exit 1` here
-        ;; the process exited 0 even though the user-visible output was
-        ;; an error message + help text -- so any shell pipeline like
-        ;; `vis foo --bogus && echo ok` printed `ok`. Map `:error` to
-        ;; exit code 2 (POSIX convention for usage errors); `:no-match`
-        ;; can't actually fire here because `unknown-command?` above
-        ;; already short-circuited that case.
-          (let [{:keys [status]} (timed-startup! measure? "dispatch"
-                                   #(commandline/dispatch! root full-args))]
-            (case status
-              :error (System/exit 2)
-              nil))))
+              :else
+              ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match …}`.
+              ;; `:error` covers spec-validation failures (missing required
+              ;; args, unknown flags). Without an explicit `System/exit 1` here
+              ;; the process exited 0 even though the user-visible output was
+              ;; an error message + help text -- so any shell pipeline like
+              ;; `vis foo --bogus && echo ok` printed `ok`. Map `:error` to
+              ;; exit code 2 (POSIX convention for usage errors); `:no-match`
+              ;; can't actually fire here because `unknown-command?` above
+              ;; already short-circuited that case.
+              (let [{:keys [status]} (timed-startup! measure? "dispatch"
+                                       #(commandline/dispatch! root full-args))]
+                (case status
+                  :error (System/exit 2)
+                  nil))))))
       (catch Throwable t
         (if (:vis/user-error (ex-data t))
           (exit-with-user-error! t)
