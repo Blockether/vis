@@ -11,7 +11,6 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.lang-clojure.lsp :as lsp]
    [com.blockether.vis.ext.lang-clojure.patch :as patch]
    [com.blockether.vis.ext.lang-clojure.repair :as repair]
    [com.blockether.vis.ext.lang-clojure.xref :as xref]
@@ -121,6 +120,36 @@
   [_environment]
   "Clojure/EDN workspace detected. Prefer the `z/` alias before raw text edits: use `z/xref-analyze!`, `z/who-calls`, `z/calls-who`, and `z/context-for` for semantic graph context; use `z/locators`, `z/symbols`, `z/locators-for-symbol`, or `z/locator-for-ref` for rewrite-clj locator rows; use `z/repair-range`, `z/repair-locator`, or `z/repair-file` for parse repair over row/col ranges; use `z/diagnostics`, `z/rename-plan`, or `z/clean-ns-plan` for clojure-lsp dry-run semantic checks; then use `z/patch` for structural Clojure/EDN changes. Locator rows include `:path`, `:index`, `:tag`, `:value`, `:locator`, `:source`, and `:span`; add `:replace` to a row to turn it into a patch edit. Use `v/patch` only for comments/plain text or non-Clojure files.")
 
+(defn- lazy-lsp-call
+  [sym & args]
+  (apply (or (requiring-resolve (symbol "com.blockether.vis.ext.lang-clojure.lsp" (name sym)))
+           (throw (ex-info "Clojure LSP helper did not resolve"
+                    {:type :lang-clojure/missing-lsp-helper
+                     :symbol sym})))
+    args))
+
+(defn- lazy-lsp-symbol
+  [sym doc arglists examples]
+  (vis/symbol sym (fn [& args] (apply lazy-lsp-call sym args))
+    {:doc doc
+     :arglists arglists
+     :examples examples}))
+
+(def ^:private lsp-symbols
+  [(lazy-lsp-symbol 'diagnostics
+     "Return clojure-lsp diagnostics for the project or selected files. Opts: {:project-root p, :filenames [...], :namespace [...], :settings {...}}. Loads clojure-lsp on first call."
+     '([] [opts])
+     ["(z/diagnostics)"
+      "(z/diagnostics {:filenames [\"src/foo.clj\"]})"])
+   (lazy-lsp-symbol 'rename-plan
+     "Dry-run clojure-lsp semantic rename. Returns changed paths and old/new text edits; does not write. Loads clojure-lsp on first call."
+     '([from to] [from to opts])
+     ["(z/rename-plan 'old.ns/foo 'old.ns/bar)"])
+   (lazy-lsp-symbol 'clean-ns-plan
+     "Dry-run clojure-lsp clean-ns. Returns changed paths and old/new text edits; does not write. Loads clojure-lsp on first call."
+     '([] [opts])
+     ["(z/clean-ns-plan {:filenames [\"src/foo.clj\"]})"])])
+
 (def clojure-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core
@@ -135,6 +164,6 @@
      :ext/environment-info-fn clojure-environment-info
      :ext/prompt    patch/z-prompt
      :ext/symbols   (into [patch/patch-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol]
-                      (concat repair/symbols xref/symbols lsp/symbols rewrite-clj-zip-symbols))}))
+                      (concat repair/symbols xref/symbols lsp-symbols rewrite-clj-zip-symbols))}))
 
 (vis/register-extension! clojure-extension)
