@@ -56,14 +56,26 @@
         (fn []
           (let [voice (->> (build-segments {:messages []
                                             :settings {}
-                                            :channel-status {:voice/parakeet {:text "● Recording 00:01"
-                                                                              :level :warn}}}
+                                            :channel-status {:voice/input {:text "● Recording 00:01"
+                                                                           :level :warn}}}
                              0)
                         (filter #(= "● Recording 00:01" (:text %)))
                         first)]
             (expect (nil? voice))
             (expect (nil? voice))
             (expect (nil? voice)))))))
+
+  (it "leaves cancelling status out of the footer because notifications own it"
+    (let [build-segments @#'footer/build-segments]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-5"
+                                                          :provider :openai})
+                       #'git/cached-workspace-status (fn [] {:workspace? false})}
+        (fn []
+          (expect (not-any? #(= "cancelling…" (:text %))
+                    (build-segments {:messages []
+                                     :settings {}
+                                     :cancelling? true}
+                      0)))))))
 
   (it "shows Codex dynamic quota windows on the second footer line"
     (let [build-limits-segments @#'footer/build-limits-segments

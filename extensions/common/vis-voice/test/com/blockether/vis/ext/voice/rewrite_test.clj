@@ -1,6 +1,6 @@
-(ns com.blockether.vis.ext.voice-parakeet.rewrite-test
+(ns com.blockether.vis.ext.voice.rewrite-test
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.voice-parakeet.rewrite :as rewrite]
+            [com.blockether.vis.ext.voice.rewrite :as rewrite]
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe rewrite-test

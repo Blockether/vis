@@ -40,6 +40,43 @@
       (expect (= :balanced (loop/normalize-reasoning-level "medium")))
       (expect (= :deep (loop/normalize-reasoning-level "HIGH")))))
 
+  (defdescribe stream-incomplete-feedback-test
+    (it "turns max_output_tokens stream incompletes into a compact retry instruction"
+      (let [err {:message "Stream ended with incomplete response."
+                 :data {:type :svar.core/stream-incomplete
+                        :reason "max_output_tokens"}}
+            feedback (#'loop/iteration-error-feedback 57 err "fix telegram voice")
+            rendered (#'loop/recent-errors-block [{:iteration 57 :error err}] 1)]
+        (expect (str/includes? feedback "max_output_tokens"))
+        (expect (str/includes? feedback "Use a compact path now"))
+        (expect (str/includes? rendered "Reason: max_output_tokens")))))
+
+  (defdescribe orphan-sweep-test
+    (it "marks running turns interrupted at the runtime layer"
+      (let [updates (atom [])]
+        (with-redefs [persistance/db-list-conversation-turns-by-status
+                      (fn [db status]
+                        (expect (= ::db db))
+                        (expect (= :running status))
+                        [{:id "t1" :iteration-count 2 :duration-ms 30}
+                         {:id "t2"}])
+                      persistance/db-update-conversation-turn!
+                      (fn [db id opts]
+                        (expect (= ::db db))
+                        (swap! updates conj [id opts]))]
+          (expect (= 2 (loop/db-sweep-orphaned-running-turns! ::db)))
+          (expect (= [["t1" {:answer "Warning: Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry."
+                             :iteration-count 2
+                             :duration-ms 30
+                             :status :interrupted
+                             :prior-outcome :cancelled}]
+                      ["t2" {:answer "Warning: Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry."
+                             :iteration-count 0
+                             :duration-ms 0
+                             :status :interrupted
+                             :prior-outcome :cancelled}]]
+                    @updates))))))
+
   (defdescribe cost-estimation-test
     (it "subtracts cached input tokens and keeps the cached/non-cached cost split"
       (let [cost (#'loop/estimate-token-cost "gpt-4o" 1000 200 {:cached-tokens 700})]
@@ -1081,6 +1118,18 @@
             (finally
               (loop/dispose-environment! env-2))))))))
 
+(defdescribe auto-skill-activation-test
+  (it "loads diagnose automatically for bug-like user requests"
+    (let [activate-auto-skills! (var-get (ns-resolve 'com.blockether.vis.internal.loop
+                                           'activate-auto-skills!))
+          active-skills (atom {})]
+      (activate-auto-skills! {:active-skills-atom active-skills} "fix duplicate TUI rows")
+      (expect (contains? @active-skills "diagnose"))
+      (expect (true? (:auto? (get @active-skills "diagnose"))))
+      (reset! active-skills {})
+      (activate-auto-skills! {:active-skills-atom active-skills} "hello there")
+      (expect (= {} @active-skills)))))
+
 (defdescribe router-provider-resolution-test
   (it "resolves OAuth provider credentials before constructing the router"
     (let [seen-providers (atom nil)
@@ -1104,23 +1153,35 @@
         (finally
           (loop/reset-router!))))))
 
-(lazytest.core/describe "code entry preflight"
-  (lazytest.core/it "code-entries-preflight rejects raw Markdown fence leaks before parsing"
+(defdescribe code-entry-preflight-test
+  (it "code-entries-preflight rejects raw Markdown fence leaks before parsing"
     (let [preflight (var-get (ns-resolve 'com.blockether.vis.internal.loop
                                'code-entries-preflight))
           fence (apply str (repeat 3 "`"))
           result (preflight 1 (str fence "clojure\n"
                                 "(def leaked 1)\n"
                                 fence "\n"))]
-      (lazytest.core/expect (= 1 (count (:code-entries result))))
-      (lazytest.core/expect (:raw-fence-preflight-error result))
-      (lazytest.core/expect (not (:answer-preflight-error result)))
-      (lazytest.core/expect (:parse-error (first (:code-entries result))))))
+      (expect (= 1 (count (:code-entries result))))
+      (expect (:raw-fence-preflight-error result))
+      (expect (not (:answer-preflight-error result)))
+      (expect (:preflight-error (first (:code-entries result))))))
 
-  (lazytest.core/it "code-entries-preflight flags answer position violations on every entry"
+  (it "code-entries-preflight rejects duplicate executable fenced blocks before parsing"
+    (let [preflight (var-get (ns-resolve 'com.blockether.vis.internal.loop
+                               'code-entries-preflight))
+          result (preflight 1 "(def x 1)\n(def x 1)\n" nil
+                   {:blocks [{:source "(def x 1)"}
+                             {:source "(def x 1)"}]})]
+      (expect (= 1 (count (:code-entries result))))
+      (expect (:duplicate-block-preflight-error result))
+      (expect (:preflight-error (first (:code-entries result))))
+      (expect (= "(vis/preflight-error :duplicate-fenced-blocks)"
+                (:expr (first (:code-entries result)))))))
+
+  (it "code-entries-preflight flags answer position violations on every entry"
     (let [preflight (var-get (ns-resolve 'com.blockether.vis.internal.loop
                                'code-entries-preflight))
           result (preflight 2 "(def x 1)\n(answer \"bad\")\n(def y 2)\n")]
-      (lazytest.core/expect (= 3 (count (:code-entries result))))
-      (lazytest.core/expect (:answer-preflight-error result))
-      (lazytest.core/expect (every? :preflight-error (:code-entries result))))))
+      (expect (= 3 (count (:code-entries result))))
+      (expect (:answer-preflight-error result))
+      (expect (every? :preflight-error (:code-entries result))))))

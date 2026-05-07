@@ -1,4 +1,5 @@
-;; SQLite persistence backend. Loading the ns calls
-;; (persistance/register-backend! ...). Non-LLM-facing.
+;; SQLite persistence backend. Loading the ns registers an extension with
+;; an :ext/persistance entry; the host mounts it in the backend registry.
+;; Non-LLM-facing.
 {sqlite
  {:nses [com.blockether.vis.ext.persistance-sqlite.core]}}

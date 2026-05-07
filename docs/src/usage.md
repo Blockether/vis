@@ -369,7 +369,7 @@ vis channels telegram
 
 Telegram supports the same model/reasoning/verbosity controls as the TUI
 through `/models`, `/reasoning`, and `/verbosity`. Voice messages are
-transcribed through the Parakeet ASR extension when it is on the classpath.
+transcribed by the unified `vis-voice` extension using the Parakeet ASR model.
 
 To restrict the bot to approved chats, approve the chat id from a trusted
 shell. Once the allow-list is non-empty, unlisted chats are rejected with the

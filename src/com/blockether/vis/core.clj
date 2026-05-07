@@ -270,7 +270,7 @@
 (def db-restore-blocks              persistance/db-restore-blocks)
 
 ;; Process-restart cleanup
-(def db-sweep-orphaned-running-turns!       persistance/db-sweep-orphaned-running-turns!)
+(def db-sweep-orphaned-running-turns! lp/db-sweep-orphaned-running-turns!)
 
 ;; =============================================================================
 ;; Extension contract

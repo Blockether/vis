@@ -115,7 +115,9 @@
                                              (fn [result]
                                                (when (extension/tool-result? result)
                                                  (let [prov (:provenance result)]
-                                                   (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role])
+                                                   (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role
+                                                                              :spec :paths :hit-count :truncated-by
+                                                                              :command :cwd :target])
                                                      (= :v/preview (:op prov))
                                                      (assoc :raw (pr-str (:result result)))))))
                                              result-strs (mapv (fn [{:keys [result error] :as expr}]

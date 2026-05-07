@@ -112,6 +112,7 @@
 ;;
 
 (def ^:private settings-notification-ttl-ms 1500)
+(def ^:private cancel-notification-ttl-ms 2500)
 
 (def ^:private reasoning-level-order
   [:quick :balanced :deep])
@@ -768,7 +769,8 @@
         ;; through one channel-agnostic call. See
         ;; channels.cancellation/cancel! for the contract.
         (vis/cancel! (:cancel-token db))
-        {:db (assoc db :cancelling? true)}))))
+        {:db (assoc db :cancelling? true)
+         :fx [[:notify "Cancelling current turn…" :info cancel-notification-ttl-ms]]}))))
 
 (reg-event-db :set-progress-iterations
   (fn [db [_ iterations]]

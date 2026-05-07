@@ -762,6 +762,12 @@
    (when (str/blank? command)
      (throw (ex-info "v/bash command must be non-blank"
               {:type :ext.foundation.editing/invalid-bash-command})))
+   (when (and (str/includes? command "clj-nrepl-eval")
+           (> (count command) 240))
+     (throw (ex-info "Use v/nrepl-eval for Clojure runtime checks; v/bash is only for process boundaries."
+              {:type :ext.foundation.editing/bash-nrepl-eval-discouraged
+               :reason :use-v-nrepl-eval
+               :command-preview (subs command 0 (min 240 (count command)))})))
    (when (and (re-find #"(?i)\.(clj|cljc|cljs|edn)(['\"\s]|$)" command)
            (or (re-find #"(?i)\bpython3?\b|\bperl\b|\bruby\b" command)
              (re-find #"(?i)\bsed\s+-i\b" command))
@@ -810,6 +816,49 @@
          (future-cancel stderr-f)
          (future-cancel stdin-f)
          (throw e))))))
+
+(defn- run-command-safe
+  [argv opts]
+  (let [{:keys [cwd timeout-ms max-output-chars stdin]} (coerce-bash-opts opts)
+        cwd-file (ensure-existing-dir! (safe-path cwd))
+        cwd-rel (display-path cwd-file)
+        argv (mapv str argv)
+        pb (doto (ProcessBuilder. ^java.util.List (java.util.ArrayList. argv))
+             (.directory cwd-file))
+        started (now-ms)
+        ^Process process (.start pb)
+        stdout-f (future (read-stream-limited (.getInputStream process) max-output-chars))
+        stderr-f (future (read-stream-limited (.getErrorStream process) max-output-chars))
+        stdin-f (future (write-stdin-and-close! process stdin))]
+    (try
+      (let [done? (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
+            _ (when-not done?
+                (.destroyForcibly process)
+                (.waitFor process 1000 TimeUnit/MILLISECONDS))
+            finished (now-ms)
+            stdout @stdout-f
+            stderr @stderr-f
+            exit (if done? (.exitValue process) 124)
+            _ (try @stdin-f (catch Throwable _ nil))]
+        {:command (str/join " " argv)
+         :argv argv
+         :cwd cwd-rel
+         :exit exit
+         :timed-out? (not done?)
+         :timeout-ms timeout-ms
+         :duration-ms (long (max 0 (- finished started)))
+         :stdout (:text stdout)
+         :stderr (:text stderr)
+         :stdout-chars (:chars stdout)
+         :stderr-chars (:chars stderr)
+         :stdout-truncated? (:truncated? stdout)
+         :stderr-truncated? (:truncated? stderr)})
+      (catch InterruptedException e
+        (.destroyForcibly process)
+        (future-cancel stdout-f)
+        (future-cancel stderr-f)
+        (future-cancel stdin-f)
+        (throw e)))))
 
 ;; =============================================================================
 ;; Preview EQL
@@ -1193,6 +1242,70 @@
    (bash-strict-tool command nil))
   ([command opts]
    (bash-tool-result :v/bash-strict command opts)))
+
+(defn- parse-discovered-nrepl-port
+  [stdout]
+  (some->> (re-seq #"localhost:(\d+)" (str stdout))
+    first
+    second
+    parse-long))
+
+(defn- discover-nrepl-port!
+  [opts]
+  (let [out (run-command-safe ["clj-nrepl-eval" "--discover-ports"]
+              (merge {:timeout-ms 10000 :max-output-chars 10000} opts))
+        port (parse-discovered-nrepl-port (:stdout out))]
+    (when-not (and (zero? (long (:exit out))) port)
+      (throw (ex-info "Could not discover a project nREPL port for v/nrepl-eval."
+               {:type :ext.foundation.editing/nrepl-discovery-failed
+                :result out})))
+    port))
+
+(defn- coerce-nrepl-opts
+  [opts]
+  (let [opts (or opts {})
+        port (or (:port opts) :discover)]
+    (when-not (or (= :discover port) (integer? port))
+      (throw (ex-info "v/nrepl-eval :port must be an integer or :discover"
+               {:type :ext.foundation.editing/invalid-nrepl-opts
+                :opt :port
+                :got port})))
+    (assoc opts :port port)))
+
+(defn- nrepl-eval-tool
+  ([expr]
+   (nrepl-eval-tool expr nil))
+  ([expr opts]
+   (when-not (string? expr)
+     (throw (ex-info "v/nrepl-eval expression must be a string"
+              {:type :ext.foundation.editing/invalid-nrepl-expr
+               :got (type expr)})))
+   (when (str/blank? expr)
+     (throw (ex-info "v/nrepl-eval expression must be non-blank"
+              {:type :ext.foundation.editing/invalid-nrepl-expr})))
+   (let [opts (coerce-nrepl-opts opts)
+         port (if (= :discover (:port opts))
+                (discover-nrepl-port! opts)
+                (:port opts))
+         run-opts (dissoc opts :port)
+         out (run-command-safe ["clj-nrepl-eval" "-p" port expr] run-opts)]
+     (tool-success
+       {:op :v/nrepl-eval
+        :path (:cwd out)
+        :kind :process
+        :result (assoc out :port port :expr expr)
+        :provenance {:command (:command out)
+                     :argv (:argv out)
+                     :cwd (:cwd out)
+                     :port port
+                     :exit (:exit out)
+                     :status (if (:timed-out? out) :timeout :done)
+                     :timed-out? (:timed-out? out)
+                     :timeout-ms (:timeout-ms out)
+                     :duration-ms (:duration-ms out)
+                     :stdout-truncated? (:stdout-truncated? out)
+                     :stderr-truncated? (:stderr-truncated? out)}
+        :presentation {:kind :diagnostic}}))))
 
 ;; =============================================================================
 ;; Structured renderers
@@ -1775,6 +1888,16 @@
      :render-fn render-bash
      :on-error-fn (tool-failure-on-error :v/bash-strict :dir nil)}))
 
+(def nrepl-eval-symbol
+  (vis/symbol 'nrepl-eval nrepl-eval-tool
+    {:doc "Evaluate Clojure in the project nREPL without shell quoting. Use for runtime Clojure checks; opts include {:port 7888 | :discover, :timeout-ms ms, :max-output-chars n, :cwd dir}. Tool result payload lives under :result with :stdout, :stderr, :exit, and :port."
+     :arglists '([expr] [expr opts])
+     :examples ["(v/nrepl-eval \"(require '[com.blockether.vis.core :as vis] :reload)\")"
+                "(get-in (v/nrepl-eval \"(+ 1 2)\" {:port 7888}) [:result :stdout])"]
+     :result-spec tool-result-spec
+     :render-fn render-bash
+     :on-error-fn (tool-failure-on-error :v/nrepl-eval :dir nil)}))
+
 (def editing-symbols
   [cat-symbol
    preview-symbol
@@ -1790,7 +1913,8 @@
    delete-if-exists-symbol
    exists?-symbol
    bash-symbol
-   bash-strict-symbol])
+   bash-strict-symbol
+   nrepl-eval-symbol])
 
 (def editing-prompt
   (str
@@ -1805,7 +1929,7 @@
     "Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. "
     "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Use (v/patch-check edits) to preflight match counts without writing. Read exact bytes first; keep searches small and unique; do not invent long paragraphs. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
     "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).\n"
-    "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). Use `v/bash-strict` for multi-step scripts; it prepends `set -euo pipefail`. `v/bash` and `v/bash-strict` refuse shell-driven Clojure/EDN source edits; use z/patch for those.
+    "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). Use `v/bash-strict` for multi-step scripts; it prepends `set -euo pipefail`. Use `v/nrepl-eval` for Clojure runtime checks instead of shell-quoting `clj-nrepl-eval`: (v/nrepl-eval \"(+ 1 2)\" {:port :discover}). `v/bash` and `v/bash-strict` refuse shell-driven Clojure/EDN source edits; use z/patch for those.
 "
     "Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\") [:result :lines]), (get-in (v/bash \"pwd\") [:result :stdout]), (-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits). "
     "Tools own rendering metadata; preview preserves it. Provenance/lifecycle metadata stays unchanged and remains the proof substrate. For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))

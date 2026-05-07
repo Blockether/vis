@@ -9,7 +9,7 @@
    [clojure.set :as set]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
-   [com.blockether.vis.internal.provenance-ref :as provenance-ref]))
+   [com.blockether.vis.internal.proof :as proof]))
 
 ;; -----------------------------------------------------------------------------
 ;; Scalar predicates
@@ -32,7 +32,7 @@
   (s/and string? #(boolean (re-matches #"(?i)[0-9a-f]{8}" %))))
 
 (defn canonical-ref? [x]
-  (provenance-ref/canonical-ref? x))
+  (proof/canonical-ref? x))
 
 ;; -----------------------------------------------------------------------------
 ;; Entity and public key specs
@@ -45,8 +45,8 @@
 (def gate-statuses #{:open :proven :impeded})
 (def gate-ref-roles #{:proof :impediment :context})
 (def focus-sources #{:created :touched :inferred})
-(def event-statuses #{:running :done :error :interrupted :timeout :cancelled})
-(def rendering-kinds #{:vis/sci :vis/silent :vis/system :vis/tool :vis/answer :vis/error :vis/diagnostic})
+(def event-statuses proof/lifecycle-statuses)
+(def rendering-kinds proof/rendering-kinds)
 
 ;; Identity.
 (s/def ::conversation-id uuid-string?)

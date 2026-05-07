@@ -36,6 +36,7 @@
    (com.zaxxer.hikari HikariConfig HikariDataSource)
    (java.io File RandomAccessFile)
    (java.nio.channels FileLock)
+   (java.nio.file Files LinkOption Paths)
    (java.security MessageDigest)
    (java.sql SQLException)
    (java.util.concurrent.atomic AtomicLong)
@@ -109,10 +110,87 @@
   (subs s 0 (min raw-response-preview-chars (count s))))
 
 ;; =============================================================================
+;; Error translation + bootstrap error normalization
+;; =============================================================================
+
+(defn- causal-chain
+  "Walk `(.getCause e)` until a fixed point or cycle is hit. Returns the
+   chain in causal order (innermost first), bounded so a self-referential
+   cause graph can't loop forever."
+  [^Throwable e]
+  (loop [acc [] cur e seen #{}]
+    (cond
+      (nil? cur)           (reverse acc)
+      (contains? seen cur) (reverse acc)
+      (>= (count acc) 16)  (reverse acc)
+      :else (recur (conj acc cur) (.getCause cur) (conj seen cur)))))
+
+(def ^:private migration-checksum-mismatch-user-message
+  (str "Database schema mismatch: local migrations changed since this database was created. "
+    "Close all Vis processes, remove ~/.vis/vis.mdb, then restart Vis to recreate it from packaged migration resources."))
+
+(defn- migration-checksum-mismatch?
+  "True when any throwable in the causal chain looks like Flyway's
+   migration checksum validation failure."
+  [^Throwable e]
+  (boolean
+    (some (fn [^Throwable t]
+            (let [^String m (or (ex-message t) "")]
+              (or (.contains m "Migration checksum mismatch")
+                (.contains m "Migrations have failed validation"))))
+      (causal-chain e))))
+
+(defn- maybe-wrap-db-open-error
+  "Normalize known SQLite bootstrap failures into caller-facing user
+   errors. Unknown failures pass through unchanged so fatal startup
+   behavior remains unchanged."
+  [^Throwable e]
+  (if (migration-checksum-mismatch? e)
+    (ex-info migration-checksum-mismatch-user-message
+      {:vis/user-error true
+       :type           :vis/db-migration-checksum-mismatch}
+      e)
+    e))
+
+(defn- sqlite-cantopen-message?
+  "True when any link in the cause chain looks like a SQLite open failure."
+  [^Throwable e]
+  (boolean
+    (some (fn [^Throwable t]
+            (let [^String m (or (ex-message t) "")]
+              (or (.contains m "[SQLITE_CANTOPEN]")
+                (.contains m "unable to open database file")
+                (.contains m "Unable to open the database file"))))
+      (causal-chain e))))
+
+(defn db-error->user-message
+  "Translate SQLite persistence exceptions into actionable user text.
+   Return nil for non-SQLite errors so the facade can try other adapters
+   or fall back to `(ex-message e)`."
+  [^Throwable e]
+  (when (sqlite-cantopen-message? e)
+    (let [home   (System/getProperty "user.home")
+          dbpath (str home "/.vis/vis.mdb/vis.db")
+          dbdir  (str home "/.vis/vis.mdb")
+          dirf   (File. dbdir)
+          filef  (File. dbpath)]
+      (str "Vis database is unavailable. "
+        "Expected file: " dbpath ". "
+        (cond
+          (not (.exists filef))
+          "The file is missing — likely deleted while Vis was running. Restart Vis to recreate it."
+
+          (not (.canWrite dirf))
+          (str "The directory " dbdir " is not writable by this process.")
+
+          :else
+          "The handle was lost mid-session. Restart Vis to reconnect.")))))
+
+;; =============================================================================
 ;; Schema install
 ;;
-;; The dialect-agnostic Flyway runner lives in `vis-persistance`; the
-;; canonical V*__schema.sql files live in this package under
+;; The Flyway runner and canonical V*__schema.sql files live in this
+;; package under
 ;; `resources/db/sqlite/migration/`. We only point Flyway at that
 ;; classpath location. No schema DDL or repair DDL lives in Clojure.
 ;; If an existing local database no longer matches the packaged V1 SQL,
@@ -258,30 +336,58 @@
     {:datasource pool :conn pool :path nil :db-file nil
      :backend :sqlite :owned? true :mode :memory}))
 
+(defn- stable-db-file-key
+  "Best-effort stable identity for the current SQLite file behind a store.
+   Used to detect when the pathname stayed the same but the file was
+   replaced underneath a long-lived JVM (common in dev when `~/.vis/vis.mdb`
+   gets recreated while nREPL survives)."
+  [store]
+  (when-let [db-file (:db-file store)]
+    (try
+      (let [attrs (Files/readAttributes (Paths/get db-file (make-array String 0))
+                    "basic:fileKey,lastModifiedTime,size"
+                    (make-array LinkOption 0))]
+        {:db-file       db-file
+         :file-key      (get attrs "fileKey")
+         :last-modified (some-> (get attrs "lastModifiedTime") str)
+         :size          (get attrs "size")})
+      (catch Throwable _
+        {:db-file db-file :missing? true}))))
+
+(defn- with-file-key-snapshot [store]
+  (cond-> store
+    (= :persistent (:mode store))
+    (assoc :file-key-snapshot (stable-db-file-key store))))
+
 (defn db-open! [db-spec]
-  (cond
-    (nil? db-spec)    nil
-    (= :memory db-spec) (open-sqlite-mem)
-    ;; `:owned? true` for both memory and persistent: we built the
-    ;; Hikari pool ourselves, so we own its lifecycle. The old code
-    ;; stamped persistent stores as `:owned? false` because the
-    ;; non-pooled DataSource didn't *need* closing — it had no
-    ;; resources to release. With Hikari that's no longer true; an
-    ;; un-closed pool leaks daemon threads and connection handles.
-    (string? db-spec) (assoc (open-sqlite-at-dir db-spec) :owned? true :mode :persistent)
-    (map? db-spec)
+  (try
     (cond
-      (or (:datasource db-spec) (:conn db-spec))
-      (let [ds (or (:datasource db-spec) (:conn db-spec))]
-        (install-schema! ds)
-        {:datasource ds :conn ds :path nil :db-file nil
-         :backend :external :owned? false :mode :external})
-      (:path db-spec)
-      (assoc (open-sqlite-at-dir (:path db-spec)) :owned? true :mode :persistent)
+      (nil? db-spec) nil
+      (= :memory db-spec) (open-sqlite-mem)
+      ;; `:owned? true` for both memory and persistent: we built the
+      ;; Hikari pool ourselves, so we own its lifecycle. The old code
+      ;; stamped persistent stores as `:owned? false` because the
+      ;; non-pooled DataSource didn't *need* closing — it had no
+      ;; resources to release. With Hikari that's no longer true; an
+      ;; un-closed pool leaks daemon threads and connection handles.
+      (string? db-spec) (with-file-key-snapshot
+                          (assoc (open-sqlite-at-dir db-spec) :owned? true :mode :persistent))
+      (map? db-spec)
+      (cond
+        (or (:datasource db-spec) (:conn db-spec))
+        (let [ds (or (:datasource db-spec) (:conn db-spec))]
+          (install-schema! ds)
+          {:datasource ds :conn ds :path nil :db-file nil
+           :backend :external :owned? false :mode :external})
+        (:path db-spec)
+        (with-file-key-snapshot
+          (assoc (open-sqlite-at-dir (:path db-spec)) :owned? true :mode :persistent))
+        :else
+        (throw (ex-info "Invalid db-spec map" {:type :vis/invalid-db-spec :db-spec db-spec})))
       :else
-      (throw (ex-info "Invalid db-spec map" {:type :vis/invalid-db-spec :db-spec db-spec})))
-    :else
-    (throw (ex-info "Invalid db-spec" {:type :vis/invalid-db-spec :db-spec db-spec}))))
+      (throw (ex-info "Invalid db-spec" {:type :vis/invalid-db-spec :db-spec db-spec})))
+    (catch Throwable e
+      (throw (maybe-wrap-db-open-error e)))))
 
 (defn db-close!
   "Idempotent dispose. Closes the Hikari pool when we own it; for
@@ -293,6 +399,20 @@
       (when (instance? java.io.Closeable ds)
         (try (.close ^java.io.Closeable ds) (catch Throwable _ nil)))))
   nil)
+
+(defn db-store-stale?
+  "True when a persistent SQLite store no longer matches the requested
+   db-spec or the file at the same path was replaced under this JVM. When
+   true, the facade closes the old shared pool and opens a new one."
+  [store db-spec]
+  (when (= :persistent (:mode store))
+    (or (and (string? db-spec)
+          (not= db-spec (:path store)))
+      (and (map? db-spec)
+        (:path db-spec)
+        (not= (:path db-spec) (:path store)))
+      (and (:file-key-snapshot store)
+        (not= (stable-db-file-key store) (:file-key-snapshot store))))))
 
 ;; =============================================================================
 ;; SQLite write policy

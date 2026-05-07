@@ -1,17 +1,19 @@
-(ns com.blockether.vis.ext.voice-parakeet.core-test
+(ns com.blockether.vis.ext.voice.input-test
   (:require [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.voice-parakeet.core :as voice]
-            [com.blockether.vis.ext.voice-parakeet.recorder :as recorder]
-            [com.blockether.vis.ext.voice-parakeet.rewrite :as rewrite]
-            [com.blockether.vis.ext.voice-parakeet.sherpa :as sherpa]
+            [com.blockether.vis.ext.voice.core :as core]
+            [com.blockether.vis.ext.voice.input :as voice]
+            [com.blockether.vis.ext.voice.recorder :as recorder]
+            [com.blockether.vis.ext.voice.rewrite :as rewrite]
+            [com.blockether.vis.ext.voice.asr :as asr]
             [lazytest.core :refer [defdescribe it expect]]))
 
-(defdescribe voice-parakeet-core-test
+(defdescribe voice-input-test
   (it "registers a hidden direct-toggle TUI channel hook"
     (let [hooks (vis/channel-hooks-for :tui)]
-      (expect (some #(= :voice/parakeet (:hook-id %)) hooks))
+      (expect (some #(= :voice/input (:hook-id %)) hooks))
+      (expect (some #(= :voice/input (:hook-id %)) (:ext/channel-hooks core/voice-extension)))
       (let [commands (voice/tui-commands {})]
-        (expect (= [:voice-parakeet/toggle]
+        (expect (= [:voice/toggle-recording]
                   (mapv :id commands)))
         (expect (= [false] (mapv :palette? commands)))
         (expect (every? ifn? (map :run-fn commands))))))
@@ -21,9 +23,9 @@
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false})
       (with-redefs [recorder/start! (fn [] {:started-at-ms (System/currentTimeMillis)})
                     recorder/stop! (fn [_] :audio-file)
-                    sherpa/transcribe-file! (fn [audio-file]
-                                              (expect (= :audio-file audio-file))
-                                              "raw transcript")
+                    asr/transcribe-file! (fn [audio-file]
+                                           (expect (= :audio-file audio-file))
+                                           "raw transcript")
                     rewrite/rewrite-transcript! (fn [raw]
                                                   (expect (= "raw transcript" raw))
                                                   "Rewrite")
@@ -39,12 +41,28 @@
             (recur (dec n))))
         (expect (some #(= {:op :input/append
                            :text "Rewrite"
-                           :source :voice/parakeet}
+                           :source :voice/input}
                          %)
                   @events))
         (expect (not-any? #(= :input/replace (:op %)) @events))
         (expect (some #(= "● Rewrite…" (:text %)) @events))
         (expect (not-any? #(= "● Rewriting…" (:text %)) @events)))))
+
+  (it "starts ticker after recorder is visible in shared state"
+    (let [events (atom [])]
+      (reset! voice/state {:recorder nil :ticker nil :transcribing? false})
+      (with-redefs [recorder/start! (fn [] {:started-at-ms 1000})
+                    vis/publish-channel-event! (fn [_ event]
+                                                 (swap! events conj event))]
+        (with-redefs-fn {#'voice/start-ticker! (fn [rec started-at-ms]
+                                                 (expect (= {:started-at-ms 1000} rec))
+                                                 (expect (= 1000 started-at-ms))
+                                                 (expect (identical? rec (:recorder @voice/state)))
+                                                 :ticker)}
+          (fn []
+            (voice/start-recording! {})
+            (expect (= :ticker (:ticker @voice/state)))
+            (expect (some #(= "● Recording 00:00" (:text %)) @events)))))))
 
   (it "blocks new recording while previous transcription has not finished"
     (let [starts (atom 0)
@@ -74,10 +92,10 @@
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false})
       (with-redefs [recorder/start! (fn [] {:started-at-ms (System/currentTimeMillis)})
                     recorder/stop! (fn [_] "too-short.wav")
-                    sherpa/transcribe-file! (fn [audio-file]
-                                              (expect (= "too-short.wav" audio-file))
-                                              (throw (ex-info "Voice recording too short — try again"
-                                                       {:type :voice-parakeet/audio-too-short})))
+                    asr/transcribe-file! (fn [audio-file]
+                                           (expect (= "too-short.wav" audio-file))
+                                           (throw (ex-info "Voice recording too short — try again"
+                                                    {:type :voice-asr/audio-too-short})))
                     rewrite/rewrite-transcript! (fn [_]
                                                   (expect false)
                                                   "")
@@ -106,5 +124,5 @@
                              (= ::voice/voice-asr-failed (:id %))
                              (= "too-short.wav" (get-in % [:data :audio-file]))
                              (= "Voice recording too short — try again" (get-in % [:data :error]))
-                             (= :voice-parakeet/audio-too-short (get-in % [:data :type])))
+                             (= :voice-asr/audio-too-short (get-in % [:data :type])))
                       @logs))))))))

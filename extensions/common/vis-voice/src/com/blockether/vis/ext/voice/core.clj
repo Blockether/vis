@@ -2,7 +2,9 @@
   "Local voice output through sherpa-onnx Piper/VITS TTS."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.core :as vis])
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.voice.asr :as asr]
+            [com.blockether.vis.ext.voice.input :as input])
   (:import [java.io File FileInputStream FileOutputStream]
            [java.net URL]
            [org.apache.commons.compress.archivers.tar TarArchiveInputStream]
@@ -249,10 +251,12 @@
       "The user may receive your final answer through text-to-speech audio.\n\n"
       "Still produce the canonical final answer as plain text. This text is saved to the conversation database.\n\n"
       "Optimize the final answer for spoken delivery:\n"
-      "- be concise and direct;\n"
-      "- prefer short sentences;\n"
+      "- speak like a manager update, not a developer handoff;\n"
+      "- be concise, direct, and outcome-focused;\n"
+      "- say what went wrong and what changed, but skip implementation details unless explicitly requested;\n"
+      "- do not include proof trails, provenance refs, verification logs, stack traces, diffs, or code blocks;\n"
+      "- do not read code aloud; summarize code changes in plain business language;\n"
       "- avoid huge tables unless explicitly requested;\n"
-      "- avoid dumping long code blocks unless explicitly requested;\n"
       "- when code/files changed, summarize what changed and name files clearly;\n"
       "- do not mention that you are producing audio;\n"
       "- do not emit SSML unless the user explicitly asks.\n"
@@ -283,9 +287,7 @@
 
 (defn- parakeet-status
   []
-  (if-let [installed? (requiring-resolve 'com.blockether.vis.ext.voice-parakeet.sherpa/model-installed?)]
-    {:installed? (boolean (installed?))}
-    {:installed? false :missing-extension? true}))
+  {:installed? (boolean (asr/model-installed?))})
 
 (defn model-status
   []
@@ -297,14 +299,10 @@
 (defn- print-status! []
   (let [{:keys [piper parakeet]} (model-status)]
     (cli-out! (str "Piper: " (if (:installed? piper) "installed" "missing") " — " (:dir piper)))
-    (cli-out! (str "Parakeet: " (if (:installed? parakeet) "installed" "missing")
-                (when (:missing-extension? parakeet) " — extension not on classpath")))))
+    (cli-out! (str "Parakeet: " (if (:installed? parakeet) "installed" "missing")))))
 
 (defn- ensure-parakeet! []
-  (let [f (or (requiring-resolve 'com.blockether.vis.ext.voice-parakeet.sherpa/ensure-model!)
-            (throw (ex-info "Parakeet ASR extension is not on the classpath"
-                     {:type :voice/missing-parakeet-extension})))]
-    (f)))
+  (asr/ensure-model!))
 
 (defn- voice-models-status-command [_parsed _residual]
   (vis/init-cli!)
@@ -328,7 +326,7 @@
 (def voice-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.voice.core
-     :ext/doc       "Native local voice extension: Piper/VITS TTS through sherpa-onnx."
+     :ext/doc       "Native local voice extension: Piper TTS output and Parakeet ASR input through sherpa-onnx."
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"
@@ -338,7 +336,19 @@
      :ext/settings  [{:key :voice/respond?
                       :type :toggle
                       :label "Voice responses"
-                      :description "Speak assistant final answers with Piper TTS. The answer is still saved as text."}]
+                      :description "Speak assistant final answers with Piper TTS. The answer is still saved as text."}
+                     {:key :voice/telegram-send-transcript?
+                      :type :toggle
+                      :label "Telegram transcript text"
+                      :description "In Telegram duplex mode, send the transcribed user request before the answer audio."}
+                     {:key :voice/telegram-send-answer-text?
+                      :type :toggle
+                      :label "Telegram answer text"
+                      :description "In Telegram duplex mode, send the plain text answer after the answer audio in a collapsible block."}
+                     {:key :voice/tui-auto-read?
+                      :type :toggle
+                      :label "TUI auto-read answers"
+                      :description "Read TUI answers aloud when voice responses are enabled. TUI still always shows text."}]
      :ext/env       [{:name model-dir-env
                       :label "Piper model directory"
                       :description "Directory containing model.onnx, tokens.txt, and espeak-ng-data. Missing files can be downloaded with vis extensions voice models download --piper."
@@ -350,6 +360,10 @@
                      {:name player-env
                       :label "Voice playback command"
                       :description "Optional local audio playback command. Defaults to afplay/paplay/aplay/ffplay discovery."
+                      :required? false}
+                     {:name asr/model-dir-env
+                      :label "Parakeet model directory"
+                      :description "Directory containing encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx, and tokens.txt. Missing files can be downloaded with vis extensions voice models download --parakeet."
                       :required? false}]
      :ext/cli       [{:cmd/name "voice"
                       :cmd/doc "Voice extension commands."
@@ -372,6 +386,9 @@
                                       :doc "Download/check Parakeet ASR model."}
                                      {:name "all" :kind :flag :type :boolean
                                       :doc "Download/check both voice models."}]
-                          :cmd/run-fn #'voice-models-download-command}]}]}]}))
+                          :cmd/run-fn #'voice-models-download-command}]}]}]
+     :ext/channel-hooks [{:channel-id :tui
+                          :hook-id :voice/input
+                          :commands-fn input/tui-commands}]}))
 
 (vis/register-extension! voice-extension)

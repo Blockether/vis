@@ -186,12 +186,13 @@
    Auto-splits at 4096 chars.
 
    `opts` supports:
-   - `:reply-markup` — Telegram reply_markup map, e.g. inline keyboard."
+   - `:reply-markup` — Telegram reply_markup map, e.g. inline keyboard;
+   - `:html?` — send `text` as Telegram HTML without Markdown conversion."
   ([token chat-id text]
    (send-message! token chat-id text nil))
-  ([token chat-id text {:keys [reply-markup]}]
+  ([token chat-id text {:keys [reply-markup html?]}]
    (doseq [raw-chunk (chunk-text (or text ""))]
-     (let [html-chunk (convert-md-to-html raw-chunk)
+     (let [html-chunk (if html? raw-chunk (convert-md-to-html raw-chunk))
            payload (cond-> {"chat_id"    chat-id
                             "text"       html-chunk
                             "parse_mode" "HTML"}

@@ -11,10 +11,9 @@
    built up-front and shrunk by dropping the highest `:priority`
    number (least important) until it fits the available width.
 
-   States (driven by `:loading?`, `:cancelling?` from app-db):
-     idle       → LEFT=model    CENTER=∅           RIGHT=tokens/cost
-     running    → LEFT=model    CENTER=∅           RIGHT=tokens/cost
-     cancelling → LEFT=model    CENTER=cancelling…  RIGHT=tokens/cost
+   Footer deliberately avoids transient run-state and cancellation
+   banners. Those live in the assistant bubble and host notifications;
+   this row keeps slow-changing identity + budget bits.
 
    Run-state (spinner, iteration counter, elapsed time, current
    phase) lives EXCLUSIVELY in the assistant bubble's `progress->text`
@@ -325,20 +324,19 @@
 
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 
-(comment "Channel statuses render in the header; footer owns model, git, budgets, and cancellation only.")
+(comment "Channel statuses and transient notifications render in the header; footer owns model, git, and budgets only.")
 
 (defn- build-segments
   "Vector of `{:text :fg :bold? :region :priority}`.
 
    `:priority` semantics: 1 = critical (never drop), higher = drop first
    when the row overflows. The full priority hierarchy:
-     1  cancelling…
      2  model name, provider dynamic limits
      3  model reasoning suffix
      4  cost
      5  keyboard shortcut hints"
   [db _now-ms]
-  (let [{:keys [cancelling? settings]} db
+  (let [{:keys [settings]} db
         info       (chosen-model-info)
         model      (:name info)
         provider   (:provider info)
@@ -389,20 +387,9 @@
              :fg t/footer-fg-muted :bold? false
              :region :left :priority 5})
 
-      ;; ── CENTER ────────────────────────────────────────────────────────────
-      cancelling?
-      (conj {:text "cancelling…"
-             :fg t/footer-warning-fg :bold? true
-             :region :center :priority 1})
-
-      ;; Spinner / iter-counter / elapsed: deliberately NOT here.
-      ;; The bubble's `progress->text` already carries that, with
-      ;; phase ("Vis is calling the provider" / "Vis is thinking
-      ;; (iter 3)"). Duplicating it in the footer is what the user
-      ;; complained about — same `⠋ 11.2s` shown twice. `cancelling…`
-      ;; stays because it's a whole-conversation status, not just
-      ;; current-iteration.
-      ;;
+      ;; Spinner / iter-counter / elapsed / cancellation: deliberately NOT here.
+      ;; The bubble's `progress->text` already carries live activity, and
+      ;; user-facing cancellation feedback is emitted as a host notification.
       ;; Channel statuses (voice recording, transcription, etc.) also stay out
       ;; of the footer. The header's left banner is their single owner.
 

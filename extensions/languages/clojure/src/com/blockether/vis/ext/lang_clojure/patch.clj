@@ -520,16 +520,26 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [rows (:result tool-result)
-          shown (take 40 rows)
-          body (->> shown
-                 (map (fn [{:keys [tag locator source span]}]
-                        (str (pr-str span) " " tag " " locator " <- " source)))
-                 (str/join "\n"))]
+    (let [rows       (vec (:result tool-result))
+          shown      (take 8 rows)
+          one?       (= 1 (count rows))
+          row-lines  (->> shown
+                       (map-indexed
+                         (fn [idx {:keys [path tag locator source span]}]
+                           (str (inc idx) ". " path " " (pr-str span) " " tag "\n"
+                             (preview-text (or source locator ""))))))
+          patch-hint (when one?
+                       (str "Patch hint:\n"
+                         "(z/patch [{:path \"" (:path (first rows))
+                         "\" :search <locator-row> :replace <new-source>}])"))]
       (md/join
-        (md/p "Found" (count rows) "zipper locator(s).")
-        (when (seq shown)
-          (md/code-block "text" (preview-text body)))))))
+        (md/p "Found" (count rows) "zipper locator(s)."
+          (when (get-in tool-result [:provenance :truncated?])
+            " Narrow filters before patching."))
+        (when (seq row-lines)
+          (md/code-block "text" (str/join "\n\n" row-lines)))
+        (when patch-hint
+          (md/code-block "clojure" patch-hint))))))
 
 ;; =============================================================================
 ;; Symbol declarations
