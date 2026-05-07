@@ -14,6 +14,7 @@
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
+            [com.blockether.vis.ext.provider-anthropic :as anthropic]
             [com.blockether.vis.ext.provider-github-copilot :as copilot]
             [com.blockether.vis.ext.provider-openai-codex :as codex]
             [com.blockether.vis.internal.external-opener :as opener])
@@ -332,6 +333,41 @@
                 "  vis providers auth openai-codex"])
              false)))))))
 
+(defn- anthropic-oauth-ready!
+  "Run Anthropic Claude subscription browser OAuth from the TUI when needed."
+  ([^TerminalScreen screen]
+   (anthropic-oauth-ready! screen false))
+  ([^TerminalScreen screen force?]
+   (let [provider  (vis/provider-by-id :anthropic-coding-plan)
+         detect-fn (:provider/detect-fn provider)]
+     (if (and (not force?) detect-fn (detect-fn))
+       true
+       (when (dlg/confirm-dialog! screen "Anthropic"
+               ["Vis will start the Anthropic Claude subscription OAuth flow."
+                ""
+                "After browser login, copy the final redirect URL from the"
+                "address bar and paste it into the next dialog."
+                ""
+                "Fallback if needed:"
+                "  vis providers auth anthropic-coding-plan"])
+         (try
+           (let [result (anthropic/login! (constantly nil)
+                          {:force?         force?
+                           :manual-code-fn (fn [_]
+                                             (dlg/text-input-dialog! screen
+                                               "Anthropic"
+                                               "Paste the final browser URL or authorization code:"))})]
+             (when (= result :ok)
+               (dlg/text-view-dialog! screen "Anthropic" ["✓ Authenticated!"]))
+             true)
+           (catch Exception e
+             (dlg/text-view-dialog! screen "Anthropic"
+               [(str "Auth failed: " (ex-message e))
+                ""
+                "If browser auth still fails here, run:"
+                "  vis providers auth anthropic-coding-plan"])
+             false)))))))
+
 (defn- add-provider!
   "Show add-provider flow. `existing-ids` is a set of already-configured :id keywords."
   [^TerminalScreen screen existing-ids]
@@ -343,13 +379,14 @@
               base-url   (:base-url preset)
               has-key?   (some? (:api-key preset))
               ;; OAuth providers store credentials outside config.
-              oauth?     (or (github-copilot-provider? pid) (= :openai-codex pid))
+              oauth?     (or (github-copilot-provider? pid) (= :openai-codex pid) (= :anthropic-coding-plan pid))
               ;; Local providers need no key
               needs-key? (not (or has-key? oauth? (contains? #{:ollama :lmstudio} pid)))
               api-key    (cond
                            has-key?   (:api-key preset)
                            (github-copilot-provider? pid) (copilot-oauth-flow! screen (github-copilot-account-type pid))
                            (= pid :openai-codex)          (when (codex-oauth-ready! screen) :oauth-ready)
+                           (= pid :anthropic-coding-plan) (when (anthropic-oauth-ready! screen) :oauth-ready)
                            needs-key? (let [raw (dlg/text-input-dialog! screen
                                                   (str (:label preset) " Setup")
                                                   "API Key:"
@@ -1030,6 +1067,7 @@
      (when (copilot-oauth-flow! screen (github-copilot-account-type (:id provider)) force?) provider)
 
      (= :openai-codex (:id provider)) (when (codex-oauth-ready! screen force?) provider)
+     (= :anthropic-coding-plan (:id provider)) (when (anthropic-oauth-ready! screen force?) provider)
      (= :ollama (:id provider)) nil
      (= :lmstudio (:id provider)) nil
      :else
@@ -1080,6 +1118,9 @@
 
         (= :openai-codex (:provider/id provider))
         (boolean (codex-oauth-ready! screen false))
+
+        (= :anthropic-coding-plan (:provider/id provider))
+        (boolean (anthropic-oauth-ready! screen false))
 
         :else
         (if-let [auth-fn (:provider/auth-fn provider)]

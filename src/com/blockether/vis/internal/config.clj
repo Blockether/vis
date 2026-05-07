@@ -102,7 +102,7 @@
 (def ^:private PRESET_ORDER
   "Stable display order in the 'Add Provider' picker. Most-likely-used
    first. Anything not in this vec lands at the end."
-  [:openai :anthropic :openai-codex
+  [:openai :anthropic :anthropic-coding-plan :openai-codex
    :github-copilot-business :github-copilot-individual
    :zai :zai-coding :ollama :lmstudio])
 
