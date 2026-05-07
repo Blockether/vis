@@ -4,6 +4,7 @@
    (`list-extensions`) plus the private rendering helpers powering
    `vis extensions list`: namespace shortener and word-wrapper."
   (:require
+   [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.config :as config]
@@ -29,6 +30,26 @@
 (def ^:private help-request?           #'main/help-request?)
 (def ^:private channel-help-request?   #'main/channel-help-request?)
 (def ^:private config-with-model-override #'main/config-with-model-override)
+
+(defdescribe result-json-test
+  (it "normalizes nested non-string map keys in the trace envelope"
+    (let [slot-key [(java.util.UUID/fromString "00000000-0000-0000-0000-000000000001")
+                    :verification]
+          encoded  (main/result->json
+                     {:answer "ok"
+                      :status :done
+                      :trace [{:expected-proof {:slots {slot-key {:required? true}}}
+                               :entry (first {:k :v})
+                               :exception (ex-info "boom" {:reason :bad-key})}]})
+          decoded  (json/read-json encoded)]
+      (expect (= "ok" (get decoded "answer")))
+      (expect (= "done" (get decoded "status")))
+      (expect (= {"required?" true}
+                (get-in decoded ["trace" 0 "expected-proof" "slots"
+                                 "[#uuid \"00000000-0000-0000-0000-000000000001\" :verification]"])))
+      (expect (= ["k" "v"] (get-in decoded ["trace" 0 "entry"])))
+      (expect (= "boom" (get-in decoded ["trace" 0 "exception" "message"])))
+      (expect (= "bad-key" (get-in decoded ["trace" 0 "exception" "data" "reason"]))))))
 
 (defdescribe cli-run-persistence-test
   (it "defaults `vis run` to ephemeral execution and requires --persist for disk writes"
