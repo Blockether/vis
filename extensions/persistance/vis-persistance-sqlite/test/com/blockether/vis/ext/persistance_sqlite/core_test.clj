@@ -432,7 +432,35 @@
         (expect (= :accepted (:status attestation)))
         (expect (= :fulfilled (-> state :intents first :status)))
         (expect (= true (:success? state)))
-        (expect (= 2 (raw-count s :attestation)))))))
+        (expect (= true (:success? (vis/db-audit-proof s {:conversation-id cid}))))
+        (expect (= 2 (raw-count s :attestation))))))
+
+  (it "audits legacy closure that bypassed accepted intent attestation"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "legacy close"
+                                                     :status :running})
+          _iter  (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(+ 1 1)"
+                                                       :result 2}]})
+          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Legacy close"
+                                          :rationale "Exercise audit."})
+          plan   (vis/db-store-plan! s {:intent-id (:id intent)
+                                        :summary "Legacy plan"})
+          gate   (vis/db-store-gate! s {:plan-id (:id plan)
+                                        :question "Legacy proof?"})]
+      (vis/db-prove-gate! s {:gate-id (:id gate)
+                             :summary "Legacy proven."
+                             :refs [ref]})
+      (vis/db-fulfill-intent! s (:id intent) {:summary "Legacy fulfilled."
+                                              :refs [ref]})
+      (let [audit (vis/db-audit-proof s {:conversation-id cid})]
+        (expect (= false (:success? audit)))
+        (expect (contains? (set (map :type (:violations audit)))
+                  :missing-intent-closure-attestation))))))
 
 (defn- drop-conversation-intent-schema!
   [db-file]

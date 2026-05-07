@@ -285,6 +285,7 @@
 (defdelegate db-attest-gate! [db-info opts])
 (defdelegate db-attest-intent! [db-info opts])
 (defdelegate db-get-attestation [db-info attestation-id])
+(defdelegate db-audit-proof [db-info opts])
 
 ;; --- Conversation-scoped intents, plans, gates, and focus ---
 (defdelegate db-store-intent! [db-info opts])
