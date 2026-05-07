@@ -239,6 +239,11 @@
 (def db-list-conversation-turn-iterations            persistance/db-list-conversation-turn-iterations)
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
 (def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
+(def db-store-provenance-event!      persistance/db-store-provenance-event!)
+(def db-get-provenance-event         persistance/db-get-provenance-event)
+(def db-list-provenance-events       persistance/db-list-provenance-events)
+(def db-create-evidence-bundle!      persistance/db-create-evidence-bundle!)
+(def db-get-evidence-bundle          persistance/db-get-evidence-bundle)
 
 ;; Conversation-scoped intents, plans, gates, and focus
 (def db-store-intent!                 persistance/db-store-intent!)

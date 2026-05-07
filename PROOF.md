@@ -1,6 +1,6 @@
 # PROOF.md — proof.clj consolidation and attestation-ledger implementation plan
 
-Status: implementation started. First slice installed the canonical proof-domain namespace. Legacy provenance namespaces still exist only as blockers to delete; storage/audit migration remains staged work.
+Status: implementation started. First slice installed the canonical proof-domain namespace. Task 5A pure guard/gate harness is installed and tested. Legacy provenance namespaces still exist only as blockers to delete; storage/audit migration remains staged work.
 
 Scope: attestation ledger, provenance references, lifecycle events, intent/plan/gate proof semantics, and audit surface.
 
@@ -182,9 +182,13 @@ No task is DONE if:
 |---|---|---|
 | Task 1 docs/model fit | DONE | `PROOF.md` updated with framework fit, Codex/Ralph comparison, ANALYSIS impact. Docs-only. |
 | Task 2 proof spec first slice | DONE | `clojure -M:test -n com.blockether.vis.internal.proof-test -n com.blockether.vis.internal.provenance-ref-test -n com.blockether.vis.internal.provenance-lifecycle-test -n com.blockether.vis.internal.intent-spec-test`; `./verify.sh --quick`. |
-| Task 3 canonical proof namespace migration | IN PROGRESS / NOT DONE | `proof.clj` owns refs/lifecycle/specs, but legacy files still exist. Next: migrate all callers to `proof.clj`, delete `provenance_ref.clj` / `provenance_lifecycle.clj` and their tests. |
+| Task 3 canonical proof namespace migration | DONE | Internal callers now require `com.blockether.vis.internal.proof`; deleted `provenance_ref.clj`, `provenance_lifecycle.clj`, and their tests. Verified: `rg -n "com\\.blockether\\.vis\\.internal\\.provenance-(ref|lifecycle)|provenance_ref|provenance_lifecycle|prov-life|prov-ref" src extensions test`; `clojure -M:test -n com.blockether.vis.internal.proof-test -n com.blockether.vis.internal.loop-test -n com.blockether.vis.ext.foundation.introspection-test -n com.blockether.vis.ext.persistance-sqlite.core-test`; `./verify.sh --quick`. |
+| Task 5A pure guard/gate harness | DONE | `clojure -M:test -n com.blockether.vis.internal.proof-test`; fresh REPL reload `(require '[com.blockether.vis.internal.proof :as proof] :reload) :fresh-ok`. Covers fake caller slots, fake extension aggregate proof payloads, compact refs, running events, wrong kind/op, missing extract, and false guards. |
 | PROOF_AUTORESEARCH boss plan | DONE | `PROOF_AUTORESEARCH.md` added. Pi and Vis `zai-coding/GLM-5.1` smoke-checked headlessly; P0 provider-qualified `vis run --model zai-coding/glm-5.1` fixed and verified. |
-| Task 4+ ledger/bundle/attestation/storage/audit | TODO | Must proceed only with regression tests and fresh runtime gates. |
+| Task 6 ledger storage | DONE | Added `provenance_event` to V1 only, HoneySQL insert/query helpers, public facade delegates, duplicate canonical-ref rejection, and running-event non-proof test. Verified: `clojure -M:test -n com.blockether.vis.ext.persistance-sqlite.core-test`; `clojure -M:test -n com.blockether.vis.core-test -n com.blockether.vis.internal.persistance-test`; fresh REPL reload of `vis.core`, `internal.persistance`, and SQLite core; `./verify.sh --quick`. |
+| Task 7 evidence bundle storage | DONE | Added `evidence_bundle` / `evidence_bundle_member` to V1 only, persistence derivation from `provenance_event`, public facade delegates, and regression proving caller-supplied slot values are ignored. Verified: `clojure -M -e ... :task7-smoke-ok`; fresh REPL reload of `vis.core`, `internal.persistance`, and SQLite core; `./verify.sh --quick`. Note: full `com.blockether.vis.ext.persistance-sqlite.core-test` currently hit pre-existing multiprocess child timeout assertions; non-multiprocess ledger/bundle cases ran before those failures. |
+| Task 8 attestation storage | NEXT | Add attestation rows/writers for gate proof and impediment, requiring accepted evidence bundles; old proof blobs must not be authoritative. |
+| Task 9+ plan/intent/audit | TODO | Must proceed only with regression tests and fresh runtime gates after Task 8 attestation storage. |
 | Legacy removal | TODO / REQUIRED | Final purge task must delete old files and stale names after all callers move. |
 
 
@@ -340,7 +344,7 @@ Acceptance criteria:
 - Old proof-domain specs move to `proof.clj`; old proof/provenance spec owners are deleted after callers move.
 - Tests cover valid and invalid shapes, including fake compact refs and running events.
 
-## Task 3 — NEXT — Make `proof.clj` the canonical internal proof-domain namespace
+## Task 3 — DONE — Make `proof.clj` the canonical internal proof-domain namespace
 
 Work:
 
@@ -439,7 +443,7 @@ Acceptance criteria:
 - Target command is documented in this task when complete.
 - Fresh JVM test passes before any SQLite storage work begins.
 
-## Task 6 — Add first-class event ledger storage
+## Task 6 — DONE — Add first-class event ledger storage
 
 Work:
 
@@ -460,7 +464,7 @@ Acceptance criteria:
 - Ledger checks can detect missing refs, duplicate refs, non-terminal proof refs, and malformed child refs.
 - Existing transcript UI still renders after ledger persistence is introduced.
 
-## Task 7 — Add evidence bundle and derived binding storage
+## Task 7 — DONE — Add evidence bundle and derived binding storage
 
 Work:
 
