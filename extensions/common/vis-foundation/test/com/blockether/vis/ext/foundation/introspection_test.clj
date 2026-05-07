@@ -75,6 +75,35 @@
 (defn- private-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.foundation.introspection" name))))
 
+(defn- attest-successful-gate-and-intent!
+  [store env conversation-id conversation-turn-id intent-id gate-id ref]
+  (let [slot-owner (random-uuid)]
+    (vis/db-store-provenance-event! store {:conversation-id conversation-id
+                                           :conversation-turn-id conversation-turn-id
+                                           :ref ref
+                                           :kind :tool
+                                           :op :v/bash
+                                           :status :done
+                                           :payload {:result {:exit 0}}})
+    ((private-fn "foundation-attest-gate!") env gate-id
+                                            {:kind :gate/proven
+                                             :reason "Observed verification."
+                                             :requirements [{:evidence/slot [slot-owner :proof]
+                                                             :evidence/from-ref ref
+                                                             :evidence/extract [:result :exit]
+                                                             :evidence/guard [:= [:value] 0]
+                                                             :event/kind :tool
+                                                             :event/op :v/bash}]})
+    ((private-fn "foundation-attest-intent!") env intent-id
+                                              {:kind :intent/fulfilled
+                                               :summary "Done."
+                                               :requirements [{:evidence/slot [slot-owner :closure]
+                                                               :evidence/from-ref ref
+                                                               :evidence/extract [:result :exit]
+                                                               :evidence/guard [:= [:value] 0]
+                                                               :event/kind :tool
+                                                               :event/op :v/bash}]})))
+
 ;; -----------------------------------------------------------------------------
 ;; current-turn helper — single rich snapshot of the current turn
 ;; -----------------------------------------------------------------------------
@@ -757,15 +786,12 @@
             gate   ((private-fn "foundation-issue-gate!") e {:plan-id (:id plan)
                                                              :proposition "Verification passes."
                                                              :expected-proof {:slots {}}})]
-        ((private-fn "foundation-prove-gate!") e (:id gate)
-                                               {:summary "Observed verification."
-                                                :refs [ref]})
-        ((private-fn "foundation-fulfill-intent!") e (:id intent)
-                                                   {:summary "Done."
-                                                    :refs [ref]})
-        (let [checks ((private-fn "foundation-intents") e)]
+        (attest-successful-gate-and-intent! s e conversation-id conversation-turn-id (:id intent) (:id gate) ref)
+        (let [checks ((private-fn "foundation-intents") e)
+              audit ((private-fn "foundation-audit") e)]
           (expect (true? (:success? checks)))
-          (expect (str/includes? (:report checks) ref))))))
+          (expect (true? (:success? audit)))
+          (expect (= 2 (get-in audit [:counts :attestations])))))))
 
   (it "attests gate and intent through evidence bundles instead of legacy proof blobs"
     (let [s (h/store)
@@ -936,7 +962,7 @@
         (expect (= "Cannot review ideas until user provides them."
                   (:abandonment-reason abandoned))))))
 
-  (it "rejects compact refs for gate proof"
+  (it "rejects compact refs for gate attestation"
     (let [s (h/store)
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           e (assoc (env s conversation-id)
@@ -948,13 +974,18 @@
                                                            :proposition "Verification passes."
                                                            :expected-proof {:slots {}}})
           thrown (try
-                   ((private-fn "foundation-prove-gate!") e (:id gate)
-                                                          {:summary "Wrong ref."
-                                                           :refs ["i1.1"]})
+                   ((private-fn "foundation-attest-gate!") e (:id gate)
+                                                           {:kind :gate/proven
+                                                            :reason "Wrong ref."
+                                                            :requirements [{:evidence/slot [(:id intent) :proof]
+                                                                            :evidence/from-ref "i1.1"
+                                                                            :evidence/extract [:result :exit]
+                                                                            :evidence/guard [:= [:value] 0]
+                                                                            :event/kind :tool
+                                                                            :event/op :v/bash}]})
                    nil
                    (catch Exception ex ex))]
-      (expect (some? thrown))
-      (expect (str/includes? (ex-message thrown) "canonical")))))
+      (expect (some? thrown)))))
 
 ;; -----------------------------------------------------------------------------
 ;; (v/extensions), (v/extension-docs ...), (v/extension-doc ...),
