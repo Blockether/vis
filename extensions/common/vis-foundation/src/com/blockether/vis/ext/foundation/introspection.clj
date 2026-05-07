@@ -1691,18 +1691,27 @@ _No intents._
       "- none")
     "\n"))
 
+(defn- foundation-audit
+  "Return the persisted proof audit data for the current conversation.
+   This is the model-facing migration path away from legacy proof-check prose:
+   data first, render with `v/audit-report` only for humans."
+  ([env]
+   (foundation-audit env (:conversation-id env)))
+  ([env conversation-id]
+   (try
+     (vis/db-audit-proof (:db-info env) {:conversation-id conversation-id})
+     (catch Throwable e
+       {:success? false
+        :counts {}
+        :violations [{:type :proof-audit-error
+                      :blocking? true
+                      :message (ex-message e)}]}))))
+
 (defn- foundation-audit-report
   ([env]
    (foundation-audit-report env (:conversation-id env)))
   ([env conversation-id]
-   (let [proof-audit (try
-                       (vis/db-audit-proof (:db-info env) {:conversation-id conversation-id})
-                       (catch Throwable e
-                         {:success? false
-                          :counts {}
-                          :violations [{:type :proof-audit-error
-                                        :blocking? true
-                                        :message (ex-message e)}]}))]
+   (let [proof-audit (foundation-audit env conversation-id)]
      (str "# Audit Report
 
 "
@@ -2184,9 +2193,18 @@ _No intents._
                  "(v/abandon-intent! (:id intent) {:reason \"Cannot continue until required input is available.\"})"]
      :before-fn inject-environment}))
 
+(def audit-symbol
+  (vis/symbol 'audit foundation-audit
+    {:doc       "Persisted proof audit data: validates ledger/bundle/attestation lifecycle state. Gate normal answers on :success?."
+     :arglists  '([] [conversation-id])
+     :examples  ["(v/audit)"
+                 "(:violations (v/audit))"
+                 "(when-not (:success? (v/audit)) (answer (v/audit-report)))"]
+     :before-fn inject-environment}))
+
 (def audit-report-symbol
   (vis/symbol 'audit-report foundation-audit-report
-    {:doc       "Conversation-level Markdown audit: per-turn contract summary plus full provenance timeline."
+    {:doc       "Conversation-level Markdown audit: proof audit summary/violations plus full provenance timeline."
      :arglists  '([] [conversation-id])
      :examples  ["(v/audit-report)"
                  "(v/audit-report \"cff21022-c11f-4818-a2de-b4d5c5c4630a\")"]
@@ -2283,6 +2301,7 @@ _No intents._
    block-gate!-symbol
    fulfill-intent!-symbol
    abandon-intent!-symbol
+   audit-symbol
    audit-report-symbol
    extensions-symbol
    extension-docs-symbol
@@ -2292,9 +2311,9 @@ _No intents._
    symbol-doc-symbol])
 
 (def introspection-prompt
-  (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown; (v/audit-report cid?) -> audit.\n"
-    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/provenance-event ref) resolves one ref; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/proof-checks cid?) checks gates/slots/refs deterministically; (v/proofs checks-or-cid?) renders clickable proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
-    "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with (v/prove-gate! gate opts), (v/impede-gate! gate opts), (v/fulfill-intent! id opts), (v/abandon-intent! id opts). Check (v/intents turn-id?) and (v/proof-checks) before normal answer.\n"
+  (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown; (v/audit cid?) -> proof audit data; (v/audit-report cid?) -> human audit.\n"
+    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/provenance-event ref) resolves one ref; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/proof-checks cid?) is legacy deterministic gate detail; (v/proofs checks-or-cid?) renders clickable proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
+    "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with attestation-backed gate/intent APIs where available. Check (v/intents turn-id?) and (:success? (v/audit)) before normal answer.\n"
     "`v/` docs: (v/extensions), (v/extension-docs ref), (v/extension-doc ref), (v/extension-readme ref), (v/namespace-docs ref), (v/symbol-doc ref sym).\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
