@@ -76,6 +76,12 @@
 (def ^:private pre-resolve-conversation-id!
   (deref #'screen/pre-resolve-conversation-id!))
 
+(def ^:private terminal-interrupt-action
+  (deref #'screen/terminal-interrupt-action))
+
+(def ^:private handle-terminal-interrupt!
+  (deref #'screen/handle-terminal-interrupt!))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
    the contract the channel entry point relies on to print a clean
@@ -166,6 +172,28 @@
 
       (activate-workspace-tab-hit! #(swap! refreshes conj %) {:kind :workspace-tab :index 1})
       (expect (= [false] @refreshes)))))
+
+(defdescribe terminal-interrupt-test
+  (it "clears a non-empty draft before quitting on terminal interrupts"
+    (expect (= :clear-input
+              (terminal-interrupt-action
+                {:input (input/paste-text (input/empty-input) "draft")})))
+    (expect (= :quit
+              (terminal-interrupt-action {:input (input/empty-input)}))))
+
+  (it "dispatches reset-input for the first interrupt and shutdown for the next"
+    (let [old-db @state/app-db
+          events (atom [])]
+      (try
+        (with-redefs [state/dispatch (fn [event]
+                                       (swap! events conj event))]
+          (reset! state/app-db {:input (input/paste-text (input/empty-input) "draft")})
+          (handle-terminal-interrupt!)
+          (reset! state/app-db {:input (input/empty-input)})
+          (handle-terminal-interrupt!))
+        (expect (= [[:reset-input] [:shutdown]] @events))
+        (finally
+          (reset! state/app-db old-db))))))
 
 (defdescribe startup-resume-test
   (it "--conversation-id sweeps orphaned running turns before rebuilding history"

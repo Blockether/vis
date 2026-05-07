@@ -24,7 +24,8 @@
            [java.io PrintWriter StringWriter]
            [java.nio.charset Charset]
            [java.util.concurrent TimeUnit]
-           [java.util.concurrent.locks ReentrantLock]))
+           [java.util.concurrent.locks ReentrantLock]
+           [sun.misc Signal SignalHandler]))
 
 ;;; ── Threading model ─────────────────────────────────────────────────────────────
 ;;
@@ -609,8 +610,9 @@
 (def ^:private spinner-tick-ms
   "How often the spinner advances while a turn is in flight. Drives
    both the wait-timeout cap and the animate? predicate, so a quiet
-   render thread still repaints on the same cadence as the spinner."
-  100)
+   render thread still repaints on the same cadence as the spinner.
+   Keep this calm: elapsed-thinking text only needs second-level updates."
+  1000)
 
 (defn- render-loop!
   "The render thread's main loop. Sleeps on `state/render-monitor` and
@@ -799,6 +801,46 @@
     (.addShutdownHook (Runtime/getRuntime) hook)
     hook))
 
+(defn- terminal-interrupt-action
+  "Action for terminal-level interrupts (SIGINT from Ctrl+C, SIGTSTP from
+   Ctrl+Z) that never reach Lanterna as KeyStrokes on some terminals.
+   Match the in-band Ctrl+C contract: first interrupt clears a draft; the
+   next interrupt on an empty editor exits the TUI."
+  [db]
+  (if (input-empty? (:input db))
+    :quit
+    :clear-input))
+
+(defn- handle-terminal-interrupt!
+  []
+  (case (terminal-interrupt-action @state/app-db)
+    :clear-input (state/dispatch [:reset-input])
+    :quit        (state/dispatch [:shutdown])))
+
+(defn- register-terminal-signal-handler!
+  [signal-name f]
+  (try
+    (let [signal   (Signal. signal-name)
+          previous (Signal/handle signal
+                     (reify SignalHandler
+                       (handle [_ _signal]
+                         (try (f) (catch Throwable _ nil)))))]
+      (fn []
+        (try
+          (Signal/handle signal previous)
+          (catch Throwable _ nil))))
+    (catch IllegalArgumentException _ nil)
+    (catch Throwable _ nil)))
+
+(defn- register-terminal-interrupt-handlers!
+  []
+  (let [cleanups (keep #(register-terminal-signal-handler!
+                          % handle-terminal-interrupt!)
+                   ["INT" "TSTP"])]
+    (fn []
+      (doseq [cleanup cleanups]
+        (cleanup)))))
+
 (defn- subscribe-title-listener!
   "Wire `(conversation-title \"...\")` calls inside this conversation's iteration
    loop to the TUI header: every change dispatches `[:set-title]`
@@ -967,9 +1009,11 @@
            ;; ~500 ms / big-trace-bubble on the render thread.
            ;; Stays nil for fresh conversations (nothing to warm).
            prewarm-thread (volatile! nil)
-           provider-limits-thread (volatile! nil)]
+           provider-limits-thread (volatile! nil)
+           terminal-signal-cleanup (volatile! nil)]
        (.startScreen screen)
        (try
+         (vreset! terminal-signal-cleanup (register-terminal-interrupt-handlers!))
       ;; Show provider dialog on first launch if no config
          (when-not (:config @state/app-db)
            (when (not (:dialog-open? @state/app-db))
@@ -1179,6 +1223,8 @@
                    messages-top (or messages-top 0)
                    key     (.pollInput screen)]
                (cond
+                 (:shutdown? db) nil
+
                  (nil? key) (do (Thread/sleep 16) (recur))
 
                ;; ── Bracketed paste ───────────────────────────────────────────────────
@@ -1763,6 +1809,11 @@
 
                        :continue (recur))))))))
          (finally
+           ;; Restore process-level INT/TSTP handling before teardown. If the
+           ;; user hits Ctrl+C during cleanup, let the JVM/default handler win
+           ;; instead of re-entering the TUI dispatcher.
+           (when-let [cleanup @terminal-signal-cleanup]
+             (try (cleanup) (catch Throwable _ nil)))
         ;; Tell native terminals to stop wrapping pastes and reporting
         ;; SGR mouse events.
            (disable-terminal-escape-modes! opts)

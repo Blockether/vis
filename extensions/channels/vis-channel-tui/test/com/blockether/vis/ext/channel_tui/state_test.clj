@@ -425,6 +425,26 @@
         (expect (= ["Cancelling current turn…" [:level :info :ttl-ms 2500]]
                   @notified))))))
 
+(defdescribe live-progress-rate-test
+  (it "throttles reasoning redraws to once per second and flushes lifecycle chunks"
+    (let [make-progress-render-updater @#'state/make-progress-render-updater
+          events (atom [])
+          now-ms (atom 0)
+          update! (make-progress-render-updater
+                    #(swap! events conj %)
+                    #(long @now-ms))]
+      (update! [:t0] {:phase :reasoning})
+      (reset! now-ms 999)
+      (update! [:t999] {:phase :reasoning})
+      (reset! now-ms 1000)
+      (update! [:t1000] {:phase :reasoning})
+      (reset! now-ms 1001)
+      (update! [:done] {:phase :iteration-final})
+      (expect (= [[:set-progress-iterations [:t0]]
+                  [:set-progress-iterations [:t1000]]
+                  [:set-progress-iterations [:done]]]
+                @events)))))
+
 (defdescribe send-message-test
   (it "keeps @mentions compact in chat while expanding them for the agent"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
