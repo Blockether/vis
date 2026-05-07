@@ -1379,6 +1379,33 @@
                 :bundle-status (:status bundle-row)})))
     bundle-row))
 
+(defn- update-plan-resolution-after-gate!
+  [db-info gate-id]
+  (let [gate-row (require-row db-info :conversation_intent_gate gate-id "conversation_intent_gate not found")
+        plan-id (:plan_id gate-row)
+        required-gates (query! db-info {:select [:status]
+                                        :from :conversation_intent_gate
+                                        :where [:and
+                                                [:= :plan_id plan-id]
+                                                [:= :required 1]]})
+        statuses (set (map :status required-gates))]
+    (cond
+      (and (seq required-gates) (= #{"proven"} statuses))
+      (execute! db-info {:update :conversation_intent_plan
+                         :set {:status "completed"}
+                         :where [:and
+                                 [:= :id plan-id]
+                                 [:= :status "active"]]})
+
+      (contains? statuses "impeded")
+      (execute! db-info {:update :conversation_intent_plan
+                         :set {:status "abandoned"}
+                         :where [:and
+                                 [:= :id plan-id]
+                                 [:= :status "active"]]})
+
+      :else nil)))
+
 (defn db-create-attestation!
   "Persist an explicit decision over an accepted evidence bundle. Gate proof and
    impediment attestations update gate status as an attestation-derived
@@ -1445,7 +1472,8 @@
                                          :resolved_ref nil
                                          :resolved_at (now-ms)}
                                    :where [:= :id subject-id]})
-                nil))
+                nil)
+              (update-plan-resolution-after-gate! tx-info subject-id))
             (row->attestation
               (require-row tx-info :attestation id "attestation not found after insert"))))))))
 

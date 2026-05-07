@@ -188,8 +188,9 @@ No task is DONE if:
 | Task 6 ledger storage | DONE | Added `provenance_event` to V1 only, HoneySQL insert/query helpers, public facade delegates, duplicate canonical-ref rejection, and running-event non-proof test. Verified: `clojure -M:test -n com.blockether.vis.ext.persistance-sqlite.core-test`; `clojure -M:test -n com.blockether.vis.core-test -n com.blockether.vis.internal.persistance-test`; fresh REPL reload of `vis.core`, `internal.persistance`, and SQLite core; `./verify.sh --quick`. |
 | Task 7 evidence bundle storage | DONE | Added `evidence_bundle` / `evidence_bundle_member` to V1 only, persistence derivation from `provenance_event`, public facade delegates, and regression proving caller-supplied slot values are ignored. Verified: `clojure -M -e ... :task7-smoke-ok`; fresh REPL reload of `vis.core`, `internal.persistance`, and SQLite core; `./verify.sh --quick`. Note: full `com.blockether.vis.ext.persistance-sqlite.core-test` currently hit pre-existing multiprocess child timeout assertions; non-multiprocess ledger/bundle cases ran before those failures. |
 | Task 8 attestation storage | DONE | Added `attestation` V1 table, attestation persistence/read facade, and `db-attest-gate!` writer that requires an accepted evidence bundle and updates gate status as an attestation-derived projection. Rejected bundles cannot prove gates. Verified: attestation in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. Note: full SQLite core test still hits pre-existing multiprocess child timeout assertions after passing proof/attestation cases. |
-| Task 9 plan completion transition | NEXT | Add plan completion transition from accepted gate attestations; keep intent fulfillment separate. |
-| Task 10+ intent/audit/hooks | TODO | Must proceed only with regression tests and fresh runtime gates after Task 9 plan completion. |
+| Task 9 plan completion transition | DONE | Plan status now transitions to `completed` only when all required gates are proven by accepted gate attestations; one proven gate does not complete a multi-gate plan, and intent remains active. Verified: task9 in-memory SQLite smoke, fresh REPL reload of `vis.core`, `internal.persistance`, SQLite core, and `./verify.sh --quick`. |
+| Task 10 intent fulfillment/abandonment | NEXT | Require intent closure to consume completed-plan/attestation evidence; keep abandonment evidence explicit. |
+| Task 11+ audit/hooks/rendering | TODO | Must proceed only with regression tests and fresh runtime gates after Task 10 intent closure. |
 | Legacy removal | TODO / REQUIRED | Final purge task must delete old files and stale names after all callers move. |
 
 
@@ -517,7 +518,7 @@ Acceptance criteria:
 - Audit can list which attestation supports each terminal state.
 - No persistence write path treats old proof blobs as authoritative evidence.
 
-## Task 9 — Make plan completion a real transition
+## Task 9 — DONE — Make plan completion a real transition
 
 Work:
 
