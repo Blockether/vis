@@ -283,7 +283,74 @@
       (expect (= "proven" (:status gate-row)))
       (expect (some? (:proof gate-row)))
       (expect (nil? (:impediment gate-row)))
-      (expect (= 1 (raw-count s :attestation))))))
+      (expect (= 1 (raw-count s :attestation)))))
+
+  (it "completes a plan only after every required gate has an accepted proof attestation"
+    (let [s          (h/store)
+          cid        (vis/db-store-conversation! s {:channel :tui})
+          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                         :user-request "complete plan"
+                                                         :status :running})
+          intent     (vis/db-store-intent! s {:conversation-turn-id tid
+                                              :title "Complete plan"
+                                              :rationale "User needs both checks."})
+          plan       (vis/db-store-plan! s {:intent-id (:id intent)
+                                            :summary "Two gate plan"})
+          gate-a     (vis/db-store-gate! s {:plan-id (:id plan)
+                                            :question "First check?"})
+          gate-b     (vis/db-store-gate! s {:plan-id (:id plan)
+                                            :question "Second check?"})
+          slot-owner (random-uuid)
+          ref-a      (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          ref-b      (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/2")]
+      (doseq [ref [ref-a ref-b]]
+        (vis/db-store-provenance-event! s {:conversation-id cid
+                                           :conversation-turn-id tid
+                                           :ref ref
+                                           :kind :tool
+                                           :op :v/bash
+                                           :status :done
+                                           :payload {:result {:exit 0}}}))
+      (let [bundle-a (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                        :kind :proof
+                                                        :subject-kind :gate
+                                                        :subject-id (:id gate-a)
+                                                        :requirements [{:evidence/slot [slot-owner :exit-a]
+                                                                        :evidence/from-ref ref-a
+                                                                        :evidence/extract [:result :exit]
+                                                                        :evidence/guard [:= [:value] 0]
+                                                                        :event/kind :tool
+                                                                        :event/op :v/bash}]})
+            bundle-b (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                        :kind :proof
+                                                        :subject-kind :gate
+                                                        :subject-id (:id gate-b)
+                                                        :requirements [{:evidence/slot [slot-owner :exit-b]
+                                                                        :evidence/from-ref ref-b
+                                                                        :evidence/extract [:result :exit]
+                                                                        :evidence/guard [:= [:value] 0]
+                                                                        :event/kind :tool
+                                                                        :event/op :v/bash}]})]
+        (vis/db-attest-gate! s {:gate-id (:id gate-a)
+                                :evidence-bundle-id (:id bundle-a)
+                                :kind :gate/proven
+                                :reason "First accepted."})
+        (expect (= "active" (:status (first (raw-query s {:select [:status]
+                                                          :from :conversation_intent_plan
+                                                          :where [:= :id (str (:id plan))]})))))
+        (expect (= "active" (:status (first (raw-query s {:select [:status]
+                                                          :from :conversation_intent
+                                                          :where [:= :id (str (:id intent))]})))))
+        (vis/db-attest-gate! s {:gate-id (:id gate-b)
+                                :evidence-bundle-id (:id bundle-b)
+                                :kind :gate/proven
+                                :reason "Second accepted."})
+        (expect (= "completed" (:status (first (raw-query s {:select [:status]
+                                                             :from :conversation_intent_plan
+                                                             :where [:= :id (str (:id plan))]})))))
+        (expect (= "active" (:status (first (raw-query s {:select [:status]
+                                                          :from :conversation_intent
+                                                          :where [:= :id (str (:id intent))]})))))))))
 
 (defn- drop-conversation-intent-schema!
   [db-file]
