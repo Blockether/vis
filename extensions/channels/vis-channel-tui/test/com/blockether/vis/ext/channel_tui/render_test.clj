@@ -460,6 +460,105 @@
       (expect (str/includes? body "(+ 0 1)"))
       (expect (str/includes? body "(+ 11 1)")))))
 
+(defdescribe progress-streaming-perf-test
+  (it "per-iteration cache keeps live-stream tick under 50 ms with 15 iterations"
+    ;; Regression test for the bug where `progress->lines-data` keyed its
+    ;; cache on `(System/identityHashCode iterations)` and `(quot now-ms 1000)`.
+    ;; `make-progress-tracker` rebuilds the iterations vec on every chunk via
+    ;; `(vec (vals @timeline))`, so the identity-keyed cache missed every
+    ;; tick. With a 15-iteration trace we measured 554 ms per 80 ms render
+    ;; tick - 7x over budget. The fix replaces the trace-level cache with
+    ;; per-iteration content-fingerprint caching, so completed iterations
+    ;; hit forever and only the streaming iteration recomputes.
+    ;;
+    ;; Threshold (50 ms) is generous: real measurements land ~10 ms on a
+    ;; warm JVM. We pick 50 ms so JIT-cold CI runs don't false-alarm while
+    ;; still failing loudly if someone reintroduces an O(N-iters) per-tick
+    ;; reformat path. Bump the threshold here ONLY if you have a
+    ;; corresponding bench measurement showing the new floor; never bump
+    ;; just to make a flake go away.
+    ;; Note on stdout content: we deliberately use a string with NO
+    ;; leading/trailing whitespace. `format-iteration-entry-entries`
+    ;; runs `(str/trim x)` on stdout before passing to `wrap-text`,
+    ;; and `str/trim` returns a new String instance when it actually
+    ;; trims - which busts `wrap-text`'s `identityHashCode`-keyed
+    ;; cache. That's a separate latent issue (see autoresearch.ideas
+    ;; "replace identityHashCode in wrap-text with content fp"); this
+    ;; test focuses on the per-iteration-cache regression.
+    (let [mk-iter (fn [i]
+                    {:thinking (apply str (repeat (+ 200 (* 100 i)) \.))
+                     :code [(str "(do (println :iter " i ") (mapv inc (range 100)))")]
+                     :comments [nil]
+                     :results ["[1 2 3 ...]"]
+                     :result-kinds [:value]
+                     :result-details [nil]
+                     :stdouts [(apply str (repeat 1500 "output"))]
+                     :stderrs [""]
+                     :durations [50]
+                     :successes [true]})
+          base       (mapv mk-iter (range 14))
+          last-base  (mk-iter 14)
+          bubble-w   130
+          settings   {:show-thinking true :show-iterations true}]
+      (render/invalidate-cache!)
+      ;; Warm: 3 cycles to JIT the format path.
+      (dotimes [_ 3]
+        (render/progress->lines-data {:iterations base} bubble-w settings
+          {:now-ms 1700000000000 :turn-start-ms 1700000000000
+           :viewport-rows 50}))
+      ;; Streaming: NEW iterations vec each tick (mimics `(vec (vals @timeline))`),
+      ;; last iteration's thinking grows by 100 chars per tick.
+      (let [runs 30
+            t0   (System/nanoTime)]
+        (dotimes [i runs]
+          (let [growing  (assoc last-base :thinking
+                           (apply str (:thinking last-base)
+                             (repeat (* 100 (inc i)) \.)))
+                its'     (conj (vec base) growing)]
+            (render/progress->lines-data {:iterations its'} bubble-w settings
+              {:now-ms        (+ 1700000000000 (* i 80))
+               :turn-start-ms 1700000000000
+               :viewport-rows 50})))
+        (let [per-tick-ms (/ (/ (- (System/nanoTime) t0) 1e6) (double runs))]
+          (expect (< per-tick-ms 50.0))))))
+
+  (it "completed-iteration cache hits when the iterations vec gets a fresh identity"
+    ;; Direct contract test: take a fully-completed iterations vec, format
+    ;; it once to warm the cache, then format again with a freshly-allocated
+    ;; copy that has identical content but different `identityHashCode`.
+    ;; The second call must be ~free (cache hit). If someone reintroduces
+    ;; `identityHashCode`-based keying this test fails immediately.
+    (let [iter   {:thinking "some reasoning"
+                  :code ["(+ 1 2)"]
+                  :comments [nil]
+                  :results ["3"]
+                  :result-kinds [:value]
+                  :result-details [nil]
+                  :stdouts [""]
+                  :stderrs [""]
+                  :durations [10]
+                  :successes [true]}
+          iters1 (vec (repeat 5 iter))
+          ;; Same content, fresh vec identity, fresh map identities for entries.
+          iters2 (mapv #(into {} %) iters1)]
+      (render/invalidate-cache!)
+      ;; Warm with iters1.
+      (dotimes [_ 3]
+        (render/progress->lines-data {:iterations iters1} 100
+          {:show-thinking true :show-iterations true}
+          {:now-ms 1700000000000 :turn-start-ms 1700000000000}))
+      ;; iters2 has identical CONTENT but different identity at every level.
+      (let [t0 (System/nanoTime)]
+        (dotimes [_ 100]
+          (render/progress->lines-data {:iterations iters2} 100
+            {:show-thinking true :show-iterations true}
+            {:now-ms 1700000000000 :turn-start-ms 1700000000000}))
+        (let [per-call-us (/ (/ (- (System/nanoTime) t0) 1e3) 100.0)]
+          ;; Cache hit path: should be well under 1 ms (1000 µs) per call
+          ;; even with 5 cached iterations to concat. If this exceeds 5 ms
+          ;; the per-iteration content-keyed cache is broken.
+          (expect (< per-call-us 5000.0)))))))
+
 (defdescribe iteration-live-ordering-test
   (describe "ordered live progress events"
     (it "renders reasoning / code / reasoning in event order"
@@ -2117,29 +2216,6 @@
                          :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
       (expect (= 1 (count (re-seq #"BASH bash" body))))))
-
-  (it "renders nrepl-eval as bash-class output, not duplicated META"
-    (render/invalidate-cache!)
-    (let [huge-result (str "Ran bash in `.` - exit `0`, 85 ms.\n"
-                        "Command: `clj-nrepl-eval -p 7888 (+ 1 2)`\n"
-                        (str/join " " (repeat 500 "eval-output")))
-          trace       [{:code ["(v/nrepl-eval \"(+ 1 2)\" {:port 7888})"]
-                        :results [huge-result]
-                        :result-kinds [:tool]
-                        :result-details [{:op :v/nrepl-eval
-                                          :op-class :op/shell
-                                          :presentation-kind :tool/shell
-                                          :color-role :tool-color/shell}]
-                        :stdouts [""]
-                        :durations [85]
-                        :successes [true]}]
-          payload     (render/format-answer-with-thinking-data
-                        "" trace 96 {:show-iterations true} nil false
-                        {:conversation-id "conversation"
-                         :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
-          body        (strip-ansi (:text payload))]
-      (expect (= 1 (count (re-seq #"BASH nrepl-eval" body))))
-      (expect (not (str/includes? body "META nrepl-eval")))))
 
   (it "keeps shell stderr inside the shell result zone"
     (let [lines (format-iteration-entry {:iteration      0

@@ -530,10 +530,16 @@
         ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
         ;; mismatch. Use the const, never the value.
         bubble-w     (max 1 (- cols render/MESSAGE_SIDE_PAD))
+        inner-h      (max 0 (- messages-bottom messages-top 2)) ;; top + bottom margins
+        ;; `:viewport-rows` lets the live progress bubble truncate its
+        ;; iteration trace to what actually fits on screen instead of
+        ;; formatting all 15-of-N iterations every spinner tick. Off-screen
+        ;; iterations collapse under the existing `PROGRESS HISTORY`
+        ;; toggle; clicking it expands the full trace on demand.
         progress-extra {:now-ms         now-ms
                         :turn-start-ms turn-start-ms
-                        :cancelling?    (boolean cancelling?)}
-        inner-h      (max 0 (- messages-bottom messages-top 2)) ;; top + bottom margins
+                        :cancelling?    (boolean cancelling?)
+                        :viewport-rows  inner-h}
         ;; Single virtualized layout pass: cheap height estimate for
         ;; every message, full projection + real height ONLY for
         ;; messages whose viewport interval is non-empty. The
@@ -644,7 +650,8 @@
         text-top       (+ messages-top render/MESSAGE_MARGIN_TOP)
         progress-extra {:now-ms        now-ms
                         :turn-start-ms turn-start-ms
-                        :cancelling?   (boolean cancelling?)}
+                        :cancelling?   (boolean cancelling?)
+                        :viewport-rows inner-h}
         layout         (virtual/layout messages bubble-w settings
                          messages-scroll inner-h
                          {:progress       progress
@@ -2076,7 +2083,16 @@
             (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @vis/tty-out true))
             (throw t))))
       (finally
-        (vis/shutdown!)))
+        (vis/shutdown!)
+        ;; Stop the agent thread-pool so the JVM can exit immediately
+        ;; after the TUI tears down. Without this the pool's non-daemon
+        ;; threads keep the process alive for ~60s of idle keep-alive,
+        ;; which from the user's seat looks like "Ctrl+C froze vis":
+        ;; the screen is gone, raw mode is restored, but the shell
+        ;; prompt does not return. CLI / Telegram channel paths already
+        ;; call `shutdown-agents` after their main loops; the TUI did
+        ;; not, so the hang was channel-specific.
+        (try (shutdown-agents) (catch Throwable _ nil))))
     (when (pos? @exit-code)
       (System/exit @exit-code))))
 
