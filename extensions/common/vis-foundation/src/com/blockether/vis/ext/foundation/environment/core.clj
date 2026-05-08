@@ -33,6 +33,7 @@
    [com.blockether.vis.ext.foundation.environment.render :as render]
    [com.blockether.vis.ext.foundation.environment.repositories :as repositories]
    [com.blockether.vis.ext.foundation.environment.skills :as skills]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -54,8 +55,10 @@
 
 (defn- canonical-cwd ^String []
   (try
-    (.getCanonicalPath (java.io.File. (System/getProperty "user.dir")))
-    (catch Throwable _ (System/getProperty "user.dir"))))
+    (.getCanonicalPath (workspace-context/cwd))
+    (catch Throwable _
+      (or workspace-context/*workspace-root*
+        (System/getProperty "user.dir")))))
 
 (defn- compute-snapshot
   "Build the full snapshot map. Each piece is independently guarded

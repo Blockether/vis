@@ -51,6 +51,7 @@
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [taoensso.telemere :as tel]
    [com.blockether.vis.internal.format :as fmt]))
 
@@ -585,10 +586,15 @@
       (str/join "\n" (map format-system-nudge nudges))
       "\n</system_nudges>")))
 
+(defn- callback-workspace-root
+  [args]
+  (some workspace-context/workspace-root (filter map? args)))
+
 (defn- call-extension-callback
   [ext f & args]
   (binding [extension/*current-extension* ext
-            extension/*current-symbol* nil]
+            extension/*current-symbol* nil
+            workspace-context/*workspace-root* (callback-workspace-root args)]
     (apply f args)))
 
 (defn build-iteration-context
@@ -1256,6 +1262,35 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
                          " failed; skipping provider prompt block")})
       nil)))
 
+(defn- workspace-prompt-body
+  [{:workspace/keys [id repo-id root state] :keys [main]}]
+  (str "id: " (or id "unknown") "\n"
+    "root: " root "\n"
+    (when repo-id (str "repo-id: " repo-id "\n"))
+    "state: " (name (or state :ready)) "\n"
+    (when (seq main)
+      (str "main:\n"
+        (when-let [branch (:branch main)]
+          (str "  branch: " branch "\n"))
+        (when-let [head (:head main)]
+          (str "  head: " head "\n"))))))
+
+(defn- render-workspace-prompt-block
+  [environment]
+  (when-let [root (workspace-context/workspace-root environment)]
+    (prompt-block "workspace"
+      (workspace-prompt-body
+        (assoc (or (:workspace environment) {})
+          :workspace/id (or (:workspace/id (:workspace environment))
+                          (:workspace/id environment)
+                          (:conversation-id environment))
+          :workspace/root root
+          :workspace/repo-id (or (:workspace/repo-id (:workspace environment))
+                               (:workspace/repo-id environment))
+          :workspace/state (or (:workspace/state (:workspace environment))
+                             (:workspace/state environment)
+                             :ready))))))
+
 (defn assemble-system-prompt
   "Build the full system prompt: core agent rules + active extension
    environment-info sections + active-extension prompts + the active
@@ -1276,11 +1311,13 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
              {:type :vis/missing-active-extensions})))
   (let [base       (prompt-block "system_prompt" (build-system-prompt {:system-prompt system-prompt}))
         env-info   (render-environment-info-block environment active-extensions)
+        workspace  (render-workspace-prompt-block environment)
         ext-ps     (render-extensions-prompt-block environment active-extensions)
         provider-p (when provider-prompt-context
                      (render-provider-prompt-block provider-prompt-context))
         blocks     (seq (cond-> [base]
                           env-info   (conj env-info)
+                          workspace  (conj workspace)
                           ext-ps     (conj ext-ps)
                           provider-p (conj provider-p)))]
     (str/join "\n\n" blocks)))

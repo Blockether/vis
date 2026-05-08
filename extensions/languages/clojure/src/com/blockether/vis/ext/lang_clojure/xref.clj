@@ -14,6 +14,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.markdown :as md]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [rewrite-clj.zip :as z])
   (:import
    (java.io File)))
@@ -32,7 +33,7 @@
 
 (defn- safe-path
   ^File [p]
-  (let [cwd        (fs/cwd)
+  (let [cwd        (workspace-context/cwd)
         raw-path   (fs/path (str p))
         resolved   (if (.isAbsolute raw-path)
                      raw-path
@@ -46,12 +47,13 @@
 
 (defn- rel-path
   [p]
-  (let [cwd (.normalize (.toAbsolutePath (fs/path (fs/cwd))))
+  (let [cwd-file (workspace-context/cwd)
+        cwd (.normalize (.toAbsolutePath (fs/path cwd-file)))
         f   (if (instance? File p) p (File. (str p)))
         raw (.toPath ^File f)
         abs (.normalize (.toAbsolutePath (if (.isAbsolute raw)
                                            raw
-                                           (fs/path (fs/cwd) (str p)))))]
+                                           (fs/path cwd-file (str p)))))]
     (if (.startsWith abs cwd)
       (str (.relativize cwd abs))
       (str p))))

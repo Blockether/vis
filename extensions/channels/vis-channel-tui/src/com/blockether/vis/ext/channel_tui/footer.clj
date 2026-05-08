@@ -40,7 +40,8 @@
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.git :as git])
-  (:import [java.time Instant ZoneId]
+  (:import [java.io File]
+           [java.time Instant ZoneId]
            [java.time.format DateTimeFormatter]
            [java.util Locale]))
 
@@ -351,7 +352,10 @@
         reasoning-level (or (:reasoning-level settings) default-reasoning-level)
         codex-provider? (= :openai-codex provider)
         codex-verbosity (or (:openai-codex-verbosity settings) default-codex-verbosity)
-        git-spans  (git-footer-spans (git/cached-workspace-status))]
+        git-spans  (git-footer-spans
+                     (if-let [root (:workspace/root db)]
+                       (git/cached-workspace-status (File. (str root)))
+                       (git/cached-workspace-status)))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       model-display

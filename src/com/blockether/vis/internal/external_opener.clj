@@ -21,7 +21,8 @@
    args plus `os.name` and the current working directory. `open!`
    shells out and never throws; errors land in the returned result map."
   (:require [babashka.process :as process]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import (java.io File)
            (java.nio.file Path Paths)))
 
@@ -65,10 +66,10 @@
 ;; =============================================================================
 
 (defn- cwd-path
-  "Normalized absolute current working directory as a Path. Indirected
+  "Normalized absolute explicit workspace cwd as a Path. Indirected
    so tests can redefine it."
   ^Path []
-  (.normalize (.toAbsolutePath (Paths/get (System/getProperty "user.dir") (make-array String 0)))))
+  (.normalize (.toAbsolutePath (.toPath (workspace-context/cwd)))))
 
 (defn- path-of
   ^Path [^String first-segment & more-segments]

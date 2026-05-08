@@ -1,8 +1,44 @@
 (ns com.blockether.vis.ext.foundation.environment.core-test
   (:require
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation.environment.core :as env-core]
-   [lazytest.core :refer [defdescribe expect it]]))
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [lazytest.core :refer [defdescribe expect it]])
+  (:import
+   (java.nio.file Files)
+   (java.nio.file.attribute FileAttribute)
+   (org.eclipse.jgit.api Git)))
+
+(defn- make-tmp-dir ^java.io.File []
+  (let [path (Files/createTempDirectory "vis-env-core-"
+               (into-array FileAttribute []))]
+    (.toFile path)))
+
+(defn- spit-rel [^java.io.File root rel content]
+  (let [f (io/file root rel)]
+    (when-let [parent (.getParentFile f)]
+      (.mkdirs parent))
+    (spit f content)))
+
+(defn- cleanup [^java.io.File root]
+  (when (.exists root)
+    (doseq [^java.io.File f (reverse (file-seq root))]
+      (.delete f))))
+
+(defn- init-repo-on-branch!
+  [^java.io.File root branch]
+  (with-open [git (-> (Git/init) (.setDirectory root) .call)]
+    (let [config (.. git getRepository getConfig)]
+      (.setString config "user" nil "name" "test")
+      (.setString config "user" nil "email" "test@example.com")
+      (.setBoolean config "commit" nil "gpgsign" false)
+      (.save config))
+    (spit-rel root "README.md" "# initial")
+    (-> git .add (.addFilepattern "README.md") .call)
+    (-> git .commit (.setMessage "init") .call)
+    (.. git (branchCreate) (setName branch) (call))
+    (.. git (checkout) (setName branch) (call))))
 
 (defdescribe environment-core-test
   (it "exports the expected environment symbol surface"
@@ -27,13 +63,27 @@
       (expect (str/includes? prompt "(v/snapshot)"))
       (expect (str/includes? prompt "(v/load-skill \"name\")"))
       (expect (str/includes? prompt "(v/reload-extensions!)"))
-      (expect (not (str/includes? prompt "md/")))))
+      (expect (not (str/includes? prompt "`md/`")))))
 
   (it "renders foundation environment info separately from prompt extras"
     (let [info (env-core/environment-info {})]
       (expect (string? info))
       (expect (str/includes? info "<environment>"))
       (expect (str/includes? info "git.summary"))))
+
+  (it "uses active workspace root instead of JVM cwd for v/git snapshots"
+    (let [root   (make-tmp-dir)
+          branch "feature/ws"]
+      (try
+        (init-repo-on-branch! root branch)
+        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+          (let [git (:git (env-core/refresh!))]
+            (expect (= branch (:branch git)))
+            (expect (= (.getCanonicalPath root) (:root git)))))
+        (finally
+          (binding [workspace-context/*workspace-root* nil]
+            (env-core/refresh!))
+          (cleanup root)))))
 
   (it "tracks loaded skills for the <active_skills> prompt block"
     (let [active-skills (atom {})

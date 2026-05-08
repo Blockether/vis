@@ -8,7 +8,8 @@
             [com.blockether.vis.ext.channel-tui.command-suggest :as slash]
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
-            [com.blockether.vis.ext.channel-tui.render :as render]))
+            [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.internal.workspace-context :as workspace-context]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -65,6 +66,8 @@
 
 (def ^:private workspace-state-keys
   [:conversation
+   :workspace
+   :workspace/root
    :title
    :messages
    :messages-scroll
@@ -88,6 +91,8 @@
 (defn- empty-workspace-state
   []
   {:conversation nil
+   :workspace nil
+   :workspace/root nil
    :title nil
    :messages []
    :messages-scroll nil
@@ -118,6 +123,19 @@
   (or (:active-workspace-id db)
     (:id (some #(when (:active? %) %) (:workspace-tabs db)))
     (:id (first (:workspace-tabs db)))))
+
+(defn- active-workspace-tab
+  [db]
+  (let [active-id (current-workspace-id db)]
+    (some #(when (= (:id %) active-id) %) (:workspace-tabs db))))
+
+(defn- active-workspace
+  [db]
+  (or (:workspace db)
+    (some-> (active-workspace-tab db) :workspace)
+    (when-let [root (or (:workspace/root db)
+                      (some-> (active-workspace-tab db) :workspace/root))]
+      {:workspace/root root})))
 
 (defn- sync-active-workspace
   [db]
@@ -667,19 +685,27 @@
     db))
 
 (reg-event-db :add-workspace-tab
-  (fn [db _]
-    (let [db    (-> db ensure-workspace-tabs sync-active-workspace)
-          tabs  (vec (:workspace-tabs db))
-          n     (next-workspace-tab-number tabs)
-          id    (keyword (str "tab-" n))
-          label (str "Tab " n)
-          tab   {:id id :label label :active? true}]
+  (fn [db [_ opts]]
+    (let [db        (-> db ensure-workspace-tabs sync-active-workspace)
+          tabs      (vec (:workspace-tabs db))
+          n         (next-workspace-tab-number tabs)
+          id        (keyword (str "tab-" n))
+          workspace (:workspace opts)
+          root      (or (:workspace/root workspace) (:workspace/root opts))
+          label     (or (:label opts)
+                      (some-> workspace :main :branch)
+                      (str "Tab " n))
+          tab       (cond-> {:id id :label label :active? true}
+                      workspace (assoc :workspace workspace)
+                      root      (assoc :workspace/root root))]
       (if (>= (count tabs) max-workspace-tabs)
         db
-        (-> db
-          (assoc :workspace-tabs (conj (mapv #(dissoc % :active?) tabs) tab)
-            :active-workspace-id id)
-          (merge (empty-workspace-state)))))))
+        (cond-> (-> db
+                  (assoc :workspace-tabs (conj (mapv #(dissoc % :active?) tabs) tab)
+                    :active-workspace-id id)
+                  (merge (empty-workspace-state)))
+          workspace (assoc :workspace workspace)
+          root      (assoc :workspace/root root))))))
 
 (reg-event-db :select-workspace-tab-index
   (fn [db [_ idx]]
@@ -990,10 +1016,12 @@
   ;;      `def`, then `v/preview` relevant lines before answering.
   (fn [db [_ text]]
     (let [visible-text (input/expand-paste-placeholders text (:pastes db))
-          agent-text   (input/expand-file-mentions visible-text)
+          workspace-id (current-workspace-id db)
+          workspace    (active-workspace db)
+          agent-text   (binding [workspace-context/*workspace-root* (workspace-context/workspace-root workspace)]
+                         (input/expand-file-mentions visible-text))
           token        (vis/cancellation-token)
           extra-body   (turn-extra-body db)
-          workspace-id (current-workspace-id db)
           turn-features (cond-> {}
                           (get-in db [:settings :voice/respond?])
                           (assoc :voice-response? true))
@@ -1019,7 +1047,7 @@
                :slash-command-index 0
                :slash-command-hidden? false))
        :fx [[:rlm-turn workspace-id (:conversation db) agent-text token
-             reasoning-level extra-body turn-features]]})))
+             reasoning-level extra-body turn-features workspace]]})))
 
 (reg-event-fx :cancel-turn
   (fn [db _]
@@ -1100,7 +1128,7 @@
         (vis/refresh-cached-routers! router)))))
 
 (reg-fx :rlm-turn
-  (fn [workspace-id conversation text token reasoning-level extra-body turn-features]
+  (fn [workspace-id conversation text token reasoning-level extra-body turn-features workspace]
     (let [fut (vis/worker-future "vis-tui-turn"
                 (fn []
                   (try
@@ -1116,7 +1144,8 @@
                                     :cancel-atom       (vis/cancellation-atom token)
                                     :reasoning-default reasoning-level
                                     :extra-body        extra-body
-                                    :turn-features     turn-features})]
+                                    :turn-features     turn-features
+                                    :workspace         workspace})]
                       (if (:error result)
                         (dispatch [:message-received workspace-id (vis/format-error (:error result))])
                         (do

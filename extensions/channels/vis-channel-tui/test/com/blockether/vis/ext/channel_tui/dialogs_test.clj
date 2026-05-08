@@ -4,7 +4,8 @@
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.external-opener :as opener])
+            [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -135,7 +136,17 @@
                                    {:status :ok :target path})]
         (is (= {:status :ok :target "deps.edn"}
               @(open-picker-item! {:path "deps.edn"})))
-        (is (= ["deps.edn"] @calls))))))
+        (is (= ["deps.edn"] @calls)))))
+
+  (testing "file picker opener preserves active workspace root across worker thread"
+    (let [seen-root (promise)
+          open-picker-item! (var-get #'dlg/open-picker-item!)]
+      (with-redefs [opener/open! (fn [path]
+                                   (deliver seen-root workspace-context/*workspace-root*)
+                                   {:status :ok :target path})]
+        (binding [workspace-context/*workspace-root* "/tmp/vis-dialog-ws"]
+          @(open-picker-item! {:path "deps.edn"}))
+        (is (= "/tmp/vis-dialog-ws" (deref seen-root 1000 ::timeout)))))))
 
 (deftest file-picker-table-test
   (let [table-widths    (var-get #'dlg/file-picker-table-widths)
@@ -442,6 +453,7 @@
     (testing "command palette keeps Configure Providers separate from Settings"
       (is (= ["New Conversation"
               "New Tab"
+              "New Worktree"
               "Fork Conversation"
               "Switch Conversation"
               "Configure Providers"

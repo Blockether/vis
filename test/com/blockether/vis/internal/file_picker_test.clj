@@ -1,5 +1,7 @@
 (ns com.blockether.vis.internal.file-picker-test
-  (:require [com.blockether.vis.internal.file-picker :as picker]
+  (:require [clojure.java.io :as io]
+            [com.blockether.vis.internal.file-picker :as picker]
+            [com.blockether.vis.internal.workspace-context :as workspace-context]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private sample-entries
@@ -103,3 +105,19 @@
       (expect (true? (picker/ignored-path? snapshot "target/classes/Foo.class")))
       (expect (true? (picker/ignored-path? snapshot "scratch/output.txt")))
       (expect (false? (picker/ignored-path? snapshot "src/core.clj"))))))
+
+(defdescribe collect-file-picker-entries-test
+  (it "indexes files from active workspace root instead of JVM cwd"
+    (let [root (.toFile (java.nio.file.Files/createTempDirectory "vis-picker-ws" (make-array java.nio.file.attribute.FileAttribute 0)))
+          nested (java.io.File. root "nested")
+          file (java.io.File. nested "only-here.txt")]
+      (try
+        (.mkdirs nested)
+        (spit file "workspace")
+        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+          (expect (= ["nested/only-here.txt"]
+                    (mapv :path (picker/collect-file-picker-entries)))))
+        (finally
+          (io/delete-file file true)
+          (io/delete-file nested true)
+          (io/delete-file root true))))))

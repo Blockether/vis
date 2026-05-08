@@ -6,6 +6,7 @@
    [babashka.fs :as fs]
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation.environment.skills :as skills]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-tmp*
@@ -184,6 +185,19 @@
           (expect (empty? warnings)))))))
 
 (defdescribe lookup-shape-test
+  (it "lookup uses repo skills from active workspace root instead of JVM cwd"
+    (with-tmp* (fn [root]
+                 (write-skill! root "ws-only"
+                   "---\nname: ws-only\ndescription: Workspace-only skill. Use when workspace root is bound.\n---\n\nbody")
+                 (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+                   (skills/reload!)
+                   (let [s (skills/lookup "ws-only")]
+                     (expect (true? (:found? s)))
+                     (expect (= :repo (:source s)))
+                     (expect (str/includes? (:path s) "ws-only"))))
+                 (binding [workspace-context/*workspace-root* nil]
+                   (skills/reload!)))))
+
   (it "lookup returns map with :found? flag — present case"
     ;; Use the live cache against the actual repo; we know `caveman`
     ;; is one of the repo's skills.

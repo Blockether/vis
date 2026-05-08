@@ -15,6 +15,8 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.workspace :as workspace]
+            [com.blockether.vis.internal.workspace-context :as workspace-context]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna SGR TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType
@@ -234,6 +236,37 @@
 (defn- input-state-from-text
   [text]
   (input/paste-text (input/empty-input) (or text "")))
+
+(defn- open-worktree-tab!
+  [{:keys [branch-name config install-conversation!]}]
+  (cond
+    (nil? config)
+    (do
+      (vis/notify! "Config still loading; try again in a moment"
+        :level :warn :ttl-ms copy-success-ttl-ms)
+      nil)
+
+    (>= (count (or (seq (:workspace-tabs @state/app-db)) [:main])) 8)
+    (do
+      (vis/notify! "Maximum 8 tabs open"
+        :level :warn :ttl-ms copy-success-ttl-ms)
+      nil)
+
+    :else
+    (try
+      (let [worktree (workspace/create-worktree!
+                       (cond-> {}
+                         (not (str/blank? branch-name))
+                         (assoc :branch branch-name)))]
+        (state/dispatch [:add-workspace-tab {:workspace worktree}])
+        (install-conversation! (chat/make-conversation config) true)
+        (vis/notify! (str "Created worktree " (get-in worktree [:main :branch]))
+          :level :success :ttl-ms copy-success-ttl-ms)
+        nil)
+      (catch Throwable t
+        (vis/notify! (str "Worktree failed: " (or (ex-message t) (.getName (class t))))
+          :level :error :ttl-ms (* 3 copy-success-ttl-ms))
+        nil))))
 
 (defn- copy-conversation-as-markdown! [conversation-id]
   (vis/worker-future "vis-tui-copy-conversation-markdown"
@@ -488,18 +521,36 @@
     (with-dialog-lock
       #(dlg/text-view-dialog! screen "Provenance" (provenance-dialog-lines conversation-id ref event)))))
 
+(defn- active-workspace-root
+  [db]
+  (workspace-context/workspace-root
+    (or (:workspace/root db)
+      (get-in db [:workspace :workspace/root])
+      (let [active-id (or (:active-workspace-id db)
+                        (:id (some #(when (:active? %) %) (:workspace-tabs db)))
+                        (:id (first (:workspace-tabs db))))]
+        (some #(when (= (:id %) active-id)
+                 (or (:workspace/root %)
+                   (get-in % [:workspace :workspace/root])))
+          (:workspace-tabs db))))))
+
+(defn- open-click-target-worker!
+  [{:keys [kind url]} workspace-root]
+  (vis/worker-future "vis-tui-open-click-target"
+    #(binding [workspace-context/*workspace-root* workspace-root]
+       (try
+         (if (= :file kind)
+           (opener/open-file-in-editor! url)
+           (opener/open! url))
+         (catch Throwable _ nil)))))
+
 (defn- open-click-target!
-  ([{:keys [kind url]}]
-   (vis/worker-future "vis-tui-open-click-target"
-     #(try
-        (if (= :file kind)
-          (opener/open-file-in-editor! url)
-          (opener/open! url))
-        (catch Throwable _ nil))))
+  ([ref]
+   (open-click-target-worker! ref (active-workspace-root @state/app-db)))
   ([^TerminalScreen screen {:keys [kind url] :as ref}]
    (if (= :provenance kind)
      (open-provenance-popup! screen url)
-     (open-click-target! ref))))
+     (open-click-target-worker! ref (active-workspace-root @state/app-db)))))
 
 (defn- open-resources-popup!
   [^TerminalScreen screen refs]
@@ -1785,6 +1836,12 @@
                                            :level :warn :ttl-ms copy-success-ttl-ms)
                                          (install-conversation! (chat/make-conversation config) true))))
 
+                                   :worktree
+                                   (open-worktree-tab!
+                                     {:branch-name (first (command-argv args))
+                                      :config (:config @state/app-db)
+                                      :install-conversation! install-conversation!})
+
                                    :fork-conversation
                                    (switch-conversation! {:action :fork})
 
@@ -1875,11 +1932,14 @@
                        :pick-file
                        (do
                          (when-not (:dialog-open? @state/app-db)
-                           (when-let [path (with-dialog-lock #(dlg/file-picker-dialog! screen))]
-                             (state/dispatch
-                               [:update-input
-                                (input/paste-text state
-                                  (str (input/format-file-mention path) " "))])))
+                           (let [workspace-root (active-workspace-root @state/app-db)]
+                             (when-let [path (with-dialog-lock
+                                               #(binding [workspace-context/*workspace-root* workspace-root]
+                                                  (dlg/file-picker-dialog! screen)))]
+                               (state/dispatch
+                                 [:update-input
+                                  (input/paste-text state
+                                    (str (input/format-file-mention path) " "))]))))
                          (recur))
 
                        :send
