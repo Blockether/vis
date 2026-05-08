@@ -14,6 +14,7 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.markdown :as md]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [edamame.core :as edamame])
   (:import
    (com.oakmac.parinfer Parinfer ParinferResult)
@@ -103,7 +104,7 @@
 
 (defn- safe-path
   ^File [p]
-  (let [cwd        (fs/cwd)
+  (let [cwd        (workspace-context/cwd)
         resolved   (.toAbsolutePath (fs/path cwd (str p)))
         normalized (.normalize resolved)
         cwd-norm   (.normalize (.toAbsolutePath (fs/path cwd)))]
@@ -124,7 +125,7 @@
 
 (defn- rel-path
   [^File f]
-  (let [cwd (.toAbsolutePath (fs/path (fs/cwd)))
+  (let [cwd (.toAbsolutePath (fs/path (workspace-context/cwd)))
         p   (.toAbsolutePath (.toPath f))]
     (str (.relativize cwd p))))
 

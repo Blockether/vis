@@ -11,7 +11,8 @@
    Channels render and keybind on top of this data; they should not
    reimplement repository walking or git-status logic themselves."
   (:require [clojure.string :as str]
-            [com.blockether.vis.internal.git :as git])
+            [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]
@@ -27,9 +28,9 @@
 (def ^:private sort-order [:auto :recent :relevance])
 
 (defn cwd-path
-  "Current working directory as a Path. Indirected for tests."
+  "Current explicit workspace cwd as a Path. Indirected for tests."
   ^Path []
-  (.toPath (File. (System/getProperty "user.dir"))))
+  (.toPath (workspace-context/cwd)))
 
 (defn display-path
   "`path` relativized against `root`, normalized to `/` separators."

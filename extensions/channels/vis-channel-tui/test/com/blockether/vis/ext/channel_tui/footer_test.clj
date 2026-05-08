@@ -173,6 +173,33 @@
                        :text)]
             (expect (re-find #"Premium interactions 60/300 used \(240 left\) ↺2d0h" text)))))))
 
+  (it "uses active workspace root for footer git status"
+    (let [build-segments @#'footer/build-segments
+          seen-root      (atom nil)]
+      (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"
+                                                          :provider :openai})
+                       #'git/cached-workspace-status (fn
+                                                       ([] {:workspace? false})
+                                                       ([root]
+                                                        (reset! seen-root (.getPath root))
+                                                        {:workspace? true
+                                                         :repo "vis"
+                                                         :branch "feature/ws"
+                                                         :modified 0
+                                                         :created 0
+                                                         :deleted 0
+                                                         :upstream? false
+                                                         :ahead 0
+                                                         :behind 0}))}
+        (fn []
+          (expect (= ["git ~/vis (feature/ws)" "files: clean" "(no upstream)"]
+                    (->> (build-segments {:messages []
+                                          :settings {}
+                                          :workspace/root "/tmp/vis-ws"} 0)
+                      (filter #(= :right (:region %)))
+                      (mapv :text))))
+          (expect (= "/tmp/vis-ws" @seen-root))))))
+
   (it "shows git repository state with one changed-file count on the first footer line right side"
     (let [build-segments @#'footer/build-segments]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "gpt-4o"

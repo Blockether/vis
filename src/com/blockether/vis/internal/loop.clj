@@ -2403,9 +2403,11 @@
            conversation-turn-id
            max-consecutive-errors max-restarts max-context-tokens
            hooks cancel-atom current-iteration-atom
-           reasoning-default routing extra-body turn-features allow-copilot-claude-deep?]}]
+           reasoning-default routing extra-body turn-features allow-copilot-claude-deep?
+           workspace]}]
   (let [environment (cond-> environment
-                      (seq turn-features) (assoc :turn/features turn-features))
+                      (seq turn-features) (assoc :turn/features turn-features)
+                      (seq workspace) (merge workspace))
         ;; Tightened from 5 to 3. Three consecutive failures is enough
         ;; signal that the current approach is wrong; the nudge fires
         ;; at CONSECUTIVE_ERROR_NUDGE_AT (= 2) so the model gets a
@@ -3138,10 +3140,14 @@
           _                      (env/bump-var-index! env)
           current-iteration-id-atom (:current-iteration-id-atom env)
           current-conversation-turn-id-atom (:current-conversation-turn-id-atom env)
-          environment            (assoc env
-                                   :current-iteration-atom current-iteration-atom
-                                   :current-iteration-id-atom current-iteration-id-atom
-                                   :current-conversation-turn-id-atom current-conversation-turn-id-atom)
+          workspace              (select-keys opts [:workspace/root :workspace/id
+                                                    :workspace/repo-id :workspace/state
+                                                    :workspace])
+          environment            (cond-> (assoc env
+                                           :current-iteration-atom current-iteration-atom
+                                           :current-iteration-id-atom current-iteration-id-atom
+                                           :current-conversation-turn-id-atom current-conversation-turn-id-atom)
+                                   (seq workspace) (merge workspace))
           environment-id         (:environment-id env)]
       {:cancel-atom            cancel-atom
        :user-request           user-request
@@ -3162,6 +3168,7 @@
        :routing                routing
        :extra-body             extra-body
        :turn-features          (get opts :turn/features)
+       :workspace              workspace
        :messages               messages})))
 
 ;; -----------------------------------------------------------------------------
@@ -3174,7 +3181,7 @@
   [{:keys [environment user-request spec
            max-context-tokens system-prompt
            current-iteration-atom hooks cancel-atom
-           reasoning-default routing extra-body turn-features]}]
+           reasoning-default routing extra-body turn-features workspace]}]
   (let [iteration-result (run-turn! environment user-request
                            (cond-> {:output-spec            spec
                                     :max-context-tokens     max-context-tokens
@@ -3185,7 +3192,8 @@
                                     :cancel-atom            cancel-atom}
                              routing       (assoc :routing routing)
                              extra-body    (assoc :extra-body extra-body)
-                             turn-features (assoc :turn-features turn-features)))
+                             turn-features (assoc :turn-features turn-features)
+                             (seq workspace) (assoc :workspace workspace)))
         conversation-turn-id         (:conversation-turn-id iteration-result)
         {iteration-tokens :tokens
          iteration-cost   :cost} iteration-result

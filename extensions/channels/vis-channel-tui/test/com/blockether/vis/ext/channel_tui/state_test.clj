@@ -4,6 +4,7 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
+            [com.blockether.vis.internal.workspace-context :as workspace-context]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe detail-toggle-test
@@ -121,6 +122,20 @@
                 {:id :tab-2 :label "Tab 2" :active? true}]
               (:workspace-tabs @state/app-db)))
     (expect (= :tab-2 (:active-workspace-id @state/app-db))))
+
+  (it "attaches workspace root to the new tab and active snapshot"
+    (let [workspace {:workspace/id "ws-1"
+                     :workspace/root "/tmp/vis-ws"
+                     :main {:branch "feature/ws"}}]
+      (reset! state/app-db {:workspace-tabs [{:id :main :label "Main" :active? true}]
+                            :active-workspace-id :main
+                            :workspaces {}
+                            :render-version 0})
+      (state/dispatch [:add-workspace-tab {:workspace workspace}])
+      (expect (= "/tmp/vis-ws" (get-in @state/app-db [:workspace-tabs 1 :workspace/root])))
+      (expect (= workspace (:workspace @state/app-db)))
+      (expect (= "/tmp/vis-ws" (:workspace/root @state/app-db)))
+      (expect (= "feature/ws" (get-in @state/app-db [:workspace-tabs 1 :label])))))
 
   (it "caps workspace tabs at eight total tabs"
     (reset! state/app-db {:title "Main"
@@ -532,8 +547,32 @@
                        :token
                        :balanced
                        {:text {:verbosity "high"}}
-                       {}]]
+                       {}
+                       nil]]
                     fx))))))
+
+  (it "passes active workspace root into the turn effect"
+    (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
+          workspace       {:workspace/id "ws-1" :workspace/root "/tmp/vis-ws"}
+          seen-root       (atom nil)
+          db              {:conversation {:id "c1"}
+                           :active-workspace-id :tab-1
+                           :workspace-tabs [{:id :tab-1 :label "WS" :workspace workspace}]
+                           :messages []
+                           :messages-scroll 0
+                           :input-history []
+                           :settings {:reasoning-level :balanced}
+                           :pastes {}}]
+      (with-redefs [input/expand-paste-placeholders (fn [text _] text)
+                    input/expand-file-mentions (fn [text]
+                                                 (reset! seen-root workspace-context/*workspace-root*)
+                                                 text)
+                    vis/cancellation-token (fn [] :token)
+                    vis/get-router (fn [] :router)
+                    vis/resolve-effective-model (fn [_] {:provider :standard})]
+        (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])]
+          (expect (= workspace (last (first fx))))
+          (expect (= (workspace-context/workspace-root workspace) @seen-root))))))
 
   (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
@@ -555,7 +594,7 @@
                                                          :reasoning-style :zai-thinking
                                                          :reasoning-effort? false})]
         (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])]
-          (expect (= [[:rlm-turn :main {:id "c1"} "hello" :token nil nil {}]] fx))))))
+          (expect (= [[:rlm-turn :main {:id "c1"} "hello" :token nil nil {} nil]] fx))))))
 
   (it "restores a cancelled prompt to the input instead of rendering a cancelled answer"
     (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)

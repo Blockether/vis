@@ -7,8 +7,10 @@
      2. End-to-end `open!` against safe synthetic commands so the
         spawn path is actually walked, with stdio redirection
         verified."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.workspace-context :as workspace-context]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Paths)))
 
@@ -61,6 +63,18 @@
       (expect (= :rel (:scheme out)))
       (expect (= (cwd-target "deps.edn") (:target out)))
       (expect (nil? (:line out)))))
+
+  (it "resolves relative paths under the active workspace root binding"
+    (let [root (.toFile (java.nio.file.Files/createTempDirectory "vis-opener-ws" (make-array java.nio.file.attribute.FileAttribute 0)))]
+      (try
+        (spit (java.io.File. root "from-workspace.txt") "ok")
+        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+          (let [out (opener/safe-target "from-workspace.txt")]
+            (expect (= :rel (:scheme out)))
+            (expect (= (.getCanonicalPath (java.io.File. root "from-workspace.txt")) (:target out)))))
+        (finally
+          (io/delete-file (java.io.File. root "from-workspace.txt") true)
+          (io/delete-file root true)))))
 
   (it "extracts a line anchor from path#Lline"
     (let [out (opener/safe-target "deps.edn#L42")]

@@ -30,6 +30,7 @@
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.theme :as theme]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [taoensso.telemere :as tel])
   (:import
    (java.io ByteArrayOutputStream InputStream)
@@ -1051,7 +1052,9 @@
              (if (contains? sym-entry :ext.symbol/fn)
                [sym (fn [& args]
                       (let [w (get-log-writer)]
-                        (binding [*out* w *err* w]
+                        (binding [*out* w
+                                  *err* w
+                                  workspace-context/*workspace-root* (workspace-context/workspace-root env)]
                           (invoke-symbol-wrapper ext sym-entry (vec args) env))))]
                [sym (:ext.symbol/val sym-entry)]))))
     (:ext/symbols ext)))

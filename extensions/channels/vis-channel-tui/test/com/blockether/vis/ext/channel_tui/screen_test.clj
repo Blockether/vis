@@ -14,6 +14,7 @@
    [com.blockether.vis.ext.channel-tui.selection :as selection]
    [com.blockether.vis.internal.external-opener :as opener]
    [com.blockether.vis.ext.channel-tui.state :as state]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
 
@@ -461,7 +462,20 @@
                                         {:status :ok})}
         (fn []
           (open-click-target! {:kind :url :url "https://example.com"})
-          (expect (= "https://example.com" (deref url-opened 1000 ::timeout))))))))
+          (expect (= "https://example.com" (deref url-opened 1000 ::timeout)))))))
+
+  (it "file click targets resolve relative paths from active workspace root"
+    (let [seen-root (promise)]
+      (reset! state/app-db {:workspace-tabs [{:id :main :active? true
+                                              :workspace/root "/tmp/vis-click-ws"}]
+                            :active-workspace-id :main})
+      (with-redefs-fn {#'opener/open-file-in-editor! (fn [target]
+                                                       (deliver seen-root [target workspace-context/*workspace-root*])
+                                                       {:status :ok})}
+        (fn []
+          (open-click-target! {:kind :file :url "deps.edn#L42"})
+          (expect (= ["deps.edn#L42" (workspace-context/workspace-root "/tmp/vis-click-ws")]
+                    (deref seen-root 1000 ::timeout))))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

@@ -2,6 +2,87 @@
 
 Extracted from `TASKS.md`. This is the dedicated plan for native workspaces.
 
+## Current implementation status
+
+Basic worktree slice plus first workspace-context plumbing is implemented. This is
+**not** full native workspace lifecycle yet.
+
+Implemented:
+
+- `src/com/blockether/vis/internal/workspace.clj`
+  - `create-worktree!`
+  - `workspace-status`
+  - `workspace-roots`
+- Real `git worktree add` for main-repo materialization.
+- Runtime state outside the source checkout:
+  - `~/.vis/workspaces.edn`
+- Materialized worktrees under:
+  - `~/.vis/workspaces/<repo-id>/<workspace-id>/`
+- TUI built-in command:
+  - `/worktree [branch]`
+  - creates the worktree
+  - opens a new TUI tab
+  - stores `:workspace/root` on tab state
+  - passes active workspace into the next turn env
+  - shows a success notification
+- Prompt/runtime binding:
+  - bounded `<workspace>` prompt block injected when `:workspace/root` is active
+  - extension symbol calls bind active workspace root dynamically
+  - extension prompt/environment callbacks bind active workspace root dynamically
+- Workspace-root aware surfaces:
+  - foundation editing tools: `v/cat`, `v/rg`, `v/glob`, `v/patch`, `v/bash`, and related path helpers
+  - Clojure language tools: `z/patch`, `z/xref*`, `z/lsp*`, `z/repair*`
+  - environment snapshot and `v/git`
+  - project guidance / repo-local skills discovery
+  - TUI footer git status
+  - TUI file picker, file mentions, and external opener relative paths
+- Tests:
+  - `test/com/blockether/vis/internal/workspace_test.clj`
+  - `test/com/blockether/vis/internal/workspace_context_test.clj`
+  - TUI slash-command suggestion expectations include `/worktree [<branch>]`
+  - TUI command palette expectations include `New Worktree`
+  - workspace-root regression coverage exists for prompt/env, extension symbols, editing bash cwd, `v/git`, footer git, AGENTS.md, and repo skills
+
+Deliberately **not** implemented in this slice:
+
+- JVM process cwd mutation.
+- Full workspace lifecycle API: `create-workspace!`, `open-workspace`, `refresh-workspace!`, `destroy-workspace!`.
+- Submodule reconciliation.
+- Attached repo catalog/materialization.
+- Drift detection.
+- Dirty-workspace cleanup/destroy safeguards.
+- SCI `v/workspace*` symbols.
+- Full audit/rewire of every non-turn UI helper that still assumes process cwd.
+
+Important runtime note:
+
+- One TUI runs inside one JVM. Java cwd / `user.dir` is process-global, so
+  changing it for one tab would affect all tabs and tools. Native workspace
+  binding stores workspace root on tab/conversation state and passes explicit
+  cwd to tools/subprocesses instead of mutating process cwd.
+
+Remaining cwd audit items from the first grep pass:
+
+- CLI/config defaults intentionally use invocation cwd and need a separate policy decision.
+- Voice/Telegram provider process launches are service-control helpers, not workspace tools; leave unless a workspace-facing use appears.
+- Clojure extension activation still checks process cwd, but actual Clojure tools use workspace root once active.
+
+Checklist interpretation for the basic slice:
+
+- [x] Add runtime workspace state store outside the repo.
+- [x] Implement main repo materialization with `git worktree add`.
+- [~] Create internal workspace manager module and submodules listed above.
+  - Basic `com.blockether.vis.internal.workspace` exists.
+  - Catalog/main-repo/submodules/attached-repos/reconciler namespaces do not.
+- [~] Add `create/open/refresh/destroy/status/roots` public interface.
+  - Present: `create-worktree!`, `workspace-status`, `workspace-roots`.
+  - Missing: exact `create-workspace!`, `open-workspace`, `refresh-workspace!`,
+    `destroy-workspace!`.
+- [~] Add regression tests for worktree creation, submodule reconciliation,
+  attached repo validation, and ignored nested repo rejection.
+  - Present: real worktree creation regression.
+  - Missing: submodule, attached repo, ignored nested repo regressions.
+
 ## Before this work
 
 Do these first or lock their contracts enough that workspace code does not churn:
@@ -248,8 +329,8 @@ Config records:
 - [ ] Create internal workspace manager module and submodules listed above.
 - [ ] Add static workspace manifest reader/validator.
 - [ ] Add attached repo catalog reader/validator.
-- [ ] Add runtime workspace state store outside the repo.
-- [ ] Implement main repo materialization with `git worktree add`.
+- [x] Add runtime workspace state store outside the repo.
+- [x] Implement main repo materialization with `git worktree add`.
 - [ ] Implement submodule reconciliation with `git submodule sync/update --recursive`.
 - [ ] Implement attached repo materialization for `:isolated` checkout-at-path.
 - [ ] Implement attached repo materialization for `:shared` symlink/shared-path, opt-in only.
@@ -259,12 +340,26 @@ Config records:
 - [ ] Add `v/workspace`, `v/workspaces`, `v/workspace-status`, `v/workspace-roots` symbols.
 - [ ] Add `v/create-workspace!`, `v/open-workspace`, `v/refresh-workspace!`, `v/destroy-workspace!` symbols if safe for SCI.
 - [ ] Detect multirepositories only as candidates; require manifest for attached repos that matter.
-- [ ] Render bounded workspace prompt summary.
+- [x] Render bounded workspace prompt summary.
 - [ ] Include dirty/clean, changes, stash count, stale/ahead/behind where available.
 - [ ] Cache bounded status scans; never block prompt assembly indefinitely.
 - [ ] Add installer script for `~/.local/share/vis`, `~/.local/state/vis`, and `~/.local/bin/vis`.
 - [ ] Record install root/state root/original source in config/system prompt.
-- [ ] Add regression tests for worktree creation, submodule reconciliation, attached repo validation, and ignored nested repo rejection.
+- [x] Add regression tests for worktree creation.
+- [ ] Add regression tests for submodule reconciliation, attached repo validation, and ignored nested repo rejection.
+
+### Completed next-slice workspace tab/context plumbing
+
+- [x] Store workspace root on TUI tab state.
+- [x] Bind active workspace into conversation/env for a turn.
+- [x] Inject bounded `<workspace>` prompt block automatically.
+- [x] Run available tools/subprocesses with explicit workspace-root cwd.
+- [x] Route grep/LSP/Clojure language tools from workspace root where available.
+- [x] Route `v/git` / environment snapshot from workspace root.
+- [x] Route project guidance and repo-local skill discovery from workspace root.
+- [x] Route TUI footer git status from active tab workspace root.
+- [x] Avoid process-global cwd/user.dir mutation.
+- [x] Route non-turn TUI file picker and external opener relative paths from active tab workspace root.
 
 ### Open questions
 

@@ -225,14 +225,15 @@
                           `vis/send!` unchanged.
      :turn-features     — per-turn feature flags consumed by extension prompts."
   ([conversation text] (turn! conversation text {}))
-  ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body turn-features]}]
+  ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body turn-features workspace]}]
    (try
      (let [send-opts (cond-> {}
                        on-chunk          (assoc :hooks {:on-chunk on-chunk})
                        cancel-atom       (assoc :cancel-atom cancel-atom)
                        reasoning-default (assoc :reasoning-default reasoning-default)
                        extra-body        (assoc :extra-body extra-body)
-                       turn-features     (assoc :turn/features turn-features))
+                       turn-features     (assoc :turn/features turn-features)
+                       (seq workspace)   (merge workspace))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
            ;; Plain text — the bubble renderer dims it via the

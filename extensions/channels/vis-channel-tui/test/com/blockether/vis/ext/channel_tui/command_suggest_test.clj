@@ -5,6 +5,9 @@
 (defdescribe slash-command-suggestions-test
   (let [commands [{:id :new-conversation :label "New Conversation"}
                   {:id :new-tab :label "New Tab"}
+                  {:id :worktree
+                   :label "New Worktree"
+                   :args [{:name "branch" :kind :positional :required false}]}
                   {:id :settings :label "Settings"}
                   {:id :voice/toggle-recording
                    :label "Voice: Toggle Recording"
@@ -16,7 +19,7 @@
                           {:name "limit" :kind :flag :type :int :required false}]}]]
 
     (it "shows menu commands when the prompt starts with slash"
-      (expect (= ["new-conversation" "new-tab" "settings"]
+      (expect (= ["new-conversation" "new-tab" "worktree"]
                 (->> (suggest/suggestions "/" commands {:limit 3})
                   (mapv :slash/name)))))
 
@@ -31,6 +34,10 @@
     (it "renders extension command arguments in usage"
       (expect (= "/exa/search <query> [--limit <limit>]"
                 (:slash/usage (first (suggest/suggestions "/exa" commands))))))
+
+    (it "renders built-in worktree branch argument in usage"
+      (expect (= "/worktree [<branch>]"
+                (:slash/usage (first (suggest/suggestions "/work" commands))))))
 
     (it "tracks the selected suggestion for arrow keys and tab completion"
       (let [suggestions (suggest/suggestions "/" commands {:limit 3 :selected-index 1})]

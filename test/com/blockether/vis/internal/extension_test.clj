@@ -20,6 +20,7 @@
   (:require
    [com.blockether.vis.internal.extension :as ext]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private base-channel
@@ -37,6 +38,22 @@
     :provider/limits-fn (fn [] {:provider-id :test})
     :provider/on-selected-fn (fn [_ctx] nil)
     :provider/prompt-fn (fn [_ctx] "provider prompt")))
+
+(defdescribe wrap-extension-workspace-test
+  (it "binds env workspace root around sandbox symbol calls"
+    (let [sym-entry (ext/symbol 'root (fn [] workspace-context/*workspace-root*)
+                      {:doc "Return bound workspace root."
+                       :arglists '([])
+                       :examples ["(t/root)"]
+                       :render-fn (fn [_] "")})
+          extension (ext/extension {:ext/namespace 'test.workspace-root
+                                    :ext/doc "Workspace root fixture."
+                                    :ext/kind "fixture"
+                                    :ext/ns-alias {:ns 'test.workspace-root :alias 't}
+                                    :ext/symbols [sym-entry]})
+          wrapped   (ext/wrap-extension extension {:workspace/root "."})]
+      (expect (= (workspace-context/workspace-root ".")
+                ((get wrapped 'root)))))))
 
 (defdescribe source-rewrite-test
   (it "symbol carries optional :source-rewrite-fn"

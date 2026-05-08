@@ -7,7 +7,8 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.theme :as shared-theme]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.file-picker :as picker])
+            [com.blockether.vis.internal.file-picker :as picker]
+            [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import [com.googlecode.lanterna Symbols TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
@@ -522,16 +523,19 @@
 (def ^:private file-picker-max-visible 10)
 
 (defn- open-picker-item!
-  [{:keys [path]}]
-  (vis/worker-future "vis-tui-open-picker-item"
-    #(try
-       (opener/open! path)
-       (catch Throwable t
-         {:status :spawn-failed
-          :command nil
-          :scheme nil
-          :target path
-          :error (.getMessage t)}))))
+  ([item]
+   (open-picker-item! item workspace-context/*workspace-root*))
+  ([{:keys [path]} workspace-root]
+   (vis/worker-future "vis-tui-open-picker-item"
+     #(binding [workspace-context/*workspace-root* workspace-root]
+        (try
+          (opener/open! path)
+          (catch Throwable t
+            {:status :spawn-failed
+             :command nil
+             :scheme nil
+             :target path
+             :error (.getMessage t)}))))))
 
 (def ^:private file-picker-table-headers
   ["Status" "File" "Size" "Modified"])
@@ -636,7 +640,8 @@
    the selected relative path, Esc cancels. `Alt+I` toggles ignored files;
    `Alt+S` cycles sort mode; `Alt+O` opens the selection externally."
   [^TerminalScreen screen]
-  (let [entries          (picker/collect-file-picker-entries)
+  (let [workspace-root   workspace-context/*workspace-root*
+        entries          (picker/collect-file-picker-entries)
         query            (atom "")
         include-ignored? (atom false)
         sort-mode        (atom :auto)
@@ -778,7 +783,7 @@
                     (and (.isAltDown key) (= c \o))
                     (do
                       (when (pos? total)
-                        (open-picker-item! (nth items @selected)))
+                        (open-picker-item! (nth items @selected) workspace-root))
                       (recur))
 
                     (Character/isISOControl raw-c)
@@ -1933,6 +1938,8 @@
    not in Ctrl+K."
   [{:id :new-conversation    :label "New Conversation"}
    {:id :new-tab             :label "New Tab"}
+   {:id :worktree            :label "New Worktree"
+    :args [{:name "branch" :kind :positional :required false}]}
    {:id :fork-conversation   :label "Fork Conversation"}
    {:id :switch-conversation :label "Switch Conversation"}
    {:id :providers           :label "Configure Providers"}

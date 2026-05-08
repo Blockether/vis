@@ -24,6 +24,7 @@
    the user sees them at startup and during `vis extensions doctor`."
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [taoensso.telemere :as tel]
    [yamlstar.core :as yaml]))
 
@@ -188,7 +189,7 @@
     {:loaded loaded :warnings warnings}))
 
 (defn- repo-cwd ^java.io.File []
-  (java.io.File. ^String (System/getProperty "user.dir")))
+  (workspace-context/cwd))
 
 (defn- user-home ^java.io.File []
   (java.io.File. ^String (System/getProperty "user.home")))
@@ -211,7 +212,9 @@
 
 (defn- cache-key []
   [(try (.getCanonicalPath ^java.io.File (repo-cwd))
-     (catch Throwable _ (System/getProperty "user.dir")))
+     (catch Throwable _
+       (or workspace-context/*workspace-root*
+         (System/getProperty "user.dir"))))
    (System/getProperty "user.home")])
 
 (defn current

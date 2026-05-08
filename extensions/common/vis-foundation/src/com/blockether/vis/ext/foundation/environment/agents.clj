@@ -21,6 +21,7 @@
    model isn't bound by rules it can't see, but the user/agent
    knows something is broken. See plan §1 Q10."
   (:require
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -31,10 +32,9 @@
   16384)
 
 (defn- repo-cwd ^java.io.File []
-  ;; Treat the JVM's working directory as the repo root.
-  ;; Discovery is cwd-keyed; vis snapshot cache uses the same
-  ;; convention, so cd-ing into a sibling repo gets fresh state.
-  (java.io.File. ^String (System/getProperty "user.dir")))
+  ;; Treat the active workspace root as the repo root. Falls back to
+  ;; process cwd when no workspace is bound; never mutates JVM cwd.
+  (workspace-context/cwd))
 
 (defn- read-bytes-safely
   "Read up to `(inc MAX_BYTES)` bytes from `path`. Returns
@@ -158,7 +158,9 @@
 
 (defn- canonical-cwd ^String []
   (try (.getCanonicalPath ^java.io.File (repo-cwd))
-    (catch Throwable _ (System/getProperty "user.dir"))))
+    (catch Throwable _
+      (or workspace-context/*workspace-root*
+        (System/getProperty "user.dir")))))
 
 (defn current
   "Return the cached scan result, computing it on first access or
