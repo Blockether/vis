@@ -49,6 +49,7 @@
    [com.blockether.vis.ext.foundation.transcript :as transcript]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.markdown :as md]
+   [com.blockether.vis.internal.presentation :as presentation]
    [com.blockether.vis.internal.proof :as proof])
   (:import
    [clojure.lang IBlockingDeref IDeref IPending]
@@ -1730,33 +1731,6 @@ _No intents._
        (render-proof-violations (:violations checks))
        "\n\n</proofs>"))))
 
-(defn- proof-audit-status-line
-  [audit]
-  (str "- Proof audit: " (if (:success? audit) "ok" "needs work")
-    " — " (count (:violations audit)) " violation(s)"
-    ", " (get-in audit [:counts :intents] 0) " intent(s)"
-    ", " (get-in audit [:counts :plans] 0) " plan(s)"
-    ", " (get-in audit [:counts :gates] 0) " gate(s)"
-    ", " (get-in audit [:counts :attestations] 0) " attestation(s)"))
-
-(defn- render-proof-audit-violation
-  [{:keys [type intent-id plan-id gate-id gate-ids]}]
-  (str "- " (code-ish (pr-str type))
-    (when intent-id (str " intent " (code-ish (str intent-id))))
-    (when plan-id (str " plan " (code-ish (str plan-id))))
-    (when gate-id (str " gate " (code-ish (str gate-id))))
-    (when (seq gate-ids) (str " gates " (str/join ", " (map code-ish (map str gate-ids)))))))
-
-(defn- render-proof-audit
-  [audit]
-  (str "## Proof audit\n\n"
-    (proof-audit-status-line audit) "\n\n"
-    "### Violations\n\n"
-    (if (seq (:violations audit))
-      (str/join "\n" (map render-proof-audit-violation (:violations audit)))
-      "- none")
-    "\n"))
-
 (defn- foundation-audit
   "Return the persisted proof audit data for the current conversation.
    This is the model-facing migration path away from legacy proof-check prose:
@@ -1773,17 +1747,141 @@ _No intents._
                       :blocking? true
                       :message (ex-message e)}]}))))
 
-(defn- foundation-audit-report
-  ([env]
-   (foundation-audit-report env (:conversation-id env)))
-  ([env conversation-id]
-   (let [proof-audit (foundation-audit env conversation-id)]
-     (str "# Audit Report
+(defn- intent-graph->mermaid
+  "Build a small Mermaid graph from intent/plan/gate snapshots so the
+   audit report carries an at-a-glance topology even when the user is
+   reading static Markdown. Pure data: returns nil when nothing to
+   draw so the renderer drops the section cleanly.
 
-"
-       "- Conversation: `" conversation-id "`\n"
-       (proof-audit-status-line proof-audit) "\n\n"
-       (render-proof-audit proof-audit) "\n"
+   Node shape (id is sanitised to a Mermaid identifier):
+
+       intent_<8> [\"<title> · <status>\"]
+       plan_<8>   ([\"<summary> · <status>\"])
+       gate_<8>   {{\"<proposition> · <status>\"}}
+
+   Edges: intent --> plan; plan --> gate. No cross-conversation edges.
+   Headless safe: only emits Markdown text, no diagram engine."
+  [{:keys [intents plans gates]}]
+  (let [as-id   (fn [prefix x]
+                  (let [s (some-> x str)]
+                    (when (and s (not (str/blank? s)))
+                      (str prefix "_" (str/replace (subs s 0 (min 8 (count s)))
+                                        #"[^A-Za-z0-9_]" "_")))))
+        esc     (fn [s] (-> (str (or s "")) (str/replace "\"" "'")))
+        nodes   (concat
+                  (keep (fn [{:keys [id title status]}]
+                          (when-let [nid (as-id "intent" id)]
+                            (str nid "[\"intent: " (esc title) " · " (esc (some-> status name)) "\"]")))
+                    (or intents []))
+                  (keep (fn [{:keys [id summary status]}]
+                          (when-let [nid (as-id "plan" id)]
+                            (str nid "([\"plan: " (esc summary) " · " (esc (some-> status name)) "\"])")))
+                    (or plans []))
+                  (keep (fn [{:keys [id proposition question status]}]
+                          (when-let [nid (as-id "gate" id)]
+                            (str nid "{{\"gate: " (esc (or proposition question)) " · " (esc (some-> status name)) "\"}}")))
+                    (or gates [])))
+        intent-edges (keep (fn [{:keys [id]}]
+                             (when-let [iid (as-id "intent" id)]
+                               (let [pids (keep #(as-id "plan" (:id %))
+                                            (filter #(= id (:intent-id %)) (or plans [])))]
+                                 (when (seq pids)
+                                   (str/join "\n" (map #(str iid " --> " %) pids))))))
+                       (or intents []))
+        plan-edges (keep (fn [{:keys [id]}]
+                           (when-let [pid (as-id "plan" id)]
+                             (let [gids (keep #(as-id "gate" (:id %))
+                                          (filter #(= id (:plan-id %)) (or gates [])))]
+                               (when (seq gids)
+                                 (str/join "\n" (map #(str pid " --> " %) gids))))))
+                     (or plans []))
+        edges (concat intent-edges plan-edges)]
+    (when (seq nodes)
+      (str/join "\n"
+        (concat ["flowchart TD"]
+          (mapv #(str "  " %) nodes)
+          (mapv #(str "  " %) edges))))))
+
+(defn- foundation-audit-presentation
+  "Build a `:vis.presentation/audit-report` from the live conversation
+   audit data. Pure projection over `vis/db-audit-proof` plus the
+   provenance timeline and intent state. The same shape feeds both
+   the Markdown report and any other surface that wants the audit
+   table-of-contents.
+
+   Preserves proof/intents/audit semantics: every gate, plan, intent,
+   attestation, evidence bundle, and provenance event present in the
+   live DB roll forward into the report. `:guards` carries the
+   provenance guard-check result so a downstream judge can see at a
+   glance whether the audit pass succeeded."
+  ([env] (foundation-audit-presentation env (:conversation-id env)))
+  ([env conversation-id]
+   (let [proof-audit (foundation-audit env conversation-id)
+         provenance-stats (try (foundation-provenance-stats env conversation-id)
+                            (catch Throwable _ {}))
+         timeline (try (foundation-provenance-timeline env conversation-id)
+                    (catch Throwable _ []))
+         guards (try (foundation-provenance-guards env conversation-id)
+                  (catch Throwable _ {:success? true :violations []}))
+         intent-state (try (vis/db-intents (:db-info env) {:conversation-id conversation-id})
+                        (catch Throwable _ nil))
+         intents (vec (or (:intents intent-state) []))
+         plans (vec (mapcat (fn [it] (mapv #(assoc % :intent-id (:id it)) (or (:plans it) [])))
+                      intents))
+         gates (vec (mapcat (fn [p] (mapv #(assoc % :plan-id (:id p)) (or (:gates p) [])))
+                      plans))
+         attestations (vec (concat
+                             (mapcat :attestations gates)
+                             (mapcat :attestations intents)))
+         bundles (vec (concat (mapcat :bundles gates)
+                        (mapcat :bundles intents)))
+         counts {:events (or (:event-count provenance-stats) (count timeline))
+                 :bundles (count bundles)
+                 :attestations (or (count attestations)
+                                 (get-in proof-audit [:counts :attestations] 0))
+                 :gates (or (count gates) (get-in proof-audit [:counts :gates] 0))
+                 :plans (or (count plans) (get-in proof-audit [:counts :plans] 0))
+                 :intents (or (count intents) (get-in proof-audit [:counts :intents] 0))
+                 :violations (count (or (:violations guards)
+                                      (:violations proof-audit)
+                                      []))}
+         mermaid (intent-graph->mermaid {:intents intents :plans plans :gates gates})
+         section {:title "Audit"
+                  :counts counts
+                  :events (vec (take 50 timeline))
+                  :bundles bundles
+                  :attestations attestations
+                  :gates gates
+                  :plans plans
+                  :intents intents
+                  :guards (cond-> guards
+                            (and (not (:success? guards))
+                              (seq (:violations proof-audit)))
+                            (update :violations
+                              (fn [vs]
+                                (vec (concat (or vs [])
+                                       (mapv (fn [v]
+                                               (cond-> {:type (:type v)}
+                                                 (:message v) (assoc :message (:message v))
+                                                 (:intent-id v) (assoc :ref (str (:intent-id v)))))
+                                         (or (:violations proof-audit) [])))))))
+                  :conversation-id conversation-id}
+         section (cond-> section mermaid (assoc :mermaid mermaid))]
+     (presentation/audit-report section))))
+
+(defn- foundation-audit-report
+  "Render the audit report. Defaults to the collapsed presentation
+   shape (one-line summary + collapsible body); pass
+   `{:collapsed? false}` to inline the full sections."
+  ([env]
+   (foundation-audit-report env (:conversation-id env) {}))
+  ([env conversation-id]
+   (foundation-audit-report env conversation-id {}))
+  ([env conversation-id opts]
+   (let [report (foundation-audit-presentation env conversation-id)
+         report (merge report (select-keys opts [:collapsed?]))
+         body (presentation/audit-report->md report)]
+     (str body "\n\n"
        (foundation-provenance-report env conversation-id)))))
 
 ;; ---------------------------------------------------------------------------

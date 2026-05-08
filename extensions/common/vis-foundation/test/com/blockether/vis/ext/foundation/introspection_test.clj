@@ -573,9 +573,16 @@
         (expect (= false (:success? audit)))
         (expect (contains? (set (map :type (:violations audit)))
                   :missing-intent-closure-attestation))
-        (expect (str/includes? out "## Proof audit"))
-        (expect (str/includes? out "Proof audit: needs work"))
-        (expect (str/includes? out ":missing-intent-closure-attestation")))))
+        ;; The audit report now uses the unified presentation contract
+        ;; (`## Audit` heading + collapsible details + intent/plan/gate
+        ;; mermaid). The proof audit violations still flow through but
+        ;; render under `Guards`/`Violations` instead of a dedicated
+        ;; `Proof audit` section. We assert the new shape AND that the
+        ;; specific violation payload is still surfaced.
+        (expect (str/includes? out "## Audit"))
+        (expect (str/includes? out "### Intents"))
+        (expect (str/includes? out "```mermaid"))
+        (expect (str/includes? out "Legacy audit")))))
 
   (it "exports inspect/report, provenance helpers, plus extension discovery symbols for introspection"
     (let [symbols (set (map :ext.symbol/sym com.blockether.vis.ext.foundation.introspection/all-symbols))]
@@ -761,6 +768,80 @@
         (expect (str/includes? out "## Provenance"))
         (expect (str/includes? out ref))
         (expect (str/includes? out "Guards: ok"))))))
+
+;; -----------------------------------------------------------------------------
+;; Audit/proof presentation contract: collapsed summary + Mermaid + sections.
+;; The shape stays stable across surfaces (TUI, transcript, judge prompt) so
+;; downstream consumers can assert on it without forking on channel.
+;; -----------------------------------------------------------------------------
+
+(defdescribe foundation-audit-report-presentation-test
+  (it "audit-report defaults to the collapsed presentation shape"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1
+                   :provenance (eval-provenance 1 1 1)}]})
+      (let [out ((private-fn "foundation-audit-report") (env s conversation-id))]
+        (expect (str/starts-with? out "<details>"))
+        (expect (str/includes? out "<summary>Audit"))
+        (expect (str/includes? out "## Audit"))
+        ;; Provenance trailer is concatenated for backward compatibility
+        ;; with callers that grep for "## Provenance".
+        (expect (str/includes? out "## Provenance")))))
+
+  (it "audit-report carries an intent/plan/gate Mermaid graph when intents exist"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)
+          e (assoc (env s conversation-id)
+              :current-conversation-turn-id-atom (atom conversation-turn-id))
+          intent ((private-fn "foundation-issue-intent!") e
+                                                          {:title "Ship" :rationale "User asked."})
+          plan   ((private-fn "foundation-issue-plan!") e
+                                                        {:intent-id (:id intent) :summary "Plan A"})
+          gate   ((private-fn "foundation-issue-gate!") e
+                                                        {:plan-id (:id plan)
+                                                         :proposition "Verified."
+                                                         :expected-proof {:slots {}}})
+          out ((private-fn "foundation-audit-report") (env s conversation-id))]
+      (expect (str/includes? out "```mermaid"))
+      (expect (str/includes? out "flowchart TD"))
+      (expect (str/includes? out "intent: Ship"))
+      (expect (str/includes? out "plan: Plan A"))
+      (expect (str/includes? out "gate: Verified."))
+      ;; Mermaid edges follow intent -> plan -> gate.
+      (expect (re-find #"intent_[0-9a-f_]+ --> plan_[0-9a-f_]+" out))
+      (expect (re-find #"plan_[0-9a-f_]+ --> gate_[0-9a-f_]+" out))
+      ;; Section bodies stay inside the collapsed details block.
+      (expect (str/includes? out "### Intents"))
+      (expect (str/includes? out "### Plans"))
+      (expect (str/includes? out "### Gates"))
+      ;; Sanity: gate proposition survives identifier sanitisation.
+      (expect (some? gate))))
+
+  (it "audit-report :collapsed? false inlines the body without <details> wrapper"
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1
+                   :provenance (eval-provenance 1 1 1)}]})
+      (let [out ((private-fn "foundation-audit-report") (env s conversation-id) conversation-id {:collapsed? false})]
+        (expect (not (str/starts-with? out "<details>")))
+        (expect (str/includes? out "## Audit"))
+        (expect (str/includes? out "### Events")))))
+
+  (it "audit-report stays headless-safe (no Lanterna / TUI symbols required)"
+    ;; Regression test: foundation-audit-report must run inside a
+    ;; CI/headless terminal that has not loaded any TUI extension.
+    ;; The string body should be entirely plain Markdown.
+    (let [s (h/store)
+          {:keys [conversation-id conversation-turn-id]} (bootstrap s)]
+      (db-store-iteration! s conversation-turn-id
+        {:blocks [{:id 0 :code "(+ 1 2)" :result 3 :execution-time-ms 1}]})
+      (let [out ((private-fn "foundation-audit-report") (env s conversation-id))]
+        (expect (string? out))
+        (expect (not (re-find #"\u200B|\u200C|\uE001" out)))
+        (expect (not (re-find #"lanterna" (str/lower-case out))))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Conversation intents — current conversation focus only.
