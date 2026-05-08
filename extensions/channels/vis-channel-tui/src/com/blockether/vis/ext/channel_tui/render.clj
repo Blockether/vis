@@ -2101,9 +2101,6 @@
 (def ^:private thinking-preview-edge-lines 10)
 (def ^:private live-thinking-preview-chars 2400)
 
-(defonce ^:private progress-trace-cache
-  (atom nil))
-
 (defn- live-preview-thinking-text
   [thinking]
   (let [s (str/trim (str thinking))
@@ -2120,14 +2117,69 @@
 "
           (subs s (- n edge) n))))))
 
-(defn- cached-progress-trace
-  [cache-key compute-fn]
-  (let [{:keys [key entries]} @progress-trace-cache]
-    (if (= key cache-key)
-      entries
-      (let [entries (compute-fn)]
-        (reset! progress-trace-cache {:key cache-key :entries entries})
-        entries))))
+(defn- text-fingerprint
+  "Bounded structural fingerprint for a string. Survives `(vec ...)` /
+   `assoc` round-trips that would change `identityHashCode` but leave
+   content identical, so per-iteration caches actually hit during
+   streaming. Collision probability for our render-cache use is
+   negligible (length + first 64 + last 256 chars uniquely identifies
+   the bubble's iteration content in practice); a collision would
+   produce a stale render frame, not a crash, and would self-heal
+   on the next chunk that bumps the length."
+  [s]
+  (when s
+    (let [^String s (str s)
+          n (.length s)]
+      [n
+       (subs s 0 (min 64 n))
+       (subs s (max 0 (- n 256)))])))
+
+(defn- iteration-running?
+  "True when at least one block in the iteration has started but not
+   yet completed. Drives the per-iteration cache key: iterations with
+   running blocks include a 1-second time bucket so the `↻ Ns`
+   running-duration label refreshes; fully-done iterations cache
+   forever (until LRU eviction)."
+  [{:keys [started-at-ms successes]}]
+  (boolean
+    (some (fn [^long idx]
+            (and (some? (get started-at-ms idx))
+              (nil? (get successes idx))))
+      (range (max (count (or started-at-ms []))
+               (count (or successes [])))))))
+
+(defn- iteration-fingerprint
+  "Content-derived fingerprint of an iteration entry. Captures every
+   field `format-iteration-entry-entries` reads. No `identityHashCode`
+   anywhere - identical content always produces identical fingerprint,
+   so completed iterations hit the cache forever even when the parent
+   `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
+   progress chunk."
+  [{:keys [thinking events code comments results result-kinds result-details
+           stdouts stderrs durations successes started-at-ms error
+           repeat-count]}]
+  [(text-fingerprint thinking)
+   (when events
+     (mapv (fn [e]
+             [(:type e) (:form-idx e) (text-fingerprint (:thinking e))])
+       events))
+   (mapv text-fingerprint code)
+   (mapv text-fingerprint comments)
+   (mapv text-fingerprint results)
+   result-kinds
+   ;; result-details are small op-metadata maps; the few that carry
+   ;; raw stdout/stderr only do so for shell results where stdout/
+   ;; stderr are already separately fingerprinted via the parallel
+   ;; vectors below, so the redundancy is small and the maps are
+   ;; cheap to compare.
+   result-details
+   (mapv text-fingerprint stdouts)
+   (mapv text-fingerprint stderrs)
+   durations
+   successes
+   started-at-ms
+   (when error (select-keys error [:type :message]))
+   repeat-count])
 
 (defn- short-id-fragment
   ^String [id]
@@ -3248,10 +3300,42 @@
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
          show-iteration-headers?  (get settings :show-iteration-headers false)
-         live-limit       (max 1 (long (get settings :progress/live-iteration-limit 24)))
+         static-limit     (max 1 (long (get settings :progress/live-iteration-limit 24)))
+         preview-default-lines (get settings :preview/default-lines 4)
          {:keys [now-ms turn-start-ms cancelling? conversation-id
-                 conversation-turn-id detail-expansions]} extra
+                 conversation-turn-id detail-expansions viewport-rows]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
+         ;; Patch 2: viewport-aware live truncation. The OUTER virtualizer
+         ;; only knows "the live bubble is visible", not "only the bottom
+         ;; 50 rows of a 450-row bubble are on screen". So when the caller
+         ;; tells us the viewport row budget, we walk iterations from the
+         ;; END accumulating cheap row estimates and stop at the iteration
+         ;; whose top would land roughly two viewports above the visible
+         ;; band. Iterations above that go behind the existing
+         ;; `PROGRESS HISTORY` collapse - clicking it expands them, paying
+         ;; the format cost only when the user opts in.
+         dynamic-limit    (when (and viewport-rows (pos? (long viewport-rows)))
+                            (let [budget (long (* 2 (long viewport-rows)))]
+                              (loop [i (dec (count iterations)) acc 0 kept 0]
+                                (cond
+                                  (neg? i) kept
+                                  (and (pos? kept) (>= acc budget)) kept
+                                  :else
+                                  (let [it (nth iterations i)
+                                        ;; Cheap row estimate per iteration: chrome
+                                        ;; rows + ~1 row per 80 thinking chars +
+                                        ;; ~1 row per code block * 12 + stdout chars
+                                        ;; / ~80. Order of magnitude only.
+                                        n-code (long (count (or (:code it) [])))
+                                        thinking-rows (quot (count (or (:thinking it) "")) 80)
+                                        stdout-rows (long (reduce + 0
+                                                            (map (fn [s] (quot (count (or s "")) 80))
+                                                              (or (:stdouts it) []))))
+                                        rows (+ 6 (* 12 n-code) thinking-rows stdout-rows)]
+                                    (recur (dec i) (+ acc rows) (inc kept)))))))
+         live-limit       (long (cond
+                                  (nil? dynamic-limit) static-limit
+                                  :else                (min static-limit (long dynamic-limit))))
          elapsed-ms       (when turn-start-ms
                             (max 0 (- now-ms (long turn-start-ms))))
          elapsed-str      (or (vis/format-duration elapsed-ms) "0ms")
@@ -3290,35 +3374,58 @@
                                                   :node-id (str history-node-id)
                                                   :collapsed? collapsed?})]
                               [{:line (str md-summary-marker line) :meta meta}]))
-         trace-cache-key [(System/identityHashCode iterations)
-                          content-w
-                          show-thinking?
-                          show-iterations?
-                          show-iteration-headers?
-                          (get settings :preview/default-lines 4)
-                          (System/identityHashCode detail-expansions)
-                          conversation-id
-                          conversation-turn-id
-                          ;; Running-code duration rows tick once per second.
-                          (quot now-ms 1000)]
+         ;; Patch 1: per-iteration content-keyed cache. The old
+         ;; whole-trace cache keyed on `(System/identityHashCode iterations)`
+         ;; missed on every chunk because `make-progress-tracker` returns
+         ;; a freshly-built `(vec (vals @timeline))` each tick, and missed
+         ;; once a second on `(quot now-ms 1000)`. With a 15-iteration
+         ;; trace that meant ~135 ms re-formatting per 80 ms tick. Now we
+         ;; cache each iteration on a structural fingerprint plus a
+         ;; running-block second-bucket; completed iterations hit forever,
+         ;; only the streaming iteration recomputes. Steady-state ~1-5 ms.
+         iter-entry-fn    (fn [[idx entry]]
+                            (let [stripped (if show-thinking?
+                                             entry
+                                             (dissoc entry :thinking :events))
+                                  ;; Only include the second-bucket in the
+                                  ;; cache key for iterations that actually
+                                  ;; have a running block. Done iterations
+                                  ;; have a fully time-independent key and
+                                  ;; cache forever.
+                                  running? (iteration-running? stripped)
+                                  sec-bucket (when running? (quot now-ms 1000))
+                                  iter-num (inc (long idx))
+                                  detail-scope-opts {:section :iteration
+                                                     :iteration-number iter-num
+                                                     :conversation-id conversation-id
+                                                     :conversation-turn-id conversation-turn-id
+                                                     :detail-expansions detail-expansions}
+                                  k [::iter-entries
+                                     iter-num
+                                     (iteration-fingerprint stripped)
+                                     (long content-w)
+                                     (boolean show-iteration-headers?)
+                                     (boolean show-thinking?)
+                                     preview-default-lines
+                                     conversation-id
+                                     conversation-turn-id
+                                     (relevant-detail-expansions-key detail-scope-opts)
+                                     sec-bucket]
+                                  inner-opts {:show-header?         show-iteration-headers?
+                                              :now-ms               (when running? now-ms)
+                                              :conversation-id      conversation-id
+                                              :conversation-turn-id conversation-turn-id
+                                              :detail-expansions   detail-expansions
+                                              :preview-default-lines preview-default-lines
+                                              :live-preview?        true}]
+                              (cached* k
+                                #(format-iteration-entry-entries
+                                   stripped content-w iter-num inner-opts))))
          trace-entries    (when (and show-iterations? (seq iterations))
-                            (cached-progress-trace trace-cache-key
-                              (fn []
-                                (into []
-                                  (concat
-                                    (or history-summary [])
-                                    (mapcat (fn [[idx entry]]
-                                              (format-iteration-entry-entries
-                                                (if show-thinking? entry (dissoc entry :thinking :events))
-                                                content-w (inc idx)
-                                                {:show-header?         show-iteration-headers?
-                                                 :now-ms               now-ms
-                                                 :conversation-id      conversation-id
-                                                 :conversation-turn-id conversation-turn-id
-                                                 :detail-expansions   detail-expansions
-                                                 :preview-default-lines (get settings :preview/default-lines 4)
-                                                 :live-preview?        true}))
-                                      visible-iterations))))))
+                            (vec
+                              (concat
+                                (or history-summary [])
+                                (mapcat iter-entry-fn visible-iterations))))
          entries          (if (seq trace-entries)
                             (conj (conj trace-entries (line-entry ""))
                               (line-entry spinner-line))
