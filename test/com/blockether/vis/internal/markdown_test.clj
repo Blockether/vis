@@ -84,6 +84,20 @@
     (let [valid "Intro\n```text\nbody\n```\nTail"]
       (expect (= valid (md/normalize-chat-markdown valid)))))
 
+  (it "capitalizes lowercase prose sentence starts in terse answers"
+    (expect (= "Tak. Opcje:\n\n### clojure.spec.alpha"
+              (md/normalize-chat-markdown "tak. opcje:\n### clojure.spec.alpha")))
+    (expect (= "Fixed docstring. Next sentence? Yes! Done."
+              (md/normalize-chat-markdown "fixed docstring. next sentence? yes! done."))))
+
+  (it "does not capitalize inside a leading fenced code block"
+    (expect (= "```clojure\n(def x 1)\n```\nDone."
+              (md/normalize-chat-markdown "```clojure\n(def x 1)\n```\ndone."))))
+
+  (it "adds paragraph breathing room around tight ATX headings"
+    (expect (= "Tak. Opcje:\n\n### clojure.spec.alpha\n\n- s/def"
+              (md/normalize-chat-markdown "tak. opcje:\n### clojure.spec.alpha\n- s/def"))))
+
   (it "normalizes malformed final-summary section bullets into nested evidence"
     (let [broken (str "## Summary\n\n"
                    "- **Verification**\n"

@@ -294,11 +294,9 @@
    a non-negative long for a specific row offset.
 
    `loading?` swaps the LAST assistant message's `:text` to the live
-   spinner-led progress block (`render/progress->text`). That bubble
-   is treated as visible by definition (it's at the bottom and the
-   user is staring at it). Its height comes from the full painter
-   pipeline, not the estimator, so the spinner row count is right
-   even on the first loading frame.
+   spinner-led progress block (`render/progress->text`) only when that
+   bubble intersects the viewport. Auto-bottom keeps live progress visible;
+   manual scrollback does not re-project off-screen live progress.
 
    The visible set is computed in TWO passes:
 
@@ -347,16 +345,13 @@
                      (visible? top h inner-h)))
           (range n))
         ;; Pass 2 ── project + REAL height for candidates only.
-        ;; Loading bubble is forced visible at the end (last index).
+        ;; Loading bubble gets live progress only if it is already visible.
         loading-last-idx
         (when (and loading? (pos? n)
                 (= :assistant (:role (peek messages))))
           (long (dec n)))
-        forced-idxs
-        (cond-> cand-idxs
-          (and loading-last-idx
-            (not (some #(= % loading-last-idx) cand-idxs)))
-          (conj loading-last-idx))
+        visible-idxs
+        cand-idxs
         projected
         (mapv
           (fn [^long i]
@@ -383,7 +378,7 @@
               (when-not loading-bubble?
                 (height-cache-put! m bubble-w settings detail-expansions real-h))
               {:idx i :projected pm :height real-h}))
-          forced-idxs)
+          visible-idxs)
         ;; Refine heights vec with real measurements.
         heights' (reduce
                    (fn [hs {:keys [^long idx ^long height]}]

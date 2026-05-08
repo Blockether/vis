@@ -206,6 +206,16 @@
         (expect (string? (:text projected)))
         (expect (not= (:text m) (:text projected)))))
 
+    (it "does not project off-screen live progress while the user is scrolled up"
+      (let [msgs (vec (concat (mapv #(user-msg (str "old " %)) (range 20))
+                        [{:role :assistant :text "Sending request to provider..."}]))
+            {:keys [visible]}
+            (virtual/layout msgs bubble-w settings 0 6
+              {:loading? true :progress {:iterations []}})
+            last-idx (dec (count msgs))]
+        (expect (seq visible))
+        (expect (not (some #(= last-idx (:idx %)) visible)))))
+
     (it "passes conversation context to live progress so huge blocks collapse while streaming"
       (render/invalidate-cache!)
       (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))

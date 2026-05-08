@@ -619,6 +619,170 @@
                (recur rst false false false nil (conj acc line))))))
     (str/join "\n")))
 
+(defn- capitalize-prose-line
+  "Sentence-case one non-fenced Markdown line.
+
+   `capitalize-next?` carries across lines. Inline backtick spans are protected
+   so code literals do not get rewritten, but punctuation before/after the span
+   still drives prose casing."
+  [line capitalize-next?]
+  (let [n (count line)]
+    (loop [idx              0
+           capitalize-next? (Boolean/valueOf (boolean capitalize-next?))
+           in-inline-code?  Boolean/FALSE
+           bracket-depth    0
+           paren-depth      0
+           acc              (StringBuilder.)]
+      (if (>= idx n)
+        [(.toString acc) capitalize-next?]
+        (let [ch (.charAt ^String line idx)]
+          (cond
+            (= ch \`)
+            (do
+              (.append acc ch)
+              (recur (inc idx) capitalize-next? (not in-inline-code?) bracket-depth paren-depth acc))
+
+            in-inline-code?
+            (do
+              (.append acc ch)
+              (recur (inc idx) capitalize-next? in-inline-code? bracket-depth paren-depth acc))
+
+            (= ch \[)
+            (do
+              (.append acc ch)
+              (recur (inc idx) capitalize-next? in-inline-code? (inc bracket-depth) paren-depth acc))
+
+            (= ch \])
+            (do
+              (.append acc ch)
+              (recur (inc idx) capitalize-next? in-inline-code? (max 0 (dec bracket-depth)) paren-depth acc))
+
+            (= ch \()
+            (do
+              (.append acc ch)
+              (recur (inc idx) capitalize-next? in-inline-code? bracket-depth (inc paren-depth) acc))
+
+            (= ch \))
+            (do
+              (.append acc ch)
+              (recur (inc idx) capitalize-next? in-inline-code? bracket-depth (max 0 (dec paren-depth)) acc))
+
+            (or (pos? bracket-depth) (pos? paren-depth))
+            (do
+              (.append acc ch)
+              (recur (inc idx) capitalize-next? in-inline-code? bracket-depth paren-depth acc))
+
+            (Character/isLetter ch)
+            (let [token-end  (loop [j idx]
+                               (if (and (< j n)
+                                     (not (Character/isWhitespace (.charAt ^String line j))))
+                                 (recur (inc j))
+                                 j))
+                  token      (subs line idx token-end)
+                  technical? (or (str/includes? token "/")
+                               (boolean
+                                 (some (fn [i]
+                                         (let [j (inc (long i))]
+                                           (and (= \. (.charAt ^String token (long i)))
+                                             (< j (count token))
+                                             (not (Character/isWhitespace (.charAt ^String token j))))))
+                                   (range (count token)))))
+                  out        (if (and capitalize-next?
+                                   (Character/isLowerCase ch)
+                                   (not technical?))
+                               (.charAt (.toUpperCase (str ch)) 0)
+                               ch)]
+              (.append acc out)
+              (recur (inc idx) false in-inline-code? bracket-depth paren-depth acc))
+
+            (contains? #{\. \! \?} ch)
+            (let [next-idx  (inc idx)
+                  terminal? (or (>= next-idx n)
+                              (Character/isWhitespace (.charAt ^String line next-idx)))]
+              (.append acc ch)
+              (recur next-idx terminal? in-inline-code? bracket-depth paren-depth acc))
+
+            :else
+            (do
+              (.append acc ch)
+              (recur (inc idx) capitalize-next? in-inline-code? bracket-depth paren-depth acc))))))))
+
+(defn- capitalize-prose-sentences
+  "Capitalize sentence starts in rendered answer prose.
+
+   Fixes terse model outputs like `tak. opcje` -> `Tak. Opcje` without
+   rewriting fenced code blocks. This is intentionally a light renderer repair,
+   not a grammar engine."
+  [text]
+  (let [lines (str/split (str text) #"\n" -1)]
+    (->> (loop [remaining        (seq lines)
+                in-code?         false
+                capitalize-next? true
+                acc              []]
+           (if-not remaining
+             acc
+             (let [line     (first remaining)
+                   trimmed  (str/trim line)
+                   fence?   (fence-line? line)
+                   heading? (boolean (re-matches #"^#{1,6}\s+.*" trimmed))
+                   list?    (boolean (re-matches #"^(?:[-*+]|\d+[.)])\s+.*" trimmed))]
+               (cond
+                 fence?
+                 (recur (next remaining)
+                   (not in-code?)
+                   (if in-code? true capitalize-next?)
+                   (conj acc line))
+
+                 in-code?
+                 (recur (next remaining) in-code? capitalize-next? (conj acc line))
+
+                 heading?
+                 (recur (next remaining) in-code? true (conj acc line))
+
+                 list?
+                 (recur (next remaining) in-code? true (conj acc line))
+
+                 :else
+                 (let [[line* capitalize-next?*] (capitalize-prose-line line capitalize-next?)]
+                   (recur (next remaining) in-code? (boolean capitalize-next?*) (conj acc line*)))))))
+      (str/join "\n"))))
+
+(defn- atx-heading-line?
+  [line]
+  (boolean
+    (and (string? line)
+      (re-matches #"^#{1,6}\s+.*" (str/trim line)))))
+
+(defn- normalize-heading-boundaries
+  "Insert missing blank lines around ATX headings outside fenced code.
+
+   LLMs often build answers with `(v/lines ...)`, yielding tight Markdown like
+   `Intro\n### Heading\n- item`. That is valid enough for the parser, but it
+   reads like the answer has no paragraph breaks. Keep this deliberately
+   narrow: headings only, never inside code fences, and never duplicate an
+   existing blank line."
+  [text]
+  (let [lines (vec (str/split-lines text))]
+    (->> (loop [idx      0
+                in-code? false
+                acc      []]
+           (if (>= idx (count lines))
+             acc
+             (let [line        (nth lines idx)
+                   fence?      (fence-line? line)
+                   heading?    (and (not in-code?) (atx-heading-line? line))
+                   prev-blank? (or (empty? acc) (str/blank? (peek acc)))
+                   next-line   (get lines (inc idx))
+                   next-blank? (or (nil? next-line) (str/blank? next-line))
+                   acc'        (cond-> acc
+                                 (and heading? (not prev-blank?)) (conj ""))
+                   acc''       (cond-> (conj acc' line)
+                                 (and heading? (not next-blank?)) (conj ""))]
+               (recur (inc idx)
+                 (if fence? (not in-code?) in-code?)
+                 acc''))))
+      (str/join "\n"))))
+
 (defn- punctuation-leading?
   [s]
   (boolean (re-find #"^[.,:;!?]" (str/trim (or s "")))))
@@ -711,7 +875,15 @@
       sibling evidence bullets are normalized into nested bullets, with
       a following fenced code block nested under the evidence bullet.
 
-   4. Loose inline islands caused by LLM over-formatting are folded back
+   4. Lowercase sentence starts caused by terse/mirroring style get normal
+      capitalization:
+        `tak. opcje.` -> `Tak. Opcje.`
+
+   5. Tight ATX headings caused by `(v/lines ...)` get paragraph breathing
+      room:
+        `Intro\n### Heading\n- item` -> `Intro\n\n### Heading\n\n- item`
+
+   6. Loose inline islands caused by LLM over-formatting are folded back
       into their paragraph:
         `in\n\n[link](x)\n\n. Done` -> `in [link](x). Done`
         `` `git diff`\n\n:\n\n`1 file`\n\n.`` -> `` `git diff`: `1 file`.``
@@ -725,7 +897,9 @@
     (-> text
       normalize-glued-fences
       normalize-summary-section-bullets
-      normalize-loose-inline-islands)))
+      normalize-heading-boundaries
+      normalize-loose-inline-islands
+      capitalize-prose-sentences)))
 
 (defn- comma-int
   "Group-3 thousands separator for integers, US locale-style. Used by
