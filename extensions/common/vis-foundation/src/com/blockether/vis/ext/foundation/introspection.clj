@@ -2,38 +2,13 @@
   "Programmatic introspection of the agent's own state from inside
    `:code`. The public state surface is deliberately small:
 
-   - `(v/inspect [conversation-id])` → canonical data map, including raw LLM diagnostics
-   - `(v/report [conversation-id])`  → Markdown rendered from that data
-   - `(v/provenance-timeline [conversation-id])` → ordered eval/tool provenance events
-   - `(v/provenance-stats [conversation-id])`    → ops/status/failure/slow summaries
-   - `(v/provenance-guards [conversation-id])`   → provenance integrity checks
-   - `(v/latest-provenance-refs [conversation-id])` → observed refs grouped for proof/blocker use
-   - `(v/provenance-report [conversation-id])`   → compact Markdown audit trail
-   - `(v/issue-intent! opts)` / `(v/focus-intent! id opts)` / `(v/relate-intents! opts)`
-     manage conversation-scoped intent focus
-   - `(v/issue-plan! opts)` / `(v/issue-gate! opts)`
-     create blocking plans/gates for one intent
-   - `(v/offer-proof! opts)` adds partial candidate proof slots
-   - `(v/attest-gate! gate opts)` / `(v/impede-gate! gate opts)`
-     resolve one gate with accepted evidence bundle attestations or impediment refs
-   - `(v/attest-intent! id opts)` / `(v/abandon-intent! id opts)`
-     resolve one intent with accepted closure attestations or abandonment evidence
-   - `(v/intents)` reads focus, checks, violations, and report
+   - `(v/inspect [conversation-id])` -> data map, including raw LLM diagnostics
+   - `(v/report [conversation-id])`  -> Markdown rendered from that data
 
-   Everything else in this namespace is implementation behind that
-   deeper interface. The agent gets the data once, manipulates it via
-   plain Clojure (`get-in`, `filter`, `map`, etc.), and renders the
-   same data to Markdown only when presentation is needed.
-
-   Extension catalog/doc access remains public because it is discovery,
-   not conversation-state introspection:
-
-   - `(v/extensions)`                 → catalog of every loaded extension
-   - `(v/extension-docs [ref])`       → docs declared by an extension with descriptions
-   - `(v/extension-doc ref)`          → full README descriptor for an extension
-   - `(v/extension-readme ref)`       → convenience for (:content (extension-doc ref))
-   - `(v/namespace-docs [ref])`       → sandbox symbol summaries for an extension namespace
-   - `(v/symbol-doc ref sym)`         → doc/arglists/examples for one sandbox symbol
+   Everything else in this namespace is implementation detail. The agent
+   gets the data once, manipulates it via plain Clojure (`get-in`,
+   `filter`, `map`, etc.), and renders the same data to Markdown only
+   when presentation is needed.
 
    Every function is a pure read off the same DB tables the projection
    layer reads from (or a classpath read for the doc accessors).
@@ -46,19 +21,12 @@
    [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.foundation.transcript :as transcript]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.markdown :as md]
-   [com.blockether.vis.internal.presentation :as presentation]
-   [com.blockether.vis.internal.proof :as proof])
-  (:import
-   [clojure.lang IBlockingDeref IDeref IPending]
-   [java.util.concurrent CancellationException ExecutionException Future TimeUnit TimeoutException]))
+   [com.blockether.vis.ext.foundation.transcript :as transcript]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
 ;; registry (`vis/registered-channels`) so any third-party channel jar
-;; on the classpath surfaces in the inspect conversation index automatically —
+;; on the classpath surfaces in the inspect conversation index automatically -
 ;; no edits to this file when a new front-end ships.
 ;;
 ;; `:cli` is added unconditionally because the CLI agent uses `:cli` as
@@ -79,7 +47,7 @@
     vec))
 
 ;; ---------------------------------------------------------------------------
-;; Helpers — derive ids, deref atoms, normalize sym args.
+;; Helpers - derive ids, deref atoms, normalize sym args.
 ;; ---------------------------------------------------------------------------
 
 (defn- safe-deref [a]
@@ -91,7 +59,7 @@
 (defn- current-conversation-turn-id
   "UUID of the in-flight turn, or nil when no turn is running yet.
 
-   Internally this is the `conversation_turn_soul` id — hence the
+   Internally this is the `conversation_turn_soul` id - hence the
    `:current-conversation-turn-id-atom` env key and this helper's `conversation-turn-id`
    suffix. The product concept is *turn*; everywhere this id is
    surfaced to the model (e.g. inspect current-turn results, the
@@ -117,7 +85,7 @@
     (catch Throwable _ [])))
 
 ;; ---------------------------------------------------------------------------
-;; Builders — assemble each top-level snapshot map.
+;; Builders - assemble each top-level snapshot map.
 ;; ---------------------------------------------------------------------------
 
 (defn- iteration-pointer
@@ -154,7 +122,7 @@
   "Render `\"provider/model\"` when both are known, otherwise just the
    model (or just the provider) so callers always get a non-empty
    string when at least one component exists. Returns nil when both
-   are nil/blank — callers `cond->` on the result."
+   are nil/blank - callers `cond->` on the result."
   [provider model]
   (let [provider-str (some-> provider name str/trim not-empty)
         model-str    (some-> model str str/trim not-empty)]
@@ -173,7 +141,7 @@
    Never throws.
 
    `:provider-model` is a derived `\"provider/model\"` display string
-   (e.g. `\"openai/gpt-4o\"`) so callers render it directly — the
+   (e.g. `\"openai/gpt-4o\"`) so callers render it directly - the
    canonical data still lives in `:provider` and `:model` separately."
   [turn]
   (let [provider-model (format-provider-model (:provider turn) (:model turn))]
@@ -220,7 +188,7 @@
    (when (some? text)
      (let [string-value (str text)]
        (if (> (count string-value) limit)
-         (str (subs string-value 0 limit) "…")
+         (str (subs string-value 0 limit) "...")
          string-value)))))
 
 (defn- error-text [error]
@@ -295,10 +263,10 @@
 (defn- advice-for-classification [classification]
   (case classification
     :provider-schema-rejected
-    "Provider returned prose/string instead of the iteration map. Skip the SQLite trip — the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
+    "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
     :regex-unsupported-escape
-    "Clojure strings reject \\| as an escape. Use bare | for regex alternation inside a string, or switch to a #\"…\" regex literal for complex patterns."
+    "Clojure strings reject \\| as an escape. Use bare | for regex alternation inside a string, or switch to a #\"...\" regex literal for complex patterns."
 
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."
@@ -403,7 +371,7 @@
       (catch Throwable _ nil))))
 
 ;; ---------------------------------------------------------------------------
-;; Meta fns — each takes `env` as first arg via the shared
+;; Meta fns - each takes `env` as first arg via the shared
 ;; `:before-fn` injector below. The agent never sees `env`; it calls
 ;; e.g. current-turn snapshot with zero args.
 ;; ---------------------------------------------------------------------------
@@ -414,7 +382,7 @@
 (defn- foundation-conversation
   "Snapshot for a conversation. The in-flight turn (= current `TURN_CONVERSATION_TURN_ID`)
    is automatically excluded from `:turns` because its `:iteration-count` /
-   `:total-cost` haven't been finalized yet — listing it would render
+   `:total-cost` haven't been finalized yet - listing it would render
    as `null | $null` and confuse downstream summaries. The excluded id
    is surfaced as `:in-flight-turn-id` so callers can opt into seeing
    it. Filtering happens only when the in-flight turn belongs to this
@@ -476,7 +444,7 @@
      :model :created-at :turn-count}`. The trunk is `:version 0` with
    `:parent-state-id nil`; any later row with non-nil `:parent-state-id`
    is a fork off the referenced state. Returns `[]` (never nil) when
-   the conversation has no rows OR the env is missing handles — lets
+   the conversation has no rows OR the env is missing handles - lets
    callers chain `(group-by :parent-state-id ...)` without nil-guards.
 
    No-arg form uses the current-conversation-id from the env."
@@ -495,7 +463,7 @@
    `{:state-id :version :forked-from-conversation-turn-state-id :status :prior-outcome
      :provider :model :created-at :iteration-count}`. Version 0 with
    `:forked-from-conversation-turn-state-id nil` is the original run; any higher
-   version is a retry. `conversation-turn-id` is a `conversation_turn_soul` UUID — the same id
+   version is a retry. `conversation-turn-id` is a `conversation_turn_soul` UUID - the same id
    surfaced as `:turn-id` by attempt search, `:id` by the current-turn
    snapshot, or `:turns[].id` by the conversation summary. Returns `[]` (never nil)
    when the turn is unknown or the env is missing handles."
@@ -536,11 +504,11 @@
 (def ^:private REPETITION_THRESHOLD
   "Minimum number of failures sharing the same normalized signature
    before the turn is flagged as locked in a same-error loop. Empirical
-   floor: agents that miss a path 2-3× and pivot stay below; agents
+   floor: agents that miss a path 2-3x and pivot stay below; agents
    that emit 5+ identical-root-cause errors are stuck and not learning.
    Anchored to the worst-case in the self-analyze report for
    conversation 89ea9c98-21d4-4483-a962-f8ccb1d8232d (148 'src/tui not
-   found' failures in one turn — the failure mode this catches)."
+   found' failures in one turn - the failure mode this catches)."
   5)
 
 (defn- repetition-signature
@@ -548,7 +516,7 @@
    varying filename attempts under the same missing directory hash to
    the same bucket. Strategy: keep `:source` + `:classification` and
    collapse the message to the leading phrase before the first `:`
-   (e.g. `Path not found: /…/foo.clj` and `File not found: /…/bar.clj`
+   (e.g. `Path not found: /.../foo.clj` and `File not found: /.../bar.clj`
    become `\"Path not found\"` and `\"File not found\"`). Drops the
    varying tail that would otherwise scatter identical-cause errors
    across distinct buckets."
@@ -563,7 +531,7 @@
   "Buckets of failures sharing a `repetition-signature`. Returns a vec
    of `{:signature .. :count .. :sample failure}` for clusters whose
    size meets `REPETITION_THRESHOLD`, sorted largest-first. Empty vec
-   when nothing is repeating — caller treats `(seq …)` as the
+   when nothing is repeating - caller treats `(seq ...)` as the
    `:repetition-loop?` flag. Surfacing this gives the agent a single
    number to read instead of having to derive it from `:failures`."
   [failures]
@@ -586,11 +554,11 @@
         (seq clusters)
         (into
           (mapv (fn [{:keys [count sample]}]
-                  (str "Same error repeated " count "× this turn (e.g. "
+                  (str "Same error repeated " count "x this turn (e.g. "
                     (preview (:message sample) 80)
                     "). STOP varying inputs to the failing call. "
                     "Switch strategy: list a parent directory, broaden "
-                    "the search, or pivot — repeating the same shape "
+                    "the search, or pivot - repeating the same shape "
                     "will not converge."))
             clusters))
 
@@ -618,7 +586,7 @@
    conversation id to diagnose all turns in that conversation.
 
    `:repetition-loop?` is `true` when any error signature repeats at
-   least `REPETITION_THRESHOLD` times in the failure list — the
+   least `REPETITION_THRESHOLD` times in the failure list - the
    single-glance flag for the 'agent retried the same broken call N
    times' pathology. `:repetition-clusters` carries the supporting
    data (signature, count, sample failure)."
@@ -744,1724 +712,35 @@
        (transcript/transcript->md transcript-data)
        (str "Conversation not found: " (:conversation-id data) "\n")))))
 
-;; ---------------------------------------------------------------------------
-;; Provenance timeline + guards — model-facing audit helpers.
-;; ---------------------------------------------------------------------------
-
-(defn- tool-result-envelope? [value]
-  (and (map? value)
-    (contains? value :success?)
-    (contains? value :provenance)))
-
-(defn- event-status [error success?]
-  (cond
-    error :error
-    (false? success?) :error
-    :else :done))
-
-(defn- block-index [block]
-  (or (:idx block) (:id block) 0))
-
-(defn- block-ref [iteration-position block]
-  (or (get-in block [:provenance :ref])
-    (str "i" iteration-position "." (inc (long (block-index block))))))
-
-(defn- eval-event [conversation-id turn iteration block]
-  (let [provenance (:provenance block)
-        iteration-position (:position iteration)
-        ref (block-ref iteration-position block)
-        status (event-status (:error block) true)]
-    (cond-> {:kind            :eval
-             :ref             ref
-             :conversation-id conversation-id
-             :turn-id         (:id turn)
-             :iteration-id    (:id iteration)
-             :iteration       iteration-position
-             :form-position   (or (:form-position provenance)
-                                (inc (long (block-index block))))
-             :form-count      (:form-count provenance)
-             :code            (:code block)
-             :op              (:op provenance)
-             :rendering-kind  (:rendering-kind block)
-             :status          status
-             :duration-ms     (or (:duration-ms provenance)
-                                (:execution-time-ms block)
-                                (:duration-ms block)
-                                0)
-             :links           {:conversation conversation-id
-                               :turn         (:id turn)
-                               :iteration    (:id iteration)
-                               :form         ref}}
-      (:error block)     (assoc :error (:error block))
-      (:timeout? block)  (assoc :timeout? true)
-      (:repaired? block) (assoc :repaired? true)
-      provenance         (assoc :provenance provenance))))
-
-(defn- tool-event [conversation-id turn iteration block]
-  (let [value (:result block)]
-    (when (tool-result-envelope? value)
-      (let [parent-ref (block-ref (:position iteration) block)
-            provenance (:provenance value)
-            status (event-status (:error value) (:success? value))]
-        (cond-> {:kind            :tool
-                 :ref             (str parent-ref "/tool/" (or (some-> (:op provenance) name) "tool"))
-                 :parent-ref      parent-ref
-                 :conversation-id conversation-id
-                 :turn-id         (:id turn)
-                 :iteration-id    (:id iteration)
-                 :iteration       (:position iteration)
-                 :form-position   (get-in block [:provenance :form-position])
-                 :op              (:op provenance)
-                 :status          status
-                 :duration-ms     (or (:duration-ms provenance) 0)
-                 :rendering-kind  :vis/tool
-                 :links           {:conversation conversation-id
-                                   :turn         (:id turn)
-                                   :iteration    (:id iteration)
-                                   :form         parent-ref
-                                   :parent       parent-ref}}
-          (:tool provenance)   (assoc :tool (:tool provenance))
-          (:target provenance) (assoc :target (:target provenance))
-          (:error value)       (assoc :error (:error value))
-          provenance           (assoc :provenance provenance))))))
-
-(defn- lifecycle-event
-  [conversation-id turn iteration block event-projection]
-  (let [provenance (:provenance event-projection)
-        parent-ref (:parent-ref provenance)]
-    (cond-> {:kind            (case (:rendering-kind event-projection)
-                                :vis/tool :tool
-                                :vis/error :error
-                                :event)
-             :ref             (:ref provenance)
-             :parent-ref      parent-ref
-             :conversation-id conversation-id
-             :turn-id         (:id turn)
-             :iteration-id    (:id iteration)
-             :iteration       (:position iteration)
-             :form-position   (inc (long (block-index block)))
-             :op              (:op provenance)
-             :status          (:status provenance)
-             :duration-ms     (or (:duration-ms provenance) 0)
-             :rendering-kind  (:rendering-kind event-projection)
-             :links           {:conversation conversation-id
-                               :turn         (:id turn)
-                               :iteration    (:id iteration)
-                               :form         (block-ref (:position iteration) block)
-                               :parent       parent-ref}
-             :provenance      provenance}
-      (:error event-projection) (assoc :error (:error event-projection)))))
-
-(defn- transcript-for-provenance [env conversation-id]
-  (safe-call #(transcript/transcript (:db-info env) (or conversation-id (:conversation-id env))) nil))
-
-(defn- foundation-provenance-timeline
-  "Ordered provenance ledger for one conversation. Emits one `:eval`
-   event for every executed top-level form, plus one child `:tool`
-   event whenever that form returned a tool-result envelope."
-  ([env]
-   (foundation-provenance-timeline env (:conversation-id env)))
-  ([env conversation-id]
-   (let [data (transcript-for-provenance env conversation-id)
-         conversation-id (get-in data [:conversation :id])]
-     (if-not data
-       []
-       (vec
-         (mapcat (fn [turn]
-                   (mapcat (fn [iteration]
-                             (mapcat (fn [block]
-                                       (let [events (mapv #(lifecycle-event conversation-id turn iteration block %)
-                                                      (:events block))
-                                             tool   (when (empty? events)
-                                                      (tool-event conversation-id turn iteration block))]
-                                         (cond-> (into [(eval-event conversation-id turn iteration block)] events)
-                                           tool (conj tool))))
-                               (:blocks iteration)))
-                     (:iterations turn)))
-           (:turns data)))))))
-
-(defn- id-prefix-match?
-  [id prefix]
-  (and id prefix (str/starts-with? (str/lower-case (str id)) (str/lower-case (str prefix)))))
-
-(defn- fast-provenance-event
-  [env conversation-id ref]
-  (when-let [{:keys [turn-prefix iteration block]} (proof/parse-ref ref)]
-    (let [db-info (:db-info env)
-          turn    (some #(when (id-prefix-match? (:id %) turn-prefix) %)
-                    (safe-call #(vis/db-list-conversation-turns db-info conversation-id) []))
-          iter    (when turn
-                    (some #(when (= (long iteration) (long (:position %))) %)
-                      (safe-call #(vis/db-list-conversation-turn-iterations db-info (:id turn)) [])))
-          blocks  (when iter (safe-call #(vis/db-list-iteration-blocks db-info (:id iter)) []))
-          blk     (some #(when (= (str ref) (get-in % [:provenance :ref])) %)
-                    blocks)
-          blk     (or blk (nth (vec blocks) (dec (long block)) nil))]
-      (when blk
-        (let [events (mapv #(lifecycle-event conversation-id turn iter blk %) (:events blk))
-              tool   (when (empty? events) (tool-event conversation-id turn iter blk))
-              all    (cond-> (into [(eval-event conversation-id turn iter blk)] events)
-                       tool (conj tool))]
-          (some #(when (= (str ref) (str (:ref %))) %) all))))))
-
-(defn foundation-provenance-event
-  "Return one provenance timeline event by canonical ref, or nil. Uses a direct
-   DB lookup first so TUI ref clicks do not rebuild the whole transcript."
-  ([env ref]
-   (foundation-provenance-event env (:conversation-id env) ref))
-  ([env conversation-id ref]
-   (or (fast-provenance-event env conversation-id ref)
-     (some #(when (= (str ref) (str (:ref %))) %)
-       (foundation-provenance-timeline env conversation-id)))))
-
-(defn- foundation-provenance-stats
-  "Roll up a provenance timeline into counts and audit-focused slices."
-  ([env]
-   (foundation-provenance-stats env (:conversation-id env)))
-  ([env conversation-id]
-   (let [timeline (foundation-provenance-timeline env conversation-id)]
-     {:event-count (count timeline)
-      :by-kind     (frequencies (map :kind timeline))
-      :by-op       (frequencies (map :op timeline))
-      :by-rendering-kind (frequencies (keep :rendering-kind timeline))
-      :by-status   (frequencies (map :status timeline))
-      :failures    (filterv #(= :error (:status %)) timeline)
-      :slowest     (vec (take 5 (sort-by (comp - long #(or % 0) :duration-ms) timeline)))
-      :tools       (filterv #(= :tool (:kind %)) timeline)})))
-
-(defn- event-ref
-  [event]
-  (:ref event))
-
-(defn- refs-where
-  [pred events]
-  (mapv event-ref (filter pred events)))
-
-(defn- last-ref-where
-  [pred events]
-  (some->> events (filter pred) last event-ref))
-
-(defn- foundation-latest-provenance-refs
-  "Convenience index of currently observed refs. These are copied from
-   the persisted provenance timeline; current-iteration refs that have
-   not reached the journal are intentionally absent."
-  ([env]
-   (foundation-latest-provenance-refs env (:conversation-id env)))
-  ([env conversation-id]
-   (let [events          (filterv event-ref (foundation-provenance-timeline env conversation-id))
-         done?           #(proof/successful? (:status %))
-         terminal?       #(proof/terminal? (:status %))
-         blocker?        #(proof/blocker? (:status %))
-         error?          #(= :error (:status %))
-         proof-refs      (refs-where done? events)
-         terminal-refs   (refs-where terminal? events)
-         blocker-refs    (refs-where blocker? events)
-         error-refs      (refs-where error? events)
-         all-valid-refs  (mapv event-ref events)]
-     {:latest-ref          (some-> events last event-ref)
-      :latest-done-ref     (last-ref-where done? events)
-      :latest-proof-ref    (last proof-refs)
-      :latest-terminal-ref (last terminal-refs)
-      :latest-error-ref    (last error-refs)
-      :latest-blocker-ref  (last blocker-refs)
-      :proof-refs          proof-refs
-      :terminal-refs       terminal-refs
-      :blocker-refs        blocker-refs
-      :error-refs          error-refs
-      :all-valid-refs      all-valid-refs})))
-
-(defn- provenance-guard-violations [timeline]
-  (let [refs       (keep :ref timeline)
-        ref-counts (frequencies refs)
-        ref-set    (set refs)]
-    (vec
-      (concat
-        (mapcat (fn [event]
-                  (cond-> []
-                    (nil? (:ref event))
-                    (conj {:type :missing-ref :event event})
-
-                    (nil? (:op event))
-                    (conj {:type :missing-op :ref (:ref event)})
-
-                    (nil? (:status event))
-                    (conj {:type :missing-status :ref (:ref event)})
-
-                    (and (= :error (:status event)) (nil? (:error event)))
-                    (conj {:type :failed-event-without-error :ref (:ref event)})
-
-                    (and (= :tool (:kind event))
-                      (not (contains? ref-set (:parent-ref event))))
-                    (conj {:type :tool-parent-missing
-                           :ref (:ref event)
-                           :parent-ref (:parent-ref event)})
-
-                    (and (= :eval (:kind event))
-                      (nil? (:provenance event)))
-                    (conj {:type :eval-missing-provenance :ref (:ref event)})))
-          timeline)
-        (keep (fn [[ref n]]
-                (when (> n 1)
-                  {:type :duplicate-ref :ref ref :count n}))
-          ref-counts)))))
-
-(defn- foundation-provenance-guards
-  "Integrity checks over the provenance ledger. Returns data, never
-   throws, so the model can gate answers on `:success?` before citing refs."
-  ([env]
-   (foundation-provenance-guards env (:conversation-id env)))
-  ([env conversation-id]
-   (let [timeline   (foundation-provenance-timeline env conversation-id)
-         violations (provenance-guard-violations timeline)]
-     {:success?        (empty? violations)
-      :checked    {:events (count timeline)
-                   :refs   (count (set (keep :ref timeline)))}
-      :violations violations})))
-
-(defn- foundation-provenance-report
-  "Compact Markdown audit trail suitable for inclusion in an answer."
-  ([env]
-   (foundation-provenance-report env (:conversation-id env)))
-  ([env conversation-id]
-   (let [timeline (foundation-provenance-timeline env conversation-id)
-         stats    (foundation-provenance-stats env conversation-id)
-         guards   (foundation-provenance-guards env conversation-id)]
-     (str "## Provenance\n\n"
-       "- Events: " (:event-count stats) "\n"
-       "- Status: " (pr-str (:by-status stats)) "\n"
-       "- Guards: " (if (:success? guards) "ok" (str "failed " (count (:violations guards)) " check(s)")) "\n\n"
-       (if (seq timeline)
-         (str/join "\n"
-           (map (fn [{:keys [ref parent-ref kind op engine status duration-ms error]}]
-                  (str "- `" ref "` " (name kind) " " (pr-str op)
-                    (when parent-ref (str " parent `" parent-ref "`"))
-                    (when engine (str " via " (pr-str engine)))
-                    " → " (name status) ", " (or duration-ms 0) "ms"
-                    (when error (str " — " (preview (error-text error) 180)))))
-             timeline))
-         "_No provenance events._")
-       "\n"))))
-
-;; ---------------------------------------------------------------------------
-;; Conversation-scoped intents -> plans -> blocking gates.
-;; `v/intents` is the single read/check/report surface.
-;; ---------------------------------------------------------------------------
-
-(defn- current-turn-intents
-  [env]
-  (safe-call #(vis/db-intents (:db-info env) {:conversation-turn-id (current-conversation-turn-id env)})
-    {:success? false
-     :scope :conversation
-     :conversation-id (:conversation-id env)
-     :turn-state-id nil
-     :focused-intent-ids []
-     :unfocused-active-intent-ids []
-     :intents []
-     :checks []
-     :violations [{:type :intent-read-error
-                   :blocking? true
-                   :message "Unable to read conversation intents."}]
-     :report "## Intents
-
-Unable to read conversation intents.
-"}))
-
-(defn- foundation-intents
-  ([env]
-   (current-turn-intents env))
-  ([env conversation-turn-id]
-   (safe-call #(vis/db-intents (:db-info env) {:conversation-turn-id conversation-turn-id})
-     {:success? false
-      :scope :conversation
-      :conversation-id (:conversation-id env)
-      :turn-state-id nil
-      :focused-intent-ids []
-      :unfocused-active-intent-ids []
-      :intents []
-      :checks []
-      :violations []
-      :report "## Intents
-
-_No intents._
-"})))
-
-(defn- foundation-issue-intent!
-  [env opts]
-  (vis/db-store-intent! (:db-info env)
-    (assoc opts :conversation-turn-id (or (:conversation-turn-id opts)
-                                        (current-conversation-turn-id env)))))
-
-(defn- foundation-focus-intent!
-  [env intent-id opts]
-  (vis/db-focus-intent! (:db-info env) intent-id
-    (assoc opts :conversation-turn-id (or (:conversation-turn-id opts)
-                                        (current-conversation-turn-id env)))))
-
-(defn- foundation-relate-intents!
-  [env opts]
-  (vis/db-relate-intents! (:db-info env) opts))
-
-(defn- plan-id-value
-  [x]
-  (cond
-    (map? x) (:id x)
-    :else x))
-
-(defn- foundation-proof-slot
-  [_env intent-or-id slot-name]
-  [(plan-id-value intent-or-id) (keyword slot-name)])
-
-(defn- plan-node
-  [kind id]
-  [(keyword kind) (plan-id-value id)])
-
-(defn- plan-edge-target
-  [target]
-  (cond
-    (and (vector? target) (= 2 (count target)) (keyword? (second target))) [:slot target]
-    (and (vector? target) (#{:intent :gate :slot} (first target))) target
-    (map? target) [:intent (:id target)]
-    :else [:intent target]))
-
-(defn- foundation-plan
-  ([env intent-or-id]
-   (foundation-plan env intent-or-id {}))
-  ([_env intent-or-id {:keys [requires nodes edges steps] :as _opts}]
-   (let [entry (plan-node :intent intent-or-id)]
-     (cond-> {:entry entry
-              :nodes (merge {entry {:kind :intent}} (or nodes {}))
-              :edges (vec (concat
-                            (map (fn [target]
-                                   [entry :requires (plan-edge-target target)])
-                              requires)
-                            (or edges [])))}
-       steps (assoc :steps (vec steps))))))
-
-(defn- foundation-issue-plan!
-  [env opts]
-  (vis/db-store-plan! (:db-info env)
-    (assoc opts :conversation-turn-id (or (:conversation-turn-id opts)
-                                        (current-conversation-turn-id env)))))
-
-(defn- foundation-issue-gate!
-  [env opts]
-  (vis/db-store-gate! (:db-info env) opts))
-
-(defn- foundation-offer-proof!
-  [env opts]
-  (vis/db-offer-proof! (:db-info env) opts))
-
-(defn- resolve-current-gate-id
-  [state gate]
-  (cond
-    (uuid? gate) gate
-    (string? gate) (some (fn [intent]
-                           (some (fn [plan]
-                                   (some #(when (= (str (:id %)) gate) (:id %)) (:gates plan)))
-                             (:plans intent)))
-                     (:intents state))
-    (map? gate) (:id gate)
-    :else gate))
-
-(defn- create-attestation-bundle!
-  [env {:keys [evidence-bundle-id conversation-id kind subject-kind subject-id requirements summary metadata source]}]
-  (if evidence-bundle-id
-    evidence-bundle-id
-    (do
-      (when-not (seq requirements)
-        (throw (ex-info "attestation helper requires :requirements or :evidence-bundle-id"
-                 {:subject-kind subject-kind
-                  :subject-id subject-id})))
-      (:id (vis/db-create-evidence-bundle! (:db-info env)
-             {:conversation-id (or conversation-id (current-conversation-id env))
-              :kind kind
-              :subject-kind subject-kind
-              :subject-id subject-id
-              :source source
-              :summary summary
-              :metadata metadata
-              :requirements requirements})))))
-
-(defn- foundation-attest-gate!
-  "Attestation-ledger gate resolution. Prefer this over legacy prove-gate! when
-   you have evidence requirements over provenance_event rows."
-  ([env opts]
-   (let [state (current-turn-intents env)
-         kind (or (:kind opts) :gate/proven)
-         gate-id (or (:gate-id opts)
-                   (resolve-current-gate-id state (:gate opts)))
-         bundle-kind (case kind
-                       :gate/impeded :impediment
-                       :gate/proven :proof)
-         bundle-id (create-attestation-bundle! env
-                     (assoc opts
-                       :kind (or (:bundle-kind opts) bundle-kind)
-                       :subject-kind :gate
-                       :subject-id gate-id))]
-     (vis/db-attest-gate! (:db-info env)
-       (-> opts
-         (dissoc :gate :requirements :conversation-id :bundle-kind :source :metadata)
-         (assoc :gate-id gate-id
-           :evidence-bundle-id bundle-id
-           :kind kind)))))
-  ([env gate opts]
-   (foundation-attest-gate! env (assoc opts :gate gate))))
-
-(defn foundation-prove-gate!
-  ([env opts]
-   (let [state (current-turn-intents env)
-         gate-id (or (:gate-id opts)
-                   (resolve-current-gate-id state (:gate opts)))]
-     (vis/db-prove-gate! (:db-info env)
-       (-> opts (dissoc :gate) (assoc :gate-id gate-id)))))
-  ([env gate opts]
-   (foundation-prove-gate! env (assoc opts :gate gate))))
-
-(defn- foundation-impede-gate!
-  ([env opts]
-   (let [state (current-turn-intents env)
-         gate-id (or (:gate-id opts)
-                   (resolve-current-gate-id state (:gate opts)))]
-     (vis/db-impede-gate! (:db-info env)
-       (-> opts (dissoc :gate) (assoc :gate-id gate-id)))))
-  ([env gate opts]
-   (foundation-impede-gate! env (assoc opts :gate gate))))
-
-(defn- foundation-block-gate!
-  ([env opts]
-   (foundation-impede-gate! env opts))
-  ([env gate opts]
-   (foundation-impede-gate! env gate opts)))
-
-(defn- foundation-attest-intent!
-  "Attestation-ledger intent resolution. Fulfillment requires an accepted closure
-   bundle and a completed plan; abandonment requires blocker/impediment state."
-  [env intent-id opts]
-  (let [kind (or (:kind opts) :intent/fulfilled)
-        bundle-kind (case kind
-                      :intent/abandoned :impediment
-                      :intent/fulfilled :closure)
-        bundle-id (create-attestation-bundle! env
-                    (assoc opts
-                      :kind (or (:bundle-kind opts) bundle-kind)
-                      :subject-kind :intent
-                      :subject-id intent-id))]
-    (vis/db-attest-intent! (:db-info env)
-      (-> opts
-        (dissoc :requirements :conversation-id :bundle-kind :source :metadata)
-        (assoc :intent-id intent-id
-          :evidence-bundle-id bundle-id
-          :kind kind)))))
-
-(defn foundation-fulfill-intent!
-  [env intent-id opts]
-  (vis/db-fulfill-intent! (:db-info env) intent-id
-    (assoc opts :conversation-turn-id (or (:conversation-turn-id opts)
-                                        (current-conversation-turn-id env)))))
-
-(defn- foundation-abandon-intent!
-  [env intent-id opts]
-  (vis/db-abandon-intent! (:db-info env) intent-id
-    (assoc opts
-      :reason (or (:reason opts) (:summary opts))
-      :conversation-turn-id (or (:conversation-turn-id opts)
-                              (current-conversation-turn-id env)))))
-
-;; ---------------------------------------------------------------------------
-;; Proof checks + <proofs> Markdown projection.
-;;
-;; Policy lives in data checks. Markdown is only a clickable human projection.
-;; ---------------------------------------------------------------------------
-
-(defn- ref-value
-  [x]
-  (cond
-    (map? x) (:ref x)
-    (nil? x) nil
-    :else (str x)))
-
-(defn- code-ish
-  [x]
-  (str "`" x "`"))
-
-(defn- proof-data
-  [m]
-  {:refs  (vec (or (:refs m) []))
-   :slots (or (:slots m) {})})
-
-(defn- proof-ref-entries
-  [data role]
-  (let [data     (proof-data data)
-        explicit (map #(if (map? %) (assoc % :role role) {:ref % :role role}) (:refs data))
-        slotted  (keep (fn [[slot value]]
-                         (when-let [ref (:ref value)]
-                           {:ref ref :role role :slot slot}))
-                   (:slots data))]
-    (vec (concat explicit slotted))))
-
-(defn- selector-value
-  [data selector]
-  (cond
-    (= selector [:refs]) (:refs data)
-
-    (and (vector? selector) (= :slot (first selector)))
-    (get-in (:slots data) (into [(second selector)] (drop 2 selector)))
-
-    :else selector))
-
-(defn- guard-value
-  [data x]
-  (if (and (vector? x) (#{:slot :refs} (first x)))
-    (selector-value data x)
-    x))
-
-(defn- guard-passes?
-  [data guard]
-  (letfn [(eval-guard [expr]
-            (try
-              (if-not (vector? expr)
-                (boolean expr)
-                (let [op   (first expr)
-                      args (rest expr)]
-                  (case op
-                    :and (every? eval-guard args)
-                    :or  (boolean (some eval-guard args))
-                    :not (not (eval-guard (first args)))
-                    :=   (= (guard-value data (first args)) (guard-value data (second args)))
-                    :!=  (not= (guard-value data (first args)) (guard-value data (second args)))
-                    :<   (< (guard-value data (first args)) (guard-value data (second args)))
-                    :<=  (<= (guard-value data (first args)) (guard-value data (second args)))
-                    :>   (> (guard-value data (first args)) (guard-value data (second args)))
-                    :>=  (>= (guard-value data (first args)) (guard-value data (second args)))
-                    :exists (some? (guard-value data (first args)))
-                    :contains (let [haystack (guard-value data (first args))
-                                    needle   (guard-value data (second args))]
-                                (cond
-                                  (string? haystack) (str/includes? haystack (str needle))
-                                  (coll? haystack)   (contains? (set haystack) needle)
-                                  :else false))
-                    :matches (boolean (re-find (re-pattern (str (guard-value data (second args))))
-                                        (str (guard-value data (first args)))))
-                    (boolean (guard-value data expr)))))
-              (catch Throwable _
-                false)))]
-    (if guard (eval-guard guard) true)))
-
-(defn- ref-compatible?
-  [role status]
-  (case role
-    (:proof :fulfillment-evidence) (proof/successful? status)
-    (:impediment :abandonment-evidence) (proof/terminal? status)
-    (:candidate :context) (proof/terminal? status)
-    (proof/terminal? status)))
-
-(defn- ref-incompatibility-type
-  [role]
-  (case role
-    (:proof :fulfillment-evidence) :proof-ref-not-successful
-    (:impediment :abandonment-evidence) :blocker-ref-not-terminal
-    :candidate :candidate-ref-not-terminal
-    :ref-not-terminal))
-
-(defn- check-ref-entry
-  [event-by-ref owner entry]
-  (let [proof-management-symbols #{"v/intents"
-                                   "v/audit"
-                                   "v/audit-report"
-                                   "v/provenance-guards"
-                                   "v/provenance-report"
-                                   "v/latest-provenance-refs"
-                                   "v/issue-intent!"
-                                   "v/focus-intent!"
-                                   "v/relate-intents!"
-                                   "v/issue-plan!"
-                                   "v/issue-gate!"
-                                   "v/offer-proof!"
-                                   "v/attest-gate!"
-                                   "v/prove-gate!"
-                                   "v/impede-gate!"
-                                   "v/attest-intent!"
-                                   "v/fulfill-intent!"
-                                   "v/abandon-intent!"
-                                   "v/proof-slot"}
-        contains-proof-management? (fn [code]
-                                     (let [s (str code)]
-                                       (boolean (some #(str/includes? s %) proof-management-symbols))))
-        answer-or-title-form?      (fn [code]
-                                     (let [s (str/trim (str code))]
-                                       (or (str/starts-with? s "(answer")
-                                         (str/starts-with? s "(conversation-title")
-                                         (str/includes? s "(answer ")
-                                         (str/includes? s "(conversation-title "))))
-        non-evidence-event?        (fn [event]
-                                     (let [code (:code event)]
-                                       (boolean
-                                         (or (answer-or-title-form? code)
-                                           (and (contains-proof-management? code)
-                                             (not= :tool (:kind event)))))))
-        evidence-required-role?    #(contains? #{:proof :fulfillment-evidence} %)
-        ref        (ref-value entry)
-        role       (:role entry)
-        canonical? (boolean (and ref (proof/canonical-ref? ref)))
-        event      (when canonical? (get event-by-ref ref))
-        status     (:status event)
-        observed?  (some? event)
-        compatible? (and observed? (ref-compatible? role status))
-        evidence?  (not (and (evidence-required-role? role)
-                          (non-evidence-event? event)))
-        success?   (and canonical? observed? compatible? evidence?)
-        violation  (cond
-                     (not canonical?) {:type :non-canonical-ref
-                                       :blocking? true
-                                       :ref ref
-                                       :role role
-                                       :owner owner
-                                       :message (str "Reference is not canonical: " (pr-str ref))}
-                     (not observed?)  {:type :unobserved-ref
-                                       :blocking? true
-                                       :ref ref
-                                       :role role
-                                       :owner owner
-                                       :message (str "Reference is canonical but not observed in provenance timeline: " ref)}
-                     (not compatible?) {:type (ref-incompatibility-type role)
-                                        :blocking? true
-                                        :ref ref
-                                        :role role
-                                        :status status
-                                        :owner owner
-                                        :message (str "Reference " ref " has status " (pr-str status)
-                                                   " and is not compatible with role " (pr-str role) ".")}
-                     (not evidence?) {:type :non-evidence-ref
-                                      :blocking? true
-                                      :ref ref
-                                      :role role
-                                      :owner owner
-                                      :message (str "Reference " ref
-                                                 " only observes Vis proof/answer bookkeeping, not source/runtime evidence.")})]
-    (cond-> {:ref ref
-             :role role
-             :owner owner
-             :canonical? canonical?
-             :observed? observed?
-             :compatible? compatible?
-             :evidence? evidence?
-             :success? success?}
-      (:slot entry) (assoc :slot (:slot entry))
-      event (assoc :event event)
-      violation (assoc :violation violation))))
-
-(defn- required-slots-missing
-  [expected-slots given-slots]
-  (vec
-    (keep (fn [[slot {:keys [required?]}]]
-            (when (and (not (false? required?))
-                    (not (contains? given-slots slot)))
-              slot))
-      expected-slots)))
-
-(defn- gate-given-proof
-  [gate]
-  (case (:status gate)
-    :proven (:proof gate)
-    :impeded (:impediment gate)
-    (:candidate-proof gate)))
-
-(defn- gate-ref-entries
-  [gate]
-  (vec
-    (concat
-      (proof-ref-entries (:candidate-proof gate) :candidate)
-      (proof-ref-entries (:proof gate) :proof)
-      (proof-ref-entries (:impediment gate) :impediment))))
-
-(defn- check-gate-proof
-  [event-by-ref intent plan gate]
-  (let [expected       (:expected-proof gate)
-        expected-slots (:slots expected)
-        guard          (:guard expected)
-        given          (proof-data (gate-given-proof gate))
-        missing-slots  (required-slots-missing expected-slots (:slots given))
-        guard-ok?      (guard-passes? given guard)
-        ref-checks     (mapv #(check-ref-entry event-by-ref
-                                {:kind :gate
-                                 :intent-id (:id intent)
-                                 :plan-id (:id plan)
-                                 :gate-id (:id gate)}
-                                %)
-                         (gate-ref-entries gate))
-        status-violations (vec
-                            (concat
-                              (when (and (:required? gate) (= :open (:status gate)))
-                                [{:type :required-open-gate
-                                  :blocking? true
-                                  :intent-id (:id intent)
-                                  :plan-id (:id plan)
-                                  :gate-id (:id gate)
-                                  :message (str "Required gate is open: " (:proposition gate))}])
-                              (when (and (= :proven (:status gate)) (seq missing-slots))
-                                [{:type :proof-missing-required-slots
-                                  :blocking? true
-                                  :intent-id (:id intent)
-                                  :plan-id (:id plan)
-                                  :gate-id (:id gate)
-                                  :missing-slots missing-slots
-                                  :message (str "Proven gate is missing required proof slot(s): "
-                                             (str/join ", " (map pr-str missing-slots)))}])
-                              (when (and (= :proven (:status gate)) (not guard-ok?))
-                                [{:type :proof-guard-failed
-                                  :blocking? true
-                                  :intent-id (:id intent)
-                                  :plan-id (:id plan)
-                                  :gate-id (:id gate)
-                                  :guard guard
-                                  :message (str "Proven gate proof does not satisfy guard: " (pr-str guard))}])))]
-    {:intent-id (:id intent)
-     :intent-handle (:handle intent)
-     :intent-title (:title intent)
-     :plan-id (:id plan)
-     :plan-handle (:handle plan)
-     :plan-summary (:summary plan)
-     :gate-id (:id gate)
-     :gate-handle (:handle gate)
-     :status (:status gate)
-     :required? (:required? gate)
-     :asked (:proposition gate)
-     :expected {:slots expected-slots
-                :guard guard}
-     :given {:candidate-proof (:candidate-proof gate)
-             :proof (:proof gate)
-             :impediment (:impediment gate)
-             :slots (:slots given)
-             :refs (:refs given)}
-     :checks {:required-slots-ok? (empty? missing-slots)
-              :missing-slots missing-slots
-              :guard-ok? guard-ok?
-              :refs-ok? (every? :success? ref-checks)}
-     :ref-checks ref-checks
-     :violations (vec (concat status-violations (keep :violation ref-checks)))}))
-
-(defn- intent-ref-role
-  [intent-ref intent]
-  (or (:role intent-ref)
-    (case (:status intent)
-      :fulfilled :fulfillment-evidence
-      :abandoned :abandonment-evidence
-      :context)))
-
-(defn- check-intent-ref
-  [event-by-ref intent intent-ref]
-  (check-ref-entry event-by-ref
-    {:kind :intent :intent-id (:id intent)}
-    (assoc intent-ref :role (intent-ref-role intent-ref intent))))
-
-(defn- check-intent-resolution
-  [event-by-ref intent]
-  (let [refs       (mapv #(if (map? %) % {:ref %}) (:refs intent))
-        ref-checks (mapv #(check-intent-ref event-by-ref intent %) refs)
-        missing?   (and (#{:fulfilled :abandoned} (:status intent)) (empty? refs))]
-    {:intent-id (:id intent)
-     :intent-handle (:handle intent)
-     :status (:status intent)
-     :title (:title intent)
-     :ref-checks ref-checks
-     :violations (vec
-                   (concat
-                     (when missing?
-                       [{:type :resolved-intent-without-refs
-                         :blocking? true
-                         :intent-id (:id intent)
-                         :message (str "Resolved intent has no evidence refs: " (:title intent))}])
-                     (keep :violation ref-checks)))}))
-
-(defn- all-gates
-  [intent-state]
-  (for [intent (:intents intent-state)
-        plan   (:plans intent)
-        gate   (:gates plan)]
-    [intent plan gate]))
-
-(defn foundation-proof-checks
-  "Deterministic proof validation over one DB snapshot.
-
-   Checks more than provenance syntax: focused intent readiness, every gate's
-   asked proposition, expected slots/guard, given candidate/proof/impediment
-   data, canonical observed refs, lifecycle compatibility, and fulfillment or
-   abandonment evidence refs. Same DB snapshot => same report."
-  ([env]
-   (foundation-proof-checks env (:conversation-id env)))
-  ([env conversation-id]
-   (let [timeline       (foundation-provenance-timeline env conversation-id)
-         event-by-ref   (into {} (map (juxt :ref identity)) timeline)
-         provenance     (foundation-provenance-guards env conversation-id)
-         latest-refs    (foundation-latest-provenance-refs env conversation-id)
-         intent-state   (foundation-intents env)
-         gate-checks    (mapv (fn [[intent plan gate]]
-                                (check-gate-proof event-by-ref intent plan gate))
-                          (all-gates intent-state))
-         intent-checks  (mapv #(check-intent-resolution event-by-ref %) (:intents intent-state))
-         violations     (vec
-                          (concat
-                            (map #(assoc % :source :provenance) (:violations provenance))
-                            (map #(assoc % :source :intents) (:violations intent-state))
-                            (mapcat #(map (fn [v] (assoc v :source :gate-proof)) (:violations %)) gate-checks)
-                            (mapcat #(map (fn [v] (assoc v :source :intent-resolution)) (:violations %)) intent-checks)))
-         used-refs      (->> (concat (mapcat :ref-checks gate-checks)
-                               (mapcat :ref-checks intent-checks))
-                          (keep :ref)
-                          distinct
-                          vec)
-         evidence       (vec (keep event-by-ref used-refs))]
-     {:success? (and (:success? provenance) (:success? intent-state) (empty? violations))
-      :summary {:events (count timeline)
-                :intents (count (:intents intent-state))
-                :focused-intents (count (:focused-intent-ids intent-state))
-                :gates (count gate-checks)
-                :proven-gates (count (filter #(= :proven (:status %)) gate-checks))
-                :refs (count used-refs)
-                :violations (count violations)}
-      :provenance provenance
-      :latest-refs latest-refs
-      :intents (select-keys intent-state [:success? :scope :conversation-id :turn-state-id
-                                          :focused-intent-ids :unfocused-active-intent-ids
-                                          :checks :violations :report])
-      :gates gate-checks
-      :intent-resolutions intent-checks
-      :evidence-events evidence
-      :violations violations})))
-
-(defn- render-proof-slots
-  [slots]
-  (if (seq slots)
-    (str/join "\n" (map (fn [[slot value]]
-                          (str "  - " (code-ish (pr-str slot)) ": " (code-ish (pr-str value))))
-                     slots))
-    "  - none"))
-
-(defn- provenance-link
-  [ref]
-  (if (str/blank? (str ref))
-    (code-ish ref)
-    (str "[" (code-ish ref) "](vis-provenance://" ref ")")))
-
-(defn- quote-md
-  [s]
-  (->> (str/split-lines (str (or s "")))
-    (map #(str "> " %))
-    (str/join "\n")))
-
-(defn- render-proof-refs
-  [ref-checks]
-  (if (seq ref-checks)
-    (str/join "\n"
-      (map (fn [{:keys [ref role event success?]}]
-             (str "  - " (provenance-link ref) " — " (code-ish (pr-str role))
-               (if event
-                 (str ", " (code-ish (pr-str (:op event))) " → " (code-ish (pr-str (:status event)))
-                   ", " (or (:duration-ms event) 0) "ms")
-                 ", not observed")
-               (when-not success? " ⚠")))
-        ref-checks))
-    "  - none"))
-
-(defn- render-proof-gate
-  [gate-check]
-  (str "### Gate " (code-ish (:gate-handle gate-check)) " — " (name (:status gate-check)) "\n\n"
-    "- Intent: " (code-ish (:intent-handle gate-check)) "\n\n"
-    (quote-md (:intent-title gate-check)) "\n"
-    "- Plan: " (code-ish (:plan-handle gate-check)) " — " (:plan-summary gate-check) "\n"
-    "- Asked: " (:asked gate-check) "\n"
-    "- Required: " (:required? gate-check) "\n"
-    "- Expected guard: " (code-ish (pr-str (get-in gate-check [:expected :guard]))) "\n"
-    "- Expected slots:\n" (render-proof-slots (get-in gate-check [:expected :slots])) "\n"
-    "- Given slots:\n" (render-proof-slots (get-in gate-check [:given :slots])) "\n"
-    "- Given refs:\n" (render-proof-refs (:ref-checks gate-check)) "\n"
-    "- Deterministic checks:\n"
-    "  - required slots: " (if (get-in gate-check [:checks :required-slots-ok?]) "ok" "failed") "\n"
-    "  - guard: " (if (get-in gate-check [:checks :guard-ok?]) "ok" "failed") "\n"
-    "  - refs: " (if (get-in gate-check [:checks :refs-ok?]) "ok" "failed") "\n"))
-
-(defn- render-evidence-event
-  [{:keys [ref parent-ref kind op status duration-ms error]}]
-  (str "- " (provenance-link ref) " " (name kind) " " (code-ish (pr-str op))
-    (when parent-ref (str " parent " (code-ish parent-ref)))
-    " → " (code-ish (pr-str status)) ", " (or duration-ms 0) "ms"
-    (when error (str " — " (preview (error-text error) 180)))))
-
-(defn- render-proof-violations
-  [violations]
-  (if (seq violations)
-    (str/join "\n" (map #(str "- " (:message %) " " (code-ish (pr-str (:type %)))) violations))
-    "- none"))
-
-(defn foundation-proofs
-  "Render proof-checks as a clickable `<proofs>` disclosure Markdown block.
-
-   The block is a human projection only. Truth remains in `v/proof-checks`,
-   intents/gates, and the provenance timeline. TUI renders `<proofs>` like a
-   special disclosure; other Markdown surfaces can degrade to normal text."
-  ([env]
-   (foundation-proofs env (foundation-proof-checks env)))
-  ([env checks-or-conversation-id]
-   (let [checks (if (map? checks-or-conversation-id)
-                  checks-or-conversation-id
-                  (foundation-proof-checks env checks-or-conversation-id))
-         summary (:summary checks)]
-     (str "<proofs>\n"
-       "<summary>Proofs · " (if (:success? checks) "OK" "NEEDS WORK")
-       " · " (:proven-gates summary) "/" (:gates summary) " gates"
-       " · " (:refs summary) " refs"
-       " · " (:violations summary) " violations</summary>\n\n"
-       "## Proof status\n\n"
-       "- Overall: " (if (:success? checks) "ok" "needs work") "\n"
-       "- Intents: " (if (get-in checks [:intents :success?]) "ok" "needs resolution") "\n"
-       "- Provenance guards: " (if (get-in checks [:provenance :success?]) "ok" "failed") "\n"
-       "- Events checked: " (get-in checks [:summary :events]) "\n"
-       "- Focused intents: " (get-in checks [:summary :focused-intents]) "\n"
-       "- Gates: " (get-in checks [:summary :proven-gates]) "/" (get-in checks [:summary :gates]) " proven\n"
-       "- Evidence refs: " (get-in checks [:summary :refs]) "\n\n"
-       "## Gate proof details\n\n"
-       (if (seq (:gates checks))
-         (str/join "\n" (map render-proof-gate (:gates checks)))
-         "_No gates._\n")
-       "\n## What happened\n\n"
-       (if (seq (:evidence-events checks))
-         (str/join "\n" (map render-evidence-event (:evidence-events checks)))
-         "_No evidence refs cited._")
-       "\n\n## Violations\n\n"
-       (render-proof-violations (:violations checks))
-       "\n\n</proofs>"))))
-
-(defn- foundation-audit
-  "Return the persisted proof audit data for the current conversation.
-   This is the model-facing migration path away from legacy proof-check prose:
-   data first, render with `v/audit-report` only for humans."
-  ([env]
-   (foundation-audit env (:conversation-id env)))
-  ([env conversation-id]
-   (try
-     (vis/db-audit-proof (:db-info env) {:conversation-id conversation-id})
-     (catch Throwable e
-       {:success? false
-        :counts {}
-        :violations [{:type :proof-audit-error
-                      :blocking? true
-                      :message (ex-message e)}]}))))
-
-(defn- intent-graph->mermaid
-  "Build a small Mermaid graph from intent/plan/gate snapshots so the
-   audit report carries an at-a-glance topology even when the user is
-   reading static Markdown. Pure data: returns nil when nothing to
-   draw so the renderer drops the section cleanly.
-
-   Node shape (id is sanitised to a Mermaid identifier):
-
-       intent_<8> [\"<title> · <status>\"]
-       plan_<8>   ([\"<summary> · <status>\"])
-       gate_<8>   {{\"<proposition> · <status>\"}}
-
-   Edges: intent --> plan; plan --> gate. No cross-conversation edges.
-   Headless safe: only emits Markdown text, no diagram engine."
-  [{:keys [intents plans gates]}]
-  (let [as-id   (fn [prefix x]
-                  (let [s (some-> x str)]
-                    (when (and s (not (str/blank? s)))
-                      (str prefix "_" (str/replace (subs s 0 (min 8 (count s)))
-                                        #"[^A-Za-z0-9_]" "_")))))
-        esc     (fn [s] (-> (str (or s "")) (str/replace "\"" "'")))
-        nodes   (concat
-                  (keep (fn [{:keys [id title status]}]
-                          (when-let [nid (as-id "intent" id)]
-                            (str nid "[\"intent: " (esc title) " · " (esc (some-> status name)) "\"]")))
-                    (or intents []))
-                  (keep (fn [{:keys [id summary status]}]
-                          (when-let [nid (as-id "plan" id)]
-                            (str nid "([\"plan: " (esc summary) " · " (esc (some-> status name)) "\"])")))
-                    (or plans []))
-                  (keep (fn [{:keys [id proposition question status]}]
-                          (when-let [nid (as-id "gate" id)]
-                            (str nid "{{\"gate: " (esc (or proposition question)) " · " (esc (some-> status name)) "\"}}")))
-                    (or gates [])))
-        intent-edges (keep (fn [{:keys [id]}]
-                             (when-let [iid (as-id "intent" id)]
-                               (let [pids (keep #(as-id "plan" (:id %))
-                                            (filter #(= id (:intent-id %)) (or plans [])))]
-                                 (when (seq pids)
-                                   (str/join "\n" (map #(str iid " --> " %) pids))))))
-                       (or intents []))
-        plan-edges (keep (fn [{:keys [id]}]
-                           (when-let [pid (as-id "plan" id)]
-                             (let [gids (keep #(as-id "gate" (:id %))
-                                          (filter #(= id (:plan-id %)) (or gates [])))]
-                               (when (seq gids)
-                                 (str/join "\n" (map #(str pid " --> " %) gids))))))
-                     (or plans []))
-        edges (concat intent-edges plan-edges)]
-    (when (seq nodes)
-      (str/join "\n"
-        (concat ["flowchart TD"]
-          (mapv #(str "  " %) nodes)
-          (mapv #(str "  " %) edges))))))
-
-(defn- foundation-audit-presentation
-  "Build a `:vis.presentation/audit-report` from the live conversation
-   audit data. Pure projection over `vis/db-audit-proof` plus the
-   provenance timeline and intent state. The same shape feeds both
-   the Markdown report and any other surface that wants the audit
-   table-of-contents.
-
-   Preserves proof/intents/audit semantics: every gate, plan, intent,
-   attestation, evidence bundle, and provenance event present in the
-   live DB roll forward into the report. `:guards` carries the
-   provenance guard-check result so a downstream judge can see at a
-   glance whether the audit pass succeeded."
-  ([env] (foundation-audit-presentation env (:conversation-id env)))
-  ([env conversation-id]
-   (let [proof-audit (foundation-audit env conversation-id)
-         provenance-stats (try (foundation-provenance-stats env conversation-id)
-                            (catch Throwable _ {}))
-         timeline (try (foundation-provenance-timeline env conversation-id)
-                    (catch Throwable _ []))
-         guards (try (foundation-provenance-guards env conversation-id)
-                  (catch Throwable _ {:success? true :violations []}))
-         intent-state (try (vis/db-intents (:db-info env) {:conversation-id conversation-id})
-                        (catch Throwable _ nil))
-         intents (vec (or (:intents intent-state) []))
-         plans (vec (mapcat (fn [it] (mapv #(assoc % :intent-id (:id it)) (or (:plans it) [])))
-                      intents))
-         gates (vec (mapcat (fn [p] (mapv #(assoc % :plan-id (:id p)) (or (:gates p) [])))
-                      plans))
-         attestations (vec (concat
-                             (mapcat :attestations gates)
-                             (mapcat :attestations intents)))
-         bundles (vec (concat (mapcat :bundles gates)
-                        (mapcat :bundles intents)))
-         counts {:events (or (:event-count provenance-stats) (count timeline))
-                 :bundles (count bundles)
-                 :attestations (or (count attestations)
-                                 (get-in proof-audit [:counts :attestations] 0))
-                 :gates (or (count gates) (get-in proof-audit [:counts :gates] 0))
-                 :plans (or (count plans) (get-in proof-audit [:counts :plans] 0))
-                 :intents (or (count intents) (get-in proof-audit [:counts :intents] 0))
-                 :violations (count (or (:violations guards)
-                                      (:violations proof-audit)
-                                      []))}
-         mermaid (intent-graph->mermaid {:intents intents :plans plans :gates gates})
-         section {:title "Audit"
-                  :counts counts
-                  :events (vec (take 50 timeline))
-                  :bundles bundles
-                  :attestations attestations
-                  :gates gates
-                  :plans plans
-                  :intents intents
-                  :guards (cond-> guards
-                            (and (not (:success? guards))
-                              (seq (:violations proof-audit)))
-                            (update :violations
-                              (fn [vs]
-                                (vec (concat (or vs [])
-                                       (mapv (fn [v]
-                                               (cond-> {:type (:type v)}
-                                                 (:message v) (assoc :message (:message v))
-                                                 (:intent-id v) (assoc :ref (str (:intent-id v)))))
-                                         (or (:violations proof-audit) [])))))))
-                  :conversation-id conversation-id}
-         section (cond-> section mermaid (assoc :mermaid mermaid))]
-     (presentation/audit-report section))))
-
-(defn- foundation-audit-report
-  "Render the audit report. Defaults to the collapsed presentation
-   shape (one-line summary + collapsible body); pass
-   `{:collapsed? false}` to inline the full sections."
-  ([env]
-   (foundation-audit-report env (:conversation-id env) {}))
-  ([env conversation-id]
-   (foundation-audit-report env conversation-id {}))
-  ([env conversation-id opts]
-   (let [report (foundation-audit-presentation env conversation-id)
-         report (merge report (select-keys opts [:collapsed?]))
-         body (presentation/audit-report->md report)]
-     (str body "\n\n"
-       (foundation-provenance-report env conversation-id)))))
-
-;; ---------------------------------------------------------------------------
-;; Extension catalog + README / doc access
-;;
-;; Every extension declares itself in a single classpath resource at
-;; `META-INF/vis-extension/vis.edn`, an EDN map keyed by id
-;; (`{<id-symbol> {:nses [...] :docs {<name> <body>}}}`). The id is the
-;; same token the LLM uses as the SCI sandbox alias (`'v`, `'z`,
-;; etc.). Each doc descriptor is a map with `:description` (one-paragraph
-;; summary) + `:content` (full Markdown body) as plain EDN strings.
-;; `(v/extension-docs ...)` returns the descriptions (no `:content`)
-;; so the LLM can scan the index before pulling a full body via
-;; `(v/extension-doc ...)`. Sandbox symbol docs are separate:
-;; `(v/namespace-docs ...)` / `(v/symbol-doc ...)` read the registered
-;; extension symbol metadata, not the manifest doc registry.
-;; See AGENTS.md ▸ "Every extension ships a single canonical README
-;; in vis.edn".
-;; ---------------------------------------------------------------------------
-
-(defn- registered-extensions []
-  (try (vis/registered-extensions) (catch Throwable _ [])))
-
-(defn- reference-as-symbol
-  "Coerce an extension reference to a symbol token. Accepts an id
-   symbol (`'v`), keyword (`:v`), string (`\"v\"`), alias-ns symbol
-   (`'vis.ext.v`), or full extension namespace symbol. Multi-segment
-   symbols are resolved through the global extension registry."
-  [reference]
-  (cond
-    (nil? reference) nil
-    (keyword? reference) (clojure.core/symbol (name reference))
-    (string? reference) (clojure.core/symbol reference)
-    (symbol? reference)
-    (if (namespace reference)
-      (clojure.core/symbol (str reference))
-      reference)
-    :else nil))
-
-(defn- extension-registry-id [extension]
-  (or (:registry-id (vis/extension-provenance extension))
-    (vis/extension-id-of-ns (:ext/namespace extension))
-    (get-in extension [:ext/ns-alias :alias])))
-
-(defn- extension-matches? [target extension]
-  (let [registry-id (some-> (extension-registry-id extension) str)
-        ns-sym      (some-> (:ext/namespace extension) str)
-        alias-sym   (some-> (get-in extension [:ext/ns-alias :alias]) str)
-        alias-ns    (some-> (get-in extension [:ext/ns-alias :ns]) str)]
-    (boolean (some #(= target %) (remove nil? [registry-id ns-sym alias-sym alias-ns])))))
-
-(defn- resolve-extension
-  "Resolve `reference` to a registered extension map. Returns nil when
-   no extension matches."
-  [reference]
-  (when-let [target-sym (reference-as-symbol reference)]
-    (let [target-str (str target-sym)]
-      (some (fn [extension]
-              (when (extension-matches? target-str extension)
-                extension))
-        (registered-extensions)))))
-
-(defn- resolve-extension-id
-  "Resolve `reference` to a registered extension id (symbol). Returns
-   `nil` when no extension matches."
-  [reference]
-  (when-let [target-sym (reference-as-symbol reference)]
-    (or (when (contains? (set (vis/registered-extension-ids)) target-sym)
-          target-sym)
-      (some-> (resolve-extension target-sym) extension-registry-id))))
-
-(defn- extension-summary [extension]
-  (let [prov     (vis/extension-provenance extension)
-        id       (:registry-id prov)
-        doc-list (when id (vis/extension-docs id))]
-    (assoc prov
-      :symbols (mapv :ext.symbol/sym (:ext/symbols extension))
-      :docs    (or doc-list []))))
-
-(defn- foundation-extensions
-  "Catalog every loaded extension as data. Returns a vector of
-   `{:namespace :alias :kind :version :author :owner :license
-     :registry-id :source-paths :source-mtime-max :source-hash-sha256
-     :doc :symbols :docs}` maps.
-   `:docs` is a vector of `{:name :description}` descriptors for every
-   doc the extension declares."
-  [_env]
-  (mapv extension-summary (registered-extensions)))
-
-(defn- foundation-extension-docs
-  "With one arg, return the doc catalog for one extension as a vector
-   of `{:name :description}` descriptors. With no arg, return the full
-   registry as `{<id-symbol> [<descriptor> ...]}`."
-  ([_env]
-   (try (vis/extension-docs) (catch Throwable _ {})))
-  ([_env reference]
-   (when-let [id (resolve-extension-id reference)]
-     (vis/extension-docs id))))
-
-(defn- foundation-extension-doc
-  "Return a full manifest doc descriptor for an extension.
-   `reference` may be an id/alias (`'v`, `:v`, `\"v\"`), alias namespace
-   (`'vis.ext.v`), or full extension namespace. With two args, returns
-   README.md. With three args, returns the requested doc name. Returns
-   nil when the extension/doc is unknown."
-  ([_env reference]
-   (when-let [id (resolve-extension-id reference)]
-     (vis/extension-doc id "README.md")))
-  ([_env reference doc-name]
-   (when-let [id (resolve-extension-id reference)]
-     (vis/extension-doc id doc-name))))
-
-(defn- foundation-extension-readme
-  "Convenience: full Markdown body of an extension's canonical
-   README. Equivalent to `(:content (v/extension-doc ref))`.
-   Every extension is required to declare a README
-   in its `vis.edn`, so this returns text for any registered
-   extension that follows the convention."
-  [env reference]
-  (:content (foundation-extension-doc env reference)))
-
-(defn- symbol-reference-as-symbol [reference]
-  (cond
-    (nil? reference) nil
-    (keyword? reference) (clojure.core/symbol (name reference))
-    (string? reference) (clojure.core/symbol reference)
-    (symbol? reference) (clojure.core/symbol (name reference))
-    :else nil))
-
-(defn- qualified-symbol-reference [reference]
-  (when (and (symbol? reference) (namespace reference))
-    [(clojure.core/symbol (namespace reference))
-     (clojure.core/symbol (name reference))]))
-
-(defn- symbol-doc-kind [entry]
-  (if (contains? entry :ext.symbol/fn) :fn :value))
-
-(defn- symbol-doc-summary [extension entry]
-  (let [provenance (:registry-id (vis/extension-provenance extension))
-        alias      (get-in extension [:ext/ns-alias :alias])
-        sym        (:ext.symbol/sym entry)]
-    (cond-> {:extension-id        (or provenance (extension-registry-id extension))
-             :extension-alias     alias
-             :extension-namespace (:ext/namespace extension)
-             :name                sym
-             :symbol              (if alias
-                                    (clojure.core/symbol (str alias) (str sym))
-                                    sym)
-             :kind                (symbol-doc-kind entry)
-             :doc                 (:ext.symbol/doc entry)}
-      (:ext.symbol/arglists entry) (assoc :arglists (:ext.symbol/arglists entry))
-      (:ext.symbol/examples entry) (assoc :examples (:ext.symbol/examples entry)))))
-
-(defn- foundation-namespace-docs
-  "With one arg, return sandbox symbol doc summaries for one extension
-   namespace/alias. With no arg, return the full namespace-doc registry
-   keyed by canonical extension id. Namespace docs are derived from
-   registered extension `:ext/symbols`; manifest docs stay under
-   `v/extension-docs`."
-  ([_env]
-   (into {}
-     (keep (fn [extension]
-             (when-let [id (extension-registry-id extension)]
-               [id (mapv #(symbol-doc-summary extension %) (:ext/symbols extension))])))
-     (registered-extensions)))
-  ([_env reference]
-   (when-let [extension (resolve-extension reference)]
-     (mapv #(symbol-doc-summary extension %) (:ext/symbols extension)))))
-
-(defn- foundation-symbol-doc
-  "Return doc/arglists/examples for one sandbox symbol. Accepts either
-   `(v/symbol-doc ext-ref sym)` or `(v/symbol-doc 'alias/sym)`. Returns
-   nil when the extension or symbol is unknown."
-  ([env qualified-symbol]
-   (when-let [[reference sym] (qualified-symbol-reference qualified-symbol)]
-     (foundation-symbol-doc env reference sym)))
-  ([_env reference sym-reference]
-   (when-let [extension (resolve-extension reference)]
-     (when-let [sym (symbol-reference-as-symbol sym-reference)]
-       (some (fn [entry]
-               (when (= sym (:ext.symbol/sym entry))
-                 (symbol-doc-summary extension entry)))
-         (:ext/symbols extension))))))
-
-;; ---------------------------------------------------------------------------
-;; Env injection — shared :before-fn for every symbol below.
-;; Prepends the environment map to args so impl fns can be written as
-;; ordinary `(defn- meta-foo [env & rest])` without each one having to
-;; replicate the env-fetch boilerplate.
-;; ---------------------------------------------------------------------------
+;; Removed extra workflow surfaces.
 
 (defn- inject-environment
-  "`:before-fn` for every meta symbol. The framework passes the
-   environment map as `env`; we prepend it to the call's positional
-   args so impl fns receive `(impl env & user-args)`. The model still
-   invokes `(meta/foo a b)` with two args; the impl sees `(env a b)`."
-  [env _f args]
-  {:args (vec (cons env args))})
-
-(defn- await-value
-  [x timeout-ms timeout-sentinel]
-  (cond
-    (instance? Future x)
-    (.get ^Future x (long timeout-ms) TimeUnit/MILLISECONDS)
-
-    (instance? IBlockingDeref x)
-    (let [v (deref x (long timeout-ms) timeout-sentinel)]
-      (if (identical? timeout-sentinel v)
-        (throw (TimeoutException. (str "Timed out after " timeout-ms "ms")))
-        v))
-
-    (and (instance? IPending x) (realized? x))
-    (deref x)
-
-    (instance? IDeref x)
-    (throw (ex-info "Cannot await this deref with a timeout; use a Future, promise, or another blocking deref."
-             {:type :vis.await-proof/unsupported-deref
-              :class (.getName (class x))}))
-
-    :else
-    (throw (ex-info "await-proof! expects a Future or blocking deref"
-             {:type :vis.await-proof/not-derefable
-              :class (some-> x class .getName)}))))
-
-(defn- failure-status
-  [^Throwable t]
-  (cond
-    (instance? TimeoutException t) :timeout
-    (instance? CancellationException t) :cancelled
-    :else :error))
-
-(defn- await-proof-result
-  [status result throwable started finished]
-  (let [provenance {:op :future/await
-                    :status status
-                    :started-at-ms started
-                    :finished-at-ms finished
-                    :duration-ms (max 0 (- finished started))}]
-    (if (= :done status)
-      (extension/success {:result result :provenance provenance})
-      (extension/failure {:result result :provenance provenance :throwable throwable}))))
-
-(defn- render-await-proof!
-  [{:keys [tool-result]}]
-  (let [status (get-in tool-result [:provenance :status])
-        duration-ms (get-in tool-result [:provenance :duration-ms])]
-    (if (:success? tool-result)
-      (md/p "Awaited proof - status" (md/code status) "," duration-ms "ms.")
-      (md/p "Await-proof failed - status" (md/code status) "," duration-ms "ms:"
-        (or (get-in tool-result [:error :message]) (pr-str (:error tool-result)))))))
-
-(defn- foundation-await-proof!
-  "Wait for a Future/blocking deref and return a tool-result envelope with
-   terminal provenance. Use this instead of plain deref when the awaited
-   value will be cited as proof."
-  ([x]
-   (foundation-await-proof! x {}))
-  ([x {:keys [timeout-ms] :or {timeout-ms 30000}}]
-   (let [started (System/currentTimeMillis)
-         timeout-sentinel (Object.)]
-     (try
-       (let [value (await-value x timeout-ms timeout-sentinel)
-             finished (System/currentTimeMillis)]
-         (await-proof-result :done value nil started finished))
-       (catch ExecutionException e
-         (let [cause (or (.getCause e) e)
-               finished (System/currentTimeMillis)]
-           (await-proof-result (failure-status cause) nil cause started finished)))
-       (catch Throwable e
-         (let [finished (System/currentTimeMillis)]
-           (await-proof-result (failure-status e) nil e started finished)))))))
-
-;; ---------------------------------------------------------------------------
-;; Symbol entries — each maps a sandbox-visible name to its impl fn,
-;; documented for the LLM (the `:doc` + `:examples` fields render into
-;; the auto-generated extension prompt).
-;; ---------------------------------------------------------------------------
+  [env f args]
+  {:env env :fn f :args (into [env] args)})
 
 (def inspect-symbol
   (vis/symbol 'inspect foundation-inspect
-    {:doc       "Conversation introspection map. Default current conversation; pass id/prefix for another."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/inspect)"
-                 "(get-in (v/inspect) [:diagnosis :next-actions])"
-                 "(-> (v/inspect) :llm-diagnostics last :raw-response :preview)"
-                 "(get-in (v/inspect) [:transcript :totals :cost-usd])"
-                 "(map :user-request (get-in (v/inspect) [:transcript :turns]))"]
+    {:doc "Conversation introspection data."
+     :arglists '([] [conversation-id])
+     :examples ["(v/inspect)"]
      :before-fn inject-environment}))
 
 (def report-symbol
   (vis/symbol 'report foundation-report
-    {:doc       "Markdown report from `(v/inspect)`. Default current conversation; pass id/prefix for another."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/report)"
-                 "(v/report \"3a7b2c…\")"]
-     :before-fn inject-environment}))
-
-(def provenance-timeline-symbol
-  (vis/symbol 'provenance-timeline foundation-provenance-timeline
-    {:doc       "Ordered provenance ledger: eval events plus child tool events with canonical refs."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/provenance-timeline)"
-                 "(filter #(= :error (:status %)) (v/provenance-timeline))"
-                 "(map (juxt :ref :kind :op :status) (v/provenance-timeline))"]
-     :before-fn inject-environment}))
-
-(def provenance-event-symbol
-  (vis/symbol 'provenance-event foundation-provenance-event
-    {:doc       "Resolve one canonical provenance ref to its observed timeline event, or nil."
-     :arglists  '([ref] [conversation-id ref])
-     :examples  ["(v/provenance-event \"turn/3f2a91c0/iteration/4/block/2\")"
-                 "(select-keys (v/provenance-event ref) [:ref :kind :op :status :code])"]
-     :before-fn inject-environment}))
-
-(def provenance-stats-symbol
-  (vis/symbol 'provenance-stats foundation-provenance-stats
-    {:doc       "Provenance rollup: counts by kind/op/status/engine, failures, slowest events, tools."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/provenance-stats)"
-                 "(:failures (v/provenance-stats))"
-                 "(:by-op (v/provenance-stats))"]
-     :before-fn inject-environment}))
-
-(def provenance-guards-symbol
-  (vis/symbol 'provenance-guards foundation-provenance-guards
-    {:doc       "Run provenance integrity guards. Returns {:success? :checked :violations}; gate answer citations on :success?."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/provenance-guards)"
-                 "(:violations (v/provenance-guards))"]
-     :before-fn inject-environment}))
-
-(def latest-provenance-refs-symbol
-  (vis/symbol 'latest-provenance-refs foundation-latest-provenance-refs
-    {:doc       "Observed provenance refs grouped by role. Copy these refs; never construct current-iteration refs."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/latest-provenance-refs)"
-                 "(:latest-proof-ref (v/latest-provenance-refs))"
-                 "(:latest-error-ref (v/latest-provenance-refs))"]
-     :before-fn inject-environment}))
-
-(def provenance-report-symbol
-  (vis/symbol 'provenance-report foundation-provenance-report
-    {:doc       "Compact Markdown provenance audit trail for answer proof sections."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/provenance-report)"
-                 "(answer (v/provenance-report))"]
-     :before-fn inject-environment}))
-
-(def await-proof!-symbol
-  (vis/symbol 'await-proof! foundation-await-proof!
-    {:doc       "Canonical await for Future/blocking deref values when the awaited result will be used as proof. Returns a terminal tool-result envelope; cite the observed await block, not the start ref."
-     :arglists  '([future-or-deref] [future-or-deref {:keys [timeout-ms]}])
-     :examples  ["(def result (v/await-proof! f {:timeout-ms 30000}))"
-                 "result"]
-     :render-fn render-await-proof!}))
-
-(def intents-symbol
-  (vis/symbol 'intents foundation-intents
-    {:doc       "Conversation-scoped intent aggregate: focus, plans, gates, checks, violations, and Markdown report."
-     :arglists  '([] [conversation-turn-id])
-     :examples  ["(v/intents)"
-                 "(:success? (v/intents))"
-                 "(:report (v/intents))"]
-     :before-fn inject-environment}))
-
-(def issue-intent!-symbol
-  (vis/symbol 'issue-intent! foundation-issue-intent!
-    {:doc       "Create and focus a conversation-scoped intent."
-     :arglists  '([{:keys [title rationale created-ref metadata]}])
-     :examples  ["(def intent (v/issue-intent! {:title \"Fix the bug\" :rationale \"User asked for it.\"}))"]
-     :before-fn inject-environment}))
-
-(def focus-intent!-symbol
-  (vis/symbol 'focus-intent! foundation-focus-intent!
-    {:doc       "Focus an existing intent for this turn. Guarded against unrelated switches while focused work is unresolved."
-     :arglists  '([intent-id {:keys [rationale metadata]}])
-     :examples  ["(v/focus-intent! (:id intent) {:rationale \"User clarified this is the same objective.\"})"]
-     :before-fn inject-environment}))
-
-(def relate-intents!-symbol
-  (vis/symbol 'relate-intents! foundation-relate-intents!
-    {:doc       "Relate two intents in the same conversation soul."
-     :arglists  '([{:keys [from-intent-id to-intent-id relation rationale metadata]}])
-     :examples  ["(v/relate-intents! {:from-intent-id (:id child) :to-intent-id (:id parent) :relation :subintent})"]
-     :before-fn inject-environment}))
-
-(def proof-slot-symbol
-  (vis/symbol 'proof-slot foundation-proof-slot
-    {:doc       "Canonical proof slot id. Always returns [intent-id :slot-name]. Use these in :expected-proof guards and plan DSL edges."
-     :arglists  '([intent-or-id slot-name])
-     :examples  ["(def verification-slot (v/proof-slot intent :verification))"]
-     :before-fn inject-environment}))
-
-(def plan-symbol
-  (vis/symbol 'plan foundation-plan
-    {:doc       "Build a compact plan DSL graph for an intent. :requires entries may be proof slots, intent maps/ids, or explicit [:intent|:gate|:slot ...] nodes."
-     :arglists  '([intent-or-id] [intent-or-id {:keys [requires nodes edges steps]}])
-     :examples  ["(v/plan intent {:requires [verification-slot]})"
-                 "(v/plan (:id intent) {:requires [verification-slot] :steps [{:id :verify}]})"]
-     :before-fn inject-environment}))
-
-(def issue-plan!-symbol
-  (vis/symbol 'issue-plan! foundation-issue-plan!
-    {:doc       "Create the active plan for an intent, superseding any previous active plan. :plan is a Nippy-persisted Clojure DSL graph joining intents, subintents, gates, and proof slots so the runtime can render/resolution-check it without the model carrying local state. Build it with v/plan."
-     :arglists  '([{:keys [intent-id summary plan steps created-ref metadata]}])
-     :examples  ["(def plan (v/issue-plan! {:intent-id (:id intent) :summary \"Inspect, act on evidence, verify.\" :plan (v/plan intent {:requires [verification-slot]})}))"]
-     :before-fn inject-environment}))
-
-(def issue-gate!-symbol
-  (vis/symbol 'issue-gate! foundation-issue-gate!
-    {:doc       "Create a gate proposition for a plan. Required gates block final answer until proven or impeded/re-planned."
-     :arglists  '([{:keys [plan-id proposition expected-proof candidate-proof required? created-ref metadata]}])
-     :examples  ["(def gate (v/issue-gate! {:plan-id (:id plan) :proposition \"Verification passes.\" :expected-proof {:slots {[(str (:id intent)) :test-run] {:required? true}} :guard [:exists [:slot [(str (:id intent)) :test-run] :ref]]}}))"]
-     :before-fn inject-environment}))
-
-(def offer-proof!-symbol
-  (vis/symbol 'offer-proof! foundation-offer-proof!
-    {:doc       "Add partial candidate proof slots to an open gate. Slot ids are always [intent-id :slot-name]."
-     :arglists  '([{:keys [gate-id slots refs metadata]}])
-     :examples  ["(v/offer-proof! {:gate-id (:id gate) :slots {[(str (:id intent)) :test-run] {:ref \"turn/3f2a91c0/iteration/5/block/2\"}}})"]
-     :before-fn inject-environment}))
-
-(def attest-gate!-symbol
-  (vis/symbol 'attest-gate! foundation-attest-gate!
-    {:doc       "Attestation-ledger gate resolution. Provide :requirements over provenance_event refs, or :evidence-bundle-id for an accepted bundle. Prefer over legacy prove-gate!."
-     :arglists  '([opts] [gate opts])
-     :examples  ["(v/attest-gate! (:id gate) {:kind :gate/proven :reason \"Verification passed.\" :requirements [{:evidence/slot [(:id intent) :exit] :evidence/from-ref ref :evidence/extract [:result :exit] :evidence/guard [:= [:value] 0] :event/kind :tool :event/op :v/bash}]})"]
-     :before-fn inject-environment}))
-
-(def impede-gate!-symbol
-  (vis/symbol 'impede-gate! foundation-impede-gate!
-    {:doc       "Mark a gate impeded. Requires :reason and observed canonical impediment refs."
-     :arglists  '([opts] [gate opts])
-     :examples  ["(v/impede-gate! (:id gate) {:reason \"Verification cannot run.\" :refs [\"turn/3f2a91c0/iteration/5/block/2/error\"]})"]
-     :before-fn inject-environment}))
-
-(def block-gate!-symbol
-  (vis/symbol 'block-gate! foundation-block-gate!
-    {:doc       "Legacy alias for v/impede-gate!. Prefer impede-gate!."
-     :arglists  '([opts] [gate opts])
-     :examples  ["(v/impede-gate! (:id gate) {:reason \"Verification cannot run.\" :refs [\"turn/3f2a91c0/iteration/5/block/2/error\"]})"]
-     :before-fn inject-environment}))
-
-(def attest-intent!-symbol
-  (vis/symbol 'attest-intent! foundation-attest-intent!
-    {:doc       "Attestation-ledger intent closure. Fulfillment requires a completed plan and accepted closure bundle. Prefer over legacy fulfill-intent!."
-     :arglists  '([intent-id {:keys [kind summary reason requirements evidence-bundle-id]}])
-     :examples  ["(v/attest-intent! (:id intent) {:kind :intent/fulfilled :summary \"User objective satisfied.\" :requirements [{:evidence/slot [(:id intent) :closure] :evidence/from-ref ref :evidence/extract [:result :exit] :evidence/guard [:= [:value] 0] :event/kind :tool :event/op :v/bash}]})"]
-     :before-fn inject-environment}))
-
-(def abandon-intent!-symbol
-  (vis/symbol 'abandon-intent! foundation-abandon-intent!
-    {:doc       "Resolve an intent as abandoned. Requires :reason. Provide canonical provenance refs, or omit refs when required gates on the active plan are already impeded; their impediment refs become abandonment evidence."
-     :arglists  '([intent-id {:keys [reason refs resolved-ref metadata]}])
-     :examples  ["(v/abandon-intent! (:id intent) {:reason \"User changed direction.\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})"
-                 "(v/abandon-intent! (:id intent) {:reason \"Cannot continue until required input is available.\"})"]
-     :before-fn inject-environment}))
-
-(def audit-symbol
-  (vis/symbol 'audit foundation-audit
-    {:doc       "Persisted proof audit data: validates ledger/bundle/attestation lifecycle state. Gate normal answers on :success?."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/audit)"
-                 "(:violations (v/audit))"
-                 "(when-not (:success? (v/audit)) (answer (v/audit-report)))"]
-     :before-fn inject-environment}))
-
-(def audit-report-symbol
-  (vis/symbol 'audit-report foundation-audit-report
-    {:doc       "Conversation-level Markdown audit: proof audit summary/violations plus full provenance timeline."
-     :arglists  '([] [conversation-id])
-     :examples  ["(v/audit-report)"
-                 "(v/audit-report \"cff21022-c11f-4818-a2de-b4d5c5c4630a\")"]
-     :before-fn inject-environment}))
-
-;; Legacy per-view sandbox symbols were removed from the public surface.
-;; The private implementation functions above remain as building blocks for
-;; `v/inspect` so tests and internal composition can target the real seams
-;; without re-exposing shallow API peers.
-
-(def extensions-symbol
-  (vis/symbol 'extensions foundation-extensions
-    {:doc       "Loaded extension catalog: {:namespace :alias :kind :version :doc :symbols :docs}."
-     :arglists  '([])
-     :examples  ["(v/extensions)"
-                 "(map :namespace (v/extensions))"
-                 "(map (juxt :alias :docs) (v/extensions))"]
-     :before-fn inject-environment}))
-
-(def extension-docs-symbol
-  (vis/symbol 'extension-docs foundation-extension-docs
-    {:doc       "Extension doc index. No arg returns registry; one arg returns summaries without `:content`."
-     :arglists  '([] [extension-ref])
-     :examples  ["(v/extension-docs)"
-                 "(v/extension-docs 'v)"
-                 "(map :description (v/extension-docs 'v))"
-                 "(:links (first (v/extension-docs 'v)))"]
-     :before-fn inject-environment}))
-
-(def extension-doc-symbol
-  (vis/symbol 'extension-doc foundation-extension-doc
-    {:doc       "Full extension README descriptor: {:name :description :content :links :reflinks}. Nil when missing."
-     :arglists  '([extension-ref])
-     :examples  ["(v/extension-doc 'v)"
-                 "(v/extension-doc 'com.blockether.vis.ext.foundation.core)"
-                 "(:content (v/extension-doc :v))"
-                 "(:links       (v/extension-doc 'v))"
-                 "(:reflinks    (v/extension-doc 'v))"]
-     :before-fn inject-environment}))
-
-(def extension-readme-symbol
-  (vis/symbol 'extension-readme foundation-extension-readme
-    {:doc       "Extension README Markdown text. Nil when missing."
-     :arglists  '([extension-ref])
-     :examples  ["(v/extension-readme 'v)"
-                 "(v/extension-readme 'com.blockether.vis.ext.foundation.core)"
-                 "(v/extension-readme :v)"
-                 "(println (v/extension-readme 'v))"]
-     :before-fn inject-environment}))
-
-(def namespace-docs-symbol
-  (vis/symbol 'namespace-docs foundation-namespace-docs
-    {:doc       "Sandbox namespace doc index. No arg returns registry; one arg returns docs for one extension namespace/alias."
-     :arglists  '([] [extension-ref])
-     :examples  ["(v/namespace-docs)"
-                 "(v/namespace-docs 'v)"
-                 "(map :name (v/namespace-docs 'v))"
-                 "(filter #(= :fn (:kind %)) (v/namespace-docs 'v))"]
-     :before-fn inject-environment}))
-
-(def symbol-doc-symbol
-  (vis/symbol 'symbol-doc foundation-symbol-doc
-    {:doc       "Sandbox symbol descriptor: {:extension-id :extension-alias :extension-namespace :name :symbol :kind :doc :arglists :examples}."
-     :arglists  '([qualified-symbol] [extension-ref symbol-name])
-     :examples  ["(v/symbol-doc 'v 'file-link)"
-                 "(v/symbol-doc 'v/file-link)"
-                 "(:arglists (v/symbol-doc 'v 'table))"
-                 "(:doc (v/symbol-doc :v \"link\"))"]
+    {:doc "Markdown report from conversation introspection data."
+     :arglists '([] [conversation-id])
+     :examples ["(v/report)"]
      :before-fn inject-environment}))
 
 (def all-symbols
   [inspect-symbol
-   report-symbol
-   provenance-timeline-symbol
-   provenance-event-symbol
-   provenance-stats-symbol
-   provenance-guards-symbol
-   latest-provenance-refs-symbol
-   provenance-report-symbol
-   await-proof!-symbol
-   intents-symbol
-   issue-intent!-symbol
-   focus-intent!-symbol
-   relate-intents!-symbol
-   proof-slot-symbol
-   plan-symbol
-   issue-plan!-symbol
-   issue-gate!-symbol
-   offer-proof!-symbol
-   attest-gate!-symbol
-   impede-gate!-symbol
-   block-gate!-symbol
-   attest-intent!-symbol
-   abandon-intent!-symbol
-   audit-symbol
-   audit-report-symbol
-   extensions-symbol
-   extension-docs-symbol
-   extension-doc-symbol
-   extension-readme-symbol
-   namespace-docs-symbol
-   symbol-doc-symbol])
+   report-symbol])
 
 (def introspection-prompt
-  (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown; (v/audit cid?) -> proof audit data; (v/audit-report cid?) -> human audit.\n"
-    "`v/` provenance: (v/provenance-timeline cid?) lists canonical refs; (v/provenance-event ref) resolves one ref; (v/latest-provenance-refs cid?) gives latest proof/error refs to copy; (v/provenance-guards cid?) checks them; (v/provenance-report cid?) renders proof trail; (v/await-proof! x opts?) awaits Future/blocking proof. Cite observed refs only.\n"
-    "`v/` intents: create/focus with (v/issue-intent! opts)/(v/focus-intent! id opts); plan/gate with (v/proof-slot intent slot), (v/plan intent opts?), (v/issue-plan! opts), (v/issue-gate! opts); resolve with (v/attest-gate! gate opts)/(v/attest-intent! intent-id opts). Legacy prove/fulfill helpers are compatibility only. Check (v/intents turn-id?) and (:success? (v/audit)) before normal answer.\n"
+  (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown.\n"
     "`v/` docs: (v/extensions), (v/extension-docs ref), (v/extension-doc ref), (v/extension-readme ref), (v/namespace-docs ref), (v/symbol-doc ref sym).\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,
-;; not here — this namespace only exposes the symbol vec + prompt
+;; not here - this namespace only exposes the symbol vec + prompt
 ;; fragment for the aggregator to assemble.

@@ -6,7 +6,7 @@
    facade dispatches each delegated call by resolving the matching var on
    the chosen backend namespace (`(ns-resolve ns-sym 'db-store-iteration!)`
    etc.) and applying it to the original args. This keeps the facade
-   dialect-agnostic — every migration runner / driver-specific oddity stays
+   dialect-agnostic - every migration runner / driver-specific oddity stays
    inside the backend adapter.
 
    Frontends still call `db-error->user-message` here, but the actual
@@ -54,7 +54,7 @@
     :else       (str v)))
 
 (defn ->kw
-  "Keyword/string → TEXT, stripping the leading colon. Nil → nil."
+  "Keyword/string -> TEXT, stripping the leading colon. Nil -> nil."
   [v]
   (cond
     (nil? v) nil
@@ -87,8 +87,8 @@
 (defn register-backend!
   "Register a persistence backend implementation.
 
-   `id`     — keyword identity, e.g. `:sqlite`.
-   `ns-sym` — fully qualified namespace symbol that defines the backend
+   `id`     - keyword identity, e.g. `:sqlite`.
+   `ns-sym` - fully qualified namespace symbol that defines the backend
               functions (`db-open!`, `db-close!`, `db-log!`, every
               `store-*`/`db-*` fn used by this facade). Vars are
               resolved lazily via `ns-resolve` so REPL redefinition
@@ -136,7 +136,7 @@
         (str "No persistence backend selected. "
           (if (empty? @backends)
             "No backends registered. Did you forget to require "
-            "Multiple backends registered, pass {:backend …} in db-spec. ")
+            "Multiple backends registered, pass {:backend ...} in db-spec. ")
           (when (empty? @backends)
             "`com.blockether.vis.ext.persistance-sqlite.core`?"))
         {:registered (vec (keys @backends))}))))
@@ -211,11 +211,11 @@
   "Open a persistence connection from `db-spec`.
 
    Common spec forms:
-     nil              — no DB (returns nil)
-     :memory          — in-memory ephemeral store (backend-defined)
-     \"path/to.db\"   — file-backed store (backend-defined)
-     {:backend :sqlite :path …}     — explicit backend selection
-     {:backend :sqlite :datasource ds} — caller-owned DataSource
+     nil              - no DB (returns nil)
+     :memory          - in-memory ephemeral store (backend-defined)
+     \"path/to.db\"   - file-backed store (backend-defined)
+     {:backend :sqlite :path ...}     - explicit backend selection
+     {:backend :sqlite :datasource ds} - caller-owned DataSource
 
    With a single registered backend, omitting `:backend` works and the
    facade tags the returned store map with the chosen backend so all
@@ -297,46 +297,6 @@
 (defdelegate db-list-conversation-turn-iterations [db-info conversation-turn-ref])
 (defdelegate db-list-iteration-vars [db-info iteration-ref])
 (defdelegate db-list-iteration-blocks [db-info iteration-ref])
-(defdelegate db-store-provenance-event! [db-info opts])
-(defdelegate db-get-provenance-event [db-info conversation-id ref])
-(defdelegate db-list-provenance-events [db-info opts])
-(defdelegate db-create-evidence-bundle! [db-info opts])
-(defdelegate db-get-evidence-bundle [db-info bundle-id])
-(defdelegate db-create-attestation! [db-info opts])
-(defdelegate db-attest-gate! [db-info opts])
-(defdelegate db-attest-intent! [db-info opts])
-(defdelegate db-get-attestation [db-info attestation-id])
-(defdelegate db-audit-proof [db-info opts])
-
-;; --- Conversation-scoped intents, plans, gates, and focus ---
-(defdelegate db-store-intent! [db-info opts])
-(defdelegate db-store-intent-ref! [db-info intent-id opts])
-(defdelegate db-focus-intent! [db-info intent-id opts])
-(defdelegate db-infer-focus! [db-info conversation-turn-id opts])
-(defdelegate db-relate-intents! [db-info opts])
-(defdelegate db-store-plan! [db-info opts])
-(defdelegate db-store-gate! [db-info opts])
-(defdelegate db-offer-proof! [db-info opts])
-(defdelegate db-prove-gate! [db-info opts])
-(defdelegate db-impede-gate! [db-info opts])
-(defdelegate db-block-gate! [db-info opts])
-(defdelegate db-fulfill-intent! [db-info intent-id opts])
-(defdelegate db-abandon-intent! [db-info intent-id opts])
-(defdelegate db-intents [db-info opts-or-conversation-turn-id])
-
-;; --- Intent lifecycle (PROOF.md Tasks 28–34) ---
-(defdelegate db-list-intents [db-info opts])
-(defdelegate db-get-intent [db-info intent-id])
-(defdelegate db-intent-tree [db-info root-intent-id])
-(defdelegate db-suggest-intent! [db-info opts])
-(defdelegate db-accept-intent! [db-info intent-id opts])
-(defdelegate db-defer-intent! [db-info intent-id opts])
-(defdelegate db-mark-intent-resumable! [db-info intent-id opts])
-(defdelegate db-resume-intent! [db-info intent-id opts])
-(defdelegate db-get-intent-cursor [db-info conversation-id])
-(defdelegate db-set-intent-cursor! [db-info conversation-id intent-id])
-(defdelegate db-abandon-intent-with-scope! [db-info intent-id opts])
-(defdelegate db-deferred-intent-report [db-info opts])
 
 ;; --- Var registry & history ---
 (defn db-latest-var-registry
@@ -397,8 +357,8 @@
 ;; Process-wide shared connection (singleton helper)
 ;;
 ;; vis runs every channel (TUI, CLI, Telegram) against one persistence
-;; store per process. Owning the singleton here — instead of in any
-;; particular frontend — keeps the DB lifecycle behind the persistence
+;; store per process. Owning the singleton here - instead of in any
+;; particular frontend - keeps the DB lifecycle behind the persistence
 ;; facade. Backend adapters may expose `db-store-stale?` for
 ;; adapter-specific file/handle replacement detection.
 ;; =============================================================================
@@ -416,7 +376,7 @@
   "Return the process-wide shared persistence connection for `db-spec`,
    opening it on first call and caching the handle for the lifetime of
    the JVM. Subsequent calls return the cached handle regardless of
-   the `db-spec` argument — the singleton intentionally pins to the
+   the `db-spec` argument - the singleton intentionally pins to the
    first spec it saw.
 
   Pair with `db-dispose-shared-connection!` on process shutdown."

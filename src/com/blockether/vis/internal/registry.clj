@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.registry
   "Three global registries in one place: channels, providers, commands.
 
-   Each is a small, self-contained piece — keyword id, a spec for the
+   Each is a small, self-contained piece - keyword id, a spec for the
    descriptor map, a process-level atom holding the registered entries,
    and a handful of fns for register / deregister / lookup. Putting
    them together means one file owns every \"this is the canonical
@@ -39,8 +39,8 @@
                               `vis channels` parent itself.
 
    Specs for keyword fields (`:channel/id`, `:provider/id`, `:cmd/name`,
-   …, plus the descriptor specs `::channel`, `::provider`, `::command`,
-   `::arg`) live here too — the spec IS the registry's contract.
+   ..., plus the descriptor specs `::channel`, `::provider`, `::command`,
+   `::arg`) live here too - the spec IS the registry's contract.
 
    Parsing / help rendering / dispatch utilities live in
    `com.blockether.vis.internal.commandline`. Classpath manifest
@@ -60,7 +60,7 @@
 ;; signal to stdout at INFO and above. That is loud noise for a CLI:
 ;; every `register-cmd!` / `register-channel!` / `register-extension!`
 ;; that fires at namespace load (this very file does so at the bottom)
-;; would dump a multi-line log entry before the user's `vis run …`
+;; would dump a multi-line log entry before the user's `vis run ...`
 ;; output ever appears. The CLI's `configure-logging!` hook in
 ;; `internal.main` removes the handler too, but it runs AFTER every
 ;; internal namespace has already loaded and emitted -- by then the
@@ -78,7 +78,7 @@
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
 
 ;; =============================================================================
-;; Channel descriptor — spec
+;; Channel descriptor - spec
 ;; =============================================================================
 
 ;; Stable identity key for the channel, e.g. :tui, :telegram, :web.
@@ -88,7 +88,7 @@
 
 ;; Sub-command word the CLI matches. `vis channels tui ...` -> :tui channel.
 ;; Two registered channels MUST NOT share the same :channel/cmd.
-;; There is no "default" channel — invoking `vis` with no command
+;; There is no "default" channel - invoking `vis` with no command
 ;; prints help. Every channel is an explicit subcommand.
 (s/def :channel/cmd non-blank-string?)
 
@@ -136,7 +136,7 @@
   spec)
 
 ;; =============================================================================
-;; Provider descriptor — spec
+;; Provider descriptor - spec
 ;; =============================================================================
 
 (s/def :provider/id    keyword?)
@@ -174,7 +174,7 @@
   spec)
 
 ;; =============================================================================
-;; Command descriptor — spec
+;; Command descriptor - spec
 ;; =============================================================================
 
 (s/def :cmd/name  non-blank-string?)
@@ -186,10 +186,10 @@
 ;; Where in the command tree this command mounts. Vector of parent
 ;; command-names from the root, EXCLUDING the root itself and the
 ;; command's own `:cmd/name`. Examples:
-;;   []                  — top-level (`vis <name>`)
-;;   ["extensions"]      — nested under `vis extensions`
-;;   ["channels"]        — nested under `vis channels`
-;;   ["foo" "bar"]       — nested as `vis foo bar <name>`
+;;   []                  - top-level (`vis <name>`)
+;;   ["extensions"]      - nested under `vis extensions`
+;;   ["channels"]        - nested under `vis channels`
+;;   ["foo" "bar"]       - nested as `vis foo bar <name>`
 ;; Used by the CLI dispatcher's auto-mount via `registered-under`.
 (s/def :cmd/parent (s/coll-of string? :kind vector?))
 
@@ -259,7 +259,7 @@
 
 (defn register-channel!
   "Register a channel in the global registry.
-   Idempotent on :channel/id — re-registering replaces the prior spec.
+   Idempotent on :channel/id - re-registering replaces the prior spec.
    Returns the validated channel."
   [spec]
   (let [ch (channel spec)]
@@ -302,7 +302,7 @@
 
 (defn register-provider!
   "Register a provider in the global registry. Idempotent on
-   `:provider/id` — re-registering replaces the previous descriptor.
+   `:provider/id` - re-registering replaces the previous descriptor.
    Returns the validated provider."
   [spec]
   (let [p (provider spec)]
@@ -339,7 +339,7 @@
 
 (defn register-cmd!
   "Register a command in the global registry. Idempotent on
-   `[:cmd/parent :cmd/name]` — re-registering replaces the prior
+   `[:cmd/parent :cmd/name]` - re-registering replaces the prior
    entry, useful for REPL-driven development. Returns the validated
    command map."
   [spec]
@@ -372,7 +372,7 @@
 (defn registered-under
   "Return the vector of registered commands whose `:cmd/parent` equals
    `parent-path` (a vector of names). Use this from a parent command's
-   `:cmd/subcommands` slot — typically as a 0-arg fn so newly
+   `:cmd/subcommands` slot - typically as a 0-arg fn so newly
    registered children appear immediately:
 
        {:cmd/name \"ext\"
@@ -384,7 +384,7 @@
            @command-registry))))
 
 ;; =============================================================================
-;; CLI mounting — the `vis channels` parent
+;; CLI mounting - the `vis channels` parent
 ;;
 ;; The channel registry feeds the `vis channels <cmd>` subcommand
 ;; tree. Loading this namespace registers the parent itself; subcommand
@@ -423,7 +423,7 @@
         `:cmd/parent [\"channels\"]` (escape hatch for non-channel
         adapters that still want to live under `vis channels`)
 
-   Source #1 wins on name collision — channels are first-class so a
+   Source #1 wins on name collision - channels are first-class so a
    stray extension can't shadow a real channel name. Both sorted
    together so help output is alphabetic."
   []

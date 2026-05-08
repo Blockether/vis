@@ -3,14 +3,14 @@
 
    Four phases, fired by `internal.loop` at well-defined boundaries:
 
-     :turn-start      \u2014 once, after the turn's SYSTEM_* sandbox vars
+     :turn-start      - once, after the turn's SYSTEM_* sandbox vars
                         are bound and BEFORE the first LLM call.
-     :iteration-start \u2014 once per iteration, immediately BEFORE
+     :iteration-start - once per iteration, immediately BEFORE
                         `svar/ask-code!` is invoked.
-     :iteration-end   \u2014 once per iteration, AFTER `db-store-iteration!`
+     :iteration-end   - once per iteration, AFTER `db-store-iteration!`
                         commits, on BOTH success and error paths. The
                         payload's :status discriminates.
-     :turn-end        \u2014 once, at every exit edge of the loop:
+     :turn-end        - once, at every exit edge of the loop:
                         successful answer, cancelled, error budget
                         exhausted. The payload's :status discriminates.
 
@@ -36,8 +36,8 @@
 
    Public API (used from `internal.loop`):
 
-     `(compose-listeners hooks active-extensions)` \u2192 listeners map
-     `(emit! listeners phase payload)`             \u2192 nil
+     `(compose-listeners hooks active-extensions)` -> listeners map
+     `(emit! listeners phase payload)`             -> nil
 
    Public API (used from extension authors):
 
@@ -52,13 +52,13 @@
    [taoensso.telemere :as tel]))
 
 ;; ---------------------------------------------------------------------------
-;; Phase \u2194 manifest-key registry. Stays in one place so extension authors
+;; Phase <-> manifest-key registry. Stays in one place so extension authors
 ;; have a single source of truth, and the spec list in `extension.clj`
 ;; can derive its specs from this map without drift.
 ;; ---------------------------------------------------------------------------
 
 (def phase->manifest-key
-  "Lifecycle phase keyword \u2192 extension-manifest field that exposes a
+  "Lifecycle phase keyword -> extension-manifest field that exposes a
    listener for that phase. Single source of truth used by both the
    broadcast composer here and the spec validation in
    `internal.extension`."
@@ -68,7 +68,7 @@
    :turn-end        :ext/on-turn-end-fn})
 
 (def phase->hook-key
-  "Lifecycle phase keyword \u2192 the matching `:hooks` map slot a caller
+  "Lifecycle phase keyword -> the matching `:hooks` map slot a caller
    uses to subscribe per-call (channels, tests, ad-hoc scripts).
    Mirrors the manifest map but in the `:on-<phase>` shape every
    loop ever has used."
@@ -119,15 +119,15 @@
                       [])))
 
 (defn compose-listeners
-  "Build the `{phase \u2192 [fn \u2026]}` map the loop broadcasts to.
+  "Build the `{phase -> [fn ...]}` map the loop broadcasts to.
 
-   `hooks`             \u2014 the per-call hooks map (may be nil).
-   `active-extensions` \u2014 vec of extension maps already filtered by
+   `hooks`             - the per-call hooks map (may be nil).
+   `active-extensions` - vec of extension maps already filtered by
                          `:ext/activation-fn` for the current turn.
 
    Per-phase ordering: per-call listeners first (UI updates fire
    first), then extension listeners in registration order (side
-   effects last). Empty vecs for unused phases \u2014 callers can `(seq
+   effects last). Empty vecs for unused phases - callers can `(seq
    listeners)` cheaply.
 
    Pure: returns plain data, no side effects."

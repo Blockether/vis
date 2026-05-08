@@ -127,7 +127,7 @@
       (expect (= ['a]    (:removed diff)))
       (expect (= ['b]    (:reloaded diff)))))
 
-  (it "empty registry + empty manifests → all-empty diff"
+  (it "empty registry + empty manifests -> all-empty diff"
     (let [diff (#'lp/diff-extensions [] {})]
       (expect (= [] (:added diff)))
       (expect (= [] (:removed diff)))

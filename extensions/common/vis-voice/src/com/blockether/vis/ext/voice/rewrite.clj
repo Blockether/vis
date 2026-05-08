@@ -5,7 +5,7 @@
             [com.blockether.vis.core :as vis]))
 
 (def ^:private rewrite-system
-  "You rewrite speech transcripts into concise Vis user prompts. Use context only to resolve pronouns, filenames, symbols, and ambiguous terms. Do not solve the task. Do not add requirements. Preserve profanity/emphasis when it carries intent. Return only the rewritten prompt.")
+  "You rewrite speech transcripts into concise Vis user prompts. Use context only to resolve pronouns, filenames, symbols, and ambiguous terms. Do not solve the task. Do not add requirements. Preserve profanity/emphasis when it carries meaning. Return only the rewritten prompt.")
 
 (defn rewrite-transcript!
   "Rewrite raw ASR text into a clean prompt. Blank input returns blank."

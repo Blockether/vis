@@ -135,11 +135,11 @@
                                        (reset! sent [chat-id text]))]
         (expect (true? (handle-command! "token" 42 "/help")))
         (expect (= 42 (first @sent)))
-        (expect (re-find #"/help — show this help" (second @sent)))
+        (expect (re-find #"/help - show this help" (second @sent)))
         (expect (not (re-find #"/start" (second @sent))))
-        (expect (re-find #"/models — list models" (second @sent)))
-        (expect (re-find #"/restart — restart" (second @sent)))
-        (expect (re-find #"/export — export" (second @sent))))))
+        (expect (re-find #"/models - list models" (second @sent)))
+        (expect (re-find #"/restart - restart" (second @sent)))
+        (expect (re-find #"/export - export" (second @sent))))))
 
   (it "cancels the active Telegram turn"
     (reset-chat-state!)

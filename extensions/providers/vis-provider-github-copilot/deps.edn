@@ -1,5 +1,5 @@
 {:paths ["src" "resources"]
- ;; GitHub Copilot OAuth provider — device-flow authentication +
+ ;; GitHub Copilot OAuth provider - device-flow authentication +
  ;; token lifecycle. Self-registers with `com.blockether.vis.core`
  ;; at namespace load via the unified `META-INF/vis-extension/vis.edn`.
  :deps

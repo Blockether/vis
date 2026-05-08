@@ -65,17 +65,17 @@ jobs:
       - name: Check if version exists on Clojars
         id: check-clojars
         run: |
-          # The monorepo publishes 9 artifacts — vis-loop, vis-commandline,
+          # The monorepo publishes 9 artifacts - vis-loop, vis-commandline,
           # vis-extension, vis-logging, vis-persistance, vis-persistance-sqlite,
           # vis-provider, vis-channel-telegram, vis-channel-tui. Probe vis-loop as the
-          # bellwether — every release deploys the whole set together so
+          # bellwether - every release deploys the whole set together so
           # vis-loop's presence implies the rest landed too.
           VERSION="${GITHUB_REF_NAME#v}"
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             "https://repo.clojars.org/com/blockether/vis-loop/$VERSION/vis-loop-$VERSION.jar")
           if [ "$STATUS" = "200" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Version $VERSION already exists on Clojars — skipping deploy"
+            echo "::notice::Version $VERSION already exists on Clojars - skipping deploy"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi

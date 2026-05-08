@@ -275,13 +275,13 @@
    providers, so we forward `:base-url` ONLY when the provider map
    has one explicitly (vis-only providers like `:github-models`,
    user overrides, or OAuth-supplied URLs). For known providers
-   svar fills in the URL itself — stop fighting it.
+   svar fills in the URL itself - stop fighting it.
 
    When `:api-key` is nil, look the provider up in the global
    provider registry (registry.clj) and call its
    `:provider/get-token-fn` to resolve a usable token. Each provider
    implementation handles its own auth lifecycle (OAuth refresh,
-   env-var fallback, provider-specific headers, …) so this fn stays
+   env-var fallback, provider-specific headers, ...) so this fn stays
    provider-agnostic and never references a concrete provider ns by
    name."
   [provider]
@@ -438,7 +438,7 @@
        true))))
 
 (defn resolve-config
-  "Resolve provider config: explicit → `~/.vis/config.edn`.
+  "Resolve provider config: explicit -> `~/.vis/config.edn`.
    Throws when nothing is available."
   ([] (resolve-config nil))
   ([explicit-config]
@@ -479,7 +479,7 @@
         {:name name' :source :unset :value nil}))))
 
 (defn extension-env-value
-  "Resolve an extension-declared env var as config override → real env.
+  "Resolve an extension-declared env var as config override -> real env.
    Blank/missing values return nil."
   [name]
   (:value (extension-env-status name)))
@@ -512,8 +512,8 @@
   (false? (get-in (load-config-raw) [:tools :bash :enabled?])))
 
 (defn resolve-db-spec
-  "Resolve DB spec: explicit → VIS_DB_PATH env → `:db-spec` from
-   config.edn → default sqlite at `~/.vis/vis.mdb`."
+  "Resolve DB spec: explicit -> VIS_DB_PATH env -> `:db-spec` from
+   config.edn -> default sqlite at `~/.vis/vis.mdb`."
   ([] (resolve-db-spec nil))
   ([explicit-db-spec]
    (or explicit-db-spec

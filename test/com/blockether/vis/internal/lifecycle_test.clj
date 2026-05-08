@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.lifecycle-test
-  "Coverage for the lifecycle event bus. Pure module \u2014 no router, no
+  "Coverage for the lifecycle event bus. Pure module - no router, no
    SQLite, no SCI; just composition + broadcast. The integration with
    the real iteration loop is exercised separately."
   (:require
@@ -13,7 +13,7 @@
   (merge {:ext/namespace ns-sym} listeners))
 
 ;; ---------------------------------------------------------------------------
-;; compose-listeners \u2014 the composition contract.
+;; compose-listeners - the composition contract.
 ;; ---------------------------------------------------------------------------
 
 (defdescribe compose-listeners-test
@@ -86,7 +86,7 @@
       (lc/emit! (lc/compose-listeners nil [ext]) :turn-end {})
       (expect (= "lifecycle.ext" @seen))))
 
-  (it "wires every phase independently \u2014 unrelated phases stay empty"
+  (it "wires every phase independently - unrelated phases stay empty"
     (let [ts  (fn [_])
           is  (fn [_])
           ie  (fn [_])
@@ -102,7 +102,7 @@
       (expect (= [te] (:turn-end out))))))
 
 ;; ---------------------------------------------------------------------------
-;; emit! \u2014 broadcast + isolation.
+;; emit! - broadcast + isolation.
 ;; ---------------------------------------------------------------------------
 
 (defdescribe emit-test
@@ -133,7 +133,7 @@
         :iteration-end payload)
       (expect (= (assoc payload :phase :iteration-end) @seen))))
 
-  (it "isolates listener exceptions \u2014 a thrower does NOT abort the broadcast"
+  (it "isolates listener exceptions - a thrower does NOT abort the broadcast"
     (let [seen   (atom [])
           good-1 (fn [_] (swap! seen conj :good-1))
           bad    (fn [_] (throw (ex-info "boom" {})))
@@ -144,6 +144,6 @@
 
   (it "is a no-op when no listener subscribed to that phase"
     ;; If the phase had zero listeners, payload work shouldn't even
-    ;; happen \u2014 the loop hot-path optimises around `(seq listeners)`.
+    ;; happen - the loop hot-path optimises around `(seq listeners)`.
     (let [out (lc/emit! (lc/compose-listeners nil []) :iteration-end {})]
       (expect (nil? out)))))

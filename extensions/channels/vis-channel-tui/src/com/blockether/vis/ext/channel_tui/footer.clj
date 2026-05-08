@@ -7,7 +7,7 @@
        glm-5.1 (balanced)              total ↑12000 (cached 8000) ↓800  $0.04
 
    Each region holds a list of `{:text :fg :bold? :region :priority}`
-   spans separated by ' · ' in muted color. The full segment list is
+   spans separated by ' / ' in muted color. The full segment list is
    built up-front and shrunk by dropping the highest `:priority`
    number (least important) until it fits the available width.
 
@@ -17,10 +17,10 @@
 
    Run-state (spinner, iteration counter, elapsed time, current
    phase) lives EXCLUSIVELY in the assistant bubble's `progress->text`
-   block. Putting it in the footer too was a duplicate — same
+   block. Putting it in the footer too was a duplicate - same
    `\u280b 11.2s` showing twice on screen. The footer keeps slow-changing
    identity + budget bits; the bubble keeps the live activity story
-   («Vis is thinking (iter 3)… 4.1s · Esc to cancel»).
+   («Vis is thinking (iter 3)... 4.1s / Esc to cancel»).
 
    The first footer row carries repository context on the right:
    repo/branch, one compact changed-file count, and ahead/behind counts
@@ -431,8 +431,8 @@
 
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 
-(def ^:private sep "  ·  ")
-(def ^:private sep-narrow " · ")
+(def ^:private sep "  /  ")
+(def ^:private sep-narrow " / ")
 
 (defn- region-spans [segments region]
   (filterv #(= region (:region %)) segments))
@@ -472,7 +472,7 @@
 (defn- shrink-to-fit
   "Drop highest-:priority segments one at a time until the row fits.
    Tries the wide separator first, then collapses to a narrow one
-   before sacrificing segments — looks the same on a wide terminal,
+   before sacrificing segments - looks the same on a wide terminal,
    reads the same on a 80-col one."
   [segments cols]
   (let [fit? (fn [segs sepa] (<= (total-width segs sepa) cols))]
@@ -541,7 +541,7 @@
     (when (seq r) (draw-spans! g r-col row r separator))))
 
 (defn draw-footer!
-  "Paint the two footer rows starting at `footer-row`, full width `cols`. Pure draw —
+  "Paint the two footer rows starting at `footer-row`, full width `cols`. Pure draw -
    reads `db` once, computes segments, fits to width, writes cells.
    Safe to call every frame (cheap; no allocations on the hot path
    beyond the spans vector)."

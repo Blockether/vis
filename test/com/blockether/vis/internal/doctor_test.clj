@@ -23,7 +23,7 @@
    (a vec of ext maps). Restores the prior contents on exit, even on
    throws."
   [synthetic-exts f]
-  ;; Reach via a holder atom — the registry is private. We use the
+  ;; Reach via a holder atom - the registry is private. We use the
   ;; public deregister/register surface to swap it.
   (let [prior (extension/registered-extensions)]
     (try
@@ -193,7 +193,7 @@
                   :level :error :message "broken"
                   :remediation "fix it like this"}]
                 {:use-ansi? false})]
-      (expect (str/includes? out "→ fix it like this"))))
+      (expect (str/includes? out "-> fix it like this"))))
 
   (it "icons present for every level"
     (let [out (doctor/format-output
@@ -234,7 +234,7 @@
       #(let [hint (doctor/startup-hint-line {})]
          (expect (str/includes? hint "2 issues")))))
 
-  (it "empty registry → nil hint"
+  (it "empty registry -> nil hint"
     (with-registry* []
       #(expect (nil? (doctor/startup-hint-line {}))))))
 

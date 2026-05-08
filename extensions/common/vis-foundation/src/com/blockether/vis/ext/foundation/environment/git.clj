@@ -3,7 +3,7 @@
 
    Returns a snapshot map for the repository that contains `start`
    (typically the JVM working directory). nil when `start` is not
-   inside any git repository. Never throws — every JGit call is
+   inside any git repository. Never throws - every JGit call is
    guarded; on any failure we degrade gracefully to nil or a
    reduced-shape map.
 
@@ -81,7 +81,7 @@
 (defn- collect-status
   "Run `git status` with a wall-time deadline. Returns a status map
    on success, nil on timeout/failure. Status walks the working
-   tree, which can be slow on large dirty trees — the side-thread
+   tree, which can be slow on large dirty trees - the side-thread
    + `Future.get(timeout)` pattern lets us bail out cleanly without
    stalling the system-prompt build."
   [^Repository repo ^long timeout-ms]
@@ -172,9 +172,9 @@
    of git facts, or nil when `start-file` is not in a repo.
 
    Options:
-     :status?           — when true, run `git status` (slower).
+     :status?           - when true, run `git status` (slower).
                           Defaults true.
-     :status-timeout-ms — wall-time cap on the status walk.
+     :status-timeout-ms - wall-time cap on the status walk.
                           Defaults to `default-status-timeout-ms`."
   ([^File start-file] (snapshot start-file nil))
   ([^File start-file {:keys [status? status-timeout-ms]

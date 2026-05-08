@@ -10,9 +10,9 @@
 
 (defdescribe markdown-prose-rescue-test
   (it "quotes unbound prose words in v markdown helpers"
-    (let [code "(answer (v/p Spokojnie — patche są w toku))"
+    (let [code "(answer (v/p Spokojnie - patche są w toku))"
           repaired (md/rescue-markdown-prose {:code code :environment {}})]
-      (expect (= "(answer (v/p \"Spokojnie\" \"—\" \"patche\" \"są\" \"w\" \"toku\"))"
+      (expect (= "(answer (v/p \"Spokojnie\" \"-\" \"patche\" \"są\" \"w\" \"toku\"))"
                 repaired))))
 
   (it "keeps bound symbols used for markdown interpolation"
@@ -86,7 +86,7 @@
       (expect (= md/bold   (get-in by-sym ['strong :ext.symbol/fn])))))
 
   (it "inline emphasis helpers are variadic: parts concatenated, nil dropped, seqs spliced"
-    ;; Same regression class as md/h3 — the LLM composes naturally
+    ;; Same regression class as md/h3 - the LLM composes naturally
     ;; (md/bold \"build \" (md/code \"v1.2.3\")) instead of pre-joining
     ;; with str. Variadic shape removes the foot-gun.
     (expect (= "**build `v1.2.3`**"
@@ -125,10 +125,10 @@
   (it "required target helpers reject tool-result envelopes with targeted hints"
     (let [cat-result {:success? true
                       :result {:lines ["a" "b"]}
-                      :provenance {:op :v/cat}}
+                      :info {:op :v/cat}}
           rg-result  {:success? true
                       :result {:hits [{:path "x" :line 1 :text "needle"}]}
-                      :provenance {:op :v/rg}}]
+                      :info {:op :v/rg}}]
       (try
         (md/link "docs" cat-result)
         (expect false)
@@ -227,7 +227,7 @@
   (it "code-block rejects tool-result envelopes with targeted payload hint"
     (let [bash-result {:success? true
                        :result {:stdout "hello"}
-                       :provenance {:op :v/bash}}]
+                       :info {:op :v/bash}}]
       (try
         (md/code-block bash-result)
         (expect false)
@@ -269,7 +269,7 @@
       (expect (str/includes? out "body text"))
       (expect (str/includes? out "</details>"))))
 
-  (it "summary emits a bare <summary>…</summary> tag"
+  (it "summary emits a bare <summary>...</summary> tag"
     (expect (= "<summary>Logs</summary>" (md/summary "Logs")))
     (expect (= "<summary></summary>"     (md/summary nil)))
     (expect (= "<summary>**Logs**</summary>" (md/summary (md/bold "Logs")))))
@@ -278,7 +278,7 @@
     ;; The whole point of exposing `summary` separately: callers can
     ;; decorate the disclosure label with bold/code/italic spans and
     ;; feed the wrapped tag straight into `details`. `details` must
-    ;; detect it and embed verbatim — no `<summary><summary>…` chain.
+    ;; detect it and embed verbatim - no `<summary><summary>...` chain.
     (let [out (md/details (md/summary (md/bold "Logs")) "hidden body")]
       (expect (str/includes? out "<summary>**Logs**</summary>"))
       (expect (not (str/includes? out "<summary><summary>")))
@@ -310,7 +310,7 @@
           snippet-pos (str/index-of out "snippet line")]
       (expect (str/includes? out "<summary>Trace</summary>"))
       ;; Summary appears BEFORE every body part in the rendered
-      ;; output — the lift moved it to the canonical slot.
+      ;; output - the lift moved it to the canonical slot.
       (expect (< summary-pos intro-pos))
       (expect (< summary-pos snippet-pos))
       ;; Body parts kept their relative order (intro before snippet).
@@ -318,7 +318,7 @@
       ;; And the closer lives at the end.
       (expect (str/ends-with? out "</details>"))))
 
-  (it "details (variadic) accepts <summary> as the FIRST arg too — idempotent placement"
+  (it "details (variadic) accepts <summary> as the FIRST arg too - idempotent placement"
     (let [out (md/details (md/summary "Trace") "body1" "body2")]
       (expect (str/includes? out "<summary>Trace</summary>"))
       (expect (< (str/index-of out "<summary>")
@@ -338,7 +338,7 @@
 
   (it "details (variadic, no summary) emits a label-less <details> block"
     ;; Caller explicitly omitted <summary>; we don't fabricate one.
-    ;; Browsers fall back to a default 'Details' label — their job,
+    ;; Browsers fall back to a default 'Details' label - their job,
     ;; not ours.
     (let [out (md/details "para1" "para2" "para3")]
       (expect (str/starts-with? out "<details>"))
@@ -356,7 +356,7 @@
               #(md/details (md/summary "A") "body" (md/summary "B")))))
 
   (it "details 1-arity: single body or single <summary>, no auto-wrap"
-    ;; 1-arity is the variadic path with one part — no implicit
+    ;; 1-arity is the variadic path with one part - no implicit
     ;; <summary> creation. Useful for hand-rolled blocks.
     (let [body-only (md/details "raw body only")]
       (expect (str/includes? body-only "raw body only"))
@@ -383,13 +383,13 @@
     (expect (= "- a\n- b\n- c" (md/ul ["a" "b" "c"]))))
 
   (it "ul coalesces LLM-flattened inline fragments into their parent item"
-    (expect (= (str "- Intencje żyją na poziomie `conversation_soul` — persystują między turami\n"
-                 "- Intent sam jest bramką\n"
-                 "- Nowe API: `v/issue-intent!`, `v/issue-plan!`\n"
+    (expect (= (str "- Stan żyje na poziomie `conversation_soul` - persystuje między turami\n"
+                 "- Zadanie samo steruje kolejką\n"
+                 "- Nowe API: `v/inspect`, `v/report`\n"
                  "- 5 nowych tabel")
-              (md/ul ["Intencje żyją na poziomie " (md/code "conversation_soul") " — persystują między turami"
-                      "Intent sam jest bramką"
-                      "Nowe API: " (md/code "v/issue-intent!") ", " (md/code "v/issue-plan!")
+              (md/ul ["Stan żyje na poziomie " (md/code "conversation_soul") " - persystuje między turami"
+                      "Zadanie samo steruje kolejką"
+                      "Nowe API: " (md/code "v/inspect") ", " (md/code "v/report")
                       "5 nowych tabel"]))))
 
   (it "ol coalesces LLM-flattened inline fragments without eating next item"
@@ -520,9 +520,9 @@
     (expect (= "a\n\nb" (md/join ["a" nil "b"]))))
 
   (it "variadic inline helpers splice ONE level (matching md/p), reject NESTED sequentials"
-    ;; Inline helpers (md/bold / md/italic / md/code / …) are now
+    ;; Inline helpers (md/bold / md/italic / md/code / ...) are now
     ;; variadic-with-splicing, same contract as md/p. A bare lazy
-    ;; seq is treated as splice-able parts — the LazySeq@<hex> leak
+    ;; seq is treated as splice-able parts - the LazySeq@<hex> leak
     ;; is prevented by `expand-parts` flattening, not by rejection.
     (expect (= "**ab**" (md/bold (map identity ["a" "b"]))))
     (expect (= "`v/cat`" (md/code (map identity ["v/" "cat"]))))
@@ -532,7 +532,7 @@
     (expect (throws? clojure.lang.ExceptionInfo
               #(md/bold [["nested"]])))
     ;; md/code-block is NOT variadic (single :code positional or
-    ;; :lang + :code) — a stray seq there still throws.
+    ;; :lang + :code) - a stray seq there still throws.
     (expect (throws? clojure.lang.ExceptionInfo
               #(md/code-block (map identity ["line1" "line2"])))))
 

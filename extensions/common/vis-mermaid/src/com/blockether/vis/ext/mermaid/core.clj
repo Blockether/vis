@@ -32,8 +32,8 @@
         s     (str line)]
     (cond
       (<= (count s) width) s
-      (= width 1)          "…"
-      :else                (str (subs s 0 (dec width)) "…"))))
+      (= width 1)          "..."
+      :else                (str (subs s 0 (dec width)) "..."))))
 
 (defn- clip-lines
   [width lines]
@@ -890,7 +890,7 @@
           to-idx (.indexOf ^java.util.List order (:to event))
           from-label (nth labels from-idx (:from event))
           to-label (nth labels to-idx (:to event))]
-      (str from-label " " (if (:dashed? event) "⇢" "→") " " to-label ": " (:text event)))
+      (str from-label " " (if (:dashed? event) "⇢" "->") " " to-label ": " (:text event)))
 
     :note
     (str "Note " (:pos event) " " (str/join "," (:of event)) ": " (:text event))
@@ -944,7 +944,7 @@
 
           :state
           (or (seq (map (fn [{:keys [from to label]}]
-                          (str "• " from " → " to (when label (str ": " label))))
+                          (str "• " from " -> " to (when label (str ": " label))))
                      (:transitions ast)))
             (map #(str "• " %) items))
 

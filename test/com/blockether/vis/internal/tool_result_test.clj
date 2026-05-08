@@ -8,15 +8,15 @@
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defdescribe tool-result-contract-test
-  (it "success requires :success? :result :provenance and nil :error"
+  (it "success requires :success? :result :info and nil :error"
     (let [out (tr/success {:result {:a 1}
-                           :provenance {:op :demo}})]
+                           :info {:op :demo}})]
       (expect (true? (:success? out)))
       (expect (= nil (:error out)))
-      (expect (= :demo (get-in out [:provenance :op])))
-      (expect (integer? (get-in out [:provenance :started-at-ms])))
-      (expect (integer? (get-in out [:provenance :finished-at-ms])))
-      (expect (integer? (get-in out [:provenance :duration-ms])))
+      (expect (= :demo (get-in out [:info :op])))
+      (expect (integer? (get-in out [:info :started-at-ms])))
+      (expect (integer? (get-in out [:info :finished-at-ms])))
+      (expect (integer? (get-in out [:info :duration-ms])))
       (expect (= {:a 1} (:result out)))
       (expect (not (contains? out (keyword (str "result" "-" "shape")))))
       (expect (not (contains? out :markdown)))))
@@ -26,7 +26,7 @@
                (throw (ex-info "boom" {:x 1}))
                (catch Throwable t t))
           out (tr/failure {:result nil
-                           :provenance {:op :demo}
+                           :info {:op :demo}
                            :throwable ex})]
       (expect (false? (:success? out)))
       (expect (= nil (:result out)))
@@ -38,10 +38,10 @@
     (expect (throws? clojure.lang.ExceptionInfo
               #(tr/assert-tool-result! {:success? true :result 1}))))
 
-  (it "merge-provenance re-validates the envelope without presentation carriers"
+  (it "merge-info re-validates the envelope without presentation carriers"
     (let [base (tr/success {:result true
-                            :provenance {:op :exists?}})
-          out  (tr/merge-provenance base
+                            :info {:op :exists?}})
+          out  (tr/merge-info base
                  {:tool {:sym 'exists?
                          :call "v/exists?"}
                   :extension {:namespace 'com.acme.ext.fs}
@@ -49,9 +49,9 @@
                            :mtime-max 1
                            :hash-sha256 nil}})]
       (expect (not (contains? out :markdown)))
-      (expect (= 'exists? (get-in out [:provenance :tool :sym])))
-      (expect (= 'com.acme.ext.fs (get-in out [:provenance :extension :namespace])))
-      (expect (= ["/tmp/ext.clj"] (get-in out [:provenance :source :paths])))))
+      (expect (= 'exists? (get-in out [:info :tool :sym])))
+      (expect (= 'com.acme.ext.fs (get-in out [:info :extension :namespace])))
+      (expect (= ["/tmp/ext.clj"] (get-in out [:info :source :paths])))))
 
   (it "renders through the owning symbol render-fn when registered"
     (let [sym (tr/symbol 'exists? (constantly nil)
@@ -66,8 +66,8 @@
                              :ext/symbols [sym]})]
       (try
         (tr/register-extension! ext)
-        (let [out (tr/merge-provenance
-                    (tr/success {:result true :provenance {:op :v/exists?}})
+        (let [out (tr/merge-info
+                    (tr/success {:result true :info {:op :v/exists?}})
                     {:tool {:sym 'exists? :call "fs/exists?"}
                      :extension {:namespace 'com.acme.ext.fs}
                      :source {:paths [] :mtime-max -1 :hash-sha256 nil}})]
@@ -95,8 +95,8 @@
                  :render-fn (fn [{:keys [tool-result]}]
                               (str "ok=" (:success? tool-result)
                                 "; result=" (pr-str (:result tool-result))
-                                "; provenance=" (pr-str (select-keys (:provenance tool-result)
-                                                          [:tool :extension :source]))))})
+                                "; info=" (pr-str (select-keys (:info tool-result)
+                                                    [:tool :extension :source]))))})
           ext (tr/extension {:ext/namespace 'com.acme.ext.fs.render
                              :ext/doc "fs render"
                              :ext/kind "filesystem"
@@ -104,9 +104,9 @@
                              :ext/symbols [sym]})]
       (try
         (tr/register-extension! ext)
-        (let [out (tr/merge-provenance
+        (let [out (tr/merge-info
                     (tr/success {:result {:lines ["a" "b"]}
-                                 :provenance {:op :demo}})
+                                 :info {:op :demo}})
                     {:tool {:sym 'cat
                             :call "fsr/cat"}
                      :extension {:namespace 'com.acme.ext.fs.render}

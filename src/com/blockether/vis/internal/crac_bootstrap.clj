@@ -49,8 +49,8 @@
   "Run the idempotent pre-extension bootstrap.
 
    Options:
-   - `:phase` — diagnostic keyword, e.g. `:cli`, `:dev`, `:crac-checkpoint`.
-   - `:namespaces` — namespace symbols to require before the caller proceeds.
+   - `:phase` - diagnostic keyword, e.g. `:cli`, `:dev`, `:crac-checkpoint`.
+   - `:namespaces` - namespace symbols to require before the caller proceeds.
 
    The function is deliberately idempotent inside one JVM so `bin/dev cli`,
    direct REPL calls, and restored CRaC invocations can share it without

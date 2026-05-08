@@ -1,8 +1,8 @@
 (ns ^{:clj-kondo/config
       ;; Pragmatic: this aggregator test file collects scenarios from
       ;; multiple original test namespaces. Many `it` blocks use
-      ;; `(let [s (h/store) cid (vis/db-store-conversation! …)] (let […]
-      ;; …))` where the inner let is technically mergeable and the
+      ;; `(let [s (h/store) cid (vis/db-store-conversation! ...)] (let [...]
+      ;; ...))` where the inner let is technically mergeable and the
       ;; intermediate ids (cid / qid / etc.) are bound for SIDE EFFECT,
       ;; not for use. Suppress redundant-let / unused-binding here
       ;; rather than rewrite every block.
@@ -27,7 +27,6 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.proof :as proof]
    [honey.sql :as sql]
    [lazytest.core :refer [defdescribe it expect]]
    [next.jdbc :as jdbc]
@@ -39,6 +38,18 @@
 ;; ─── from db_test.clj ───
 
 (h/use-mem-store!)
+
+(defn- private-core-fn [name]
+  (deref (resolve (symbol "com.blockether.vis.ext.persistance-sqlite.core" name))))
+
+(def ^:private migration-checksum-mismatch?
+  (private-core-fn "migration-checksum-mismatch?"))
+
+(def ^:private maybe-wrap-db-open-error
+  (private-core-fn "maybe-wrap-db-open-error"))
+
+(def ^:private migration-checksum-mismatch-user-message
+  @(resolve 'com.blockether.vis.ext.persistance-sqlite.core/migration-checksum-mismatch-user-message))
 
 (defdescribe sqlite-extension-aggregate-test
   (it "upserts extension-owned singleton rows by extension, key, kind, and scope"
@@ -107,596 +118,6 @@
                     :iteration-block-index 0}
                   (select-keys (:scope (first rows)) [:iteration-id :iteration-block-index])))
         (expect (= {:ok true} (:content (first rows))))))))
-
-(defdescribe provenance-event-ledger-test
-  (it "stores and reads immutable runtime observations by canonical ref"
-    (let [s            (h/store)
-          cid          (vis/db-store-conversation! s {:channel :tui})
-          tid          (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                           :user-request "prove ledger"
-                                                           :status :running})
-          iid          (vis/db-store-iteration! s {:conversation-turn-id tid
-                                                   :status :done
-                                                   :blocks [{:code "(v/bash \"true\")"}]})
-          turn-state-id (:state-id (first (vis/db-list-conversation-turn-states s tid)))
-          ref          (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          event        (vis/db-store-provenance-event! s {:conversation-id cid
-                                                          :conversation-turn-id tid
-                                                          :conversation-turn-state-id turn-state-id
-                                                          :iteration-id iid
-                                                          :ref ref
-                                                          :kind :tool
-                                                          :op :v/bash
-                                                          :status :done
-                                                          :rendering-kind :vis/tool
-                                                          :payload {:result {:exit 0}}
-                                                          :summary "bash true passed"})
-          fetched      (vis/db-get-provenance-event s cid ref)
-          listed       (vis/db-list-provenance-events s {:conversation-id cid})]
-      (expect (= ref (:ref event)))
-      (expect (= :tool (:kind fetched)))
-      (expect (= :done (:status fetched)))
-      (expect (= {:result {:exit 0}} (:payload fetched)))
-      (expect (string? (:payload-sha256 fetched)))
-      (expect (= [ref] (mapv :ref listed)))
-      (expect (= 1 (raw-count s :provenance_event)))))
-
-  (it "stores iteration block and var tool observations in the proof ledger"
-    (let [s             (h/store)
-          cid           (vis/db-store-conversation! s {:channel :tui})
-          tid           (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                            :user-request "prove from iteration"
-                                                            :status :running})
-          intent        (vis/db-store-intent! s {:conversation-turn-id tid
-                                                 :title "Prove iteration"
-                                                 :rationale "Regression for iteration provenance persistence."})
-          plan          (vis/db-store-plan! s {:intent-id (:id intent) :summary "Verify."})
-          gate          (vis/db-store-gate! s {:plan-id (:id plan)
-                                               :question "Command passed?"})
-          code          "(def verify (v/bash \"true\"))"
-          tool-envelope {:success? true
-                         :result {:exit 0 :stdout "" :stderr ""}
-                         :provenance {:op :v/bash
-                                      :duration-ms 1
-                                      :started-at-ms 10
-                                      :finished-at-ms 11}}
-          iid           (vis/db-store-iteration! s {:conversation-turn-id tid
-                                                    :blocks [{:id 0
-                                                              :code code
-                                                              :result #:vis{:ref :expr}
-                                                              :stdout ""
-                                                              :stderr ""
-                                                              :error nil
-                                                              :execution-time-ms 1}]
-                                                    :vars [{:name 'verify
-                                                            :value tool-envelope
-                                                            :code code}]})
-          block-ref     (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          tool-ref      (str block-ref "/tool/v.bash")
-          event         (vis/db-get-provenance-event s cid tool-ref)
-          bundle        (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                           :kind :proof
-                                                           :subject-kind :gate
-                                                           :subject-id (:id gate)
-                                                           :requirements [{:evidence/slot [(:id intent) :exit]
-                                                                           :evidence/from-ref tool-ref
-                                                                           :evidence/extract [:result :exit]
-                                                                           :evidence/guard [:= [:value] 0]
-                                                                           :event/kind :tool
-                                                                           :event/op :v/bash}]})
-          attestation   (vis/db-attest-gate! s {:gate-id (:id gate)
-                                                :evidence-bundle-id (:id bundle)
-                                                :kind :gate/proven
-                                                :reason "Stored iteration provenance proves exit zero."})]
-      (expect (= iid (:iteration-id event)))
-      (expect (= :tool (:kind event)))
-      (expect (= :done (:status event)))
-      (expect (= {:result {:exit 0 :stdout "" :stderr ""}
-                  :success? true}
-                (:payload event)))
-      (expect (= :accepted (:status bundle)))
-      (expect (= true (:accepted? bundle)))
-      (expect (= 0 (:value (first (:members bundle)))))
-      (expect (= :accepted (:status attestation)))
-      (expect (= 1 (raw-count s :provenance_event)))))
-
-  (it "auto-capturing iteration tool provenance is idempotent when refs already exist"
-    (let [s             (h/store)
-          cid           (vis/db-store-conversation! s {:channel :tui})
-          tid           (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                            :user-request "idempotent provenance"
-                                                            :status :running})
-          code          "(def verify (v/bash \"true\"))"
-          block-ref     (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          tool-ref      (str block-ref "/tool/v.bash")
-          tool-envelope {:success? true
-                         :result {:exit 0}
-                         :provenance {:op :v/bash}}]
-      (vis/db-store-provenance-event! s {:conversation-id cid
-                                         :conversation-turn-id tid
-                                         :ref tool-ref
-                                         :kind :tool
-                                         :op :v/bash
-                                         :status :done
-                                         :payload {:result {:exit 0}}})
-      (vis/db-store-iteration! s {:conversation-turn-id tid
-                                  :blocks [{:id 0
-                                            :code code
-                                            :result #:vis{:ref :expr}
-                                            :error nil
-                                            :execution-time-ms 1}]
-                                  :vars [{:name 'verify
-                                          :value tool-envelope
-                                          :code code}]})
-      (expect (= 1 (raw-count s :provenance_event)))
-      (expect (= {:result {:exit 0}}
-                (:payload (vis/db-get-provenance-event s cid tool-ref))))))
-
-  (it "rejects duplicate canonical refs in one conversation ledger"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                  :user-request "duplicate ref"
-                                                  :status :running})
-          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")]
-      (vis/db-store-provenance-event! s {:conversation-id cid
-                                         :conversation-turn-id tid
-                                         :ref ref
-                                         :kind :eval
-                                         :op :sci/eval
-                                         :status :done})
-      (let [thrown (try
-                     (vis/db-store-provenance-event! s {:conversation-id cid
-                                                        :conversation-turn-id tid
-                                                        :ref ref
-                                                        :kind :eval
-                                                        :op :sci/eval
-                                                        :status :done})
-                     nil
-                     (catch Exception e e))]
-        (expect (some? thrown))
-        (expect (= 1 (raw-count s :provenance_event))))))
-
-  (it "stores running events but they do not satisfy proof compatibility"
-    (let [s       (h/store)
-          cid     (vis/db-store-conversation! s {:channel :tui})
-          tid     (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                      :user-request "future"
-                                                      :status :running})
-          ref     (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/tool/future")
-          running (vis/db-store-provenance-event! s {:conversation-id cid
-                                                     :conversation-turn-id tid
-                                                     :ref ref
-                                                     :kind :lifecycle
-                                                     :op :future
-                                                     :status :running})]
-      (expect (= :running (:status running)))
-      (expect (= [ref] (mapv :ref (vis/db-list-provenance-events s {:conversation-id cid
-                                                                    :status :running}))))
-      (expect (false? (proof/proof-compatible? {:provenance {:status (:status running)}})))))
-
-  (it "derives evidence bundle members from ledger events, not fake caller slots"
-    (let [s          (h/store)
-          cid        (vis/db-store-conversation! s {:channel :tui})
-          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                         :user-request "derive bundle"
-                                                         :status :running})
-          gate-id    (random-uuid)
-          slot-owner (random-uuid)
-          ref        (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          _event     (vis/db-store-provenance-event! s {:conversation-id cid
-                                                        :conversation-turn-id tid
-                                                        :ref ref
-                                                        :kind :tool
-                                                        :op :v/bash
-                                                        :status :done
-                                                        :payload {:result {:exit 1}}})
-          bundle     (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                        :kind :proof
-                                                        :subject-kind :gate
-                                                        :subject-id gate-id
-                                                        :requirements [{:evidence/slot [slot-owner :exit]
-                                                                        :evidence/from-ref ref
-                                                                        :evidence/extract [:result :exit]
-                                                                        :evidence/value 0
-                                                                        :evidence/guard [:= [:value] 0]
-                                                                        :event/kind :tool
-                                                                        :event/op :v/bash}]})
-          member     (first (:members bundle))]
-      (expect (= :rejected (:status bundle)))
-      (expect (= false (:accepted? bundle)))
-      (expect (= 1 (:value member)))
-      (expect (= :guard-false (:error-code member)))
-      (expect (= 1 (raw-count s :evidence_bundle)))
-      (expect (= 1 (raw-count s :evidence_bundle_member)))
-      (expect (= bundle (vis/db-get-evidence-bundle s (:id bundle))))))
-
-  (it "rejects empty-requirements bundles as a fake-proof bypass"
-    ;; Persistence-side regression for the attestation ledger: a caller could
-    ;; previously submit `:requirements []` and receive an `:accepted` bundle
-    ;; (because `(every? guard-ok [])` is trivially true), then attest the
-    ;; gate from it. PROOF.md's whole event → bundle → attestation → audit
-    ;; chain assumes every bundle derives at least one runtime fact.
-    (let [s          (h/store)
-          cid        (vis/db-store-conversation! s {:channel :tui})
-          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                         :user-request "empty bundle"
-                                                         :status :running})
-          intent     (vis/db-store-intent! s {:conversation-turn-id tid
-                                              :title "Empty bundle"
-                                              :rationale "Repro fake-proof bypass."})
-          plan       (vis/db-store-plan! s {:intent-id (:id intent) :summary "Plan"})
-          gate       (vis/db-store-gate! s {:plan-id (:id plan) :question "Anything?"})
-          empty-bundle (vis/db-create-evidence-bundle! s
-                         {:conversation-id cid :kind :proof :subject-kind :gate
-                          :subject-id (:id gate) :source :derived :requirements []})
-          attest-thrown (try
-                          (vis/db-attest-gate! s {:gate-id (:id gate)
-                                                  :evidence-bundle-id (:id empty-bundle)
-                                                  :kind :gate/proven
-                                                  :reason "Should reject."})
-                          nil
-                          (catch Exception e e))
-          [gate-row] (raw-query s {:select [:status]
-                                   :from :conversation_intent_gate
-                                   :where [:= :id (str (:id gate))]})]
-      (expect (= :rejected (:status empty-bundle)))
-      (expect (= false (:accepted? empty-bundle)))
-      (expect (zero? (count (:members empty-bundle))))
-      (expect (some? attest-thrown))
-      (expect (= "open" (:status gate-row)))
-      (expect (zero? (raw-count s :attestation)))))
-
-  (it "distinguishes missing-event from cross-conversation-ref in bundle members"
-    ;; Persistence-side regression: previously both \"event ref does not exist\"
-    ;; and \"event lives in another conversation\" collapsed to
-    ;; `:non-successful-event` because the SQL lookup synthesised a stub row.
-    ;; Audit could not tell forgotten observations from cross-conversation
-    ;; leakage — both are real attestation-attempt categories that PROOF.md
-    ;; needs to surface separately.
-    (let [s          (h/store)
-          cid        (vis/db-store-conversation! s {:channel :tui})
-          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                         :user-request "distinguish"
-                                                         :status :running})
-          intent     (vis/db-store-intent! s {:conversation-turn-id tid
-                                              :title "distinguish" :rationale "r"})
-          plan       (vis/db-store-plan! s {:intent-id (:id intent) :summary "P"})
-          gate       (vis/db-store-gate! s {:plan-id (:id plan) :question "q"})
-          slot-owner (random-uuid)
-          ;; Plant an event in another conversation. Same bare ref shape on
-          ;; purpose so the only difference between PROBE-C and PROBE-D is
-          ;; whether it lives under this conversation.
-          other-cid  (vis/db-store-conversation! s {:channel :tui})
-          other-tid  (vis/db-store-conversation-turn! s {:parent-conversation-id other-cid
-                                                         :user-request "other"
-                                                         :status :running})
-          cross-ref  (str "turn/" (subs (str other-tid) 0 8) "/iteration/1/block/1")
-          _other-ev  (vis/db-store-provenance-event! s {:conversation-id other-cid
-                                                        :conversation-turn-id other-tid
-                                                        :ref cross-ref
-                                                        :kind :tool :op :v/bash
-                                                        :status :done
-                                                        :payload {:result {:exit 0}}})
-          missing-ref "turn/00000000/iteration/9/block/9"
-          missing-bundle (vis/db-create-evidence-bundle! s
-                           {:conversation-id cid :kind :proof :subject-kind :gate
-                            :subject-id (:id gate) :source :derived
-                            :requirements [{:evidence/slot [slot-owner :verify]
-                                            :evidence/from-ref missing-ref
-                                            :evidence/extract [:result :exit]}]})
-          cross-bundle (vis/db-create-evidence-bundle! s
-                         {:conversation-id cid :kind :proof :subject-kind :gate
-                          :subject-id (:id gate) :source :derived
-                          :requirements [{:evidence/slot [slot-owner :verify]
-                                          :evidence/from-ref cross-ref
-                                          :evidence/extract [:result :exit]}]})]
-      (expect (= :rejected (:status missing-bundle)))
-      (expect (= :missing-event (:error-code (first (:members missing-bundle)))))
-      (expect (= :rejected (:status cross-bundle)))
-      (expect (= :cross-conversation-ref (:error-code (first (:members cross-bundle)))))))
-
-  (it "accepts gate attestations only from accepted evidence bundles"
-    (let [s          (h/store)
-          cid        (vis/db-store-conversation! s {:channel :tui})
-          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                         :user-request "attest gate"
-                                                         :status :running})
-          intent     (vis/db-store-intent! s {:conversation-turn-id tid
-                                              :title "Attest gate"
-                                              :rationale "User needs proof."})
-          plan       (vis/db-store-plan! s {:intent-id (:id intent)
-                                            :summary "Plan"})
-          gate       (vis/db-store-gate! s {:plan-id (:id plan)
-                                            :question "Did bash pass?"})
-          slot-owner (random-uuid)
-          pass-ref   (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          fail-ref   (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/2")
-          _pass      (vis/db-store-provenance-event! s {:conversation-id cid
-                                                        :conversation-turn-id tid
-                                                        :ref pass-ref
-                                                        :kind :tool
-                                                        :op :v/bash
-                                                        :status :done
-                                                        :payload {:result {:exit 0}}})
-          _fail      (vis/db-store-provenance-event! s {:conversation-id cid
-                                                        :conversation-turn-id tid
-                                                        :ref fail-ref
-                                                        :kind :tool
-                                                        :op :v/bash
-                                                        :status :done
-                                                        :payload {:result {:exit 1}}})
-          accepted   (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                        :kind :proof
-                                                        :subject-kind :gate
-                                                        :subject-id (:id gate)
-                                                        :requirements [{:evidence/slot [slot-owner :exit]
-                                                                        :evidence/from-ref pass-ref
-                                                                        :evidence/extract [:result :exit]
-                                                                        :evidence/guard [:= [:value] 0]
-                                                                        :event/kind :tool
-                                                                        :event/op :v/bash}]})
-          rejected   (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                        :kind :proof
-                                                        :subject-kind :gate
-                                                        :subject-id (:id gate)
-                                                        :requirements [{:evidence/slot [slot-owner :exit]
-                                                                        :evidence/from-ref fail-ref
-                                                                        :evidence/extract [:result :exit]
-                                                                        :evidence/guard [:= [:value] 0]
-                                                                        :event/kind :tool
-                                                                        :event/op :v/bash}]})
-          rejected-thrown (try
-                            (vis/db-attest-gate! s {:gate-id (:id gate)
-                                                    :evidence-bundle-id (:id rejected)
-                                                    :kind :gate/proven
-                                                    :reason "Should reject."})
-                            nil
-                            (catch Exception e e))
-          attestation (vis/db-attest-gate! s {:gate-id (:id gate)
-                                              :evidence-bundle-id (:id accepted)
-                                              :kind :gate/proven
-                                              :reason "Runtime evidence accepted."})
-          [gate-row] (raw-query s {:select [:status :proof :impediment]
-                                   :from :conversation_intent_gate
-                                   :where [:= :id (str (:id gate))]})]
-      (expect (= :accepted (:status accepted)))
-      (expect (= :rejected (:status rejected)))
-      (expect (some? rejected-thrown))
-      (expect (= :gate/proven (:kind attestation)))
-      (expect (= :proven (:decision attestation)))
-      (expect (= :accepted (:status attestation)))
-      (expect (= "proven" (:status gate-row)))
-      (expect (some? (:proof gate-row)))
-      (expect (nil? (:impediment gate-row)))
-      (expect (= 1 (raw-count s :attestation)))))
-
-  (it "completes a plan only after every required gate has an accepted proof attestation"
-    (let [s          (h/store)
-          cid        (vis/db-store-conversation! s {:channel :tui})
-          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                         :user-request "complete plan"
-                                                         :status :running})
-          intent     (vis/db-store-intent! s {:conversation-turn-id tid
-                                              :title "Complete plan"
-                                              :rationale "User needs both checks."})
-          plan       (vis/db-store-plan! s {:intent-id (:id intent)
-                                            :summary "Two gate plan"})
-          gate-a     (vis/db-store-gate! s {:plan-id (:id plan)
-                                            :question "First check?"})
-          gate-b     (vis/db-store-gate! s {:plan-id (:id plan)
-                                            :question "Second check?"})
-          slot-owner (random-uuid)
-          ref-a      (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          ref-b      (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/2")]
-      (doseq [ref [ref-a ref-b]]
-        (vis/db-store-provenance-event! s {:conversation-id cid
-                                           :conversation-turn-id tid
-                                           :ref ref
-                                           :kind :tool
-                                           :op :v/bash
-                                           :status :done
-                                           :payload {:result {:exit 0}}}))
-      (let [bundle-a (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                        :kind :proof
-                                                        :subject-kind :gate
-                                                        :subject-id (:id gate-a)
-                                                        :requirements [{:evidence/slot [slot-owner :exit-a]
-                                                                        :evidence/from-ref ref-a
-                                                                        :evidence/extract [:result :exit]
-                                                                        :evidence/guard [:= [:value] 0]
-                                                                        :event/kind :tool
-                                                                        :event/op :v/bash}]})
-            bundle-b (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                        :kind :proof
-                                                        :subject-kind :gate
-                                                        :subject-id (:id gate-b)
-                                                        :requirements [{:evidence/slot [slot-owner :exit-b]
-                                                                        :evidence/from-ref ref-b
-                                                                        :evidence/extract [:result :exit]
-                                                                        :evidence/guard [:= [:value] 0]
-                                                                        :event/kind :tool
-                                                                        :event/op :v/bash}]})]
-        (vis/db-attest-gate! s {:gate-id (:id gate-a)
-                                :evidence-bundle-id (:id bundle-a)
-                                :kind :gate/proven
-                                :reason "First accepted."})
-        (expect (= "active" (:status (first (raw-query s {:select [:status]
-                                                          :from :conversation_intent_plan
-                                                          :where [:= :id (str (:id plan))]})))))
-        (expect (= "active" (:status (first (raw-query s {:select [:status]
-                                                          :from :conversation_intent
-                                                          :where [:= :id (str (:id intent))]})))))
-        (vis/db-attest-gate! s {:gate-id (:id gate-b)
-                                :evidence-bundle-id (:id bundle-b)
-                                :kind :gate/proven
-                                :reason "Second accepted."})
-        (expect (= "completed" (:status (first (raw-query s {:select [:status]
-                                                             :from :conversation_intent_plan
-                                                             :where [:= :id (str (:id plan))]})))))
-        (expect (= "active" (:status (first (raw-query s {:select [:status]
-                                                          :from :conversation_intent
-                                                          :where [:= :id (str (:id intent))]}))))))))
-
-  (it "fulfills an intent only from accepted closure attestation after plan completion"
-    (let [s          (h/store)
-          cid        (vis/db-store-conversation! s {:channel :tui})
-          tid        (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                         :user-request "close intent"
-                                                         :status :running})
-          intent     (vis/db-store-intent! s {:conversation-turn-id tid
-                                              :title "Close intent"
-                                              :rationale "User commitment boundary."})
-          plan       (vis/db-store-plan! s {:intent-id (:id intent)
-                                            :summary "One gate plan"})
-          gate       (vis/db-store-gate! s {:plan-id (:id plan)
-                                            :question "Verified?"})
-          slot-owner (random-uuid)
-          proof-ref  (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          close-ref  (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/2")]
-      (doseq [[ref exit] [[proof-ref 0] [close-ref 0]]]
-        (vis/db-store-provenance-event! s {:conversation-id cid
-                                           :conversation-turn-id tid
-                                           :ref ref
-                                           :kind :tool
-                                           :op :v/bash
-                                           :status :done
-                                           :payload {:result {:exit exit}}}))
-      (let [early-bundle (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                            :kind :closure
-                                                            :subject-kind :intent
-                                                            :subject-id (:id intent)
-                                                            :requirements [{:evidence/slot [slot-owner :close]
-                                                                            :evidence/from-ref close-ref
-                                                                            :evidence/extract [:result :exit]
-                                                                            :evidence/guard [:= [:value] 0]
-                                                                            :event/kind :tool
-                                                                            :event/op :v/bash}]})
-            early-thrown (try
-                           (vis/db-attest-intent! s {:intent-id (:id intent)
-                                                     :evidence-bundle-id (:id early-bundle)
-                                                     :kind :intent/fulfilled
-                                                     :summary "Too early."})
-                           nil
-                           (catch Exception e e))]
-        (expect (= :accepted (:status early-bundle)))
-        (expect (some? early-thrown))
-        (expect (= "active" (:status (first (raw-query s {:select [:status]
-                                                          :from :conversation_intent
-                                                          :where [:= :id (str (:id intent))]}))))))
-      (let [gate-bundle (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                           :kind :proof
-                                                           :subject-kind :gate
-                                                           :subject-id (:id gate)
-                                                           :requirements [{:evidence/slot [slot-owner :proof]
-                                                                           :evidence/from-ref proof-ref
-                                                                           :evidence/extract [:result :exit]
-                                                                           :evidence/guard [:= [:value] 0]
-                                                                           :event/kind :tool
-                                                                           :event/op :v/bash}]})]
-        (vis/db-attest-gate! s {:gate-id (:id gate)
-                                :evidence-bundle-id (:id gate-bundle)
-                                :kind :gate/proven
-                                :reason "Gate accepted."}))
-      (let [closure-bundle (vis/db-create-evidence-bundle! s {:conversation-id cid
-                                                              :kind :closure
-                                                              :subject-kind :intent
-                                                              :subject-id (:id intent)
-                                                              :requirements [{:evidence/slot [slot-owner :close]
-                                                                              :evidence/from-ref close-ref
-                                                                              :evidence/extract [:result :exit]
-                                                                              :evidence/guard [:= [:value] 0]
-                                                                              :event/kind :tool
-                                                                              :event/op :v/bash}]})
-            attestation    (vis/db-attest-intent! s {:intent-id (:id intent)
-                                                     :evidence-bundle-id (:id closure-bundle)
-                                                     :kind :intent/fulfilled
-                                                     :summary "Done."})
-            state          (vis/db-intents s {:conversation-turn-id tid})]
-        (expect (= :intent/fulfilled (:kind attestation)))
-        (expect (= :fulfilled (:decision attestation)))
-        (expect (= :accepted (:status attestation)))
-        (expect (= :fulfilled (-> state :intents first :status)))
-        (expect (= true (:success? state)))
-        (expect (= true (:success? (vis/db-audit-proof s {:conversation-id cid}))))
-        (expect (= 2 (raw-count s :attestation))))))
-
-  (it "audits legacy closure that bypassed accepted intent attestation"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "legacy close"
-                                                     :status :running})
-          _iter  (vis/db-store-iteration! s {:conversation-turn-id tid
-                                             :blocks [{:code "(+ 1 1)"
-                                                       :result 2}]})
-          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Legacy close"
-                                          :rationale "Exercise audit."})
-          plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :summary "Legacy plan"})
-          gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :question "Legacy proof?"})
-          slot-owner (random-uuid)]
-      (vis/db-store-provenance-event! s {:conversation-id cid
-                                         :conversation-turn-id tid
-                                         :ref ref
-                                         :kind :tool
-                                         :op :v/bash
-                                         :status :done
-                                         :payload {:result {:exit 0}}})
-      (let [gate-bundle (vis/db-create-evidence-bundle! s
-                          {:conversation-id cid
-                           :kind :proof
-                           :subject-kind :gate
-                           :subject-id (:id gate)
-                           :requirements [{:evidence/slot [slot-owner :proof]
-                                           :evidence/from-ref ref
-                                           :evidence/extract [:result :exit]
-                                           :evidence/guard [:= [:value] 0]
-                                           :event/kind :tool
-                                           :event/op :v/bash}]})]
-        (vis/db-attest-gate! s {:gate-id (:id gate)
-                                :evidence-bundle-id (:id gate-bundle)
-                                :kind :gate/proven
-                                :reason "Gate accepted."}))
-      (jdbc/execute! (:datasource s)
-        (sql/format {:update :conversation_intent
-                     :set {:status "fulfilled"
-                           :fulfillment_summary "Legacy fulfilled."
-                           :abandonment_reason nil
-                           :resolved_at (vis/now-ms)}
-                     :where [:= :id (str (:id intent))]}))
-      (let [audit (vis/db-audit-proof s {:conversation-id cid})]
-        (expect (= false (:success? audit)))
-        (expect (contains? (set (map :type (:violations audit)))
-                  :missing-intent-closure-attestation))))))
-
-(defn- drop-conversation-intent-schema!
-  [db-file]
-  (let [ds (jdbc/get-datasource {:jdbcUrl (str "jdbc:sqlite:" db-file)})]
-    (jdbc/execute! ds ["PRAGMA foreign_keys = OFF"])
-    (doseq [table [:conversation_intent_focus
-                   :conversation_intent_gate_ref
-                   :conversation_intent_gate
-                   :conversation_intent_plan
-                   :conversation_intent_relation
-                   :conversation_intent_ref
-                   :conversation_intent]]
-      (jdbc/execute! ds (sql/format {:drop-table [:if-exists table]})))))
-
-(defn- private-core-fn [name]
-  (deref (resolve (symbol "com.blockether.vis.ext.persistance-sqlite.core" name))))
-
-(def ^:private migration-checksum-mismatch?
-  (private-core-fn "migration-checksum-mismatch?"))
-
-(def ^:private maybe-wrap-db-open-error
-  (private-core-fn "maybe-wrap-db-open-error"))
-
-(def ^:private migration-checksum-mismatch-user-message
-  (private-core-fn "migration-checksum-mismatch-user-message"))
 
 (defdescribe sqlite-bootstrap-error-normalization-test
   (it "matches Flyway checksum text at top level"
@@ -942,30 +363,6 @@
       (expect (= :ok result))
       (expect (= 2 @attempts)))))
 
-(defdescribe v1-schema-resource-only-test
-  (it "does not repair local databases that are missing migration-owned tables"
-    (let [dir (fs/create-temp-dir {:prefix "vis-v1-no-repair-"})]
-      (try
-        (let [s (vis/db-create-connection! (str dir))]
-          (vis/db-dispose-connection! s))
-        (drop-conversation-intent-schema! (fs/file dir "vis.db"))
-        (let [s (vis/db-create-connection! (str dir))]
-          (try
-            (let [cid (vis/db-store-conversation! s {:channel :cli})
-                  tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                          :user-request "missing schema"
-                                                          :status :running})]
-              (expect (some? (try
-                               (vis/db-store-intent! s {:conversation-turn-id tid
-                                                        :title "No repair"
-                                                        :rationale "Schema must come from migration resource."})
-                               nil
-                               (catch Throwable t t)))))
-            (finally
-              (vis/db-dispose-connection! s))))
-        (finally
-          (fs/delete-tree dir))))))
-
 ;; =============================================================================
 ;; Conversation
 ;; =============================================================================
@@ -1051,7 +448,7 @@
         (expect (= (:state-id (nth rows 1)) (:parent-state-id (nth rows 2))))
         (expect (= ["vA" "vB"] (mapv :system-prompt (drop 1 rows)))))))
 
-  (it "reports :turn-count per state — turns belong to one specific branch"
+  (it "reports :turn-count per state - turns belong to one specific branch"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})]
       (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "trunk Q1" :status :done})
@@ -1204,688 +601,7 @@
       (expect (= :error (:status (first (vis/db-list-conversation-turns s cid))))))))
 
 ;; =============================================================================
-;; Conversation-scoped intents: intent -> plan -> gate refs
-;; =============================================================================
-
-(defdescribe conversation-intent-test
-  (it "persists conversation-scoped intent plan gate through attestations"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "ship it"
-                                                     :status :running})
-          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
-                                             :blocks [{:code "(+ 1 2)"
-                                                       :result 3}
-                                                      {:code "(+ 2 3)"
-                                                       :result 5}]})
-          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          ref-2  (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/2")
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Ship it"
-                                          :rationale "User asked for it."})
-          plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :summary "Inspect and verify."
-                                        :steps [{:id :verify}]})
-          slot   [(:id intent) :verification]
-          plan-dsl (:plan plan)
-          gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :proposition "Verification passes."
-                                        :expected-proof {:slots {slot {:required? true}}
-                                                         :guard [:exists [:slot slot :ref]]}})
-          _candidate (vis/db-offer-proof! s {:gate-id (:id gate)
-                                             :slots {slot {:ref ref}}
-                                             :refs [ref]})]
-      (doseq [ref [ref ref-2]]
-        (vis/db-store-provenance-event! s {:conversation-id cid
-                                           :conversation-turn-id tid
-                                           :ref ref
-                                           :kind :tool
-                                           :op :v/bash
-                                           :status :done
-                                           :payload {:result {:exit 0}}}))
-      (let [gate-bundle (vis/db-create-evidence-bundle! s
-                          {:conversation-id cid
-                           :kind :proof
-                           :subject-kind :gate
-                           :subject-id (:id gate)
-                           :requirements [{:evidence/slot slot
-                                           :evidence/from-ref ref
-                                           :evidence/extract [:result :exit]
-                                           :evidence/guard [:= [:value] 0]
-                                           :event/kind :tool
-                                           :event/op :v/bash}]})
-            proven (vis/db-attest-gate! s {:gate-id (:id gate)
-                                           :evidence-bundle-id (:id gate-bundle)
-                                           :kind :gate/proven
-                                           :reason "Verification passed."})
-            closure-bundle (vis/db-create-evidence-bundle! s
-                             {:conversation-id cid
-                              :kind :closure
-                              :subject-kind :intent
-                              :subject-id (:id intent)
-                              :requirements [{:evidence/slot [(:id intent) :closure]
-                                              :evidence/from-ref ref
-                                              :evidence/extract [:result :exit]
-                                              :evidence/guard [:= [:value] 0]
-                                              :event/kind :tool
-                                              :event/op :v/bash}]})
-            fulfilled (vis/db-attest-intent! s {:intent-id (:id intent)
-                                                :evidence-bundle-id (:id closure-bundle)
-                                                :kind :intent/fulfilled
-                                                :summary "Done."})
-            gate-bundle-again (vis/db-create-evidence-bundle! s
-                                {:conversation-id cid
-                                 :kind :proof
-                                 :subject-kind :gate
-                                 :subject-id (:id gate)
-                                 :requirements [{:evidence/slot slot
-                                                 :evidence/from-ref ref
-                                                 :evidence/extract [:result :exit]
-                                                 :evidence/guard [:= [:value] 0]
-                                                 :event/kind :tool
-                                                 :event/op :v/bash}]})
-            proven-again (vis/db-attest-gate! s {:gate-id (:id gate)
-                                                 :evidence-bundle-id (:id gate-bundle-again)
-                                                 :kind :gate/proven
-                                                 :reason "Verification passed again."})
-            closure-bundle-again (vis/db-create-evidence-bundle! s
-                                   {:conversation-id cid
-                                    :kind :closure
-                                    :subject-kind :intent
-                                    :subject-id (:id intent)
-                                    :requirements [{:evidence/slot [(:id intent) :closure]
-                                                    :evidence/from-ref ref
-                                                    :evidence/extract [:result :exit]
-                                                    :evidence/guard [:= [:value] 0]
-                                                    :event/kind :tool
-                                                    :event/op :v/bash}
-                                                   {:evidence/slot [(:id intent) :closure-2]
-                                                    :evidence/from-ref ref-2
-                                                    :evidence/extract [:result :exit]
-                                                    :evidence/guard [:= [:value] 0]
-                                                    :event/kind :tool
-                                                    :event/op :v/bash}]})
-            fulfilled-again (vis/db-attest-intent! s {:intent-id (:id intent)
-                                                      :evidence-bundle-id (:id closure-bundle-again)
-                                                      :kind :intent/fulfilled
-                                                      :summary "Done again."})
-            state  (vis/db-intents s {:conversation-turn-id tid})
-            state-intent (-> state :intents first)
-            state-gate (-> state-intent :plans first :gates first)]
-        (expect (= 1 (raw-count s :conversation_intent)))
-        (expect (= 1 (raw-count s :conversation_intent_plan)))
-        (expect (= 1 (raw-count s :conversation_intent_gate)))
-        (expect (= 0 (raw-count s :conversation_intent_gate_ref)))
-        (expect (= 0 (raw-count s :conversation_intent_ref)))
-        (expect (= 4 (raw-count s :evidence_bundle)))
-        (expect (= 5 (raw-count s :evidence_bundle_member)))
-        (expect (= 4 (raw-count s :attestation)))
-        (expect (= :verify (get-in plan-dsl [:steps 0 :id])))
-        (expect (= :gate/proven (:kind proven)))
-        (expect (= :gate/proven (:kind proven-again)))
-        (expect (= :proven (:decision proven)))
-        (expect (= :proven (:status state-gate)))
-        (expect (= "Verification passes." (:proposition gate)))
-        (expect (= (str (:id gate-bundle-again)) (get-in state-gate [:proof :evidence-bundle-id])))
-        (expect (= :intent/fulfilled (:kind fulfilled)))
-        (expect (= :intent/fulfilled (:kind fulfilled-again)))
-        (expect (= :fulfilled (:decision fulfilled)))
-        (expect (= :fulfilled (:status state-intent)))
-        (expect (= "Done again." (:fulfillment-summary state-intent)))
-        (expect (= true (:success? state)))
-        (expect (= true (:success? (vis/db-audit-proof s {:conversation-id cid}))))
-        (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
-        (expect (= ref-2 (:from-ref (last (:members closure-bundle-again)))))
-        (expect (= :vis/sci (get-in (vis/db-list-iteration-blocks s iid) [0 :rendering-kind]))))))
-
-  (it "derives abandonment refs from required impeded gates when refs are omitted"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "review ideas"
-                                                     :status :running})
-          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
-                                             :blocks [{:code "(v/needs-input \"Paste ideas.\")"
-                                                       :result :vis/system
-                                                       :rendering-kind :vis/system}]})
-          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Review ideas"
-                                          :rationale "User asked."})
-          plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :summary "Need user input."})
-          gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :proposition "Ideas are available."
-                                        :required? true})]
-      (vis/db-impede-gate! s {:gate-id (:id gate)
-                              :reason "User has not provided ideas."
-                              :refs [ref]})
-      (let [abandoned (vis/db-abandon-intent! s (:id intent)
-                        {:reason "Cannot review ideas until user provides them."})
-            state     (vis/db-intents s {:conversation-turn-id tid})]
-        (expect (= :abandoned (:status abandoned)))
-        (expect (= "Cannot review ideas until user provides them."
-                  (:abandonment-reason abandoned)))
-        (expect (= ref (-> abandoned :refs first :ref)))
-        (expect (= :abandonment-evidence (-> abandoned :refs first :role)))
-        (expect (= true (:success? state)))
-        (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
-        (expect (= 1 (raw-count s :conversation_intent_ref))))))
-
-  (it "rejects explicit abandonment refs that only cite ordinary successful work"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "ship patch"
-                                                     :status :running})
-          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
-                                             :blocks [{:code "(answer \"design only\")"
-                                                       :result "design only"
-                                                       :rendering-kind :vis/answer}]})
-          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Ship patch"
-                                          :rationale "User asked."})
-          thrown (try
-                   (vis/db-abandon-intent! s (:id intent)
-                     {:reason "No patch shipped."
-                      :refs [ref]})
-                   nil
-                   (catch clojure.lang.ExceptionInfo e e))]
-      (expect (= :intent/abandon-without-impediment (-> thrown ex-data :type)))
-      (expect (= :active (:status (vis/db-get-intent s (:id intent)))))
-      (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))))
-
-  (it "accepts explicit abandonment refs that cite an impeded gate result"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "ship patch"
-                                                     :status :running})
-          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
-                                             :blocks [{:code "(v/impede-gate! gate opts)"
-                                                       :result {:status :impeded
-                                                                :reason "Missing credentials."}
-                                                       :rendering-kind :vis/sci}]})
-          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Ship patch"
-                                          :rationale "User asked."})
-          abandoned (vis/db-abandon-intent! s (:id intent)
-                      {:reason "Blocked by missing credentials."
-                       :refs [ref]})]
-      (expect (= :abandoned (:status abandoned)))
-      (expect (= ref (-> abandoned :refs first :ref)))
-      (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))))
-
-  (it "rejects compact provenance refs in evidence bundles"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "ship it"
-                                                     :status :running})
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Ship it"
-                                          :rationale "User asked for it."})
-          plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :summary "Plan"})
-          gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :question "Verified?"})
-          bundle (vis/db-create-evidence-bundle! s
-                   {:conversation-id cid
-                    :kind :proof
-                    :subject-kind :gate
-                    :subject-id (:id gate)
-                    :requirements [{:evidence/slot [(:id intent) :proof]
-                                    :evidence/from-ref "i1.1"
-                                    :evidence/extract [:result]
-                                    :evidence/guard [:= [:value] 3]}]})
-          thrown (try
-                   (vis/db-attest-gate! s {:gate-id (:id gate)
-                                           :evidence-bundle-id (:id bundle)
-                                           :kind :gate/proven
-                                           :reason "Nope"})
-                   nil
-                   (catch Exception e e))]
-      (expect (= :rejected (:status bundle)))
-      ;; PROOF.md § \"compact display refs may remain display-only\" —
-      ;; persistence must emit the precise `:non-canonical-ref` code so
-      ;; audit can explain WHY the ref was rejected. Previously this
-      ;; collapsed to the generic `:invalid-requirement` because the
-      ;; spec on `:evidence/from-ref` (typed as ::canonical-ref) shadowed
-      ;; the dedicated runtime branch in `derive-binding`. Tightened in
-      ;; the proof spec-ordering fix.
-      (expect (= :non-canonical-ref (-> bundle :members first :error-code)))
-      (expect (some? thrown))
-      (expect (str/includes? (ex-message thrown) "accepted evidence bundle"))))
-
-  (it "rejects unobserved canonical refs in evidence bundles"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "ship it"
-                                                     :status :running})
-          _iid   (vis/db-store-iteration! s {:conversation-turn-id tid
-                                             :blocks [{:code "(+ 1 2)"
-                                                       :result 3}]})
-          future-ref   (str "turn/" (subs (str tid) 0 8) "/iteration/2/block/1")
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Ship it"
-                                          :rationale "User asked for it."})
-          plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :summary "Plan"})
-          gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :question "Verified?"})
-          bundle (vis/db-create-evidence-bundle! s
-                   {:conversation-id cid
-                    :kind :proof
-                    :subject-kind :gate
-                    :subject-id (:id gate)
-                    :requirements [{:evidence/slot [(:id intent) :proof]
-                                    :evidence/from-ref future-ref
-                                    :evidence/extract [:result]
-                                    :evidence/guard [:= [:value] 3]}]})]
-      (expect (= :rejected (:status bundle)))
-      (expect (= future-ref (-> bundle :members first :from-ref)))
-      ;; A canonical ref that points at no recorded event must surface as
-      ;; `:missing-event`, not the misleading `:non-successful-event`. The
-      ;; old code synthesised a stub event row when the SQL lookup missed,
-      ;; so audit could not distinguish forgotten observations from
-      ;; cross-conversation ref leakage. Both are real attestation-attempt
-      ;; categories the new persistence ingest separates explicitly.
-      (expect (= :missing-event (-> bundle :members first :error-code)))))
-
-  (it "supersedes the previous active plan for an intent"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "plan"
-                                                     :status :running})
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Plan"
-                                          :rationale "User asked."})
-          p1     (vis/db-store-plan! s {:intent-id (:id intent) :summary "First"})
-          p2     (vis/db-store-plan! s {:intent-id (:id intent) :summary "Second"})
-          plans  (raw-query s {:select [:id :status]
-                               :from :conversation_intent_plan
-                               :order-by [[:created_at :asc]]})]
-      (expect (= [[(str (:id p1)) "superseded"] [(str (:id p2)) "active"]]
-                (mapv (juxt :id :status) plans)))))
-
-  (it "reports unresolved focused intents as blocking"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "ship it"
-                                                     :status :running})
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Ship it"
-                                          :rationale "User asked for it."})
-          state  (vis/db-intents s {:conversation-turn-id tid})]
-      (expect (= false (:success? state)))
-      (expect (some #(= :missing-active-plan (:type %)) (:violations state)))
-      (expect (= [(:id intent)] (:focused-intent-ids state)))))
-
-  (it "carries unresolved focus into the next turn and rejects unrelated new intent focus"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          t1     (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "finish schema"
-                                                     :status :running})
-          intent (vis/db-store-intent! s {:conversation-turn-id t1
-                                          :title "Finish schema"
-                                          :rationale "User asked."})
-          t2     (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "unrelated work"
-                                                     :status :running})
-          inferred (vis/db-infer-focus! s t2 {:rationale "carry focus"})
-          thrown (try
-                   (vis/db-store-intent! s {:conversation-turn-id t2
-                                            :title "Unrelated work"
-                                            :rationale "User asked."})
-                   nil
-                   (catch Exception e e))]
-      (expect (= [(:id intent)] (:focused-intent-ids inferred)))
-      (expect (some? thrown))
-      (expect (str/includes? (ex-message thrown) "unresolved intent"))))
-
-  (it "persists a running lifecycle child event for deferred future results and rejects it as proof"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "ship it"
-                                                     :status :running})
-          fut    (future (Thread/sleep 1000) :done)
-          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
-                                             :blocks [{:code "(future :done)"
-                                                       :result fut}]})
-          future-ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/tool/future")
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Ship it"
-                                          :rationale "User asked for it."})
-          plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :summary "Plan"})
-          gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :question "Did deferred work complete?"})
-          [block] (vis/db-list-iteration-blocks s iid)]
-      (vis/db-store-provenance-event! s {:conversation-id cid
-                                         :conversation-turn-id tid
-                                         :ref future-ref
-                                         :kind :lifecycle
-                                         :op :future
-                                         :status :running
-                                         :payload {:result {:vis/ref :expr}}})
-      (let [bundle (vis/db-create-evidence-bundle! s
-                     {:conversation-id cid
-                      :kind :proof
-                      :subject-kind :gate
-                      :subject-id (:id gate)
-                      :requirements [{:evidence/slot [(:id intent) :proof]
-                                      :evidence/from-ref future-ref
-                                      :evidence/extract [:result]
-                                      :event/kind :lifecycle
-                                      :event/op :future}]})]
-        (future-cancel fut)
-        (expect (= {:vis/ref :expr} (:result block)))
-        (expect (= future-ref (get-in block [:events 0 :provenance :ref])))
-        (expect (= :running (get-in block [:events 0 :provenance :status])))
-        (expect (= :rejected (:status bundle)))
-        (expect (= :non-successful-event (-> bundle :members first :error-code))))))
-
-  (it "persists await-proof timeout as terminal blocker-compatible lifecycle evidence"
-    (let [s      (h/store)
-          cid    (vis/db-store-conversation! s {:channel :tui})
-          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                     :user-request "ship it"
-                                                     :status :running})
-          timeout-result {:success? false
-                          :result nil
-                          :provenance {:op :future/await
-                                       :status :timeout
-                                       :started-at-ms 10
-                                       :finished-at-ms 15
-                                       :duration-ms 5}
-                          :error {:type "java.util.concurrent.TimeoutException"
-                                  :message "Timed out"
-                                  :trace []}}
-          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
-                                             :blocks [{:code "(v/await-proof! f {:timeout-ms 1})"
-                                                       :result timeout-result}]})
-          await-ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/tool/future.await")
-          intent (vis/db-store-intent! s {:conversation-turn-id tid
-                                          :title "Ship it"
-                                          :rationale "User asked for it."})
-          plan   (vis/db-store-plan! s {:intent-id (:id intent)
-                                        :summary "Plan"})
-          gate   (vis/db-store-gate! s {:plan-id (:id plan)
-                                        :question "Did deferred work complete?"})
-          [block] (vis/db-list-iteration-blocks s iid)
-          impeded (vis/db-impede-gate! s {:gate-id (:id gate)
-                                          :reason "Deferred work timed out."
-                                          :refs [await-ref]})]
-      (vis/db-store-provenance-event! s {:conversation-id cid
-                                         :conversation-turn-id tid
-                                         :ref await-ref
-                                         :kind :lifecycle
-                                         :op :future/await
-                                         :status :timeout
-                                         :payload timeout-result})
-      (let [proof-bundle (vis/db-create-evidence-bundle! s
-                           {:conversation-id cid
-                            :kind :proof
-                            :subject-kind :gate
-                            :subject-id (:id gate)
-                            :requirements [{:evidence/slot [(:id intent) :proof]
-                                            :evidence/from-ref await-ref
-                                            :evidence/extract [:result]
-                                            :event/kind :lifecycle
-                                            :event/op :future/await}]})]
-        (expect (= await-ref (get-in block [:events 0 :provenance :ref])))
-        (expect (= :timeout (get-in block [:events 0 :provenance :status])))
-        (expect (= :impeded (:status impeded)))
-        (expect (= :rejected (:status proof-bundle)))
-        (expect (= :non-successful-event (-> proof-bundle :members first :error-code)))))))
-
-;; =============================================================================
-;; PROOF.md Tasks 28–34 — intent lifecycle persistence end-to-end
-;; =============================================================================
-
-(defdescribe intent-lifecycle-persistence-test
-  (it "db-store-intent! requires owner-extension-id when source is :extension"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})]
-      (let [thrown (try (vis/db-store-intent! s {:conversation-id cid :title "x"
-                                                 :rationale "r" :source :extension})
-                     nil (catch Exception e e))]
-        (expect (some? thrown))
-        (expect (str/includes? (ex-message thrown) ":owner-extension-id")))
-      (let [thrown (try (vis/db-store-intent! s {:conversation-id cid :title "x"
-                                                 :rationale "r" :source :user
-                                                 :owner-extension-id "vis.ext.x"})
-                     nil (catch Exception e e))]
-        (expect (some? thrown))
-        (expect (str/includes? (ex-message thrown) ":owner-extension-id")))))
-
-  (it "db-suggest-intent! creates :suggested extension-owned intent without focus"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                  :user-request "telegram" :status :running})
-          sug (vis/db-suggest-intent! s {:conversation-id cid :conversation-turn-id tid
-                                         :title "Telegram bot" :rationale "setup"
-                                         :source :extension
-                                         :owner-extension-id "vis.ext.telegram"})]
-      (expect (= :suggested (:status sug)))
-      (expect (= :extension (:source sug)))
-      (expect (= "vis.ext.telegram" (:owner-extension-id sug)))
-      (expect (zero? (raw-count s :conversation_intent_focus)))))
-
-  (it "db-accept-intent! rejects extensions and accepts :user / :system-policy actors"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          sug (vis/db-suggest-intent! s {:conversation-id cid :title "x"
-                                         :rationale "r" :source :user})
-          ext-thrown (try (vis/db-accept-intent! s (:id sug) {:actor-kind :extension})
-                       nil (catch Exception e e))
-          accepted   (vis/db-accept-intent! s (:id sug) {:actor-kind :user :reason "ok"})]
-      (expect (some? ext-thrown))
-      (expect (str/includes? (ex-message ext-thrown) "extensions cannot self-accept"))
-      (expect (= :active (:status accepted)))
-      (expect (= :user (:accepted-by-kind accepted)))
-      (expect (some? (:accepted-at accepted)))
-      (expect (= 1 (raw-count s :attestation)))
-      (expect (some? (:transition-attestation accepted)))))
-
-  (it "db-accept-intent! :defer routes straight to :deferred with trigger metadata"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          sug (vis/db-suggest-intent! s {:conversation-id cid :title "y"
-                                         :rationale "r" :source :user})
-          deferred (vis/db-accept-intent! s (:id sug)
-                     {:actor-kind :user
-                      :defer {:trigger-kind :defer/user-input
-                              :sibling-policy :defer/block-parent}})]
-      (expect (= :deferred (:status deferred)))
-      (expect (= :defer/user-input (:defer-trigger-kind deferred)))
-      (expect (= :defer/block-parent (:defer-sibling-policy deferred)))))
-
-  (it "defer/resume requires resumable mark and rejects extension resume actor"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          sug (vis/db-suggest-intent! s {:conversation-id cid :title "z"
-                                         :rationale "r" :source :user})
-          _   (vis/db-accept-intent! s (:id sug) {:actor-kind :user})
-          _   (vis/db-defer-intent! s (:id sug) {:actor-kind :user
-                                                 :trigger-kind :defer/extension-signal})
-          early-thrown (try (vis/db-resume-intent! s (:id sug) {:actor-kind :user})
-                         nil (catch Exception e e))
-          _   (vis/db-mark-intent-resumable! s (:id sug) {})
-          ext-thrown (try (vis/db-resume-intent! s (:id sug) {:actor-kind :extension})
-                       nil (catch Exception e e))
-          resumed (vis/db-resume-intent! s (:id sug) {:actor-kind :user})]
-      (expect (some? early-thrown))
-      (expect (str/includes? (ex-message early-thrown) "not resumable"))
-      (expect (some? ext-thrown))
-      (expect (str/includes? (ex-message ext-thrown) "extensions cannot self-accept"))
-      (expect (= :active (:status resumed)))
-      (expect (= :user (:resumed-by-kind resumed)))))
-
-  (it "intent lifecycle rejects illegal transitions (terminal states are sticky)"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                  :user-request "close" :status :running})
-          _   (vis/db-store-iteration! s {:conversation-turn-id tid
-                                          :blocks [{:code "(v/bash \"false\")"
-                                                    :result :vis/error
-                                                    :error {:message "failed"}
-                                                    :rendering-kind :vis/system}]})
-          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/error")
-          sug (vis/db-suggest-intent! s {:conversation-id cid :title "x"
-                                         :rationale "r" :source :user})
-          _   (vis/db-accept-intent! s (:id sug) {:actor-kind :user})
-          _   (vis/db-abandon-intent! s (:id sug) {:reason "changed mind" :refs [ref]})
-          to-active   (try (vis/db-accept-intent! s (:id sug) {:actor-kind :user})
-                        nil (catch Exception e e))
-          to-deferred (try (vis/db-defer-intent! s (:id sug)
-                             {:actor-kind :user :trigger-kind :defer/user-input})
-                        nil (catch Exception e e))]
-      (expect (some? to-active))
-      (expect (str/includes? (ex-message to-active) "illegal intent lifecycle transition"))
-      (expect (some? to-deferred))
-      (expect (str/includes? (ex-message to-deferred) "illegal intent lifecycle transition"))))
-
-  (it "db-list-intents filters by status / source / owner / parent / resumable + tree DFS"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          parent (vis/db-suggest-intent! s {:conversation-id cid :title "p"
-                                            :rationale "r" :source :user})
-          _ (vis/db-accept-intent! s (:id parent) {:actor-kind :user})
-          _ext-sug (vis/db-suggest-intent! s {:conversation-id cid :title "e"
-                                              :rationale "r" :source :extension
-                                              :owner-extension-id "vis.ext.telegram"})
-          ext-def (vis/db-suggest-intent! s {:conversation-id cid :title "d"
-                                             :rationale "r" :source :extension
-                                             :owner-extension-id "vis.ext.telegram"})
-          _ (vis/db-accept-intent! s (:id ext-def) {:actor-kind :user
-                                                    :defer {:trigger-kind :defer/time}})
-          child (vis/db-suggest-intent! s {:conversation-id cid :title "c"
-                                           :rationale "r" :source :user
-                                           :parent-intent-id (:id parent)})]
-      (expect (= 1 (count (vis/db-list-intents s {:conversation-id cid :status :active}))))
-      (expect (= 2 (count (vis/db-list-intents s {:conversation-id cid :status :suggested}))))
-      (expect (= 1 (count (vis/db-list-intents s {:conversation-id cid :status :deferred}))))
-      (expect (= 2 (count (vis/db-list-intents s {:conversation-id cid :source :extension}))))
-      (expect (= 2 (count (vis/db-list-intents s {:conversation-id cid
-                                                  :owner-extension-id "vis.ext.telegram"}))))
-      (expect (= 1 (count (vis/db-list-intents s {:conversation-id cid
-                                                  :parent-intent-id (:id parent)}))))
-      (expect (= 4 (count (vis/db-list-intents s {:conversation-id cid
-                                                  :status #{:suggested :active :deferred}}))))
-      (expect (zero? (count (vis/db-list-intents s {:conversation-id cid :resumable? true}))))
-      (vis/db-mark-intent-resumable! s (:id ext-def) {})
-      (expect (= 1 (count (vis/db-list-intents s {:conversation-id cid :resumable? true}))))
-      (expect (zero? (count (vis/db-list-intents s {:conversation-id cid :resumable? false}))))
-      (expect (= (:id child) (:id (vis/db-get-intent s (:id child)))))
-      (let [tree (vis/db-intent-tree s (:id parent))]
-        (expect (= 2 (count tree)))
-        (expect (= (:id parent) (:id (:intent (first tree)))))
-        (expect (zero? (:depth (first tree))))
-        (expect (= (:id child) (:id (:intent (second tree)))))
-        (expect (= 1 (:depth (second tree)))))))
-
-  (it "db-set-intent-cursor! enforces single running intent per conversation"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          a   (vis/db-suggest-intent! s {:conversation-id cid :title "a"
-                                         :rationale "r" :source :user})
-          _   (vis/db-accept-intent! s (:id a) {:actor-kind :user})
-          b   (vis/db-suggest-intent! s {:conversation-id cid :title "b"
-                                         :rationale "r" :source :user})
-          _   (vis/db-accept-intent! s (:id b) {:actor-kind :user})
-          first-cursor  (vis/db-set-intent-cursor! s cid (:id a))
-          second-cursor (vis/db-set-intent-cursor! s cid (:id b))
-          cleared       (vis/db-set-intent-cursor! s cid nil)]
-      (expect (= (:id a) (:intent-id first-cursor)))
-      (expect (= (:id b) (:intent-id second-cursor)))
-      (expect (nil? (:intent-id cleared)))
-      (expect (= 1 (raw-count s :conversation_intent_cursor)))
-      (let [sug (vis/db-suggest-intent! s {:conversation-id cid :title "sugg"
-                                           :rationale "r" :source :user})
-            thrown (try (vis/db-set-intent-cursor! s cid (:id sug))
-                     nil (catch Exception e e))]
-        (expect (some? thrown))
-        (expect (str/includes? (ex-message thrown) "only :active intents")))))
-
-  (it "abandon-with-scope cascades to descendants and clears the cursor"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          tid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
-                                                  :user-request "abandon" :status :running})
-          _   (vis/db-store-iteration! s {:conversation-turn-id tid
-                                          :blocks [{:code "(v/bash \"false\")"
-                                                    :result :vis/error
-                                                    :error {:message "failed"}
-                                                    :rendering-kind :vis/system}]})
-          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/error")
-          parent (vis/db-suggest-intent! s {:conversation-id cid :title "p"
-                                            :rationale "r" :source :user})
-          _ (vis/db-accept-intent! s (:id parent) {:actor-kind :user})
-          child  (vis/db-suggest-intent! s {:conversation-id cid :title "c"
-                                            :rationale "r" :source :user
-                                            :parent-intent-id (:id parent)})
-          _ (vis/db-accept-intent! s (:id child) {:actor-kind :user})
-          grandchild (vis/db-suggest-intent! s {:conversation-id cid :title "g"
-                                                :rationale "r" :source :user
-                                                :parent-intent-id (:id child)})
-          _ (vis/db-accept-intent! s (:id grandchild) {:actor-kind :user})
-          _ (vis/db-set-intent-cursor! s cid (:id grandchild))
-          result (vis/db-abandon-intent-with-scope! s (:id parent)
-                   {:scope :abandon/current-branch
-                    :reason "user changed direction"
-                    :refs [ref]})]
-      (expect (= :abandon/current-branch (:scope result)))
-      (expect (= 2 (count (:cascaded-intent-ids result))))
-      (expect (= :abandoned (:status (vis/db-get-intent s (:id parent)))))
-      (expect (= :abandoned (:status (vis/db-get-intent s (:id child)))))
-      (expect (= :abandoned (:status (vis/db-get-intent s (:id grandchild)))))
-      (expect (nil? (:intent-id (vis/db-get-intent-cursor s cid))))
-      (expect (= :abandon/current-branch (:abandonment-scope (vis/db-get-intent s (:id parent)))))
-      (expect (= :abandon/current-branch (:abandonment-scope (vis/db-get-intent s (:id child)))))))
-
-  (it "deferred-intent report categorizes active / suggested / deferred / extension-owned"
-    (let [s   (h/store)
-          cid (vis/db-store-conversation! s {:channel :tui})
-          a (vis/db-suggest-intent! s {:conversation-id cid :title "a"
-                                       :rationale "r" :source :user})
-          _ (vis/db-accept-intent! s (:id a) {:actor-kind :user})
-          _suggested (vis/db-suggest-intent! s {:conversation-id cid :title "sugg"
-                                                :rationale "r" :source :user})
-          ext-resumable (vis/db-suggest-intent! s {:conversation-id cid :title "ext-r"
-                                                   :rationale "r" :source :extension
-                                                   :owner-extension-id "vis.ext.x"})
-          _ (vis/db-accept-intent! s (:id ext-resumable)
-              {:actor-kind :user :defer {:trigger-kind :defer/extension-signal}})
-          _ (vis/db-mark-intent-resumable! s (:id ext-resumable) {})
-          ext-waiting (vis/db-suggest-intent! s {:conversation-id cid :title "ext-w"
-                                                 :rationale "r" :source :extension
-                                                 :owner-extension-id "vis.ext.x"})
-          _ (vis/db-accept-intent! s (:id ext-waiting)
-              {:actor-kind :user :defer {:trigger-kind :defer/time
-                                         :sibling-policy :defer/block-parent}})
-          report (vis/db-deferred-intent-report s {:conversation-id cid})]
-      (expect (= 1 (count (:active report))))
-      (expect (= 1 (count (:suggested report))))
-      (expect (= 1 (count (:deferred-resumable report))))
-      (expect (= 1 (count (:deferred-waiting report))))
-      (expect (= 1 (count (:sibling-blocking report))))
-      (expect (= 2 (count (:extension-owned report))))
-      (expect (zero? (count (:fulfilled (:resolved report)))))
-      (expect (zero? (count (:abandoned (:resolved report))))))))
-
-;; =============================================================================
-;; Retry
+;; Conversation-scoped state refs
 ;; =============================================================================
 
 (defdescribe retry-test
@@ -1924,7 +640,7 @@
                                            {:code "(* 3 4)" :result 12 :execution-time-ms 3}]
                                   :thinking "Computing" :duration-ms 50})
       (expect (= 1 (raw-count s :iteration)))
-      ;; No more kind='call' rows — the call log lives inline in the
+      ;; No more kind='call' rows - the call log lives inline in the
       ;; iteration.blocks Nippy blob.
       (expect (= 0 (raw-count s :expression_soul)))
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
@@ -1960,29 +676,29 @@
         (expect (some? thrown))
         (expect (re-find #"iteration position must increment by 1" (ex-message thrown))))))
 
-  (it "round-trips block-level provenance through the BLOB"
+  (it "round-trips block-level info through the BLOB"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
-          provenance {:op :sci/eval
-                      :started-at-ms 10
-                      :finished-at-ms 11
-                      :duration-ms 1}]
+          info {:op :sci/eval
+                :started-at-ms 10
+                :finished-at-ms 11
+                :duration-ms 1}]
       (vis/db-store-iteration! s {:conversation-turn-id qid
                                   :blocks [{:code "(+ 1 1)"
                                             :result 2
                                             :execution-time-ms 1
-                                            :provenance provenance}]
+                                            :info info}]
                                   :duration-ms 5})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             [exec] (vis/db-list-iteration-blocks s (:id iteration))]
-        (expect (= (assoc provenance
+        (expect (= (assoc info
                      :ref (str "turn/" (subs (str qid) 0 8) "/iteration/1/block/1")
                      :status :done)
-                  (:provenance exec)))
+                  (:info exec)))
         (expect (= :vis/sci (:rendering-kind exec))))))
 
-  (it "persists running tool-start child events when a block times out before tool completion"
+  (it "does not persist timeout child-event side ledgers"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
@@ -1998,16 +714,9 @@
                                                            :tool {:sym 'bash :call "v/bash"}}]}]
                                   :duration-ms 120000})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
-            [exec] (vis/db-list-iteration-blocks s (:id iteration))
-            [event] (:events exec)]
-        (expect (= :timeout (get-in exec [:provenance :status])))
-        (expect (= :running (get-in event [:provenance :status])))
-        (expect (= :v/bash (get-in event [:provenance :op])))
-        (expect (= (str (get-in exec [:provenance :ref]) "/tool/v.bash")
-                  (get-in event [:provenance :ref])))
-        (expect (= 123 (get-in event [:provenance :started-at-ms])))
-        (expect (= "This event proves only that a tool was started, not that it completed."
-                  (get-in event [:metadata :proof-note]))))))
+            [exec] (vis/db-list-iteration-blocks s (:id iteration))]
+        (expect (= :timeout (get-in exec [:info :status])))
+        (expect (nil? (:events exec))))))
 
   (it "replaces fn results with the {:vis/ref :expr} sentinel (freeze-safe contract)"
     (let [s   (h/store)
@@ -2033,10 +742,10 @@
         (expect (= "Divide by zero" (:error exec)))
         (expect (= "dbg" (:stdout exec)))
         (expect (= "warn" (:stderr exec)))
-        ;; :result intentionally omitted on error — cond-> drops nil.
+        ;; :result intentionally omitted on error - cond-> drops nil.
         (expect (not (contains? exec :result))))))
 
-  (it ":comment field carries leading `;; … / #_(...)` blocks alongside :code"
+  (it ":comment field carries leading `;; ... / #_(...)` blocks alongside :code"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
@@ -2070,7 +779,7 @@
         (expect (= 3 (count iterations)))
         (expect (= [1 2 3] positions)))))
 
-  ;; Token + cost round-trip — iteration.llm_input_tokens /
+  ;; Token + cost round-trip - iteration.llm_input_tokens /
   ;; llm_output_tokens / llm_reasoning_tokens / llm_cached_tokens /
   ;; llm_cost_usd are written by db-store-iteration! when the caller
   ;; passes :tokens / :cost-usd, and surfaced by db-list-conversation-turn-iterations
@@ -2098,7 +807,7 @@
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
-      ;; Caller passes neither :tokens nor :cost-usd — the columns
+      ;; Caller passes neither :tokens nor :cost-usd - the columns
       ;; stay NULL on disk, but the read side normalizes to 0 / 0.0
       ;; so consumers never have to `or`-pad. Callers that need to
       ;; distinguish "no usage reported" from "zero tokens" can
@@ -2139,7 +848,7 @@
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
-      ;; Negative usage is structurally impossible — the schema CHECK
+      ;; Negative usage is structurally impossible - the schema CHECK
       ;; is the last line of defence. Any caller that fabricates a
       ;; negative value gets a SQLite constraint exception (wrapped
       ;; through next.jdbc). lazytest has no `thrown?` macro; use a
@@ -2238,7 +947,7 @@
       (expect (= [1 50 99] (mapv :value h)))
       (expect (= [0 1 2] (mapv :version h)))))
 
-  (it "builds a compact latest symbol index with provenance"
+  (it "builds a compact latest symbol index with info"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
@@ -2255,7 +964,7 @@
       (expect (= [:fn :data] (mapv :kind idx)))
       (expect (every? :restorable? idx))
       (expect (not-any? #(contains? % :value) idx))
-      (expect (every? #(get-in % [:provenance :iteration-id]) idx))))
+      (expect (every? #(get-in % [:info :iteration-id]) idx))))
 
   (it "builds a newest-first value-free var history timeline"
     (let [s   (h/store)
@@ -2343,7 +1052,7 @@
         (expect (= (:id qstate) (:conversation_turn_state_id iteration))))))
 
   (it "expression_soul.conversation_state_id (var rows) points to conversation_state.id"
-    ;; Only var rows live in expression_soul now. Drive a `(def …)`
+    ;; Only var rows live in expression_soul now. Drive a `(def ...)`
     ;; through the iteration so a var-soul row actually exists.
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
@@ -2546,11 +1255,11 @@
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "2+2?" :status :running})]
-      ;; Before update — no answer in metadata
+      ;; Before update - no answer in metadata
       (let [q (first (vis/db-list-conversation-turns s cid))]
         (expect (= :running (:status q)))
         (expect (nil? (:answer q))))
-      ;; After update — answer present
+      ;; After update - answer present
       (vis/db-update-conversation-turn! s qid {:answer "4" :status :success :iteration-count 1 :duration-ms 500})
       (let [q   (first (vis/db-list-conversation-turns s cid))
             raw (first (raw-query s {:select [:metadata] :from :conversation_turn_state}))]
@@ -2600,11 +1309,11 @@
         (expect (clojure.string/includes? (:metadata (nth states 2)) "\"10\""))))))
 
 ;; =============================================================================
-;; Restore — dependency chains, topological order, sandbox reconstruction
+;; Restore - dependency chains, topological order, sandbox reconstruction
 ;; =============================================================================
 
 (defdescribe restore-test
-  (it "restores vars in topological order — no dependencies"
+  (it "restores vars in topological order - no dependencies"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
@@ -2635,7 +1344,7 @@
       (expect (= {:vis/ref :expr} (:result entry)))
       (expect (= "(defn double-it [x] (* x 2))" (:expr entry)))))
 
-  (it "linear dependency chain A → B → C restored in correct order"
+  (it "linear dependency chain A -> B -> C restored in correct order"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
           qid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
@@ -2655,11 +1364,11 @@
           souls    (raw-query s {:select [:id :name] :from :expression_soul
                                  :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
-      ;; base-rate → calc-interest
+      ;; base-rate -> calc-interest
       (vis/db-store-dependency! s {:conversation-state-id state-id
                                    :downstream-soul-id (soul-by "calc-interest")
                                    :upstream-soul-id   (soul-by "base-rate")})
-      ;; calc-interest → monthly-payment
+      ;; calc-interest -> monthly-payment
       (vis/db-store-dependency! s {:conversation-state-id state-id
                                    :downstream-soul-id (soul-by "monthly-payment")
                                    :upstream-soul-id   (soul-by "calc-interest")})
@@ -2690,14 +1399,14 @@
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
-      ;; config → tax-fn, config → fee-fn
+      ;; config -> tax-fn, config -> fee-fn
       (vis/db-store-dependency! s {:conversation-state-id state-id
                                    :downstream-soul-id (soul-by "tax-fn")
                                    :upstream-soul-id   (soul-by "config")})
       (vis/db-store-dependency! s {:conversation-state-id state-id
                                    :downstream-soul-id (soul-by "fee-fn")
                                    :upstream-soul-id   (soul-by "config")})
-      ;; tax-fn → total-fn, fee-fn → total-fn
+      ;; tax-fn -> total-fn, fee-fn -> total-fn
       (vis/db-store-dependency! s {:conversation-state-id state-id
                                    :downstream-soul-id (soul-by "total-fn")
                                    :upstream-soul-id   (soul-by "tax-fn")})
@@ -2733,7 +1442,7 @@
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
-      ;; Chain: level-0 → level-1 → level-2 → level-3 → level-4
+      ;; Chain: level-0 -> level-1 -> level-2 -> level-3 -> level-4
       (doseq [i (range 4)]
         (vis/db-store-dependency! s {:conversation-state-id state-id
                                      :downstream-soul-id (soul-by (var-names (inc i)))
@@ -2762,7 +1471,7 @@
                                                  {:name "CONVERSATION_PREVIOUS_ANSWER" :value "[1 3]" :code ";; SYSTEM"}
                                                  {:name "result" :value [1 3]
                                                   :code "(def result (summarize dataset))"}]})
-          ;; Wire: dataset → summarize (it reads dataset), dataset + summarize → result
+          ;; Wire: dataset -> summarize (it reads dataset), dataset + summarize -> result
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
@@ -3012,7 +1721,7 @@
 ;; =============================================================================
 
 (defdescribe lazy-seq-safety-test
-  (it "infinite range → {:vis/ref :expr} — never realized"
+  (it "infinite range -> {:vis/ref :expr} - never realized"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -3023,7 +1732,7 @@
       (expect (= {:vis/ref :expr} (:value v)))
       (expect (= "(def nums (range))" (:code v)))))
 
-  (it "infinite repeat → {:vis/ref :expr}"
+  (it "infinite repeat -> {:vis/ref :expr}"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -3032,7 +1741,7 @@
           v   (first (vis/db-list-iteration-vars s iid))]
       (expect (= {:vis/ref :expr} (:value v)))))
 
-  (it "iterate → {:vis/ref :expr}"
+  (it "iterate -> {:vis/ref :expr}"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -3042,7 +1751,7 @@
           v   (first (vis/db-list-iteration-vars s iid))]
       (expect (= {:vis/ref :expr} (:value v)))))
 
-  (it "small lazy seq (map inc [1 2 3]) → {:vis/ref :expr} — lazy is lazy"
+  (it "small lazy seq (map inc [1 2 3]) -> {:vis/ref :expr} - lazy is lazy"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -3050,7 +1759,7 @@
                                           :vars [{:name "small" :value (map inc [1 2 3])
                                                   :code "(def small (map inc [1 2 3]))"}]})
           v   (first (vis/db-list-iteration-vars s iid))]
-      ;; Even small lazy seqs are refs — they're computations, not data
+      ;; Even small lazy seqs are refs - they're computations, not data
       (expect (= {:vis/ref :expr} (:value v)))))
 
   (it "realized vector is stored as data"
@@ -3073,7 +1782,7 @@
           v   (first (vis/db-list-iteration-vars s iid))]
       (expect (= '(1 2 3) (:value v)))))
 
-  (it "lazy seq inside a map → map stored, lazy value becomes ref"
+  (it "lazy seq inside a map -> map stored, lazy value becomes ref"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -3085,11 +1794,11 @@
           m   (:value (first (vis/db-list-iteration-vars s iid)))]
       (expect (map? m))
       (expect (= [1 2 3] (:data m)))
-      ;; Both lazy seqs → ref, regardless of size
+      ;; Both lazy seqs -> ref, regardless of size
       (expect (= {:vis/ref :expr} (:lazy m)))
       (expect (= {:vis/ref :expr} (:infinite m)))))
 
-  (it "lazy seq as expression result → ref"
+  (it "lazy seq as expression result -> ref"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -3099,12 +1808,12 @@
                                           :duration-ms 5})
           iteration (first (vis/db-list-conversation-turn-iterations s qid))
           execs (vis/db-list-iteration-blocks s (:id iteration))]
-      ;; (range) → ref
+      ;; (range) -> ref
       (expect (= {:vis/ref :expr} (:result (first execs))))
-      ;; (vec (range 5)) → realized vector, stored as data
+      ;; (vec (range 5)) -> realized vector, stored as data
       (expect (= [0 1 2 3 4] (:result (second execs)))))))
 ;; =============================================================================
-;; Integration: store → wipe sandbox → restore → use
+;; Integration: store -> wipe sandbox -> restore -> use
 ;; =============================================================================
 
 (defdescribe restore-integration-test
@@ -3149,11 +1858,11 @@
       ;; Call the restored function
       (expect (= 42 (:val (sci/eval-string+ sci-ctx "(double-it 21)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))))
 
-  (it "dependency chain: data → fn → result, all restored in order"
+  (it "dependency chain: data -> fn -> result, all restored in order"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
-          ;; Store chain: rate → calc → answer
+          ;; Store chain: rate -> calc -> answer
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "rate" :value 0.1 :code "(def rate 0.1)"}]})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
@@ -3200,7 +1909,7 @@
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "add-5" :value (fn [x] (+ x 5))
                                                   :code "(def add-5 (make-adder 5))"}]})
-          ;; Wire: make-adder → add-5
+          ;; Wire: make-adder -> add-5
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)
@@ -3362,7 +2071,7 @@
 ;; ───
 
 ;; =============================================================================
-;; SYSTEM_VAR_NAMES — fixed registry of UPPERCASE constants
+;; SYSTEM_VAR_NAMES - fixed registry of UPPERCASE constants
 ;; =============================================================================
 
 (defdescribe system-var-registry-test

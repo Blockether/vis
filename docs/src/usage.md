@@ -1,7 +1,7 @@
 # Getting Started
 
 Vis is a single binary (`vis`) with a tree of sub-commands. Every
-front-end — TUI, CLI agent, Telegram bot — is reached through the
+front-end - TUI, CLI agent, Telegram bot - is reached through the
 same dispatcher.
 
 This page covers the **user-facing** invocations. For the architecture
@@ -371,7 +371,7 @@ with the rest of the TUI settings. These shortcuts are shown in the footer
 next to the model/reasoning/verbosity values they change.
 The provider picker can also launch the OpenAI Codex browser OAuth
 flow directly from the TUI.
-**Never bind `Ctrl+Y`** — the kernel intercepts it and suspends
+**Never bind `Ctrl+Y`** - the kernel intercepts it and suspends
 the whole process; this is documented in `AGENTS.md`.
 
 ### Telegram bot
@@ -438,7 +438,7 @@ Full API reference: [Public API](architecture/packages.md#package-map).
 
 ## Browsing past conversations
 
-Every conversation — from any channel — lives in a single SQLite DB
+Every conversation - from any channel - lives in a single SQLite DB
 at `~/.vis/vis.mdb/vis.db`. Inspect it through the CLI:
 
 ```bash
@@ -454,7 +454,7 @@ The output table includes the conversation ID; pass it to
 ## Extensions
 
 Extensions add tools to the SCI sandbox. Drop an extension jar on the
-classpath — it self-registers via the unified `META-INF/vis-extension/vis.edn`
+classpath - it self-registers via the unified `META-INF/vis-extension/vis.edn`
 at startup. Source extensions are also auto-loaded from these directories when
 the Unix `bin/vis` launcher starts:
 
@@ -464,7 +464,7 @@ the Unix `bin/vis` launcher starts:
 ```bash
 vis extensions list                  # list everything that registered
 vis extensions scaffold my-tools     # create .vis/vis-extensions/my-tools
-vis extensions <cmd> [args…]         # run an extension's exported CLI command
+vis extensions <cmd> [args...]         # run an extension's exported CLI command
 ```
 
 The bundled `extensions/common/vis-foundation` package adds `v/cat`,
@@ -495,27 +495,27 @@ To author your own extension, see [Extension System](extensions/overview.md).
 | Command                    | Purpose                                                                  |
 | -------------------------- | ------------------------------------------------------------------------ |
 | `vis run "prompt"`         | One-shot agent turn (CLI agent).                                         |
-| `vis channels tui […]`     | Lanterna TUI chat.                                                       |
+| `vis channels tui [...]`     | Lanterna TUI chat.                                                       |
 | `vis channels telegram`    | Telegram long-poll bot.                                                  |
-| `vis providers …`          | Provider auth / status / limits / logout commands.                       |
+| `vis providers ...`          | Provider auth / status / limits / logout commands.                       |
 | `vis conversations [ch]`   | List conversations, optionally filtered by channel.                      |
 | `vis update`               | Fast-forward the installed source checkout.                              |
 | `vis extensions doctor`    | Environment diagnostics.                                                 |
 | `vis extensions reproduction <conv-id>` | Complete flag-free Markdown reproduction artifact for a persisted conversation. |
 | `vis extensions list`      | List registered extensions.                                              |
 | `vis extensions scaffold <name>` | Create a user extension project scaffold.                         |
-| `vis extensions <cmd> […]` | Run an extension-provided CLI command.                                   |
-| `vis channels <name> […]`  | Run any registered channel by `:channel/cmd` name.                       |
+| `vis extensions <cmd> [...]` | Run an extension-provided CLI command.                                   |
+| `vis channels <name> [...]`  | Run any registered channel by `:channel/cmd` name.                       |
 | `vis help`                 | Print the help tree (same as no args).                                   |
 
 The dispatcher is a pure command tree. There is no magical fallback
-to `vis run` for free-form prompts — unrecognized commands print
-the help tree and exit non-zero. Use `vis run "…"` explicitly.
+to `vis run` for free-form prompts - unrecognized commands print
+the help tree and exit non-zero. Use `vis run "..."` explicitly.
 
 ## Where to next
 
-- [Introduction](README.md) — why code-eval over tool-calls
-- [Architecture Overview](architecture/overview.md) — how the layers fit together
-- [Packages](architecture/packages.md) — every `vis-*` jar, dep direction, auto-discovery
-- [Extension System](extensions/overview.md) — add tools, prompts, nudges
-- [Channels](architecture/channels.md) — build your own front-end
+- [Introduction](README.md) - why code-eval over tool-calls
+- [Architecture Overview](architecture/overview.md) - how the layers fit together
+- [Packages](architecture/packages.md) - every `vis-*` jar, dep direction, auto-discovery
+- [Extension System](extensions/overview.md) - add tools, prompts, nudges
+- [Channels](architecture/channels.md) - build your own front-end

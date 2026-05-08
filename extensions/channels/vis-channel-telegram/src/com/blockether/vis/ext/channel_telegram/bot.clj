@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.channel-telegram.bot
-  "Telegram frontend for vis — long-polling loop that hands each incoming
+  "Telegram frontend for vis - long-polling loop that hands each incoming
    message to the shared conversations API and ships the answer back.
 
    Each Telegram chat maps to a `:telegram` conversation via
@@ -276,7 +276,7 @@
         (.delete tmp)))))
 
 (defn- format-footer [result]
-  ;; Canonical " · "-joined turn-summary line, decorated for Telegram.
+  ;; Canonical " / "-joined turn-summary line, decorated for Telegram.
   ;; Keep this RAW Markdown-ish text. `tg/send-message!` owns escaping.
   ;; Pre-escaping here made MarkdownV2 fallback leak literal backslashes
   ;; into chats when an answer body failed Telegram parsing.
@@ -507,25 +507,25 @@
 
 (defn- command-help []
   (str "Vis Telegram commands:\n"
-    "/help — show this help\n"
-    "/status — show conversation, model, reasoning, verbosity\n"
-    "/model — show current model\n"
-    "/models — list models and choose with buttons\n"
-    "/models <n|provider/model> — choose model\n"
-    "/reasoning [quick|balanced|deep] — show/set reasoning effort, same as TUI Ctrl+R\n"
-    "/verbosity [low|medium|high] — show/set OpenAI Codex verbosity, same as TUI Ctrl+L\n"
+    "/help - show this help\n"
+    "/status - show conversation, model, reasoning, verbosity\n"
+    "/model - show current model\n"
+    "/models - list models and choose with buttons\n"
+    "/models <n|provider/model> - choose model\n"
+    "/reasoning [quick|balanced|deep] - show/set reasoning effort, same as TUI Ctrl+R\n"
+    "/verbosity [low|medium|high] - show/set OpenAI Codex verbosity, same as TUI Ctrl+L\n"
     (when (voice-extension?)
-      (str "/voice [off|input|output|duplex|on] — configure voice input/output for this chat\n"
-        "Voice messages — transcribe with the Parakeet ASR model, then send as text\n"))
-    "/cancel — cancel current request\n"
-    "/restart — restart the bot in a fresh Java process\n"
-    "/export — export this conversation as Markdown"))
+      (str "/voice [off|input|output|duplex|on] - configure voice input/output for this chat\n"
+        "Voice messages - transcribe with the Parakeet ASR model, then send as text\n"))
+    "/cancel - cancel current request\n"
+    "/restart - restart the bot in a fresh Java process\n"
+    "/export - export this conversation as Markdown"))
 
 (defn- command-status [chat-id]
   (let [{:keys [id title]} (vis/for-telegram-chat! chat-id)
         settings (chat-settings chat-id)]
     (str "Conversation: " (subs (str id) 0 (min 8 (count (str id))))
-      (when-not (str/blank? title) (str " — " title))
+      (when-not (str/blank? title) (str " - " title))
       "\nModel: " (model-label)
       "\nReasoning: " (name (:reasoning-level settings))
       "\nCodex verbosity: " (name (:openai-codex-verbosity settings))
@@ -626,12 +626,12 @@
   (if-let [token (in-flight-token chat-id)]
     (do
       (vis/cancel! token)
-      "Cancelling current request…")
+      "Cancelling current request...")
     "No request is currently running."))
 
 (defn- command-restart []
   (schedule-self-restart!)
-  "Restarting Telegram bot in a fresh Java process…")
+  "Restarting Telegram bot in a fresh Java process...")
 
 (defn- command-export [chat-id]
   (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
@@ -934,7 +934,7 @@
 
 (defn- channel-main
   "Channel entry point. Boots the CLI runtime config, then starts the
-   long-poll loop and blocks forever (until SIGTERM → shutdown hook)."
+   long-poll loop and blocks forever (until SIGTERM -> shutdown hook)."
   [_args]
   (vis/init-cli!)
   (-main))
@@ -977,7 +977,7 @@
 (vis/register-extension!
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-telegram.bot
-     :ext/doc       "Telegram bot channel — long-poll loop wired into conversations."
+     :ext/doc       "Telegram bot channel - long-poll loop wired into conversations."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"

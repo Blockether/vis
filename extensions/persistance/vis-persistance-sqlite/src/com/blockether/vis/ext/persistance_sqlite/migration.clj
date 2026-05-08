@@ -4,19 +4,19 @@
    Lives in the SQLite extension because:
 
      1. The dialect-specific Flyway driver (`flyway-database-nc-sqlite`)
-        is required to recognize `jdbc:sqlite:` URLs — already
+        is required to recognize `jdbc:sqlite:` URLs - already
         declared in this extension's deps.edn.
      2. Flyway is the only backend-side concern using
         `flyway-core`; making it a per-backend dep keeps the root
         package free of the migration toolchain.
      3. The previous arrangement shipped a generic `migrate!` from
         `com.blockether.vis.sdk`, but it had exactly one caller
-        — this extension. Other backends will ship their own
+        - this extension. Other backends will ship their own
         migration entry point in their own jar.
 
    Public API:
 
-     `(migrate! datasource locations)` — apply every Flyway
+     `(migrate! datasource locations)` - apply every Flyway
      migration found at the given classpath `locations` to the
      supplied `DataSource`. Returns the datasource for thread-style
      chaining.

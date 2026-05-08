@@ -72,8 +72,8 @@
   "Start the dev nREPL server.
 
    Options:
-   - `:port` — bind port; defaults to `$NREPL_PORT` or 7888.
-   - `:fallback-random?` — if true (default), use an ephemeral port when
+   - `:port` - bind port; defaults to `$NREPL_PORT` or 7888.
+   - `:fallback-random?` - if true (default), use an ephemeral port when
      the requested port is already bound.
 
    Writes `.nrepl-port` so `clj-nrepl-eval --discover-ports` can find it."

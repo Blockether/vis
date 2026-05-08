@@ -48,10 +48,10 @@
                           :preview-eql {:result [[:lines {:from 0 :to 2}]]}
                           :preview {:rendering-kind :source}
                           :presentation {:kind :source :path "src/demo.clj"}
-                          :provenance {:op :v/preview}}]
+                          :info {:op :v/preview}}]
       (with-redefs [vis/db-info (fn [] :db)
                     extension/tool-result? (fn [x]
-                                             (= :v/preview (get-in x [:provenance :op])))
+                                             (= :v/preview (get-in x [:info :op])))
                     extension/render-tool-result (fn [surface result & _]
                                                    (expect (= :tui surface))
                                                    (expect (= preview-result result))

@@ -6,7 +6,7 @@ Built with [mdBook](https://rust-lang.github.io/mdBook/).
 
 ```bash
 cd docs
-mdbook-mermaid install .   # one-time — drops mermaid.min.js + mermaid-init.js (gitignored)
+mdbook-mermaid install .   # one-time - drops mermaid.min.js + mermaid-init.js (gitignored)
 mdbook serve --open        # live-reload dev server at http://localhost:3000
 mdbook build               # static build to docs/book/
 ```
@@ -17,7 +17,7 @@ tiny `mermaid-init.js`) are **not** committed. They are standard
 above. Run it once after cloning; every subsequent `mdbook serve`
 or `mdbook build` will find them in place. The preprocessor
 (`[preprocessor.mermaid]` in `book.toml`) is what transforms
-` ```mermaid ` blocks into rendered diagrams — the JS files just do
+` ```mermaid ` blocks into rendered diagrams - the JS files just do
 the client-side rendering.
 
 Most architectural illustrations are plain text / ASCII so the docs
@@ -26,7 +26,7 @@ read fine without any JS at all. If a page adds a Mermaid diagram,
 
 ## Structure
 
-`SUMMARY.md` is the table of contents — keep it in sync with the
+`SUMMARY.md` is the table of contents - keep it in sync with the
 filesystem. We deliberately do **not** maintain a `directory-structure.md`
 page: the codebase moves faster than any static tree, and AGENTS.md
 forbids creating one (`find` / `grep` instead).
@@ -69,5 +69,5 @@ docs/
 1. **Every change to source code that affects architecture, environment shape,
    extension spec, iteration flow, or public API MUST be accompanied by an
    update to the relevant page under `docs/src/`.**
-2. If docs and code diverge, code wins — fix the docs immediately.
-3. In-source READMEs are pointers to these docs — each README links into the book and the book carries the content.
+2. If docs and code diverge, code wins - fix the docs immediately.
+3. In-source READMEs are pointers to these docs - each README links into the book and the book carries the content.

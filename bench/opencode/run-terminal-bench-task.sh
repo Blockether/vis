@@ -84,7 +84,7 @@ setup_side() {
   mkdir -p "$side_dir"
   cp -a "$src_task" "$task_dir"
   local safe_run image container
-  safe_run="$(echo "$run_id-$side" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-')"
+  safe_run="$(printf '%s' "$run_id-$side" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9_.-' '-' | sed -E 's/^-+//; s/-+$//')"
   image="visbench-$safe_run"
   container="visbench-$safe_run"
   docker build -q -t "$image" "$task_dir" > "$side_dir/docker-build-image.txt"

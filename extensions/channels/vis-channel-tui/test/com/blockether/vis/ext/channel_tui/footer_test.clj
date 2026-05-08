@@ -71,7 +71,7 @@
                                                           :provider :openai})
                        #'git/cached-workspace-status (fn [] {:workspace? false})}
         (fn []
-          (expect (not-any? #(= "cancelling…" (:text %))
+          (expect (not-any? #(= "cancelling..." (:text %))
                     (build-segments {:messages []
                                      :settings {}
                                      :cancelling? true}
@@ -310,9 +310,9 @@
 
   (it "joins shortcuts to their labels without separator dots"
     (let [spans-width @#'footer/spans-width]
-      (expect (= (count "model (Ctrl+T) · reasoning: deep (Ctrl+R)")
+      (expect (= (count "model (Ctrl+T) / reasoning: deep (Ctrl+R)")
                 (spans-width [{:text "model"}
                               {:text "(Ctrl+T)" :join-left? true}
                               {:text "reasoning: deep"}
                               {:text "(Ctrl+R)" :join-left? true}]
-                  " · "))))))
+                  " / "))))))

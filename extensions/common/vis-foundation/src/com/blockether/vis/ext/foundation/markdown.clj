@@ -104,7 +104,7 @@
 (defn rescue-markdown-prose
   "Foundation source-rewrite hook. Repairs valid Clojure that would fail while
    building final Markdown because prose was emitted as bare symbols inside
-   direct `v/` markdown helper args, e.g. `(v/p Spokojnie — gotowe)`. Bound
+   direct `v/` markdown helper args, e.g. `(v/p Spokojnie - gotowe)`. Bound
    symbols are preserved for interpolation. Returns rewritten source or nil."
   [{:keys [code environment]}]
   (try
@@ -121,27 +121,27 @@
       :examples ["(v/h1 \"Patch report\")"
                  "(v/h1 \"Build of \" (v/code \"v1.2.3\"))"]})
    (vis/symbol 'h2 h2
-     {:doc "H2: `## text`. Variadic body — see v/h1."
+     {:doc "H2: `## text`. Variadic body - see v/h1."
       :arglists '([& parts])
       :examples ["(v/h2 \"Summary\")"]})
    (vis/symbol 'h3 h3
-     {:doc "H3: `### text`. Variadic body — see v/h1."
+     {:doc "H3: `### text`. Variadic body - see v/h1."
       :arglists '([& parts])
       :examples ["(v/h3 \"Proposal: \" (v/code \":vis/silent\") \" sentinel\")"]})
    (vis/symbol 'h4 h4
-     {:doc "H4: `#### text`. Variadic body — see v/h1."
+     {:doc "H4: `#### text`. Variadic body - see v/h1."
       :arglists '([& parts])
       :examples ["(v/h4 \"Notes\")"]})
    (vis/symbol 'h5 h5
-     {:doc "H5: `##### text`. Variadic body — see v/h1."
+     {:doc "H5: `##### text`. Variadic body - see v/h1."
       :arglists '([& parts])
       :examples ["(v/h5 \"Caveat\")"]})
    (vis/symbol 'h6 h6
-     {:doc "H6: `###### text`. Variadic body — see v/h1."
+     {:doc "H6: `###### text`. Variadic body - see v/h1."
       :arglists '([& parts])
       :examples ["(v/h6 \"Footnote\")"]})
    (vis/symbol 'h h
-     {:doc "Heading at level n (clamped [1, 6]). Variadic body — see v/h1."
+     {:doc "Heading at level n (clamped [1, 6]). Variadic body - see v/h1."
       :arglists '([level & parts])
       :examples ["(v/h 3 \"Step 1\")"
                  "(v/h 2 \"Build of \" (v/code \"v1.2.3\"))"]})
@@ -158,27 +158,27 @@
       :examples ["(v/bold \"important\")"
                  "(v/bold \"build \" (v/code \"v1.2.3\"))"]})
    (vis/symbol 'strong strong
-     {:doc "Bold span: `**text**` (HTML-semantic alias for `v/bold`). Variadic — see v/bold."
+     {:doc "Bold span: `**text**` (HTML-semantic alias for `v/bold`). Variadic - see v/bold."
       :arglists '([& parts])
       :examples ["(v/strong \"important\")"]})
    (vis/symbol 'italic italic
-     {:doc "Italic span: `*text*`. Variadic — see v/bold."
+     {:doc "Italic span: `*text*`. Variadic - see v/bold."
       :arglists '([& parts])
       :examples ["(v/italic \"subtle\")"]})
    (vis/symbol 'em em
-     {:doc "Italic span: `*text*` (HTML-semantic alias for `v/italic`). Variadic — see v/bold."
+     {:doc "Italic span: `*text*` (HTML-semantic alias for `v/italic`). Variadic - see v/bold."
       :arglists '([& parts])
       :examples ["(v/em \"subtle\")"]})
    (vis/symbol 'bold-italic bold-italic
-     {:doc "Bold-italic span: `***text***`. Variadic — see v/bold."
+     {:doc "Bold-italic span: `***text***`. Variadic - see v/bold."
       :arglists '([& parts])
       :examples ["(v/bold-italic \"!!!\")"]})
    (vis/symbol 'strike strike
-     {:doc "Strikethrough span: `~~text~~`. Variadic — see v/bold."
+     {:doc "Strikethrough span: `~~text~~`. Variadic - see v/bold."
       :arglists '([& parts])
       :examples ["(v/strike \"obsolete\")"]})
    (vis/symbol 'code code
-     {:doc "Inline code span: `` `text` ``. Variadic — parts concatenated."
+     {:doc "Inline code span: `` `text` ``. Variadic - parts concatenated."
       :arglists '([& parts])
       :examples ["(v/code \"v/cat\")"
                  "(v/code \"v/\" tool-name)"]})
@@ -189,7 +189,7 @@
                  "(v/summary (v/bold \"Logs\") \" (\" (v/code \"42\") \")\")"
                  "(v/details (v/summary (v/bold \"Logs\")) body)"]})
    (vis/symbol 'kbd kbd
-     {:doc "Keyboard span: `<kbd>text</kbd>`. Variadic — parts concatenated."
+     {:doc "Keyboard span: `<kbd>text</kbd>`. Variadic - parts concatenated."
       :arglists '([& parts])
       :examples ["(v/kbd \"Ctrl+K\")"]})
    (vis/symbol 'link link
@@ -221,12 +221,12 @@
                  "(v/code-block 'edn \"{:k 1}\")"
                  "(v/code-block \"plain text\")"]})
    (vis/symbol 'blockquote blockquote
-     {:doc "Quote each line with `> `. Variadic — parts concatenated then split on `\\n`."
+     {:doc "Quote each line with `> `. Variadic - parts concatenated then split on `\\n`."
       :arglists '([& parts])
       :examples ["(v/blockquote \"caveat\")"
                  "(v/blockquote \"line1\\nline2\")"]})
    (vis/symbol 'quote blockquote
-     {:doc "Quote each line with `> ` (shorter alias for `v/blockquote`). Variadic — see v/blockquote."
+     {:doc "Quote each line with `> ` (shorter alias for `v/blockquote`). Variadic - see v/blockquote."
       :arglists '([& parts])
       :examples ["(v/quote \"caveat\")"]})
    (vis/value 'hr hr
@@ -240,7 +240,7 @@
                  "(v/details intro snippet (v/summary \"Trace\"))"
                  "(v/details para1 para2)"]})
    (vis/symbol 'li li
-     {:doc "Single unordered-list item: `\"- text\"`. Variadic — nil dropped, seqs spliced."
+     {:doc "Single unordered-list item: `\"- text\"`. Variadic - nil dropped, seqs spliced."
       :arglists '([& parts])
       :examples ["(v/li \"hello\")" "(v/li \"build \" (v/code \"v1.2.3\"))"]})
    (vis/symbol 'ul ul
@@ -265,7 +265,7 @@
       :arglists '([& parts])
       :examples ["(v/join (v/h1 \"x\") (v/p \"y\"))"]})
    (vis/symbol 'needs-input needs-input
-     {:doc "Explicit answer marker for missing user input. Use as `(answer (v/needs-input ...))` to ask for required material without creating an intent."
+     {:doc "Explicit answer marker for missing user input. Use as `(answer (v/needs-input ...))` to ask for required material."
       :arglists '([ask] [{:keys [missing ask]}])
       :examples ["(answer (v/needs-input \"Please paste the ideas you want reviewed.\"))"
                  "(answer (v/needs-input {:missing \"the ideas to review\" :ask \"Please paste the ideas you currently have.\"}))"]})
@@ -295,6 +295,6 @@
 (def markdown-prompt
   "Prompt fragment listing the `v/` surface for the iteration prompt."
   (str
-    "`v/` answer Markdown: headings (v/h1 …) (v/h2 …) (v/h3 …) (v/h n …); blocks (v/p …) (v/code-block lang? code) (v/blockquote …) v/hr v/br (v/details …); lists (v/ul xs) (v/ol xs) (v/checklist xs); table (v/table headers rows opts?).\n"
-    "Inline/link helpers: (v/bold …) (v/italic …) (v/code …) (v/kbd …) (v/strike …), (v/link text url), (v/image alt url), (v/file-link path line?), (v/anchor text slug?).\n"
-    "Compose answers with (v/join …blocks), (v/lines …lines), (v/section title body), (v/escape s). Cite files with v/file-link. Missing required user material: (answer (v/needs-input ask-or-{:missing :ask}))."))
+    "`v/` answer Markdown: headings (v/h1 ...) (v/h2 ...) (v/h3 ...) (v/h n ...); blocks (v/p ...) (v/code-block lang? code) (v/blockquote ...) v/hr v/br (v/details ...); lists (v/ul xs) (v/ol xs) (v/checklist xs); table (v/table headers rows opts?).\n"
+    "Inline/link helpers: (v/bold ...) (v/italic ...) (v/code ...) (v/kbd ...) (v/strike ...), (v/link text url), (v/image alt url), (v/file-link path line?), (v/anchor text slug?).\n"
+    "Compose answers with (v/join ...blocks), (v/lines ...lines), (v/section title body), (v/escape s). Cite files with v/file-link. Missing required user material: (answer (v/needs-input ask-or-{:missing :ask}))."))

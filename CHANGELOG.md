@@ -20,9 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - Default reasoning level: `:balanced` (was `:quick`)
-- `create-env` → `create-environment`
-- `dispose-env!` → `dispose-environment!`
-- `vis!` → `query!`
+- `create-env` -> `create-environment`
+- `dispose-env!` -> `dispose-environment!`
+- `vis!` -> `query!`
 - `register-env-def!` removed (use extensions)
 - Nudges moved from `loop/nudges.clj` to `loop/runtime/prompt.clj`
 - `conversation/shared.clj` folded into `conversation/core.clj`
@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `var-diff` (dead code)
 - `restore-var` references (never existed as callable tool)
 - Scattered .md files (consolidated into `resources/docs/`)
-- Built-in repetition `[system_nudge]` ("You repeated the same expression …").
+- Built-in repetition `[system_nudge]` ("You repeated the same expression ...").
   `<journal>` + the dedup cache (`:cached? true`) already give the model
   enough signal to change strategy; the nudge was noise. Drops
   `repetition-warning`, `REPETITION_THRESHOLD`, the `call-counts-atom`

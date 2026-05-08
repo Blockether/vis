@@ -74,16 +74,16 @@ bench/opencode/tasks.jsonl
 
 Current curated subset:
 
-1. `TB-hello-world` — easy file operations sanity check.
-2. `TB-jsonl-aggregator` — JSONL aggregation/data processing.
-3. `TB-regex-log` — regex/log processing.
-4. `TB-large-scale-text-editing` — large text editing/tool discipline.
-5. `TB-git-multibranch` — Git branch/history manipulation.
-6. `TB-cancel-async-tasks` — Python async debugging.
-7. `TB-sqlite-db-truncate` — SQLite/database recovery.
-8. `TB-cprofiling-python` — Python profiling/performance.
-9. `TB-multi-source-data-merger` — multi-source data processing.
-10. `TB-tree-directory-parser` — parser/filesystem task.
+1. `TB-hello-world` - easy file operations sanity check.
+2. `TB-jsonl-aggregator` - JSONL aggregation/data processing.
+3. `TB-regex-log` - regex/log processing.
+4. `TB-large-scale-text-editing` - large text editing/tool discipline.
+5. `TB-git-multibranch` - Git branch/history manipulation.
+6. `TB-cancel-async-tasks` - Python async debugging.
+7. `TB-sqlite-db-truncate` - SQLite/database recovery.
+8. `TB-cprofiling-python` - Python profiling/performance.
+9. `TB-multi-source-data-merger` - multi-source data processing.
+10. `TB-tree-directory-parser` - parser/filesystem task.
 
 These were chosen because they are Dockerized, testable, diverse, and do not require changing Vis repo code just to define success.
 
@@ -152,7 +152,7 @@ Vis optimization targets:
 
 - Do not use or inspect Terminal-Bench `solution.sh` during agent runs.
 - Do not train/optimize against hidden test implementation details.
-- Do not weaken Vis proof/intent/audit semantics for speed.
+- Do not weaken Vis correctness or observable verification for speed.
 - Do not delete user-owned `~/.vis` or opencode global state.
 - Do not benchmark Pi in this session.
 - Root `README.md` stays tiny.

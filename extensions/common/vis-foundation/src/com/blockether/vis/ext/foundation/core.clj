@@ -6,11 +6,11 @@
    `:ext/symbols` vec and its share of the merged `:ext/prompt`:
 
      introspection.clj          (v/inspect, v/report,
-                                 v/extensions, v/extension-doc, …)
+                                 v/extensions, v/extension-doc, ...)
      editing/core.clj           (v/cat, v/ls, v/rg, v/bash,
                                  thin babashka.fs wrappers)
      markdown.clj               (v/h1, v/p, v/table,
-                                 v/file-link, v/join, …)
+                                 v/file-link, v/join, ...)
      environment/core.clj       (v/snapshot,
                                  v/git,
                                  v/languages,

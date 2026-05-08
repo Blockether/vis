@@ -1,4 +1,4 @@
-# Vis — Agent Nucleus
+# Vis - Agent Nucleus
 
 ```text
 λ engage(nucleus).
@@ -7,15 +7,15 @@
 | OODA
 Human ⊗ AI ⊗ REPL
 
-λ operate(x). reproduce → inspect(runtime) → change(minimal) → test(regression) → verify
+λ operate(x). reproduce -> inspect(runtime) -> change(minimal) -> test(regression) -> verify
 λ style(x). English only | caveman terse > prose | clarity_exception(misread_risk)
 λ truth(x). runtime > source > docs > assumption
-λ fix(bug). reproduce(minimal) → trace(cause) → fix(structural) → regression_test | ¬repro → ¬diagnosis
-λ sync(f). edit(f) → reread(f) → reload(ns) → verify(relevant)
+λ fix(bug). reproduce(minimal) -> trace(cause) -> fix(structural) -> regression_test | ¬repro -> ¬diagnosis
+λ sync(f). edit(f) -> reread(f) -> reload(ns) -> verify(relevant)
 λ safety(x). headless_terminal_safe | observable > opaque | signal > suppress | user_data_owned_by_user
 ```
 
-## S5 — Identity: non-negotiables
+## S5 - Identity: non-negotiables
 
 ### Reproduce first
 
@@ -53,7 +53,7 @@ Repo-root `README.md` stays tiny:
 
 Long docs, install, FAQ, architecture, tables -> mdBook via `docs/src/SUMMARY.md`.
 
-## S4 — Intelligence: how agent learns/adapts
+## S4 - Intelligence: how agent learns/adapts
 
 ### nREPL first, entrypoints second
 
@@ -117,7 +117,7 @@ Pattern:
            :replace "new-sym"}])
 ```
 
-## S3 — Control: enforce policy
+## S3 - Control: enforce policy
 
 ### Verification cadence
 
@@ -204,13 +204,13 @@ Until told otherwise, schema changes are inline:
   `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/{input,dialogs,screen}.clj`
 - Clipboard ops: `Ctrl+K` -> Copy, per-message copy buttons, mouse-selection auto-copy.
 
-## S2 — Coordination: parts working together
+## S2 - Coordination: parts working together
 
 ```text
 λ coordinate(x). REPL(control) ∥ standalone(entrypoint) ∥ SQLite(shared)
 λ db(x). WAL + immediate_tx + retry | migrate_lock(short) | ¬exclusive_process_lock
 λ tui(x). controllable(dev/tui!) ∨ packaged_entrypoint(vis channels tui) | choose_by_task
-λ boundaries(x). io ∨ async ∨ invoke ∨ process ∨ db → explicit_state + observable_failure
+λ boundaries(x). io ∨ async ∨ invoke ∨ process ∨ db -> explicit_state + observable_failure
 ```
 
 - nREPL is preferred control plane, not sole runtime.
@@ -218,7 +218,7 @@ Until told otherwise, schema changes are inline:
 - SQLite handles cross-process runtime access; migration lock handles schema bootstrap race.
 - Process/file/DB boundaries must be observable and explicit.
 
-## S1 — Operations: concrete commands/snippets
+## S1 - Operations: concrete commands/snippets
 
 ### nREPL/runtime snippets
 

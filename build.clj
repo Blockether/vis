@@ -52,7 +52,7 @@
    {:lib 'com.blockether/vis-exa                    :dir "extensions/common/vis-exa"}])
 
 (def ^:private sibling-versions
-  "Map of every monorepo lib → mvn coord at the shared version. Passed
+  "Map of every monorepo lib -> mvn coord at the shared version. Passed
    as `:override-deps` to each per-package basis so `:local/root` sibling
    deps are emitted into the published POM as `<dependency>` entries
    referencing Clojars artifacts instead of pointing at relative paths."
@@ -96,7 +96,7 @@
 
 (def ^:private package-descriptions
   {'com.blockether/vis
-   "vis — single-namespace SDK + iteration runtime + binary entry point."
+   "vis - single-namespace SDK + iteration runtime + binary entry point."
    'com.blockether/vis-persistance-sqlite
    "SQLite backend for the vis persistence facade."
    'com.blockether/vis-provider-github-copilot
@@ -110,7 +110,7 @@
 
 (defn- build-pom-data [lib]
   (into [[:description (or (get package-descriptions lib)
-                         (str lib " — vis monorepo package."))]]
+                         (str lib " - vis monorepo package."))]]
     base-pom-data))
 
 ;; =============================================================================
@@ -176,7 +176,7 @@
     (b/jar {:class-dir class-dir :jar-file jar-file})
     (let [result {:lib lib :class-dir class-dir :jar-file jar-file}]
       (install-local! result)
-      (println "  →" jar-file "(installed to ~/.m2)")
+      (println "  ->" jar-file "(installed to ~/.m2)")
       result)))
 
 (defn- selected-packages
@@ -216,4 +216,4 @@
       (dd/deploy {:installer :remote
                   :artifact  jar-file
                   :pom-file  (b/pom-path {:lib lib :class-dir class-dir})})
-      (println "  → deployed" lib version "to Clojars"))))
+      (println "  -> deployed" lib version "to Clojars"))))

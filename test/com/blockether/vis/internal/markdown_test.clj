@@ -1,13 +1,13 @@
 (ns com.blockether.vis.internal.markdown-test
   "Pure-function coverage for the conversation -> Markdown exporter.
 
-   Why it exists: AGENTS.md hard rule \u2014 every namespace ships a
+   Why it exists: AGENTS.md hard rule - every namespace ships a
    matching `_test.clj`. We pin the projection's shape (header, blockquoted
    user text, italic meta, turn separators, fall-back placeholders) by
    stubbing the two persistance reads it depends on; no SQLite needed.
 
    These tests are the spec of `conversation->markdown`. Anyone changing
-   the output shape MUST update this file in the same commit \u2014 every
+   the output shape MUST update this file in the same commit - every
    downstream consumer (TUI `Copy as Markdown`, third-party channels,
    future `vis export` CLI) reads the same projection."
   (:require
@@ -91,11 +91,20 @@
                    "{:bug-fixed true}\n"
                    "```\n"
                    "- **verify.sh --quick**\n"
-                   "- Format check PASS, lint PASS — all 2 steps passed.")
+                   "- Format check PASS, lint PASS - all 2 steps passed.")
           fixed  (md/normalize-chat-markdown broken)]
       (expect (str/includes? fixed "- **Verification**\n  - All cases verified via nREPL:\n      ```clojure"))
       (expect (str/includes? fixed "      {:bug-fixed true}\n      ```"))
       (expect (str/includes? fixed "- **verify.sh --quick**\n  - Format check PASS"))))
+
+  (it "folds loose inline bold islands back into prose"
+    (let [broken "Do
+
+**not**
+
+ delete the whole section."]
+      (expect (= "Do **not** delete the whole section."
+                (md/normalize-chat-markdown broken)))))
 
   (it "folds loose inline code/link/punctuation islands back into prose"
     (let [broken (str "One line changed in \n\n"
@@ -123,14 +132,14 @@
                    "  `@ex-machina/opencode-anthropic-auth@1.7.4`\n  \n"
                    "   and added \n  \n  `opencode-claude-auth@latest`\n  \n  .\n"
                    "- Verified: \n  \n  `grep -c 'opencode-claude-auth@latest'`\n  \n"
-                   "   → \n  \n  `1`\n  \n"
+                   "   -> \n  \n  `1`\n  \n"
                    "  ; plugin array confirmed.\n\n"
-                   "The intent was abandoned because \n\n`v/attest-gate!`\n\n"
-                   " repeatedly rejected requirements, and no API is exposed under \n\n`v/`.")]
+                   "The task stopped because \n\n`the command`\n\n"
+                   " repeatedly failed, and no API is exposed under \n\n`v/`.")]
       (expect (= (str "- Prereqs OK: opencode `1.14.41`; Claude Code keychain credentials present (40-byte sample read).\n"
                    "- Edited `~/.config/opencode/opencode.json` via the documented Node one-liner; preserved existing `@ex-machina/opencode-anthropic-auth@1.7.4` and added `opencode-claude-auth@latest`.\n"
-                   "- Verified: `grep -c 'opencode-claude-auth@latest'` → `1`; plugin array confirmed.\n\n"
-                   "The intent was abandoned because `v/attest-gate!` repeatedly rejected requirements, and no API is exposed under `v/`.")
+                   "- Verified: `grep -c 'opencode-claude-auth@latest'` -> `1`; plugin array confirmed.\n\n"
+                   "The task stopped because `the command` repeatedly failed, and no API is exposed under `v/`.")
                 (md/normalize-chat-markdown broken))))))
 
 (defdescribe conversation->markdown-test
@@ -210,13 +219,13 @@
       (with-stubbed-persistance fixed-conversation
         [{:user-request "boom" :status :error}]
         (let [out (md/conversation->markdown stub-db (:id fixed-conversation))]
-          (expect (str/includes? out "*(turn errored \u2014 no answer recorded)*"))))))
+          (expect (str/includes? out "*(turn errored - no answer recorded)*"))))))
 
   (describe "Italic meta line on the assistant header"
     (it "Surfaces provider, model, iteration count, duration, cost AND tokens"
       (with-stubbed-persistance fixed-conversation [(first fixed-turns)]
         (let [out (md/conversation->markdown stub-db (:id fixed-conversation))]
-          (expect (str/includes? out "**Assistant:** *\u2014 openai \u00b7 gpt-4o"))
+          (expect (str/includes? out "**Assistant:** *- openai / gpt-4o"))
           (expect (str/includes? out "1 iter"))
           (expect (str/includes? out "1,024 in"))
           (expect (str/includes? out "12 out"))
@@ -242,10 +251,10 @@
         (let [out (md/conversation->markdown stub-db (:id fixed-conversation)
                     {:include-meta? false})]
           ;; Conversation-header blockquote still mentions provider /
-          ;; model — that's a property of the conversation, not the
+          ;; model - that's a property of the conversation, not the
           ;; turn. The flag only suppresses the per-turn italic suffix.
           (expect (str/includes? out "**Assistant:**\n\n4"))
-          (expect (not (str/includes? out "**Assistant:** *\u2014")))))))
+          (expect (not (str/includes? out "**Assistant:** *-")))))))
 
   (describe "Optional system prompt section"
     (it "Off by default"
