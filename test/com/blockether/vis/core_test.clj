@@ -1474,15 +1474,13 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe system-var-exclusion-test
-  (it "does not render TURN_USER_REQUEST/CONVERSATION_PREVIOUS_ANSWER/ITERATION_PREVIOUS_REASONING in the live block"
-    (let [out (index {'TURN_USER_REQUEST            "user request"
+  (it "does not render TURN_SYSTEM_PROMPT/CONVERSATION_PREVIOUS_ANSWER in the live block"
+    (let [out (index {'TURN_SYSTEM_PROMPT           "system prompt"
                       'CONVERSATION_PREVIOUS_ANSWER "prior answer"
-                      'ITERATION_PREVIOUS_REASONING "thinking"
                       'user-var  42})]
       (expect (re-find #"\(def user-var 42\)" out))
-      (expect (not (re-find #"\(def TURN_USER_REQUEST" out)))
-      (expect (not (re-find #"\(def CONVERSATION_PREVIOUS_ANSWER" out)))
-      (expect (not (re-find #"\(def ITERATION_PREVIOUS_REASONING" out)))))
+      (expect (not (re-find #"\(def TURN_SYSTEM_PROMPT" out)))
+      (expect (not (re-find #"\(def CONVERSATION_PREVIOUS_ANSWER" out)))))
 
   (it "does not render initial-ns-keys (tools / helpers)"
     (let [out (index {'read-file (fn []) 'user-var 42}
@@ -1502,7 +1500,7 @@
     (expect (nil? (index {'read-file (fn [])} #{'read-file}))))
 
   (it "returns nil when sandbox has only SYSTEM vars"
-    (expect (nil? (index {'TURN_USER_REQUEST "x" 'CONVERSATION_PREVIOUS_ANSWER "y" 'ITERATION_PREVIOUS_REASONING "z"})))))
+    (expect (nil? (index {'TURN_SYSTEM_PROMPT "x" 'CONVERSATION_PREVIOUS_ANSWER "y"})))))
 
 ;; -----------------------------------------------------------------------------
 ;; Sort order - newest-touched first by recency-of (no DB -> all tied at
@@ -1732,11 +1730,11 @@
 
   (it "initial sandbox symbols and SYSTEM symbols never count as archive candidates"
     (let [sandbox  (make-sandbox [['builtin 1]
-                                  ['TURN_USER_REQUEST "hello"]
+                                  ['TURN_SYSTEM_PROMPT "hello"]
                                   ['old-a 1]
                                   ['new-b 2]])
           registry (make-registry [['builtin 1]
-                                   ['TURN_USER_REQUEST 1]
+                                   ['TURN_SYSTEM_PROMPT 1]
                                    ['old-a 10]
                                    ['new-b 20]])]
       (expect (= #{'old-a}

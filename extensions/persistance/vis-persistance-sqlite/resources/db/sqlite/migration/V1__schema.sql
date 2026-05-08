@@ -199,6 +199,15 @@ CREATE TABLE iteration (
   llm_executable_code             TEXT,
   llm_executable_blocks           TEXT,    -- JSON vec of executable fenced blocks selected by svar: [{:lang :source} ...]
 
+  -- svar canonical assistant message persisted so preserved-thinking
+  -- replay survives a vis restart. JSON-encoded
+  -- `{:role "assistant" :content [<canonical-blocks>]}` exactly as
+  -- svar's `:assistant-message` returns it; canonical thinking blocks
+  -- carry per-provider preserved-reasoning state under
+  -- `:thinking-signature`. Cross-turn / cross-restart resume reads
+  -- this column to rebuild the per-turn replay buffer.
+  llm_assistant_message           TEXT,
+
   -- Per-iteration token accounting + estimated USD cost. NULL when
   -- the provider response did not surface usage (e.g. the LLM call
   -- itself failed before a response was returned). Reasoning /

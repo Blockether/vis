@@ -197,6 +197,26 @@
         (finally
           (reset! state/app-db old-db))))))
 
+(defdescribe channel-main-shutdown-agents-test
+  (it "calls (shutdown-agents) on the success path so the JVM exits without
+       the ~60s agent thread-pool keep-alive that looks like 'Ctrl+C froze
+       vis'. Regression: TUI used to only call (vis/shutdown!) (Telemere
+       handlers); the agent pool's non-daemon threads kept the JVM alive
+       long after the screen was torn down. CLI / Telegram channel paths
+       have always called shutdown-agents - this test pins the same
+       guarantee for the TUI channel."
+    (let [calls (atom [])]
+      (with-redefs [screen/redirect-stdio-to-log! (fn [] (swap! calls conj :redirect))
+                    vis/init!                    (fn [] (swap! calls conj :init))
+                    screen/run-chat!             (fn [_opts] (swap! calls conj :run))
+                    vis/shutdown!                (fn [] (swap! calls conj :vis-shutdown))
+                    clojure.core/shutdown-agents (fn [] (swap! calls conj :shutdown-agents))]
+        (screen/channel-main []))
+      ;; Order matters: stop Telemere handlers first, THEN drain the
+      ;; agent pool - the former may flush a final log write that rides
+      ;; the agent pool, and shutdown-agents will refuse new work.
+      (expect (= [:redirect :init :run :vis-shutdown :shutdown-agents] @calls)))))
+
 (defdescribe startup-resume-test
   (it "--conversation-id sweeps orphaned running turns before rebuilding history"
     (let [calls   (atom [])

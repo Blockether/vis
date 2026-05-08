@@ -1088,8 +1088,16 @@
                :input-history-draft nil
                :slash-command-index 0
                :slash-command-hidden? false))
+       ;; `agent-text` (LLM-facing, with `@path` expanded into a
+       ;; `[Attached File: ...]` directive) drives the model.
+       ;; `visible-text` (un-expanded `@path` token) is the user's
+       ;; original line - flowed in as `display-text` so it lands in
+       ;; the persisted `user_request` column. Without the split,
+       ;; reopening a conversation re-rendered the verbose attachment
+       ;; directive in the user bubble.
        :fx [[:rlm-turn workspace-id (:conversation db) agent-text token
-             reasoning-level extra-body turn-features workspace client-turn-id]]})))
+             reasoning-level extra-body turn-features workspace client-turn-id
+             visible-text]]})))
 
 (reg-event-fx :cancel-turn
   (fn [db _]
@@ -1177,7 +1185,8 @@
         (vis/refresh-cached-routers! router)))))
 
 (reg-fx :rlm-turn
-  (fn [workspace-id conversation text token reasoning-level extra-body turn-features workspace client-turn-id]
+  (fn [workspace-id conversation text token reasoning-level extra-body turn-features workspace client-turn-id
+       & [display-text]]
     (let [fut (vis/worker-future "vis-tui-turn"
                 (fn []
                   (try
@@ -1194,7 +1203,8 @@
                                     :reasoning-default reasoning-level
                                     :extra-body        extra-body
                                     :turn-features     turn-features
-                                    :workspace         workspace})]
+                                    :workspace         workspace
+                                    :display-text      display-text})]
                       (if (:error result)
                         (dispatch [:message-received workspace-id (vis/format-error (:error result))
                                    {:client-turn-id client-turn-id}])

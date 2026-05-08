@@ -60,7 +60,12 @@
   ;;   org.babashka/http-client -> vis-channel-telegram + vis-provider-github-copilot + vis-exa
   ;;   rewrite-clj              -> vis-language-clojure
   ;;   lanterna                 -> vis-channel-tui
-  com.blockether/svar              {:mvn/version "0.4.11"}
+  ;; Local svar checkout while we land the canonical assistant-message
+  ;; contract — swap back to a tagged release once the next svar
+  ;; version ships. The sibling repo lives next to vis on the
+  ;; developer's filesystem; CI must mirror that layout (or pin a
+  ;; tagged version) before this is merged.
+  com.blockether/svar              {:local/root "../svar"}
   com.blockether/anomaly           {:mvn/version "1.0.1"}
   babashka/process                 {:mvn/version "0.6.25"}
   org.clojure/clojure              {:mvn/version "1.12.4"}

@@ -290,8 +290,7 @@
   (-> edits patch-plan vec write-plans!))
 
 (defn- patch-file
-  "Zipper patch for Clojure/EDN source. Same input shape as v/patch:
-   one edit map or a vector of {:path :search :replace} maps."
+  "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator form/source snippet and must match exactly once before any write. Tool result envelope."
   [edits]
   (let [plans (patch-safe edits)]
     (tool-success
@@ -474,6 +473,7 @@
      :truncated? (> (count rows) limit)}))
 
 (defn- locators-file
+  "List Clojure/EDN zipper locators in a file. Defaults to 10 rows; pass opts like {:symbol 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
   ([path] (locators-file path nil))
   ([path opts]
    (let [f     (ensure-existing-file! (safe-path path))
@@ -493,6 +493,7 @@
                :filters (select-keys (or opts {}) [:symbol :source-contains :limit])}}))))
 
 (defn- symbols-file
+  "List symbol zipper locators in a Clojure/EDN file. Defaults to 10 rows; pass opts like {:name 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
   ([path] (symbols-file path nil))
   ([path opts]
    (let [f     (ensure-existing-file! (safe-path path))
@@ -513,6 +514,7 @@
                :filters (select-keys (or opts {}) [:name :symbol :source-contains :limit])}}))))
 
 (defn- locator-for-symbol-file
+  "Return the first symbol zipper locator row for `sym` without dumping the whole namespace."
   [path sym]
   (let [out (symbols-file path {:symbol sym :limit 2})]
     (assoc out
@@ -559,9 +561,8 @@
 ;; =============================================================================
 
 (def patch-symbol
-  (vis/symbol 'patch patch-file
-    {:doc "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator form/source snippet and must match exactly once before any write. Tool result envelope."
-     :arglists '([edits])
+  (vis/symbol #'patch-file
+    {:sym 'patch
      :examples ["(z/patch [{:path \"src/x.clj\" :search \"old\" :replace \"new\"}])"
                 "(z/patch {:path \"deps.edn\" :search \":old\" :replace \":new\"})"]
      :result-spec ::extension/tool-result
@@ -569,9 +570,8 @@
      :on-error-fn (tool-failure-on-error :z/patch)}))
 
 (def locators-symbol
-  (vis/symbol 'locators locators-file
-    {:doc "List Clojure/EDN zipper locators in a file. Defaults to 10 rows; pass opts like {:symbol 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
-     :arglists '([path] [path opts])
+  (vis/symbol #'locators-file
+    {:sym 'locators
      :examples ["(z/locators \"src/foo.clj\")"
                 "(z/locators \"src/foo.clj\" {:symbol 'foo :limit 20})"]
      :result-spec ::extension/tool-result
@@ -579,9 +579,8 @@
      :on-error-fn (tool-failure-on-error :z/locators)}))
 
 (def symbols-symbol
-  (vis/symbol 'symbols symbols-file
-    {:doc "List symbol zipper locators in a Clojure/EDN file. Defaults to 10 rows; pass opts like {:name 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
-     :arglists '([path] [path opts])
+  (vis/symbol #'symbols-file
+    {:sym 'symbols
      :examples ["(z/symbols \"src/foo.clj\")"
                 "(z/symbols \"src/foo.clj\" {:name 'foo :limit 20})"]
      :result-spec ::extension/tool-result
@@ -589,9 +588,8 @@
      :on-error-fn (tool-failure-on-error :z/symbols)}))
 
 (def locator-for-symbol-symbol
-  (vis/symbol 'locator-for-symbol locator-for-symbol-file
-    {:doc "Return the first symbol zipper locator row for `sym` without dumping the whole namespace."
-     :arglists '([path sym])
+  (vis/symbol #'locator-for-symbol-file
+    {:sym 'locator-for-symbol
      :examples ["(z/locator-for-symbol \"src/foo.clj\" 'foo)"]
      :result-spec ::extension/tool-result
      :render-fn render-locators-result
