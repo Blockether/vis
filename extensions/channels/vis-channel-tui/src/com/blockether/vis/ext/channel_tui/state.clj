@@ -202,13 +202,14 @@
 (def ^:private cancel-notification-ttl-ms 2500)
 
 (def ^:private live-progress-render-interval-ms
-  "Minimum wall-clock interval between live reasoning redraws.
+  "Maximum wall-clock interval between live reasoning redraws.
 
-   Providers can stream reasoning at token cadence. Rendering every token makes
-   the TUI flicker and burns CPU while the visible elapsed-time line changes too
-   fast to read. Lifecycle chunks still flush immediately so code/result/final
-   boundaries appear without delay."
-  1000)
+   Keep the live TUI heartbeat at the same cadence as the render loop: progress
+   chunks coalesce to one app-db update per frame instead of per token, while
+   lifecycle chunks still flush immediately so code/result/final boundaries
+   appear without delay. Virtual layout then projects and paints only visible
+   bubbles."
+  80)
 
 (def ^:private pending-assistant-text "Sending request to provider...")
 

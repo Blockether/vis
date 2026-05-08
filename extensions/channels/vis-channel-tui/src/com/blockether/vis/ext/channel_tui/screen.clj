@@ -12,13 +12,12 @@
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.selection :as selection]
             [com.blockether.vis.ext.channel-tui.state :as state]
+            [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.workspace :as workspace]
-            [com.blockether.vis.internal.workspace-context :as workspace-context]
             [taoensso.telemere :as tel])
-  (:import [com.googlecode.lanterna SGR TerminalPosition]
+  (:import [com.googlecode.lanterna SGR Symbols TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType
             MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
@@ -36,7 +35,7 @@
 ;;
 ;;   1. Input thread (the original main loop): polls keys, dispatches
 ;;      events into app-db, opens modal dialogs. Never draws the chat
-;;      view itself — just mutates state.
+;;      view itself - just mutates state.
 ;;
 ;;   2. Render thread: sleeps on `state/render-monitor`, wakes on
 ;;      every dispatched event, and only repaints if `:render-version`
@@ -60,7 +59,7 @@
 ;; per soft-wrap line of typed content, capped at four rows. Beyond
 ;; the cap `draw-input-box!` keeps the cursor in view by scrolling
 ;; the visible window vertically over the underlying text. The cap
-;; was 8 rows; four is the sweet spot — long enough to show a real
+;; was 8 rows; four is the sweet spot - long enough to show a real
 ;; multi-paragraph prompt, short enough that the input never eats
 ;; more than ~25% of a 1080p terminal's chat area.
 (def ^:private input-min-lines 1)
@@ -78,29 +77,29 @@
   500)
 ;; Hint strip rules
 ;;
-;; Idle, input EMPTY    → show newline + history cycle + menu. The
+;; Idle, input EMPTY    -> show newline + history cycle + menu. The
 ;;                       empty box is the moment someone is deciding
 ;;                       what to type, so we surface `↑↓` for
 ;;                       cycling through prior prompts and `Alt+Enter`
 ;;                       for multi-line composition right where the
 ;;                       eye lands.
-;; Idle, input NON-EMPTY → just menu. \"Enter send\" is monkey-obvious; once
+;; Idle, input NON-EMPTY -> just menu. \"Enter send\" is monkey-obvious; once
 ;;                        someone has typed the hint is redundant,
 ;;                        and history-cycle would clobber the buffer.
-;; Loading              → cancel + quit. Same as before.
-;; Cancelling            → progress message + quit.
+;; Loading              -> cancel + quit. Same as before.
+;; Cancelling            -> progress message + quit.
 ;;
 ;; Removed from idle: `Enter send` (universally obvious). PageUp/PageDown
 ;; remain available for transcript scrolling. Model/reasoning/verbosity
 ;; shortcuts live in the footer next to the values they change.
-(def ^:private hint-idle-empty " Alt+Enter newline · ↑↓ history · Shift+Tab tabs · Ctrl+B voice · Ctrl+G conversations · Ctrl+K menu ")
-(def ^:private hint-idle-typed " Shift+Tab tabs · Ctrl+B voice · Ctrl+G conversations · Ctrl+K menu ")
-(def ^:private hint-loading    " Esc cancel · Ctrl+C quit ")
-(def ^:private hint-cancelling " Cancelling… please wait · Ctrl+C quit ")
+(def ^:private hint-idle-empty " Alt+Enter newline / ↑↓ history / Shift+Tab tabs / Ctrl+B voice / Ctrl+G conversations / Ctrl+K menu ")
+(def ^:private hint-idle-typed " Shift+Tab tabs / Ctrl+B voice / Ctrl+G conversations / Ctrl+K menu ")
+(def ^:private hint-loading    " Esc cancel / Ctrl+C quit ")
+(def ^:private hint-cancelling " Cancelling... please wait / Ctrl+C quit ")
 
 (defn- input-empty?
   "True when the input editor has no text. The empty editor is `{:lines [\"\"]
-   :crow 0 :ccol 0}` — a one-element vec with the empty string — so we
+   :crow 0 :ccol 0}` - a one-element vec with the empty string - so we
    can't just `(empty? lines)`."
   [{:keys [lines]}]
   (or (empty? lines)
@@ -236,37 +235,6 @@
 (defn- input-state-from-text
   [text]
   (input/paste-text (input/empty-input) (or text "")))
-
-(defn- open-worktree-tab!
-  [{:keys [branch-name config install-conversation!]}]
-  (cond
-    (nil? config)
-    (do
-      (vis/notify! "Config still loading; try again in a moment"
-        :level :warn :ttl-ms copy-success-ttl-ms)
-      nil)
-
-    (>= (count (or (seq (:workspace-tabs @state/app-db)) [:main])) 8)
-    (do
-      (vis/notify! "Maximum 8 tabs open"
-        :level :warn :ttl-ms copy-success-ttl-ms)
-      nil)
-
-    :else
-    (try
-      (let [worktree (workspace/create-worktree!
-                       (cond-> {}
-                         (not (str/blank? branch-name))
-                         (assoc :branch branch-name)))]
-        (state/dispatch [:add-workspace-tab {:workspace worktree}])
-        (install-conversation! (chat/make-conversation config) true)
-        (vis/notify! (str "Created worktree " (get-in worktree [:main :branch]))
-          :level :success :ttl-ms copy-success-ttl-ms)
-        nil)
-      (catch Throwable t
-        (vis/notify! (str "Worktree failed: " (or (ex-message t) (.getName (class t))))
-          :level :error :ttl-ms (* 3 copy-success-ttl-ms))
-        nil))))
 
 (defn- copy-conversation-as-markdown! [conversation-id]
   (vis/worker-future "vis-tui-copy-conversation-markdown"
@@ -472,85 +440,16 @@
     (finally
       (.unlock draw-lock))))
 
-(def ^:private provenance-url-prefix "vis-provenance://")
-
-(defn- provenance-ref-from-url
-  [url]
-  (when (and (string? url) (str/starts-with? url provenance-url-prefix))
-    (subs url (count provenance-url-prefix))))
-
-(defn- preview-line
-  [x max-n]
-  (let [s (str/replace (str (or x "")) #"\s+" " ")]
-    (if (> (count s) max-n)
-      (str (subs s 0 max-n) "…")
-      s)))
-
-(defn- resolve-provenance-event
-  [conversation-id ref]
-  (try
-    (when-let [f (requiring-resolve 'com.blockether.vis.ext.foundation.introspection/foundation-provenance-event)]
-      (f (vis/env-for conversation-id) conversation-id ref))
-    (catch Throwable _ nil)))
-
-(defn- provenance-dialog-lines
-  [conversation-id ref event]
-  (if event
-    (cond-> [(str "Ref: " ref)
-             (str "Status: " (:status event))
-             (str "Kind: " (:kind event))
-             (str "Op: " (:op event))
-             (str "Duration: " (or (:duration-ms event) 0) "ms")
-             (str "Turn: " (:turn-id event))
-             (str "Iteration: " (:iteration event))
-             (str "Form: " (:form-position event))]
-      (:parent-ref event) (conj (str "Parent: " (:parent-ref event)))
-      (:code event)       (conj "" (str "Code: " (preview-line (:code event) 220)))
-      (:error event)      (conj "" (str "Error: " (preview-line (pr-str (:error event)) 220))))
-    [(str "Ref: " ref)
-     ""
-     "No observed event found in the current conversation."
-     (str "Conversation: " conversation-id)]))
-
-(defn- open-provenance-popup!
-  [^TerminalScreen screen url]
-  (let [conversation-id (get-in @state/app-db [:conversation :id])
-        ref             (provenance-ref-from-url url)
-        event           (when (and conversation-id ref)
-                          (resolve-provenance-event conversation-id ref))]
-    (with-dialog-lock
-      #(dlg/text-view-dialog! screen "Provenance" (provenance-dialog-lines conversation-id ref event)))))
-
-(defn- active-workspace-root
-  [db]
-  (workspace-context/workspace-root
-    (or (:workspace/root db)
-      (get-in db [:workspace :workspace/root])
-      (let [active-id (or (:active-workspace-id db)
-                        (:id (some #(when (:active? %) %) (:workspace-tabs db)))
-                        (:id (first (:workspace-tabs db))))]
-        (some #(when (= (:id %) active-id)
-                 (or (:workspace/root %)
-                   (get-in % [:workspace :workspace/root])))
-          (:workspace-tabs db))))))
-
-(defn- open-click-target-worker!
-  [{:keys [kind url]} workspace-root]
-  (vis/worker-future "vis-tui-open-click-target"
-    #(binding [workspace-context/*workspace-root* workspace-root]
-       (try
-         (if (= :file kind)
-           (opener/open-file-in-editor! url)
-           (opener/open! url))
-         (catch Throwable _ nil)))))
-
 (defn- open-click-target!
-  ([ref]
-   (open-click-target-worker! ref (active-workspace-root @state/app-db)))
-  ([^TerminalScreen screen {:keys [kind url] :as ref}]
-   (if (= :provenance kind)
-     (open-provenance-popup! screen url)
-     (open-click-target-worker! ref (active-workspace-root @state/app-db)))))
+  ([{:keys [kind url]}]
+   (vis/worker-future "vis-tui-open-click-target"
+     #(try
+        (if (= :file kind)
+          (opener/open-file-in-editor! url)
+          (opener/open! url))
+        (catch Throwable _ nil))))
+  ([^TerminalScreen _screen ref]
+   (open-click-target! ref)))
 
 (defn- open-resources-popup!
   [^TerminalScreen screen refs]
@@ -600,7 +499,7 @@
    Returns the layout map `{:total-h, :inner-h, :cols, :rows}` so the
    render thread can publish it back into app-db for the input thread's
    scroll handlers. `apply-settings` runs ONCE here and feeds both the
-   layout calculation and the actual draw — the old code path computed
+   layout calculation and the actual draw - the old code path computed
    it twice per frame, which doubled cost on long traces."
   [^TerminalScreen screen cols rows
    {:keys [messages messages-scroll input progress loading? cancelling?
@@ -627,7 +526,7 @@
         ;; NOT inline a literal here. Two layers disagreeing by even
         ;; one column makes `format-iteration-entry` size labels for
         ;; one bubble-w while `draw-chat-bubble!` paints into a
-        ;; different bubble-w — right-aligned labels (`BLOCK 3`,
+        ;; different bubble-w - right-aligned labels (`BLOCK 3`,
         ;; `✓ 3ms`, `FINAL ANSWER`) wrap onto two lines from the
         ;; mismatch. Use the const, never the value.
         bubble-w     (max 1 (- cols render/MESSAGE_SIDE_PAD))
@@ -661,7 +560,7 @@
     ;; row (links, image markers, file links). The header then
     ;; registers its :copy-id region. The published click-region
     ;; registry is unchanged until `cr/commit-frame!` runs at the end
-    ;; of this fn — so the input thread can `cr/lookup` at any time
+    ;; of this fn - so the input thread can `cr/lookup` at any time
     ;; during the paint and still get a complete previous frame back
     ;; instead of a half-filled buffer (the bug that made the header
     ;; copy-id button feel \"sometimes broken\" when the spinner was
@@ -675,7 +574,7 @@
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     ;; Atomically publish every chrome region painted above. Until
     ;; this swap runs the input thread sees the PREVIOUS frame's
-    ;; regions, which is the correct fallback — the previous frame
+    ;; regions, which is the correct fallback - the previous frame
     ;; matches what's actually still on the user's screen up to this
     ;; instant.
     (let [screen-cells (capture-screen-cells screen cols rows)
@@ -698,34 +597,118 @@
        :transcript-bubble-copy-regions transcript-bubble-copy-regions
        :input-selectable-ranges input-selectable-ranges})))
 
+(defn- live-progress-only-change?
+  "True when the next frame only changed live progress bookkeeping.
+   Those frames should keep the 80ms heartbeat but not repaint the header,
+   footer, input, or stable transcript bubbles. Full renders still happen for
+   scroll/input/settings/notification/layout changes."
+  [previous-db db]
+  (and previous-db
+    (:loading? db)
+    (= (dissoc previous-db :progress :render-version :layout)
+      (dissoc db :progress :render-version :layout))))
+
+(defn- live-loading-idx
+  [messages loading?]
+  (when (and loading? (seq messages) (= :assistant (:role (peek messages))))
+    (long (dec (count messages)))))
+
+(defn- render-scrollbar!
+  [g cols text-top inner-h total-h eff-scroll]
+  (when-let [{:keys [thumb-top-rel thumb-h]}
+             (render/scrollbar-thumb-geometry total-h inner-h eff-scroll)]
+    (let [bar-col (- cols 2)]
+      (doseq [r (range inner-h)]
+        (p/set-colors! g t/border-fg t/terminal-bg)
+        (p/set-char! g bar-col (+ text-top r) Symbols/SINGLE_LINE_VERTICAL))
+      (doseq [r (range thumb-h)]
+        (p/set-colors! g t/dialog-hint-key t/terminal-bg)
+        (p/set-char! g bar-col (+ text-top thumb-top-rel r) \u2588)))))
+
+(defn- render-live-bubble-frame!
+  "Fast path for 80ms live ticks. Recompute virtual layout, but repaint only
+   the live assistant bubble when it intersects the terminal viewport. This is
+   the terminal equivalent of React/virtual-list dirty-row painting: the tick is
+   frequent, but stable visible bubbles/input/footer/header are left alone."
+  [^TerminalScreen screen cols rows
+   {:keys [messages messages-scroll progress loading? cancelling? turn-start-ms settings] :as db}
+   now-ms previous-layout]
+  (let [g              (.newTextGraphics screen)
+        text-rows      (input-text-rows (:input db) cols)
+        input-box-h    (+ text-rows 2 (* 2 render/input-pad-y))
+        input-top      (- rows input-box-h 2)
+        messages-top   (header/header-rows db)
+        messages-bottom input-top
+        bubble-w       (max 1 (- cols render/MESSAGE_SIDE_PAD))
+        inner-h        (max 0 (- messages-bottom messages-top 2))
+        text-top       (+ messages-top render/MESSAGE_MARGIN_TOP)
+        progress-extra {:now-ms        now-ms
+                        :turn-start-ms turn-start-ms
+                        :cancelling?   (boolean cancelling?)}
+        layout         (virtual/layout messages bubble-w settings
+                         messages-scroll inner-h
+                         {:progress       progress
+                          :loading?       loading?
+                          :progress-extra progress-extra}
+                         {:conversation-id   (get-in db [:conversation :id])
+                          :detail-expansions (:detail-expansions db)})
+        live-idx       (live-loading-idx messages loading?)
+        live-entry     (first (filter #(= live-idx (:idx %)) (:visible layout)))
+        old-entry      (first (filter #(= live-idx (:idx %)) (:visible previous-layout)))]
+    (when live-entry
+      (let [clip (.newTextGraphics g
+                   (TerminalPosition. 0 text-top)
+                   (TerminalSize. cols inner-h))
+            y0   (max 0 (min (long (:top live-entry))
+                          (long (or (:top old-entry) (:top live-entry)))))
+            y1   (min inner-h
+                   (max (+ (long (:top live-entry)) (long (:height live-entry)))
+                     (+ (long (or (:top old-entry) (:top live-entry)))
+                       (long (or (:height old-entry) (:height live-entry))))))]
+        (when (< y0 y1)
+          (p/set-colors! clip t/text-fg t/terminal-bg)
+          (p/fill-rect! clip 0 y0 cols (- y1 y0)))
+        (render/draw-chat-bubble! clip (:projected live-entry) (:top live-entry)
+          render/MESSAGE_MARGIN_LEFT bubble-w
+          {:viewport-top text-top :viewport-h inner-h})
+        (render-scrollbar! g cols text-top inner-h (:total-h layout) (:eff-scroll layout))
+        (.refresh screen Screen$RefreshType/DELTA)))
+    (merge previous-layout
+      {:cols cols :rows rows :total-h (long (:total-h layout)) :inner-h inner-h
+       :messages-top messages-top
+       :text-top text-top
+       :eff-scroll (:eff-scroll layout)
+       :visible (:visible layout)})))
+
 ;;; ── Render thread ───────────────────────────────────────────────────────────────
 
 (def ^:private spinner-tick-ms
-  "How often the spinner advances while a turn is in flight. Drives
-   both the wait-timeout cap and the animate? predicate, so a quiet
-   render thread still repaints on the same cadence as the spinner.
-   Keep this calm: elapsed-thinking text only needs second-level updates."
+  "How often the live turn frame advances while a turn is in flight. Drives
+   both the wait-timeout cap and the animate? predicate, so a quiet render
+   thread still repaints on the live heartbeat. Keep this at 80ms: higher
+   values make streamed reasoning feel frozen, lower values waste work."
   80)
 
 (defn- render-loop!
   "The render thread's main loop. Sleeps on `state/render-monitor` and
    only paints when `:render-version` advances, the terminal gets
-   resized, or — while loading — the spinner frame advances. Skips
+   resized, or - while loading - the spinner frame advances. Skips
    painting entirely while a dialog is up by failing to acquire
    `draw-lock`."
   [^TerminalScreen screen]
-  (loop [last-v -1 last-cols -1 last-rows -1 last-frame-ms 0]
+  (loop [last-v -1 last-cols -1 last-rows -1 last-frame-ms 0
+         last-db nil last-layout nil]
     (let [db @state/app-db]
       (when-not (:shutdown? db)
         (let [version (long (or (:render-version db) 0))
               ;; tryLock so a dialog session (which holds the lock for
               ;; seconds) doesn't pin us. Time out fast and re-poll.
               got-lock? (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
-              [rendered? new-cols new-rows new-frame-ms]
+              [rendered? new-cols new-rows new-frame-ms rendered-db rendered-layout]
               (if-not got-lock?
-                [false last-cols last-rows last-frame-ms]
+                [false last-cols last-rows last-frame-ms last-db last-layout]
                 (try
-                  ;; Re-read AFTER acquiring the lock — dialog state
+                  ;; Re-read AFTER acquiring the lock - dialog state
                   ;; could have flipped while we were waiting.
                   (let [db       @state/app-db
                         size     (screen-size screen)
@@ -735,27 +718,36 @@
                         loading? (boolean (:loading? db))
                         animate? (and loading?
                                    (>= (- now-ms (long last-frame-ms))
-                                     spinner-tick-ms))]
+                                     spinner-tick-ms))
+                        same-size? (and (= last-cols cols) (= last-rows rows))
+                        partial-live? (and loading?
+                                        same-size?
+                                        last-layout
+                                        (not (:mouse-selection db))
+                                        (or animate?
+                                          (live-progress-only-change? last-db db)))]
                     (if (and (not (:shutdown? db))
                           (not (:dialog-open? db))
                           (or (not= last-v version)
                             (not= last-cols cols)
                             (not= last-rows rows)
                             animate?))
-                      (let [layout (render-frame! screen cols rows db now-ms)]
+                      (let [layout (if partial-live?
+                                     (render-live-bubble-frame! screen cols rows db now-ms last-layout)
+                                     (render-frame! screen cols rows db now-ms))]
                         ;; Publish layout back to app-db without
                         ;; bumping the version (see no-render-bump-events).
                         (state/dispatch [:set-layout layout])
-                        [true cols rows now-ms])
-                      [false cols rows last-frame-ms]))
+                        [true cols rows now-ms db layout])
+                      [false cols rows last-frame-ms last-db last-layout]))
                   (catch Throwable t
-                    ;; Drawing must never crash the thread — a stray
+                    ;; Drawing must never crash the thread - a stray
                     ;; resize race or null cell will recover next frame.
                     (tel/log! {:level :warn
                                :id    ::render-frame-failed
                                :data  (throwable-log-data t)
                                :msg   (str "render frame failed: " (or (ex-message t) (str t)))})
-                    [false last-cols last-rows last-frame-ms])
+                    [false last-cols last-rows last-frame-ms last-db last-layout])
                   (finally (.unlock draw-lock))))]
           (when-not rendered?
             ;; Park until the next dispatch wakes us, or until the
@@ -773,7 +765,9 @@
           (recur (if rendered? version last-v)
             (long (or new-cols last-cols))
             (long (or new-rows last-rows))
-            (long new-frame-ms)))))))
+            (long new-frame-ms)
+            rendered-db
+            rendered-layout))))))
 
 (defn- start-render-thread!
   "Spawn the render thread. Daemon so the JVM can still exit even if a
@@ -844,7 +838,7 @@
         (str "\n\nAvailable :tui conversations (most recent first):\n"
           (str/join "\n" (map line available))
           "\n\nUse the 8-char prefix or full UUID with --conversation-id.")
-        "\n\nNo :tui conversations exist yet — run `vis channels tui` without --conversation-id first."))))
+        "\n\nNo :tui conversations exist yet - run `vis channels tui` without --conversation-id first."))))
 
 (defn- current-conversation-id
   []
@@ -868,7 +862,7 @@
 (defn- register-conversation-shutdown-hook!
   "Register a JVM shutdown hook that prints the TUI resume command for
    the active conversation. TUI-local: the printed string is a
-   `vis channels tui …` sub-command, so this hook lives next to the
+   `vis channels tui ...` sub-command, so this hook lives next to the
    only consumer instead of in vis-runtime or vis-cli."
   []
   (let [hook (Thread. (fn []
@@ -885,7 +879,7 @@
   "Thin wrapper over `Runtime/addShutdownHook` so call-sites read as
    plain Clojure instead of a `(Thread. ^Runnable (fn [] ...))` casting
    ritual. `f` is a zero-arg fn; thrown exceptions are swallowed (the
-   hook chain MUST NOT propagate — a single noisy listener can hang
+   hook chain MUST NOT propagate - a single noisy listener can hang
    the whole shutdown sequence). Returns the registered Thread so
    tests can deregister it via `.removeShutdownHook` if needed."
   [^Runnable f]
@@ -1071,8 +1065,8 @@
 (defn run-chat!
   "Start the fullscreen chat TUI. Blocks until user quits.
    Optional `opts` map:
-     :conversation-id uuid-string — resume a specific conversation
-     :resume          true        — resume the latest :tui conversation"
+     :conversation-id uuid-string - resume a specific conversation
+     :resume          true        - resume the latest :tui conversation"
   ([] (run-chat! {}))
   ([opts]
   ;; Validate --conversation-id BEFORE we boot Lanterna. A miss here
@@ -1084,9 +1078,9 @@
    (let [resumed-from-flag (pre-resolve-conversation-id! opts)]
      (state/init!)
 
-  ;; Subscribe to host notifications so any (vis/notify! …) push
-  ;; — from anywhere: this channel's click handler, an extension,
-  ;; the iteration loop — wakes the render thread immediately. The
+  ;; Subscribe to host notifications so any (vis/notify! ...) push
+  ;; - from anywhere: this channel's click handler, an extension,
+  ;; the iteration loop - wakes the render thread immediately. The
   ;; header band reads `(vis/notifications)` on every paint, so we
   ;; only need a render bump here; no app-db copy.
      (vis/watch-notifications! :tui-screen
@@ -1169,15 +1163,15 @@
          ;;
          ;; Drag math then becomes `new-thumb-top = my - offset`,
          ;; which keeps the grip-point fixed under the cursor for
-         ;; the entire drag — same contract every GUI scroll thumb
+         ;; the entire drag - same contract every GUI scroll thumb
          ;; honours. A simple boolean would force the thumb to snap
          ;; its TOP to the cursor on the first DRAG event, which is
          ;; what made the previous implementation "jump" the moment
          ;; the user started moving.
          ;;
-         ;; Clicks anywhere outside the thumb itself — the messages
+         ;; Clicks anywhere outside the thumb itself - the messages
          ;; area, the track above/below the thumb, the right gutter
-         ;; columns — are deliberately ignored (no jump-to-position).
+         ;; columns - are deliberately ignored (no jump-to-position).
          ;; Wheel scroll, keyboard PageUp/PageDown and arrows remain
          ;; the supported ways to move the viewport without grabbing
          ;; the thumb.
@@ -1185,14 +1179,14 @@
          ;; `ESC[?2004h` enable sequence right after the screen is
          ;; up so xterm-class terminals (Apple Terminal, iTerm,
          ;; Alacritty, kitty, gnome-terminal, mintty, vscode) wrap
-         ;; subsequent pastes in `ESC[200~ … ESC[201~`. Disabling
+         ;; subsequent pastes in `ESC[200~ ... ESC[201~`. Disabling
          ;; happens in the outer `finally` block, so a crashed TUI
          ;; can't leave the user's shell stuck with bracketing on.
          (enable-terminal-escape-modes! opts)
          ;; SGR mouse mode (1006). Lanterna's `setMouseCaptureMode`
          ;; above already enabled legacy 1003 on the native terminal
          ;; backend, but its parser only understands the X10 binary
-         ;; encoding — which corrupts coordinates the moment
+         ;; encoding - which corrupts coordinates the moment
          ;; `col + 32` exceeds 0x7F (i.e. col >= 96), because the JVM
          ;; UTF-8 decoder replaces the high byte with U+FFFD. SGR sends
          ;; the same payload as pure ASCII text, so wide terminals (the
@@ -1204,7 +1198,7 @@
                ;; CLICK_DOWN branch already handled a click region
                ;; (copy / link / image). The CLICK_RELEASE branch
                ;; reads it to decide whether to fire the fallback
-               ;; release-only path — needed for terminals that
+               ;; release-only path - needed for terminals that
                ;; deliver clicks as a single CLICK_RELEASE event
                ;; (X10-style mouse mode, some SSH-tunnelled
                ;; setups). Without this guard a normal
@@ -1221,7 +1215,7 @@
                last-selection-click   (volatile! nil)
                ;; `paste-buffer` accumulates every keystroke received
                ;; between `paste-start?` and `paste-end?`. We treat
-               ;; the whole block as one paste — newlines included —
+               ;; the whole block as one paste - newlines included -
                ;; so a multi-line clipboard payload doesn't fire
                ;; `KeyType/Enter` -> send mid-paste. The buffer is
                ;; kept in a StringBuilder so accumulation stays
@@ -1316,7 +1310,7 @@
            ;; Layout fields are populated by the render thread after
            ;; the first paint. Until then, scroll handlers fall back
            ;; to safe defaults and act as a no-op.
-           ;; Pure poll — no rendering on this thread anymore. The
+           ;; Pure poll - no rendering on this thread anymore. The
            ;; render thread handles all screen output.
              (let [db      @state/app-db
                    {:keys [cols total-h inner-h messages-top]} (:layout db)
@@ -1343,7 +1337,7 @@
                ;;                     close the buffer.
                ;;
                ;; Mouse events are excluded from the paste
-               ;; state machine below — they take a separate cond
+               ;; state machine below - they take a separate cond
                ;; branch that fires BEFORE this one (see the
                ;; `(instance? MouseAction key)` clause). A stuck
                ;; paste buffer therefore can't silently swallow
@@ -1361,7 +1355,7 @@
                        (when-not (.isEmpty text)
                          (if (input/use-placeholder? text)
                            ;; Stash the payload, insert a
-                           ;; one-line `[Pasted #N: …]` placeholder.
+                           ;; one-line `[Pasted #N: ...]` placeholder.
                            ;; The send path expands every active
                            ;; placeholder back into its content via
                            ;; `expand-paste-placeholders`. Reading
@@ -1385,12 +1379,12 @@
                    (recur))
 
                ;; Mouse events: scrollbar grab/drag + wheel scroll.
-               ;; Bypass `input/handle-key` entirely — those events
+               ;; Bypass `input/handle-key` entirely - those events
                ;; need access to the layout published by the render
                ;; thread, which `handle-key` doesn't see. Placed
                ;; BEFORE the paste-buffer clause so a stuck paste
                ;; bracket can't silently swallow mouse events (mouse
-               ;; and paste are physically disjoint channels —
+               ;; and paste are physically disjoint channels -
                ;; nothing in this branch can mutate paste state).
                  (instance? MouseAction key)
                  (let [^MouseAction ma key
@@ -1401,7 +1395,7 @@
                        _         (when-not (or (= atype MouseActionType/MOVE)
                                              (= atype MouseActionType/DRAG))
                                    ;; MOVE/DRAG fire dozens of times
-                                   ;; per second — logging them would
+                                   ;; per second - logging them would
                                    ;; flood the file. Every other
                                    ;; mouse event (CLICK_DOWN,
                                    ;; CLICK_RELEASE, SCROLL_UP/DOWN)
@@ -1430,7 +1424,7 @@
                        ;; Single source of truth for thumb geometry
                        ;; lives in `render/scrollbar-thumb-geometry`,
                        ;; so painter and hit-test cannot drift apart.
-                       ;; A nil return means there's no overflow — no
+                       ;; A nil return means there's no overflow - no
                        ;; thumb is painted, and every click below is
                        ;; correctly classified as off-thumb.
                        geom      (render/scrollbar-thumb-geometry
@@ -1477,7 +1471,7 @@
                      ;; Record the offset between the click row and
                      ;; the thumb's top so subsequent DRAG events can
                      ;; preserve the grip-point. Crucially we do NOT
-                     ;; dispatch any scroll mutation here — a bare
+                     ;; dispatch any scroll mutation here - a bare
                      ;; click without movement must not move content.
                      (and (= atype MouseActionType/CLICK_DOWN) on-thumb?)
                      (do (vreset! scrollbar-drag-offset (- my thumb-top))
@@ -1489,7 +1483,7 @@
                      ;; the cursor row, then arm a drag with the same
                      ;; centered grip offset so a follow-up motion
                      ;; tracks naturally. This is the modern macOS
-                     ;; \"jump to spot\" behaviour — a click anywhere
+                     ;; \"jump to spot\" behaviour - a click anywhere
                      ;; on the scrollbar moves you there, instead of
                      ;; the legacy paged \"click-above-thumb = page-up\"
                      ;; convention. The previous build silently
@@ -1515,7 +1509,7 @@
                      ;; a thumb grab. We feed `(my - drag-offset)` to
                      ;; `:scroll-to-y` so the row under the user's
                      ;; finger stays glued to the same point on the
-                     ;; thumb — no jump, no snap. X is intentionally
+                     ;; thumb - no jump, no snap. X is intentionally
                      ;; ignored once dragging starts so the thumb
                      ;; doesn't pop loose if the cursor strays out
                      ;; of the right gutter.
@@ -1553,7 +1547,7 @@
                              nil)))
                        (recur))
 
-                     ;; CLICK_RELEASE — ends a drag, and serves as
+                     ;; CLICK_RELEASE - ends a drag, and serves as
                      ;; a FALLBACK click trigger for terminals that
                      ;; deliver clicks as a single CLICK_RELEASE
                      ;; (X10 mouse mode, some SSH-tunnelled
@@ -1561,7 +1555,7 @@
                      ;; CLICK_DOWN/CLICK_RELEASE pair. The fallback
                      ;; is gated on (a) no drag in progress, and
                      ;; (b) the corresponding CLICK_DOWN didn't
-                     ;; already handle the same region — otherwise
+                     ;; already handle the same region - otherwise
                      ;; a normal terminal would double-fire (copy
                      ;; the id twice, open the link twice).
                      (= atype MouseActionType/CLICK_RELEASE)
@@ -1635,7 +1629,7 @@
                                (copy-bubble! (:text bubble-hit))))))
                        (recur))
 
-                     ;; MOVE — hover. We want the chat link-chrome
+                     ;; MOVE - hover. We want the chat link-chrome
                      ;; rows to highlight when the user hovers over
                      ;; them. Look up the click region under the
                      ;; cursor; if it changed, update the hover
@@ -1653,20 +1647,20 @@
                      ;; if it landed on a registered click region
                      ;; (a markdown link / image / file-link
                      ;; chrome row), hand the URL to the OS opener
-                     ;; on a side thread — a slow `xdg-open` cannot
+                     ;; on a side thread - a slow `xdg-open` cannot
                      ;; freeze the input loop's redraw cadence.
                      (= atype MouseActionType/CLICK_DOWN)
                      (do (if-let [hit (cr/lookup mx my)]
                            (do
                              ;; Tell the matching CLICK_RELEASE in
                              ;; the same gesture pair to skip the
-                             ;; fallback fire — we just handled it.
+                             ;; fallback fire - we just handled it.
                              (vreset! click-action-fired? true)
                              (vreset! last-selection-click nil)
                              (case (:kind hit)
                              ;; Header copy-id affordance: drop the
                              ;; FULL UUID onto the system clipboard,
-                             ;; then push a host notification — the
+                             ;; then push a host notification - the
                              ;; header band's LEFT slot subscribes to
                              ;; `vis.core/notifications` and surfaces
                              ;; `✓ Copied conversation ID` for ~1.5s
@@ -1697,7 +1691,7 @@
 
                              ;; Default (markdown link / image /
                              ;; file-link chrome): hand the URL to
-                             ;; the OS opener on a side thread —
+                             ;; the OS opener on a side thread -
                              ;; a slow `xdg-open` cannot freeze the
                              ;; input loop's redraw cadence.
                                (open-click-target! screen hit)))
@@ -1744,8 +1738,8 @@
                                        :source source}]))))))
                        (recur))
 
-                     ;; Every other click — inside the input box,
-                     ;; on the footer, etc. — falls through here.
+                     ;; Every other click - inside the input box,
+                     ;; on the footer, etc. - falls through here.
                      ;; The scrollbar branch above already covers
                      ;; the right-gutter \"click on track to jump\";
                      ;; this `:else` is effectively the no-op tail.
@@ -1762,12 +1756,12 @@
 
                  ;; Placeholder smart-delete: a single
                  ;; Backspace right after the closing `]` of a
-                 ;; `[Pasted #N: …]` token nukes the WHOLE token in
+                 ;; `[Pasted #N: ...]` token nukes the WHOLE token in
                  ;; one keystroke, and drops the matching entry from
                  ;; `:pastes` so memory tracks what the user can
                  ;; still see in their input. Without this, the user
                  ;; would have to mash Backspace 27+ times to remove
-                 ;; one placeholder — the visual unit-of-edit is the
+                 ;; one placeholder - the visual unit-of-edit is the
                  ;; whole token, not its individual characters.
                  (and (instance? KeyStroke key)
                    (= KeyType/Backspace (.getKeyType ^KeyStroke key))
@@ -1836,12 +1830,6 @@
                                            :level :warn :ttl-ms copy-success-ttl-ms)
                                          (install-conversation! (chat/make-conversation config) true))))
 
-                                   :worktree
-                                   (open-worktree-tab!
-                                     {:branch-name (first (command-argv args))
-                                      :config (:config @state/app-db)
-                                      :install-conversation! install-conversation!})
-
                                    :fork-conversation
                                    (switch-conversation! {:action :fork})
 
@@ -1869,7 +1857,7 @@
                                                         :redraw-ui redraw-ui!}))]
                                        (state/dispatch [:update-settings s])))
 
-                            ;; No :quit branch — the palette has no Quit
+                            ;; No :quit branch - the palette has no Quit
                             ;; entry; Ctrl+C is the only quit path.
                                    nil)))))]
                      (case action
@@ -1932,14 +1920,11 @@
                        :pick-file
                        (do
                          (when-not (:dialog-open? @state/app-db)
-                           (let [workspace-root (active-workspace-root @state/app-db)]
-                             (when-let [path (with-dialog-lock
-                                               #(binding [workspace-context/*workspace-root* workspace-root]
-                                                  (dlg/file-picker-dialog! screen)))]
-                               (state/dispatch
-                                 [:update-input
-                                  (input/paste-text state
-                                    (str (input/format-file-mention path) " "))]))))
+                           (when-let [path (with-dialog-lock #(dlg/file-picker-dialog! screen))]
+                             (state/dispatch
+                               [:update-input
+                                (input/paste-text state
+                                  (str (input/format-file-mention path) " "))])))
                          (recur))
 
                        :send
@@ -1977,18 +1962,18 @@
            (disable-terminal-escape-modes! opts)
         ;; Drop the notifications watcher so the next TUI session
         ;; doesn't accumulate stale hooks (the screen is short-lived
-        ;; relative to the JVM — leaving stale watchers around would
+        ;; relative to the JVM - leaving stale watchers around would
         ;; eventually hold references to dead atoms).
            (try (vis/unwatch-notifications! :tui-screen) (catch Throwable _ nil))
            (try (vis/remove-channel-event-listener! :tui :tui-screen) (catch Throwable _ nil))
         ;; Tell the render thread to exit and wake it so the wait
         ;; finishes immediately. Daemon thread, so the join is
-        ;; optional — doing it anyway lets the final paint (or the
+        ;; optional - doing it anyway lets the final paint (or the
         ;; no-op when shutdown? was already true) finish before we
         ;; tear down the screen.
            (state/dispatch [:shutdown])
            ;; Cancel the pre-warm worker BEFORE joining the render
-           ;; thread — it might still be holding `cached*` work
+           ;; thread - it might still be holding `cached*` work
            ;; that we'd rather drop than wait on.
            (virtual/stop-pre-warm! @prewarm-thread)
            (when-let [t @render-thread]
@@ -2048,7 +2033,7 @@
 (defn- redirect-stdio-to-log!
   "Lanterna writes to /dev/tty directly. Everything else (Telemere, SLF4J,
    library prints, JVM warnings) MUST be redirected to ~/.vis/vis.log
-   before any other code runs — otherwise stray bytes corrupt the screen."
+   before any other code runs - otherwise stray bytes corrupt the screen."
   []
   (try (require 'taoensso.telemere)
     ((resolve 'taoensso.telemere/remove-handler!) :default/console)
@@ -2069,7 +2054,7 @@
    redirect, runs `vis/init!`, then hands off to `run-chat!`. Errors
    surface on the original terminal and the log file.
 
-   Invoked by `com.blockether.vis.core` dispatch — not called from
+   Invoked by `com.blockether.vis.core` dispatch - not called from
    vis-runtime directly."
   [args]
   (redirect-stdio-to-log!)
@@ -2081,13 +2066,13 @@
         (if (:vis/user-error (ex-data t))
           ;; Caller-facing error: invalid flag value, missing
           ;; conversation id, etc. Print the message clean and let the
-          ;; process exit non-zero — no Java stack trace, no rethrow
+          ;; process exit non-zero - no Java stack trace, no rethrow
           ;; (which would trigger clojure.main's auto-trace dump).
           (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: " (.getMessage t)))
             (reset! exit-code 2))
           ;; Genuine fatal: dump the trace to the terminal AND the log
           ;; so we can post-mortem it.
-          (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: fatal error — " (.getMessage t)))
+          (do (.println ^java.io.PrintStream vis/original-stdout (str "vis: fatal error - " (.getMessage t)))
             (.printStackTrace t (java.io.PrintStream. ^java.io.OutputStream @vis/tty-out true))
             (throw t))))
       (finally

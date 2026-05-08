@@ -501,7 +501,7 @@
                   @notified))))))
 
 (defdescribe live-progress-rate-test
-  (it "throttles reasoning redraws to once per second and flushes lifecycle chunks"
+  (it "coalesces reasoning redraws to the 80ms frame cadence and flushes lifecycle chunks"
     (let [make-progress-render-updater @#'state/make-progress-render-updater
           events (atom [])
           now-ms (atom 0)
@@ -509,14 +509,14 @@
                     #(swap! events conj %)
                     #(long @now-ms))]
       (update! [:t0] {:phase :reasoning})
-      (reset! now-ms 999)
-      (update! [:t999] {:phase :reasoning})
-      (reset! now-ms 1000)
-      (update! [:t1000] {:phase :reasoning})
-      (reset! now-ms 1001)
+      (reset! now-ms 79)
+      (update! [:t79] {:phase :reasoning})
+      (reset! now-ms 80)
+      (update! [:t80] {:phase :reasoning})
+      (reset! now-ms 81)
       (update! [:done] {:phase :iteration-final})
       (expect (= [[:set-progress-iterations [:t0]]
-                  [:set-progress-iterations [:t1000]]
+                  [:set-progress-iterations [:t80]]
                   [:set-progress-iterations [:done]]]
                 @events)))))
 
@@ -542,14 +542,16 @@
                     (-> db :messages first :text)))
           (expect (= "see @src/core.clj +paste"
                     (last (:input-history db))))
-          (expect (= [[:rlm-turn :main {:id "c1"}
-                       "see @src/core.clj +paste +file"
-                       :token
-                       :balanced
-                       {:text {:verbosity "high"}}
-                       {}
-                       nil]]
-                    fx))))))
+          (let [[event] fx]
+            (expect (= [:rlm-turn :main {:id "c1"}
+                        "see @src/core.clj +paste +file"
+                        :token
+                        :balanced
+                        {:text {:verbosity "high"}}
+                        {}]
+                      (subvec event 0 8)))
+            (expect (nil? (nth event 8)))
+            (expect (string? (nth event 9))))))))
 
   (it "passes active workspace root into the turn effect"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
@@ -593,8 +595,12 @@
                                                          :reasoning? true
                                                          :reasoning-style :zai-thinking
                                                          :reasoning-effort? false})]
-        (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])]
-          (expect (= [[:rlm-turn :main {:id "c1"} "hello" :token nil nil {} nil]] fx))))))
+        (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])
+              [event] fx]
+          (expect (= [:rlm-turn :main {:id "c1"} "hello" :token nil nil {}]
+                    (subvec event 0 8)))
+          (expect (nil? (nth event 8)))
+          (expect (string? (nth event 9)))))))
 
   (it "restores a cancelled prompt to the input instead of rendering a cancelled answer"
     (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)

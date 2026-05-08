@@ -24,6 +24,9 @@
 (def ^:private current-hint
   (deref #'screen/current-hint))
 
+(def ^:private live-progress-only-change?
+  (deref #'screen/live-progress-only-change?))
+
 (def ^:private submit-input!
   (deref #'screen/submit-input!))
 
@@ -112,7 +115,25 @@
     (let [empty-hint (current-hint {:input (input/empty-input)})
           typed-hint (current-hint {:input (input/paste-text (input/empty-input) "hello")})]
       (expect (re-find #"Ctrl\+B voice" empty-hint))
-      (expect (re-find #"Ctrl\+B voice" typed-hint)))))
+      (expect (re-find #"Ctrl\+B voice" typed-hint))))
+
+  (it "keeps live render heartbeat at 80ms"
+    (expect (= 80 (deref #'screen/spinner-tick-ms))))
+
+  (it "classifies progress-only loading ticks for partial repaint"
+    (let [base {:loading? true
+                :messages [{:role :assistant :text "live"}]
+                :input {:lines [""]}
+                :progress {:iterations []}
+                :render-version 1
+                :layout {:total-h 1}}]
+      (expect (live-progress-only-change? base
+                (assoc base :progress {:iterations [:new]}
+                  :render-version 2
+                  :layout {:total-h 2})))
+      (expect (not (live-progress-only-change? base
+                     (assoc base :input {:lines ["typed"]}
+                       :progress {:iterations [:new]})))))))
 
 (defdescribe extension-command-test
   (it "hides direct-only extension commands from Ctrl+K palette"
