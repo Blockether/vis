@@ -243,3 +243,164 @@
     ;; gap so it's obvious when it's been closed.
     (expect (nil? (diag/try-quote-rebalance multi-line-unclosed-string
                     edamame-parses?)))))
+
+;; -----------------------------------------------------------------------------
+;; Eval-time diagnostic: bare prose symbol inside a vector of strings.
+;;
+;; Source: conversation ec64266c-...'s turn 2. The model wrote
+;; `(answer (v/join (v/ul ["...string-a" "string-b" SzerokoscWordHere ...])))`
+;; - third element of the vector is missing its opening `\"`. The
+;; whole form parses (`Szerokosc...` is a legal Clojure symbol), so
+;; the parse-rescue chain never fires. SCI explodes at eval-time
+;; with `Unable to resolve symbol: Szerokość` and the model gets
+;; no actionable signal.
+;;
+;; The two pinned fixtures are the verbatim broken iter-0 and iter-1
+;; bodies. They live as `.clj.txt` so editors don't \"helpfully\"
+;; balance the broken vector during a save.
+;; -----------------------------------------------------------------------------
+
+(def bare-prose-symbol-iter0
+  (slurp
+    (io/resource
+      "parse-fixtures/ec64266c-bare-prose-symbol-iter0.clj.txt")))
+
+(def bare-prose-symbol-iter1
+  (slurp
+    (io/resource
+      "parse-fixtures/ec64266c-bare-prose-symbol-iter1.clj.txt")))
+
+(defdescribe unresolved-symbol-hint-test
+  (it "returns nil when the error message isn't an unresolve"
+    (expect (nil? (diag/unresolved-symbol-hint
+                    "NullPointerException: oops"
+                    "(do (println :x))"))))
+
+  (it "returns nil when args are nil"
+    (expect (nil? (diag/unresolved-symbol-hint nil "(answer)")))
+    (expect (nil? (diag/unresolved-symbol-hint
+                    "Unable to resolve symbol: X" nil))))
+
+  (it "returns nil for ASCII kebab-case symbols (legitimate Clojure idents)"
+    (expect (nil? (diag/unresolved-symbol-hint
+                    "Unable to resolve symbol: foo-bar"
+                    "(v/ul [\"a\" foo-bar \"b\"])"))))
+
+  (it "returns nil for ASCII Java-class shape (no non-ASCII letter signal)"
+    (expect (nil? (diag/unresolved-symbol-hint
+                    "Unable to resolve symbol: String"
+                    "(.length String)"))))
+
+  (it "returns nil when the symbol is prose-shaped but NOT in a missing-quote context"
+    (expect (nil? (diag/unresolved-symbol-hint
+                    "Unable to resolve symbol: Niektóre"
+                    "(let [x 1] Niektóre)"))))
+
+  (it "returns a hint for the iter-0 fixture (`Szerokość` inside a v/ul vector of strings)"
+    (let [hint (diag/unresolved-symbol-hint
+                 "ExceptionInfo: Unable to resolve symbol: Szerokość"
+                 bare-prose-symbol-iter0)]
+      (expect (some? hint))
+      (expect (str/includes? hint "Szerokość"))
+      (expect (str/includes? hint "unquoted string fragment"))
+      (expect (str/includes? hint "opening `\"`"))))
+
+  (it "returns a hint for the iter-1 fixture (`Niektóre` inside a v/ul vector of strings)"
+    (let [hint (diag/unresolved-symbol-hint
+                 "ExceptionInfo: Unable to resolve symbol: Niektóre"
+                 bare-prose-symbol-iter1)]
+      (expect (some? hint))
+      (expect (str/includes? hint "Niektóre"))
+      (expect (str/includes? hint "unquoted string fragment"))))
+
+  (it "both fixtures have an EVEN unescaped-quote count (parse passes; this is the regression signature)"
+    ;; The whole point of this diagnostic class: parse rescue can't
+    ;; help because edamame is happy. Quote balance is even, the
+    ;; bare prose word slips through as a legal Clojure symbol.
+    (expect (even? (diag/count-unescaped-quotes bare-prose-symbol-iter0)))
+    (expect (even? (diag/count-unescaped-quotes bare-prose-symbol-iter1)))))
+
+;; -----------------------------------------------------------------------------
+;; Eval-time auto-repair: `try-answer-string-restitch`.
+;;
+;; Pure candidate generator. Returns a vec of repair candidates; the
+;; caller (`loop/execute-code`) is responsible for re-evaluating them
+;; through SCI and picking the first that succeeds.
+;;
+;; Tests below pin: (a) the scope guards (no `(answer`, non-prose
+;; symbol, no missing-quote ctx), and (b) the structural shape of
+;; the candidates (parses cleanly through edamame, contains the
+;; symbol now wrapped as a string).
+;; -----------------------------------------------------------------------------
+
+(defdescribe try-answer-string-restitch-test
+  (it "returns nil when source has no `(answer` form (out of scope)"
+    (expect (nil? (diag/try-answer-string-restitch
+                    "(let [x 1] Niektóre)" "Niektóre"))))
+
+  (it "returns nil for ASCII kebab-case symbol (might be a real binding)"
+    (expect (nil? (diag/try-answer-string-restitch
+                    "(answer (v/ul [\"a\" foo-bar \"b\"]))" "foo-bar"))))
+
+  (it "returns nil when the prose symbol isn't in a missing-quote context"
+    (expect (nil? (diag/try-answer-string-restitch
+                    "(answer Niektóre)" "Niektóre"))))
+
+  (it "returns nil when the symbol isn't found in source"
+    (expect (nil? (diag/try-answer-string-restitch
+                    "(answer (v/ul [\"a\" \"b\"]))" "Szerokość"))))
+
+  (it "returns 2 candidates for the iter-0 fixture and at least one parses"
+    (let [cands (diag/try-answer-string-restitch
+                  bare-prose-symbol-iter0 "Szerokość")]
+      (expect (= 2 (count cands)))
+      ;; Strategy A (just prepend `\"`) won't parse because the
+      ;; element body has an inner `\"` that breaks alignment.
+      ;; Strategy B (prepend + escape inner `\"`s) DOES parse.
+      (expect (some edamame-parses? cands))))
+
+  (it "returns 2 candidates for the iter-1 fixture and at least one parses"
+    (let [cands (diag/try-answer-string-restitch
+                  bare-prose-symbol-iter1 "Niektóre")]
+      (expect (= 2 (count cands)))
+      (expect (some edamame-parses? cands))))
+
+  (it "the parsable candidate wraps the bare prose symbol as part of a string literal (iter-0)"
+    ;; Pin the structural shape: after restitch, edamame parses the
+    ;; (v/ul [...]) form and the `Szerokość` word ends up INSIDE a
+    ;; string element rather than as a bare symbol.
+    (let [parsable (some #(when (edamame-parses? %) %)
+                     (diag/try-answer-string-restitch
+                       bare-prose-symbol-iter0 "Szerokość"))]
+      (expect (some? parsable))
+      (let [parsed (edamame/parse-string-all parsable
+                     {:all true :readers (fn [_tag] (fn [v] (list 'do v)))})]
+        ;; Find the `(v/ul [...])` form in the parse tree.
+        (let [v-ul-form (some (fn walk [form]
+                                (cond
+                                  (and (seq? form) (= 'v/ul (first form)))
+                                  form
+                                  (coll? form) (some walk form)))
+                          parsed)]
+          (expect (some? v-ul-form))
+          (let [vec-arg (second v-ul-form)
+                third   (nth vec-arg 2)]
+            (expect (vector? vec-arg))
+            (expect (string? third))
+            (expect (str/includes? third "Szerokość")))))))
+
+  (it "only mutates source between the symbol and the enclosing `]`/`)`"
+    ;; Lines outside the offending element stay byte-identical so
+    ;; the repair stays surgical and the audit trail in :original-code
+    ;; vs the repaired source diff is small.
+    (let [parsable (some #(when (edamame-parses? %) %)
+                     (diag/try-answer-string-restitch
+                       bare-prose-symbol-iter0 "Szerokość"))
+          orig-lines  (str/split-lines bare-prose-symbol-iter0)
+          fixed-lines (str/split-lines parsable)]
+      (expect (= (count orig-lines) (count fixed-lines)))
+      ;; Lines 1-10 (1-based) are headers/preamble; line 11 is the
+      ;; broken element. Everything except line 11 stays verbatim.
+      (doseq [i (range (count orig-lines))]
+        (when (not= 10 i) ;; line 11 (1-based) is at idx 10
+          (expect (= (nth orig-lines i) (nth fixed-lines i))))))))

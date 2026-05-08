@@ -211,6 +211,233 @@
   (when-let [[_ hi] (line-bounds code line-no)]
     (str (subs code 0 hi) "\"" (subs code hi))))
 
+;; -----------------------------------------------------------------------------
+;; Eval-time diagnostic: `Unable to resolve symbol: X`
+;;
+;; Class of LLM mistake: model writes a vector of strings inside
+;; `(answer (v/join (v/ul [...])))` and forgets the opening `"`
+;; on one element. The bare prose still parses (Unicode words are
+;; legal Clojure symbols), but SCI throws `Unable to resolve
+;; symbol: <FirstWord>` at eval-time. Edamame is happy. The repair
+;; pipeline never fires because there's no parse error.
+;;
+;; This diagnostic doesn't auto-repair - the safe move at this
+;; level is to enrich the error message so the model sees WHY the
+;; symbol was unresolved (it's prose-shaped, not a real binding).
+;; Auto-repair scoped to `(answer ...)` is a separate concern and
+;; lives outside this ns.
+;;
+;; Source: conversation ec64266c-...'s turn 2 (iter 0+1) where the
+;; model failed twice on the same pattern and recovered on iter 2
+;; only after switching to ASCII-only prose.
+;; -----------------------------------------------------------------------------
+
+(defn- looks-like-prose?
+  "Heuristic: does `s` look like a word from natural-language prose
+   rather than a Clojure identifier? Yes when:
+     - first char is an upper-case letter, AND
+     - at least one char is a non-ASCII letter (Polish, Czech,
+       German, etc.).
+   Catches `Szerokość`, `Niektóre`, `Różne`, `Wszystkie`. Skips
+   ASCII Java classes (`String`, `IllegalArgumentException`) and
+   plain kebab-case Clojure idents."
+  [^String s]
+  (and (string? s)
+    (>= (count s) 3)
+    (let [c0 (.charAt s 0)]
+      (and (Character/isLetter c0)
+        (Character/isUpperCase c0)
+        (loop [i 0]
+          (cond
+            (>= i (.length s)) false
+            (and (Character/isLetter (.charAt s i))
+              (> (int (.charAt s i)) 127)) true
+            :else (recur (inc i))))))))
+
+(defn- likely-missing-quote-context?
+  "Walk backwards from `idx` (where `sym` starts in `source`) past
+   whitespace and check for one of two signatures of an unquoted
+   prose element inside a vector of strings:
+
+     a. `\"prev-string\"\n   X`  - newline + indent right after a
+        closing quote (the model started a new line and forgot the
+        leading `\"`).
+     b. `\"prev-string\" X`     - same line, single space between
+        previous element and X.
+
+   Returns true on either pattern."
+  [^String source ^long idx]
+  (let [start (max 0 (- idx 200))
+        before (subs source start idx)]
+    (boolean
+      (or
+        (re-find #"\"\s*\R\s*$" before)
+        (re-find #"\"[ \t]+$" before)))))
+
+(defn unresolved-symbol-hint
+  "When SCI surfaces `Unable to resolve symbol: X` and `X` looks
+   like prose sitting inside a vector of strings, return a string
+   to APPEND to the original error so the next iteration sees a
+   concrete suggestion (\"missing opening quote\") instead of the
+   bare 'symbol unresolved' message.
+
+   Returns nil when:
+     - the error message isn't an `Unable to resolve symbol: X`,
+     - X doesn't look like prose, OR
+     - X doesn't sit in a missing-quote-shaped context.
+
+   Pure. Does NOT mutate source. Caller is responsible for
+   appending the hint to the error message it surfaces to the
+   model."
+  [^String error-msg ^String source]
+  (when (and (string? error-msg) (string? source))
+    (when-let [sym (some-> (re-find #"Unable to resolve symbol: (\S+)" error-msg)
+                     second)]
+      (when (and (looks-like-prose? sym)
+              (when-let [idx (str/index-of source sym)]
+                (likely-missing-quote-context? source (long idx))))
+        (str
+          " -- HINT: '" sym "' looks like an unquoted string fragment."
+          " Did you forget an opening `\"` before it? Common shape:"
+          " `(v/ul [\"a\" \"b\" " sym " ...])` - the third element is"
+          " missing its opening quote, so SCI sees `" sym "` as a"
+          " bare symbol and fails to resolve it. Wrap that element"
+          " as a string literal.")))))
+
+;; -----------------------------------------------------------------------------
+;; Eval-time auto-repair scoped to `(answer ...)` forms.
+;;
+;; Why scoped to `answer`: it's the terminal sink of the RLM loop.
+;; A failed `(answer ...)` burns an iteration, the cost-USD on the
+;; LLM call, and the user's wall-clock - and the user is staring
+;; at a spinner while the model regenerates the same long markdown
+;; payload. Inside `(answer ...)` the body is by contract
+;; markdown-shaped prose, NOT computation - so a bare-prose symbol
+;; in a `v/ul`/`v/p`/etc vector of strings has no legitimate use
+;; case. We can rewrite safely.
+;;
+;; Outside `(answer ...)` we do NOT rewrite: a bare Unicode symbol
+;; in regular code might be the intended binding (rare but legal),
+;; and silently coercing it to a string would mask real bugs.
+;;
+;; Strategies (in order):
+;;   A. Prepend `\"` before X. Works when there's no inner unescaped
+;;      `\"` between X and the enclosing `]`/`)`.
+;;   B. Prepend `\"` AND escape every unescaped `\"` inside the span
+;;      EXCEPT the last one (which becomes the natural closer).
+;;      Handles iter-0/iter-1 from conversation ec64266c-... where
+;;      the prose contained an inner `\"` (`„zjadać\"`).
+;;
+;; Pure: this fn returns candidates only. The caller (`loop/execute-code`)
+;; re-evaluates each through SCI and picks the first that succeeds,
+;; so a bad candidate just means we move on. There's no way for
+;; this fn alone to corrupt anything.
+;; -----------------------------------------------------------------------------
+
+(defn- find-enclosing-close-pos
+  "Walk forward from `idx` in `source` and return the byte position
+   of the FIRST `]` or `)` we hit at one shallower nesting level
+   than where we started. Treats string content (between unescaped
+   `\"` ... `\"`) as opaque so quotes inside strings don't confuse
+   nesting. Returns nil if no such close exists before EOF."
+  ^Long [^String source ^long idx]
+  (let [n (.length source)]
+    (loop [i idx
+           depth 0
+           in-string? false]
+      (cond
+        (>= i n) nil
+
+        (and in-string? (= \\ (.charAt source i)))
+        (recur (+ i 2) depth in-string?)
+
+        (= \" (.charAt source i))
+        (recur (inc i) depth (not in-string?))
+
+        in-string?
+        (recur (inc i) depth in-string?)
+
+        (or (= \[ (.charAt source i))
+          (= \( (.charAt source i)))
+        (recur (inc i) (inc depth) in-string?)
+
+        (or (= \] (.charAt source i))
+          (= \) (.charAt source i)))
+        (if (zero? depth)
+          i
+          (recur (inc i) (dec depth) in-string?))
+
+        :else
+        (recur (inc i) depth in-string?)))))
+
+(defn- restitch-candidates
+  "Generate ordered candidate source strings that wrap a bare prose
+   symbol starting at `idx` as a string literal. Each candidate has
+   ONE local edit; nothing outside `[idx, span-end]` changes.
+
+   See ns-level comment block above for strategy rationale."
+  [^String source ^long idx]
+  (when-let [span-end (find-enclosing-close-pos source idx)]
+    (let [span-text   (subs source idx span-end)
+          q-positions (positions-of-unescaped-quotes span-text)
+          prefix      (subs source 0 idx)
+          suffix      (subs source span-end)
+          strategy-a  (str prefix "\"" span-text suffix)
+          strategy-b  (when (seq q-positions)
+                        (let [last-q (long (last q-positions))
+                              n      (.length ^String span-text)
+                              sb     (StringBuilder.)]
+                          (.append sb prefix)
+                          (.append sb \")
+                          (loop [i 0]
+                            (when (< i n)
+                              (let [c (.charAt ^String span-text i)]
+                                (cond
+                                  (= \\ c)
+                                  (do (.append sb c)
+                                    (when (< (inc i) n)
+                                      (.append sb (.charAt ^String span-text (inc i))))
+                                    (recur (+ i 2)))
+
+                                  (and (= \" c) (not= i last-q))
+                                  (do (.append sb \\)
+                                    (.append sb \")
+                                    (recur (inc i)))
+
+                                  :else
+                                  (do (.append sb c) (recur (inc i)))))))
+                          (.append sb suffix)
+                          (.toString sb)))]
+      (cond-> [strategy-a]
+        strategy-b (conj strategy-b)))))
+
+(defn try-answer-string-restitch
+  "Repair-candidate generator for the eval-time error class
+   `Unable to resolve symbol: X` when X is a bare prose word that
+   was supposed to be a string literal inside an `(answer ...)`
+   form.
+
+   Returns a vector of source candidates in priority order, or nil
+   when:
+     - `source` doesn't contain `(answer` (out of scope),
+     - `sym` doesn't look like prose (legitimate Clojure ident
+       could be a real binding - never silently rewrite),
+     - `sym` doesn't sit in a missing-quote-shaped context,
+     - the enclosing `]`/`)` cannot be located.
+
+   Pure. The caller is responsible for re-evaluating each candidate
+   through SCI and picking the first that succeeds. A candidate
+   that re-throws is harmless - it's just discarded."
+  [^String source ^String sym]
+  (when (and (string? source)
+          (string? sym)
+          (str/includes? source "(answer")
+          (looks-like-prose? sym))
+    (when-let [idx (str/index-of source sym)]
+      (when (likely-missing-quote-context? source (long idx))
+        (let [cands (restitch-candidates source (long idx))]
+          (when (seq cands) cands))))))
+
 (defn try-quote-rebalance
   "Parinfer-equivalent for unbalanced double-quotes.
 
