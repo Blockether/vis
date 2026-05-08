@@ -12,9 +12,9 @@
    analytics extension consumes the same shape.
 
    Lives in foundation because it's an introspection surface, not host
-   plumbing. The sandbox-visible public surface is now `(v/inspect)`
-   for data and `(v/report)` for Markdown; this namespace owns the
-   transcript portion behind that deeper interface.
+   plumbing. The sandbox-visible public surface is `(v/conversation-state)`
+   for data and `(v/conversation-report)` for Markdown; this namespace
+   owns the transcript portion behind that deeper interface.
 
    Public Clojure surface:
 
@@ -653,7 +653,7 @@
   "Flatten transcript turns/iterations into compact raw-response
    diagnostic rows. Rows exist only when the iteration has persisted
    raw-response or executable-block forensic data. This is presentation
-   support for `v/report`; `v/inspect` builds its public convenience
+   support for `v/conversation-report`; `v/conversation-state` builds its public convenience
    view from the same underlying transcript fields."
   [turns]
   (vec
@@ -710,7 +710,7 @@
 (defn- render-raw-diagnostics
   "Compact raw LLM response diagnostics for the whole report. The
    table is always small; bounded previews live in collapsed details
-   blocks so `v/report` answers the first diagnostic question without
+   blocks so `v/conversation-report` answers the first diagnostic question without
    forcing users into logs or SQLite."
   [turns]
   (let [rows (raw-diagnostic-rows turns)]
