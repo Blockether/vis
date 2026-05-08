@@ -2,8 +2,8 @@
   "Programmatic introspection of the agent's own state from inside
    `:code`. The public state surface is deliberately small:
 
-   - `(v/inspect [conversation-id])` -> data map, including raw LLM diagnostics
-   - `(v/report [conversation-id])`  -> Markdown rendered from that data
+   - `(v/conversation-state [conversation-id])` -> data map, including raw LLM diagnostics
+   - `(v/conversation-report [conversation-id])` -> Markdown rendered from that data
 
    Everything else in this namespace is implementation detail. The agent
    gets the data once, manipulates it via plain Clojure (`get-in`,
@@ -563,7 +563,7 @@
             clusters))
 
         (contains? classes :provider-schema-rejected)
-        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (v/inspect)) and retry/switch model only if it repeats.")
+        (conj "Treat schema rejection as provider noise, not a reason to inspect SQLite. Use :raw-preview from (:failures (v/conversation-state)) and retry/switch model only if it repeats.")
 
         (contains? classes :regex-unsupported-escape)
         (conj (str "v/rg takes one spec map with literal vectors, not regex strings or positional args. "
@@ -662,7 +662,7 @@
 
 (defn- llm-diagnostics
   "Flatten the full transcript into the raw LLM diagnostics view exposed
-   by `v/inspect`. This is a convenience index over the canonical
+   by `v/conversation-state`. This is a convenience index over the canonical
    transcript payload, not another storage read."
   [transcript-data]
   (vec
@@ -723,28 +723,30 @@
 ;; private and named for clarity inside this ns. Re-export them under their
 ;; SCI-visible names with `:doc` and `:arglists` baked into the var meta so
 ;; `vis/symbol` can read both straight off the var.
-(def ^{:doc "Conversation introspection data."
-       :arglists '([] [conversation-id])} inspect foundation-inspect)
-(def ^{:doc "Markdown report from conversation introspection data."
-       :arglists '([] [conversation-id])} report foundation-report)
+(def ^{:doc "Full conversation state: conversation index, current turn snapshot, classified failures, diagnosis, fork/retry metadata, raw LLM diagnostics, and complete transcript. Default target = current conversation; pass a conversation-id or unambiguous prefix to inspect another."
+       :arglists '([] [conversation-id])} conversation-state foundation-inspect)
+(def ^{:doc "Complete Markdown report for a conversation: every turn, iteration, code block, result, answer, and LLM diagnostic rendered as a single Markdown artifact. Same underlying data as `v/conversation-state`. Default target = current conversation."
+       :arglists '([] [conversation-id])} conversation-report foundation-report)
 
-(def inspect-symbol
-  (vis/symbol #'inspect
-    {:examples ["(v/inspect)"]
+(def conversation-state-symbol
+  (vis/symbol #'conversation-state
+    {:examples ["(v/conversation-state)"
+                "(v/conversation-state \"eeaf9651\")"]
      :before-fn inject-environment}))
 
-(def report-symbol
-  (vis/symbol #'report
-    {:examples ["(v/report)"]
+(def conversation-report-symbol
+  (vis/symbol #'conversation-report
+    {:examples ["(v/conversation-report)"
+                "(v/conversation-report \"eeaf9651\")"]
      :before-fn inject-environment}))
 
 (def all-symbols
-  [inspect-symbol
-   report-symbol])
+  [conversation-state-symbol
+   conversation-report-symbol])
 
 (def introspection-prompt
-  (str "`v/` state: (v/inspect cid?) -> data; (v/report cid?) -> Markdown.\n"
-    "`v/` docs: (v/extensions), (v/extension-docs ref), (v/extension-doc ref), (v/extension-readme ref), (v/namespace-docs ref), (v/symbol-doc ref sym).\n"))
+  (str "`v/` conversation state: (v/conversation-state cid?) -> full conversation data map (turns, iterations, failures, diagnosis, transcript, LLM diagnostics).\n"
+    "`v/` conversation report: (v/conversation-report cid?) -> complete Markdown report of the same data.\n"))
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

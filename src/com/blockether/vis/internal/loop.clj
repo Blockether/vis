@@ -1395,7 +1395,8 @@
                          (cond-> {:lang     "clojure"
                                   :messages messages
                                   :routing  (or routing {})
-                                  :check-context? true}
+                                  :check-context? true
+                                  :preserved-thinking? true}
                            effective-reasoning (assoc :reasoning effective-reasoning)
                            streaming-fn        (assoc :on-chunk streaming-fn)
                            extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
@@ -2406,7 +2407,7 @@
     ;; -----------------------------------------------------------------
     ;; TURN_USER_REQUEST retired. The current human turn text and richer
     ;; per-iteration / cross-turn history both flow through
-    ;; `(v/inspect)` -> :current-turn :user-request / :transcript :turns.
+    ;; `(v/conversation-state)` -> :current-turn :user-request / :transcript :turns.
     (env/bind-and-bump! environment 'TURN_CONVERSATION_TURN_ID conversation-turn-id)
     (env/bind-and-bump! environment 'TURN_CONVERSATION_SOUL_ID
       (:conversation-id environment))
@@ -2963,7 +2964,7 @@
           ;;   2. (The retired `TURN_USER_REQUEST` SYSTEM var, bound from
           ;;      this same string, grew with each turn instead of
           ;;      reflecting the current ask. Surface now flows through
-          ;;      `(v/inspect)` -> :current-turn :user-request.)
+          ;;      `(v/conversation-state)` -> :current-turn :user-request.)
           ;;   3. The synthetic `{:requirement ...}` frame the LLM sees
           ;;      restated the whole conversation as the "requirement".
           ;;
@@ -3791,7 +3792,7 @@
                                      :vis/silent))
         ;; The retired `TURN_USER_REQUEST` SYSTEM var has no replacement
         ;; binding by design - the same data already flows through
-        ;; `(v/inspect)` -> :current-turn :user-request (and through
+        ;; `(v/conversation-state)` -> :current-turn :user-request (and through
         ;; :transcript :turns for cross-turn history), so a separate
         ;; sandbox primitive would just duplicate the surface.
         env-bindings             (merge {'var-history          var-history-fn
