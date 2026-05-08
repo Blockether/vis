@@ -5,8 +5,7 @@
    middle of a form. Four sources, each contributing its
    `:ext/symbols` vec and its share of the merged `:ext/prompt`:
 
-     introspection.clj          (v/inspect, v/report,
-                                 v/extensions, v/extension-doc, ...)
+     introspection.clj          (v/conversation-state, v/conversation-report)
      editing/core.clj           (v/cat, v/ls, v/rg, v/bash,
                                  thin babashka.fs wrappers)
      markdown.clj               (v/h1, v/p, v/table,
@@ -88,7 +87,7 @@
 (def vis-extension
   (vis/extension
     {:ext/namespace      'com.blockether.vis.ext.foundation.core
-     :ext/doc            "Foundation `v/`: inspect/report, file I/O, bash, markdown answer builders (h1/p/table/file-link/join/code-block/details), env snapshot, project guidance, skills, scan warnings, doctor/report CLI."
+     :ext/doc            "Foundation `v/`: conversation-state/conversation-report, file I/O (cat/ls/rg/patch/bash), markdown answer builders (h1/p/table/file-link/join/code-block/details), env snapshot, project guidance, skills, scan warnings, doctor/reproduction CLI."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

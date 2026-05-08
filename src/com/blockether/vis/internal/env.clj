@@ -16,7 +16,6 @@
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.persistance :as persistance]
-   [lazytest.core :as lazytest]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
    [taoensso.telemere :as tel]))
@@ -185,8 +184,9 @@
                        (or custom-bindings {}))
         str-ns  (sci/create-ns 'clojure.string nil)
         set-ns  (sci/create-ns 'clojure.set nil)
-        walk-ns (sci/create-ns 'clojure.walk nil)
-        plus-ns (sci/create-ns 'clojure+.core nil)
+        walk-ns   (sci/create-ns 'clojure.walk nil)
+        c+walk-ns (sci/create-ns 'clojure+.walk nil)
+        plus-ns   (sci/create-ns 'clojure+.core nil)
         spec-ns (sci/create-ns 'clojure.spec.alpha nil)
         ;; Patch clojure.string/split so string delimiters auto-promote to
         ;; Patterns. The original raises a late ClassCastException when an
@@ -213,6 +213,7 @@
                                                     'clojure.string str-ns-copied
                                                     'clojure.set (sci/copy-ns clojure.set set-ns)
                                                     'clojure.walk (sci/copy-ns clojure+.walk walk-ns)
+                                                    'clojure+.walk (sci/copy-ns clojure+.walk c+walk-ns)
                                                     'clojure+.core (sci/copy-ns clojure+.core plus-ns)
                                                     ;; clojure.spec.alpha - LLMs reach for s/def / s/valid? /
                                                     ;; s/keys / s/and / s/conform reflexively when given a
@@ -250,13 +251,7 @@
                                                                   'configure-all!  fmt/safe-configure-zprint!}
                                                     'clojure.pprint {'pprint     fmt/safe-pprint
                                                                      'pprint-str fmt/safe-pprint-str}
-                                                    'lazytest.core {'expect-fn       lazytest/expect-fn
-                                                                    'ok?              lazytest/ok?
-                                                                    'throws?          lazytest/throws?
-                                                                    'causes?          lazytest/causes?
-                                                                    'causes-with-msg? lazytest/causes-with-msg?}
-                                                    'clojure.test {'is      lazytest/expect-fn
-                                                                   'throws? lazytest/throws?}
+
                                                     'charred.api (ns->sci-map 'charred.api)}
                                        :readers {'p (fn [form]
                                                       (list 'do
@@ -269,9 +264,8 @@
                                                     'pp 'clojure.pprint
                                                     'set 'clojure.set
                                                     'walk 'clojure.walk
+                                                    'c+walk 'clojure+.walk
                                                     'json 'charred.api
-                                                    'lt 'lazytest.core
-                                                    'test 'clojure.test
                                                     'c+ 'clojure+.core
                                                     's 'clojure.spec.alpha}
                                        :classes {'java.lang.Character Character
@@ -452,7 +446,7 @@
 ;;                                 closure over `:current-user-request-atom` -
 ;;                                 so the value is not pumped into per-iteration
 ;;                                 var-history rows. For richer history use
-;;                                 `(v/inspect)` -> `:current-turn`/`:transcript`.)
+;;                                 `(v/conversation-state)` -> `:current-turn`/`:transcript`.)
 ;;     TURN_CONVERSATION_SOUL_ID   UUID of the conversation_soul this turn lives under.
 ;;     TURN_CONVERSATION_STATE_ID  UUID of the latest conversation_state row at
 ;;                                 turn start. Stable for the whole turn even if a

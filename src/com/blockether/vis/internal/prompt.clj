@@ -6,7 +6,7 @@
      1. System prompt - written once, cached per conversation.
         `assemble-system-prompt` joins tagged blocks: <system_prompt>,
         <environment-info>, <extensions>, <skills> (summaries only),
-        and provider-specific prompt. Stable for the conversation
+        and <llm_model_prompt>. Stable for the conversation
         lifetime so providers can cache it. Full skill bodies are
         not in the cached prompt; they arrive only after the model
         calls `(load-skill ...)`.
@@ -36,7 +36,7 @@
    cover everything the model needs. SYSTEM vars are direct sandbox
    bindings - reference them by name; they are not re-serialized
    into the trailer. The retired `TURN_USER_REQUEST` lives on as the
-   sandbox `(turn-request)` fn; richer history flows through `(v/inspect)`.
+   sandbox `(turn-request)` fn; richer history flows through `(v/conversation-state)`.
 
    Context-floor contract (CTX1; see prompt-test):
 
@@ -58,7 +58,7 @@
      stay in SCI vars and persisted iteration / block rows. The
      renderer never emits a full multi-KB tool / file payload
      into context; it emits a bounded preview and the model can
-     fetch the full value through foundation APIs (`v/inspect`,
+     fetch the full value through foundation APIs (`v/conversation-state`,
      `v/event`, `v/preview`, or the live SCI var binding)."
   (:require
    [clojure.string :as str]
@@ -481,7 +481,7 @@
           "  Keys above are illustrative - use whatever shape fits the\n"
           "  task. Atoms preferred (file paths, symbol names, error keys,\n"
           "  concrete values) over prose. Raw iteration output stays reachable via\n"
-          "  `(v/inspect)` after journal lines roll off; use its :transcript\n"
+          "  `(v/conversation-state)` after journal lines roll off; use its :transcript\n"
           "  and :failures keys when you genuinely need precision your\n"
           "  `(def ...)` didn't capture.")))))
 
@@ -917,17 +917,17 @@
             (sort-by :name all-skills)))))))
 
 (defn- provider-prompt-block
-  "Render `<specific_provider_model_prompt>` by calling the active
-   provider's `:provider/prompt-fn` with the prompt context built by
-   the loop layer. Returns nil when no provider hook is configured or
-   when it returns blank."
+  "Render `<llm_model_prompt>` by calling the active provider's
+   `:provider/prompt-fn` with the prompt context built by the loop
+   layer. Returns nil when no provider hook is configured or when
+   it returns blank."
   [provider-prompt-context]
   (when-let [{:keys [descriptor] :as ctx} provider-prompt-context]
     (when-let [f (:provider/prompt-fn descriptor)]
       (try
         (let [result (f ctx)]
           (when (and (string? result) (not (str/blank? result)))
-            (prompt-block "specific_provider_model_prompt" result)))
+            (prompt-block "llm_model_prompt" result)))
         (catch Throwable t
           (tel/log! {:level :warn
                      :id ::provider-prompt-error
@@ -944,7 +944,7 @@
      `<environment-info>`                 - host/git/project facts from extensions
      `<extensions>`                       - extension `:ext/prompt` fragments
      `<skills>`                           - skill name + description summaries
-     `<specific_provider_model_prompt>`   - provider-specific prompt hook
+     `<llm_model_prompt>`                 - provider/model-specific prompt hook
 
    Stable for the conversation lifetime so providers can cache it.
    Full skill bodies are not in the cached prompt; they arrive only

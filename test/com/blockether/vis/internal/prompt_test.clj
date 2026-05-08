@@ -58,6 +58,7 @@
                    :system-prompt nil})]
         (expect (not (str/includes? out "<extensions>")))
         (expect (not (str/includes? out "<environment-info>")))
+        (expect (not (str/includes? out "<llm_model_prompt")))
         (expect (not (str/includes? out "<specific_provider_model_prompt"))))))
 
   (it "includes <extensions> when an active extension provides :ext/prompt"

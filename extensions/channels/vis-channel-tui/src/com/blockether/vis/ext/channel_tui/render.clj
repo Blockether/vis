@@ -2259,6 +2259,42 @@
     (detail-node-base-id detail-ctx)
     (when (seq details-path) (str ":d" (str/join "." details-path)))))
 
+(defn- relevant-detail-expansions-key
+  "Stable cache key for only the disclosure nodes this Markdown projection
+   can render. A click in one old answer must not bust cached projections for
+   every other visible answer. Scope by conversation + node-id base."
+  [opts]
+  (let [conversation-id (some-> (:conversation-id opts) str)
+        base            (detail-node-base-id opts)
+        prefix          (str base ":")]
+    (->> (:detail-expansions opts)
+      (keep (fn [[[cid node-id] expanded?]]
+              (let [node-id (str node-id)]
+                (when (and (= conversation-id (str cid))
+                        (or (= base node-id)
+                          (str/starts-with? node-id prefix)))
+                  [node-id expanded?]))))
+      sort
+      vec)))
+
+(defn- turn-detail-expansions-key
+  "Stable cache key for any disclosure belonging to this rendered assistant
+   turn. Used by the outer trace+answer projection, which may contain thinking,
+   iteration, tool/result, and final-answer disclosures."
+  [opts]
+  (let [conversation-id (some-> (:conversation-id opts) str)
+        turn-fragment   (some-> (:conversation-turn-id opts) short-id-fragment)
+        turn-token      (when turn-fragment (str ":t" turn-fragment))]
+    (->> (:detail-expansions opts)
+      (keep (fn [[[cid node-id] expanded?]]
+              (let [node-id (str node-id)]
+                (when (and (= conversation-id (str cid))
+                        (or (nil? turn-token)
+                          (str/includes? node-id turn-token)))
+                  [node-id expanded?]))))
+      sort
+      vec)))
+
 (defn- search-spec-summary
   [{:keys [spec paths]}]
   (when (map? spec)
@@ -3887,8 +3923,8 @@
       (re-matches #"^([-*_])\1{2,}$" t)         ;; horizontal rule
       (re-matches #"^>\s?.*" t)                 ;; blockquote
       (re-matches #"^\|.*\|$" t)                ;; pipe-table row
-      (re-matches #"^</?details(\s[^>]*)?>$" t) ;; details framing tags
-      (re-matches #"^<summary>.*</summary>$" t) ;; summary tag
+      (re-matches #"(?i)^</?details(\s[^>]*)?>$" t) ;; details framing tags
+      (re-matches #"(?i)^<summary>.*</summary>$" t) ;; summary tag
       (top-level-bold-paragraph-line? t))))      ;; **prefix:** value
 
 (def ^:private continuation-tail-char?
@@ -4122,11 +4158,11 @@
                (let [[tbl tail] (consume-table lines max-w m)]
                  (recur (seq tail) false (into acc tbl)))
 
-               (re-matches #"^\s*</?details(\s[^>]*)?>\s*$" line)
+               (re-matches #"(?i)^\s*</?details(\s[^>]*)?>\s*$" line)
                (recur rst false acc)
 
-               (re-matches #"^\s*<summary>.*</summary>\s*$" line)
-               (let [[_ inner] (re-matches #"^\s*<summary>(.*)</summary>\s*$" line)
+               (re-matches #"(?i)^\s*<summary>.*</summary>\s*$" line)
+               (let [[_ inner] (re-matches #"(?i)^\s*<summary>(.*)</summary>\s*$" line)
                      decorated (markdown->inline (or inner ""))
                      prefix    "▾ "
                      wrap-w    (max 1 (- max-w (count prefix)))]
@@ -4215,19 +4251,21 @@
 
 (defn- detail-open-kind [line]
   (when-let [[_ tag] (and (string? line)
-                       (re-matches #"^\s*<(details)(?:\s[^>]*)?>\s*$" line))]
-    (keyword tag)))
+                       (re-matches #"(?i)^\s*<(details)(?:\s[^>]*)?>\s*$" line))]
+    ;; HTML/CommonMark tags are case-insensitive; normalise so downstream
+    ;; cache keys and meta stay stable regardless of `<Details>` vs `<details>`.
+    (keyword (str/lower-case tag))))
 
 (defn- details-open-line? [line]
   (boolean (detail-open-kind line)))
 
 (defn- details-close-line? [line]
   (boolean (and (string? line)
-             (re-matches #"^\s*</details>\s*$" line))))
+             (re-matches #"(?i)^\s*</details>\s*$" line))))
 
 (defn- summary-content [line]
   (when-let [[_ inner] (and (string? line)
-                         (re-matches #"^\s*<summary>(.*)</summary>\s*$" line))]
+                         (re-matches #"(?i)^\s*<summary>(.*)</summary>\s*$" line))]
     inner))
 
 (defn- trim-trailing-blank-lines
@@ -4308,42 +4346,6 @@
                                            :node-id node-id))
                  (when expanded? body-entries))))))
     segments))
-
-(defn- relevant-detail-expansions-key
-  "Stable cache key for only the disclosure nodes this Markdown projection
-   can render. A click in one old answer must not bust cached projections for
-   every other visible answer. Scope by conversation + node-id base."
-  [opts]
-  (let [conversation-id (some-> (:conversation-id opts) str)
-        base            (detail-node-base-id opts)
-        prefix          (str base ":")]
-    (->> (:detail-expansions opts)
-      (keep (fn [[[cid node-id] expanded?]]
-              (let [node-id (str node-id)]
-                (when (and (= conversation-id (str cid))
-                        (or (= base node-id)
-                          (str/starts-with? node-id prefix)))
-                  [node-id expanded?]))))
-      sort
-      vec)))
-
-(defn- turn-detail-expansions-key
-  "Stable cache key for any disclosure belonging to this rendered assistant
-   turn. Used by the outer trace+answer projection, which may contain thinking,
-   iteration, tool/result, and final-answer disclosures."
-  [opts]
-  (let [conversation-id (some-> (:conversation-id opts) str)
-        turn-fragment   (some-> (:conversation-turn-id opts) short-id-fragment)
-        turn-token      (when turn-fragment (str ":t" turn-fragment))]
-    (->> (:detail-expansions opts)
-      (keep (fn [[[cid node-id] expanded?]]
-              (let [node-id (str node-id)]
-                (when (and (= conversation-id (str cid))
-                        (or (nil? turn-token)
-                          (str/includes? node-id turn-token)))
-                  [node-id expanded?]))))
-      sort
-      vec)))
 
 (defn- markdown-entries-cache-key
   [text max-w mode opts]
