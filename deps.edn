@@ -59,7 +59,7 @@
   ;;   org.babashka/http-client → vis-channel-telegram + vis-provider-github-copilot + vis-exa
   ;;   rewrite-clj              → vis-language-clojure
   ;;   lanterna                 → vis-channel-tui
-  com.blockether/svar              {:mvn/version "0.4.10"}
+  com.blockether/svar              {:mvn/version "0.4.11"}
   com.blockether/anomaly           {:mvn/version "1.0.1"}
   babashka/process                 {:mvn/version "0.6.25"}
   org.clojure/clojure              {:mvn/version "1.12.4"}
