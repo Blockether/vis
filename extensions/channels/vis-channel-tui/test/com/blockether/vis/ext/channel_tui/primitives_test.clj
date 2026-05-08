@@ -12,14 +12,14 @@
 
 (def ASCII       "abc")          ;; 3 cells / 3 chars / 3 columns
 (def CJK         "日本語")        ;; 3 cells / 3 chars / 6 columns (each glyph double-width)
-(def EMOJI_BMP_TEXT   "\u2615")  ;; 1 cell / 1 char / TWO cols (☕ hot beverage — Emoji_Presentation=Yes)
-(def EMOJI_BMP_NARROW "\u2764")  ;; 1 cell / 1 char / 1  col   (❤ heavy heart — Emoji_Presentation=No, narrow without VS-16)
-(def EMOJI_BMP_WIDE   "\u2705")  ;; 1 cell / 1 char / TWO cols (✅ white check mark button — the bug)
+(def EMOJI_BMP_TEXT   "\u2615")  ;; 1 cell / 1 char / TWO cols (☕ hot beverage - Emoji_Presentation=Yes)
+(def EMOJI_BMP_NARROW "\u2764")  ;; 1 cell / 1 char / 1  col   (❤ heavy heart - Emoji_Presentation=No, narrow without VS-16)
+(def EMOJI_BMP_WIDE   "\u2705")  ;; 1 cell / 1 char / TWO cols (✅ white check mark button - the bug)
 (def EMOJI_BMP_STAR   "\u2B50")  ;; 1 cell / 1 char / TWO cols (⭐ star)
 (def EMOJI_BMP_BOLT   "\u26A1")  ;; 1 cell / 1 char / TWO cols (⚡ high voltage)
-(def EMOJI_SMP   "\uD83D\uDCC1")  ;; 1 cell / 2 chars / 2 columns (📁 — supplementary plane)
-(def FLAG_PL     "\uD83C\uDDF5\uD83C\uDDF1") ;; 1 cell / 4 chars / 2 columns (🇵🇱 — regional indicator pair)
-(def MIXED       (str "x " EMOJI_SMP " y")) ;; "x 📁 y" — 5 cells / 6 chars / 6 columns
+(def EMOJI_SMP   "\uD83D\uDCC1")  ;; 1 cell / 2 chars / 2 columns (📁 - supplementary plane)
+(def FLAG_PL     "\uD83C\uDDF5\uD83C\uDDF1") ;; 1 cell / 4 chars / 2 columns (🇵🇱 - regional indicator pair)
+(def MIXED       (str "x " EMOJI_SMP " y")) ;; "x 📁 y" - 5 cells / 6 chars / 6 columns
 
 (defdescribe display-width-test
   (describe "display-width counts terminal columns, not Java chars"
@@ -34,10 +34,10 @@
 
   (describe "control characters are sanitized, NEVER throw (regression: conv 954bf315)"
     ;; Pre-sanitizer, Lanterna's `TextCharacter.fromString` threw on
-    ;; any C0 byte (0x00–0x1F), the render thread's catch-all
+    ;; any C0 byte (0x00-0x1F), the render thread's catch-all
     ;; swallowed it, the bubble silently failed to paint, the user
     ;; saw a blank scrollback. Each control byte must now degrade to
-    ;; a single visible · column instead of taking the thread down.
+    ;; a single visible / column instead of taking the thread down.
     (it "newline (0x0a) does not throw"
       (expect (= 5 (p/display-width "a\nb c"))))
     (it "tab (0x09) does not throw"
@@ -87,10 +87,10 @@
     (it "ASCII matches max-cols verbatim"
       (expect (= 3 (p/col-prefix-end "abcdef" 3))))
     (it "CJK stops at the last whole glyph that fits"
-      ;; "日本語" — each glyph 2 cols. max-cols=5 → fit 2 glyphs (4 cols), drop 3rd.
+      ;; "日本語" - each glyph 2 cols. max-cols=5 -> fit 2 glyphs (4 cols), drop 3rd.
       (expect (= 2 (p/col-prefix-end CJK 5))))
     (it "SMP emoji is atomic"
-      ;; "x📁y" → max-cols=2 should yield "x" only (the emoji is 2 cols and would overflow).
+      ;; "x📁y" -> max-cols=2 should yield "x" only (the emoji is 2 cols and would overflow).
       (expect (= 1 (p/col-prefix-end (str "x" EMOJI_SMP "y") 2))))
     (it "Returns full length when string fits"
       (expect (= (.length CJK) (p/col-prefix-end CJK 99))))
@@ -107,7 +107,7 @@
       (expect (= "日本" (p/truncate-cols CJK 4))))
     (it "Cutting an emoji boundary drops the emoji and pads with one space"
       ;; "x 📁" has display-width 4. truncating to 3 must NOT include
-      ;; half of 📁 — drop it, pad to keep width invariant.
+      ;; half of 📁 - drop it, pad to keep width invariant.
       (let [out (p/truncate-cols (str "x " EMOJI_SMP) 3)]
         (expect (= 3 (p/display-width out)))
         (expect (= "x  " out))))

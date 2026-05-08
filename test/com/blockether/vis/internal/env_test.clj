@@ -2,20 +2,20 @@
   "Smoke + alias coverage for `internal/env`'s SCI sandbox.
 
    Why it exists:
-     1. AGENTS.md's hard rule — every source namespace ships with a
+     1. AGENTS.md's hard rule - every source namespace ships with a
         `_test.clj`. `env.clj` is the SCI sandbox factory; nothing
         in the runtime is more central, and a regression here
         silently breaks every model call.
      2. The `:ns-aliases` map is the model's main contact surface
         with the host stdlib. The system prompt advertises specific
-        short-form aliases (`str/`, `set/`, `walk/`, `s/`, …) and a
+        short-form aliases (`str/`, `set/`, `walk/`, `s/`, ...) and a
         regression that quietly drops one of those mappings would
         surface only in the model trace as `Unable to resolve
         symbol`. Pinning the alias resolution here means a typo /
         accidental drop fails CI instead of a turn.
      3. `clojure.spec.alpha` is special: spec macros expand into
         internal `*-impl` helpers (`def-impl`, `and-spec-impl`,
-        `cat-impl`, …) that all carry `^:skip-wiki` meta. Without
+        `cat-impl`, ...) that all carry `^:skip-wiki` meta. Without
         an explicit `:exclude-when-meta []` opt-out, `sci/copy-ns`
         filters the impls out and `(s/def ::id int?)` blows up at
         runtime with `Unable to resolve symbol:
@@ -44,7 +44,7 @@
 (defn- run-concurrently!
   "Run `f` and `g` from the same start gate, return a vec of any thrown
    messages tagged with the worker label. The zprint regression needs real
-   overlap — sequential calls never tickle the library's global in-flight
+   overlap - sequential calls never tickle the library's global in-flight
    guard."
   [f g]
   (let [gate (CountDownLatch. 1)
@@ -131,7 +131,7 @@
 (defdescribe zprint-concurrency-regression-test
   (describe "sandbox pretty-printing shares the render path's zprint lock"
     ;; The user's conversation hit exactly this race: sandbox
-    ;; `(pp/pprint-str …)` formatted a data structure while the TUI
+    ;; `(pp/pprint-str ...)` formatted a data structure while the TUI
     ;; render thread formatted code with `:parse-string? true`, and
     ;; zprint exploded with `Attempted to run zprint with type ...`.
     ;;
@@ -163,7 +163,7 @@
     ;; Spec is the regression-net flagship of this file. The macros
     ;; expand into `^:skip-wiki` impl helpers; if we ever drop the
     ;; `:exclude-when-meta []` opt-out from `(sci/copy-ns
-    ;; clojure.spec.alpha …)` every assertion below blows up and
+    ;; clojure.spec.alpha ...)` every assertion below blows up and
     ;; tells us exactly that.
 
     (it "`s/def` registers a predicate spec; `s/valid?` reads it back"
@@ -231,9 +231,9 @@
   ;; `(catch Exception e (.getMessage e))` blew up with
   ;; "Method getMessage on class java.lang.NullPointerException not
   ;; allowed!" because only `java.lang.Exception` was on SCI's
-  ;; `:classes` allow-list — SCI checks methods against the actual
+  ;; `:classes` allow-list - SCI checks methods against the actual
   ;; runtime class, and the thrown instance was an NPE / IAE / ISE.
-  ;; The model wrote idiomatic `(catch … (.getMessage e))` and
+  ;; The model wrote idiomatic `(catch ... (.getMessage e))` and
   ;; got back gibberish for an entire iteration.
   ;;
   ;; Each `it` below exercises one common runtime-exception class.
@@ -241,31 +241,31 @@
   ;; `:imports` lights up the matching test instead of bouncing the
   ;; LLM through wasted iterations.
   (describe "every common runtime exception's `.getMessage` is callable"
-    (it "NullPointerException — the original repro"
+    (it "NullPointerException - the original repro"
       (let [ctx (fresh-ctx)]
         (expect (= "oops" (eval-in ctx
                             "(try (throw (NullPointerException. \"oops\"))
                                   (catch Exception e (.getMessage e)))")))))
 
-    (it "IllegalArgumentException — `(into 5 [1])` etc."
+    (it "IllegalArgumentException - `(into 5 [1])` etc."
       (let [ctx (fresh-ctx)]
         (expect (= "bad arg" (eval-in ctx
                                "(try (throw (IllegalArgumentException. \"bad arg\"))
                                      (catch Exception e (.getMessage e)))")))))
 
-    (it "IllegalStateException — typical clj transducer / atom violations"
+    (it "IllegalStateException - typical clj transducer / atom violations"
       (let [ctx (fresh-ctx)]
         (expect (= "bad state" (eval-in ctx
                                  "(try (throw (IllegalStateException. \"bad state\"))
                                        (catch Exception e (.getMessage e)))")))))
 
-    (it "ClassCastException — type errors"
+    (it "ClassCastException - type errors"
       (let [ctx (fresh-ctx)]
         (expect (= "cast" (eval-in ctx
                             "(try (throw (ClassCastException. \"cast\"))
                                   (catch Exception e (.getMessage e)))")))))
 
-    (it "ArithmeticException — divide by zero"
+    (it "ArithmeticException - divide by zero"
       (let [ctx (fresh-ctx)]
         ;; The model's most natural form: catch the runtime division
         ;; error and surface its message. Pre-fix this threw
@@ -276,15 +276,15 @@
                     "(try (/ 1 0)
                           (catch Exception e (.getMessage e)))")))))
 
-    (it "NumberFormatException — bad parse"
+    (it "NumberFormatException - bad parse"
       (let [ctx (fresh-ctx)]
         (expect (string?
                   (eval-in ctx
                     "(try (Long/parseLong \"NaN\")
                           (catch Exception e (.getMessage e)))")))))
 
-    (it "`(catch Throwable t …)` short form resolves via :imports"
-      ;; Confirms that the import alias was added too — not just the
+    (it "`(catch Throwable t ...)` short form resolves via :imports"
+      ;; Confirms that the import alias was added too - not just the
       ;; FQN class entry. Without the import, `(catch Throwable t)`
       ;; would throw "Could not resolve class: Throwable".
       (let [ctx (fresh-ctx)]
@@ -292,7 +292,7 @@
                          "(try (throw (RuntimeException. \"x\"))
                                (catch Throwable t (.getMessage t)))")))))
 
-    (it "`(catch NullPointerException e …)` short form resolves"
+    (it "`(catch NullPointerException e ...)` short form resolves"
       (let [ctx (fresh-ctx)]
         (expect (= "npe" (eval-in ctx
                            "(try (throw (NullPointerException. \"npe\"))

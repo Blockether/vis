@@ -12,7 +12,7 @@
      input thread can land BETWEEN the per-row registrations of
      a single frame. With a single-buffer design the input thread
      would see a partially-filled vec and miss clicks on chrome
-     rows that hadn't been painted yet — the very bug that made
+     rows that hadn't been painted yet - the very bug that made
      the header copy-id button feel \"sometimes broken\". The
      staged buffer is private to the render thread; `commit-frame!`
      publishes the WHOLE frame's regions in a single atomic swap,
@@ -20,11 +20,11 @@
      until commit, the new one after).
 
    - The renderer paints into a Lanterna `TextGraphics` object that
-     has no place to attach \"and also \u2014 here are the clickable
+     has no place to attach \"and also - here are the clickable
      bits I just drew.\" We'd otherwise need a parallel return
      channel through every paint helper.
 
-   - The set is small (tens of entries at most \u2014 the visible
+   - The set is small (tens of entries at most - the visible
      scrollback's worth of links); a linear scan on lookup is
      fine and removes the need for any spatial-index dance.
 
@@ -54,13 +54,13 @@
 ;; pipeline can communicate \"this one is blocked\" to the user.
 ;; They never produce an open!.
 
-;; PUBLISHED registry — what `lookup` reads. Holds the LAST fully
+;; PUBLISHED registry - what `lookup` reads. Holds the LAST fully
 ;; committed frame's regions. The vec is small (tens of entries)
 ;; so a linear scan on lookup is fine and we avoid the locking
 ;; dance a spatial index would need.
 (defonce ^:private regions-atom (atom []))
 
-;; STAGING buffer — only the render thread writes. Filled by
+;; STAGING buffer - only the render thread writes. Filled by
 ;; `register!` between `begin-frame!` and `commit-frame!`. The
 ;; input thread never reads this; lookups always go to
 ;; `regions-atom` so a half-filled staging buffer never leaks.
@@ -80,7 +80,7 @@
 (defn begin-frame!
   "Open a new paint pass: drop every staged region. Call once at the
    top of every full chat repaint, BEFORE any `register!`. Does not
-   touch the published registry — `lookup` keeps returning the
+   touch the published registry - `lookup` keeps returning the
    previous frame's regions until `commit-frame!` runs."
   []
   (clojure.core/reset! staging-atom []))
@@ -92,7 +92,7 @@
    (matches what the user actually sees on screen). Regions become
    visible to `lookup` only after `commit-frame!`.
 
-   Validates the bounds shape \u2014 silently dropping a bad entry
+   Validates the bounds shape - silently dropping a bad entry
    would mask renderer bugs."
   [{:keys [bounds] :as region}]
   (assert (map? bounds))
@@ -104,7 +104,7 @@
 (defn commit-frame!
   "Atomically publish the staged regions as the new live set. Call
    once at the END of every full chat repaint, after every painter
-   (messages area, header, footer, …) has registered its regions.
+   (messages area, header, footer, ...) has registered its regions.
    `lookup` then sees the freshly-painted frame in a single step,
    never a partial buffer."
   []
@@ -125,8 +125,8 @@
 
 (defn current
   "Snapshot of every currently-registered region, in paint order.
-   The renderer reads this on every paint to decide which row \u2014
-   if any \u2014 to highlight."
+   The renderer reads this on every paint to decide which row -
+   if any - to highlight."
   []
   @regions-atom)
 

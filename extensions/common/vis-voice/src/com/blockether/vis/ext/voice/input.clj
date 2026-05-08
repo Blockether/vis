@@ -86,9 +86,9 @@
   [audio-file workspace-id]
   (future
     (try
-      (voice-status! "● Transcribing…" :info)
+      (voice-status! "● Transcribing..." :info)
       (let [raw (asr/transcribe-file! audio-file)]
-        (voice-status! "● Rewrite…" :info)
+        (voice-status! "● Rewrite..." :info)
         (let [rewritten (rewrite/rewrite-transcript! raw)
               text      (if (str/blank? rewritten) raw rewritten)]
           (publish! (cond-> {:op :input/append

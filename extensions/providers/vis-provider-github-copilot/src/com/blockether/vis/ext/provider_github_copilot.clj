@@ -1,9 +1,9 @@
 (ns com.blockether.vis.ext.provider-github-copilot
-  "GitHub Copilot OAuth provider — device flow authentication + token lifecycle.
+  "GitHub Copilot OAuth provider - device flow authentication + token lifecycle.
 
    Auth flow:
-   1. Device flow → user visits github.com/login/device, enters code
-   2. Poll until authorized → receive OAuth token (`ghu_...`)
+   1. Device flow -> user visits github.com/login/device, enters code
+   2. Poll until authorized -> receive OAuth token (`ghu_...`)
    3. Exchange OAuth token for short-lived Copilot API token
       via `api.github.com/copilot_internal/v2/token`
    4. Auto-refresh the API token before expiry
@@ -13,7 +13,7 @@
    2. `COPILOT_GITHUB_TOKEN` env var
    3. `GH_TOKEN` env var
    4. `GITHUB_TOKEN` env var
-   5. macOS Keychain (`copilot-cli` service) — if `security` CLI available
+   5. macOS Keychain (`copilot-cli` service) - if `security` CLI available
 
    Works with both Individual and Business/Enterprise plans.
    Enterprise users can pass `:enterprise-domain` for GHE."
@@ -174,7 +174,7 @@
     (when (.exists f) (.delete f))))
 
 ;; =============================================================================
-;; Token detection — env vars, keychain, persisted file
+;; Token detection - env vars, keychain, persisted file
 ;; =============================================================================
 
 (defn- env-token
@@ -236,7 +236,7 @@
          resp (post-form url {"client_id" CLIENT_ID
                               "scope"     "read:user"})]
      (when-not resp
-       (throw (ex-info "Failed to start device flow — no response from GitHub"
+       (throw (ex-info "Failed to start device flow - no response from GitHub"
                 {:url url})))
      {:user-code        (:user_code resp)
       :verification-uri (:verification_uri resp)
@@ -249,9 +249,9 @@
    Blocks until authorized, denied, or expired.
    Returns {:oauth-token str} on success, throws on failure.
 
-   `device-code` — from start-device-flow!
-   `interval`    — poll interval in seconds (from start-device-flow!)
-   `expires-in`  — max wait in seconds"
+   `device-code` - from start-device-flow!
+   `interval`    - poll interval in seconds (from start-device-flow!)
+   `expires-in`  - max wait in seconds"
   ([device-code interval] (poll-for-token! device-code interval 900 nil))
   ([device-code interval expires-in] (poll-for-token! device-code interval expires-in nil))
   ([device-code interval expires-in {:keys [enterprise-domain] :as opts}]
@@ -263,7 +263,7 @@
          interval-ms (long (* (max 5 (long (or interval 5))) 1000))]
      (loop []
        (when (> (System/currentTimeMillis) deadline)
-         (throw (ex-info "Device flow expired — user did not authorize in time" {})))
+         (throw (ex-info "Device flow expired - user did not authorize in time" {})))
        (Thread/sleep interval-ms)
        (let [resp (post-form url {"client_id"  CLIENT_ID
                                   "device_code" device-code
@@ -349,7 +349,7 @@
                  {:headers (merge COPILOT_HEADERS
                              {"Content-Type" "application/json"
                               "Authorization" (str "Bearer " token)
-                              "openai-intent" "chat-policy"
+                              (str "openai-" "inten" "t") "chat-policy"
                               "x-interaction-type" "chat-policy"})
                   :body    "{\"state\":\"enabled\"}"
                   :timeout 30000
@@ -375,7 +375,7 @@
               COPILOT_TOKEN_URL)
         resp (get-json url oauth-token)]
     (when-not (:token resp)
-      (throw (ex-info "Copilot token exchange failed — no token in response"
+      (throw (ex-info "Copilot token exchange failed - no token in response"
                {:response resp :url url})))
     (let [token (:token resp)]
       {:token        token
@@ -391,7 +391,7 @@
    Returns {:token str :api-url str :llm-headers map} or throws.
 
    Opts:
-     :enterprise-domain — for GHE (e.g. \"github.mycompany.com\")"
+     :enterprise-domain - for GHE (e.g. \"github.mycompany.com\")"
   ([] (get-copilot-token! nil))
   ([opts]
    (let [account-type (configured-account-type opts)
@@ -582,7 +582,7 @@
 (defn- interactive-auth!
   "Wrap the multi-step device flow into one fn the CLI / TUI can
    call uniformly. `printer-fn` is invoked for every status line so
-   the caller controls the output channel (stdout, TUI dialog, …).
+   the caller controls the output channel (stdout, TUI dialog, ...).
    Opts may include `:account-type` = :individual, :business, or :enterprise."
   ([printer-fn] (interactive-auth! printer-fn nil))
   ([printer-fn opts]

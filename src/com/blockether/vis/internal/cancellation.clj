@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.cancellation
-  "Cancellation token — leaf module.
+  "Cancellation token - leaf module.
 
    The cancellation token is a tiny two-atom record that lets a UI
    thread (TUI, Telegram bot, REPL caller) cooperatively abort an
@@ -10,15 +10,15 @@
 
    Public API:
 
-     `(cancellation-token)`       — fresh token
-     `(cancellation-atom token)`  — cooperative flag atom (pass to `turn!`)
-     `(cancellation-set-future! token fut)` — register the worker future
-     `(cancel! token)`            — set flag + interrupt registered future
-     `(cancelled? token)`         — true once `cancel!` has been called
-     `(cancellation? throwable)`  — true if exception was caused by `cancel!`
+     `(cancellation-token)`       - fresh token
+     `(cancellation-atom token)`  - cooperative flag atom (pass to `turn!`)
+     `(cancellation-set-future! token fut)` - register the worker future
+     `(cancel! token)`            - set flag + interrupt registered future
+     `(cancelled? token)`         - true once `cancel!` has been called
+     `(cancellation? throwable)`  - true if exception was caused by `cancel!`
 
    This namespace has zero side effects at load time and depends only
-   on Java interop — channels and the runtime can require it
+   on Java interop - channels and the runtime can require it
    directly without pulling in the rest of the SDK."
   (:refer-clojure))
 
@@ -88,7 +88,7 @@
    ::future (atom nil)})
 
 (defn cancellation-atom
-  "Cooperative flag atom — pass under `:cancel-atom` to `turn!`."
+  "Cooperative flag atom - pass under `:cancel-atom` to `turn!`."
   [token]
   (::flag token))
 
@@ -102,7 +102,7 @@
 (defn cancel!
   "Abort the in-flight turn. Sets the cooperative flag AND interrupts
    the registered future (if any). Safe to call multiple times. Safe
-   to call when no future has been registered yet — only the flag is
+   to call when no future has been registered yet - only the flag is
    flipped in that case, and the cooperative path will still pick it
    up at the next iteration boundary."
   [token]

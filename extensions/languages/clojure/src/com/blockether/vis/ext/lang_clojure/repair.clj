@@ -210,17 +210,17 @@
 (defn- now-ms [] (System/currentTimeMillis))
 
 (defn- tool-success
-  [{:keys [op path result provenance]}]
+  [{:keys [op path result info]}]
   (let [t (now-ms)]
     (extension/success
       {:result result
-       :provenance (merge {:op op
-                           :target {:kind :file
-                                    :resolved path}
-                           :started-at-ms t
-                           :finished-at-ms t
-                           :duration-ms 0}
-                     provenance)})))
+       :info (merge {:op op
+                     :target {:kind :file
+                              :resolved path}
+                     :started-at-ms t
+                     :finished-at-ms t
+                     :duration-ms 0}
+               info)})))
 
 (defn- tool-failure-on-error
   [op]
@@ -229,11 +229,11 @@
           t    (now-ms)]
       {:result (extension/failure
                  {:result nil
-                  :provenance {:op op
-                               :target {:kind :file :requested (str path)}
-                               :started-at-ms t
-                               :finished-at-ms t
-                               :duration-ms 0}
+                  :info {:op op
+                         :target {:kind :file :requested (str path)}
+                         :started-at-ms t
+                         :finished-at-ms t
+                         :duration-ms 0}
                   :throwable err})})))
 
 (defn- repair-selection!
@@ -268,13 +268,13 @@
                 :parseable-after? (:parseable-after? repaired)
                 :error (:error repaired)
                 :diagnostic (:diagnostic repaired)}
-       :provenance {:files [{:path path
-                             :range (:range selection)
-                             :dry-run? (boolean dry-run?)
-                             :changed? (:changed? repaired)
-                             :engine (:engine repaired)
-                             :before (:source selection)
-                             :after (:source repaired)}]}})))
+       :info {:files [{:path path
+                       :range (:range selection)
+                       :dry-run? (boolean dry-run?)
+                       :changed? (:changed? repaired)
+                       :engine (:engine repaired)
+                       :before (:source selection)
+                       :after (:source repaired)}]}})))
 
 (defn- repair-range
   ([edit]
@@ -311,14 +311,14 @@
   [s]
   (let [s (str s)]
     (if (> (count s) 2000)
-      (str (subs s 0 2000) "\n…<+" (- (count s) 2000) " chars>")
+      (str (subs s 0 2000) "\n...<+" (- (count s) 2000) " chars>")
       s)))
 
 (defn- render-repair-result
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
-    (md/p "Tool" (md/code (get-in tool-result [:provenance :op])) "failed:" (get-in tool-result [:error :message]))
-    (let [file (first (get-in tool-result [:provenance :files]))]
+    (md/p "Tool" (md/code (get-in tool-result [:info :op])) "failed:" (get-in tool-result [:error :message]))
+    (let [file (first (get-in tool-result [:info :files]))]
       (md/join
         (md/p "Repair" (md/code (:path file))
           "range" (md/code (pr-str (:range file)))

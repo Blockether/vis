@@ -42,7 +42,7 @@
                         {:width 80
                          :source "sequenceDiagram\n  participant U as User\n  participant API as API\n  U->>API: Submit\n  API-->>U: OK"}))]
       (expect (= "Mermaid (sequence)" (first out)))
-      (expect (some #(str/includes? % "User → API: Submit") out))
+      (expect (some #(str/includes? % "User -> API: Submit") out))
       (expect (some #(str/includes? % "API ⇢ User: OK") out))))
 
   (it "clips output to the requested width"

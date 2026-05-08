@@ -14,8 +14,8 @@
                     virtual/invalidate-heights! (fn [] (swap! height-invalidations inc))]
         (reset! state/app-db {:detail-expansions {}
                               :render-version 0})
-        (state/dispatch [:toggle-detail "cid" "answer:t11111111:proofs:d1"])
-        (expect (= {["cid" "answer:t11111111:proofs:d1"] true}
+        (state/dispatch [:toggle-detail "cid" "answer:t11111111:details:d1"])
+        (expect (= {["cid" "answer:t11111111:details:d1"] true}
                   (:detail-expansions @state/app-db)))
         (expect (zero? @render-invalidations))
         (expect (zero? @height-invalidations)))))
@@ -161,7 +161,7 @@
   (it "routes background turn results to their originating inactive tab"
     (reset! state/app-db {:conversation {:id "main-c"}
                           :messages [{:role :user :text "main prompt"}
-                                     {:role :assistant :text "Sending request to provider…"}]
+                                     {:role :assistant :text "Sending request to provider..."}]
                           :loading? true
                           :progress {:iterations []}
                           :workspace-tabs [{:id :main :label "Main" :active? true}
@@ -482,7 +482,7 @@
         (state/dispatch [:cancel-turn])
         (expect (= :token @cancelled))
         (expect (true? (:cancelling? @state/app-db)))
-        (expect (= ["Cancelling current turn…" [:level :info :ttl-ms 2500]]
+        (expect (= ["Cancelling current turn..." [:level :info :ttl-ms 2500]]
                   @notified))))))
 
 (defdescribe live-progress-rate-test

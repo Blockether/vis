@@ -1,4 +1,4 @@
-# Build / cache — all globs are leading-slash-free on purpose so they
+# Build / cache - all globs are leading-slash-free on purpose so they
 # match at any depth (root, packages/*, extensions/*, docs/, etc.).
 .cpcache/
 .cache/
@@ -46,7 +46,7 @@ packages/vis-benchmark/swebench-harness/
 .nrepl.log
 .nrepl.pid
 docs/book/
-# mdbook-mermaid install assets — regenerable via `mdbook-mermaid install docs`
+# mdbook-mermaid install assets - regenerable via `mdbook-mermaid install docs`
 docs/mermaid.min.js
 docs/mermaid-init.js
 

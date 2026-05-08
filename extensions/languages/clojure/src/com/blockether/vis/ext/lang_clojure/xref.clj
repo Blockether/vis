@@ -117,17 +117,17 @@
   (System/currentTimeMillis))
 
 (defn- tool-success
-  [{:keys [op result provenance]}]
+  [{:keys [op result info]}]
   (let [t (now-ms)]
     (extension/success
       {:result result
-       :provenance (merge {:op             op
-                           :target         {:kind :project
-                                            :resolved (rel-path ".")}
-                           :started-at-ms  t
-                           :finished-at-ms t
-                           :duration-ms    0}
-                     provenance)})))
+       :info (merge {:op             op
+                     :target         {:kind :project
+                                      :resolved (rel-path ".")}
+                     :started-at-ms  t
+                     :finished-at-ms t
+                     :duration-ms    0}
+               info)})))
 
 (defn- tool-failure-on-error
   [op]
@@ -135,12 +135,12 @@
     (let [t (now-ms)]
       {:result (extension/failure
                  {:result nil
-                  :provenance {:op             op
-                               :target         {:kind :project
-                                                :resolved (rel-path ".")}
-                               :started-at-ms  t
-                               :finished-at-ms t
-                               :duration-ms    0}
+                  :info {:op             op
+                         :target         {:kind :project
+                                          :resolved (rel-path ".")}
+                         :started-at-ms  t
+                         :finished-at-ms t
+                         :duration-ms    0}
                   :throwable err})})))
 
 ;; =============================================================================
@@ -185,8 +185,8 @@
                  :refs (count (:refs db))
                  :namespaces (count (:namespaces db))
                  :elapsed-ms elapsed-ms}
-        :provenance {:paths paths
-                     :analyzed-at-ms analyzed-at-ms}}))))
+        :info {:paths paths
+               :analyzed-at-ms analyzed-at-ms}}))))
 
 (defn- xref-refresh!
   ([] (xref-refresh! nil))
@@ -229,9 +229,9 @@
     (tool-success
       {:op op
        :result result
-       :provenance (merge {:paths paths
-                           :analyzed-at-ms analyzed-at-ms}
-                     extra-prov)})))
+       :info (merge {:paths paths
+                     :analyzed-at-ms analyzed-at-ms}
+               extra-prov)})))
 
 (defn- ref-query
   [op f sym opts]
@@ -492,11 +492,11 @@
 (defn- render-tool-result
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
-    (md/p "Tool" (md/code (get-in tool-result [:provenance :op])) "failed:" (get-in tool-result [:error :message]))
+    (md/p "Tool" (md/code (get-in tool-result [:info :op])) "failed:" (get-in tool-result [:error :message]))
     (md/join
-      (md/p (md/code (get-in tool-result [:provenance :op])) "returned" (if (sequential? (:result tool-result))
-                                                                          (count (:result tool-result))
-                                                                          "a") "result(s).")
+      (md/p (md/code (get-in tool-result [:info :op])) "returned" (if (sequential? (:result tool-result))
+                                                                    (count (:result tool-result))
+                                                                    "a") "result(s).")
       (md/code-block "clojure" (pr-str (:result tool-result))))))
 
 (defn- xref-symbol

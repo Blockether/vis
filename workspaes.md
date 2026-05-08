@@ -104,12 +104,12 @@ Attached repos:
 
 Attached repo modes:
 
-- `:isolated` — default for writable code; each parent workspace gets its own nested checkout.
-- `:shared` — opt-in for read-mostly/shared resources; mutation leakage is accepted by configuration.
+- `:isolated` - default for writable code; each parent workspace gets its own nested checkout.
+- `:shared` - opt-in for read-mostly/shared resources; mutation leakage is accepted by configuration.
 
 ### Static manifest and attached repo catalog
 
-Workspace shape is project intent, not inferred from host leftovers.
+Workspace shape is project purpose, not inferred from host leftovers.
 
 Static manifest example:
 

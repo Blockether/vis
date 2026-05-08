@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation.environment.core
-  "vis-foundation — the agent's environment-awareness layer.
+  "vis-foundation - the agent's environment-awareness layer.
 
    Owns the `<environment>` block that used to live hard-coded in
    `com.blockether.vis.internal.prompt`. Everything in there
@@ -32,7 +32,7 @@
    [com.blockether.vis.ext.foundation.environment.monorepo :as monorepo]
    [com.blockether.vis.ext.foundation.environment.render :as render]
    [com.blockether.vis.ext.foundation.environment.repositories :as repositories]
-   [com.blockether.vis.ext.foundation.environment.skills :as skills]
+   [com.blockether.vis.internal.skills :as skills]
    [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -47,7 +47,7 @@
 ;; `defonce` so the atom survives a `(require :reload)` during an
 ;; extension reload (per plan caveat: extensions holding mutable
 ;; state across reload MUST use defonce). The cwd-keyed snapshot
-;; covers host/git/languages/monorepo only — agents + skills hold
+;; covers host/git/languages/monorepo only - agents + skills hold
 ;; their own caches in their respective namespaces (plan Q8).
 (defonce ^:private cache
   (atom {:key nil :value nil}))
@@ -192,50 +192,26 @@
      :examples ["(v/main-agent-instructions)"
                 "(:content (v/main-agent-instructions))"]}))
 
-;; (v/skills) WAS HERE. Removed: enumeration is now the
-;; `TURN_ACCESSIBLE_SKILLS` SYSTEM var (frozen at turn start, vec of
-;; summaries, no body). Having both `(v/skills)` AND the SYSTEM var
-;; trained the model to call the symbol — see conversation
-;; eeaf9651-06c7-4dda-9e97-877fcef06337's `(def skills (v/skills))`
-;; followed by an answer composed straight off the call result, when
-;; the same data was already in the prompt's <skills> block + the
-;; SYSTEM var. ONE source of truth wins; the redundant call goes.
-;;
-;; Surfaces still exposed: TURN_ACCESSIBLE_SKILLS for filtering,
-;; `(v/load-skill "name")` for activation (loads body),
-;; `(v/reload-skills!)` for the cache-bust after editing on disk.
-
-(defn- remember-active-skill!
-  [environment _f _args result]
-  (when (and (:found? result) (string? (:name result)))
-    (when-let [active-skills-atom (:active-skills-atom environment)]
-      (swap! active-skills-atom assoc (:name result) result)))
-  {:result result})
-
-(def load-skill-symbol
-  (vis/symbol 'load-skill skills/lookup
-    {:doc      "Load skill body by name. Returns {:found? true :body ...} or {:found? false}. Loaded skills appear in <active_skills> with full body on the next iteration."
-     :arglists '([skill-name])
-     :examples ["(v/load-skill \"diagnose\")"
-                "(:body (v/load-skill \"caveman\"))"]
-     :after-fn remember-active-skill!}))
+;; Skills are host-internal now. Foundation may report skill scan warnings
+;; via `(v/scan-warnings)`, but activation is the top-level sandbox primitive
+;; `(load-skill "name")`, not a `v/` extension symbol.
 
 (defn- combined-scan-warnings []
   ;; Three sources, all `{:source :reason :path}` shaped so the
   ;; renderer can splice them into one `<scan-warnings>` block:
   ;;
-  ;;   (a) AGENTS.md / CLAUDE.md read failures              — agents/scan-warnings
-  ;;   (b) SKILL.md frontmatter / shape rejections           — skills/scan-warnings
+  ;;   (a) AGENTS.md / CLAUDE.md read failures              - agents/scan-warnings
+  ;;   (b) SKILL.md frontmatter / shape rejections           - skills/scan-warnings
   ;;   (c) Extension namespace `(require)` failures collected
-  ;;       during classpath discovery                        — vis/extension-load-failures
+  ;;       during classpath discovery                        - vis/extension-load-failures
   ;;
   ;; (c) is the load-bearing addition. Pre-fix a single typo in any
   ;; extension source file silently disabled its alias namespace
-  ;; (`v/`, `z/`, `clj/`, …). The user saw nothing; the LLM saw
+  ;; (`v/`, `z/`, `clj/`, ...). The user saw nothing; the LLM saw
   ;; "Unable to resolve symbol" forever (conversation
   ;; d8aff512-d60d-42b6-a009-041f1bec3891 burned 200+ blocks on this).
-  ;; Surfacing the failure here puts the actual root cause — "foundation.core
-  ;; failed to load: Syntax error reading source at markdown.clj:328:17" —
+  ;; Surfacing the failure here puts the actual root cause - "foundation.core
+  ;; failed to load: Syntax error reading source at markdown.clj:328:17" -
   ;; into the system prompt where the model will read it.
   (vec (concat (agents/scan-warnings)
          (skills/scan-warnings)
@@ -254,12 +230,6 @@
      :arglists '([])
      :examples ["(v/reload-instructions!)"]}))
 
-(def reload-skills!-symbol
-  (vis/symbol 'reload-skills! skills/reload!
-    {:doc      "Reload SKILL.md cache. Returns {:scanned :loaded :dropped :warnings}."
-     :arglists '([])
-     :examples ["(v/reload-skills!)"]}))
-
 (def reload-extensions!-symbol
   (vis/symbol 'reload-extensions! vis/reload-extensions!
     {:doc      "Reload extension registry. Returns diff: {:added :removed :reloaded :errors ...}."
@@ -270,21 +240,19 @@
 (def environment-symbols
   [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol
-   main-agent-instructions-symbol load-skill-symbol
-   scan-warnings-symbol
-   reload-instructions!-symbol reload-skills!-symbol
-   reload-extensions!-symbol])
+   main-agent-instructions-symbol scan-warnings-symbol
+   reload-instructions!-symbol reload-extensions!-symbol])
 
 (def ^:private FN_INDEX
   "One-line surface listing for the environment fns under the `v/`
    alias. Authored here (not auto-rendered from `:ext/symbols`)
    because the runtime no longer auto-canonicalizes symbols into
-   prompt text — see
+   prompt text - see
    `com.blockether.vis.internal.prompt/render-extension-prompt-block`
    for the rationale."
   (str "`v/` env: (v/snapshot) full map; shortcuts (v/repositories) (v/git) (v/languages) (v/monorepo); (v/render) prints env block; (v/refresh!) refreshes cache. "
-    "Guidance/skills: (v/main-agent-instructions), (v/load-skill \"name\"), (v/scan-warnings). "
-    "Reload: (v/reload-instructions!), (v/reload-skills!), (v/reload-extensions!)."))
+    "Guidance: (v/main-agent-instructions), (v/scan-warnings). "
+    "Reload: (v/reload-instructions!), (v/reload-extensions!). Skills use internal (load-skill \"name\") / (reload-skills!)."))
 
 (defn environment-info
   "Render the foundation-owned environment-info contribution. The
@@ -300,8 +268,8 @@
 
 (defn environment-prompt
   "Renders the live foundation prompt extras: <project-guidance> (when
-   present) → <scan-warnings> (when issues exist) → <skills> (when
-   populated) → FN_INDEX. The <environment> block now flows through
+   present) -> <scan-warnings> (when issues exist) -> FN_INDEX. Skills are
+   rendered by the internal prompt assembler. The <environment> block now flows through
    `:ext/environment-info-fn` so other extensions can add sibling
    environment-info sections without owning the whole prompt fragment."
   [_environment]
@@ -309,12 +277,9 @@
     (let [pg-block       (render/format-project-guidance-block (agents/instructions))
           warnings       (combined-scan-warnings)
           warnings-block (render/format-scan-warnings-block warnings)
-          skills-list    (skills/list-all)
-          skills-block   (render/format-skills-block skills-list)
           parts          (cond-> []
                            pg-block       (conj pg-block)
                            warnings-block (conj warnings-block)
-                           skills-block   (conj skills-block)
                            true           (conj FN_INDEX))]
       (string/join "\n\n" parts))
     (catch Throwable t
@@ -324,5 +289,5 @@
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,
-;; not here — this namespace only exposes the symbol vec + prompt
+;; not here - this namespace only exposes the symbol vec + prompt
 ;; fragment for the aggregator to assemble.

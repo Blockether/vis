@@ -5,7 +5,7 @@
    `<project-guidance>` block in the system prompt.
 
    Strict precedence: AGENTS.md wins; CLAUDE.md is only consulted
-   when AGENTS.md is absent. No user-global merge — the rules a
+   when AGENTS.md is absent. No user-global merge - the rules a
    project ships in its repo root are the rules. See plan §1 Q4.
 
    Size policy: inline up to `MAX_BYTES` verbatim. Beyond that,
@@ -17,7 +17,7 @@
    See plan §1 Q5.
 
    Failure modes (file unreadable, permissions, I/O error, etc.)
-   land in the scan-warnings vec, NOT in the rendered prompt block —
+   land in the scan-warnings vec, NOT in the rendered prompt block -
    model isn't bound by rules it can't see, but the user/agent
    knows something is broken. See plan §1 Q10."
   (:require
@@ -67,7 +67,7 @@
    byte count and points at the read-fn that returns the full
    content."
   [^long original-bytes]
-  (str "\n\n[TRUNCATED — " (- original-bytes MAX_BYTES)
+  (str "\n\n[TRUNCATED - " (- original-bytes MAX_BYTES)
     " more bytes. Read full content via (vis/main-agent-instructions).]"))
 
 (defn- ->utf8-string ^String [^bytes b ^long len]

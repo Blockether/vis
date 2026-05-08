@@ -46,13 +46,6 @@
       (expect (= :rejected (:scheme (first out))))
       (expect (false? (:enabled? (first out))))))
 
-  (it "vis-provenance links are enabled internal provenance refs"
-    (let [out (links/parse-md-refs "[`turn/8fc00e9d/iteration/6/block/4`](vis-provenance://turn/8fc00e9d/iteration/6/block/4)")]
-      (expect (= 1 (count out)))
-      (expect (= :provenance (:kind (first out))))
-      (expect (= :vis-provenance (:scheme (first out))))
-      (expect (true? (:enabled? (first out))))))
-
   (it "javascript: / data: schemes flagged disabled"
     (let [out (links/parse-md-refs "[click](javascript:alert(1))")]
       (expect (= 1 (count out)))

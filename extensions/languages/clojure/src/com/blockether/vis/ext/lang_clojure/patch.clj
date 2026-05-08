@@ -74,17 +74,17 @@
        :kind      kind})))
 
 (defn- tool-success
-  [{:keys [op path kind result provenance presentation]}]
+  [{:keys [op path kind result info presentation]}]
   (let [t (now-ms)]
     (cond->
       (extension/success
         {:result     result
-         :provenance (merge {:op             op
-                             :target         (path->target path kind)
-                             :started-at-ms  t
-                             :finished-at-ms t
-                             :duration-ms    0}
-                       provenance)})
+         :info (merge {:op             op
+                       :target         (path->target path kind)
+                       :started-at-ms  t
+                       :finished-at-ms t
+                       :duration-ms    0}
+                 info)})
       presentation (assoc :presentation presentation))))
 
 (defn- first-edit-path
@@ -103,11 +103,11 @@
           t    (now-ms)]
       {:result (extension/failure
                  {:result     nil
-                  :provenance {:op             op
-                               :target         (path->target path :file)
-                               :started-at-ms  t
-                               :finished-at-ms t
-                               :duration-ms    0}
+                  :info {:op             op
+                         :target         (path->target path :file)
+                         :started-at-ms  t
+                         :finished-at-ms t
+                         :duration-ms    0}
                   :throwable  err})})))
 
 ;; =============================================================================
@@ -298,14 +298,14 @@
        :path (or (:path (first plans)) ".")
        :kind :file
        :result (mapv #(select-keys % [:path]) plans)
-       :provenance {:files (mapv (fn [{:keys [path before after]}]
-                                   {:path path
-                                    :changed? (not= before after)
-                                    :before before
-                                    :after after
-                                    :lines-before (count (str/split-lines before))
-                                    :lines-after (count (str/split-lines after))})
-                             plans)}})))
+       :info {:files (mapv (fn [{:keys [path before after]}]
+                             {:path path
+                              :changed? (not= before after)
+                              :before before
+                              :after after
+                              :lines-before (count (str/split-lines before))
+                              :lines-after (count (str/split-lines after))})
+                       plans)}})))
 
 ;; =============================================================================
 ;; Rendering
@@ -319,7 +319,7 @@
   (let [s (str s)]
     (if (> (count s) journal-preview-chars)
       (str (subs s 0 journal-preview-chars)
-        "\n…<+" (- (count s) journal-preview-chars) " chars>")
+        "\n...<+" (- (count s) journal-preview-chars) " chars>")
       s)))
 
 (defn- split-preserve-trailing-empty
@@ -401,8 +401,8 @@
 
 (defn- tool-error-text
   [tool-result]
-  (let [op   (get-in tool-result [:provenance :op])
-        path (get-in tool-result [:provenance :target :requested])
+  (let [op   (get-in tool-result [:info :op])
+        path (get-in tool-result [:info :target :requested])
         err  (:error tool-result)]
     (md/p "Tool" (md/code op) "failed"
       (when path (str "for " (md/code path)))
@@ -413,7 +413,7 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [files (get-in tool-result [:provenance :files])]
+    (let [files (get-in tool-result [:info :files])]
       (md/join
         (md/p "Patched" (count files) "Clojure file(s). Each :search locator matched exactly once before any write.")
         (for [{:keys [path changed? before after]} files
@@ -485,11 +485,11 @@
         :kind :file
         :result rows
         :presentation {:kind :clojure/locators}
-        :provenance {:count (count rows)
-                     :total-count total-count
-                     :limit limit
-                     :truncated? truncated?
-                     :filters (select-keys (or opts {}) [:symbol :source-contains :limit])}}))))
+        :info {:count (count rows)
+               :total-count total-count
+               :limit limit
+               :truncated? truncated?
+               :filters (select-keys (or opts {}) [:symbol :source-contains :limit])}}))))
 
 (defn- symbols-file
   ([path] (symbols-file path nil))
@@ -505,20 +505,20 @@
         :kind :file
         :result rows
         :presentation {:kind :clojure/locators}
-        :provenance {:count (count rows)
-                     :total-count total-count
-                     :limit limit
-                     :truncated? truncated?
-                     :filters (select-keys (or opts {}) [:name :symbol :source-contains :limit])}}))))
+        :info {:count (count rows)
+               :total-count total-count
+               :limit limit
+               :truncated? truncated?
+               :filters (select-keys (or opts {}) [:name :symbol :source-contains :limit])}}))))
 
 (defn- locator-for-symbol-file
   [path sym]
   (let [out (symbols-file path {:symbol sym :limit 2})]
     (assoc out
       :result (first (:result out))
-      :provenance (assoc (:provenance out)
-                    :op :z/locator-for-symbol
-                    :symbol sym))))
+      :info (assoc (:info out)
+              :op :z/locator-for-symbol
+              :symbol sym))))
 
 (defn- render-locators-result
   [{:keys [tool-result]}]
@@ -538,7 +538,7 @@
                          "\" :search <locator-row> :replace <new-source>}])"))]
       (md/join
         (md/p "Found" (count rows) "zipper locator(s)."
-          (when (get-in tool-result [:provenance :truncated?])
+          (when (get-in tool-result [:info :truncated?])
             " Narrow filters before patching."))
         (when (seq row-lines)
           (md/code-block "text" (str/join "\n\n" row-lines)))

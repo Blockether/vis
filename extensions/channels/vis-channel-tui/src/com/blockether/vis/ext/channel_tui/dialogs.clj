@@ -75,13 +75,13 @@
     (cond
       (<= max-w 0) ""
       (<= (p/display-width txt) max-w) txt
-      (= max-w 1) "…"
-      :else (str (p/truncate-cols txt (dec max-w)) "…"))))
+      (= max-w 1) "..."
+      :else (str (p/truncate-cols txt (dec max-w)) "..."))))
 
 (defn dialog-layout
   "Compute content area layout. When `content-count` is provided and smaller than
    the available height, content is vertically centered within the frame.
-   Layout: border → title bar → top separator → CONTENT → bottom separator → hint → border."
+   Layout: border -> title bar -> top separator -> CONTENT -> bottom separator -> hint -> border."
   ([bounds] (dialog-layout bounds nil))
   ([{:keys [top bottom]} content-count]
    (let [raw-top      (+ top 3)
@@ -93,7 +93,7 @@
                        (quot (- full-h content-count) 2)
                        0)
          content-top (+ raw-top v-offset)
-         ;; Usable height from centered top — never exceeds content-bot
+         ;; Usable height from centered top - never exceeds content-bot
          content-h   (max 1 (inc (- content-bot content-top)))]
      {:content-top content-top
       :content-bottom content-bot
@@ -181,7 +181,7 @@
       (string? hint)
       (p/put-str! g text-x row (ellipsize hint text-w))
 
-      ;; Vec of [key action] pairs — render keys in italic
+      ;; Vec of [key action] pairs - render keys in italic
       (and (vector? hint) (seq hint) (vector? (first hint)))
       (let [labels    (mapv (fn [[k a]] (str k " " a)) hint)
             ;; Walk through the laid-out string to find each key's position
@@ -198,17 +198,17 @@
                   gap     (if (< i (dec n))
                             (+ base-gap (if (< i extra) 1 0))
                             0)]
-              ;; Key part — bold, stronger color
+              ;; Key part - bold, stronger color
               (p/set-fg! g t/dialog-hint-key)
               (p/styled g [p/BOLD]
                 (p/put-str! g col row k))
-              ;; Action part — normal hint color, italic
+              ;; Action part - normal hint color, italic
               (p/set-fg! g t/dialog-hint)
               (p/styled g [p/ITALIC]
                 (p/put-str! g (+ col (count k)) row (str " " a)))
               (recur (inc i) (+ col (count k) 1 (count a) gap))))))
 
-      ;; Vec of strings — space-between, all italic
+      ;; Vec of strings - space-between, all italic
       (vector? hint)
       (p/styled g [p/ITALIC]
         (p/draw-space-between! g text-x row text-w hint)))))
@@ -253,10 +253,10 @@
   "Draw dialog background, shadow, border, and title.
 
    Three arities:
-   - `(g cols rows title content-h)` — shared default width and height.
+   - `(g cols rows title content-h)` - shared default width and height.
      Caller-supplied `content-h` is ignored in this arity on purpose;
      the whole TUI dialog stack now uses one common footprint.
-   - `(g cols rows title content-w content-h)` — fully explicit. Use
+   - `(g cols rows title content-w content-h)` - fully explicit. Use
      only when a dialog genuinely needs a non-default width.
 
    Returns {:left :top :right :bottom :inner-w :inner-h}."
@@ -272,7 +272,7 @@
          box-bottom    (+ box-top box-h -1)
          inner-w       (- box-w 2)]
 
-    ;; Shadow — clipped to terminal bounds
+    ;; Shadow - clipped to terminal bounds
      (let [shd-left (+ box-left 2)
            shd-top  (inc box-top)
            shd-w    (min box-w (- cols shd-left))
@@ -289,7 +289,7 @@
      (p/set-colors! g t/dialog-border t/dialog-bg)
      (p/draw-box! g box-left box-top box-w box-h)
 
-    ;; Title bar — full-width accent stripe with centered title
+    ;; Title bar - full-width accent stripe with centered title
      (let [title-row  (inc box-top)
            title-text (ellipsize (or title "") (max 0 (- inner-w 2)))
            tx         (+ box-left 1 (quot (- inner-w (count title-text)) 2))]
@@ -299,10 +299,10 @@
       ;; Title text
        (p/set-fg! g t/dialog-title-fg)
        (p/put-str! g tx title-row title-text)
-      ;; Top separator — below title bar
+      ;; Top separator - below title bar
        (p/set-colors! g t/dialog-border t/dialog-bg)
        (p/draw-separator! g box-left box-right (inc title-row))
-      ;; Bottom separator — above hint bar
+      ;; Bottom separator - above hint bar
        (let [bot-sep (- box-bottom 2)]
          (when (> bot-sep (+ box-top 3))
            (p/draw-separator! g box-left box-right bot-sep))))
@@ -384,7 +384,7 @@
             :label    (or display
                         (str (or text "Resource")
                           (when-not (str/blank? url)
-                            (str " → " url))))))
+                            (str " -> " url))))))
     refs))
 
 (defn- draw-resource-item!
@@ -394,7 +394,7 @@
         badge      (case kind
                      :image      "image"
                      :file       "file"
-                     :provenance "proof"
+                     :info "detail"
                      "link")
         body-w     (max 1 (- inner-w 4))
         target-w   (min 32 (max 0 (- body-w (count title) 10)))
@@ -831,7 +831,7 @@
             max-body-lines (max 0 (- content-h 4 body-gap))
             visible-body (if (<= (count wrapped-body) max-body-lines)
                            wrapped-body
-                           (conj (vec (take (max 0 (dec max-body-lines)) wrapped-body)) "…"))
+                           (conj (vec (take (max 0 (dec max-body-lines)) wrapped-body)) "..."))
             label-row  (+ content-top (count visible-body) body-gap)
             input-row  (inc label-row)
             txt        (apply str @text)
@@ -846,7 +846,7 @@
         (p/fill-rect! g (inc left) label-row inner-w 1)
         (p/put-str! g (+ left 2) label-row (ellipsize label (max 0 (- inner-w 2))))
 
-        (draw-hint-bar! g left hint-row inner-w [["←/→" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
+        (draw-hint-bar! g left hint-row inner-w [["<-/->" "move"] ["Enter" "confirm"] ["Esc" "cancel"]])
         (.setCursorPosition screen cursor-pos)
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -855,9 +855,9 @@
             (cond
               ;; ── Bracketed paste ──────────────────────────────
               ;; Three-state machine matching the main input loop.
-              ;; START → open buffer; END → flush into text.
+              ;; START -> open buffer; END -> flush into text.
               ;; Prevents PUA marker chars (\uE200, \uE201) from
-              ;; leaking into the dialog value — they break HTTP
+              ;; leaking into the dialog value - they break HTTP
               ;; Authorization headers when pasted API keys carry
               ;; them into the Bearer token.
               (input/paste-start? key)
@@ -945,7 +945,7 @@
             total-btn-w (+ btn-w btn-gap btn-w)
             btn-start   (+ left 1 (quot (- inner-w total-btn-w) 2))]
 
-        ;; Message text — centered per line
+        ;; Message text - centered per line
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (doseq [[i line] (map-indexed vector lines)]
           (let [row (+ content-top i)]
@@ -953,13 +953,13 @@
               (p/fill-rect! g (inc left) row inner-w 1)
               (p/draw-centered! g (inc left) row inner-w line))))
 
-        ;; Buttons — side by side
+        ;; Buttons - side by side
         (p/set-bg! g t/dialog-bg)
         (p/fill-rect! g (inc left) btn-row inner-w 1)
         (draw-button! g btn-start btn-row btn-yes (= @focus 0))
         (draw-button! g (+ btn-start btn-w btn-gap) btn-row btn-no (= @focus 1))
 
-        (draw-hint-bar! g left hint-row inner-w [["←/→" "switch"] ["Enter" "confirm"] ["Esc" "cancel"]])
+        (draw-hint-bar! g left hint-row inner-w [["<-/->" "switch"] ["Enter" "confirm"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
         (.refresh screen Screen$RefreshType/DELTA)
 
@@ -1031,7 +1031,7 @@
    {:key :show-iterations
     :type :toggle
     :label "Show full execution trace"
-    :description "Blocks, eval results, stdout, errors — the whole iteration history"}
+    :description "Blocks, eval results, stdout, errors - the whole iteration history"}
    {:key :show-timestamps
     :type :toggle
     :label "Show per-message timestamps"
@@ -1366,7 +1366,7 @@
               (str name ":")
               :mask (when secret? \*)
               :initial (if secret? "" (or value ""))
-              :body [(str label " — " (extension-env-status-label source))
+              :body [(str label " - " (extension-env-status-label source))
                      (or description "")
                      "Blank input clears the Vis config override; OS env still applies."])]
     (when (some? raw)
@@ -1544,7 +1544,7 @@
   "Show the tabbed settings dialog.
 
    Tabs: Channels, Providers & Models, Extensions. Toggle rows render `[✓]` /
-   `[ ]`. Choice rows render `[→]` and cycle through their allowed values
+   `[ ]`. Choice rows render `[->]` and cycle through their allowed values
    with Space or Enter. Action rows render `[↗]` and invoke a callback
    from `callbacks`.
 
@@ -1611,14 +1611,14 @@
                                   :info       "    "
                                   :action     "[↗] "
                                   :env-var    "[↗] "
-                                  :choice     "[→] "
+                                  :choice     "[->] "
                                   (if (get @values key true) "[✓] " "[ ] "))
                      label-pad  (str label
                                   (apply str (repeat (max 0 (- label-w (count label))) \space)))
                      desc       (or description "")
                      desc-trunc (if (<= (count desc) actual-desc-w)
                                   desc
-                                  (str (subs desc 0 (max 0 (dec actual-desc-w))) "…"))]
+                                  (str (subs desc 0 (max 0 (dec actual-desc-w))) "..."))]
                  (case type
                    :section
                    (do
@@ -1660,7 +1660,7 @@
                  (p/fill-rect! g (inc left) row-y paint-w 1)))))
 
          (draw-scrollbar! g (+ left inner-w) list-top visible-h n @scroll)
-         (draw-hint-bar! g left hint-row inner-w [["←/→ Tab" "switch"] ["↑/↓" "move"] ["Space/Enter" "change"] ["Esc" "done"]])
+         (draw-hint-bar! g left hint-row inner-w [["<-/-> Tab" "switch"] ["↑/↓" "move"] ["Space/Enter" "change"] ["Esc" "done"]])
          (.setCursorPosition screen (p/cursor-pos 0 0))
          (.refresh screen Screen$RefreshType/DELTA)
 
@@ -1774,7 +1774,7 @@
     (let [fmt (SimpleDateFormat. "yyyy-MM-dd HH:mm" Locale/ROOT)]
       (.setTimeZone fmt (TimeZone/getTimeZone "UTC"))
       (.format fmt date))
-    "—"))
+    "-"))
 
 (def ^:private conversation-table-headers
   ["" "ID" "Turns" "Modified" "Created" "Title"])
@@ -1924,10 +1924,10 @@
 
 (def palette-commands
   "Command palette entries. Each is {:id keyword :label str}.
-   Quit is intentionally NOT here — use Ctrl+C to quit.
+   Quit is intentionally NOT here - use Ctrl+C to quit.
 
    `:providers` opens router/model/auth configuration. Provider-owned
-   knobs still live in Settings → Providers & Models.
+   knobs still live in Settings -> Providers & Models.
 
    Whole-conversation Markdown copy lives in the header as an icon,
    not in Ctrl+K."
@@ -1940,7 +1940,7 @@
 
 (defn command-palette!
   "Show a command palette dialog. Returns the :id of the chosen command, or nil on Esc.
-   No bespoke padding — `select-dialog!` runs at the shared default modal
+   No bespoke padding - `select-dialog!` runs at the shared default modal
    footprint, and `draw-list-item!` already fills the highlight stripe
    across the full inner width regardless of label length."
   ([^TerminalScreen screen]
@@ -1956,7 +1956,7 @@
 (defn text-viewer-dialog!
   "Show a scrollable read-only text viewer dialog.
    `title` is the dialog header. `text` is a string (may contain newlines)
-   that is rendered VERBATIM — same content the LLM receives, only soft-
+   that is rendered VERBATIM - same content the LLM receives, only soft-
    wrapped to fit the dialog width. No markdown, no truncation, no
    reformatting.
    Returns nil on Esc. Supports keyboard scrolling."
@@ -1968,7 +1968,7 @@
             rows    (.getRows size)
             g       (.newTextGraphics screen)
             ;; Text viewer is the only dialog that should consume the
-            ;; vertical room it can get — it scrolls long content. Ask
+            ;; vertical room it can get - it scrolls long content. Ask
             ;; for terminal-bound height so the viewport is generous,
             ;; while still sharing the standard width.
             bounds  (draw-dialog-chrome! g cols rows title (max 12 (- rows 8)))
@@ -1987,7 +1987,7 @@
             visible (subvec lines @scroll
                       (min total (+ @scroll content-h)))]
 
-        ;; Body — verbatim line render, no ellipsization (wrap-text
+        ;; Body - verbatim line render, no ellipsization (wrap-text
         ;; already produced lines that fit `text-w`).
         (p/set-colors! g t/dialog-fg t/dialog-bg)
         (doseq [[i line] (map-indexed vector visible)]
@@ -2001,7 +2001,7 @@
           (p/set-colors! g t/dialog-fg t/dialog-bg)
           (p/fill-rect! g (inc left) row inner-w 1))
 
-        ;; Scrollbar — same style as the chat messages area: a vertical
+        ;; Scrollbar - same style as the chat messages area: a vertical
         ;; track of │ plus a solid █ thumb sized proportionally to the
         ;; visible window. Drawn over the content's right margin, on the
         ;; dialog background so it visually blends with the dialog frame.

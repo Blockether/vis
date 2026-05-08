@@ -194,7 +194,7 @@
 ;; Both build the same kind of sectioned, column-aligned output and
 ;; share the same color/section helpers. Color is auto-disabled when
 ;; stdout is not a TTY (tests, pipes), or when `NO_COLOR` is set, or
-;; when `TERM=dumb` — callers can also force it via
+;; when `TERM=dumb` - callers can also force it via
 ;; `(binding [*color-enabled?* false] ...)`.
 ;; =============================================================================
 
@@ -223,7 +223,7 @@
     (str s)))
 
 (defn- bold    [s] (ansi "1" s))
-;; Bright-black (`90`) instead of dim (`2`) — the standard ANSI "dim"
+;; Bright-black (`90`) instead of dim (`2`) - the standard ANSI "dim"
 ;; renders almost invisibly on most terminal themes (especially dark
 ;; ones with low-contrast palettes). Bright-black is the universal
 ;; "muted but visible" choice used by gh, kubectl, cargo, etc.
@@ -316,7 +316,7 @@
      USAGE / DESCRIPTION / SUBCOMMANDS / ARGUMENTS / FLAGS / EXAMPLES.
 
    Empty sections are omitted. `path` is the command-name chain
-   leading up to and including this command — used for the USAGE line
+   leading up to and including this command - used for the USAGE line
    when `:cmd/usage` isn't set."
   [cmd path]
   (let [args     (or (:cmd/args cmd) [])
@@ -414,7 +414,7 @@
          ;; Strict-flag check fires only when the command actually
          ;; declares flags. Commands without `:cmd/args` (or with only
          ;; positionals) keep the loose, layer-your-own-flags posture
-         ;; — `vis providers status <provider>` and similar bespoke
+         ;; - `vis providers status <provider>` and similar bespoke
          ;; handlers stay working without forcing every command to
          ;; declare its full surface up front.
          (let [arg-specs (:cmd/args command)

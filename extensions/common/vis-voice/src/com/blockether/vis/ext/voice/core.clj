@@ -253,7 +253,7 @@
       "- speak like a manager update, not a developer handoff;\n"
       "- be concise, direct, and outcome-focused;\n"
       "- say what went wrong and what changed, but skip implementation details unless explicitly requested;\n"
-      "- do not include proof trails, provenance refs, verification logs, stack traces, diffs, or code blocks;\n"
+      "- do not include extra trails, info refs, verification logs, stack traces, diffs, or code blocks;\n"
       "- do not read code aloud; summarize code changes in plain business language;\n"
       "- avoid huge tables unless explicitly requested;\n"
       "- when code/files changed, summarize what changed and name files clearly;\n"
@@ -270,7 +270,7 @@
         (notify-progress! :synthesize "Synthesizing voice response" 0 -1)
         (let [wav (File/createTempFile "vis-voice-response-" ".wav")]
           (synthesize-file! answer {:out-file wav})
-          (notify-progress! :play "Speaking…" 0 -1)
+          (notify-progress! :play "Speaking..." 0 -1)
           (let [{:keys [process]} (play-file! wav)]
             (future
               (try
@@ -308,7 +308,7 @@
 
 (defn- print-status! []
   (let [{:keys [piper parakeet]} (model-status)]
-    (cli-out! (str "Piper: " (if (:installed? piper) "installed" "missing") " — " (:dir piper)))
+    (cli-out! (str "Piper: " (if (:installed? piper) "installed" "missing") " - " (:dir piper)))
     (cli-out! (str "Parakeet: " (if (:installed? parakeet) "installed" "missing")))))
 
 (defn- ensure-parakeet! []
@@ -332,11 +332,11 @@
         parakeet? (or parakeet? all? (contains? words "parakeet") (contains? words "all"))
         any? (or piper? parakeet?)]
     (when (or piper? (not any?))
-      (cli-out! "Downloading/checking Piper TTS model…")
+      (cli-out! "Downloading/checking Piper TTS model...")
       (ensure-model!)
       (cli-out! (str "Piper ready: " (model-dir))))
     (when (or parakeet? (not any?))
-      (cli-out! "Downloading/checking Parakeet ASR model…")
+      (cli-out! "Downloading/checking Parakeet ASR model...")
       (cli-out! (str "Parakeet ready: " (ensure-parakeet!))))
     (print-status!)))
 

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.format-test
   "Smoke coverage for `internal/format`.
 
-   Why it exists: AGENTS.md hard rule — every production namespace ships a
+   Why it exists: AGENTS.md hard rule - every production namespace ships a
    corresponding `_test.clj`. The concurrency regression itself lives in
    `env_test.clj` because the user-visible failure crossed the sandbox/render
    seam; this file pins the public formatter outputs and the parse/fallback

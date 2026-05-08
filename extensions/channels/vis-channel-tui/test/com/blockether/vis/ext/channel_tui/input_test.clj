@@ -5,7 +5,7 @@
 
      1. The pure input-buffer helpers (`empty-input`, `insert-char`,
         `insert-newline`, `delete-backward`, `move-*`, `paste-text`)
-        — used by every keystroke handled in the screen poll loop.
+        - used by every keystroke handled in the screen poll loop.
      2. The bracketed-paste sentinels + helpers
         (`paste-start?`, `paste-end?`, `keystroke->paste-char`).
         These power the multi-line paste flow added so a clipboard
@@ -284,7 +284,7 @@
   (it "Enter becomes a newline char so multi-line pastes survive"
     (expect (= "\n" (input/keystroke->paste-char (KeyStroke. KeyType/Enter false false)))))
 
-  (it "Tab becomes \\t — preserves indentation in pasted code"
+  (it "Tab becomes \\t - preserves indentation in pasted code"
     (expect (= "\t" (input/keystroke->paste-char (KeyStroke. KeyType/Tab false false)))))
 
   (it "non-text keys (function keys, arrows) drop to nil"
@@ -383,7 +383,7 @@
 (defdescribe clipboard-copy-test
   (it "clipboard-copy! returns a boolean (smoke)"
     ;; We can't reliably test that the SYSTEM clipboard now contains
-    ;; the bytes — that would require a `pbcopy`/`xclip` helper on
+    ;; the bytes - that would require a `pbcopy`/`xclip` helper on
     ;; $PATH on the CI box. The contract
     ;; we DO guarantee is that the function returns truthy on success
     ;; and falsy on total failure, never throws, and never blocks
@@ -417,7 +417,7 @@
       (expect (= com.googlecode.lanterna.input.CharacterPattern$Matching/NOT_YET m))))
 
   (it "nil on shape violation (third byte is not '<')"
-    ;; Plain CSI sequences (no '<') belong to other patterns —
+    ;; Plain CSI sequences (no '<') belong to other patterns -
     ;; sgr-mouse-pattern must reject them so Lanterna keeps trying.
     (expect (nil? (.match input/sgr-mouse-pattern (mk-chars "\u001B[A")))))
 

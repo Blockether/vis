@@ -1,5 +1,5 @@
-(ns com.blockether.vis.ext.foundation.environment.skills
-  "Skills catalog: scans `.agents/skills/*/SKILL.md` under both the
+(ns com.blockether.vis.internal.skills
+  "Internal skills catalog: scans `.agents/skills/*/SKILL.md` under both the
    repo root and `~/.agents/skills/*/SKILL.md` (user-global), parses
    YAML frontmatter via yamlstar, surfaces a flat alphabetical
    catalog of `{:name :description :path :source :body :extra}`
@@ -227,7 +227,7 @@
 
 (defn reload!
   "Invalidate and recompute the cached scan. Returns a summary
-   compatible with `(vis/reload-skills!)`'s contract:
+   compatible with the internal `(reload-skills!)` sandbox binding:
      {:scanned N :loaded M :dropped K :warnings [...]}"
   []
   (let [{:keys [loaded warnings]} (scan)
@@ -240,25 +240,22 @@
      :warnings warnings}))
 
 ;; ---------------------------------------------------------------------------
-;; Public-ish helpers used by the foundation aggregator and the
-;; render module.
+;; Public helpers used by the internal prompt assembler, sandbox
+;; bindings, doctor, and auto-skill activation.
 ;; ---------------------------------------------------------------------------
 
 (defn list-all
   "Vec of skill maps, alphabetical by `:name`. Empty when no skills
-   are found anywhere. Drives both the `<skills>` block in the
-   system prompt and the `TURN_ACCESSIBLE_SKILLS` SYSTEM var; not
-   exposed as a sandbox surface (the SYSTEM var is the model-facing
-   API)."
+   are found anywhere. Drives both the internal `<skills>` block in the system prompt
+   and the `TURN_ACCESSIBLE_SKILLS` SYSTEM var."
   []
   (or (:loaded (current)) []))
 
 (defn lookup
   "Find one skill by `:name`. Always returns a map; `:found?` flag
-   discriminates present vs absent (plan Q6). Surfaces as
-   `(v/load-skill \"name\")` — the activation step that materialises
-   the SKILL.md body into a sandbox value (TURN_ACCESSIBLE_SKILLS
-   carries only the summary)."
+   discriminates present vs absent (plan Q6). Used by the internal `(load-skill \"name\")` sandbox binding -
+   the activation step that materialises the SKILL.md body into a
+   sandbox value (TURN_ACCESSIBLE_SKILLS carries only the summary)."
   [^String skill-name]
   (if-let [s (some #(when (= skill-name (:name %)) %) (list-all))]
     (assoc s :found? true)
@@ -269,3 +266,19 @@
    clean."
   []
   (or (:warnings (current)) []))
+
+(defn sandbox-bindings
+  "Return internal sandbox bindings for skill activation. These are host
+   primitives, not extension symbols: `(load-skill \"name\")` loads the
+   full body and records it in `active-skills-atom` for the next
+   `<active_skills>` trailer; `(reload-skills!)` cache-busts the scanner."
+  [active-skills-atom]
+  {'load-skill
+   (fn load-skill [skill-name]
+     (let [result (lookup skill-name)]
+       (when (and (:found? result) (string? (:name result)) active-skills-atom)
+         (swap! active-skills-atom assoc (:name result) result))
+       result))
+   'reload-skills!
+   (fn reload-skills! []
+     (reload!))})

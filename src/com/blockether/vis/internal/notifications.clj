@@ -2,8 +2,8 @@
   "Cross-channel ephemeral notifications.
 
    A single in-memory pub-sub the host runtime, every extension, and
-   every channel can use to surface a transient signal — \"copied to
-   clipboard\", \"verify.sh passed\", \"provider switched\" — without
+   every channel can use to surface a transient signal - \"copied to
+   clipboard\", \"verify.sh passed\", \"provider switched\" - without
    embedding it in the answer body or polluting Telemere logs.
 
    Surface (re-exported on `com.blockether.vis.core`):
@@ -14,7 +14,7 @@
      (notifications)              ;; vec of currently-active entries
      (dismiss! id)                ;; force-clear by id
      (clear-expired!)             ;; prune; called on every read
-     (watch! key (fn [vec] …))    ;; cross-channel reactivity
+     (watch! key (fn [vec] ...))    ;; cross-channel reactivity
      (unwatch! key)
 
    Entry shape:
@@ -62,7 +62,7 @@
   (atom []))
 
 (defonce ^:private watchers-atom
-  ;; {key (fn [vec] …)}. Watchers fire AFTER every successful state
+  ;; {key (fn [vec] ...)}. Watchers fire AFTER every successful state
   ;; mutation (push / dismiss / clear-expired) with the new vec.
   ;; Errors inside watchers are swallowed + logged so a misbehaving
   ;; channel can never poison the pub-sub for everyone else.
@@ -76,7 +76,7 @@
 
 (defn- expired?
   "True when `entry` has an `:until` deadline that has passed.
-   Nil `:until` means sticky — never expires automatically."
+   Nil `:until` means sticky - never expires automatically."
   [entry]
   (when-let [until (:until entry)]
     (< (long until) (now-ms))))
@@ -122,7 +122,7 @@
    the caller can later `dismiss!` it manually.
 
    Options:
-     :level   one of #{:info :success :warn :error} — default :info.
+     :level   one of #{:info :success :warn :error} - default :info.
               Channels use the level for visual treatment (color,
               emoji prefix, etc.).
      :ttl-ms  lifespan in ms. Default 3000. nil = sticky / no auto
@@ -179,11 +179,11 @@
 (defn watch!
   "Register a watcher under `key`. The fn `f` is called with the
    full active-notifications vec on every push / dismiss / clear.
-   Replacing an existing watcher under the same key is fine —
+   Replacing an existing watcher under the same key is fine -
    typical pattern is `(watch! :tui-screen render-bump)`.
 
    Watchers run synchronously on the mutating thread, AFTER the
-   atom swap. They MUST be cheap (microseconds) — anything heavier
+   atom swap. They MUST be cheap (microseconds) - anything heavier
    should bounce work onto a future."
   [key f]
   (when-not (ifn? f)

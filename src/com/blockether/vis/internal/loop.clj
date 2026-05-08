@@ -1,14 +1,14 @@
 (ns com.blockether.vis.internal.loop
-  "vis iteration runtime + conversations — the library surface.
+  "vis iteration runtime + conversations - the library surface.
 
    Owns:
-     - Query runtime settings (`*rlm-context*`, `*eval-timeout-ms*`, …)
+     - Query runtime settings (`*rlm-context*`, `*eval-timeout-ms*`, ...)
      - Single-iteration runner (`run-iteration`)
      - Multi-iteration turn engine + router cache (`turn!`,
        `get-router`, `rebuild-router!`)
      - Environment lifecycle (`create-environment`, `dispose-environment!`)
      - Conversation env cache (`create!`, `by-id`, `by-channel`,
-       `send!`, `close!`, `delete!`, …)
+       `send!`, `close!`, `delete!`, ...)
 
    The binary entry point (`-main`), the persistence-backed Telemere
    `:db` handler, the one-shot agent helper, and every built-in CLI
@@ -44,9 +44,9 @@
    [com.blockether.vis.internal.markdown :as markdown]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
-   [com.blockether.vis.internal.proof :as proof]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.internal.skills :as skills]
    [edamame.core :as edamame]
    [sci.core :as sci]
    [taoensso.telemere :as tel])
@@ -78,7 +78,7 @@
 
 (def MAX_EVAL_TIMEOUT_MS
   "Hard ceiling for :eval-timeout-ms to prevent runaway SCI futures.
-   30 minutes — anything longer is a bug, not a feature."
+   30 minutes - anything longer is a bug, not a feature."
   (* 30 60 1000))
 
 (def ^:dynamic *eval-timeout-ms*
@@ -90,7 +90,7 @@
 
 (defn clamp-eval-timeout-ms
   "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS].
-   `candidate` may be nil — callers should resolve the fallback before calling.
+   `candidate` may be nil - callers should resolve the fallback before calling.
    Accepts any integer, coerces to long. Prevents runaway SCI futures from
    absurdly high values and sub-second timeouts from absurdly low values."
   [candidate]
@@ -246,10 +246,7 @@
 
    Foundation exposes this through `(v/needs-input ...)`; the loop
    keeps the predicate data-shaped instead of depending on foundation
-   namespaces so the core runtime has no extension cycle. A needs-input
-   answer may finish an evidence-bearing request only when the only
-   intent violation is missing focus — i.e. the model is asking the user
-   for the evidence needed to start work, not bypassing unresolved work."
+   namespaces so the core runtime has no extension cycle."
   [v]
   (and (map? v)
     (= :needs-input (:vis/answer-mode v))
@@ -269,51 +266,10 @@
         s (answer-value-string v)]
     (markdown/normalize-chat-markdown s)))
 
-(defn- contains-runtime-audit-appendix?
-  [answer-text]
-  (boolean
-    (and (string? answer-text)
-      (or (re-find #"(?is)<proofs(?:\s[^>]*)?>.*</proofs>" answer-text)
-        (str/includes? answer-text "## Proof audit")))))
-
-(defn- runtime-proof-appendix
-  "Optional runtime proof-audit appendix supplied by vis-foundation when present.
-
-   Core must not statically require foundation: foundation is an extension and
-   already requires core. Dynamic resolution keeps the dependency optional while
-   still letting accepted answers get the canonical audit projection appended by
-   the runtime instead of legacy proof-check/proofs boilerplate."
-  [environment]
-  (try
-    (let [audit-fn        (requiring-resolve
-                            'com.blockether.vis.ext.foundation.introspection/foundation-audit)
-          audit-report-fn (requiring-resolve
-                            'com.blockether.vis.ext.foundation.introspection/foundation-audit-report)
-          audit           (when audit-fn (audit-fn environment))]
-      (when (and audit-report-fn
-              (:success? audit)
-              (pos? (long (or (get-in audit [:counts :attestations]) 0))))
-        (let [appendix (audit-report-fn environment)]
-          (when (and (string? appendix) (not (str/blank? appendix)))
-            appendix))))
-    (catch Throwable _
-      nil)))
-
-(defn append-runtime-proofs
-  "Append proof-audit disclosure to accepted final answers.
-
-   Skips explicit needs-input answers and answers that already contain a
-   runtime proof/audit appendix. If audit is not available or not ok, returns the
-   original answer text; answer rejection remains owned by the final-answer
-   gate."
-  [environment answer-text answer-value]
-  (let [answer-text (str answer-text)]
-    (if (or (needs-input-answer? answer-value)
-          (contains-runtime-audit-appendix? answer-text))
-      answer-text
-      (if-let [appendix (runtime-proof-appendix environment)]
-        (str answer-text "\n\n" appendix)
-        answer-text))))
+(defn append-runtime-appendices
+  "No-op compatibility shim; runtime appendices were removed."
+  [_environment answer-text _answer-value]
+  (str answer-text))
 
 (def edamame-opts
   {:all true
@@ -359,7 +315,7 @@
      1. Quick-out when the unescaped-quote count is even.
      2. Find the line where the running count first goes odd.
      3. Try removing each unescaped `\"` on that line, ONE AT A
-        TIME (most common LLM mistake — conversation cf9e29b5).
+        TIME (most common LLM mistake - conversation cf9e29b5).
      4. As a fallback, try appending `\"` at end of that line
         (the \"missing close-quote\" case).
      5. Each candidate goes to edamame; first one that parses wins.
@@ -411,7 +367,7 @@
    survives into `<journal>` instead of getting silently stripped).
 
    Repair pipeline when the raw source fails edamame:
-     1. parinfer indent-mode rebalance → re-parse via edamame;
+     1. parinfer indent-mode rebalance -> re-parse via edamame;
         on success every form gets `:repaired? true` so the channel
         can see the repair happened.
      2. quote rebalance for unbalanced string delimiters.
@@ -444,7 +400,7 @@
                              forms)
                ;; For form K, two slices:
                ;;   `:comment` = the GAP (end-of-K-1 .. start-of-K).
-               ;;     Captures any `;; …` / `#_(...)` / blank lines
+               ;;     Captures any `;; ...` / `#_(...)` / blank lines
                ;;     that sat between the previous form and this
                ;;     one. Trimmed; nil when empty.
                ;;   `:expr`    = the form's own bounds. The actual
@@ -489,7 +445,7 @@
                 ;; extension chain on the original source.
                 [nil (ex-message raw-err)]))
             ;; Attempt 3: quote rebalance (extra/missing `\"` chars).
-            ;; Same contract as parinfer-rebalance — returns the
+            ;; Same contract as parinfer-rebalance - returns the
             ;; rebalanced source iff it parses cleanly via edamame,
             ;; else nil.
             (if-let [rebalanced (quote-rebalance code-str)]
@@ -629,10 +585,10 @@
    once it parses cleanly, nil otherwise.
 
    Termination conditions (in order):
-     1. Rewrite parses cleanly             → return rewrite.
-     2. Hook returns nil                    → return nil.
-     3. Hook returns the input unchanged    → return nil (no progress).
-     4. Iteration cap reached               → return nil (bounded).
+     1. Rewrite parses cleanly             -> return rewrite.
+     2. Hook returns nil                    -> return nil.
+     3. Hook returns the input unchanged    -> return nil (no progress).
+     4. Iteration cap reached               -> return nil (bounded).
 
    Read-only on the environment."
   [environment code parse-error]
@@ -644,18 +600,18 @@
         (let [fixed (extension/try-rescue-parse-error exts current-code current-error environment)]
           (cond
             (nil? fixed)              nil
-            (= fixed current-code)    nil  ; no progress — bail
+            (= fixed current-code)    nil  ; no progress - bail
             :else
             (let [next-error (parse-clojure-syntax fixed)]
               (if (nil? next-error)
-                fixed                       ; parses cleanly — done
+                fixed                       ; parses cleanly - done
                 (recur fixed next-error (inc iterations))))))))))
 
 (def ^:private DEF_HEADS '#{def defn defn- defmacro})
 
 (defn extract-defining-name
-  "Return the symbol named by a `(def NAME …)` / `(defn NAME …)` /
-   `(defn- NAME …)` / `(defmacro NAME …)` form, or nil otherwise.
+  "Return the symbol named by a `(def NAME ...)` / `(defn NAME ...)` /
+   `(defn- NAME ...)` / `(defmacro NAME ...)` form, or nil otherwise.
    Tolerant: parse errors return nil rather than throwing."
   [expression]
   (try
@@ -670,8 +626,8 @@
 
 (defn- attach-doc-meta!
   "Attach `doc-string` as :doc metadata to the var named by `expression`'s
-   defining form, if any. No-op when `expression` is not a (def…) /
-   (defn…) shape, when doc-string is blank, or when the SCI eval throws.
+   defining form, if any. No-op when `expression` is not a (def...) /
+   (defn...) shape, when doc-string is blank, or when the SCI eval throws.
    Failures are logged at :debug; the caller's eval already succeeded
    so a metadata-attach failure must NOT propagate."
   [{:keys [sci-ctx sandbox-ns]} expression doc-string]
@@ -701,13 +657,13 @@
   "Run a single :code block through the SCI sandbox.
 
    Optional kwargs:
-     :timeout-ms — hard-cap eval time, clamped at the
+     :timeout-ms - hard-cap eval time, clamped at the
                    *eval-timeout-ms* bounds.
-     :doc        — docstring to attach to the var defined by this :expr.
+     :doc        - docstring to attach to the var defined by this :expr.
 
    Every call performs a real SCI eval. There is no result cache:
-   forms with side effects (e.g. host primitives `(answer …)` and
-   `(conversation-title …)`) MUST run their bodies on every
+   forms with side effects (e.g. host primitives `(answer ...)` and
+   `(conversation-title ...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [{:keys [sci-ctx sandbox-ns] :as environment} code
@@ -741,7 +697,7 @@
                   :original-code code
                   :repair :extension-source-rewrite)))))))))
 
-;; Print-cap defaults for `prompt/safe-pr-str` — chosen so a wide flat
+;; Print-cap defaults for `prompt/safe-pr-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
 ;; an unbounded JVM string before truncation. Override per call site
 ;; when a tighter or looser bound is required.
@@ -771,7 +727,7 @@
     (let [s (str c)]
       (if (> (count s) LAST_USER_PREVIEW_CHARS)
         (str (subs s 0 LAST_USER_PREVIEW_CHARS)
-          " …<+" (- (count s) LAST_USER_PREVIEW_CHARS) " chars>")
+          " ...<+" (- (count s) LAST_USER_PREVIEW_CHARS) " chars>")
         s))))
 
 (defn- exception->iteration-error-data
@@ -788,7 +744,7 @@
 (defn handle-iteration-exception!
   "Error path for the main-loop try/catch around `run-iteration`.
    Infrastructure failures are terminal for the turn; model/format/code
-   failures still return `{::iteration-error …}` for RLM self-correction."
+   failures still return `{::iteration-error ...}` for RLM self-correction."
   [^Throwable e ctx]
   (let [ex-data-map (ex-data e)
         iteration (:iteration ctx)
@@ -797,7 +753,7 @@
     (tel/log! {:level (if fatal? :error :warn)
                :data  (assoc (format-exception-short e) :iteration iteration)}
       (if fatal?
-        "Provider infrastructure error — failing turn without RLM restarts"
+        "Provider infrastructure error - failing turn without RLM restarts"
         "RLM iteration failed, feeding error to LLM"))
     (cond-> {::iteration-error iteration-error-data}
       fatal? (assoc ::fatal-iteration-error true))))
@@ -807,8 +763,8 @@
 ;; ---------------------------------------------------------------------------
 
 (defn get-locals
-  "Returns {sym → val} of user-defined vars in the SCI sandbox
-   (excludes built-ins / kw-keyed entries). Direct atom read — zero
+  "Returns {sym -> val} of user-defined vars in the SCI sandbox
+   (excludes built-ins / kw-keyed entries). Direct atom read - zero
    eval overhead."
   [{:keys [sci-ctx initial-ns-keys]}]
   (try
@@ -844,7 +800,7 @@
   [value]
   (and (extension/tool-result? value)
     (contains? #{:op/read :op/search}
-      (get-in value [:provenance :op-class]))))
+      (get-in value [:info :op-class]))))
 
 (defn- def-display-result
   "For single value defs, persist the bound value, not the Var return.
@@ -873,7 +829,7 @@
 
 (def ^:private noop-exprs
   "Expressions the LLM emits only to satisfy the 'must return code' constraint.
-   These carry no information — filter them before storage and display."
+   These carry no information - filter them before storage and display."
   #{":ok" ":ok\n" "nil" ":noop"})
 
 (defn- noop-expr?
@@ -891,8 +847,8 @@
 ;;
 ;; The iteration loop discards a `(answer ...)` call iff the form
 ;; that ITSELF invoked it errored. Sibling errors (a typo in some
-;; OTHER form, a bad v/edit elsewhere) do NOT gate termination —
-;; the model's intent to finalize is honored as long as the answer-
+;; OTHER form, a bad v/edit elsewhere) do NOT gate termination -
+;; the model's request to finalize is honored as long as the answer-
 ;; bearing form ran cleanly. Pre-Option C the loop discarded on ANY
 ;; sibling error, which is how a turn could rack up 148 retries with
 ;; the model repeatedly emitting `(answer ...)` next to a single
@@ -901,7 +857,7 @@
 ;; Returns the error from the form at `form-idx` in `block-results`
 ;; or nil when that form's evaluation succeeded. `form-idx` may be
 ;; nil (older answer-atom payloads) or out-of-bounds (defensive
-;; against shape drift) — both yield nil (no discard).
+;; against shape drift) - both yield nil (no discard).
 ;; ---------------------------------------------------------------------------
 
 (defn answer-form-error
@@ -921,20 +877,20 @@
 ;; Answer-position contract (latency-aware terminal form)
 ;;
 ;; A final answer may be the only top-level form OR the last top-level
-;; form after earlier setup/proof-helper forms. This avoids burning a
-;; recovery iteration when the model already put `(answer …)` last.
+;; form after earlier setup/helper forms. This avoids burning a
+;; recovery iteration when the model already put `(answer ...)` last.
 ;;
 ;; Sibling forms AFTER an answer are still rejected before evaluation:
 ;; once the model commits a terminal answer, no later top-level work may
 ;; mutate state, run tools, or alter the evidence surface.
 ;;
-;; Structural wrappers — `(let […] (answer …))`, `(do … (answer …))`,
-;; `(answer (build))` — stay legal in every iteration because they are
+;; Structural wrappers - `(let [...] (answer ...))`, `(do ... (answer ...))`,
+;; `(answer (build))` - stay legal in every iteration because they are
 ;; still ONE top-level form.
 ;; ---------------------------------------------------------------------------
 
 (defn answer-position-violation?
-  "True when `(answer …)` fired from a disallowed top-level position.
+  "True when `(answer ...)` fired from a disallowed top-level position.
    `form-idx` is the 0-based index of the form that set `answer-atom`;
    `total-forms` is the count of parsed top-level blocks;
    `iteration-position` is 1-based. Pure; public so loop + tests share
@@ -963,12 +919,12 @@
    top-level form of its iteration."
   [form-idx total-forms]
   (let [actual-1 (inc (or form-idx 0))]
-    (str "(answer …) must be the LAST top-level form of its final iteration. "
+    (str "(answer ...) must be the LAST top-level form of its final iteration. "
       "This iteration had " total-forms " top-level forms; answer "
       "fired from form " actual-1 ". Recovery: move any later sibling work "
-      "before the answer or omit `(answer …)` so the host loops, then finish "
-      "with an answer-bearing final form such as `(answer …)` or "
-      "`(let [...] (answer …))`.")))
+      "before the answer or omit `(answer ...)` so the host loops, then finish "
+      "with an answer-bearing final form such as `(answer ...)` or "
+      "`(let [...] (answer ...))`.")))
 
 (defn- answer-call-form?
   [form]
@@ -986,7 +942,7 @@
       false)))
 
 (defn- answer-position-preflight-form-idx
-  "Return the 0-based top-level form index when an `(answer …)` call has
+  "Return the 0-based top-level form index when an `(answer ...)` call has
    later sibling top-level forms. This runs before SCI evaluation so
    rejected final iterations do not execute any of their forms."
   [_iteration-position code-entries]
@@ -1003,10 +959,10 @@
   [form-idx total-forms]
   (let [actual-1 (inc (or form-idx 0))]
     (str "Answer-position preflight rejected this iteration before evaluation: "
-      "(answer …) must be the LAST top-level form. "
+      "(answer ...) must be the LAST top-level form. "
       "This iteration had " total-forms " top-level forms; an answer call "
       "appears in form " actual-1 " with later sibling work after it. "
-      "Move any required sibling work before the answer, or omit `(answer …)` "
+      "Move any required sibling work before the answer, or omit `(answer ...)` "
       "so the host loops. Intent resolution may be inside the final wrapper "
       "only when all cited refs are already observed.")))
 
@@ -1217,77 +1173,12 @@
       :code-hash code-hash
       :original-total-blocks parsed-total-blocks})))
 
-(def ^:private evidence-bearing-request-pattern
-  (re-pattern
-    (str "(?i)\\b("
-      (str/join "|"
-        ["audit" "bash" "build" "change" "check" "code" "debug" "diagnose"
-         "edit" "fail" "failing" "fix" "grep" "implement" "inspect"
-         "investigate" "ls" "patch" "paste" "pasted" "refactor" "repo"
-         "repository" "reproduce" "run" "search" "sent" "test" "verify"
-         "what did i send" "write"])
-      ")\\b")))
-
-(defn intent-required?
-  "True when the current request needs workspace/evidence-backed intent gating.
-   Trivial chat and pure conceptual answers may finish without an intent; code,
-   debugging, repository, change, search, verification, audit, pasted-content
-   inspection, terminal/tool demonstration, and multi-step work must first
-   create/focus and resolve an intent."
-  [user-request]
-  (boolean (and (string? user-request)
-             (re-find evidence-bearing-request-pattern user-request))))
-
-(defn- current-user-request
-  [environment]
-  (or (:user-request environment)
-    (some-> (:current-user-request-atom environment) deref)))
-
-(defn- ignorable-missing-focused-intent-only?
-  [state]
-  (let [violations (:violations state)]
-    (and (seq violations)
-      (every? #(= :missing-focused-intent (:type %)) violations))))
-
 (defn final-answer-gate-error
-  "Return nil only when focused conversation intents are answer-ready.
-   Evidence-bearing requests require a focused conversation intent that is
-   fulfilled or abandoned before `(answer …)`. Trivial chat/conceptual answers
-   may finish without creating an intent, unless focused work already exists and
-   is unresolved.
-
-   Explicit `(answer (v/needs-input ...))` payloads are the third path:
-   they may finish an evidence-bearing request with no focused intent when the
-   model is asking the user for missing input required to begin the work.
-
-   Evidence-bearing first-iteration plain clarification answers are rejected;
-   use explicit `(v/needs-input …)` when required user material is absent."
+  "Final answers are no longer blocked by extra workflow state."
   ([environment iteration blocks]
    (final-answer-gate-error environment iteration blocks nil))
-  ([environment _iteration _blocks answer-value]
-   (let [db-info (:db-info environment)
-         turn-id (some-> (:current-conversation-turn-id-atom environment) deref)]
-     (when (and db-info turn-id)
-       (let [state (try (persistance/db-intents db-info {:conversation-turn-id turn-id})
-                     (catch Throwable e
-                       {:success? false
-                        :violations [{:type :intent-check-error
-                                      :blocking? true
-                                      :message (ex-message e)}]}))
-             required? (intent-required? (current-user-request environment))
-             missing-focus-only? (ignorable-missing-focused-intent-only? state)
-             needs-input? (needs-input-answer? answer-value)
-             missing-focus-allowed? (and missing-focus-only?
-                                      (or (not required?) needs-input?))]
-         (when (and (not (:success? state))
-                 (not missing-focus-allowed?))
-           (str "Final answer rejected: focused conversation intents are not resolved. "
-             "Run `(v/intents)`, prove/block gates with canonical provenance refs, "
-             "then fulfill or abandon every focused intent before `(answer …)`. "
-             "For missing input needed to begin work, answer with `(v/needs-input …)`. "
-             "For trivial chat/conceptual answers with no workspace evidence, no intent is required. "
-             "For unrelated parallel work, fork the conversation. "
-             "Violations: " (pr-str (:violations state)))))))))
+  ([_environment _iteration _blocks _answer-value]
+   nil))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -1317,9 +1208,9 @@
     (= :vis/answer (:result result)) :vis/answer
     :else :vis/sci))
 
-(defn- eval-provenance
-  "Generic canonical provenance for every top-level form that passes
-   through the Vis eval pipeline. Tool calls can add nested provenance
+(defn- eval-info
+  "Generic canonical info for every top-level form that passes
+   through the Vis eval pipeline. Tool calls can add nested info
    inside their returned envelope; this records the outer regular form
    evaluation so plain calls and tool calls share a common block-level
    trace."
@@ -1330,7 +1221,7 @@
         started       (long (or (:execution-started-at-ms result)
                               (max 0 (- finished duration))))
         form-position (inc (long form-idx))]
-    (extension/normalize-provenance
+    (extension/normalize-info
       {:op             (or (:op result)
                          (case rendering-kind
                            :vis/system :vis/system
@@ -1346,9 +1237,7 @@
        :iteration      iteration
        :form-position  form-position
        :form-count     form-count
-       :ref            (proof/block-ref {:turn-prefix turn-prefix
-                                         :iteration iteration
-                                         :block form-position})
+       :ref            (str "turn/" turn-prefix "/iteration/" iteration "/block/" form-position)
        :timeout?       (boolean (:timeout? result))
        :repaired?      (boolean (:repaired? result))})))
 
@@ -1361,25 +1250,25 @@
 (s/def ::timeout? (s/nilable boolean?))
 (s/def ::repaired? (s/nilable boolean?))
 (s/def ::comment string?)
-(s/def ::block-provenance
+(s/def ::block-info
   (s/and
-    ::extension/provenance
+    ::extension/info
     #(contains? #{:sci/eval :edamame/parse :vis/guard :vis/system :vis/answer} (:op %))
     #(contains? #{:done :error :timeout} (:status %))
     #(pos-int? (:iteration %))
     #(pos-int? (:form-position %))
     #(pos-int? (:form-count %))
     #(re-matches #"(?i)^turn/[0-9a-f]{8}/iteration/[1-9][0-9]*/block/[1-9][0-9]*$" (:ref %))))
-(s/def ::provenance ::block-provenance)
+(s/def ::info ::block-info)
 (s/def ::iteration-block
   (s/keys :req-un [::id ::code ::stdout ::stderr ::error
-                   ::execution-time-ms ::provenance]
+                   ::execution-time-ms ::info]
     :opt-un [::result ::timeout? ::repaired? ::comment]))
 
 (defn validate-iteration-blocks!
-  "Fail fast if a stored/evaluated block lost mandatory provenance.
-   Tool-result envelopes enforce their nested provenance separately;
-   this spec enforces the outer block-level eval provenance for every
+  "Fail fast if a stored/evaluated block lost mandatory info.
+   Tool-result envelopes enforce their nested info separately;
+   this spec enforces the outer block-level eval info for every
    regular top-level form."
   [blocks]
   (let [blocks (vec (or blocks []))]
@@ -1482,16 +1371,14 @@
       messages*)))
 
 (defn run-iteration
-  "Runs a single RLM iteration: ask! → check final → execute code.
+  "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
   [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body]}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
           form-ref (fn [idx]
-                     (proof/block-ref {:turn-prefix turn-prefix
-                                       :iteration iteration-position
-                                       :block (inc idx)}))
+                     (str "turn/" turn-prefix "/iteration/" iteration-position "/block/" (inc idx)))
           effective-reasoning (when (and (some? reasoning-level)
                                       (reasoning-effort-configurable? resolved-model))
                                 (or (normalize-reasoning-level reasoning-level)
@@ -1515,12 +1402,12 @@
                                            {:type :vis/missing-current-form-idx-atom})))
           _ (reset! current-form-idx-atom nil)
           ;; Stream reasoning chunks to the TUI while the LLM is
-          ;; thinking. Every chunk carries `:phase` — consumers
+          ;; thinking. Every chunk carries `:phase` - consumers
           ;; dispatch on it. Phases:
-          ;;   :reasoning      — LLM streaming reasoning text
-          ;;   :form-start     — one form started evaluating (per-form)
-          ;;   :form-result    — one form finished evaluating (per-form)
-          ;;   :iteration-final — iteration complete (final-result
+          ;;   :reasoning      - LLM streaming reasoning text
+          ;;   :form-start     - one form started evaluating (per-form)
+          ;;   :form-result    - one form finished evaluating (per-form)
+          ;;   :iteration-final - iteration complete (final-result
           ;;                      or normal end-of-iteration marker)
           streaming-fn (when on-chunk
                          (fn [{:keys [reasoning done?]}]
@@ -1645,16 +1532,16 @@
                                           form-repaired? (assoc :repaired? true))
                                  display-result (def-display-result environment expr result)
                                  rendering-kind (eval-rendering-kind display-result)
-                                 provenance (eval-provenance turn-prefix iteration-position idx total-blocks display-result rendering-kind)
+                                 info (eval-info turn-prefix iteration-position idx total-blocks display-result rendering-kind)
                                  result* (assoc display-result
-                                           :provenance provenance
+                                           :info info
                                            :rendering-kind rendering-kind)]
                              ;; Per-form streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; form lands so the channel can render
                              ;; per-form results incrementally instead
                              ;; of waiting for the whole batch. Same
-                             ;; envelope on success and error —
+                             ;; envelope on success and error -
                              ;; consumers branch on `:error nil?`,
                              ;; not on shape.
                              (when on-chunk
@@ -1672,7 +1559,7 @@
                                           :stdout            (:stdout result*)
                                           :stderr            (:stderr result*)
                                           :execution-time-ms (:execution-time-ms result*)
-                                          :provenance        (:provenance result*)
+                                          :info        (:info result*)
                                           :rendering-kind    (:rendering-kind result*)
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))}))
@@ -1692,7 +1579,7 @@
                                     :stderr (:stderr result)
                                     :error (:error result)
                                     :execution-time-ms (:execution-time-ms result)
-                                    :provenance (:provenance result)
+                                    :info (:info result)
                                     :rendering-kind (:rendering-kind result)
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)}
@@ -1709,7 +1596,7 @@
           ;; iteration. Atom payload is `{:value :form-idx}`. Two
           ;; gates fire in order:
           ;;
-          ;;   1. Rule b' (answer position): `(answer …)` must be the
+          ;;   1. Rule b' (answer position): `(answer ...)` must be the
           ;;      only top-level form in the final iteration. Any
           ;;      sibling form means the model mixed finishing with
           ;;      exploration/action/verification, so the answer is
@@ -1717,14 +1604,14 @@
           ;;
           ;;   2. Option C (form-scoped error gate): if the answer-
           ;;      bearing form's own evaluation errored anyway
-          ;;      (e.g. `(do (v/edit …throws…) (answer "x"))` —
+          ;;      (e.g. `(do (v/edit ...throws...) (answer "x"))` -
           ;;      the form had inner work that crashed), the answer
           ;;      is discarded with the form's own error. Sibling
           ;;      forms BEFORE the answer-form may error freely; that
           ;;      doesn't gate termination.
           ;;
-          ;; `resolved-model` is a MAP — `{:name str :provider kw
-          ;; :reasoning? bool}` — not a string. Persisting `(str
+          ;; `resolved-model` is a MAP - `{:name str :provider kw
+          ;; :reasoning? bool}` - not a string. Persisting `(str
           ;; resolved-model)` would land a stringified map in
           ;; `iteration.llm_model`; surface `:name` and `:provider`
           ;; separately so both columns get clean values.
@@ -1743,8 +1630,8 @@
                                  gate-error
                                  gate-error)
               ;; Surface the validation error on the answer-bearing
-              ;; form's row so the model sees \"my (answer …) was
-              ;; rejected because…\" right next to its own code.
+              ;; form's row so the model sees \"my (answer ...) was
+              ;; rejected because...\" right next to its own code.
               blocks*     (cond-> blocks
                             (and validation-error form-idx
                               (< form-idx (count blocks))
@@ -1772,7 +1659,7 @@
                                :stdout            (:stdout b)
                                :stderr            (:stderr b)
                                :execution-time-ms (:execution-time-ms b)
-                               :provenance        (:provenance b)
+                               :info        (:info b)
                                :rendering-kind    (:rendering-kind b)
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))
@@ -1791,13 +1678,13 @@
              :llm-raw-response (:raw ask-result)
              :llm-executable-code (:result ask-result)
              :llm-executable-blocks (:blocks ask-result)}
-            (let [final-answer* (append-runtime-proofs environment final-answer value)]
+            (let [final-answer* (append-runtime-appendices environment final-answer value)]
               {:thinking thinking
                :blocks (strip-noop-blocks blocks)
                :final-result {:final?           true
                               :answer           final-answer*
                               ;; Index of the form that called
-                            ;; `(answer …)`. Channels use this to
+                            ;; `(answer ...)`. Channels use this to
                             ;; ELIDE the answer-bearing form from the
                             ;; per-iteration code trace (the channel
                             ;; renders the answer text below; showing
@@ -1843,7 +1730,7 @@
   (if (stream-output-overflow? iteration-error-data)
     (str "[Iteration " (inc (long iteration)) "]\n"
       "<error>Provider stopped the response as incomplete because output budget was exhausted (max_output_tokens).</error>\n"
-      "Recovery policy: do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, proofs, or repeated diagnostics.\n"
+      "Recovery policy: do not continue the broad strategy. Use a compact path now: one small probe if essential, otherwise stop, report the exact impediment, and ask for confirmation before more changes. Avoid dumping large maps, file contents, diffs, or repeated diagnostics.\n"
       "Original request: " user-request)
     (str "[Iteration " (inc iteration) "]\n"
       "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
@@ -1888,7 +1775,7 @@
 (defn- recent-errors-block
   "Render recent provider-level and block-level errors as a Markdown
    feedback block. Returns nil when the trace carries no errors so
-   callers can `(when …)` without churn."
+   callers can `(when ...)` without churn."
   [trace n]
   (let [errs (->> trace
                reverse
@@ -1942,7 +1829,7 @@
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
-   Plain-text completion + fenced code-block extraction — returns the
+   Plain-text completion + fenced code-block extraction - returns the
    svar map `{:result :blocks :raw :tokens :cost :duration-ms}`.
    `ask!` (JSON-spec) is gone; every Vis caller uses `ask-code!`."
   [opts]
@@ -1983,7 +1870,7 @@
    `:provider` (provider id keyword, e.g. `:openai`) so every caller
    can persist BOTH alongside the model. Earlier versions returned
    just the model map and the provider id was silently dropped on
-   the way to the DB — leaving the meta layer with no way to render
+   the way to the DB - leaving the meta layer with no way to render
    `provider/model`."
   ([router]
    (let [provider (first (:providers router))
@@ -2107,14 +1994,14 @@
    registry.
 
    Touches:
-     ITERATION_PREVIOUS_REASONING — last iteration's :thinking text.
-     CONVERSATION_PREVIOUS_ANSWER — latest finalized turn answer; only
+     ITERATION_PREVIOUS_REASONING - last iteration's :thinking text.
+     CONVERSATION_PREVIOUS_ANSWER - latest finalized turn answer; only
                                      bumps when this iteration produced
                                      a `final-result` (= terminal answer
                                      for this turn). For all earlier
                                      iterations of the same turn it
                                      keeps the previous turn's value.
-     CONVERSATION_TITLE           — mirrors `:conversation-title-atom`
+     CONVERSATION_TITLE           - mirrors `:conversation-title-atom`
                                      so a `(conversation-title \"...\")`
                                      inside iteration N is observable
                                      to the model in iteration N+1
@@ -2145,14 +2032,14 @@
    TURN_CONVERSATION_SOUL_ID, TURN_CONVERSATION_STATE_ID,
    TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS,
    CONVERSATION_ID, CONVERSATION_SOUL_ID, CONVERSATION_STATE_ID) repeat verbatim across
-   iterations of the same turn — that is the intentional contract:
+   iterations of the same turn - that is the intentional contract:
    \"every iteration carries a snapshot of every SYSTEM var\". The
    dedup-on-unchanged optimization the previous version did was a
    row-saving micro-opt that kept the var-history vec stuck on iter 0
    for those names.
 
    Each var is normalized to a non-nil string so `expression_state`
-   never stores nil for a SYSTEM var — makes the version vec a clean
+   never stores nil for a SYSTEM var - makes the version vec a clean
    log of values across iterations."
   [vars-snapshot {:keys [user-request thinking final-answer
                          turn-conversation-turn-id iteration-id
@@ -2197,7 +2084,7 @@
 ;; =============================================================================
 
 (defn- system-var-sym?
-  "Local alias — the canonical predicate lives in `sci-env`. Kept here
+  "Local alias - the canonical predicate lives in `sci-env`. Kept here
    so archive code reads cleanly without an extra namespace bounce on
    every call."
   [sym]
@@ -2208,7 +2095,7 @@
    bindings only; persisted history remains available through
    `var-history`.
 
-   HARD GUARD: SYSTEM symbols can NEVER be archived — they are contract
+   HARD GUARD: SYSTEM symbols can NEVER be archived - they are contract
    surfaces the iteration loop re-binds every turn. Filtered out +
    logged."
   [sci-ctx names]
@@ -2221,7 +2108,7 @@
     (when (seq system-syms)
       (tel/log! {:level :info :id ::archive-system-symbol-refused
                  :data {:requested (mapv str system-syms)}
-                 :msg "Refusing to archive SYSTEM symbols — ignoring those names"}))
+                 :msg "Refusing to archive SYSTEM symbols - ignoring those names"}))
     (when (seq user-syms)
       (try
         (swap! (:env sci-ctx) update-in [:namespaces 'sandbox]
@@ -2229,7 +2116,7 @@
         (catch Throwable e
           (tel/log! {:level :debug :id ::archive-vars-failed
                      :data {:error (ex-message e) :syms (mapv str user-syms)}
-                     :msg "archive-vars! failed — skipping"}))))))
+                     :msg "archive-vars! failed - skipping"}))))))
 
 (def ^:const HOT_SYMBOL_CAP
   "Maximum live user-defined symbols targeted by RLM hot memory."
@@ -2292,7 +2179,7 @@
       (catch Exception e
         (tel/log! {:level :warn :id ::auto-archive-failed
                    :data {:error (ex-message e)}
-                   :msg "Auto-archive failed — skipping"})))))
+                   :msg "Auto-archive failed - skipping"})))))
 
 ;; -----------------------------------------------------------------------------
 ;; Iteration loop + run-turn! (inlined from former base)
@@ -2358,11 +2245,9 @@
     (when-let [active-skills-atom (:active-skills-atom environment)]
       (doseq [skill-name (auto-skill-names user-request)]
         (try
-          (when-let [lookup (requiring-resolve
-                              'com.blockether.vis.ext.foundation.environment.skills/lookup)]
-            (let [skill (lookup skill-name)]
-              (when (:found? skill)
-                (swap! active-skills-atom assoc (:name skill) (assoc skill :auto? true)))))
+          (let [skill (skills/lookup skill-name)]
+            (when (:found? skill)
+              (swap! active-skills-atom assoc (:name skill) (assoc skill :auto? true))))
           (catch Throwable t
             (tel/log! {:level :warn :id ::auto-skill-activation-failed
                        :data {:skill skill-name
@@ -2394,7 +2279,7 @@
         nil))))
 
 (defn iteration-loop
-  "The core iteration loop. Runs assemble → ask LLM → execute → persist
+  "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer`, the user cancels, or the
    consecutive-error budget is exhausted. There is NO iteration cap.
    If a buggy model never finalizes, the user cancels."
@@ -2419,7 +2304,7 @@
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per turn. Threaded through both the
         ;; system-prompt assembler (cacheable prefix) and the per-iteration
-        ;; ext nudge collector — activation-fn never re-fires inside the loop.
+        ;; ext nudge collector - activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         _             (sync-active-extension-symbols! environment active-exts)
         _             (when-let [a (:active-skills-atom environment)]
@@ -2492,7 +2377,7 @@
                          (atom {:index nil :revision -1 :current-revision 0}))
         ;; `:on-chunk` is a streaming-token hook (per-reasoning-chunk
         ;; from svar's stream callback); it lives outside the
-        ;; lifecycle bus on purpose — it fires dozens of times per
+        ;; lifecycle bus on purpose - it fires dozens of times per
         ;; iteration, not once at a boundary. The four lifecycle
         ;; phases (turn-start / iteration-start / iteration-end /
         ;; turn-end) compose per-call hooks + every active extension
@@ -2502,7 +2387,7 @@
         ;; starve siblings.
         on-chunk             (:on-chunk hooks)
         lifecycle-listeners  (lifecycle/compose-listeners hooks active-exts)
-        ;; Per-turn payload skeleton — phase + iteration extras get
+        ;; Per-turn payload skeleton - phase + iteration extras get
         ;; merged on at every emit site.
         turn-base-payload    {:conversation-id (:conversation-id environment)
                               :conversation-turn-id        conversation-turn-id
@@ -2519,14 +2404,14 @@
                        (try (hook-fn payload)
                          (catch Exception e
                            (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
-        ;; Metadata persisted on each iteration row — reuses the
+        ;; Metadata persisted on each iteration row - reuses the
         ;; precomputed `active-exts` (no second activation pass).
         ;;
         ;; Source markers (paths, max-mtime, sha256) are written ONLY
         ;; on the first iteration of each turn (`iter-pos` = 0 internally,
         ;; persisted as position 1). The v2 change-detector reads `WHERE position = 1 ORDER BY
         ;; created_at DESC LIMIT 1` to compare against current state.
-        ;; Subsequent iterations omit them — cuts ~99 % redundant DB
+        ;; Subsequent iterations omit them - cuts ~99 % redundant DB
         ;; volume vs every-iteration. See plan Q15.
         iteration-metadata (fn [iter-pos]
                              (when (seq active-exts)
@@ -2545,7 +2430,7 @@
     ;; Turn-start SYSTEM-var bindings.
     ;;
     ;; Every `TURN_*` here is bound exactly once per turn and never
-    ;; mutated again until the next turn opens — the model gets a
+    ;; mutated again until the next turn opens - the model gets a
     ;; stable view for the entire iteration loop. `ITERATION_*` resets
     ;; here and rebinds per iteration. `CONVERSATION_*` is touched at
     ;; iteration boundaries via `update-system-vars!` /
@@ -2564,7 +2449,7 @@
     ;; The full assembled system prompt that drives THIS turn. SYSTEM
     ;; vars are excluded from `<var_index>` (see `env/build-var-index`)
     ;; so binding a multi-KB string here does NOT enter per-iteration
-    ;; prompt context — it is only paid for if the model evaluates the
+    ;; prompt context - it is only paid for if the model evaluates the
     ;; symbol explicitly (e.g. to verify what rules it is bound by).
     (env/bind-and-bump! environment 'TURN_SYSTEM_PROMPT system-prompt)
     ;; TURN_ACTIVE_EXTENSIONS = frozen, fully-realized vec describing
@@ -2576,7 +2461,7 @@
       (prompt/extensions-snapshot active-exts))
     ;; TURN_ACCESSIBLE_SKILLS = frozen vec of skill summaries the model
     ;; can filter/map/some over. Bodies are NOT included; loading one
-    ;; is the activation step via (v/load-skill name). See
+    ;; is the internal activation step via (load-skill name). See
     ;; prompt/accessible-skills-snapshot for the per-element shape.
     (env/bind-and-bump! environment 'TURN_ACCESSIBLE_SKILLS
       (prompt/accessible-skills-snapshot))
@@ -2588,13 +2473,6 @@
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
     (when-let [a (:repeat-preflight-atom environment)] (reset! a nil))
-    (try
-      (persistance/db-infer-focus! (:db-info environment) conversation-turn-id
-        {:rationale "Turn-start focus inference carried unresolved previous focus."})
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::turn-focus-inference-failed
-                   :data {:error (ex-message t)}}
-          "Turn-start focus inference failed; continuing without inferred focus")))
     ;; Hot symbol compaction is archive-based and runs only after a
     ;; final successful answer. Failed/cancelled turns keep their live
     ;; scratch symbols for recovery.
@@ -2626,7 +2504,7 @@
                          :data  {:error (ex-message t)}
                          :msg   "Cross-turn journal seed failed; first iteration starts with an empty <journal>"})
               nil))]
-      ;; Lifecycle :turn-start — fired once now that every SYSTEM_*
+      ;; Lifecycle :turn-start - fired once now that every SYSTEM_*
       ;; sandbox var is bound and BEFORE the first iteration kicks
       ;; off. Listeners can stamp the conversation log, start a
       ;; per-turn timer, etc. Failures are isolated by the bus.
@@ -2646,7 +2524,7 @@
                 (let [result (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
                                      :trace trace :iteration-count iteration} (finalize-cost))]
                   ;; Lifecycle :turn-end with :cancelled status (replaces
-                  ;; the retired `:on-cancel` slot — listeners distinguish
+                  ;; the retired `:on-cancel` slot - listeners distinguish
                   ;; via `:status`).
                   (lifecycle/emit! lifecycle-listeners :turn-end
                     (merge turn-base-payload
@@ -2702,7 +2580,7 @@
                       _ (log-stage! :iteration-start iteration {:message-count (count messages)
                                                                 :reasoning reasoning-level
                                                                 :requested-reasoning raw-reasoning-level})
-                      ;; Lifecycle :iteration-start — fired BEFORE
+                      ;; Lifecycle :iteration-start - fired BEFORE
                       ;; svar/ask-code! is invoked. Listeners can
                       ;; stamp a per-iteration timer or pre-flight
                       ;; the upcoming LLM round-trip.
@@ -2793,7 +2671,7 @@
                                                         :cost-usd (:cost-usd tc)))))]
                         (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                         (update-iteration-id! environment err-iteration-id)
-                      ;; Live error chunk — `:phase :iteration-error`
+                      ;; Live error chunk - `:phase :iteration-error`
                       ;; signals the iteration aborted before any
                       ;; forms could run. No per-form chunks fired
                       ;; this iteration, so the channel sees a clean
@@ -2952,7 +2830,7 @@
                         ;; whatever's already on screen.
                         ;;
                         ;; `:answer-form-idx` tells the channel which
-                        ;; per-form slot was the `(answer …)` call;
+                        ;; per-form slot was the `(answer ...)` call;
                         ;; the progress tracker elides that slot so
                         ;; the renderer doesn't paint the answer
                         ;; call's code above the answer text.
@@ -3031,10 +2909,10 @@
     :complete))
 
 (defn run-turn!
-  "Store turn → iteration-loop → update turn → return result.
+  "Store turn -> iteration-loop -> update turn -> return result.
 
-   Derives `:prior-outcome` (one of `:complete`,
-   `:abandoned`, `:cancelled`, `:error`) from the loop result and
+   Derives `:prior-outcome` (one of `:complete`, `:cancelled`, `:error`)
+   from the loop result and
    persists it on the `conversation_turn_state` row. The next turn's
    `<system_state>` digest reads it."
   [env user-request loop-opts]
@@ -3094,14 +2972,14 @@
           ;; previous turns' user messages + assistant answers + system!) into
           ;; one growing blob. That corrupted three things at once:
           ;;   1. the persisted user request stored the entire transcript
-          ;;      for every turn — the sidebar showed "Siema\nSiema!\n…".
+          ;;      for every turn - the sidebar showed "Siema\nSiema!\n...".
           ;;   2. `TURN_USER_REQUEST` (bound from this same string) grew
           ;;      with each turn instead of reflecting the current ask.
-          ;;   3. The synthetic `{:requirement …}` frame the LLM sees
+          ;;   3. The synthetic `{:requirement ...}` frame the LLM sees
           ;;      restated the whole conversation as the "requirement".
           ;;
           ;; Prior dialog transcript is dropped here. `user-request` is
-          ;; ONLY the current turn — one ask, one value.
+          ;; ONLY the current turn - one ask, one value.
           extract-text           (fn [c]
                                    (cond
                                      (string? c)     c
@@ -3119,7 +2997,7 @@
                                              i))))
           last-user-message      (when last-user-idx (nth messages last-user-idx))
           user-request           (or (some-> last-user-message :content extract-text)
-                                   ;; Fallback: no :user role found (malformed caller) —
+                                   ;; Fallback: no :user role found (malformed caller) -
                                    ;; use the last message's text. Better than an empty user request.
                                    (some-> messages last :content extract-text)
                                    "")
@@ -3211,8 +3089,8 @@
 ;; Title listeners + set-title! broadcast
 ;;
 ;; Channels (TUI, Telegram, ...) that want to react to a conversation
-;; title change — typically because the model emitted `(conversation-title "...")`
-;; mid-turn — register a listener via `add-title-listener!`. The
+;; title change - typically because the model emitted `(conversation-title "...")`
+;; mid-turn - register a listener via `add-title-listener!`. The
 ;; listener fn receives the new title; it MUST be cheap (typically a
 ;; `state/dispatch` into the channel's app-db). Listeners are stored
 ;; per conversation-id so a TUI watching conversation A doesn't get
@@ -3222,7 +3100,7 @@
 ;; `(conversation-title "...")` fn (model-driven) funnel through
 ;; `set-title-with-broadcast!`, which is the single mutation point.
 ;; That keeps the in-memory env atom + DB column + listener fan-out
-;; in lockstep — no path can update one without the others.
+;; in lockstep - no path can update one without the others.
 ;; =============================================================================
 
 (defonce ^:private title-listeners
@@ -3251,7 +3129,7 @@
 
 (defn- broadcast-title-change!
   "Fire every registered listener for `conversation-id` with `title`.
-   Listeners that throw are swallowed and logged — a misbehaving
+   Listeners that throw are swallowed and logged - a misbehaving
    channel must NOT block the iteration loop."
   [conversation-id title]
   (let [cid (persistance/->uuid conversation-id)]
@@ -3302,7 +3180,7 @@
 
 (defn- auto-title!
   "Generate a 6-words-max title for `conversation-id` from the user
-   request, persist it, and broadcast. Synchronous — caller picks the
+   request, persist it, and broadcast. Synchronous - caller picks the
    thread (we wrap it in a `future` from `turn!` so the answer path
    is never blocked).
 
@@ -3323,7 +3201,7 @@
           cur   (some-> conv :title str)]
       (when (str/blank? cur)
         (try
-          (let [prompt (str "Pick a short conversation title for this user request — at most "
+          (let [prompt (str "Pick a short conversation title for this user request - at most "
                          auto-title-max-words " words, plain text only, no quotes, no period.\n\n"
                          "User request:\n" user-request "\n\n"
                          "Reply with ONE fenced ```text block containing only the title.")
@@ -3369,8 +3247,8 @@
   "Updates DB turn record, builds result map.
 
    `:provider` and `:model` are both attached to the persisted cost
-   map so the web footer / meta layer can render `provider/model · N
-   iteration · duration · tokens · $total` after a restart."
+   map so the web footer / meta layer can render `provider/model / N
+   iteration / duration / tokens / $total` after a restart."
   [{:keys [db-info root-model root-provider]}
    {:keys [conversation-turn-id start-time iteration-count status status-id trace locals
            answer confidence reasoning total-tokens-atom total-cost-atom]}]
@@ -3381,7 +3259,7 @@
                           (and root-provider (not (:provider @total-cost-atom)))
                           (assoc :provider root-provider))]
     (if status
-      ;; failure path — surface the fallback answer (built by the loop for
+      ;; failure path - surface the fallback answer (built by the loop for
       ;; :error) to the caller. Leaving
       ;; :answer nil here meant the web bubble rendered blank even though
       ;; we had diagnostic text ready.
@@ -3556,7 +3434,7 @@
 ;; =============================================================================
 
 ;; `db-info` (the env accessor) was a thin wrapper over `(:db-info env)`
-;; that no caller actually invoked — every consumer either destructured
+;; that no caller actually invoked - every consumer either destructured
 ;; `:db-info` directly or used the no-arg `(db-info)` defined further
 ;; down (which returns the process-wide shared connection). The defn was
 ;; deleted to keep ONE canonical `db-info` symbol on this namespace.
@@ -3725,7 +3603,7 @@
    distinct from the global-registry `register-extension!` defined earlier
    in this file).
 
-   Checks `:ext/requires` — if the extension declares dependencies, all
+   Checks `:ext/requires` - if the extension declares dependencies, all
    listed extension namespaces must already be registered. Throws on
    missing dependencies.
 
@@ -3736,7 +3614,7 @@
    Returns `environment` for chaining."
   [environment ext]
   (when-not (:extensions environment)
-    (anomaly/incorrect! "Invalid vis environment — missing :extensions atom"
+    (anomaly/incorrect! "Invalid vis environment - missing :extensions atom"
       {:type :vis/invalid-env}))
   (when-let [requires (seq (:ext/requires ext))]
     (let [registered (into #{} (map :ext/namespace) @(:extensions environment))
@@ -3783,16 +3661,16 @@
      - Extension registry atom
 
    Params:
-     `router` — Required. Result of `llm/make-router`.
-     `opts`   — Map with `:db` and optional `:conversation`,
+     `router` - Required. Result of `llm/make-router`.
+     `opts`   - Map with `:db` and optional `:conversation`,
                  `:channel`, `:external-id`, `:title`.
 
      `:db` accepted forms:
-       nil               — no DB (SCI-only execution)
-       :memory           — ephemeral in-process SQLite DB
-       path string       — persistent SQLite DB at path
-       {:path p}         — persistent SQLite DB at path
-       {:datasource ds}  — caller-owned DataSource (not closed on dispose)
+       nil               - no DB (SCI-only execution)
+       :memory           - ephemeral in-process SQLite DB
+       path string       - persistent SQLite DB at path
+       {:path p}         - persistent SQLite DB at path
+       {:datasource ds}  - caller-owned DataSource (not closed on dispose)
 
    Returns the vis environment map."
   [router {:keys [db conversation channel external-id title]}]
@@ -3808,10 +3686,10 @@
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
         ;; Iteration-final-answer signal. The SCI sandbox's `(answer
-        ;; "…")` fn `reset!`s this atom with `{:value :form-idx}`;
+        ;; "...")` fn `reset!`s this atom with `{:value :form-idx}`;
         ;; the iteration loop reads it back after evaluating each
         ;; iteration's forms and discards iff the form at `:form-idx`
-        ;; itself errored (Option C scoping — sibling errors do NOT
+        ;; itself errored (Option C scoping - sibling errors do NOT
         ;; gate the answer). Reset to nil before every iteration runs.
         answer-atom              (atom nil)
         ;; Form-index pointer the iteration loop reset!s before each
@@ -3871,19 +3749,19 @@
                                     (var-history-timeline-view @environment-atom {}))
                                    ([opts]
                                     (var-history-timeline-view @environment-atom opts)))
-        ;; SCI binding for `(answer "…")` — the canonical turn-
+        ;; SCI binding for `(answer "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; `current-form-idx-atom` so the iteration loop can scope
         ;; the discard check to the form that actually called this.
         ;; Returns the marker keyword so the per-form result row makes
-        ;; intent visible.
+        ;; request visible.
         answer-fn                (fn answer [s]
                                    (reset! answer-atom
                                      {:value    (str s)
                                       :form-idx @current-form-idx-atom})
                                    :vis/answer)
         ;; SCI binding for the conversation title:
-        ;;   `(conversation-title \"...\")` — writes the title through
+        ;;   `(conversation-title \"...\")` - writes the title through
         ;;                              to DB, syncs the in-memory
         ;;                              atom, and broadcasts
         ;;                              `:title-changed` to every
@@ -3892,7 +3770,7 @@
         ;;                              header) can refresh without
         ;;                              polling.
         ;; ONE-ARITY ONLY. To READ the current title from `:code`,
-        ;; reference the `CONVERSATION_TITLE` SYSTEM var — there is
+        ;; reference the `CONVERSATION_TITLE` SYSTEM var - there is
         ;; no zero-arg reader, by design: a `(conversation-title)`
         ;; call would invite the model to round-trip what it can
         ;; read for free. Calling with the wrong arity raises an
@@ -3903,10 +3781,11 @@
                                        db-info conversation-id
                                        conversation-title-atom s)
                                      :vis/silent))
-        env-bindings             {'var-history          var-history-fn
-                                  'var-history-timeline var-history-timeline-fn
-                                  'answer               answer-fn
-                                  'conversation-title   conversation-title-fn}
+        env-bindings             (merge {'var-history          var-history-fn
+                                         'var-history-timeline var-history-timeline-fn
+                                         'answer               answer-fn
+                                         'conversation-title   conversation-title-fn}
+                                   (skills/sandbox-bindings active-skills-atom))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
@@ -3942,7 +3821,7 @@
           (tel/log! {:level :warn :id ::restore-sandbox-failed
                      :data {:error (ex-message t)
                             :conversation-id conversation-id}
-                     :msg "Failed to restore sandbox from DB — starting empty"}))))
+                     :msg "Failed to restore sandbox from DB - starting empty"}))))
     ;; Auto-discover everything from `META-INF/vis-extension/vis.edn` on the
     ;; classpath, then install extensions in dependency order. The
     ;; same loader populates channel/command/provider/persistance
@@ -3980,7 +3859,7 @@
 
   `create-environment` snapshots the router into
   `(:router env)` at construction time, and the iteration loop calls
-  `(svar/ask! (:router environment) ...)` — not the global
+  `(svar/ask! (:router environment) ...)` - not the global
   `router-atom`. So when a frontend changes provider
   config and rebuilds the global router, every long-lived env in the
   cache (TUI keeps one for the whole session) keeps talking to the
@@ -4056,17 +3935,17 @@
 (defn- diff-extensions
   "Compute the F1-lite diff between the current in-memory
    `extension-registry` and a freshly-scanned `manifests` map
-   (manifest-id → entry, where entry has `:nses`).
+   (manifest-id -> entry, where entry has `:nses`).
 
    Returns `{:added [#{ns-syms...}] :removed [#{ns-syms...}]
-             :reloaded [#{ns-syms...}]}` — each value is a vec of
+             :reloaded [#{ns-syms...}]}` - each value is a vec of
    `:ext/namespace` symbols.
 
    `:added`: nses in some manifest's `:nses` but no extension
             currently registered for that ns.
    `:removed`: registered ext namespaces no longer covered by any
             manifest.
-   `:reloaded`: ext namespaces present in BOTH — every still-here
+   `:reloaded`: ext namespaces present in BOTH - every still-here
             ext re-loaded under F1-lite (no change detection v1)."
   [registered manifests]
   (let [registered-ns (set (map :ext/namespace registered))
@@ -4101,12 +3980,12 @@
      :reseated
      :deferred (calling env, locked by current thread)
      {:reason :busy :waited-ms N}
-   The current implementation focuses on lifecycle correctness —
+   The current implementation focuses on lifecycle correctness -
    v1 doesn't surgically swap individual extensions' bindings
    in-place because `register-extensions!` (which `create-environment`
    uses) needs an SCI register-fn that we don't have post-hoc.
    Instead, the env stays alive but its sandbox bindings are
-   considered stale until next access — the next `send!` re-runs the
+   considered stale until next access - the next `send!` re-runs the
    prompt assembler, which sees the freshly-registered extensions.
    This is honest: we tell the caller `:reseated` to mean we
    acquired the lock and confirmed nothing's mid-iteration; the
@@ -4170,18 +4049,18 @@
          ;; Step 2: diff.
          registered    (extension/registered-extensions)
          {:keys [added removed reloaded]} (diff-extensions registered manifests)
-         ;; Step 3a: :removed first — pull side effects before any
+         ;; Step 3a: :removed first - pull side effects before any
          ;; new register-extension! could clash with their dispatch.
          _             (doseq [ns-sym removed]
                          (try (extension/deregister-extension! ns-sym)
                            (catch Throwable t
                              (record-error errors ns-sym :deregister t))))
-         ;; Step 3b: :added — require + the namespace's top-level form
+         ;; Step 3b: :added - require + the namespace's top-level form
          ;; calls `register-extension!` itself.
          _             (doseq [ns-sym added]
                          (when-let [t (require-ns! ns-sym false)]
                            (record-error errors ns-sym :require t)))
-         ;; Step 3c: :reloaded — same as :added but with :reload.
+         ;; Step 3c: :reloaded - same as :added but with :reload.
          _             (doseq [ns-sym reloaded]
                          (when-let [t (require-ns! ns-sym true)]
                            (record-error errors ns-sym :require t)))
@@ -4334,7 +4213,7 @@
       (catch Exception _ nil))))
 
 (def ^:private ORPHAN_INTERRUPTED_ANSWER
-  "Warning: Turn interrupted — the server was restarted before this answer could finalize. Re-send the message to retry.")
+  "Warning: Turn interrupted - the server was restarted before this answer could finalize. Re-send the message to retry.")
 
 (defn db-sweep-orphaned-running-turns!
   "Mark every `:running` turn as `:interrupted`. Run at process start

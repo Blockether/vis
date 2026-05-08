@@ -1,11 +1,11 @@
-(ns com.blockether.vis.ext.foundation.environment.skills-test
+(ns com.blockether.vis.internal.skills-test
   "Unit tests for skills frontmatter discovery, parsing, malformed
    handling, collision policy, and alphabetical ordering. Covers
    plan §6 + Q6 + Q7 + Q10."
   (:require
    [babashka.fs :as fs]
    [clojure.string :as str]
-   [com.blockether.vis.ext.foundation.environment.skills :as skills]
+   [com.blockether.vis.internal.skills :as skills]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- with-tmp*
@@ -92,7 +92,7 @@
           (expect (= true (get-in s [:extra :disable-model-invocation]))))))))
 
 (defdescribe malformed-frontmatter-test
-  (it "missing required `name` → drop with warning"
+  (it "missing required `name` -> drop with warning"
     (with-two-tmps*
       (fn [root user-root]
         (write-skill! root "no-name" SAMPLE_MISSING_NAME)
@@ -103,7 +103,7 @@
             (expect (= :skill-frontmatter (:source w)))
             (expect (str/includes? (:reason w) "name")))))))
 
-  (it "missing required `description` → drop with warning"
+  (it "missing required `description` -> drop with warning"
     (with-two-tmps*
       (fn [root user-root]
         (write-skill! root "no-desc" SAMPLE_MISSING_DESCRIPTION)
@@ -112,7 +112,7 @@
           (expect (= 1 (count warnings)))
           (expect (str/includes? (:reason (first warnings)) "description"))))))
 
-  (it "YAML parse error → drop with warning"
+  (it "YAML parse error -> drop with warning"
     (with-two-tmps*
       (fn [root user-root]
         (write-skill! root "bad-yaml" SAMPLE_BAD_YAML)
@@ -121,7 +121,7 @@
           (expect (= 1 (count warnings)))
           (expect (str/includes? (:reason (first warnings)) "YAML parse error"))))))
 
-  (it "no frontmatter at all → drop with warning"
+  (it "no frontmatter at all -> drop with warning"
     (with-two-tmps*
       (fn [root user-root]
         (write-skill! root "no-front" SAMPLE_NO_FRONTMATTER)
@@ -130,7 +130,7 @@
           (expect (= 1 (count warnings)))
           (expect (str/includes? (:reason (first warnings)) "missing YAML frontmatter"))))))
 
-  (it "empty frontmatter (`---\\n---\\n`) → drop with warning (missing required fields)"
+  (it "empty frontmatter (`---\\n---\\n`) -> drop with warning (missing required fields)"
     (with-two-tmps*
       (fn [root user-root]
         (write-skill! root "empty-front" SAMPLE_EMPTY_FRONTMATTER)
@@ -168,14 +168,14 @@
           (expect (= ["apple" "mango" "zebra"] (mapv :name loaded))))))))
 
 (defdescribe scan-with-roots-empty-cases
-  (it "no .agents/skills/ at all → empty catalog, no warnings"
+  (it "no .agents/skills/ at all -> empty catalog, no warnings"
     (with-two-tmps*
       (fn [repo-root user-root]
         (let [{:keys [loaded warnings]} (skills/scan-with-roots repo-root user-root)]
           (expect (empty? loaded))
           (expect (empty? warnings))))))
 
-  (it "empty .agents/skills/ dir → empty catalog, no warnings"
+  (it "empty .agents/skills/ dir -> empty catalog, no warnings"
     (with-two-tmps*
       (fn [repo-root user-root]
         (.mkdirs (java.io.File. repo-root ".agents/skills"))
@@ -184,7 +184,7 @@
           (expect (empty? warnings)))))))
 
 (defdescribe lookup-shape-test
-  (it "lookup returns map with :found? flag — present case"
+  (it "lookup returns map with :found? flag - present case"
     ;; Use the live cache against the actual repo; we know `caveman`
     ;; is one of the repo's skills.
     (let [s (skills/lookup "caveman")]
@@ -196,3 +196,19 @@
     (let [s (skills/lookup "this-skill-does-not-exist-anywhere")]
       (expect (false? (:found? s)))
       (expect (= "this-skill-does-not-exist-anywhere" (:name s))))))
+
+(defdescribe sandbox-bindings-test
+  (it "load-skill binding records active skill bodies without extension symbols"
+    (let [active (atom {})
+          bindings (skills/sandbox-bindings active)
+          load-skill (get bindings 'load-skill)
+          result (load-skill "caveman")]
+      (expect (true? (:found? result)))
+      (expect (= result (get @active "caveman")))))
+
+  (it "reload-skills! binding returns scanner summary"
+    (let [reload-skills! (get (skills/sandbox-bindings (atom {})) 'reload-skills!)
+          result (reload-skills!)]
+      (expect (integer? (:scanned result)))
+      (expect (integer? (:loaded result)))
+      (expect (integer? (:dropped result))))))

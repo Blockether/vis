@@ -3,9 +3,9 @@
    registry, parse-error rescue, and the inline-docs catalog.
 
    An extension is the SINGLE entry point for everything a third-party
-   bundle contributes to vis. Whatever surfaces it populates — SCI
+   bundle contributes to vis. Whatever surfaces it populates - SCI
    sandbox symbols, CLI commands, channels, providers, persistence
-   backends — it does so by listing them in the matching `:ext/<surface>`
+   backends - it does so by listing them in the matching `:ext/<surface>`
    slot, and `register-extension!` dispatches each slot to its concrete
    sub-registry. The same data feeds:
 
@@ -80,7 +80,7 @@
 (s/def ::hash-sha256 (s/nilable (s/and string? #(= 64 (count %)))))
 (s/def ::source (s/keys :req-un [::paths ::mtime-max ::hash-sha256]))
 
-(s/def ::provenance
+(s/def ::info
   (s/and
     (s/keys :req-un [::op ::started-at-ms ::finished-at-ms ::duration-ms]
       :opt-un [::tool ::source])
@@ -101,7 +101,7 @@
 (s/def ::error (s/nilable ::error-map))
 
 (s/def ::tool-result-base
-  (s/keys :req-un [::success? ::result ::provenance ::error]))
+  (s/keys :req-un [::success? ::result ::info ::error]))
 
 (s/def ::tool-result
   (s/and
@@ -147,8 +147,8 @@
               :explain (s/explain-data ::tool-result x)})))
   x)
 
-(defn normalize-provenance
-  "Fill the common provenance clock keys when absent.
+(defn normalize-info
+  "Fill the common info clock keys when absent.
 
    Required by the tool-result contract:
      :op
@@ -158,26 +158,26 @@
 
    Callers may pass richer maps (tool / extension / source metadata);
    this helper only normalizes the shared timing surface."
-  [provenance]
-  (let [provenance (or provenance {})
+  [info]
+  (let [info (or info {})
         t          (now-ms)
-        started    (long (or (:started-at-ms provenance) t))
-        finished   (long (or (:finished-at-ms provenance) t))
-        duration   (long (or (:duration-ms provenance)
+        started    (long (or (:started-at-ms info) t))
+        finished   (long (or (:finished-at-ms info) t))
+        duration   (long (or (:duration-ms info)
                            (max 0 (- finished started))))]
-    (assoc provenance
+    (assoc info
       :started-at-ms started
       :finished-at-ms finished
       :duration-ms duration)))
 
-(defn merge-provenance
+(defn merge-info
   "Merge `extra` into an already-valid tool-result envelope, re-check
    the contract, and preserve metadata. Used by the extension wrapper
-   to stamp extension/source provenance onto tool-like returns."
+   to stamp extension/source info onto tool-like returns."
   [tool-result extra]
   (let [meta*  (meta tool-result)
         merged (-> tool-result
-                 (update :provenance #(merge (or % {}) extra))
+                 (update :info #(merge (or % {}) extra))
                  assert-tool-result!)]
     (with-meta merged meta*)))
 
@@ -235,20 +235,20 @@
    :trace   (normalize-trace t)})
 
 (defn success
-  [{:keys [result provenance]}]
+  [{:keys [result info]}]
   (-> {:success?   true
        :result     result
-       :provenance (normalize-provenance provenance)
+       :info (normalize-info info)
        :error      nil}
     assert-tool-result!))
 
 (defn failure
-  [{:keys [result provenance error throwable]}]
+  [{:keys [result info error throwable]}]
   (let [err (or error
               (when throwable (normalize-error throwable)))]
     (-> {:success?   false
          :result     result
-         :provenance (normalize-provenance provenance)
+         :info (normalize-info info)
          :error      err}
       assert-tool-result!)))
 
@@ -273,20 +273,20 @@
 ;; concrete call patterns, e.g. ["(search-documents \"neural\")"]
 (s/def :ext.symbol/examples (s/and vector? seq #(every? non-blank-string? %)))
 
-;; Entry decorator: (fn [env f args] → map). Wraps :fn on the way in.
+;; Entry decorator: (fn [env f args] -> map). Wraps :fn on the way in.
 (s/def :ext.symbol/before-fn fn?)
 
-;; Exit decorator: (fn [env f args result] → map). Wraps :fn on the way out.
+;; Exit decorator: (fn [env f args result] -> map). Wraps :fn on the way out.
 (s/def :ext.symbol/after-fn fn?)
 
-;; Error decorator: (fn [err env f args] → map). Called when :fn throws.
+;; Error decorator: (fn [err env f args] -> map). Called when :fn throws.
 (s/def :ext.symbol/on-error-fn fn?)
 
-;; Optional parse-error rescue: (fn [{:keys [code error sym environment]}] → string|nil).
+;; Optional parse-error rescue: (fn [{:keys [code error sym environment]}] -> string|nil).
 ;; Runs BEFORE dispatch when SCI/edamame cannot parse the source.
 (s/def :ext.symbol/on-parse-error-fn fn?)
 
-;; Optional parsed-source normalizer: (fn [{:keys [code sym environment]}] → string|nil).
+;; Optional parsed-source normalizer: (fn [{:keys [code sym environment]}] -> string|nil).
 ;; Runs before SCI eval when source already parses. Use for symbol-local sugar / repair.
 (s/def :ext.symbol/source-rewrite-fn fn?)
 
@@ -297,7 +297,7 @@
 ;; Renderer for this symbol's result. Called by runtime consumers
 ;; (journal, transcript, TUI) with a context map, e.g.
 ;; `{:surface :journal :tool-result result}`. Every fn-symbol MUST
-;; provide one — either explicitly via `:render-fn` or implicitly via
+;; provide one - either explicitly via `:render-fn` or implicitly via
 ;; the `vis/symbol` builder attaching `render-value`.
 (s/def :ext.symbol/render-fn fn?)
 
@@ -349,7 +349,7 @@
 ;; Extension-level documentation - describes what this bundle provides.
 (s/def :ext/doc non-blank-string?)
 
-;; Top-level kind — the *category* of surface this extension
+;; Top-level kind - the *category* of surface this extension
 ;; contributes. Used for prompt-rendering section labels AND as the
 ;; section heading in `vis extensions list`. Examples: "foundation",
 ;; "languages", "providers", "channels", "persistance". Authors may
@@ -418,31 +418,19 @@
 ;; Iteration-loop lifecycle hooks. Side-effecting fns invoked by the
 ;; loop at well-defined boundaries. See
 ;; `internal.lifecycle/phase->manifest-key` for the canonical
-;; phase↔key map and `docs/src/extensions/lifecycle.md` for payload
+;; phase<->key map and `docs/src/extensions/lifecycle.md` for payload
 ;; shapes. ALL four are optional; an extension that doesn't care
 ;; about lifecycle simply omits them.
 ;;
 ;; Composition is broadcast: every active extension's listener fires
 ;; for every event, plus the per-call `:hooks` slot a channel/test
 ;; passed in. A listener that throws is caught + logged via Telemere
-;; — it MUST NOT take the loop down or starve sibling listeners.
+;; - it MUST NOT take the loop down or starve sibling listeners.
 ;; ----------------------------------------------------------------------------
 (s/def :ext/on-turn-start-fn      fn?)
 (s/def :ext/on-iteration-start-fn fn?)
 (s/def :ext/on-iteration-end-fn   fn?)
 (s/def :ext/on-turn-end-fn        fn?)
-
-(def proof-event-kinds
-  "Structured proof lifecycle events emitted by persistence writes and audit.
-   Extensions receive these through `:ext/on-proof-event-fn`; they must observe
-   data, not scrape audit/proof Markdown."
-  #{:proof/event-appended
-    :proof/evidence-bundle-created
-    :proof/attestation-accepted
-    :proof/audit-violation})
-
-(s/def :proof/event proof-event-kinds)
-(s/def :ext/on-proof-event-fn fn?)
 
 ;; Channel-local hooks let extensions contribute UI commands/status behavior to
 ;; concrete channels without requiring those channel namespaces. The TUI uses
@@ -471,7 +459,7 @@
 
 ;; Optional extension-owned TUI setting declarations. The TUI stores the
 ;; values, but the extension owns the row metadata so extension-specific
-;; knobs appear under Extensions → <extension> instead of hardcoded host
+;; knobs appear under Extensions -> <extension> instead of hardcoded host
 ;; buckets.
 (s/def :ext.setting/key (s/or :keyword keyword? :string non-blank-string?))
 (s/def :ext.setting/type #{:toggle :choice :action})
@@ -496,11 +484,11 @@
 ;; Semver version string, e.g. "1.0.0", "0.3.1-SNAPSHOT".
 (s/def :ext/version non-blank-string?)
 
-;; Author name or org — the entity that *created* the extension
+;; Author name or org - the entity that *created* the extension
 ;; (e.g. "Blockether", "Acme Corp.").
 (s/def :ext/author non-blank-string?)
 
-;; Owner of the *package* — the project / distribution that ships
+;; Owner of the *package* - the project / distribution that ships
 ;; this extension. For everything bundled in this repo: "vis".
 ;; Third-party packages set their own owner (often the same as
 ;; `:ext/author`, but they're independent: a Blockether-authored
@@ -552,7 +540,7 @@
 ;; Doctor contribution from this extension: ONE function the `vis doctor`
 ;; aggregator calls with the live environment and that returns a seq of
 ;; diagnostic message maps. Replaces the previous `:ext/doctor-checks`
-;; vec-of-`{:check/id :check/name :check/description :check/run-fn}` shape —
+;; vec-of-`{:check/id :check/name :check/description :check/run-fn}` shape -
 ;; the metadata fields (`:check/name`, `:check/description`) were never
 ;; surfaced anywhere; only `:check/id` made it onto messages, and the
 ;; extension can stamp `:check-id` on its own messages just as easily
@@ -560,15 +548,15 @@
 ;; Authors who don't ship checks just omit the field.
 ;;
 ;; Naming follows the `:ext/<surface>-fn` convention already used for
-;; `:ext/activation-fn`, `:ext/nudge-fn`, `:ext/on-parse-error-fn` — ONE fn,
+;; `:ext/activation-fn`, `:ext/nudge-fn`, `:ext/on-parse-error-fn` - ONE fn,
 ;; called by the host, returns data.
 ;;
 ;; Per-message expectations (host coerces missing/invalid):
 ;;   {:level :info|:warn|:error
-;;    :message "…"            ; required, non-blank
-;;    :remediation "…"        ; optional; renders as `→ …` indented line
+;;    :message "..."            ; required, non-blank
+;;    :remediation "..."        ; optional; renders as `-> ...` indented line
 ;;    :check-id ::keyword     ; optional; renders as the prefix
-;;    :data {…}}              ; optional; passthrough for callers
+;;    :data {...}}              ; optional; passthrough for callers
 (s/def :ext/doctor-check-fn fn?)
 
 ;; Vector of symbol entries this extension binds into the sandbox.
@@ -596,7 +584,7 @@
 
 ;; Canonical source markers attached to registered extensions via the
 ;; sidecar atom. Also surfaced in TURN_ACTIVE_EXTENSIONS / v/extensions
-;; and stamped onto tool-result provenance.
+;; and stamped onto tool-result info.
 (s/def ::alias symbol?)
 (s/def ::namespace symbol?)
 (s/def ::doc non-blank-string?)
@@ -614,7 +602,7 @@
 (s/def ::source-markers
   (s/keys :req-un [::source-paths ::source-mtime-max ::source-hash-sha256]))
 
-(s/def ::extension-provenance
+(s/def ::extension-info
   (s/keys :req-un [::namespace ::source-paths ::source-mtime-max ::source-hash-sha256]
     :opt-un [::alias ::doc ::kind ::version ::author ::owner ::license ::registry-id]))
 
@@ -641,8 +629,7 @@
             :ext/channel-hooks
             :ext/doctor-check-fn
             :ext/on-turn-start-fn :ext/on-iteration-start-fn
-            :ext/on-iteration-end-fn :ext/on-turn-end-fn
-            :ext/on-proof-event-fn])
+            :ext/on-iteration-end-fn :ext/on-turn-end-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
 
@@ -688,8 +675,8 @@
              :on-parse-error-fn, :source-rewrite-fn, :result-spec, :render-fn
 
    Defaults:
-     :examples  — derived from :arglists when not provided
-     :render-fn — `render-value` when not provided
+     :examples  - derived from :arglists when not provided
+     :render-fn - `render-value` when not provided
 
    See `docs/src/extensions/hooks.md` for hook semantics."
   [sym-name f opts]
@@ -740,12 +727,12 @@
     (if (:ext.symbol/fn entry)
       (str "- "
         (str/join " or " (map #(arglist->call-form alias-sym sym-name %) arglists))
-        " — " doc)
+        " - " doc)
       (str "- "
         (if alias-sym
           (str alias-sym "/" sym-name)
           (str sym-name))
-        " — " doc))))
+        " - " doc))))
 
 (defn render-prompt
   "Render canonical :ext/prompt text from symbol docstrings + arglists.
@@ -792,7 +779,7 @@
 
 (defn validate!
   "Normalize and assert that an extension map conforms to ::extension.
-   Normalizes `:ext/prompt` (string → fn) before checking the spec
+   Normalizes `:ext/prompt` (string -> fn) before checking the spec
    when the key is present. Throws with spec explain-data on violation."
   [ext]
   (let [ext (cond-> ext
@@ -919,13 +906,13 @@
      :symbol sym
      :started-at-ms (long started-at-ms)}))
 
-(declare extension-provenance)
+(declare extension-info)
 
-(defn- enrich-tool-result-provenance
+(defn- enrich-tool-result-info
   [ext sym-entry result]
   (if (tool-result? result)
-    (let [ext-prov (extension-provenance ext)]
-      (merge-provenance
+    (let [ext-prov (extension-info ext)]
+      (merge-info
         result
         {:tool      (cond-> {:sym  (:ext.symbol/sym sym-entry)
                              :call (tool-call-name ext (:ext.symbol/sym sym-entry))}
@@ -940,7 +927,7 @@
 (defn- maybe-record-preview-result!
   [result]
   (if (and (tool-result? result)
-        (= :v/preview (get-in result [:provenance :op])))
+        (= :v/preview (get-in result [:info :op])))
     (record-preview! result)
     result))
 
@@ -962,7 +949,7 @@
 
 (defn invoke-symbol-wrapper
   "Full invocation pipeline for a function symbol entry:
-   before-fn → fn → after-fn, with on-error-fn catching :fn errors.
+   before-fn -> fn -> after-fn, with on-error-fn catching :fn errors.
 
    Every hook can override :fn, :args, :env via its return map.
    :before-fn can return {:result val} to short-circuit.
@@ -984,7 +971,7 @@
       (if (contains? before-out :result)
         (let [ms (elapsed-ms t0)
               result (->> (:result before-out)
-                       (enrich-tool-result-provenance ext sym-entry)
+                       (enrich-tool-result-info ext sym-entry)
                        (validate-symbol-result! sym spec-ref)
                        (maybe-record-preview-result!))]
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
@@ -1014,7 +1001,7 @@
 
               {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
               result (->> result
-                       (enrich-tool-result-provenance ext sym-entry)
+                       (enrich-tool-result-info ext sym-entry)
                        (validate-symbol-result! sym spec-ref)
                        (maybe-record-preview-result!))
               ms (elapsed-ms t0)]
@@ -1036,14 +1023,14 @@
 (defn wrap-extension
   "Wrap all function symbols in an extension into invocation fns.
 
-   Returns a map of {sym → (fn [& args] result)} where each fn
+   Returns a map of {sym -> (fn [& args] result)} where each fn
    closes over the extension, symbol entry, and environment, then
    routes through `invoke-symbol-wrapper`.
 
    All stdout/stderr from extension calls is redirected to the log
    file so nothing bleeds into the TUI.
 
-   Value symbols are returned as {sym → value}."
+   Value symbols are returned as {sym -> value}."
   [ext env]
   (into {}
     (map (fn [sym-entry]
@@ -1057,7 +1044,7 @@
     (:ext/symbols ext)))
 
 ;; =============================================================================
-;; Parse-error rescue — walked by the iteration loop
+;; Parse-error rescue - walked by the iteration loop
 ;; =============================================================================
 
 (defn- code-mentions-symbol?
@@ -1188,13 +1175,13 @@
      1. Per-symbol `:ext.symbol/source-rewrite-fn` whose symbol appears in code.
      2. Extension-level `:ext/source-rewrite-fn` fallback.
 
-   Hooks are pure source→source; throw/non-string/unchanged results are skipped."
+   Hooks are pure source->source; throw/non-string/unchanged results are skipped."
   [extensions code environment]
   (or (try-symbol-source-rewrite extensions code environment)
     (try-extension-source-rewrite extensions code environment)))
 
 ;; =============================================================================
-;; Public API — extension builder
+;; Public API - extension builder
 ;; =============================================================================
 
 (defn- derive-kind
@@ -1207,7 +1194,7 @@
 
    Explicit `:ext/kind` always wins. Extensions that fit no
    categorical bucket (and don't set a kind themselves) stay
-   blank — that's a legitimate \"uncategorized\" outcome."
+   blank - that's a legitimate \"uncategorized\" outcome."
   [spec]
   (cond
     (some? (:ext/kind spec))            (:ext/kind spec)
@@ -1274,7 +1261,7 @@
     (.toByteArray out)))
 
 ;; ---------------------------------------------------------------------------
-;; Resolve one namespace → entry map.
+;; Resolve one namespace -> entry map.
 ;; ---------------------------------------------------------------------------
 
 (defn- ns->resource-path
@@ -1322,7 +1309,7 @@
    timestamped). Closes the jar on exit."
   ^SourceEntry [^URL url]
   (let [conn      (.openConnection url)
-        ;; The cast is paranoid — `.getJarFileURL` lives on `JarURLConnection`,
+        ;; The cast is paranoid - `.getJarFileURL` lives on `JarURLConnection`,
         ;; we know URL was a jar: URL when we got here.
         jconn     ^java.net.JarURLConnection conn
         jar-url   (.getJarFileURL jconn)
@@ -1510,7 +1497,7 @@
     ;; Compute and store source markers in the sidecar atom. Resolved
     ;; via the helper (see source_markers.clj) which knows how to walk
     ;; both file: and jar: classpath URLs. Failures are logged at :warn
-    ;; and degrade to empty markers — they don't fail registration.
+    ;; and degrade to empty markers - they don't fail registration.
     (try
       (let [markers (resolve-markers-for-extension ext)]
         (swap! extension-source-markers assoc ns-sym markers))
@@ -1546,15 +1533,15 @@
         empty-source-markers))
     empty-source-markers))
 
-(defn extension-provenance
-  "Canonical extension provenance map.
+(defn extension-info
+  "Canonical extension info map.
 
    Merges author-declared extension metadata with source markers:
      {:namespace :alias? :doc? :kind? :version? :author? :owner?
       :license? :registry-id? :source-paths :source-mtime-max
       :source-hash-sha256}
 
-   This is the single provenance shape used by TURN_ACTIVE_EXTENSIONS,
+   This is the single info shape used by TURN_ACTIVE_EXTENSIONS,
    `v/extensions`, and tool-result enrichment."
   [ext]
   (let [ext-ns     (:ext/namespace ext)
@@ -1575,12 +1562,12 @@
                      (:ext/owner ext)     (assoc :owner (:ext/owner ext))
                      (:ext/license ext)   (assoc :license (:ext/license ext))
                      registry-id          (assoc :registry-id registry-id))]
-    (when-not (s/valid? ::extension-provenance prov)
-      (throw (ex-info "Invalid extension provenance"
-               {:type      :extension/invalid-provenance
+    (when-not (s/valid? ::extension-info prov)
+      (throw (ex-info "Invalid extension info"
+               {:type      :extension/invalid-info
                 :namespace ext-ns
                 :value     prov
-                :explain   (s/explain-data ::extension-provenance prov)})))
+                :explain   (s/explain-data ::extension-info prov)})))
     prov))
 
 (defn deregister-extension!
@@ -1629,29 +1616,6 @@
 (defn registered-extensions []
   (let [registry @extension-registry]
     (into [] (keep registry) @extension-order)))
-
-(defn emit-proof-event!
-  "Broadcast one structured proof lifecycle event to registered extensions.
-   Payload must contain `:proof/event`. Listener failures are logged and never
-   prevent the persistence operation that emitted the event."
-  [{:proof/keys [event] :as payload}]
-  (when-not (contains? proof-event-kinds event)
-    (throw (ex-info "unsupported proof lifecycle event" {:proof/event event})))
-  (doseq [ext (registered-extensions)
-          :let [listener (:ext/on-proof-event-fn ext)]
-          :when listener]
-    (try
-      (binding [*current-extension* ext
-                *current-symbol* nil]
-        (listener payload))
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::proof-event-listener-threw
-                   :data {:ext (:ext/namespace ext)
-                          :proof-event event
-                          :error (ex-message t)
-                          :ex-class (.getName (class t))}
-                   :msg "proof lifecycle listener threw; broadcast continues"}))))
-  nil)
 
 (defn channel-hooks-for
   "Return registered extension channel hooks for `channel-id` in extension
@@ -1746,8 +1710,8 @@
 
 (defn- tool-result-symbol-entry
   [tool-result]
-  (let [ext-ns (get-in tool-result [:provenance :extension :namespace])
-        sym    (get-in tool-result [:provenance :tool :sym])]
+  (let [ext-ns (get-in tool-result [:info :extension :namespace])
+        sym    (get-in tool-result [:info :tool :sym])]
     (when (and ext-ns sym)
       (some (fn [entry]
               (when (= sym (:ext.symbol/sym entry))
@@ -1760,7 +1724,7 @@
     Dispatch is extension/symbol-owned: `:ext.symbol/render-fn` receives a
     context map with `:surface` and `:tool-result`. Every fn-symbol has a
     render-fn (either custom or the default `render-value`). There is no
-    generic fallback — each symbol owns its presentation."
+    generic fallback - each symbol owns its presentation."
   ([surface tool-result]
    (render-tool-result surface tool-result {}))
   ([surface tool-result ctx]
@@ -1777,12 +1741,12 @@
        (or (render-rendering-kind surface presentation-kind (:result tool-result) ctx*)
          (throw (AssertionError.
                   (str "No render-fn for tool result with op "
-                    (pr-str (get-in tool-result [:provenance :op]))))))
+                    (pr-str (get-in tool-result [:info :op]))))))
 
        :else
        (throw (AssertionError.
                 (str "No render-fn for tool result with op "
-                  (pr-str (get-in tool-result [:provenance :op])))))))))
+                  (pr-str (get-in tool-result [:info :op])))))))))
 
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.
@@ -1795,7 +1759,7 @@
     (letfn [(visit [ns-sym]
               (when (contains? @path ns-sym)
                 (throw (ex-info (str "Circular extension dependency: " ns-sym
-                                  " → ... → " ns-sym)
+                                  " -> ... -> " ns-sym)
                          {:type :extension/circular-dependency
                           :extension ns-sym
                           :path @path})))
@@ -1848,15 +1812,15 @@
 (defn reload-extension!
   "Reload an extension namespace and hot-swap it everywhere.
 
-   1. Forces `(require ns :reload)` — re-executes `register-extension!`
+   1. Forces `(require ns :reload)` - re-executes `register-extension!`
    2. Updates the global registry (automatic via register-extension!)
    3. If `environments` are provided, replaces the old version in
       each live environment's `:extensions` atom immediately.
 
    Arity:
-     (reload-extension! ns-sym)              — global registry only.
-     (reload-extension! ns-sym environment)  — hot-swap into one env.
-     (reload-extension! ns-sym environments) — hot-swap into all envs.
+     (reload-extension! ns-sym)              - global registry only.
+     (reload-extension! ns-sym environment)  - hot-swap into one env.
+     (reload-extension! ns-sym environments) - hot-swap into all envs.
 
    Returns the updated extension."
   ([ns-sym]
@@ -2069,5 +2033,5 @@
 (registry/register-cmd!
   {:cmd/name        "extensions"
    :cmd/doc         "Run an extension-provided CLI command."
-   :cmd/usage       "vis extensions <cmd> [args…]"
+   :cmd/usage       "vis extensions <cmd> [args...]"
    :cmd/subcommands #(registry/registered-under ["extensions"])})

@@ -14,8 +14,8 @@
      from paying full TUI class-loading cost.
 
      Correct hits still go through the normal screen channel-main, so all
-     existing screen behavior — argument parsing, redirects, lifecycle —
-     stays intact. Proof/intents/audit semantics live below the TUI layer
+     existing screen behavior - argument parsing, redirects, lifecycle -
+     stays intact. Runtime semantics live below the TUI layer
      and are unaffected: this only changes WHEN screen.clj is required."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]))
@@ -57,7 +57,7 @@
             (str (first matches))))))))
 
 (defn- format-conversation-not-found
-  "Same wording as `screen/format-conversation-not-found` (intentional —
+  "Same wording as `screen/format-conversation-not-found` (intentional -
    the user message must not regress)."
   [cid]
   (let [available (try (vec (take 10 (vis/by-channel :tui))) (catch Throwable _ []))
@@ -71,7 +71,7 @@
         (str "\n\nAvailable :tui conversations (most recent first):\n"
           (str/join "\n" (map line available))
           "\n\nUse the 8-char prefix or full UUID with --conversation-id.")
-        "\n\nNo :tui conversations exist yet — run `vis channels tui` without --conversation-id first."))))
+        "\n\nNo :tui conversations exist yet - run `vis channels tui` without --conversation-id first."))))
 
 (defn- require-screen-channel-main
   "Resolve the heavyweight screen channel entry point. Pulled out so the fast
@@ -95,7 +95,7 @@
 
 (defn- pre-validate-conversation-id!
   "If `args` carries `--conversation-id ID`, run a lightweight validation
-   pass: bring up `vis/init!` (DB connection only — Lanterna stays
+   pass: bring up `vis/init!` (DB connection only - Lanterna stays
    unloaded), look the id up, and on miss print the friendly not-found
    message to the original stdout and exit 2.
 

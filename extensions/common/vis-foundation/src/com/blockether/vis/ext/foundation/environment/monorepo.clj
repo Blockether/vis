@@ -30,7 +30,7 @@
     "book" "_site" "public" "site" "_book"})
 
 (def ^:private manifest-kinds
-  "Filename → ecosystem label."
+  "Filename -> ecosystem label."
   {"deps.edn"       :clojure
    "project.clj"    :clojure
    "package.json"   :node
@@ -47,10 +47,10 @@
 (defn- shape-label
   "Heuristic label for the multi-package shape.
 
-   - polylith — `extensions/` AND `packages/` AND `bb.edn|deps.edn`
+   - polylith - `extensions/` AND `packages/` AND `bb.edn|deps.edn`
      at root; or any `polylith` directory.
-   - submodules — `.gitmodules` at root.
-   - workspace — multiple manifests of one kind in distinct subdirs."
+   - submodules - `.gitmodules` at root.
+   - workspace - multiple manifests of one kind in distinct subdirs."
   [^File root manifests-by-kind]
   (let [ext-dir   (.exists (io/file root "extensions"))
         pkg-dir   (.exists (io/file root "packages"))
@@ -75,7 +75,7 @@
       :truncated? bool}
 
    The `:files` paths are relative to `root` and OMIT the manifest
-   in the root itself (we only care about descendants — a single
+   in the root itself (we only care about descendants - a single
    root-level deps.edn is not a monorepo)."
   ([root] (snapshot root nil))
   ([root {:keys [max-files deadline-ms]
@@ -117,7 +117,7 @@
                                    (let [name   (str (.getFileName file))
                                          parent (.getParent file)]
                                      ;; Ignore manifests sitting in the
-                                     ;; ROOT itself \u2014 only descendants
+                                     ;; ROOT itself - only descendants
                                      ;; signal a multi-package shape.
                                      (when (and parent (not= parent start))
                                        (when-let [kind (get manifest-kinds name)]

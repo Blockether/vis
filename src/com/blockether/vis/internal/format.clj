@@ -1,21 +1,21 @@
 (ns com.blockether.vis.internal.format
-  "Format helpers — leaf module.
+  "Format helpers - leaf module.
 
    Small, dependency-light formatters used by the SDK facade, the
    TUI footer, the CLI status output, and the Telegram bot. Each one
    is a pure transform over basic Clojure / Java values.
 
-     `format-date`      — `java.util.Date` to `dd-MM-yyyy HH:mm` (local TZ)
-     `format-clojure`   — pretty-print a Clojure source string with zprint
-     `format-duration`  — millisecond duration to `2.3s`, `1m 15s`, etc.
-     `format-tokens`    — `:input`/`:output` token counts to '↑11461 ↓35'
-     `format-cost`      — dollar cost to '~$0.006954'
-     `format-iterations`— iteration count to '1 iter' / '3 iters'
-     `format-meta-line` — canonical ' · '-joined turn-summary line
+     `format-date`      - `java.util.Date` to `dd-MM-yyyy HH:mm` (local TZ)
+     `format-clojure`   - pretty-print a Clojure source string with zprint
+     `format-duration`  - millisecond duration to `2.3s`, `1m 15s`, etc.
+     `format-tokens`    - `:input`/`:output` token counts to '↑11461 ↓35'
+     `format-cost`      - dollar cost to '~$0.006954'
+     `format-iterations`- iteration count to '1 iter' / '3 iters'
+     `format-meta-line` - canonical ' / '-joined turn-summary line
                           (used identically by CLI / TUI / Telegram)
 
    zprint is a hard dep; `format-clojure` calls it directly. The
-   namespace is otherwise free of state — safe to require from any
+   namespace is otherwise free of state - safe to require from any
    layer."
   (:require
    [clojure.string :as str]
@@ -144,18 +144,18 @@
 ;; Turn-summary helpers (CLI / TUI / Telegram all share these)
 ;;
 ;; Three different surfaces used to format the same data three
-;; different ways: "ctx-in: N, ctx-out: M" (CLI), "↑N · ↓M" (TUI),
-;; "ctx N→M" (Telegram). Inconsistent, and every surface duplicated
+;; different ways: "ctx-in: N, ctx-out: M" (CLI), "↑N / ↓M" (TUI),
+;; "ctx N->M" (Telegram). Inconsistent, and every surface duplicated
 ;; its own `String/format` for the cost. These helpers are the single
 ;; source of truth for the canonical surface form:
 ;;
-;;   tokens   →  "↑11461 (cached 4096) ↓35" (input, cached input, output)
-;;   cost     →  "~$0.006954"             (six decimal places, US locale)
-;;   iters    →  "1 iter" / "3 iters"    (unit auto-pluralized)
-;;   line     →  "<iters> · <tokens> · ~$<cost> · <duration>"
+;;   tokens   ->  "↑11461 (cached 4096) ↓35" (input, cached input, output)
+;;   cost     ->  "~$0.006954"             (six decimal places, US locale)
+;;   iters    ->  "1 iter" / "3 iters"    (unit auto-pluralized)
+;;   line     ->  "<iters> / <tokens> / ~$<cost> / <duration>"
 ;;
-;; Surfaces compose around this output — the TUI prepends the model
-;; name; the CLI wraps in `[…]`; Telegram wraps in italics. The
+;; Surfaces compose around this output - the TUI prepends the model
+;; name; the CLI wraps in `[...]`; Telegram wraps in italics. The
 ;; INNER content is identical so screenshots / pastes / chat history
 ;; all read the same way.
 ;; =============================================================================
@@ -250,7 +250,7 @@
   "Coerce a provider id to a short string. Accepts keyword (`:openai`),
    string (`\"openai\"`), or nil. Strips a leading colon so a stringified
    keyword still renders as `openai`, not `:openai`. Returns nil for
-   blank or non-string values — the caller treats nil as 'no provider
+   blank or non-string values - the caller treats nil as 'no provider
    prefix' and renders the bare model."
   [p]
   (cond
@@ -263,7 +263,7 @@
 
 (defn- extract-model
   "Pull the model identity off a result map and render it as
-   `provider/model` when both are present — e.g. `openai/gpt-4o`,
+   `provider/model` when both are present - e.g. `openai/gpt-4o`,
    `blockether/glm-5.1`. Falls back to bare `model` when only the
    model is known (older persisted rows, mid-flight chunks). The
    iteration runtime stores both fields on `:cost`
@@ -279,13 +279,13 @@
       (if provider (str provider "/" model) model))))
 
 (defn format-meta-line
-  "Compose the canonical ' · '-joined turn-summary line shared by
+  "Compose the canonical ' / '-joined turn-summary line shared by
    the CLI bracket, the TUI per-message footer, and the Telegram
    reply tagline. Skips slots whose value is nil so a partial result
    (no cost yet, no duration on a cancelled turn) renders cleanly.
 
    Slot order:
-     <model> · <iterations> · <tokens> · <cost> · <duration>
+     <model> / <iterations> / <tokens> / <cost> / <duration>
 
    The model slot renders `provider/model` when both are known
    (e.g. `openai/gpt-4o`, `blockether/glm-5.1`); falls back to bare
@@ -298,7 +298,7 @@
    `result` is the iteration runtime's result map: `{:iteration-count
    :duration-ms :tokens {:input :output :cached ...} :cost {:total-cost
    :provider :model}}`. `opts` accepts
-   `{:model <string|false> :prefix [...] :suffix [...]}` —
+   `{:model <string|false> :prefix [...] :suffix [...]}` -
    `:prefix`/`:suffix` are lists of arbitrary extra slots prepended /
    appended to the line (rare; mostly for channels with non-result
    chrome)."
@@ -317,4 +317,4 @@
                    (format-cost cost)
                    (format-duration duration-ms)]
                   (vec suffix))]
-     (str/join " · " (remove nil? parts)))))
+     (str/join " / " (remove nil? parts)))))

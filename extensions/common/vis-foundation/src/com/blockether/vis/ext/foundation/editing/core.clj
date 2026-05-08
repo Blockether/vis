@@ -183,18 +183,18 @@
    :color-role (tool-op->color-role op)})
 
 (defn- tool-success
-  [{:keys [op path kind result provenance presentation]}]
+  [{:keys [op path kind result info presentation]}]
   (let [t (now-ms)]
     (cond->
       (extension/success
         {:result     result
-         :provenance (merge {:op             op
-                             :target         (path->target path kind)
-                             :started-at-ms  t
-                             :finished-at-ms t
-                             :duration-ms    0}
-                       (op-presentation op)
-                       provenance)})
+         :info (merge {:op             op
+                       :target         (path->target path kind)
+                       :started-at-ms  t
+                       :finished-at-ms t
+                       :duration-ms    0}
+                 (op-presentation op)
+                 info)})
       presentation (assoc :presentation (merge (op-presentation op) presentation)))))
 
 (defn- tool-failure-on-error
@@ -213,19 +213,19 @@
                           :trace   []})]
       {:result (extension/failure
                  {:result     nil
-                  :provenance (cond-> (merge {:op             op
-                                              :target         target
-                                              :started-at-ms  t
-                                              :finished-at-ms t
-                                              :duration-ms    0}
-                                        (op-presentation op))
-                                bash?
-                                (assoc :command (first args)
-                                  :cwd path
-                                  :opts (dissoc bash-opts :stdin))
-                                interrupted?
-                                (assoc :interrupted? true
-                                  :status :interrupted))
+                  :info (cond-> (merge {:op             op
+                                        :target         target
+                                        :started-at-ms  t
+                                        :finished-at-ms t
+                                        :duration-ms    0}
+                                  (op-presentation op))
+                          bash?
+                          (assoc :command (first args)
+                            :cwd path
+                            :opts (dissoc bash-opts :stdin))
+                          interrupted?
+                          (assoc :interrupted? true
+                            :status :interrupted))
                   :error      error
                   :throwable  (when-not error err)})})))
 
@@ -506,7 +506,7 @@
     (if (<= (count s) patch-search-preview-chars)
       s
       (str (subs s 0 patch-search-preview-chars)
-        "…<+" (- (count s) patch-search-preview-chars) " chars>"))))
+        "...<+" (- (count s) patch-search-preview-chars) " chars>"))))
 
 (defn- patch-analysis
   [edits]
@@ -870,7 +870,7 @@
 (defn- payload-envelope?
   [value]
   (and (map? value)
-    (or (extension/tool-result? value) (contains? value :provenance))
+    (or (extension/tool-result? value) (contains? value :info))
     (some value [:result :stdout :stderr :error])))
 
 (defn- payload-map
@@ -1049,10 +1049,10 @@
          t (now-ms)]
      (assoc (extension/success
               {:result projection
-               :provenance {:op :v/preview
-                            :started-at-ms t
-                            :finished-at-ms t
-                            :duration-ms 0}})
+               :info {:op :v/preview
+                      :started-at-ms t
+                      :finished-at-ms t
+                      :duration-ms 0}})
        :preview-eql preview-eql
        :preview {:rendering-kind (get (preview-presentation value projection) :kind)}
        :presentation (preview-presentation value projection)))))
@@ -1069,10 +1069,10 @@
         :path path
         :kind :file
         :result out
-        :provenance {:lines-returned (count (:lines out))
-                     :offset (:offset out)
-                     :total-lines (:total-lines out)
-                     :truncated-by (:truncated-by out)}
+        :info {:lines-returned (count (:lines out))
+               :offset (:offset out)
+               :total-lines (:total-lines out)
+               :truncated-by (:truncated-by out)}
         :presentation {:kind :source
                        :path (:path out)
                        :line-key :lines
@@ -1088,9 +1088,9 @@
         :path path
         :kind :dir
         :result out
-        :provenance {:depth (:depth opts)
-                     :hidden? (:hidden? opts)
-                     :respect-gitignore? (get opts :respect-gitignore? true)}
+        :info {:depth (:depth opts)
+               :hidden? (:hidden? opts)
+               :respect-gitignore? (get opts :respect-gitignore? true)}
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
@@ -1104,13 +1104,13 @@
                ".")
        :kind :dir
        :result out
-       :provenance {:spec spec
-                    :query-op (:op coerced)
-                    :paths paths
-                    :include include
-                    :exclude exclude
-                    :hit-count (count (:hits out))
-                    :truncated-by (:truncated-by out)}
+       :info {:spec spec
+              :query-op (:op coerced)
+              :paths paths
+              :include include
+              :exclude exclude
+              :hit-count (count (:hits out))
+              :truncated-by (:truncated-by out)}
        :presentation {:kind :search-hits
                       :row-keys [:path :line :text]}})))
 
@@ -1122,14 +1122,14 @@
        :path (or (:path (first plans)) ".")
        :kind :file
        :result (mapv #(select-keys % [:path]) plans)
-       :provenance {:files (mapv (fn [{:keys [path before after]}]
-                                   {:path path
-                                    :changed? (not= before after)
-                                    :before before
-                                    :after after
-                                    :lines-before (count (str/split-lines before))
-                                    :lines-after (count (str/split-lines after))})
-                             plans)}})))
+       :info {:files (mapv (fn [{:keys [path before after]}]
+                             {:path path
+                              :changed? (not= before after)
+                              :before before
+                              :after after
+                              :lines-before (count (str/split-lines before))
+                              :lines-after (count (str/split-lines after))})
+                       plans)}})))
 
 (defn- patch-check-tool
   [edits]
@@ -1139,9 +1139,9 @@
        :path (or (:path (first (:checks out))) ".")
        :kind :file
        :result out
-       :provenance {:valid? (:valid? out)
-                    :edit-count (count (:checks out))
-                    :failure-count (count (:failures out))}})))
+       :info {:valid? (:valid? out)
+              :edit-count (count (:checks out))
+              :failure-count (count (:failures out))}})))
 
 (defn- create-dirs-tool
   [path]
@@ -1152,8 +1152,8 @@
        :path path
        :kind :dir
        :result out
-       :provenance {:created? (not before)
-                    :already-existed? before}})))
+       :info {:created? (not before)
+              :already-existed? before}})))
 
 (defn- glob-tool
   ([root pattern]
@@ -1165,10 +1165,10 @@
         :path root
         :kind :dir
         :result paths
-        :provenance {:pattern pattern
-                     :scope scope
-                     :match-count (count paths)
-                     :opts opts}}))))
+        :info {:pattern pattern
+               :scope scope
+               :match-count (count paths)
+               :opts opts}}))))
 
 (defn- copy-tool
   ([src dest]
@@ -1180,9 +1180,9 @@
         :path dest
         :kind :path
         :result out
-        :provenance {:src (path->target src :path)
-                     :dest (path->target dest :path)
-                     :opts opts}}))))
+        :info {:src (path->target src :path)
+               :dest (path->target dest :path)
+               :opts opts}}))))
 
 (defn- move-tool
   ([src dest]
@@ -1194,9 +1194,9 @@
         :path dest
         :kind :path
         :result out
-        :provenance {:src (path->target src :path)
-                     :dest (path->target dest :path)
-                     :opts opts}}))))
+        :info {:src (path->target src :path)
+               :dest (path->target dest :path)
+               :opts opts}}))))
 
 (defn- delete-tool
   [path]
@@ -1206,7 +1206,7 @@
      :path path
      :kind :path
      :result nil
-     :provenance {:deleted? true}}))
+     :info {:deleted? true}}))
 
 (defn- delete-if-exists-tool
   [path]
@@ -1216,7 +1216,7 @@
        :path path
        :kind :path
        :result deleted?
-       :provenance {:deleted? deleted?}})))
+       :info {:deleted? deleted?}})))
 
 (defn- exists-tool
   [path]
@@ -1226,7 +1226,7 @@
        :path path
        :kind :path
        :result exists?
-       :provenance {:exists? exists?}})))
+       :info {:exists? exists?}})))
 
 (defn- strict-bash-command
   [command]
@@ -1240,19 +1240,19 @@
        :path (:cwd out)
        :kind :dir
        :result (assoc out :strict? true :original-command command)
-       :provenance {:command command
-                    :cwd (:cwd out)
-                    :exit (:exit out)
-                    :status (if (:timed-out? out) :timeout :done)
-                    :timed-out? (:timed-out? out)
-                    :timeout-ms (:timeout-ms out)
-                    :duration-ms (:duration-ms out)
-                    :stdout-truncated? (:stdout-truncated? out)
-                    :stderr-truncated? (:stderr-truncated? out)
-                    :warnings (:warnings out)
-                    :opts (dissoc opts :stdin)
-                    :strict? true
-                    :strict-command (:command out)}
+       :info {:command command
+              :cwd (:cwd out)
+              :exit (:exit out)
+              :status (if (:timed-out? out) :timeout :done)
+              :timed-out? (:timed-out? out)
+              :timeout-ms (:timeout-ms out)
+              :duration-ms (:duration-ms out)
+              :stdout-truncated? (:stdout-truncated? out)
+              :stderr-truncated? (:stderr-truncated? out)
+              :warnings (:warnings out)
+              :opts (dissoc opts :stdin)
+              :strict? true
+              :strict-command (:command out)}
        :presentation {:kind :diagnostic}})))
 
 (defn- bash-tool
@@ -1312,17 +1312,17 @@
         :path (:cwd out)
         :kind :process
         :result (assoc out :port port :expr expr)
-        :provenance {:command (:command out)
-                     :argv (:argv out)
-                     :cwd (:cwd out)
-                     :port port
-                     :exit (:exit out)
-                     :status (if (:timed-out? out) :timeout :done)
-                     :timed-out? (:timed-out? out)
-                     :timeout-ms (:timeout-ms out)
-                     :duration-ms (:duration-ms out)
-                     :stdout-truncated? (:stdout-truncated? out)
-                     :stderr-truncated? (:stderr-truncated? out)}
+        :info {:command (:command out)
+               :argv (:argv out)
+               :cwd (:cwd out)
+               :port port
+               :exit (:exit out)
+               :status (if (:timed-out? out) :timeout :done)
+               :timed-out? (:timed-out? out)
+               :timeout-ms (:timeout-ms out)
+               :duration-ms (:duration-ms out)
+               :stdout-truncated? (:stdout-truncated? out)
+               :stderr-truncated? (:stderr-truncated? out)}
         :presentation {:kind :diagnostic}}))))
 
 ;; =============================================================================
@@ -1334,7 +1334,7 @@
   (let [s (str s)]
     (if (> (count s) journal-render-chars)
       (str (subs s 0 journal-render-chars)
-        "\n…<+" (- (count s) journal-render-chars) " chars>")
+        "\n...<+" (- (count s) journal-render-chars) " chars>")
       s)))
 
 (defn- split-preserve-trailing-empty
@@ -1416,8 +1416,8 @@
 
 (defn- tool-error-text
   [tool-result]
-  (let [op   (get-in tool-result [:provenance :op])
-        path (get-in tool-result [:provenance :target :requested])
+  (let [op   (get-in tool-result [:info :op])
+        path (get-in tool-result [:info :target :requested])
         err  (:error tool-result)]
     (md/p "Tool" (md/code op) "failed"
       (when path (str "for " (md/code path)))
@@ -1646,7 +1646,7 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [files (get-in tool-result [:provenance :files])]
+    (let [files (get-in tool-result [:info :files])]
       (md/join
         (md/p "Patched" (count files) "file(s). Each :search matched exactly once before any write. Read back only when exact persisted bytes matter or external writers may interfere.")
         (for [{:keys [path changed? before after]} files
@@ -1673,9 +1673,9 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [pattern (get-in tool-result [:provenance :pattern])
-          root (get-in tool-result [:provenance :target :requested])
-          scope (get-in tool-result [:provenance :scope])
+    (let [pattern (get-in tool-result [:info :pattern])
+          root (get-in tool-result [:info :target :requested])
+          scope (get-in tool-result [:info :scope])
           matches (:result tool-result)]
       (md/join
         (md/p "Glob" (md/code pattern) "in" (md/code root) "-" (count matches) "match(es)"
@@ -1688,7 +1688,7 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [src (get-in tool-result [:provenance :src :requested])
+    (let [src (get-in tool-result [:info :src :requested])
           dest (:result tool-result)]
       (md/p "Copied" (md/code src) "->" (md/code dest) "."))))
 
@@ -1696,7 +1696,7 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [src (get-in tool-result [:provenance :src :requested])
+    (let [src (get-in tool-result [:info :src :requested])
           dest (:result tool-result)]
       (md/p "Moved" (md/code src) "->" (md/code dest) "."))))
 
@@ -1704,14 +1704,14 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [path (get-in tool-result [:provenance :target :requested])]
+    (let [path (get-in tool-result [:info :target :requested])]
       (md/p "Deleted" (md/code path) "."))))
 
 (defn- render-delete-if-exists
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [path (get-in tool-result [:provenance :target :requested])
+    (let [path (get-in tool-result [:info :target :requested])
           deleted? (:result tool-result)]
       (if deleted?
         (md/p "Deleted" (md/code path) ".")
@@ -1721,7 +1721,7 @@
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
-    (let [path (get-in tool-result [:provenance :target :requested])
+    (let [path (get-in tool-result [:info :target :requested])
           exists? (:result tool-result)]
       (md/p "Exists?" (md/code path) "->" (pr-str exists?)))))
 
@@ -1740,9 +1740,9 @@
   (if-not (:success? tool-result)
     (tool-error-text tool-result)
     (let [out (:result tool-result)
-          spec (get-in tool-result [:provenance :spec])
-          paths (or (get-in tool-result [:provenance :paths])
-                  [(get-in tool-result [:provenance :target :requested])])]
+          spec (get-in tool-result [:info :spec])
+          paths (or (get-in tool-result [:info :paths])
+                  [(get-in tool-result [:info :target :requested])])]
       (md/p "Searched" (md/code (pr-str paths)) "with" (md/code (pr-str spec)) "-"
         (count (:hits out)) "hit(s), truncated-by" (md/code (name (:truncated-by out))) "."))))
 
@@ -1788,7 +1788,7 @@
 
 (def preview-symbol
   (vis/symbol 'preview preview-tool
-    {:doc "Project a value into <journal>/TUI display with EQL. The tool envelope always keeps the raw projected value under `:result`; rendering is separate display metadata. Observation call: use as a standalone display form; leave durable bindings for source/acquisition values. Strategy: bind full reads/searches you need later, then call preview separately; never echo a var just to inspect it. Examples: `(def file (v/cat \"src/foo.clj\"))` followed by `(v/preview file {:result [[:lines {:from 100 :to 180}]]})`, `(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)`, `(v/preview value)`. With no EQL, previews the whole payload. EQL supports keys, [:*], nested pulls, and field ranges like {:result [[:lines {:from 40 :to 120}]]}. Preserves source rendering metadata and provenance boundary."
+    {:doc "Project a value into <journal>/TUI display with EQL. The tool envelope always keeps the raw projected value under `:result`; rendering is separate display metadata. Observation call: use as a standalone display form; leave durable bindings for source/acquisition values. Strategy: bind full reads/searches you need later, then call preview separately; never echo a var just to inspect it. Examples: `(def file (v/cat \"src/foo.clj\"))` followed by `(v/preview file {:result [[:lines {:from 100 :to 180}]]})`, `(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)`, `(v/preview value)`. With no EQL, previews the whole payload. EQL supports keys, [:*], nested pulls, and field ranges like {:result [[:lines {:from 40 :to 120}]]}. Preserves source rendering metadata and info boundary."
      :arglists '([value] [value preview-eql])
      :examples ["(v/preview file {:result [[:lines {:from 40 :to 120}]]})"
                 "(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})"
@@ -1964,7 +1964,7 @@
     (when-not (config/bash-disabled?)
       "(get-in (v/bash \"pwd\") [:result :stdout]), ")
     "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits). "
-    "Tools own rendering metadata; preview preserves it. Provenance/lifecycle metadata stays unchanged and remains the proof substrate. For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))
+    "Tools own rendering metadata; preview preserves it. For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests. Runtime extension registration calls

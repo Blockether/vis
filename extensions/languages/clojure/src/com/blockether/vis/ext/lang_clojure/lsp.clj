@@ -81,17 +81,17 @@
   (System/currentTimeMillis))
 
 (defn- tool-success
-  [{:keys [op result provenance]}]
+  [{:keys [op result info]}]
   (let [t (now-ms)]
     (extension/success
       {:result result
-       :provenance (merge {:op op
-                           :target {:kind :project
-                                    :resolved (rel-path ".")}
-                           :started-at-ms t
-                           :finished-at-ms t
-                           :duration-ms 0}
-                     provenance)})))
+       :info (merge {:op op
+                     :target {:kind :project
+                              :resolved (rel-path ".")}
+                     :started-at-ms t
+                     :finished-at-ms t
+                     :duration-ms 0}
+               info)})))
 
 (defn- tool-failure-on-error
   [op]
@@ -99,12 +99,12 @@
     (let [t (now-ms)]
       {:result (extension/failure
                  {:result nil
-                  :provenance {:op op
-                               :target {:kind :project
-                                        :resolved (rel-path ".")}
-                               :started-at-ms t
-                               :finished-at-ms t
-                               :duration-ms 0}
+                  :info {:op op
+                         :target {:kind :project
+                                  :resolved (rel-path ".")}
+                         :started-at-ms t
+                         :finished-at-ms t
+                         :duration-ms 0}
                   :throwable err})})))
 
 (defn- option-files
@@ -125,9 +125,9 @@
      (tool-success
        {:op :z/diagnostics
         :result (normalize-diagnostics (:diagnostics result))
-        :provenance {:result-code (:result-code result)
-                     :diagnostic-count (count (normalize-diagnostics (:diagnostics result)))
-                     :lsp-output output}}))))
+        :info {:result-code (:result-code result)
+               :diagnostic-count (count (normalize-diagnostics (:diagnostics result)))
+               :lsp-output output}}))))
 
 (defn- rename-plan
   [from to & [opts]]
@@ -146,9 +146,9 @@
                 :to to
                 :edits edits
                 :changed-paths (->> edits (map :path) distinct vec)}
-       :provenance {:result-code (:result-code result)
-                    :edit-count (count edits)
-                    :lsp-output output}})))
+       :info {:result-code (:result-code result)
+              :edit-count (count edits)
+              :lsp-output output}})))
 
 (defn- clean-ns-plan
   ([] (clean-ns-plan nil))
@@ -167,18 +167,18 @@
        {:op :z/clean-ns-plan
         :result {:edits edits
                  :changed-paths (->> edits (map :path) distinct vec)}
-        :provenance {:result-code (:result-code result)
-                     :edit-count (count edits)
-                     :lsp-output output}}))))
+        :info {:result-code (:result-code result)
+               :edit-count (count edits)
+               :lsp-output output}}))))
 
 (defn- render-tool-result
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
-    (md/p "Tool" (md/code (get-in tool-result [:provenance :op])) "failed:" (get-in tool-result [:error :message]))
+    (md/p "Tool" (md/code (get-in tool-result [:info :op])) "failed:" (get-in tool-result [:error :message]))
     (md/join
-      (md/p (md/code (get-in tool-result [:provenance :op])) "returned" (if (sequential? (:result tool-result))
-                                                                          (count (:result tool-result))
-                                                                          "a") "result(s).")
+      (md/p (md/code (get-in tool-result [:info :op])) "returned" (if (sequential? (:result tool-result))
+                                                                    (count (:result tool-result))
+                                                                    "a") "result(s).")
       (md/code-block "clojure" (pr-str (:result tool-result))))))
 
 (defn- lsp-symbol

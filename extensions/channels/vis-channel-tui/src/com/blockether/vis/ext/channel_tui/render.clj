@@ -30,7 +30,7 @@
 ;; `removeEldestEntry` returns true once the map exceeds `fmt-cache-cap`,
 ;; so `put` automatically drops the single least-recently-used entry.
 ;; That keeps the working set hot (the bubbles you're currently
-;; scrolling through) while the cache stays bounded — no "oh you got
+;; scrolling through) while the cache stays bounded - no "oh you got
 ;; one entry over the cap, here's a 5x latency spike on every visible
 ;; bubble while we re-format from scratch" cliff like the old
 ;; clear-the-whole-thing strategy.
@@ -46,7 +46,7 @@
 (defonce ^:private ^LinkedHashMap fmt-cache (make-fmt-cache))
 
 (defn- cached* [k compute-fn]
-  ;; LinkedHashMap is not thread-safe — the render thread used to be
+  ;; LinkedHashMap is not thread-safe - the render thread used to be
   ;; the only caller, but `virtual/pre-warm!` now hits these caches
   ;; from a worker thread to keep first-scroll smooth. Two callers
   ;; means the lock matters, AND the lock granularity matters: if
@@ -57,7 +57,7 @@
   ;; touches (.get / .put), never for the compute.
   ;;
   ;; If two threads race on the same missing key, both compute, but
-  ;; the second one's `(or (.get …) …)` discards its result and
+  ;; the second one's `(or (.get ...) ...)` discards its result and
   ;; reuses the first one's value, so the cache map stays
   ;; deterministic. Wasted CPU on the duplicate compute is bounded
   ;; by the cache cap and rare in practice (the worker walks
@@ -84,7 +84,7 @@
 
 (defn repeat-str
   "Allocate a String of `n` copies of `ch`. Drop-in replacement for
-   `(apply str (repeat n ch))` — bypasses lazy-seq + per-char
+   `(apply str (repeat n ch))` - bypasses lazy-seq + per-char
    StringBuilder appends, so the box-border + padding code paths stop
    showing up on the flame graph."
   ^String [ch ^long n]
@@ -111,13 +111,14 @@
       (when (structural-line-marker? ch)
         [(subs line 0 1) (subs line 1)]))))
 
-(def ^:private inline-style-order [:bold :italic :strike :code])
+(def ^:private inline-style-order [:bold :italic :strike :code :link])
 
 (def ^:private inline-style->sentinels
   {:bold   [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF]
    :italic [p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF]
    :strike [p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF]
-   :code   [p/INLINE_CODE_ON p/INLINE_CODE_OFF]})
+   :code   [p/INLINE_CODE_ON p/INLINE_CODE_OFF]
+   :link   [p/INLINE_LINK_ON p/INLINE_LINK_OFF]})
 
 (def ^:private inline-sentinel->transition
   {p/INLINE_BOLD_ON    [:on :bold]
@@ -127,7 +128,9 @@
    p/INLINE_STRIKE_ON  [:on :strike]
    p/INLINE_STRIKE_OFF [:off :strike]
    p/INLINE_CODE_ON    [:on :code]
-   p/INLINE_CODE_OFF   [:off :code]})
+   p/INLINE_CODE_OFF   [:off :code]
+   p/INLINE_LINK_ON    [:on :link]
+   p/INLINE_LINK_OFF   [:off :link]})
 
 (defn- inline-state-after
   [active ^String line]
@@ -195,7 +198,7 @@
             ;; Break at word boundary
             (recur (subs remaining (inc (int last-sp)))
               (conj acc (subs remaining 0 (int last-sp))))
-            ;; No space found — hard break at column boundary
+            ;; No space found - hard break at column boundary
             (recur (subs remaining cut)
               (conj acc chunk))))))))
 
@@ -270,7 +273,7 @@
                     ;; Render it visibly as a middle dot and continue.
                     (let [w 1]
                       (if (<= (+ used w) max-cols)
-                        (do (.append sb \u00b7)
+                        (do (.append sb /)
                           (recur (inc esc-idx) (+ used w)))
                         (.toString sb)))
                     (do (.append sb s esc-idx (inc m-idx))
@@ -329,14 +332,14 @@
   (let [;; Minimum box size to contain content + chrome
         min-w (+ content-w dialog-chrome-w)
         min-h (+ content-h dialog-chrome-h)
-        ;; Only widen to approach φ — never heighten
+        ;; Only widen to approach φ - never heighten
         golden-w (int (* min-h phi))
         box-w (max min-w golden-w)
         box-h min-h
         ;; Clamp to terminal
         box-w (min box-w (- cols 4))
         box-h (min box-h (- rows 4))
-        ;; Floor — minimum width generous enough for hint bars + labels
+        ;; Floor - minimum width generous enough for hint bars + labels
         box-w (max box-w 40)
         box-h (max box-h 7)]
     [box-w box-h]))
@@ -365,10 +368,10 @@
 ;; column instead of running edge-to-edge.
 ;;
 ;; Tweak this single number to grow / shrink both rules symmetrically.
-;; The previous bullet-point tuning history (4 → 5 → 4 → 3 → 2)
+;; The previous bullet-point tuning history (4 -> 5 -> 4 -> 3 -> 2)
 ;; lived inline in `draw-box-border!`; lifting it to a const def keeps
 ;; the painter's body free of magic numbers and makes layout reviews
-;; trivial — grep for `INPUT_BORDER_HORIZONTAL_PAD`.
+;; trivial - grep for `INPUT_BORDER_HORIZONTAL_PAD`.
 (def ^:private INPUT_BORDER_HORIZONTAL_PAD
   "Cols of empty space on each end of the input-box top/bottom rules.
    Total rule width = `cols - 2 * INPUT_BORDER_HORIZONTAL_PAD`."
@@ -403,7 +406,7 @@
          (.putString g 1 (int box-top) (embed-in-bar bar top-hint))
          (.setCharacter g (int (dec cols)) (int box-top) Symbols/SINGLE_LINE_TOP_RIGHT_CORNER)
 
-         ;; Bottom: └──────┘ (plain rule — status moved to footer row).
+         ;; Bottom: └──────┘ (plain rule - status moved to footer row).
          (.setCharacter g 0 (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_LEFT_CORNER)
          (.putString g 1 (int box-bottom) bar)
          (.setCharacter g (int (dec cols)) (int box-bottom) Symbols/SINGLE_LINE_BOTTOM_RIGHT_CORNER)
@@ -481,13 +484,13 @@
 
    The input box is SIDELESS (top/bottom rules only, no `│` rails)
    and `input-pad-x` is now 0, so the typing zone spans the full
-   terminal width — `text-w` = `cols` (clamped to ≥1)."
+   terminal width - `text-w` = `cols` (clamped to >=1)."
   [cols]
   (max 1 (- cols (* 2 input-pad-x))))
 
 (defn- wrap-input-line
   "Soft-wrap one logical input line into visual segments at `text-w`
-   columns. Always returns a non-empty vec (empty input → [\"\"])."
+   columns. Always returns a non-empty vec (empty input -> [\"\"])."
   [^String line text-w]
   (let [text-w (max 1 text-w)
         n     (count line)]
@@ -557,10 +560,10 @@
    Long logical lines are SOFT-WRAPPED at the box width: typing past
    the right edge flows onto the next visual row instead of scrolling
    the line horizontally. The logical model (`{:lines :crow :ccol}`)
-   is unchanged — wrapping is a render-time projection only.
+   is unchanged - wrapping is a render-time projection only.
 
    `hint` is the keybinding strip embedded in the TOP border. The
-   bottom border is always a plain horizontal rule — live status
+   bottom border is always a plain horizontal rule - live status
    (model / run-state / ctx %) lives in the dedicated footer row
    below this box (see `footer/draw-footer!`).
 
@@ -618,7 +621,7 @@
       (when (pos? n)
         (p/set-colors! g t/dialog-hint-key t/dialog-bg)
         (p/put-str! g 0 top
-          (p/truncate-cols " Slash commands · ↑↓/wheel select · Tab complete · Enter run " width))
+          (p/truncate-cols " Slash commands / ↑↓/wheel select / Tab complete / Enter run " width))
         (doseq [[i suggestion] (map-indexed vector visible)]
           (if (:slash/selected? suggestion)
             (p/set-colors! g t/dialog-bg t/dialog-title-bg)
@@ -695,7 +698,7 @@
 
 ;;; ── Chat bubble ────────────────────────────────────────────────────────────
 
-;; Line markers live in primitives — aliases for local readability.
+;; Line markers live in primitives - aliases for local readability.
 (def ^:private thinking-marker  p/MARKER_THINKING)
 (def ^:private code-marker      p/MARKER_CODE)
 (def ^:private result-marker    p/MARKER_RESULT)
@@ -949,7 +952,7 @@
    show bold without dragging the column dividers along with them.
 
    `body-styles` (e.g. `[p/BOLD]` for header rows, `[p/ITALIC]` for
-   thinking-mode body rows) applies to the text overdraw only — not
+   thinking-mode body rows) applies to the text overdraw only - not
    to the chrome pass."
   [^TextGraphics g x y ^String line text-fg border-fg bg body-styles]
   (p/clear-styles! g)
@@ -1007,7 +1010,7 @@
               (or seg-start-char char-pos)
               (or seg-start-col col-pos))))))))
 
-;; Forward declarations — the link-chrome painter + ref extractor
+;; Forward declarations - the link-chrome painter + ref extractor
 ;; are defined further down (between the inline-marker tokeniser
 ;; and `bubble-height*`) but are reached from the prose-painting
 ;; loop in `draw-chat-bubble!` defined right below. Pulling the
@@ -1057,8 +1060,7 @@
            :kind :toggle-details
            :conversation-id (:conversation-id meta)
            :node-id (:toggle-node-id meta)
-           :collapsed? (:collapsed? meta)
-           :proofs? false}))))
+           :collapsed? (:collapsed? meta)}))))
   (doseq [{:keys [mode active? label start width]} (:options meta)]
     (p/set-colors! g (if active? fg inactive-fg) bg)
     (p/styled g (cond-> (vec base-styles) active? (conj p/UNDERLINE))
@@ -1085,7 +1087,7 @@
 
    User content rows get a subtle blue-gray background block
    (`user-bubble-bg`) to visually separate user input from the rest of
-   the conversation. Assistant content rows render on terminal bg —
+   the conversation. Assistant content rows render on terminal bg -
    the only fills come from inline marker zones (code blocks,
    answer-bg, stdout, etc.).
 
@@ -1105,7 +1107,7 @@
        :or   {viewport-top 0 viewport-h 0}}]]
   (let [user?     (= role :user)
         warning?  (warning-message? text)
-        ;; Cancelled turns are status messages, not real answers —
+        ;; Cancelled turns are status messages, not real answers -
         ;; render the entire bubble dim (gray + italic), drop the
         ;; meta line, dim the role label too. Skips markdown so a
         ;; bare text like \"Cancelled by user.\" reads naturally.
@@ -1130,10 +1132,10 @@
                     (vec (repeat (count lines) nil)))
         bubble-h  (count lines)
         bx        left
-        ;; No bg fill on plain assistant text — we sit on terminal-bg.
+        ;; No bg fill on plain assistant text - we sit on terminal-bg.
         ;; `:warning` and user messages each get a tinted block so
         ;; they're impossible to miss in the timeline. Cancelled turns
-        ;; intentionally render on bare terminal-bg — the muted italic
+        ;; intentionally render on bare terminal-bg - the muted italic
         ;; fg + status footer carry the "aborted" signal without a
         ;; bubble-wide fill that competed visually with adjacent
         ;; assistant messages.
@@ -1155,14 +1157,14 @@
                     user?      t/user-role-fg
                     :else      t/ai-role-fg)
         time-str   (vis/format-date timestamp)
-        ;; Below-message meta (assistant only): "blockether/glm-5.1 ·
-        ;; 1 iter · ↑11461 · ↓35 · ~$0.006954 · 4.9s". Same surface
+        ;; Below-message meta (assistant only): "blockether/glm-5.1 /
+        ;; 1 iter / ↑11461 / ↓35 / ~$0.006954 / 4.9s". Same surface
         ;; form `format-meta-line` produces for the CLI bracket and
         ;; the Telegram tagline. Provider + model auto-extract from
         ;; `:cost :provider` / `:cost :model` (where the iteration
         ;; runtime persists them). The chat-state's bare-name `:model`
         ;; field is intentionally NOT passed as the `:model` override
-        ;; here — doing so would defeat the provider/model rendering.
+        ;; here - doing so would defeat the provider/model rendering.
         ;; Cancelled turns skip the whole block; there's no answer to
         ;; attribute and "0 iters / no model" reads as clutter under
         ;; a "Cancelled" placeholder.
@@ -1209,7 +1211,7 @@
           (p/put-str! g (+ bx (max (count label) (- bubble-w (count time-str)))) label-row time-str))))
 
     ;; Content begins directly under the role banner for ASSISTANT
-    ;; bubbles — the previous breathing row read as an unwanted top
+    ;; bubbles - the previous breathing row read as an unwanted top
     ;; margin above the thinking block. USER bubbles keep the
     ;; breathing row so the yellow block has visible vertical
     ;; padding above the typed text (otherwise the yellow band
@@ -1220,14 +1222,14 @@
           bottom-pad (if user? 1 0)
           btop       (+ start-row top-sep-h 1 top-pad)]
       ;; No bubble-wide background fill. Plain user / assistant text
-      ;; renders directly on terminal bg — the only fills come from
+      ;; renders directly on terminal bg - the only fills come from
       ;; structured-trace marker zones (code blocks, stdout, answer
       ;; section). Roles are visually distinguished by the colored
       ;; label and the blank row beneath it (no horizontal divider).
       ;; Bulk fill the content rows for the cases that want a
       ;; bubble-wide colored block: warnings (amber alarm) and user
       ;; messages (warm light-yellow zone). Assistant plain text and
-      ;; cancelled status keep terminal bg — their per-line marker
+      ;; cancelled status keep terminal bg - their per-line marker
       ;; switch handles any zone-specific fills (code blocks,
       ;; answer-bg, stdout, etc.) on its own.
       ;;
@@ -1247,14 +1249,14 @@
         (p/set-bg! g bg-color)
         (p/fill-rect! g bx (- btop top-pad) bubble-w (+ (max 1 bubble-h) top-pad bottom-pad)))
 
-      ;; Text content — per-line styling via invisible marker prefixes
+      ;; Text content - per-line styling via invisible marker prefixes
       ;;
       ;; The \"answer zone\" starts at the first line carrying ANY
       ;; structural answer-* marker. Every line AFTER that index
       ;; renders on `answer-bg`. We used to anchor strictly on
       ;; `answer-hdr-marker` (the right-aligned \"FINAL ANSWER\"
       ;; superscript), but that marker became opt-in via
-      ;; `:show-final-answer-header` — when off, the answer body lost
+      ;; `:show-final-answer-header` - when off, the answer body lost
       ;; its blue zone and rendered on white terminal bg. Now we
       ;; accept any of the three structural markers
       ;; `format-answer-with-thinking*` always emits:
@@ -1286,7 +1288,7 @@
             ;; Allocation-free O(n) scan, cached by `lines`-identity.
             ;; The previous `(some (map-indexed vector lines))`
             ;; allocated a fresh `[i l]` tuple per element on every
-            ;; redraw — 11k tuples per frame on the big bubbles.
+            ;; redraw - 11k tuples per frame on the big bubbles.
             ;; `wrap-text` is identity-stable across frames, so the
             ;; cached answer-start hits next time around.
             answer-start (cached* [::ans-start (System/identityHashCode lines)]
@@ -1302,11 +1304,11 @@
               (p/clear-styles! g)
               (let [in-answer? (> i (long answer-start))
                 ;; Two coordinate systems per content row:
-                ;;   text  at `x = bx + h-pad`, runs `content-w` cols  — keeps
+                ;;   text  at `x = bx + h-pad`, runs `content-w` cols  - keeps
                 ;;         body padded inside the column.
-                ;;   fills at `fbx = bx`,        run  `bubble-w`  cols — every
+                ;;   fills at `fbx = bx`,        run  `bubble-w`  cols - every
                 ;;         marker zone (code, answer, stdout, iteration
-                ;;         header, thinking, table…) paints the FULL message
+                ;;         header, thinking, table...) paints the FULL message
                 ;;         column so the colored band reaches both edges of
                 ;;         the messages area instead of leaving a 2-col
                 ;;         white strip on each side.
@@ -1331,12 +1333,12 @@
                   (p/set-bg! g t/answer-bg)
                   (p/fill-rect! g fbx y iw 1))
                 (cond
-              ;; ── Iteration header — right-aligned, subtle ──
+              ;; ── Iteration header - right-aligned, subtle ──
                   (str/starts-with? line iteration-hdr-marker)
                   (do (p/set-colors! g t/iteration-header-fg bg-color)
                     (p/put-str! g x y (subs line 1)))
 
-              ;; ── Thinking — dimmed bg, italic ──
+              ;; ── Thinking - dimmed bg, italic ──
               ;; Inline span sentinels (**bold** etc.) embedded in
               ;; thinking-mode prose are honoured via paint-styled-line!
               ;; on top of the italic base style. Italic stacks with
@@ -1352,7 +1354,7 @@
                         t/dialog-hint t/iteration-header-bg
                         t/code-block-fg t/code-block-bg)))
 
-              ;; ── Code (success) — light green bg, green ✓ suffix ──
+              ;; ── Code (success) - light green bg, green ✓ suffix ──
                   (str/starts-with? line code-ok-marker)
                   (let [raw (subs line 1)]
                     (p/set-colors! g t/code-block-fg t/code-ok-bg)
@@ -1362,7 +1364,7 @@
                       (p/set-colors! g t/code-success-fg t/code-ok-bg)
                       (p/put-str! g (+ x ci) y (subs raw ci))))
 
-              ;; ── Code (error) — light red bg, red ✗ suffix ──
+              ;; ── Code (error) - light red bg, red ✗ suffix ──
                   (str/starts-with? line code-err-marker)
                   (let [raw (subs line 1)]
                     (p/set-colors! g t/code-block-fg t/code-err-bg)
@@ -1372,7 +1374,7 @@
                       (p/set-colors! g t/code-error-fg t/code-err-bg)
                       (p/put-str! g (+ x ci) y (subs raw ci))))
 
-              ;; ── Code (running, no status yet) — neutral bg ──
+              ;; ── Code (running, no status yet) - neutral bg ──
                   (str/starts-with? line code-marker)
                   (do (p/set-colors! g t/code-block-fg t/code-block-bg)
                     (p/fill-rect! g fbx y iw 1)
@@ -1384,26 +1386,26 @@
                     (p/fill-rect! g fbx y iw 1)
                     (p/put-str! g x y (subs line 1)))
 
-              ;; ── Result (success) — dim on success bg ──
+              ;; ── Result (success) - dim on success bg ──
                   (str/starts-with? line result-marker)
                   (do (p/set-colors! g t/code-result-fg t/code-ok-bg)
                     (p/fill-rect! g fbx y iw 1)
                     (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-ok-bg))
 
-              ;; ── Result (error) — red on light red bg ──
+              ;; ── Result (error) - red on light red bg ──
                   (str/starts-with? line err-result-marker)
                   (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
                     (p/fill-rect! g fbx y iw 1)
                     (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-err-bg))
 
-              ;; ── Stdout text — distinct stdout bg, italic ──
+              ;; ── Stdout text - distinct stdout bg, italic ──
                   (str/starts-with? line stdout-marker)
                   (do (p/set-colors! g t/stdout-fg t/stdout-bg)
                     (p/fill-rect! g fbx y iw 1)
                     (p/styled g [p/ITALIC]
                       (p/put-str! g x y (subs line 1))))
 
-              ;; ── Stderr text — light red, italic ──
+              ;; ── Stderr text - light red, italic ──
                   (str/starts-with? line stderr-marker)
                   (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
                     (p/fill-rect! g fbx y iw 1)
@@ -1441,31 +1443,31 @@
                   (do (p/set-bg! g bg-color)
                     (p/fill-rect! g fbx y iw 1))
 
-              ;; ── Answer separator — bold horizontal rule between iterations and answer ──
+              ;; ── Answer separator - bold horizontal rule between iterations and answer ──
                   (str/starts-with? line answer-sep-marker)
                   (do (p/set-colors! g t/answer-sep-fg bg-color)
                     (p/styled g [p/BOLD]
                       (p/put-str! g fbx y (repeat-str \u2500 iw))))
 
-              ;; ── Answer header — right-aligned superscript on bubble bg ──
+              ;; ── Answer header - right-aligned superscript on bubble bg ──
                   (str/starts-with? line answer-hdr-marker)
                   (do (p/set-colors! g t/iteration-header-fg bg-color)
                     (p/put-str! g x y (subs line 1)))
 
               ;; ── Answer-mode markdown headings (gold gradient) ──
               ;;
-              ;; H1→H3 use a saturated amber/gold gradient
+              ;; H1->H3 use a saturated amber/gold gradient
               ;; (`t/md-h1-fg` etc.) instead of the body fg + bold,
               ;; so headings stop disappearing into surrounding
               ;; prose. The colour stack is engineered to pop on
               ;; both the white assistant bg and the new pale-blue
-              ;; answer-bg — see the WCAG ratios in theme.clj.
+              ;; answer-bg - see the WCAG ratios in theme.clj.
               ;; Heading lines now run their content through
               ;; `markdown->inline` before reaching here, so the line
               ;; payload may contain INLINE_*_ON/OFF sentinels for
               ;; nested bold/italic/code spans. Painting via
               ;; `paint-styled-line!` (instead of raw `put-str!`)
-              ;; consumes the sentinels in-place — they stay out of
+              ;; consumes the sentinels in-place - they stay out of
               ;; the terminal output (no PUA glyphs). Heading colour + BOLD
               ;; remain the BASE style; inline spans STACK on top
               ;; (e.g. `## **plain** *and italic*` keeps the gold +
@@ -1502,7 +1504,7 @@
                       (p/paint-styled-line! g x y (subs line 1)
                         fg-color lbg t/code-block-fg t/code-block-bg)))
 
-                  ;; <summary> disclosure label — lavender band that
+                  ;; <summary> disclosure label - lavender band that
                   ;; spans the full bubble inner-width. Bold + violet
                   ;; foreground reads as a section heading; the bg
                   ;; tint is unique among answer-zone tints (code is
@@ -1515,15 +1517,10 @@
                   (let [abs-row (+ (long viewport-top) y)
                         hovered? (and (contains? #{:toggle-details :preview-switcher} (:kind meta))
                                    (= abs-row (:row (:bounds (cr/hovered)))))
-                        proof?   (:proofs? meta)
-                        bg       (cond
-                                   hovered? t/link-chrome-hover-bg
-                                   proof?   t/proof-summary-bg
-                                   :else    t/md-summary-bg)
+                        bg       (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
                         tool-fg  (tool-color-role->fg (:color-role meta))
                         fg       (cond
                                    hovered? t/link-chrome-hover-fg
-                                   proof?   t/proof-summary-fg
                                    tool-fg  tool-fg
                                    :else    t/md-summary-fg)]
                     (if (seq (:options meta))
@@ -1542,8 +1539,7 @@
                              :kind :toggle-details
                              :conversation-id (:conversation-id meta)
                              :node-id (:node-id meta)
-                             :collapsed? (:collapsed? meta)
-                             :proofs? (:proofs? meta)})
+                             :collapsed? (:collapsed? meta)})
 
                           nil))))
 
@@ -1562,7 +1558,7 @@
                       fg-color lbg t/code-block-fg t/code-block-bg))
 
               ;; Blockquote: italic + dim base, inline spans honoured
-              ;; on top. Was the user-visible bug — `> **Lącznie:**`
+              ;; on top. Was the user-visible bug - `> **Lącznie:**`
               ;; rendered with literal asterisks because the previous
               ;; quote painter used raw put-str! and the quote branch
               ;; in markdown->lines didn't run markdown->inline. Both
@@ -1605,9 +1601,9 @@
                     (p/set-colors! g t/code-border-fg tbg)
                     (p/fill-rect! g fbx y iw 1)
                     (if border?
-                  ;; Pure box-drawing line — single muted paint.
+                  ;; Pure box-drawing line - single muted paint.
                       (p/put-str! g x y stripped)
-                  ;; Header / body data row — dual-color split.
+                  ;; Header / body data row - dual-color split.
                       (paint-table-data-line! g x y stripped
                         tfg t/code-border-fg tbg
                         (when head? [p/BOLD]))))
@@ -1668,15 +1664,10 @@
                   (let [abs-row (+ (long viewport-top) y)
                         hovered? (and (contains? #{:toggle-details :preview-switcher} (:kind meta))
                                    (= abs-row (:row (:bounds (cr/hovered)))))
-                        proof?   (:proofs? meta)
-                        bg       (cond
-                                   hovered? t/link-chrome-hover-bg
-                                   proof?   t/th-proof-summary-bg
-                                   :else    t/th-md-summary-bg)
+                        bg       (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
                         tool-fg  (tool-color-role->fg (:color-role meta))
                         fg       (cond
                                    hovered? t/link-chrome-hover-fg
-                                   proof?   t/th-proof-summary-fg
                                    tool-fg  tool-fg
                                    :else    t/th-md-summary-fg)]
                     (if (seq (:options meta))
@@ -1695,8 +1686,7 @@
                              :kind :toggle-details
                              :conversation-id (:conversation-id meta)
                              :node-id (:node-id meta)
-                             :collapsed? (:collapsed? meta)
-                             :proofs? (:proofs? meta)})
+                             :collapsed? (:collapsed? meta)})
 
                           nil))))
 
@@ -1757,12 +1747,12 @@
                           head? [p/BOLD p/ITALIC]
                           :else [p/ITALIC]))))
 
-              ;; ── Legacy separator — dim ──
+              ;; ── Legacy separator - dim ──
                   (str/starts-with? line sep-marker)
                   (do (p/set-colors! g t/dialog-hint bg-color)
                     (p/put-str! g x y (subs line 1)))
 
-              ;; ── Answer text — answer bg ──
+              ;; ── Answer text - answer bg ──
                   (str/starts-with? line answer-txt-marker)
                   (do (p/set-colors! g t/answer-fg t/answer-bg)
                     (p/fill-rect! g fbx y iw 1)
@@ -1773,12 +1763,12 @@
                   (do (p/set-bg! g t/answer-bg)
                     (p/fill-rect! g fbx y iw 1))
 
-              ;; ── Plain text — answer bg if in answer zone, else bubble bg ──
+              ;; ── Plain text - answer bg if in answer zone, else bubble bg ──
               ;; Cancelled status messages render in muted italic on
               ;; terminal bg (no fill) so the line reads as a system
               ;; note, not as something the model said.
                   :else
-              ;; Cancelled bubbles never enter the answer zone — the
+              ;; Cancelled bubbles never enter the answer zone - the
               ;; status footer ("Cancelled by user.") renders flat on
               ;; terminal-bg, no answer-bg fill underneath, even if a
               ;; structural answer marker sits earlier in the trailer.
@@ -1792,7 +1782,7 @@
                     (if cancelled?
                   ;; Cancelled / system status messages: render as a
                   ;; muted italic block. Inline markdown spans are
-                  ;; intentionally NOT honoured here — a system note
+                  ;; intentionally NOT honoured here - a system note
                   ;; saying "Cancelled by user" should stay flat,
                   ;; never bold.
                       (p/styled g [p/ITALIC] (p/put-str! g x y line))
@@ -1817,7 +1807,7 @@
       ;; Final per-message layout (no outer box, no bg fill, no
       ;; horizontal rule under the label):
       ;;   row 0                    : label + resources badge + timestamp
-      ;;   row 1 … N                : wrapped content (with marker-zone fills)
+      ;;   row 1 ... N                : wrapped content (with marker-zone fills)
       ;;   row 1+N                  : bottom pad (user only)
       ;;   row 1+N+P                : meta right, when present
       ;;   final row                : single blank gap before the next message
@@ -1866,7 +1856,6 @@
 (def ^:private link-icon-image    "\uD83D\uDCF7")  ; 📷
 (def ^:private link-icon-link     "\uD83D\uDD17")  ; 🔗
 (def ^:private link-icon-file     "\uD83D\uDCC4")  ; 📄
-(def ^:private link-icon-proof    "✓")              ; provenance proof ref
 (def ^:private link-icon-blocked  "\uD83D\uDEAB")  ; 🚫
 (def ^:private resources-icon     "\uD83D\uDCDA")  ; 📚
 
@@ -1915,22 +1904,21 @@
     (not enabled?) link-icon-blocked
     (= kind :image)      link-icon-image
     (= kind :file)       link-icon-file
-    (= kind :provenance) link-icon-proof
     :else                link-icon-link))
 
 ;; Inline-style sentinel codepoints emitted by `markdown->inline`
-;; (BOLD/ITALIC/STRIKE/CODE on/off pairs in the U+E110–U+E117 PUA
-;; range). The chrome strip doesn't paint per-character SGR — it's
-;; a single-tone hover band — so we strip the sentinels back out
+;; (BOLD/ITALIC/STRIKE/CODE on/off pairs in the U+E110-U+E117 PUA
+;; range). The chrome strip doesn't paint per-character SGR - it's
+;; a single-tone hover band - so we strip the sentinels back out
 ;; before display, leaving plain text. The pre-pass through
 ;; `markdown->inline` is the trick: `**bold**` cleanly becomes
 ;; `bold`, `*italic*` becomes `italic`, ` `code` ` becomes `code`,
 ;; and unmatched openers (`*half`, `**incomplete`) stay literal
-;; — same behaviour the prose body gets. Without this pass the
+;; - same behaviour the prose body gets. Without this pass the
 ;; chrome shows raw markdown markup verbatim, e.g.
-;;   [See **here**](url) -> "🔗 See **here** → url"
+;;   [See **here**](url) -> "🔗 See **here** -> url"
 ;; which looks like a typo to the user.
-(def ^:private chrome-text-sentinel-re #"[\uE110-\uE117]")
+(def ^:private chrome-text-sentinel-re #"[\uE110-\uE119]")
 
 (defn- strip-inline-markup
   "Run `text` through `markdown->inline` then drop the styling
@@ -1943,7 +1931,7 @@
 
 (defn- chrome-display-text
   "Build the visible chrome row for a ref:
-     <icon> <text> → <url>
+     <icon> <text> -> <url>
    The url tail is shortened to fit `max-w`. Pure.
 
    `text` is run through `strip-inline-markup` so inline emphasis
@@ -1954,7 +1942,7 @@
   (let [icon  (ref-icon ref)
         text  (strip-inline-markup (or (:text ref) ""))
         url   (or (:url ref)  "")
-        sep   " → "
+        sep   " -> "
         ;; Reserve room: icon (2 cols) + space + sep + at least 8 cols
         ;; of url.
         head     (str icon " " text)
@@ -1964,7 +1952,7 @@
         url-disp (if (<= (count url) avail)
                    url
                    (let [keep (max 0 (- avail 1))]
-                     (str (subs url 0 (min (count url) keep)) "…")))]
+                     (str (subs url 0 (min (count url) keep)) "...")))]
     (str head sep url-disp)))
 
 (defn extract-link-refs*
@@ -1977,7 +1965,7 @@
 
 (defn extract-link-refs
   "Memoised wrapper around `extract-link-refs*`. Keyed by the
-   message text’s identity-hash + width — the same trick
+   message text’s identity-hash + width - the same trick
    `bubble-height` uses to dodge re-walking immutable message bodies
    on every paint."
   [{:keys [text hide-links?]} max-w]
@@ -2001,7 +1989,7 @@
    `abs-row` is inside the viewport AND the ref is enabled, register
    a click region.
 
-   The row paints `<icon> <text> → <url>` in three colour zones so
+   The row paints `<icon> <text> -> <url>` in three colour zones so
    the affordance reads cleanly (link colour for the text, muted
    gray for the arrow + url tail). Hover state inverts the row to a
    pale blue band."
@@ -2023,7 +2011,7 @@
     (p/set-colors! g t/text-fg bg)
     (p/fill-rect! g x y bubble-w 1)
     ;; Whole row painted in one colour pass; the text/arrow/url
-    ;; tri-tone is a future polish — the single-tone read is
+    ;; tri-tone is a future polish - the single-tone read is
     ;; already obviously a link, the tri-tone added complexity
     ;; without changing the click affordance.
     (p/set-colors! g fg-text bg)
@@ -2111,6 +2099,35 @@
 (def ^:private auto-collapse-line-threshold 12)
 (def ^:private auto-collapse-char-threshold 700)
 (def ^:private thinking-preview-edge-lines 10)
+(def ^:private live-thinking-preview-chars 2400)
+
+(defonce ^:private progress-trace-cache
+  (atom nil))
+
+(defn- live-preview-thinking-text
+  [thinking]
+  (let [s (str/trim (str thinking))
+        n (count s)]
+    (if (<= n live-thinking-preview-chars)
+      s
+      (let [edge   (quot live-thinking-preview-chars 2)
+            hidden (max 0 (- n (* 2 edge)))]
+        (str (subs s 0 edge)
+          "
+
+▸ REASONING / " hidden " chars hidden while live
+
+"
+          (subs s (- n edge) n))))))
+
+(defn- cached-progress-trace
+  [cache-key compute-fn]
+  (let [{:keys [key entries]} @progress-trace-cache]
+    (if (= key cache-key)
+      entries
+      (let [entries (compute-fn)]
+        (reset! progress-trace-cache {:key cache-key :entries entries})
+        entries))))
 
 (defn- short-id-fragment
   ^String [id]
@@ -2156,11 +2173,11 @@
   (cond
     (<= max-w 0) ""
     (<= (p/display-width s) max-w) s
-    (= max-w 1) "…"
-    :else (str (p/truncate-cols s (dec max-w)) "…")))
+    (= max-w 1) "..."
+    :else (str (p/truncate-cols s (dec max-w)) "...")))
 
 (defn- format-detail-summary-line
-  "Put the human-readable detail provenance on the right edge. The
+  "Put the human-readable detail info on the right edge. The
    whole row is already painted as a bold disclosure band by
    `draw-chat-bubble!`, so keep the suffix as plain text. Inline code
    would drop that inherited bold style and switch to a weaker code
@@ -2169,7 +2186,7 @@
   (let [suffix-w (p/display-width suffix)
         gap-w    2]
     (if (> (+ suffix-w gap-w 1) max-w)
-      (str left " · " suffix)
+      (str left " / " suffix)
       (let [left-w (max 1 (- max-w suffix-w gap-w))
             left   (ellipsize-cols left left-w)
             pad-w  (max gap-w (- max-w (p/display-width left) suffix-w))]
@@ -2190,15 +2207,6 @@
     (detail-node-base-id detail-ctx)
     (when (seq details-path) (str ":d" (str/join "." details-path)))))
 
-(def ^:private proof-summary-icon "✓")
-
-(defn- proof-summary-label
-  [summary]
-  (let [summary (or summary "Proofs")]
-    (if (str/includes? summary proof-summary-icon)
-      summary
-      (str proof-summary-icon " " summary))))
-
 (defn- search-spec-summary
   [{:keys [spec paths]}]
   (when (map? spec)
@@ -2207,7 +2215,7 @@
           needle  (some-> needles first str)
           paths   (or (seq paths) (seq (:paths spec)))
           in      (when-let [p (first paths)]
-                    (str " in " p (when (next paths) "…")))]
+                    (str " in " p (when (next paths) "...")))]
       (str
         (cond
           (= 1 n) (str " “" (ellipsize-cols needle 32) "”")
@@ -2294,11 +2302,11 @@
             :collapsed? collapsed?}}))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
-  [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id proofs? color-role]
+  [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id color-role]
     :as detail-ctx}]
   (let [suffix    (detail-id-suffix detail-ctx)
-        hint      (when collapsed? (str " · " (hidden-size-hint hidden-entries)))
-        summary   (if proofs? (proof-summary-label summary) (or summary "Details"))
+        hint      (when collapsed? (str " / " (hidden-size-hint hidden-entries)))
+        summary   (or summary "Details")
         left      (str (if collapsed? "▸ " "▾ ")
                     summary
                     (or hint ""))
@@ -2308,7 +2316,6 @@
                    :conversation-id (str conversation-id)
                    :node-id (str node-id)
                    :collapsed? collapsed?
-                   :proofs? (boolean proofs?)
                    :color-role color-role}]
     (mapv (fn [line] {:line (str marker line) :meta meta}) wrapped)))
 
@@ -2435,7 +2442,7 @@
                            :marker th-md-summary-marker
                            :max-w max-w
                            :summary (if expanded?
-                                      (str "REASONING · " (hidden-size-hint hidden))
+                                      (str "REASONING / " (hidden-size-hint hidden))
                                       "REASONING")
                            :hidden-entries hidden
                            :collapsed? (not expanded?)
@@ -2512,9 +2519,9 @@
      character (including the closer we're hunting for) without our
      scanner being fooled. Skip from one backtick to its matching pair.
      The exception is when WE are the code-span scanner (closer = ``\\`
-     ``) — then we just want the next backtick, no further skipping.
+     ``) - then we just want the next backtick, no further skipping.
    - When `closer` is a SINGLE char (`*` or `_`), a doubled-pair like
-     `**…**` or `__…__` belongs to a nested bold span, NOT to the open
+     `**...**` or `__...__` belongs to a nested bold span, NOT to the open
      italic we're trying to close. Skip the whole nested pair. This is
      what makes `*italic with **bold** inside*` parse the way a human
      reads it (italic wrapping bold) instead of `italic with` /
@@ -2526,7 +2533,7 @@
      opener-side lives in `markdown->inline`.
 
    Empty spans (`**` immediately followed by `**`, etc.) are rejected
-   by returning -1 — GitHub does the same.
+   by returning -1 - GitHub does the same.
 
    Returns the index of the matched closer or -1 if none."
   [^String s ^String closer ^long from]
@@ -2538,13 +2545,13 @@
       (cond
         (> (+ k cl-len) n) -1
 
-        ;; Step over code spans — unless we ARE the code-span scanner.
+        ;; Step over code spans - unless we ARE the code-span scanner.
         (and (not= closer "`") (= (.charAt s k) \`))
         (let [end (.indexOf s "`" (inc k))]
           (if (neg? end) (recur (inc k)) (recur (inc end))))
 
         ;; When closing a single `*` (or `_`), skip past nested
-        ;; doubled `**…**` (or `__…__`) so the outer italic doesn't
+        ;; doubled `**...**` (or `__...__`) so the outer italic doesn't
         ;; eat the inner bold's opener.
         (and single-ch
           (= (.charAt s k) ^char single-ch)
@@ -2553,7 +2560,7 @@
         (let [doubled (str single-ch single-ch)
               end     (.indexOf s doubled (+ k 2))]
           (if (neg? end)
-            ;; Unmatched double — step past the first char only and continue.
+            ;; Unmatched double - step past the first char only and continue.
             (recur (inc k))
             (recur (+ end 2))))
 
@@ -2577,15 +2584,15 @@
 ;;
 ;;     #"(!)?\[([^\]]*?)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)"
 ;;
-;; — `[text](url)` becomes `text`, `![alt](url)` becomes `""`. Used to
-;; live as `(str/replace s #"…" (fn [m] …))` inside `markdown->inline`.
+;; - `[text](url)` becomes `text`, `![alt](url)` becomes `""`. Used to
+;; live as `(str/replace s #"..." (fn [m] ...))` inside `markdown->inline`.
 ;; That allocated a Pattern call, a Matcher, and a per-match callback
 ;; closure on every line of every assistant bubble on every redraw,
 ;; which dominated cold-open cost on long conversations (multi-MB of
 ;; trace lines, dozens of `[path](path)` links per answer).
 ;;
 ;; The new version walks chars in a single loop and lazily allocates
-;; a `StringBuilder` only when the first match is actually found —
+;; a `StringBuilder` only when the first match is actually found -
 ;; the (very common) case where a line carries no link markup at all
 ;; returns the input string unchanged with zero allocations.
 
@@ -2604,7 +2611,7 @@
       (let [c (.charAt s k)]
         (cond
           (= c \))
-          (if (> k start) k -1)            ;; URL must have ≥1 char
+          (if (> k start) k -1)            ;; URL must have >=1 char
 
           (or (= c \space) (= c \tab))
           (if (= k start)
@@ -2662,7 +2669,9 @@
                           ^StringBuilder b (or sb (StringBuilder. n))]
                       (.append b s last-write i)
                       (when-not image?
-                        (.append b s text-start bracket-close))
+                        (.append b p/INLINE_LINK_ON)
+                        (.append b s text-start bracket-close)
+                        (.append b p/INLINE_LINK_OFF))
                       (recur match-end match-end b))))
                 (recur (inc i) last-write sb)))
             (recur (inc i) last-write sb)))))))
@@ -2689,16 +2698,16 @@
    `` `**not-bold**` `` keeps the asterisks literal, mirroring GitHub.
 
    Empty spans (`****`, `__`, `~~~~`) and orphan openers fall through
-   as literal text — also matches GitHub behaviour for the same input.
+   as literal text - also matches GitHub behaviour for the same input.
 
    Link and image markup (`[text](url)`, `![alt](url)`) is stripped
-   in a pre-pass BEFORE tokenisation: only the anchor text survives
-   into the sentinel stream. The clickable affordance lives in the
-   link-chrome strip painted below the prose, so duplicating the URL
-   inline would show the same information twice.
+   in a pre-pass BEFORE tokenisation: only the anchor text survives,
+   wrapped in link sentinels so it paints underlined. Click/open still
+   lives in the resources badge/popup; the body must not duplicate the
+   URL inline.
 
    What this is NOT: a full CommonMark parser. We DO honour CommonMark's
-   intra-word underscore rule (`VAR_NAME_HERE` is left alone — `_` /
+   intra-word underscore rule (`VAR_NAME_HERE` is left alone - `_` /
    `__` cannot open when preceded by a word char, cannot close when
    followed by one), because identifier-mangling is the single most
    visible regression a markdown presenter can ship. Asterisks keep
@@ -2723,7 +2732,7 @@
           sb (StringBuilder.)
           ;; Each token entry: [opener, closer, ON-sentinel, OFF-sentinel,
           ;;                    recurse-into-content?].
-          ;; Order matters — longer openers tried first (`**` before `*`)
+          ;; Order matters - longer openers tried first (`**` before `*`)
           ;; so `**foo**` parses as bold rather than italic-`foo`-italic.
           tokens [["**" "**" p/INLINE_BOLD_ON   p/INLINE_BOLD_OFF   true]
                   ["__" "__" p/INLINE_BOLD_ON   p/INLINE_BOLD_OFF   true]
@@ -2738,7 +2747,7 @@
           ;; etc. rendering as plain literal text instead of being
           ;; mangled into italics with the underscores eaten.
           ;; Asterisks (`*` / `**`) keep CommonMark's permissive
-          ;; behaviour — `a*b*c` is still italic-b — because real
+          ;; behaviour - `a*b*c` is still italic-b - because real
           ;; prose relies on it.
           opener-allowed?
           (fn [^String op ^long i]
@@ -2759,7 +2768,7 @@
             (let [content-from (+ i (.length ^String opener))
                   close-at     (find-inline-close s closer content-from)]
               (if (neg? close-at)
-                ;; No matching close — emit opener char as literal,
+                ;; No matching close - emit opener char as literal,
                 ;; advance one char and let later positions reattempt.
                 (do (.append sb (.charAt s i))
                   (recur (inc i)))
@@ -2798,8 +2807,8 @@
 (defn- format-iteration-entry-entries
   [{:keys [thinking events code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms error repeat-count]}
    code-width iteration-number
-   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines]
-       :or   {show-header? true preview-default-lines 4}}]]
+   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines live-preview?]
+       :or   {show-header? true preview-default-lines 4 live-preview? false}}]]
   (let [fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
         label       (label-text "iteration" iteration-number)
@@ -2810,9 +2819,12 @@
                       [])
         thinking-lines
         (fn [thinking-text-or-texts]
-          (let [texts (if (sequential? thinking-text-or-texts)
-                        thinking-text-or-texts
-                        [thinking-text-or-texts])
+          (let [raw-texts (if (sequential? thinking-text-or-texts)
+                            thinking-text-or-texts
+                            [thinking-text-or-texts])
+                texts     (if live-preview?
+                            [(live-preview-thinking-text (str/join "" raw-texts))]
+                            raw-texts)
                 entries (into []
                           (mapcat
                             (fn [thinking-text]
@@ -2841,7 +2853,7 @@
         (fn []
           (when (map? error)
             (let [repeat-count      (max 1 (long (or repeat-count 1)))
-                  badge             (when (> repeat-count 1) (str "  × " repeat-count))
+                  badge             (when (> repeat-count 1) (str "  x " repeat-count))
                   hdr-label         (str (label-text "error") (or badge ""))
                   hdr-pad           (max 0 (- fill-w (count hdr-label) 1))
                   hdr-line          (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
@@ -2854,7 +2866,7 @@
                                       (let [hdr        (str "provider returned"
                                                          (when recv (str " (" recv ")"))
                                                          ":")
-                                            raw-trim   (if (> (count raw) 600) (str (subs raw 0 600) "…") raw)
+                                            raw-trim   (if (> (count raw) 600) (str (subs raw 0 600) "...") raw)
                                             body-lines (mapv #(line-entry (str err-result-marker %))
                                                          (wrap-text raw-trim fill-w))]
                                         (into [(line-entry (str err-result-marker hdr))] body-lines)))]
@@ -3145,22 +3157,22 @@
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
 
-;;; ── Spinner glyph (used by the in-bubble “working…” row) ──────────────────
+;;; ── Spinner glyph (used by the in-bubble “working...” row) ──────────────────
 
 (def ^:private spinner-frames
   "Braille-dot spinner frames; one frame advances every ~100ms."
   ["⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"])
 
 (defn spinner-frame
-  "Pick the spinner glyph for `now-ms`. Pure — same input always
+  "Pick the spinner glyph for `now-ms`. Pure - same input always
    returns the same frame, which makes the render loop testable."
   ^String [^long now-ms]
   (nth spinner-frames (mod (quot now-ms 100) (count spinner-frames))))
 
 (defn- prettify-error-type
-  "`:svar.core/http-error` → \"http error\". Drops the namespace and
+  "`:svar.core/http-error` -> \"http error\". Drops the namespace and
    replaces dashes with spaces so the spinner line reads naturally,
-   e.g. \"iter 0 — http error — retrying\". Returns nil when there's
+   e.g. \"iter 0 - http error - retrying\". Returns nil when there's
    nothing useful to print."
   [error-data]
   (when-let [t (some-> error-data :type)]
@@ -3173,8 +3185,8 @@
    the spinner row text so the user can tell whether Vis is calling
    the provider, thinking, executing, retrying, or cancelling.
 
-   Anthropomorphic `Vis is …` phrasing reads as a status sentence
-   instead of a system log line. No elapsed-time-driven escalation —
+   Anthropomorphic `Vis is ...` phrasing reads as a status sentence
+   instead of a system log line. No elapsed-time-driven escalation -
    wall-clock is already shown right next to this string in the
    spinner row, the user can read the seconds themselves."
   [iterations cancelling?]
@@ -3207,10 +3219,10 @@
    Layout while loading (spinner ALWAYS at the bottom):
      <iteration trace, if iterations exist and not hidden>
      <blank>
-     [spinner] phase… elapsed · Esc to cancel
+     [spinner] phase... elapsed / Esc to cancel
 
    The activity row sits last so it tracks the natural reading
-   direction — trace history flows top-down like a transcript, and
+   direction - trace history flows top-down like a transcript, and
    what is happening RIGHT NOW lives where the cursor is about to
    write next. Putting the spinner above the trace forced the user
    to look at a moving line, then drop their eye further down to
@@ -3221,16 +3233,17 @@
    bubble's symmetric inner padding to match draw-chat-bubble!).
    `settings` is the display settings map: `{:show-thinking bool :show-iterations bool}`.
    `extra` carries:
-     :now-ms         — `System/currentTimeMillis` from the render thread
+     :now-ms         - `System/currentTimeMillis` from the render thread
                        (drives the spinner frame); defaults to current ms
-     :turn-start-ms — wall-clock start, used for elapsed time
-     :cancelling?    — true once Esc was pressed
-     :conversation-id — current conversation id; enables live detail rows
-     :conversation-turn-id — optional turn id, when known
-     :detail-expansions — detail expansion state keyed by conversation/node"
+     :turn-start-ms - wall-clock start, used for elapsed time
+     :cancelling?    - true once Esc was pressed
+     :conversation-id - current conversation id; enables live detail rows
+     :conversation-turn-id - optional turn id, when known
+     :detail-expansions - detail expansion state keyed by conversation/node"
   ([progress bubble-w settings] (progress->lines-data progress bubble-w settings nil))
   ([progress bubble-w settings extra]
-   (let [iterations       (vec (:iterations progress))
+   (let [raw-iterations   (or (:iterations progress) [])
+         iterations       (if (vector? raw-iterations) raw-iterations (vec raw-iterations))
          content-w        (max 10 (- bubble-w 4))
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
@@ -3243,8 +3256,8 @@
                             (max 0 (- now-ms (long turn-start-ms))))
          elapsed-str      (or (vis/format-duration elapsed-ms) "0ms")
          spinner-line     (str (spinner-frame now-ms) "  "
-                            (progress-phase iterations cancelling?) "…  "
-                            elapsed-str "  ·  Esc to cancel")
+                            (progress-phase iterations cancelling?) "...  "
+                            elapsed-str "  /  Esc to cancel")
          line-entry       (fn [line] {:line line :meta nil})
          history-ctx      {:conversation-id conversation-id
                            :conversation-turn-id conversation-turn-id
@@ -3266,8 +3279,8 @@
          history-summary  (when history-needed?
                             (let [collapsed?   (pos? hidden-count)
                                   summary-text (if collapsed?
-                                                 (str "PROGRESS HISTORY · " hidden-count " iterations hidden")
-                                                 (str "PROGRESS HISTORY · showing all " (count grouped-iterations) " iterations"))
+                                                 (str "PROGRESS HISTORY / " hidden-count " iterations hidden")
+                                                 (str "PROGRESS HISTORY / showing all " (count grouped-iterations) " iterations"))
                                   suffix       (detail-id-suffix history-ctx)
                                   left         (str (if collapsed? "▸ " "▾ ") summary-text)
                                   line         (format-detail-summary-line left suffix content-w)
@@ -3275,24 +3288,37 @@
                                                  {:kind :toggle-details
                                                   :conversation-id (str conversation-id)
                                                   :node-id (str history-node-id)
-                                                  :collapsed? collapsed?
-                                                  :proofs? false})]
+                                                  :collapsed? collapsed?})]
                               [{:line (str md-summary-marker line) :meta meta}]))
+         trace-cache-key [(System/identityHashCode iterations)
+                          content-w
+                          show-thinking?
+                          show-iterations?
+                          show-iteration-headers?
+                          (get settings :preview/default-lines 4)
+                          (System/identityHashCode detail-expansions)
+                          conversation-id
+                          conversation-turn-id
+                          ;; Running-code duration rows tick once per second.
+                          (quot now-ms 1000)]
          trace-entries    (when (and show-iterations? (seq iterations))
-                            (into []
-                              (concat
-                                (or history-summary [])
-                                (mapcat (fn [[idx entry]]
-                                          (format-iteration-entry-entries
-                                            (if show-thinking? entry (dissoc entry :thinking :events))
-                                            content-w (inc idx)
-                                            {:show-header?         show-iteration-headers?
-                                             :now-ms               now-ms
-                                             :conversation-id      conversation-id
-                                             :conversation-turn-id conversation-turn-id
-                                             :detail-expansions   detail-expansions
-                                             :preview-default-lines (get settings :preview/default-lines 4)}))
-                                  visible-iterations))))
+                            (cached-progress-trace trace-cache-key
+                              (fn []
+                                (into []
+                                  (concat
+                                    (or history-summary [])
+                                    (mapcat (fn [[idx entry]]
+                                              (format-iteration-entry-entries
+                                                (if show-thinking? entry (dissoc entry :thinking :events))
+                                                content-w (inc idx)
+                                                {:show-header?         show-iteration-headers?
+                                                 :now-ms               now-ms
+                                                 :conversation-id      conversation-id
+                                                 :conversation-turn-id conversation-turn-id
+                                                 :detail-expansions   detail-expansions
+                                                 :preview-default-lines (get settings :preview/default-lines 4)
+                                                 :live-preview?        true}))
+                                      visible-iterations))))))
          entries          (if (seq trace-entries)
                             (conj (conj trace-entries (line-entry ""))
                               (line-entry spinner-line))
@@ -3346,7 +3372,7 @@
   "True when `s` parses as a number after stripping spaces, NBSP,
    thousands separators, and surrounding whitespace. Handles Polish
    formatting like `4 879`, `12 104`, `1,5`, `-3.14`. Empty cells
-   are NOT numeric — they shouldn't pin a column to right-align on
+   are NOT numeric - they shouldn't pin a column to right-align on
    their own."
   [s]
   (let [t (some-> s str str/trim)]
@@ -3364,7 +3390,7 @@
 (defn- column-align
   "Return `:right` when every non-empty body cell in `col-cells` is
    numeric; `:left` otherwise. Headers are excluded from the
-   detection — a header named \"2024\" shouldn't right-align a
+   detection - a header named \"2024\" shouldn't right-align a
    column of free-form text below it. Empty body cells are ignored."
   [col-cells]
   (let [filled (filter (fn [s] (and s (pos? (count (str/trim (str s)))))) col-cells)]
@@ -3374,14 +3400,14 @@
 
 (defn- pad-cell
   "Render one cell padded to `w` terminal COLUMNS with the given
-   alignment. Returns ` <padded content> ` — the leading and trailing
+   alignment. Returns ` <padded content> ` - the leading and trailing
    spaces are mandatory: they sit between the `│` column dividers,
    giving every cell a one-space inner margin so text never touches
    the vertical lines.
 
    `align` is `:left` (default, trailing pad) or `:right` (leading
    pad). Numeric columns are auto-detected as `:right` so columns of
-   `389 / 12 104 / 4 879` line up on the units position — the only
+   `389 / 12 104 / 4 879` line up on the units position - the only
    way numeric tables read naturally.
 
    Width math: every length here is **display columns**, not Java
@@ -3394,21 +3420,21 @@
         t-cols (p/display-width t)
         t (cond
             (<= t-cols w) t
-            ;; Truncate to (w-1) columns and append …; ellipsis is 1 col,
+            ;; Truncate to (w-1) columns and append ...; ellipsis is 1 col,
             ;; so total width is exactly `w`. truncate-cols is
             ;; grapheme-safe and won't split an emoji in half.
-            (>= w 2)      (str (p/truncate-cols t (dec w)) "…")
+            (>= w 2)      (str (p/truncate-cols t (dec w)) "...")
             ;; w == 1: no room for ellipsis, just slice.
             :else         (p/truncate-cols t w))
         ;; Re-measure after possible truncation so the pad amount is
         ;; expressed in COLUMNS, not Java chars. truncate-cols
-        ;; guarantees display-width ≤ (dec w); the +1 for the ellipsis
+        ;; guarantees display-width <= (dec w); the +1 for the ellipsis
         ;; or unchanged path keeps the math honest.
         ;;
         ;; (VS-16 padding compensation lived here briefly when the
         ;; lanterna fork still reported `isDoubleWidth=true` for
         ;; 🏷️ / ❤️. Lanterna 3.1.5-vis.3 fixes that at the source
-        ;; — see the dep comment in vis-channel-tui/deps.edn — so VS-16
+        ;; - see the dep comment in vis-channel-tui/deps.edn - so VS-16
         ;; graphemes now report `display-width=1` consistently and
         ;; pad-cell allocates the right space without a per-cell hack.)
         pad-cols (max 0 (- w (p/display-width t)))
@@ -3430,7 +3456,7 @@
 
 (defn- longest-token-width
   "Display width of the widest whitespace-delimited token across
-   `cells`. Used as the per-column floor when shrinking — keeps the
+   `cells`. Used as the per-column floor when shrinking - keeps the
    word-wrapper from constantly hard-breaking ordinary words. Floors
    at 1 so the result is always a sensible column width."
   ^long [cells]
@@ -3463,7 +3489,7 @@
   "Render a parsed markdown table (headers vec + rows vec-of-vecs) as
    a list of marker-prefixed display lines.
 
-   Style: full grid — square outer corners (`┌┐└┘`), `┬┼┴` T-junctions
+   Style: full grid - square outer corners (`┌┐└┘`), `┬┼┴` T-junctions
    where columns meet horizontals, `│` between columns, `─` for
    horizontals.
 
@@ -3473,7 +3499,7 @@
    chrome doesn't compete with the content, and the cell text on
    top paints in `code-block-fg` (bold for header rows). Putting
    everything in the same dark color made the grid read as solid
-   ink — the user complaint that triggered this design.
+   ink - the user complaint that triggered this design.
 
    `markers` is `{:thead :tsep :trow}` from `md-marker-sets`. Tables
    wider than `max-w` first try to shrink each column toward its
@@ -3495,11 +3521,11 @@
         ;;
         ;; VS-16 compensation lives in pad-cell, not here. Each cell
         ;; carrying a VS-16 grapheme adds its own +1 padding so its
-        ;; visual width matches sibling cells — see pad-cell. Tried
+        ;; visual width matches sibling cells - see pad-cell. Tried
         ;; expanding col-width for the whole column instead; rejected
         ;; because it over-pads non-VS-16 cells (📄, 📁, ✅ etc. render
         ;; correctly without the bonus, so adding it everywhere shifts
-        ;; them right by 1 — the user-visible 'still misaligned, need
+        ;; them right by 1 - the user-visible 'still misaligned, need
         ;; even more' regression). Per-cell bonus is the right grain.
         col-widths-raw
         (mapv (fn [i]
@@ -3517,7 +3543,7 @@
         ;; Per-column floor: never shrink a column below its widest
         ;; single token (capped). Word-wrap then breaks naturally on
         ;; spaces inside the column instead of slicing 'AGENTS.md' to
-        ;; 'AGE…' just because the bubble is narrow. The cap stops a
+        ;; 'AGE...' just because the bubble is narrow. The cap stops a
         ;; lone 200-char URL from monopolising the table.
         col-mins   (mapv (fn [i]
                            (min TABLE_CELL_MIN_W_CAP
@@ -3527,7 +3553,7 @@
                      (range n-cols))
         sum-min    (reduce + 0 col-mins)
         col-widths (cond
-                     ;; Natural widths fit — no shrinking needed.
+                     ;; Natural widths fit - no shrinking needed.
                      (<= (+ sum-w overhead) max-w)
                      col-widths-raw
 
@@ -3557,7 +3583,7 @@
 
                      ;; Even the floors don't fit (many narrow cols /
                      ;; tiny bubble). Degrade to the original uniform
-                     ;; scale-down — content will hard-break, but the
+                     ;; scale-down - content will hard-break, but the
                      ;; table still lands inside `max-w`.
                      :else
                      (let [scale  (/ (double avail) sum-w)
@@ -3569,7 +3595,7 @@
                          (vec (map-indexed
                                 (fn [i w] (if (< i extra) (inc w) w))
                                 shrunk)))))
-        ;; LIGHT box-drawing variants — the heavy glyphs read as
+        ;; LIGHT box-drawing variants - the heavy glyphs read as
         ;; aggressive bold lines on macOS Terminal / iTerm2 with a
         ;; thick monospaced font; users wanted a quieter grid that
         ;; does not compete with the cell text for attention. Light
@@ -3578,7 +3604,7 @@
         bar        (fn [w] (repeat-str \─ (+ w 2)))
         top-line   (str "┌" (str/join "┬" (map bar col-widths)) "┐")
         head-sep   (str "├" (str/join "┼" (map bar col-widths)) "┤")
-        ;; Same shape as `head-sep` — inserted between every pair of
+        ;; Same shape as `head-sep` - inserted between every pair of
         ;; body rows so each row sits in its own visual cell. Without
         ;; this the body looked like a stack of pipe-separated text
         ;; rows; with it, the table reads as a proper grid.
@@ -3739,10 +3765,10 @@
 
    Bold paragraphs are split into two cases by
    `top-level-bold-paragraph-line?`:
-     - `**Status:** done.` (label + value) — closes the list, the
+     - `**Status:** done.` (label + value) - closes the list, the
        summary lines that authors put after a list never want to
        fold INTO the last bullet.
-     - `**word**` alone (`md/join` artefact) — stays a continuation,
+     - `**word**` alone (`md/join` artefact) - stays a continuation,
        so the bullet that contains a flowing sentence with embedded
        bold spans renders as one wrapped bullet, not as the bullet
        header followed by an avalanche of one-word paragraphs (the
@@ -3754,23 +3780,23 @@
       (re-matches #"^([-*_])\1{2,}$" t)         ;; horizontal rule
       (re-matches #"^>\s?.*" t)                 ;; blockquote
       (re-matches #"^\|.*\|$" t)                ;; pipe-table row
-      (re-matches #"^</?(?:details|proofs)(\s[^>]*)?>$" t) ;; details/proofs framing tags
+      (re-matches #"^</?details(\s[^>]*)?>$" t) ;; details framing tags
       (re-matches #"^<summary>.*</summary>$" t) ;; summary tag
       (top-level-bold-paragraph-line? t))))      ;; **prefix:** value
 
 (def ^:private continuation-tail-char?
   "Trailing characters on the running bullet line that signal `the
    sentence isn't done`. When the previous chunk ended with one of
-   these, the next chunk — even a flush-left, letter-starting one —
+   these, the next chunk - even a flush-left, letter-starting one -
    is treated as a continuation rather than a fresh paragraph. Covers
    open brackets / parens / braces, dashes, colons, semicolons,
-   commas — every punctuator that grammar guarantees demands more
+   commas - every punctuator that grammar guarantees demands more
    text after it."
-  #{\( \[ \{ \: \; \, \— \– \-})
+  #{\( \[ \{ \: \; \, \-})
 
 (defn- fresh-paragraph-line?
   "True when `line` looks like a brand-new top-level paragraph that
-   appeared after a blank line — i.e. flush-left, opens with an
+   appeared after a blank line - i.e. flush-left, opens with an
    alphanumeric character. Used by `coalesce-loose-list-items` to
    close an open list scope when the post-blank line is OBVIOUSLY a
    new paragraph rather than an `md/join`-fragmented continuation
@@ -3778,18 +3804,18 @@
 
    The two real-world shapes this discriminates:
 
-     Case A (close — fresh paragraph after a list, the AGENTS.md
+     Case A (close - fresh paragraph after a list, the AGENTS.md
      pattern):
-       - bullet item …
-       - bullet item …
+       - bullet item ...
+       - bullet item ...
 
        Modes:
 
-     Case B (keep coalescing — `md/join` artefact INSIDE a bullet's
+     Case B (keep coalescing - `md/join` artefact INSIDE a bullet's
      body, the eeaf9651 regression):
        - **Header:** intro
 
-        38 failures across iterations …
+        38 failures across iterations ...
 
        `src/com/blockether/...`
 
@@ -3799,12 +3825,12 @@
    author-supplied leading space), a backtick (` `code` `), a `*`
    (bold span), or punctuation (`,`, `(`, `)`, `:`). None of those
    trip the `[A-Za-z0-9]` test. Case A's `Modes:` / `Logs:` /
-   `Baseline = …` ALL open with a letter, so the test fires and
+   `Baseline = ...` ALL open with a letter, so the test fires and
    the list closes cleanly.
 
    Indented continuations (`  more text` directly under a bullet)
    are NOT flush-left, so this returns false and the line still
-   folds into the current bullet — preserving the documented
+   folds into the current bullet - preserving the documented
    `- foo\n\n indented continuation` reflow."
   [^String line]
   (boolean (re-matches #"^[A-Za-z0-9].*" line)))
@@ -3817,7 +3843,7 @@
 
        - `dialogs.clj`
 
-        — removed `:system-prompt` palette command
+        - removed `:system-prompt` palette command
 
    where blank lines INSIDE a list item turn the bullet's body into
    a chain of loose top-level paragraphs (CommonMark spec-compliant
@@ -3834,7 +3860,7 @@
    - two consecutive blank lines (CommonMark loose-list close),
    - end of input.
 
-   Lines outside an open list pass through unchanged — we only
+   Lines outside an open list pass through unchanged - we only
    reshape content that's clearly a fragmented bullet item.
 
    Continuations are joined with a single ASCII space; leading
@@ -3846,28 +3872,28 @@
          blanks   0         ;; buffered consecutive blank lines
          acc      []]
     (cond
-      ;; End of input — flush.
+      ;; End of input - flush.
       (nil? lines)
       (cond-> acc current (conj current))
 
       :else
       (let [line (first lines) rst (next lines)]
         (cond
-          ;; In list scope, see another list marker → flush current,
+          ;; In list scope, see another list marker -> flush current,
           ;; start a new item. Buffered blanks were intra-item; drop
           ;; them (the new item separates itself).
           (and current (list-marker-line? line))
           (recur rst line 0 (conj acc current))
 
-          ;; In list scope, hit a structural non-list line → flush
+          ;; In list scope, hit a structural non-list line -> flush
           ;; current with one blank separator (so the heading / fence
           ;; that follows reads as a fresh block), then re-process
           ;; this line in idle mode by NOT advancing `lines`.
           (and current (structural-non-list-line? line))
           (recur lines nil 0 (conj acc current ""))
 
-          ;; In list scope, blank line. One blank → buffer; two in a
-          ;; row → list closes (CommonMark loose-list end).
+          ;; In list scope, blank line. One blank -> buffer; two in a
+          ;; row -> list closes (CommonMark loose-list end).
           (and current (str/blank? line))
           (let [n (if (empty? line) (inc blanks) (max 1 blanks))]
             (if (>= n 2)
@@ -3876,10 +3902,10 @@
 
           ;; In list scope, plain text line that LOOKS LIKE a fresh
           ;; top-level paragraph (flush-left, opens with a letter or
-          ;; digit) AND we just saw a blank line → close the list
+          ;; digit) AND we just saw a blank line -> close the list
           ;; scope and re-process the line in idle mode. This stops
-          ;; AGENTS.md-style summary paragraphs (`Modes:`, `Logs: …`,
-          ;; `Baseline = …`) after a bullet list from being silently
+          ;; AGENTS.md-style summary paragraphs (`Modes:`, `Logs: ...`,
+          ;; `Baseline = ...`) after a bullet list from being silently
           ;; folded into the last bullet's body. CommonMark closes a
           ;; list on a single blank line + non-indented continuation;
           ;; we mirror that for the plain-prose case while leaving
@@ -3888,7 +3914,7 @@
           ;; the eeaf9651 regression stays fixed.
           ;;
           ;; Exception: if `current` ends with an open-grammar tail
-          ;; char (`(`, `[`, `{`, `:`, `;`, `,`, `—`, `–`, `-`), the
+          ;; char (`(`, `[`, `{`, `:`, `;`, `,`, `-`, `-`, `-`), the
           ;; sentence is mid-clause and the next line continues it,
           ;; even when that line is flush-left and letter-starting.
           ;; Covers the `- foo (\n\nbar\n\n, baz\n\n)` reflow case.
@@ -3902,7 +3928,7 @@
                 (not (continuation-tail-char? (.charAt trimmed (dec n)))))))
           (recur lines nil 0 (conj acc current ""))
 
-          ;; In list scope, plain text line → continuation. Strip
+          ;; In list scope, plain text line -> continuation. Strip
           ;; leading indentation (Markdown structural whitespace),
           ;; join with one space onto the running bullet text.
           ;; Then re-flow whitespace around punctuation that the
@@ -3925,11 +3951,11 @@
                            (str/replace #"(\() +" "$1")))]
             (recur rst joined 0 acc))
 
-          ;; Idle, see a list marker → enter list scope.
+          ;; Idle, see a list marker -> enter list scope.
           (list-marker-line? line)
           (recur rst line 0 acc)
 
-          ;; Idle, anything else → pass through unchanged.
+          ;; Idle, anything else -> pass through unchanged.
           :else
           (recur rst nil 0 (conj acc line)))))))
 
@@ -3989,7 +4015,7 @@
                (let [[tbl tail] (consume-table lines max-w m)]
                  (recur (seq tail) false (into acc tbl)))
 
-               (re-matches #"^\s*</?(?:details|proofs)(\s[^>]*)?>\s*$" line)
+               (re-matches #"^\s*</?details(\s[^>]*)?>\s*$" line)
                (recur rst false acc)
 
                (re-matches #"^\s*<summary>.*</summary>\s*$" line)
@@ -4082,7 +4108,7 @@
 
 (defn- detail-open-kind [line]
   (when-let [[_ tag] (and (string? line)
-                       (re-matches #"^\s*<(details|proofs)(?:\s[^>]*)?>\s*$" line))]
+                       (re-matches #"^\s*<(details)(?:\s[^>]*)?>\s*$" line))]
     (keyword tag)))
 
 (defn- details-open-line? [line]
@@ -4090,7 +4116,7 @@
 
 (defn- details-close-line? [line]
   (boolean (and (string? line)
-             (re-matches #"^\s*</(?:details|proofs)>\s*$" line))))
+             (re-matches #"^\s*</details>\s*$" line))))
 
 (defn- summary-content [line]
   (when-let [[_ inner] (and (string? line)
@@ -4124,7 +4150,7 @@
                       after-open       (next remaining)
                       explicit-summary (summary-content (first after-open))
                       summary          (or explicit-summary
-                                         (if (= :proofs detail-kind) "Proofs" "Details"))
+                                         "Details")
                       body-start       (if explicit-summary (next after-open) after-open)
                       [body rem]       (consume* body-start path')
                       rem'             (if (and rem (details-close-line? (first rem))) (next rem) rem)
@@ -4157,13 +4183,12 @@
                             :block-number (:block-number opts)
                             :details-path path
                             :section section
-                            :kind detail-kind
-                            :proofs? (= :proofs detail-kind)}
+                            :kind detail-kind}
               node-id      (detail-node-id detail-ctx)
               expanded?    (detail-expanded? (:detail-expansions opts)
                              conversation-id
                              node-id
-                             (not= :proofs detail-kind))
+                             true)
               body-entries (vec (render-detail-segments segments max-w mode opts))]
           (vec (concat
                  (when margin-top? [{:line "" :meta nil}])
@@ -4278,7 +4303,7 @@
                                     (collapse-repeated-error-runs trace)))
         answer-str              (or answer "")
         fa-label                (label-text "final answer")
-        conf-str                (when confidence (str " · " (name confidence)))
+        conf-str                (when confidence (str " / " (name confidence)))
         full-label              (str fa-label (or conf-str ""))
         fa-pad                  (max 0 (- fill-w (count full-label) 1))
         fa-hdr                  (when (and show-final-hdr? (not cancelled?))
@@ -4402,7 +4427,7 @@
    renders stacked full-block cells as a ladder of separate boxes when
    the window is tall, which reads as multiple scroll positions instead
    of one current-position marker. Returns `nil` when there's no overflow
-   — no thumb is drawn, no click should hit-test as on-thumb."
+   - no thumb is drawn, no click should hit-test as on-thumb."
   [^long total-h ^long inner-h scroll]
   (when (and (pos? inner-h) (> total-h inner-h))
     (let [track-h    inner-h
@@ -4425,14 +4450,14 @@
 
    `layout` is a virtual-layout plan produced by
    `com.blockether.vis.ext.channel-tui.virtual/layout`. Carries
-   `{:total-h :eff-scroll :visible}` — the painter only iterates
+   `{:total-h :eff-scroll :visible}` - the painter only iterates
    `:visible` (the messages whose interval intersects the viewport),
    so off-screen bubbles never trigger `format-answer-with-thinking`
    / `wrap-text` / `markdown->lines`. That's the single largest
    user-visible win for cold-opening long conversations: cold paint
-   drops from O(N × trace-size) to O(visible × trace-size).
+   drops from O(N x trace-size) to O(visible x trace-size).
 
-   No outer box, no title bar — just a vertical column of messages with
+   No outer box, no title bar - just a vertical column of messages with
    generous side gutters. The right gutter doubles as scrollbar space
    when the conversation overflows. The conversation title (if any) is
    surfaced via the input-box bottom status line, not here."
@@ -4450,9 +4475,9 @@
 
     ;; Open a new staging pass for click regions. Bubbles register
     ;; their chrome rows during paint; downstream painters (header,
-    ;; …) register theirs too. The published registry that the
+    ;; ...) register theirs too. The published registry that the
     ;; input thread reads doesn't change until the screen calls
-    ;; `cr/commit-frame!` after every painter has run — so the
+    ;; `cr/commit-frame!` after every painter has run - so the
     ;; input thread never lookup-misses on a half-filled buffer.
     (cr/begin-frame!)
 

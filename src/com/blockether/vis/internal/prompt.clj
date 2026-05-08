@@ -3,19 +3,18 @@
 
    Two surfaces:
 
-     1. The system prompt — written once, cached per-conversation.
+     1. The system prompt - written once, cached per-conversation.
         `assemble-system-prompt` joins tagged blocks: <system_prompt>,
         <environment-info>, <extensions>, and provider-specific prompt.
 
-     2. The trailing user message — rebuilt every iteration. Two slots:
+     2. The trailing user message - rebuilt every iteration. Two slots:
           <journal>      newest code + result lines that fit the dynamic
-                        journal token budget, addressed by canonical
-                        provenance refs.
+                        journal token budget.
           <var_index>   user-defined `(def ...)` bindings in the SCI env.
         Extensions can append `<system_nudge importance=\"...\">` entries via `:ext/nudge-fn`.
 
    The two slots above plus the SYSTEM vars (every name in
-   `SYSTEM_VAR_NAMES` — `TURN_USER_REQUEST`, `TURN_CONVERSATION_TURN_ID`,
+   `SYSTEM_VAR_NAMES` - `TURN_USER_REQUEST`, `TURN_CONVERSATION_TURN_ID`,
    `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`,
    `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`,
    `TURN_ACCESSIBLE_SKILLS`, `ITERATION_ID`,
@@ -31,9 +30,9 @@
      (no <journal>, no <active_skills>, no <var_index>, no
      <system_nudges>). The model-facing context for a trivial turn
      is just the cached system prompt + the current
-     <user_turn_request_main_goal>. Coding / proof turns surface
-     canonical provenance refs, intent / gate / audit-callable APIs,
-     active-skill bodies, var_index entries, and tool evidence
+     <user_turn_request_main_goal>. Coding turns surface
+     observable journal entries and simple callable APIs,
+     active-skill bodies, var_index entries, and tool output
      through the same XML-tagged surfaces. Prior LLM-only reasoning
      reaches the model only through the
      `ITERATION_PREVIOUS_REASONING` SYSTEM var; <journal> stays
@@ -41,18 +40,19 @@
 
      Preview / full boundary: <journal> and <var_index> are
      bounded previews. Full values stay in SCI vars, persisted
-     iteration / block rows, and the provenance ledger. The
+     iteration / block rows. The
      renderer never emits a full multi-KB tool / file payload
-     into context; it emits a bounded preview plus the canonical
-     ref the model can use to fetch the full value through
-     foundation APIs (`v/inspect`, `v/event`, the var binding)."
+     into context; it emits a bounded preview and the model can fetch
+     the full value through foundation APIs (`v/inspect`, `v/event`,
+     the var binding)."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.extension :as extension]
-   [taoensso.telemere :as tel]
-   [com.blockether.vis.internal.format :as fmt]))
+   [com.blockether.vis.internal.format :as fmt]
+   [com.blockether.vis.internal.skills :as skills]
+   [taoensso.telemere :as tel]))
 
 ;; =============================================================================
 ;; Tunables
@@ -116,7 +116,7 @@
 ;; =============================================================================
 
 (defn- truncate [s n]
-  (let [s (str s)] (if (> (count s) n) (str (subs s 0 n) " …") s)))
+  (let [s (str s)] (if (> (count s) n) (str (subs s 0 n) " ...") s)))
 
 (defn- strip-sandbox-ns [s]
   (str/replace (str s) #"\bsandbox/" ""))
@@ -160,7 +160,7 @@
                               (contains? opts :print-level))
              s (strip-sandbox-ns (value-pr-str v bounded-print?))]
          (if (> (count s) max-chars)
-           (str (subs s 0 max-chars) " …<+" (- (count s) max-chars) " chars>")
+           (str (subs s 0 max-chars) " ...<+" (- (count s) max-chars) " chars>")
            s)))
      (catch Throwable t
        (str "<unprintable: " (.getMessage t) ">")))))
@@ -169,11 +169,11 @@
   "Wrapper used by <journal>. Returns [bounded-str truncated?]."
   [v]
   (let [bounded   (safe-pr-str v {:max-chars MAX_RESULT_DISPLAY_CHARS})
-        truncated? (boolean (re-find #" …<\+\d+ chars>$" bounded))]
+        truncated? (boolean (re-find #" ...<\+\d+ chars>$" bounded))]
     [bounded truncated?]))
 
 ;; =============================================================================
-;; <journal> — newest token-budgeted code + results
+;; <journal> - newest token-budgeted code + results
 ;; =============================================================================
 
 (declare count-prompt-tokens model-context-limit)
@@ -195,30 +195,16 @@
   [v]
   (extension/render-tool-result :journal v))
 
-(defn- provenance-journal-suffix
-  "Compact block-level provenance for the model-facing journal. Keep
-   only the fields that help the next iteration reason about where the
-   observation came from; full provenance remains stored on the block."
-  [provenance]
-  (when (map? provenance)
-    (let [visible (cond-> (select-keys provenance [:ref :op :status :duration-ms])
-                    (:timeout? provenance) (assoc :timeout? true)
-                    (:repaired? provenance) (assoc :repaired? true))]
-      (when (seq visible)
-        (str " :provenance " (pr-str visible))))))
-
 (defn- format-block-line
   "One iteration's single block as a `<journal>` line. Renders
-   `<canonical-ref>  <code> → <value>` plus any non-blank stdout/stderr and a
+   `iN.K  <code> -> <value>` plus any non-blank stdout/stderr and a
    slow-suffix when execution exceeded 5s. Bare-symbol blocks read
    naturally because the `<code>` IS the symbol and `<value>` is its
    bound content. Tool-result envelopes render through shared display text
    instead of dumping the full map into the journal."
   [iteration-position k expr]
-  (let [{:keys [code error result previews stdout stderr execution-time-ms provenance]} expr
-        display-ref    (or (:ref provenance)
-                         (str "<missing-canonical-ref iteration=" iteration-position
-                           " block=" (inc k) ">"))
+  (let [{:keys [code error result previews stdout stderr execution-time-ms]} expr
+        block-label   (str "i" iteration-position "." (inc k))
         code-str      (truncate (str/trim (or code "")) MAX_RESULT_DISPLAY_CHARS)
         stdout-suffix (when-not (str/blank? stdout)
                         (str " :stdout " (pr-str (truncate stdout 600))))
@@ -238,27 +224,24 @@
                                   [value-str truncated?] (truncated-pr-str v)]
                               (str value-str
                                 (when truncated? " :truncated? true"))))))]
-    (str "  " display-ref "  " code-str " → " value-part
+    (str "  " block-label "  " code-str " -> " value-part
       (or slow-suffix "")
-      (or (provenance-journal-suffix provenance) "")
       (or stdout-suffix "")
       (or stderr-suffix ""))))
 
 (defn- format-journal-iteration-block
-  "One iteration's full `<journal>` segment: per-block canonical-ref
-   lines that include the leading `:comment` (when present) right above
-   the code→value line. LLM-only iteration `:thinking` is intentionally
+  "One iteration's full `<journal>` segment: per-block labels
+   include the leading `:comment` (when present) right above
+   the code->value line. LLM-only iteration `:thinking` is intentionally
    excluded; the previous value is available only through the
    `ITERATION_PREVIOUS_REASONING` system var, not the journal."
   [iteration-position iteration-data]
-  (let [{:keys [blocks answer answer-form-idx]} iteration-data
+  (let [{:keys [blocks answer]} iteration-data
         block-lines (vec (mapcat (fn [[k blk]]
                                    (let [comment-text (some-> (:comment blk) str/trim)
                                          comment-line (when (and comment-text
                                                               (not (str/blank? comment-text)))
-                                                        (str "  " (or (get-in blk [:provenance :ref])
-                                                                    (str "<missing-canonical-ref iteration=" iteration-position
-                                                                      " block=" (inc k) ">"))
+                                                        (str "  i" iteration-position "." (inc k)
                                                           "  ;; "
                                                           (truncate comment-text 400)))]
                                      (cond-> []
@@ -267,12 +250,9 @@
                                                             k blk)))))
                            (map-indexed vector (or blocks []))))
         answer-text (some-> answer str str/trim)
-        answer-ref  (or (when (integer? answer-form-idx)
-                          (get-in (vec (or blocks [])) [answer-form-idx :provenance :ref]))
-                      (some-> (last (or blocks [])) :provenance :ref)
-                      (str "<missing-canonical-ref iteration=" iteration-position " answer>"))
+        answer-label (str "i" iteration-position ".answer")
         answer-line (when (and answer-text (not (str/blank? answer-text)))
-                      (str "  " answer-ref "  <final-answer> → "
+                      (str "  " answer-label "  <final-answer> -> "
                         (pr-str (truncate answer-text MAX_RESULT_DISPLAY_CHARS))))]
     (cond-> block-lines
       answer-line (conj answer-line))))
@@ -284,8 +264,8 @@
    then may be reduced by protected/pinned context and <var_index> usage.
 
    Returns `[lines dropped-count budget-tokens used-tokens]`. Lines are
-   indivisible because each carries one canonical ref; truncating inside
-   a line would create misleading half-evidence. Per-value truncation
+   indivisible; truncating inside a line would create misleading half-output.
+   Per-value truncation
    above keeps individual lines bounded, while this token cap stops
    repeated reads from dominating every later provider prompt."
   ([model lines]
@@ -305,16 +285,16 @@
          [(vec kept) 0 budget-tokens used])))))
 
 (defn- format-journal-block
-  "Render all carried iterations with canonical provenance refs, then
-   trim the rendered lines by token budget instead of by iteration count.
+  "Render all carried iterations, then trim the rendered lines by token
+   budget instead of by iteration count.
    `iters` is a seq of `[iteration-position {:thinking :blocks}]` pairs,
    oldest-first. Iteration-level `:thinking` is LLM-only reasoning and is
    not rendered in `<journal>`; only `ITERATION_PREVIOUS_REASONING` exposes
    the latest prior value. Each iteration's segment carries:
-     - per-block `<canonical-ref>  ;; <comment>` line above the code line, when
-       the model authored a leading `;; …` / `#_(...)` comment for
+     - per-block `iN.K  ;; <comment>` line above the code line, when
+       the model authored a leading `;; ...` / `#_(...)` comment for
        that form
-     - `<canonical-ref>  <code> → <value>` for every block in the iteration"
+     - `iN.K  <code> -> <value>` for every block in the iteration"
   ([model iters]
    (format-journal-block model iters nil))
   ([model iters token-budget]
@@ -336,7 +316,7 @@
        (str "<journal>\n" (str/join "\n" rendered-lines) "\n</journal>")))))
 
 ;; =============================================================================
-;; <var_index> — read/cache the current SCI sandbox shape
+;; <var_index> - read/cache the current SCI sandbox shape
 ;; =============================================================================
 
 (defn read-var-index-str
@@ -405,14 +385,14 @@
           (str/join "\n" kept))))))
 
 ;; =============================================================================
-;; Iteration context — provider context block inserted before current user goal
+;; Iteration context - provider context block inserted before current user goal
 ;; =============================================================================
 
 (def ^:const TITLE_REFRESH_NUDGE_PERIOD
   "Iteration cadence at which the loop re-nudges the model to refresh
    `CONVERSATION_TITLE`. Independent of the always-on nudge fired
    when the title is blank. 12 lands in the middle of the
-   user-requested 10-20 range — frequent enough that the title stays
+   user-requested 10-20 range - frequent enough that the title stays
    current as the conversation drifts, infrequent enough that a
    settled conversation isn't pestered every turn."
   12)
@@ -442,7 +422,7 @@
 (defn- model-context-limit
   "Best-effort lookup of `model`'s context window. Falls back to a
    conservative 32k when the table doesn't know the model id, which
-   is the smallest mainstream tier still in production use — better
+   is the smallest mainstream tier still in production use - better
    to nudge a bit early on a 200k model than to never nudge at all."
   [model]
   (or (try
@@ -458,10 +438,10 @@
    Returns nil when usage is below threshold or token info is
    unavailable.
 
-   The nudge does NOT auto-summarize — RLM puts curation in the
+   The nudge does NOT auto-summarize - RLM puts curation in the
    model's hands. Instead it (a) reports the live usage so the model
    sees the budget concretely, (b) gives a Chain-of-Density-style
-   recipe for a `(def …)` summary the MODEL writes itself, and (c)
+   recipe for a `(def ...)` summary the MODEL writes itself, and (c)
    reminds the model that older raw iters stay reachable through the
    foundation read API even after they roll off the journal."
   [_model used-tokens limit-tokens]
@@ -472,8 +452,8 @@
           (int (Math/round (* 100.0 util))) "% ("
           used-tokens " / " limit-tokens " tokens). Older <journal>\n"
           "  lines drop when the journal exceeds its token budget. Curate the\n"
-          "  insight you've earned BEFORE that happens — emit a structured\n"
-          "  `(def …)` so the value lands in <var_index> + persisted var store and\n"
+          "  insight you've earned BEFORE that happens - emit a structured\n"
+          "  `(def ...)` so the value lands in <var_index> + persisted var store and\n"
           "  survives the roll. Chain-of-Density-style recipe (use only\n"
           "  facts that already appeared in the journal; no new\n"
           "  characterizations / evaluative adjectives):\n"
@@ -481,16 +461,16 @@
           "    (def turn-summary\n"
           "      {:findings   [{:where \"src/auth.clj:42\" :what \"jwt-decode rejects nbf-skew\"}\n"
           "                    {:where \"turn/<turn8>/iteration/<n>/block/<k>\" :what \"<concrete-fact>\"}]\n"
-          "       :errors     [{:iteration N :class :patch-no-match :recovery \"…\"}]\n"
-          "       :decisions  [{:choice \"validate-then-decode\" :rationale \"…\"}]\n"
+          "       :errors     [{:iteration N :class :patch-no-match :recovery \"...\"}]\n"
+          "       :decisions  [{:choice \"validate-then-decode\" :rationale \"...\"}]\n"
           "       :next-step  \"extract verify-jwt to its own ns\"})\n"
           "\n"
-          "  Keys above are illustrative — use whatever shape fits the\n"
+          "  Keys above are illustrative - use whatever shape fits the\n"
           "  task. Atoms preferred (file paths, symbol names, error keys,\n"
-          "  canonical refs) over prose. Raw iteration evidence stays reachable via\n"
+          "  concrete values) over prose. Raw iteration output stays reachable via\n"
           "  `(v/inspect)` after journal lines roll off; use its :transcript\n"
           "  and :failures keys when you genuinely need precision your\n"
-          "  `(def …)` didn't capture.")))))
+          "  `(def ...)` didn't capture.")))))
 
 (defn- title-nudge
   "Built-in title nudge that fires when:
@@ -505,21 +485,21 @@
     (cond
       blank?
       (str "CONVERSATION_TITLE is currently empty. "
-        "Set it via `(conversation-title \"…\")` (3-7-word noun phrase, "
+        "Set it via `(conversation-title \"...\")` (3-7-word noun phrase, "
         "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
         "the conversation is discoverable in the sidebar.")
 
       refresh?
       (str "Current CONVERSATION_TITLE is \"" title "\". "
         "If this turn changes the conversation focus, refresh the title via "
-        "`(conversation-title \"…\")`.")
+        "`(conversation-title \"...\")`.")
 
       (and (integer? iteration)
         (pos? iteration)
         (zero? (mod iteration TITLE_REFRESH_NUDGE_PERIOD)))
       (str "You're " iteration " iterations into this turn. "
         "If the conversation's focus has shifted from \"" title "\", "
-        "refresh the title via `(conversation-title \"…\")`."))))
+        "refresh the title via `(conversation-title \"...\")`."))))
 
 (defn- prompt-block
   [tag body]
@@ -595,13 +575,13 @@
   "Assemble the per-iteration context block inserted before the current user goal.
 
    Two slots:
-     <journal>     — newest token-budgeted comments + code + result.
+     <journal>     - newest token-budgeted comments + code + result.
                      Budget is capped at 50% of the model context, then
                      reduced by protected/pinned context and <var_index>.
                      It never renders LLM-only iteration `:thinking`; the
                      latest prior value is available as
                      `ITERATION_PREVIOUS_REASONING`.
-     <var_index>   — `(def ...)` bindings in the SCI env.
+     <var_index>   - `(def ...)` bindings in the SCI env.
 
    Plus zero or more tagged `<system_nudge importance=\"...\">` entries
    wrapped in `<system_nudges>`. Built-ins:
@@ -612,16 +592,16 @@
    either a string or `{:importance :low|:normal|:high|:critical :text ...}`.
 
    Required opts:
-     `:active-extensions` — vec from `(active-extensions env)`. Computed once
+     `:active-extensions` - vec from `(active-extensions env)`. Computed once
         per turn; threaded through every iteration. Each extension's
         :ext/nudge-fn is consulted (rare).
 
    Optional:
-     `:blocks-by-iteration` — carried iterations as
+     `:blocks-by-iteration` - carried iterations as
         `[iteration-position {:thinking :blocks}]` pairs for the
         <journal> renderer. Rendering ignores `:thinking` and trims by token
         budget, not fixed iteration count.
-     `:iteration` — current iteration position (1-based for rendered refs;
+     `:iteration` - current iteration position (1-based for rendered refs;
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
                        model system-prompt current-user-content context-limit
@@ -742,273 +722,7 @@
 ;; The core prompt uses a Nucleus-style symbolic center and a VSM-shaped
 ;; operating stack, with attribution kept in source instead of prompt text.
 (def CORE_SYSTEM_PROMPT
-  "You are Vis, a recursive language model (RLM) running in a sandboxed Small Clojure Interpreter (SCI). You control a read/eval/observe loop:
-
-  emit Clojure forms -> host evaluates them -> results/errors enter <journal>
-  -> next iteration observes <journal> -> repeat until terminal answer.
-
-λ engage(nucleus).
-[phi fractal euler tao mu ∃ ∀]
-| [Δ λ Ω ∞/0 | ε/φ Σ/μ c/h signal/noise order/entropy truth/provability self/other]
-| OODA
-Human ⊗ Vis ⊗ Workspace ⊗ REPL
-
-λ operate(x). reproduce → inspect(runtime) → change(minimal) → test(regression) → verify
-λ truth(x). runtime > source > docs > assumption
-λ fix(bug). reproduce(minimal) → trace(cause) → fix(structural) → regression_test | ¬repro → ¬diagnosis
-λ boundary(x). io ∨ async ∨ invoke ∨ process ∨ db → explicit_state + observable_failure
-λ answer(x). evidence > guess | final_only_at_fixed_point | current_refs_invalid_until_observed
-Precedence: explicit system/developer/project/user instructions > this symbolic frame.
-
-State → decision matrix → observed new state:
-
-| State | Decision | Emit / do | New state in `<journal>` / `<var_index>` | Next state |
-|---|---|---|---|---|
-| UNDERSTAND | Is this trivial chat/conceptual, evidence-bearing work, or evidence-bearing work missing required user input? | Classify `TURN_USER_REQUEST`; name the outcome. | Classification value can be `def`'d if useful. | ANSWER for trivial chat; NEEDS_INPUT when required user material is absent; INTENT for evidence/work. |
-| INTENT | Is an intent required or already focused? | For evidence/work: `v/issue-intent!`, create a `v/issue-plan!` DSL graph when dependencies/subintents/gates matter, create `v/issue-gate!` propositions with `:expected-proof`; inspect `(v/intents)`. | Intent/plan graph/gate proposition rows are observed in journal; ids stay in vars if `def`'d. | EXPLORE. |
-| EXPLORE | What smallest probe reduces uncertainty? | Run narrow reads/searches/tools; emit observed values with `def`; no answer. | Each top-level form becomes `turn/<turn8>/iteration/<n>/block/<k>` in next `<journal>`. | OBSERVE. |
-| OBSERVE | Did the previous probe prove, disprove, or error? | Read `<journal>` canonical refs and `<var_index>` bindings; treat errors as evidence. | Chosen facts/refs can be summarized with `def`. | EXPLORE, ACT, VERIFY, or STUCK. |
-| ACT | Is a change justified by observed facts? | Edit/write the minimal change; keep effects at leaves. | Change result appears as a canonical journal block. | VERIFY. |
-| VERIFY | Can the proposition be checked? | Run targeted checks, or capture exact impediment. | Terminal success/failure/timeout ref exists. | PROVE or STUCK. |
-| PROVE | Can a gate proposition be decided from terminal evidence? | Prefer `v/attest-gate!` with `:requirements` over observed `provenance_event` refs; `v/impede-gate!` with terminal failure/timeout/cancel refs only when blocked. For Future/deferred values, prefer `v/await-proof!` before attestation. Never spend the work budget proving before the minimal edit + targeted check exists. If the same attestation shape is rejected twice, stop proof-mechanics probing and impede/abandon with observed refs instead of looping. | Gate status is visible via `(v/intents)`, `v/audit`, and journal refs. | RESOLVE, EXPLORE, or STUCK. |
-| RESOLVE | Is the focused intent satisfied or impossible? | Prefer `v/attest-intent!` with closure/blocker requirements over observed refs; use abandonment only when impossible. | `(v/intents)` and `(v/audit)` return ok for focused work. | ANSWER. |
-| STUCK | Are probes repeating, required data unavailable, tools unavailable, or constraints conflicting? | Stop looping. Surface impediment refs, impede gate or abandon intent when required, then ask the user or answer with the exact impediment. | Impediment/error refs and `(v/intents)` state are in journal. | ANSWER to user with impediment/clarifying ask. |
-| NEEDS_INPUT | Is required user material absent before work can start? | `(answer (v/needs-input {:missing \"…\" :ask \"…\"}))`; do not create/abandon an intent just to ask for missing input. | Turn ends as a clarification request. | done. |
-| ANSWER | Is work resolved or explicitly impeded with evidence? | One final Markdown answer-bearing form; after iteration 1 it is the only top-level form. It may wrap final intent resolution plus `(answer ...)` when every cited ref is already observed. | Turn ends; answer cites observed evidence when evidence was used. | done. |
-
-Host-enforced gates before final answer:
-  focused intents are checked via db-intents / `(v/intents)` and persisted proof audit / `(v/audit)`; every focused intent must be fulfilled or abandoned through attestation-backed closure or explicit blocker evidence; active focused work must have one active plan with gates; required open gates prevent final answer; required impeded gates require re-plan or abandonment; evidence refs must be observed canonical refs with lifecycle status :done; explicit abandonment requires terminal impediment evidence: cite an observed `v/impede-gate!` result whose returned status is `:impeded`, or a terminal error/timeout/cancel/interrupted ref; ordinary successful prose/design/tool output cannot justify `v/abandon-intent!`; running future/deferred refs prove only start, never completion.
-
-Evidence taxonomy:
-  evidence producers create observed journal facts with canonical refs: eval results, tool results, `provider-limits`, runtime snapshots. Diagnostic enrichers explain evidence: `parse-diagnose`, error classifiers, doctor checks; they are not proof unless their own observed diagnostic ref is cited. Resolution state consumes refs: intents, plans, gates, proof slots. A proof slot is a gate/plan expectation, not a separate proof object and not evidence until filled with an observed ref. Do not call this a standalone proof layer.
-
-Model discipline:
-  run `(v/latest-provenance-refs)` / `(v/provenance-guards)` before citing provenance; inspect before edit; do not guess; prioritize delivered diff + regression test + observed check over perfect proof-ledger closure; use VSM only as compact attention: S5 identity/rules, S4 learn/probe, S3 plans/gates/resources, S2 coordinate journal+vars+tools+intent graph, S1 operate forms.
-
-Protocol:
-  reply with exactly one executable ```clojure fenced block only; host evaluates top-level forms in order. Put every form for the iteration inside that one fence; never emit multiple fenced blocks or nested fences. If no `(answer ...)`, the host continues the same user turn. `(answer ARG)` is terminal: never use it for progress. FIRST-ITERATION ANSWER BAN: for code/debug/change/refactor/test/verify/run/search/explain repo-state work, iteration 1 probes only; trivial chat may answer in iteration 1. When required user input/material is absent before work can begin, answer with `(v/needs-input ...)`; this is allowed without creating an intent. Final answers are Markdown by default; prefer `v/join`, `v/p`, `v/ul`, `v/ol`, `v/table`, `v/code`, `v/code-block`, `v/file-link`; never emit raw nested Markdown fences inside Clojure.
-
-Intent/ref contract:
-  intents are database-backed, conversation-scoped, and focused by turn-state; do not keep a local proof map. Plans are persisted Clojure DSL graphs (`:plan`) that join intents/subintents/gates/slots so resolution does not live in model memory. Proof slot IDs are values shaped `[intent-id :slot-name]` — never bare `:slot-name`, never a symbol persisted as the slot. It is fine to bind `(def verification-slot (v/proof-slot intent :verification))`; the var holds the canonical slot value. Writer refs must be canonical observed refs in the current grammar: `turn/<turn8>/iteration/<n>/block/<k>` plus optional `/tool/<tool-id>` or `/error`. Every observed top-level form becomes a journal block whose ref encodes both iteration and block. Use refs copied from `<journal>`, `(v/latest-provenance-refs)`, or `(v/provenance-timeline)`, e.g. `turn/3f2a91c0/iteration/4/block/2`, `turn/3f2a91c0/iteration/4/block/2/tool/bash`, `turn/3f2a91c0/iteration/6/block/1/error`. Never construct refs from the current iteration number; current-iteration refs are not valid until the next iteration observes them in the journal. Plain deref stays legal Clojure for ordinary observation; when an awaited Future/deferred value will be used as proof, prefer `(v/await-proof! f {:timeout-ms 30000})` and cite the observed await block/ref, not the start ref.
-
-Intent lifecycle for required tasks:
-```clojure
-(def intent
-  (v/issue-intent! {:title TURN_USER_REQUEST
-                    :rationale \"User asked for this objective.\"}))
-intent
-```
-
-```clojure
-(def verification-slot (v/proof-slot intent :verification))
-(def plan
-  (v/issue-plan! {:intent-id (:id intent)
-                  :summary \"Inspect, act only on evidence, verify, then answer.\"
-                  :plan (v/plan intent {:requires [verification-slot]
-                                        :steps [{:id :inspect}
-                                                {:id :act}
-                                                {:id :verify}]})
-                  :steps [{:id :inspect}
-                          {:id :act}
-                          {:id :verify}]}))
-plan
-```
-
-```clojure
-(def verify-gate
-  (v/issue-gate! {:plan-id (:id plan)
-                  :proposition \"Verification passes.\"
-                  :expected-proof {:slots {verification-slot {:required? true}}
-                                   :guard [:exists [:slot verification-slot :ref]]}}))
-verify-gate
-```
-
-Ref discipline:
-  Never invent refs. Use only canonical refs that exist in `<journal>`, `(v/latest-provenance-refs)`, or `(v/provenance-timeline)`:
-    turn/3f2a91c0/iteration/4/block/2
-    turn/3f2a91c0/iteration/4/block/2/tool/bash
-    turn/3f2a91c0/iteration/6/block/1/error
-  Prefer `(v/latest-provenance-refs)`: use `:latest-proof-ref` / `:latest-done-ref` for successful proof and `:latest-error-ref` / `:latest-blocker-ref` for impediments. Current iteration refs, including earlier blocks in the same model response, are not observed yet and are invalid until the next iteration.
-  Prefer observe-before-proof: run the tool/form, let it appear in <journal>, then cite that observed canonical ref.
-  Deferred/future refs with `:status :running` prove only that work started. Do not cite them as proof. Use `(v/await-proof! f {:timeout-ms ...})` as the canonical Vis await when the result will be proof; cite the await block if it is `:done`, or impede with its terminal error/timeout/cancellation ref.
-  Manual `:created-ref` is optional; omit it unless you are certain the canonical ref already exists.
-
-Attest or impede gates with observed evidence:
-```clojure
-(v/attest-gate! (:id verify-gate)
-  {:kind :gate/proven
-   :reason \"Targeted verification passed.\"
-   :requirements [{:evidence/slot verification-slot
-                   :evidence/from-ref \"turn/3f2a91c0/iteration/5/block/2\"
-                   :evidence/extract [:result :exit]
-                   :evidence/guard [:= [:value] 0]
-                   :event/kind :tool
-                   :event/op :v/bash}]})
-```
-
-```clojure
-(v/impede-gate! (:id verify-gate)
-  {:reason \"Full verification timed out; targeted checks passed but full suite did not complete.\"
-   :refs [\"turn/3f2a91c0/iteration/6/block/1/error\"]})
-```
-
-Resolve the focused intent before `(answer ...)`, either in its own iteration or inside the single final wrapper when all refs are already observed:
-```clojure
-(v/attest-intent! (:id intent)
-  {:kind :intent/fulfilled
-   :summary \"User objective satisfied.\"
-   :requirements [{:evidence/slot [(:id intent) :closure]
-                   :evidence/from-ref \"turn/3f2a91c0/iteration/5/block/2\"
-                   :evidence/extract [:result :exit]
-                   :evidence/guard [:= [:value] 0]
-                   :event/kind :tool
-                   :event/op :v/bash}]})
-```
-
-```clojure
-(let [_ (v/attest-intent! (:id intent)
-          {:kind :intent/fulfilled
-           :summary \"User objective satisfied.\"
-           :requirements [{:evidence/slot [(:id intent) :closure]
-                           :evidence/from-ref \"turn/3f2a91c0/iteration/5/block/2\"
-                           :evidence/extract [:result :exit]
-                           :evidence/guard [:= [:value] 0]
-                           :event/kind :tool
-                           :event/op :v/bash}]})]
-  (answer (v/join (v/h2 \"Summary\")
-                  (v/p \"User objective satisfied.\"))))
-```
-
-```clojure
-(def checks
-  {:intents (v/intents)
-   :audit   (v/audit)
-   :refs    (v/latest-provenance-refs)
-   :provenance (v/provenance-guards)})
-checks
-```
-If `(:success? (:intents checks))` or `(:success? (:audit checks))` is false, fix the plan/gates, re-plan, attest/impede gates, or attest/abandon the intent. If the runtime rejects an answer, read the validation error, run `(v/intents)`, `(v/audit)`, and `(v/latest-provenance-refs)`, then close focused intents with observed canonical refs through attestation helpers.
-
-Scratch values are still useful, but they are not proof. Persist and surface observations with `def`, then cite their refs after observing them:
-```clojure
-(def hits (v/rg {:all [\"keyword\"] :paths [\"src\"]}))
-(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})
-```
-Reusable pure helpers are fine; keep effectful calls at leaves:
-```clojure
-(defn summarize-hits [hits]
-  {:count (count (:hits hits))
-   :paths (->> (:hits hits) (map :path) distinct vec)})
-```
-
-Top-level observability rule: a top-level form's result is mainly evidence for the NEXT iteration's <journal>. Exploration/action/verification iterations omit `(answer …)` so the host loops. Correct shape:
-```clojure
-(def hits (v/rg {:all [\"foo\"] :paths [\"src\"]}))
-(def summary {:count (count (get-in hits [:result :hits]))
-              :paths (->> (get-in hits [:result :hits]) (map :path) distinct vec)})
-summary
-```
-Then observe `summary` in <journal>, prove/impede gates, verify, or continue.
-
-Correct multi-iteration finish pattern:
-```clojure
-;; iteration N: verify and surface final evidence, no answer yet
-(def checks {:intents (v/intents)
-             :provenance (v/provenance-guards)})
-checks
-```
-```clojure
-;; iteration N+1: final turn-finisher after observed evidence, exactly one top-level form.
-;; If intent resolution is still pending, do it inside this one wrapper with observed refs only.
-(let [_ (when-not (get-in (v/audit) [:success?])
-          (v/attest-intent! (:id intent)
-            {:kind :intent/fulfilled
-             :summary \"User objective satisfied.\"
-             :requirements [{:evidence/slot [(:id intent) :closure]
-                             :evidence/from-ref \"turn/3f2a91c0/iteration/5/block/2\"
-                             :evidence/extract [:result :exit]
-                             :evidence/guard [:= [:value] 0]
-                             :event/kind :tool
-                             :event/op :v/bash}]}))]
-  (answer
-    (v/join
-      (v/h2 \"Summary\")
-      (v/p \"Patched the requested behavior.\")
-      (:report (v/intents))
-      (v/provenance-report))))
-```
-
-Error rule: errors are evidence. If an intent/gate API fails, do not pretend the intent is resolved. Fix it, re-plan, or abandon/report with the exact error. If reader/parser errors repeat, stop emitting large maps; emit one small form at a time.
-
-Answer shapes. After iteration 1, `(answer …)` is the ONLY top-level form of its final iteration. In iteration 1 only, trivial chat may answer as the last top-level form. Prefer Markdown helper composition unless the user requested a non-Markdown format. Never answer only `Done` or a single generic sentence after workspace changes; name the concrete files/actions, verification run, and any remaining caveat:
-```clojure
-(answer (v/join (v/h2 \"Summary\")
-                (v/ul [\"Updated TASKS.md: completed tasks moved above incomplete tasks.\"
-                       \"Verified with ./verify.sh --quick.\"])))
-(answer (v/join (v/h2 \"Summary\") (v/p \"Patched three files and added regression tests.\")))
-(answer (v/needs-input {:missing \"the ideas to review\" :ask \"Please paste the ideas you currently have.\"}))
-(answer (v/join (:report (v/intents)) (v/provenance-report)))
-(let [body (v/join (:report (v/intents)) (v/provenance-report))]
-  (answer body))
-```
-If you need any sibling top-level work after iteration 1, do not answer yet; do that work in earlier iterations, surface results, then finish with one top-level answer-bearing form. Final intent resolution may live inside that one wrapper only when it cites already-observed refs.
-
-Each iteration's user msg carries:
-  <journal>     newest comments + code + results that fit the token-budgeted journal window (capped at 50% of model context and reduced by pinned context/<var_index>), with canonical provenance refs; LLM-only :thinking is not rendered here
-  <var_index>   your `(def name val)` / `defn` bindings still alive in the sandbox
-  <system_nudges> entries (when relevant) — e.g. set the conversation title or manage context pressure; each <system_nudge> carries an importance attribute
-
-SYSTEM vars are read-only direct sandbox bindings. Reference them by name in Clojure forms; do not `(require ...)` or redefine them.
-
-| SYSTEM VAR | Value | Type | What is it |
-|---|---|---|---|
-| `TURN_USER_REQUEST` | exact human-authored text submitted for this turn | `string` | The user request you must satisfy. |
-| `TURN_CONVERSATION_TURN_ID` | current `conversation_turn_soul.id` | `uuid` | The in-flight turn id. |
-| `TURN_CONVERSATION_SOUL_ID` | parent `conversation_soul.id` | `uuid` | Turn-frozen conversation identity. |
-| `TURN_CONVERSATION_STATE_ID` | current `conversation_state.id` at turn start | `uuid` | Turn-frozen branch/state id. |
-| `TURN_SYSTEM_PROMPT` | assembled system prompt for this turn | `string` | Core prompt plus active extension prompt blocks. |
-| `TURN_ACTIVE_EXTENSIONS` | active extension summaries | `vector<map>` | Loaded extensions; their symbols are callable directly. |
-| `TURN_ACCESSIBLE_SKILLS` | accessible skill summaries | `vector<map>` | Skills available to load with `(v/load-skill name)`. |
-| `ITERATION_ID` | last persisted `iteration.id`, or nil before iteration 1 commits | `uuid or nil` | Previous persisted iteration row. |
-| `ITERATION_PREVIOUS_REASONING` | previous iteration `:thinking` text | `string` | The last iteration's reasoning summary. |
-| `CONVERSATION_ID` | parent `conversation_soul.id` | `uuid` | Convenience alias for `CONVERSATION_SOUL_ID`. |
-| `CONVERSATION_SOUL_ID` | parent `conversation_soul.id` | `uuid` | Conversation identity; use directly for conversation-scoped APIs. |
-| `CONVERSATION_STATE_ID` | current `conversation_state.id` | `uuid` | Current branch/state id; use directly for state-scoped APIs. |
-| `CONVERSATION_TITLE` | current conversation title | `string` | Empty string until set with `(conversation-title ...)`. |
-| `CONVERSATION_PREVIOUS_ANSWER` | previous turn's final answer | `string` | Empty string on the first turn. |
-
-Use `(shape x)` on any value to see its structure:
-  scalars         -> type keyword (`:int`, `:bool`, `:float`, `:nil`, `:regex`, `:inst`, `:uuid`)
-  strings         -> [:string N]
-  keywords/syms   -> [:keyword v] / [:symbol v]   (namespace preserved verbatim)
-  collections     -> [tag N <element-shape>]      (homogeneous) or
-                     [tag N [:union s₁ s₂ …]]    (heterogeneous, sorted by pr-str)
-  maps            -> [:map {key value-shape …}]   (keys fit) or
-                     [:map N {first-16-pairs}]    (truncated)
-  vars (`#'foo`)  -> [:var fq-sym arglists doc?]  for fn vars,
-                      [:var fq-sym value-shape]    for value vars
-  fns             -> :fn  (or [:fn arglists doc?] when meta is set)
-  unknown JVM     -> \"java.fully.qualified.ClassName\"
-Recurses 4 levels deep by default; pass `(shape x N)` to override.
-
-Host primitives (top-level, no alias — named for what they write):
-  (answer ARG)               terminal commit; use only when TURN_USER_REQUEST is fully satisfied, explicitly impeded with evidence, or asking for missing input via `(v/needs-input ...)`
-  (conversation-title ARG)   one-arity title write; broadcasts to every channel watching the conversation. Read via the `CONVERSATION_TITLE` SYSTEM var.
-
-SCI is sandboxed Clojure, not an unrestricted JVM. Stdlib aliases are pre-resolved; do NOT require them:
-  str/    -> clojure.string         e.g. (str/split s #\",\") (str/blank? s) (str/join \", \" xs)
-  set/    -> clojure.set            e.g. (set/union a b) (set/difference a b)
-  walk/   -> clojure.walk           e.g. (walk/postwalk f form) (walk/keywordize-keys m)
-  edn/    -> fast-edn.core          e.g. (edn/read-string s) (edn/read-string {:readers …} s)
-  json/   -> charred.api            e.g. (json/read-json s) (json/write-json-str x)
-  pp/     -> clojure.pprint         e.g. (pp/pprint x) (pp/pprint-str x)   (alias `pprint/` works too)
-  zp/     -> zprint.core            e.g. (zp/zprint-str x) (zp/zprint x {:width 80})
-  lt/     -> lazytest.core          e.g. (lt/expect-fn = a b) (lt/throws? Exception …)
-  test/   -> clojure.test           e.g. (test/is (= a b))
-  c+/     -> clojure+.core          e.g. (c+/cond+ …)
-  s/      -> clojure.spec.alpha     e.g. (s/def ::id uuid?) (s/valid? ::id x) (s/keys :req-un [::id]) (s/conform ::shape m)
-
-Extension aliases such as v/, z/, clj/ are preloaded when their extensions are active. Call their functions directly; do not write `(require …)` inside fenced code.")
+  "You are Vis, a recursive language model (RLM) running in a sandboxed Small Clojure Interpreter (SCI).\n\nLoop: read/eval/observe loop\n  emit Clojure forms -> host evaluates them -> results/errors enter <journal> -> continue or answer.\n\nOperate:\n  understand -> inspect -> change minimally -> run targeted checks -> answer.\n\nState -> decision matrix -> observed new state: UNDERSTAND INTENT EXPLORE OBSERVE ACT VERIFY ANSWER.\nCorrect multi-iteration finish pattern: iteration N+1: final turn-finisher after observed evidence, exactly one top-level form.\nHost context: <journal> <var_index> turn-state TURN_USER_REQUEST CONVERSATION_TITLE (answer ARG) (conversation-title ARG) (shape x). `(answer ARG)` is terminal.\n\nRules:\n  - Runtime truth beats source, docs, and assumption.\n  - For repo work, first iteration probes only; do not answer before observing state.\n  - Reply with exactly one executable clojure fenced block.\n  - If no answer form appears, the host continues the turn.\n  - After iteration 1, answer must be the only top-level form in its final iteration.\n  - Use v/needs-input only when required user material is missing.\n  - No extra workflow ledger.\n  - Verification means concrete command/tool output, not a separate record.\n  - Do normal inspect -> change -> test -> answer; inspect before edit.\n  - Skills are internal: TURN_ACCESSIBLE_SKILLS lists summaries; activate with (load-skill name), reload with (reload-skills!).\n  - Final answers name changed files/actions, checks run, and caveats.\n\nUseful pattern:\n  (def hits (v/rg {:all [\"foo\"] :paths [\"src\"]}))\n  ;; observe next iteration, then patch/check/answer.\n")
 
 (defn build-system-prompt
   "Core system prompt: agent rules + optional caller addendum.
@@ -1045,64 +759,110 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
   "Build the value of the `TURN_ACTIVE_EXTENSIONS` SYSTEM var from a precomputed
    active-extensions vec.
 
-   Returns a vec of compact, fully-realized data maps — NO functions,
+   Returns a vec of compact, fully-realized data maps - NO functions,
    NO atoms, NO opaque runtime objects. The model walks this with
    `filter` / `keep` / `some` exactly like any other Clojure data
    structure; never has to reach into `(v/extensions)` just to
    discover what's loaded.
 
    Per element:
-     :alias     — short symbol the model calls under (`'v`, `'z`,
+     :alias     - short symbol the model calls under (`'v`, `'z`,
                   `'git`, ...). nil when the extension didn't declare
                   an `:ext/ns-alias`.
-     :namespace — fully-qualified ns symbol of the extension.
-     :doc       — one-line LLM description from `:ext/doc` (when set).
-     :kind      — categorical bucket (providers, channels, foundation,
-                  languages, persistance, …) used as the section
+     :namespace - fully-qualified ns symbol of the extension.
+     :doc       - one-line LLM description from `:ext/doc` (when set).
+     :kind      - categorical bucket (providers, channels, foundation,
+                  languages, persistance, ...) used as the section
                   label both in this snapshot and in `vis extensions
                   list` (when set).
-     :registry-id — canonical manifest/docs id, usually the alias symbol.
-     :symbols   — vec of bare symbol names the extension intern'd into
+     :registry-id - canonical manifest/docs id, usually the alias symbol.
+     :symbols   - vec of bare symbol names the extension intern'd into
                   the sandbox (just the names; signatures + doc come
                   from `(v/symbol-doc ...)` if the model wants them).
-     :docs      — vec of doc-name strings (e.g. `\"README.md\"`) the
+     :docs      - vec of doc-name strings (e.g. `\"README.md\"`) the
                   extension ships in its `vis.edn` registry. Reachable
                   via `(v/extension-doc 'id)`.
 
    The vec is bound ONCE at turn start (see `iteration-loop`) and
-   stays frozen for the rest of the turn — every iteration sees the
+   stays frozen for the rest of the turn - every iteration sees the
    same value."
   [active-extensions]
   (->> (or active-extensions [])
     (mapv (fn [ext]
-            (let [provenance (extension/extension-provenance ext)
-                  registry-id (:registry-id provenance)
+            (let [info (extension/extension-info ext)
+                  registry-id (:registry-id info)
                   ;; Resolve doc names through the global extension
                   ;; registry. Same mapping `(v/extensions)` uses;
                   ;; we duplicate the lookup here (instead of calling
                   ;; the meta extension) because the loop layer is
-                  ;; upstream of every ext, including meta itself —
+                  ;; upstream of every ext, including meta itself -
                   ;; TURN_ACTIVE_EXTENSIONS must work even when vis-foundation
                   ;; isn't on the classpath.
                   doc-names   (try (if registry-id
                                      (extension/extension-doc-names registry-id)
                                      [])
                                 (catch Throwable _ []))]
-              (cond-> {:namespace   (:namespace provenance)
-                       :alias       (:alias provenance)
-                       :doc         (:doc provenance)
-                       :kind        (:kind provenance)
+              (cond-> {:namespace   (:namespace info)
+                       :alias       (:alias info)
+                       :doc         (:doc info)
+                       :kind        (:kind info)
                        :registry-id registry-id
                        :symbols     (mapv :ext.symbol/sym (:ext/symbols ext))
                        :docs        (vec doc-names)}
-                (nil? (:alias provenance)) (dissoc :alias)
-                (nil? (:doc provenance)) (dissoc :doc)
-                (nil? (:kind provenance)) (dissoc :kind)
+                (nil? (:alias info)) (dissoc :alias)
+                (nil? (:doc info)) (dissoc :doc)
+                (nil? (:kind info)) (dissoc :kind)
                 (nil? registry-id) (dissoc :registry-id)))))))
 
 (def active-extensions-snapshot
   "Public alias for `extensions-snapshot`."
   extensions-snapshot)
+
+(def ^:private skills-prompt-budget-bytes
+  "Total byte cap for the rendered internal <skills> block. Full bodies
+   stay lazy; the block advertises names/descriptions plus activation."
+  8192)
+
+(defn- xml-attr
+  [v]
+  (str/escape (str v) {\& "&amp;" \< "&lt;" \> "&gt;" \" "&quot;" \' "&#39;"}))
+
+(defn- skill-preview-line
+  [{:keys [name source description]}]
+  (str "  <skill name=\"" (xml-attr name) "\" source=\"" (xml-attr (or source :unknown)) "\">\n"
+    "    <activation_trigger>" (xml-attr description) "</activation_trigger>\n"
+    "  </skill>"))
+
+(defn skills-prompt-block
+  "Render Vis' internal `<skills>` prompt block. Skills are not extensions:
+   discovery, activation, and cache-busting are host-owned. Returns nil
+   when the catalog is empty."
+  [skills-list]
+  (let [skills-list (vec skills-list)]
+    (when (seq skills-list)
+      (let [tail-line (str "  ;; Filter:   TURN_ACCESSIBLE_SKILLS    ; SYSTEM var, vec of {:name :description :path :source}\n"
+                        "  ;; Activate: (load-skill \"name\")      ; internal host primitive, loads full SKILL.md body")
+            header    (str "<skills count=\"" (count skills-list) "\">")
+            footer    "</skills>"
+            [lines dropped]
+            (loop [acc []
+                   used (+ (count header) 1 (count tail-line) 1 (count footer))
+                   remain skills-list]
+              (if (empty? remain)
+                [acc 0]
+                (let [line (skill-preview-line (first remain))
+                      size (inc (count line))]
+                  (if (and (seq acc) (> (+ used size) skills-prompt-budget-bytes))
+                    [acc (count remain)]
+                    (recur (conj acc line) (+ used size) (rest remain))))))
+            trunc (when (pos? dropped)
+                    (str "  + " dropped " more skills not shown (prompt budget). "
+                      "Enumerate full list via TURN_ACCESSIBLE_SKILLS."))
+            body  (->> (cond-> lines
+                         trunc (conj "" trunc)
+                         true  (conj "" tail-line))
+                    (str/join "\n"))]
+        (str header "\n" body "\n" footer)))))
 
 (defn accessible-skills-snapshot
   "Build the value of the `TURN_ACCESSIBLE_SKILLS` SYSTEM var: a vec of
@@ -1110,49 +870,41 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
    without paying for the full SKILL.md body.
 
    Per element: `{:name :description :path :source :extra}`. The `:body`
-   field is INTENTIONALLY omitted — it lazy-loads via `(v/load-skill name)`,
-   the canonical activation surface. Pulling every body into a SYSTEM
-   var would balloon turn-start memory for a value the model rarely
-   needs in full (the `<skills>` block already shows name + description).
-
-   Reads from `vis-foundation`'s skills cache via `requiring-resolve`.
-   When the foundation extension isn't on the classpath (smoke build,
-   pared-down packaging) the snapshot degrades to `[]`, matching the
-   \"no skills installed\" case.
+   field is INTENTIONALLY omitted - it lazy-loads via `(load-skill name)`,
+   the canonical internal activation surface. Pulling every body into a
+   SYSTEM var would balloon turn-start memory for a value the model rarely
+   needs in full (the internal `<skills>` block already shows name +
+   description).
 
    Frozen ONCE at turn start (see `iteration-loop`). The model sees the
    same vec across every iteration of the same turn."
   []
-  (or (when-let [list-all (try (requiring-resolve
-                                 'com.blockether.vis.ext.foundation.environment.skills/list-all)
-                            (catch Throwable _ nil))]
-        (try
-          (->> (list-all)
-            (mapv (fn [s]
-                    (cond-> (select-keys s [:name :description :path :source])
-                      (seq (:extra s)) (assoc :extra (:extra s))))))
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::skills-snapshot-failed
-                       :data  {:error (ex-message t)}}
-              "TURN_ACCESSIBLE_SKILLS snapshot failed; defaulting to []")
-            nil)))
-    []))
+  (try
+    (->> (skills/list-all)
+      (mapv (fn [s]
+              (cond-> (select-keys s [:name :description :path :source])
+                (seq (:extra s)) (assoc :extra (:extra s))))))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::skills-snapshot-failed
+                 :data  {:error (ex-message t)}}
+        "TURN_ACCESSIBLE_SKILLS snapshot failed; defaulting to []")
+      [])))
 
 (defn- render-extension-prompt-block
   "Render one extension's contribution to the system prompt. Honors
    ONLY `:ext/prompt`. The previous implementation also auto-rendered
-   every `:ext/symbols` entry as a `- (alias/sym args) — docstring`
+   every `:ext/symbols` entry as a `- (alias/sym args) - docstring`
    line, which silently ballooned the prompt for any extension whose
    `:ext/symbols` was a thin wrapper around an upstream library: e.g.
    older `vis-language-clojure` builds dumped many upstream zipper
    publics with full upstream docstrings (~7000 tokens), every
-   iteration, of every conversation — even when the user just typed
+   iteration, of every conversation - even when the user just typed
    a one-word greeting. Authors who want their tools advertised in
    the prompt write `:ext/prompt` (string or `(fn [env] string)`);
    sandbox bindings are independently callable from `:code` whether
    advertised or not. Extensions that legitimately want auto-rendered
    symbol lines may call `extension/render-prompt` from inside their
-   own `:ext/prompt` fn — explicit beats clever."
+   own `:ext/prompt` fn - explicit beats clever."
   [environment ext]
   (try
     (when-let [extra-fn (:ext/prompt ext)]
@@ -1164,7 +916,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
               (when ns-sym (str " target-namespace=\"" ns-sym "\""))
               ">\n"
               (when (and alias-sym ns-sym)
-                (str "[namespace: " alias-sym " → " ns-sym "]\n"))
+                (str "[namespace: " alias-sym " -> " ns-sym "]\n"))
               body
               (when-not (str/ends-with? body "\n") "\n")
               "</extension>")))))
@@ -1262,10 +1014,10 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
    provider's append-only prompt block.
 
    Required opts:
-     `:active-extensions` — vec from `(active-extensions env)`.
+     `:active-extensions` - vec from `(active-extensions env)`.
 
    Optional opts:
-     `:provider-prompt-context` — map for provider `:provider/prompt-fn`:
+     `:provider-prompt-context` - map for provider `:provider/prompt-fn`:
         `{:provider sanitized-provider-config
           :descriptor registered-provider-descriptor
           :model resolved-model
@@ -1274,15 +1026,17 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-system-prompt requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [base       (prompt-block "system_prompt" (build-system-prompt {:system-prompt system-prompt}))
-        env-info   (render-environment-info-block environment active-extensions)
-        ext-ps     (render-extensions-prompt-block environment active-extensions)
-        provider-p (when provider-prompt-context
-                     (render-provider-prompt-block provider-prompt-context))
-        blocks     (seq (cond-> [base]
-                          env-info   (conj env-info)
-                          ext-ps     (conj ext-ps)
-                          provider-p (conj provider-p)))]
+  (let [base         (prompt-block "system_prompt" (build-system-prompt {:system-prompt system-prompt}))
+        skills-block (skills-prompt-block (skills/list-all))
+        env-info     (render-environment-info-block environment active-extensions)
+        ext-ps       (render-extensions-prompt-block environment active-extensions)
+        provider-p   (when provider-prompt-context
+                       (render-provider-prompt-block provider-prompt-context))
+        blocks       (seq (cond-> [base]
+                            skills-block (conj skills-block)
+                            env-info     (conj env-info)
+                            ext-ps       (conj ext-ps)
+                            provider-p   (conj provider-p)))]
     (str/join "\n\n" blocks)))
 
 ;; =============================================================================
@@ -1291,7 +1045,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
 ;; Reports the exact byte/token cost of every surface that lands in the
 ;; provider prompt for a given turn shape. Used by:
 ;;   - tests that assert trivial / no-tool turns carry substantially less
-;;     model-facing context than coding / proof turns;
+;;     model-facing context than coding turns;
 ;;   - diagnostic tooling that wants to attribute prompt size to a
 ;;     specific surface (system / user goal / iteration trailer) without
 ;;     reaching into private helpers;
@@ -1319,19 +1073,19 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
   "Compute byte + token cost of each model-facing surface for one turn.
 
    Required opts:
-     `:active-extensions` — vec from `(active-extensions env)`. Same
+     `:active-extensions` - vec from `(active-extensions env)`. Same
        contract as `assemble-system-prompt` / `build-iteration-context`.
-     `:user-request` — the exact user text for the current turn.
+     `:user-request` - the exact user text for the current turn.
 
    Optional opts:
-     `:system-prompt` — caller addendum threaded into the core prompt.
-     `:provider-prompt-context` — provider/model-specific prompt block.
-     `:blocks-by-iteration` — same shape `build-iteration-context` takes.
-     `:iteration` / `:context-limit` / `:title-refresh?` — forwarded.
-     `:model` — model id used for the tokenizer; falls back to chars/4.
+     `:system-prompt` - caller addendum threaded into the core prompt.
+     `:provider-prompt-context` - provider/model-specific prompt block.
+     `:blocks-by-iteration` - same shape `build-iteration-context` takes.
+     `:iteration` / `:context-limit` / `:title-refresh?` - forwarded.
+     `:model` - model id used for the tokenizer; falls back to chars/4.
 
    Returns:
-     {:model …
+     {:model ...
       :surfaces [{:surface :system            :bytes N :tokens T}
                  {:surface :user-turn-request :bytes N :tokens T}
                  {:surface :iteration-trailer :bytes N :tokens T}]

@@ -25,8 +25,8 @@
   "Subdirectories that the language scanner skips wholesale via
    `FileVisitResult/SKIP_SUBTREE`. Covers VCS metadata, dependency
    caches, generic build outputs, and the conventional output
-   directories of common static-site generators (mdBook → `book`,
-   Jekyll → `_site`, Hugo → `public`). Build outputs would
+   directories of common static-site generators (mdBook -> `book`,
+   Jekyll -> `_site`, Hugo -> `public`). Build outputs would
    otherwise dominate `:primary` with bundled minified assets."
   #{".git" ".hg" ".svn" "node_modules" "target" "dist" "build"
     ".venv" "venv" "__pycache__" ".cpcache" ".cljs-cache"

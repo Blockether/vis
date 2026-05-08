@@ -41,8 +41,8 @@
       (expect (true? (get-in out [:result :changed?])))
       (expect (= "(ns demo)\n(defn bad [x]\n  (inc x))\n\n(def ok 1)\n"
                 (slurp path)))
-      (expect (= "(defn bad [x]\n  (inc x)\n" (get-in out [:provenance :files 0 :before])))
-      (expect (= "(defn bad [x]\n  (inc x))\n" (get-in out [:provenance :files 0 :after])))))
+      (expect (= "(defn bad [x]\n  (inc x)\n" (get-in out [:info :files 0 :before])))
+      (expect (= "(defn bad [x]\n  (inc x))\n" (get-in out [:info :files 0 :after])))))
 
   (it "accepts locator-row :span and supports dry-run"
     (let [path      (write-temp! "range/quote.clj" "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n")
@@ -54,7 +54,7 @@
       (expect (true? (get-in out [:result :changed?])))
       (expect (true? (get-in out [:result :dry-run?])))
       (expect (= "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n" (slurp path)))
-      (expect (str/includes? (get-in out [:provenance :files 0 :after]) "(str"))))
+      (expect (str/includes? (get-in out [:info :files 0 :after]) "(str"))))
 
   (it "repairs locator rows through z/repair-locator"
     (let [path      (write-temp! "range/locator.clj" "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n")
@@ -64,7 +64,7 @@
       (expect (true? (:success? out)))
       (expect (= :quote (get-in out [:result :engine])))
       (expect (true? (get-in out [:result :dry-run?])))
-      (expect (= :z/repair-locator (get-in out [:provenance :op])))
+      (expect (= :z/repair-locator (get-in out [:info :op])))
       (expect (= "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n" (slurp path)))))
 
   (it "repairs a whole file through z/repair-file"

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.screen-test
   "Tests for the TUI channel entry point. The bulk of the namespace
    is Lanterna-bound and exercised by the integration smoke + render
-   benchmark; this suite focuses on the pure helpers — currently the
+   benchmark; this suite focuses on the pure helpers - currently the
    `--conversation-id` / `--resume` argument parser, where a silent
    accept of unknown flags previously masked typos like
    `--conversations-id`."
@@ -47,12 +47,6 @@
 (def ^:private open-click-target!
   (deref #'screen/open-click-target!))
 
-(def ^:private provenance-ref-from-url
-  (deref #'screen/provenance-ref-from-url))
-
-(def ^:private provenance-dialog-lines
-  (deref #'screen/provenance-dialog-lines))
-
 (def ^:private bubble-selectable-ranges
   (deref #'screen/bubble-selectable-ranges))
 
@@ -87,35 +81,13 @@
   (deref #'screen/handle-terminal-interrupt!))
 
 (defn- user-error?
-  "True when `f` throws an ex-info carrying the `:vis/user-error` flag —
+  "True when `f` throws an ex-info carrying the `:vis/user-error` flag -
    the contract the channel entry point relies on to print a clean
    `vis: <msg>` line and exit 2 instead of a Java stack trace."
   [f]
   (try (f) false
     (catch clojure.lang.ExceptionInfo e
       (true? (:vis/user-error (ex-data e))))))
-
-(defdescribe provenance-click-test
-  (it "extracts the canonical ref from a TUI-internal provenance URL"
-    (expect (= "turn/8fc00e9d/iteration/6/block/4"
-              (provenance-ref-from-url "vis-provenance://turn/8fc00e9d/iteration/6/block/4"))))
-
-  (it "formats a provenance event for the internal viewer"
-    (let [lines (provenance-dialog-lines
-                  "cid"
-                  "turn/8fc00e9d/iteration/6/block/4"
-                  {:ref "turn/8fc00e9d/iteration/6/block/4"
-                   :status :done
-                   :kind :eval
-                   :op :sci/eval
-                   :duration-ms 5
-                   :turn-id "turn-id"
-                   :iteration 6
-                   :form-position 4
-                   :code "(+ 1 1)"})]
-      (expect (some #(= "Ref: turn/8fc00e9d/iteration/6/block/4" %) lines))
-      (expect (some #(= "Status: :done" %) lines))
-      (expect (some #(= "Code: (+ 1 1)" %) lines)))))
 
 (defdescribe hint-test
   (it "empty input advertises arrow-key history and Shift+Tab tabs"
@@ -316,7 +288,7 @@
                   "    (answer (v/p \"hi\"))    "
                   "──────────────────────────────"
                   "    hi there                  "
-                  "          zai/glm · 1 iter    "
+                  "          zai/glm / 1 iter    "
                   "                              "]]
       (expect (= "(answer (v/p \"hi\"))\nhi there"
                 (selection/selected-text
