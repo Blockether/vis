@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.main
-  "vis CLI binary — :db Telemere handler, one-shot agent helper,
+  "vis CLI binary - :db Telemere handler, one-shot agent helper,
    built-in CLI commands, and the `-main` dispatcher entry point.
 
    Everything in this file is binary-only. The library surface
@@ -10,18 +10,18 @@
 
    Public entry point:
 
-     (-main & args)   — invoked by the `:vis` alias / `bin/vis`.
+     (-main & args)   - invoked by the `:vis` alias / `bin/vis`.
                         Configures logging, runs the unified extension
                         discovery scan, redirects stderr to ~/.vis/vis.log
                         for any TTY-owning channel, then dispatches to
                         the resolved command's `:cmd/run-fn`.
 
    Built-in commands registered here:
-     vis run                — one-shot agent turn (CLI agent helper)
-     vis providers          — provider inspection, auth, and limits
-     vis conversations      — list persisted conversations
-     vis extensions list    — list registered extensions
-     vis channels <name>    — auto-mounted via the channel registry
+     vis run                - one-shot agent turn (CLI agent helper)
+     vis providers          - provider inspection, auth, and limits
+     vis conversations      - list persisted conversations
+     vis extensions list    - list registered extensions
+     vis channels <name>    - auto-mounted via the channel registry
 
    `vis extensions doctor` is registered by vis-foundation through
    `:ext/cli`, so extension-owned commands stay under `vis extensions`.
@@ -54,7 +54,7 @@
 ;; =============================================================================
 
 ;; =============================================================================
-;; Signal → log entry
+;; Signal -> log entry
 ;; =============================================================================
 
 (defn- signal->entry
@@ -93,7 +93,7 @@
 
    The handler reads `:db-info` from the signal's telemere context
    (`*ctx*`). When `:db-info` is absent (no DB connection active in
-   scope), the signal is silently dropped — the console handler still
+   scope), the signal is silently dropped - the console handler still
    prints it.
 
    Usage:
@@ -112,7 +112,7 @@
      ([] nil))))
 
 (defn setup-db-handler!
-  "Install the `:db` Telemere handler. Idempotent — reusing the same
+  "Install the `:db` Telemere handler. Idempotent - reusing the same
    handler key replaces the previous registration. Call once at
    process startup, after the persistence backend is loaded
    (otherwise the handler will silently drop signals because no
@@ -140,8 +140,8 @@
    the canonical `com.blockether.vis.ext.` package, so the table column
    stays narrow:
 
-     com.blockether.vis.ext.foundation.core      → v/foundation.core
-     com.blockether.vis.ext.provider-github-copilot → v/provider-github-copilot
+     com.blockether.vis.ext.foundation.core      -> v/foundation.core
+     com.blockether.vis.ext.provider-github-copilot -> v/provider-github-copilot
 
    Anything that doesn't start with the canonical prefix is returned
    unchanged."
@@ -152,13 +152,13 @@
       s)))
 
 (defn- per-kind-group
-  "Per-row \"Group\" cell — a finer label *inside* `:ext/kind`. Pulled
+  "Per-row \"Group\" cell - a finer label *inside* `:ext/kind`. Pulled
    from the extension's contribution slot that matches its kind:
 
-     - providers   → joined `:provider/label`s
-     - channels    → joined `:channel/cmd`s
-     - persistance → joined `:persistance/id` names
-     - everything else (foundation, languages, uncategorized) → blank
+     - providers   -> joined `:provider/label`s
+     - channels    -> joined `:channel/cmd`s
+     - persistance -> joined `:persistance/id` names
+     - everything else (foundation, languages, uncategorized) -> blank
 
    Joined with `, ` so an extension contributing multiple of one
    surface (e.g. `provider-zai` exporting both Coding-Plan and
@@ -176,7 +176,7 @@
 
    `:namespace` is shortened with the `v/` prefix (see
    `short-ext-ns`). `:kind` carries the categorical bucket
-   (`providers`, `channels`, `foundation`, …) used to render the
+   (`providers`, `channels`, `foundation`, ...) used to render the
    table in grouped sections. `:group` is a finer label *inside* the
    kind (provider label / channel cmd / persistance id), blank for
    kinds that don't have one. `:author`, `:owner`, and `:license` come
@@ -189,10 +189,10 @@
            :doc       (:ext/doc e)
            :kind      (or (:ext/kind e) "uncategorized")
            :group     (per-kind-group e)
-           :author    (or (:ext/author e) "—")
-           :owner     (or (:ext/owner e) "—")
-           :license   (or (:ext/license e) "—")
-           :version   (or (:ext/version e) "—")})
+           :author    (or (:ext/author e) "-")
+           :owner     (or (:ext/owner e) "-")
+           :license   (or (:ext/license e) "-")
+           :version   (or (:ext/version e) "-")})
     (extension/registered-extensions)))
 
 (defn find-extension-cmd
@@ -337,10 +337,10 @@
   "Create an agent definition (data map).
 
    Options:
-   - :name        — Agent name (string, default \"default\")
-   - :description — What the agent does
-   - :constants   — Map of {symbol value} constants for SCI sandbox
-   - :model       — Override default model selection
+   - :name        - Agent name (string, default \"default\")
+   - :description - What the agent does
+   - :constants   - Map of {symbol value} constants for SCI sandbox
+   - :model       - Override default model selection
 
    The iteration loop runs until the model emits `:answer` or the
    user cancels. There is no per-agent budget and no iteration cap.
@@ -425,28 +425,28 @@
    `:cli` conversation written to disk.
 
    Returns map with:
-   - :conversation-id — Conversation ID (UUID string) when persisted;
+   - :conversation-id - Conversation ID (UUID string) when persisted;
                         nil for default ephemeral runs
-   - :answer       — The agent's response
-   - :iteration-count — Number of iterations executed
-   - :duration-ms  — Total wall-clock time
-   - :tokens       — {:input N :output N :reasoning N :cached N :total N}
-   - :cost         — {:input-cost N :output-cost N :total-cost N :model str}
-   - :trace        — Full iteration trace
-   - :confidence   — :high/:medium/:low (when present)
-   - :status — Only on failure (`:error` or `:cancelled`).
-   - :error  — Error message (only on failure).
+   - :answer       - The agent's response
+   - :iteration-count - Number of iterations executed
+   - :duration-ms  - Total wall-clock time
+   - :tokens       - {:input N :output N :reasoning N :cached N :total N}
+   - :cost         - {:input-cost N :output-cost N :total-cost N :model str}
+   - :trace        - Full iteration trace
+   - :confidence   - :high/:medium/:low (when present)
+   - :status - Only on failure (`:error` or `:cancelled`).
+   - :error  - Error message (only on failure).
 
    Options:
-   - :spec        — Output spec for structured responses
-   - :model       — Override model
-   - :on-chunk    — Streaming callback fn
-   - :debug?      — Enable debug logging (default false)
-   - :config      — Provider config override (skips ~/.vis/config.edn)
-   - :db          — DB target for ephemeral runs (`:memory`, path, or db spec)
-   - :persist?    — Write the run to ~/.vis/vis.mdb as a `:cli`
+   - :spec        - Output spec for structured responses
+   - :model       - Override model
+   - :on-chunk    - Streaming callback fn
+   - :debug?      - Enable debug logging (default false)
+   - :config      - Provider config override (skips ~/.vis/config.edn)
+   - :db          - DB target for ephemeral runs (`:memory`, path, or db spec)
+   - :persist?    - Write the run to ~/.vis/vis.mdb as a `:cli`
                     conversation. Default false.
-   - :no-persist? — Backward-compatible override; when true, forces
+   - :no-persist? - Backward-compatible override; when true, forces
                     ephemeral execution even if `:persist?` is true.
 
    Ephemeral runs use an in-memory SQLite DB (`:db :memory`), run the
@@ -464,7 +464,7 @@
         local-router? (boolean (or config mdl))
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
         title     (let [t (str/trim prompt-s)]
-                    (if (> (count t) 100) (str (subs t 0 97) "…") t))
+                    (if (> (count t) 100) (str (subs t 0 97) "...") t))
         tracker   (when on-chunk
                     (progress/make-progress-tracker {:on-update (fn [_timeline chunk] (on-chunk chunk))}))
         on-chunk* (when tracker (:on-chunk tracker))
@@ -529,8 +529,7 @@
 
 (defn- json-key
   "Return a stable string key for CLI JSON output. Runtime trace maps can
-   contain non-JSON map keys (for example proof slots keyed by
-   `[intent-id :verification]`). Charred correctly rejects those, so normalize
+   contain non-JSON map keys. Charred correctly rejects those, so normalize
    keys before writing the public `vis run --json` envelope."
   [k]
   (cond
@@ -586,7 +585,7 @@
   (.flush ^java.io.PrintStream config/original-stdout))
 
 (defn- wrap-str
-  "Word-wrap `s` into a vector of lines, each ≤ `width` chars. Splits on
+  "Word-wrap `s` into a vector of lines, each <= `width` chars. Splits on
    whitespace; tokens longer than `width` are hard-broken so a single
    long URL or symbol can't blow the column out."
   [s width]
@@ -601,7 +600,7 @@
                lines  []]
           (if-let [tok (first tokens)]
             (cond
-              ;; token longer than the column → hard-split it
+              ;; token longer than the column -> hard-split it
               (> (count tok) width)
               (let [head (subs tok 0 width)
                     tail (subs tok width)
@@ -615,7 +614,7 @@
                 (if (str/blank? line) tok (str line " " tok))
                 lines)
 
-              ;; doesn't fit → push current line, start a new one
+              ;; doesn't fit -> push current line, start a new one
               :else
               (recur (rest tokens) tok (conj lines line)))
             (cond-> lines (seq line) (conj line))))))))
@@ -728,7 +727,7 @@
               " ")))))))
 
 (defn- print-section-heading!
-  "Render a section heading line for a grouped table — used when
+  "Render a section heading line for a grouped table - used when
    `vis extensions list` breaks the rows into per-`:ext/kind`
    sub-tables. `width` is the total visible width of the surrounding
    table so the rule under the label spans the same column run."
@@ -738,10 +737,10 @@
     (stdout! "")
     (stdout! (str "── " label " " (apply str (repeat rule-len \─))))))
 
-;;; ── `vis run` — handler + bespoke arg parser ────────────────────────────
+;;; ── `vis run` - handler + bespoke arg parser ────────────────────────────
 
 (defn- parse-run-args
-  "Parse `vis run` arguments into {:prompt str :json? bool …}.
+  "Parse `vis run` arguments into {:prompt str :json? bool ...}.
 
    Bespoke instead of `commandline.base/parse-args` because everything
    that ISN'T a known flag is glued together as the prompt body."
@@ -786,7 +785,7 @@
   (stdout! "  vis run --persist \"Keep this conversation\""))
 
 (defn- cli-run!
-  "`vis run` handler. `_parsed` is unused — we re-parse the residual
+  "`vis run` handler. `_parsed` is unused - we re-parse the residual
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
@@ -898,14 +897,14 @@
         last-turn    (last turns)
         channel-name (name (or (:channel c) :unknown))]
     {:id           (str (:id c))
-     :title        (or (:title c) "—")
+     :title        (or (:title c) "-")
      :last-channel channel-name
      :turns        (count turns)
      :forks        (long (or (:fork-count c) 0))
      :last-turn-at (:created-at last-turn)
-     :last-turn    (or (some-> last-turn :created-at fmt/format-date) "—")
+     :last-turn    (or (some-> last-turn :created-at fmt/format-date) "-")
      :created-at   (:created-at c)
-     :created      (or (fmt/format-date (:created-at c)) "—")}))
+     :created      (or (fmt/format-date (:created-at c)) "-")}))
 
 (defn- conversation-rows
   [d convs]
@@ -1072,7 +1071,7 @@
       (when quota
         (str ": " quota))
       (when note
-        (str " — " note)))))
+        (str " - " note)))))
 
 (defn- provider-limit-lines
   [provider-id]
@@ -1137,9 +1136,9 @@
               {:id       (name (:provider/id provider))
                :label    (:provider/label provider)
                :auth     (if (:authenticated? status) "yes" "no")
-               :rpm      (or (some-> report :static :rpm str) "—")
-               :tpm      (or (some-> report :static :tpm str) "—")
-               :base-url (or base-url "—")})))))
+               :rpm      (or (some-> report :static :rpm str) "-")
+               :tpm      (or (some-> report :static :tpm str) "-")
+               :base-url (or base-url "-")})))))
 
 (defn- print-registered-providers!
   []
@@ -1590,9 +1589,9 @@
 
 (defn- configure-logging!
   "Route Telemere signals: file handler always on, persistence-backed
-   `:db` handler always on (so the loop's `tel/with-ctx+ {:db-info …}`
+   `:db` handler always on (so the loop's `tel/with-ctx+ {:db-info ...}`
    bindings land in the conversation_log table), and the
-   `:default/console` handler is OFF by default — it was removed by
+   `:default/console` handler is OFF by default - it was removed by
    `internal.registry` at namespace load so boot-time registration
    logs never spray to stdout. We re-add it here only when `--debug`
    / `--verbose` / `-v` / `VIS_DEBUG=1` is set. Idempotent."
@@ -1632,7 +1631,7 @@
    up during the most recent scan to stderr, along with the
    user-actionable hint. Pre-fix the failure was a buried
    `~/.vis/vis.log` ERROR line and the user had no surface clue
-   that an entire alias namespace was unbound — the LLM in the
+   that an entire alias namespace was unbound - the LLM in the
    sandbox would loop on `Unable to resolve symbol: v/cat` until
    the user manually dug through the log file. Now the launcher
    shouts the failure on every startup so the user can `git diff`
@@ -1682,7 +1681,7 @@
 ;; calls and its commands appear here without any code change.
 ;; =============================================================================
 
-(def ^:private DEFAULT_DOC "vis — iterative coding agent CLI")
+(def ^:private DEFAULT_DOC "vis - iterative coding agent CLI")
 
 (defn root-command
   "Build the root `vis` command tree. Subcommands are pulled fresh on
@@ -1782,7 +1781,7 @@
 
 (defn- exit-with-fatal-error!
   [^Throwable t]
-  (stdout! (str "vis: fatal error — " (or (ex-message t) (.getName (class t)))))
+  (stdout! (str "vis: fatal error - " (or (ex-message t) (.getName (class t)))))
   (stdout! "See ~/.vis/vis.log for details.")
   (shutdown-agents)
   (System/exit 1))
@@ -1872,7 +1871,7 @@
       (timed-startup! measure? "pre-extension-bootstrap"
         #(crac-bootstrap/pre-extension-bootstrap! {:phase :cli}))
       ;; Quiet stdout BEFORE any extension load triggers Telemere registration
-      ;; spam — the user only sees logs when they pass --debug / --verbose / -v
+      ;; spam - the user only sees logs when they pass --debug / --verbose / -v
       ;; (or set VIS_DEBUG=1).
       (timed-startup! measure? "configure-logging"
         #(configure-logging! args))
@@ -1902,7 +1901,7 @@
                 (System/exit 1))
 
               :else
-              ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match …}`.
+              ;; `dispatch!` returns `{:status :ok|:help|:error|:no-match ...}`.
               ;; `:error` covers spec-validation failures (missing required
               ;; args, unknown flags). Without an explicit `System/exit 1` here
               ;; the process exited 0 even though the user-visible output was

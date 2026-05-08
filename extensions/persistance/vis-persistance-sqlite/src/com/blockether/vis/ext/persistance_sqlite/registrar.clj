@@ -3,7 +3,7 @@
 
    Manifest discovery loads this namespace on every Vis startup. The
    heavyweight `com.blockether.vis.ext.persistance-sqlite.core` namespace
-   (HikariCP, sqlite-jdbc, charred, honey.sql, next.jdbc, nippy, … —
+   (HikariCP, sqlite-jdbc, charred, honey.sql, next.jdbc, nippy, ... -
    ~480 ms of class loading on a cold JVM) is NOT required here.
 
    `:ext/persistance` registers the backend with `:persistance/ns` pointing
@@ -12,17 +12,17 @@
    `com.blockether.vis.internal.persistance/resolve-impl`), so the heavy
    ns auto-loads on the first real DB op. Commands that never touch the
    DB (`vis providers list`, `vis --help`, `vis extensions doctor` for
-   non-DB-touching extensions, …) skip the load entirely.
+   non-DB-touching extensions, ...) skip the load entirely.
 
    The contract that flips with this split:
    - `(require 'com.blockether.vis.ext.persistance-sqlite.core)` does
-     NOT register the extension on its own anymore — it just defines the
+     NOT register the extension on its own anymore - it just defines the
      fns. Tests that only need the fns can keep requiring core directly.
      Tests / runtime that need the extension registered should require
      this `registrar` ns OR rely on classpath manifest discovery (which
      loads this ns).
 
-   Proof / intents / audit semantics are untouched: when the persistance
+   Runtime semantics are untouched: when the persistance
    facade actually dispatches a backend call, the heavy ns loads, and
    every fn is found exactly as before. The split only changes WHEN the
    heavy ns is loaded, never WHAT it does."

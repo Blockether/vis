@@ -2,14 +2,14 @@
   "Public-surface coverage for `internal/manifest`.
 
    Why this file exists:
-     1. AGENTS.md hard rule — every namespace ships with a `_test.clj`.
+     1. AGENTS.md hard rule - every namespace ships with a `_test.clj`.
      2. The `load-failures` surface added after conversation
         d8aff512-d60d-42b6-a009-041f1bec3891 is the keystone of an
         end-to-end fix: a syntax error in any extension source file
         used to silently disable its alias namespace, the LLM would
         see `Unable to resolve symbol: v/cat` for every call, and
         the only trail was a buried `~/.vis/vis.log` ERROR line. Now
-        the same failure feeds two visible surfaces — the launcher's
+        the same failure feeds two visible surfaces - the launcher's
         stderr banner AND the system prompt's `<scan-warnings>`
         block. Both consumers depend on this contract:
 
@@ -37,8 +37,8 @@
         (expect (vector? v))))
 
     (it "calling twice in a row returns equal values (read-only surface)"
-      ;; If `load-failures` ever started doing work on read — e.g.
-      ;; lazily re-scanning the classpath — two consecutive calls
+      ;; If `load-failures` ever started doing work on read - e.g.
+      ;; lazily re-scanning the classpath - two consecutive calls
       ;; could disagree. The launcher banner + system-prompt block
       ;; both call this fn, sometimes from different threads; they
       ;; need to see the same answer.
@@ -65,7 +65,7 @@
         (expect (= :extension-load source))))))
 
 (defdescribe scan-extensions-still-idempotent-test
-  ;; `load-failures` reset semantics live INSIDE `scan!` — each scan
+  ;; `load-failures` reset semantics live INSIDE `scan!` - each scan
   ;; clears the atom before re-populating. We don't trigger a real
   ;; scan here (it would mutate global state used by other tests);
   ;; instead we pin that the public scan entry point is callable and

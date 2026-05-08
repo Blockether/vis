@@ -471,7 +471,7 @@
   (it "zai-coding-style :already-authenticated success stays silent even when auth-fn prints lines"
     ;; Real regression: zai's make-auth-fn prints \"Already authenticated with X.\"
     ;; on the success path. The previous \"silent unless lines collected\" rule
-    ;; let those lines through as a popup — the exact \"success dialog\" the user
+    ;; let those lines through as a popup - the exact \"success dialog\" the user
     ;; vetoed for typical/standard providers. Now success keywords suppress
     ;; printed output regardless.
     (let [popups   (atom [])
@@ -508,7 +508,7 @@
           provider {:id :zai-coding :api-key nil}]
       (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
                                                          (fn [print!]
-                                                           (print! "Set ZAI_CODING_API_KEY=\u2026 and re-run.")
+                                                           (print! "Set ZAI_CODING_API_KEY=... and re-run.")
                                                            :no-credentials)})
                     vis/display-label       (fn [_] "Z.AI Coding")
                     dlg/text-view-dialog!   (text-view-recorder popups)

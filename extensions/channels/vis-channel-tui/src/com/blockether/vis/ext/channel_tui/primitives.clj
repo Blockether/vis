@@ -100,7 +100,7 @@
 ;;; ── Rectangles ─────────────────────────────────────────────────────────────
 
 (defn fill-rect!
-  "Fill a rectangle at (col, row) of size w×h with the given char (default space)."
+  "Fill a rectangle at (col, row) of size wxh with the given char (default space)."
   ([g col row w h]    (fill-rect! g col row w h \space))
   ([^TextGraphics g col row w h ch]
    (.fillRectangle g (TerminalPosition. (int col) (int row))
@@ -126,7 +126,7 @@
 ;;; ── Composite primitives ──────────────────────────────────────────────────
 
 (defn draw-box!
-  "Draw a single-line bordered box at (left, top) of size w×h.
+  "Draw a single-line bordered box at (left, top) of size wxh.
    Draws corners, edges. Does NOT fill interior."
   [g left top w h]
   (let [right  (+ left w -1)
@@ -157,7 +157,7 @@
 
 ;;; ── Display-width (terminal columns, not Java chars) ──────────────────────
 ;;
-;; Inline span sentinels are a SECOND PUA range (\uE110…\uE117);
+;; Inline span sentinels are a SECOND PUA range (\uE110...\uE117);
 ;; see the `INLINE_*` constants further down in this file. The
 ;; range bounds + the `inline-sentinel?` predicate are inlined here
 ;; so display-width and friends can reference them without a forward
@@ -171,9 +171,11 @@
 (def INLINE_STRIKE_OFF  "\uE115")
 (def INLINE_CODE_ON     "\uE116")
 (def INLINE_CODE_OFF    "\uE117")
+(def INLINE_LINK_ON     "\uE118")
+(def INLINE_LINK_OFF    "\uE119")
 
 (def ^:private ^:const INLINE_SENTINEL_LO 0xE110)
-(def ^:private ^:const INLINE_SENTINEL_HI 0xE117)
+(def ^:private ^:const INLINE_SENTINEL_HI 0xE119)
 
 (defn inline-sentinel?
   "True when `g` (a single grapheme String) is one of the eight inline
@@ -184,11 +186,11 @@
       (and (>= c (long INLINE_SENTINEL_LO)) (<= c (long INLINE_SENTINEL_HI))))))
 
 (defn- sanitize-control-chars
-  "Replace every ASCII control character in `s` (codepoints 0x00–0x1F)
-   with `·` so a stray `\n` / `\t` / `\r` from a malformed link
+  "Replace every ASCII control character in `s` (codepoints 0x00-0x1F)
+   with `/` so a stray `\n` / `\t` / `\r` from a malformed link
    parse or bad upstream string can NEVER take the render thread
    down. Returns `s` UNCHANGED (same identity, no allocation) when
-   the input is clean — the overwhelmingly common case — so we
+   the input is clean - the overwhelmingly common case - so we
    don't pay a StringBuilder allocation on every grapheme-width
    call.
 
@@ -202,7 +204,7 @@
    upstream; this is the belt-and-braces fallback for any future
    caller that lets a control char slip into a paint string.
 
-   Inline-span sentinels (\uE110…\uE117) live in the BMP
+   Inline-span sentinels (\uE110...\uE117) live in the BMP
    private-use area, not C0, so they pass through untouched."
   ^String [^String s]
   (let [n (.length s)
@@ -219,7 +221,7 @@
           (if (>= k n)
             (.toString sb)
             (let [c (.charAt s k)]
-              (.append sb (if (< (int c) 0x20) \u00b7 c))
+              (.append sb (if (< (int c) 0x20) / c))
               (recur (inc k)))))))))
 
 (defn display-width
@@ -227,16 +229,16 @@
 
    Built on `TextCharacter/fromString`, the same routine
    `AbstractTextGraphics.putString` uses internally after PR #625, so
-   what we measure matches what the renderer actually paints — grapheme
+   what we measure matches what the renderer actually paints - grapheme
    clusters honoured (BreakIterator-based), CJK + emoji counted as two
    columns, ASCII as one.
 
-   Inline span sentinels (`INLINE_*_ON`/`OFF`, range \uE110…\uE117)
+   Inline span sentinels (`INLINE_*_ON`/`OFF`, range \uE110...\uE117)
    count as zero columns: they're invisible style toggles, never
    painted, never advance the cursor.
 
-   Stray ASCII control bytes (0x00–0x1F) get sanitized to `·`
-   before reaching Lanterna — see `sanitize-control-chars` for the
+   Stray ASCII control bytes (0x00-0x1F) get sanitized to `/`
+   before reaching Lanterna - see `sanitize-control-chars` for the
    why. Without that, a single rogue `\n` from a misbehaving link
    parse used to take down the entire render thread.
 
@@ -260,7 +262,7 @@
 
 (defn col-prefix-end
   "Return the char-index `i` such that `(subs s 0 i)` is the longest
-   prefix of `s` whose `display-width` is ≤ `max-cols` AND that does NOT
+   prefix of `s` whose `display-width` is <= `max-cols` AND that does NOT
    split a grapheme cluster.
 
    Use this when you need both the prefix and the position of the
@@ -344,7 +346,7 @@
   "Paint a single line at (x, y) honouring inline span sentinels.
 
    The line may contain interleaved text and `INLINE_*_ON`/`OFF`
-   sentinels (range \\uE110…\\uE117). Sentinels themselves are NEVER
+   sentinels (range \\uE110...\\uE117). Sentinels themselves are NEVER
    painted; they toggle the SGR style (BOLD/ITALIC/CROSSED-OUT) or
    the fg/bg colors (CODE) for the spans that follow.
 
@@ -359,19 +361,19 @@
      toggles STACK on top of the inherited set: `> **bold**` inside a
      quote renders as bold-italic, not bold-without-italic. The pre-fix
      version called `clearModifiers` at entry and silently dropped the
-     wrapping italic — user-visible bug on every blockquote that
+     wrapping italic - user-visible bug on every blockquote that
      contained inline emphasis.
    - Unmatched / dangling sentinels (e.g. an OFF without a prior ON,
      or a line that ends mid-bold) are tolerated: at exit we restore
      exactly the inherited modifier set, so SGR state never leaks past
      the call.
    - When NO sentinel appears in the line this collapses to a single
-     `put-str!` call — the same as the old non-styled path — so the
+     `put-str!` call - the same as the old non-styled path - so the
      hot path is not penalised for the common case.
 
    This is the entry point that lets the markdown renderer support
    **bold** / *italic* / ~~strike~~ / `code` mid-line without
-   abandoning the marker-prefix-per-line architecture above."
+   replacing the marker-prefix-per-line architecture above."
   [^TextGraphics g x y ^String line base-fg base-bg code-fg code-bg]
   (let [;; Capture pre-existing modifiers so inline toggles can stack
         ;; on top of them and we can restore exactly at exit.
@@ -383,7 +385,7 @@
     (cond
       (zero? n) nil
 
-      ;; Fast path: no sentinels at all → single putString. The
+      ;; Fast path: no sentinels at all -> single putString. The
       ;; inherited modifiers are still active, so this paints with
       ;; whatever style the wrapping `styled` block enabled.
       (loop [i 0]
@@ -433,6 +435,8 @@
               (= gs INLINE_STRIKE_OFF) (do (flush!) (.remove inline SGR/CROSSED_OUT))
               (= gs INLINE_CODE_ON)    (do (flush!) (aset code? 0 true))
               (= gs INLINE_CODE_OFF)   (do (flush!) (aset code? 0 false))
+              (= gs INLINE_LINK_ON)    (do (flush!) (.add inline SGR/UNDERLINE))
+              (= gs INLINE_LINK_OFF)   (do (flush!) (.remove inline SGR/UNDERLINE))
               :else                    (.append sb gs))))
         (flush!)
         ;; Restore the inherited modifier set exactly so the wrapping
@@ -569,9 +573,9 @@
   "Compact label for a tab map.
 
    Supported tab keys:
-   - `:label` / `:id` — visible base label.
-   - `:dirty?` — appends a dirty marker.
-   - `:state` — appends a compact state badge for running / verified /
+   - `:label` / `:id` - visible base label.
+   - `:dirty?` - appends a dirty marker.
+   - `:state` - appends a compact state badge for running / verified /
      accepted / error tabs.
 
    This is terminal-column aware when later passed through `tab-layout`, so
@@ -678,31 +682,31 @@
 ;; (italic for thinking, dim for code, bold for headers, etc.)
 ;; without visible noise.
 
-(def MARKER_THINKING   "\u200B")  ;; zero-width space       → italic, dim (reasoning)
-(def MARKER_CODE       "\u200C")  ;; zero-width non-joiner  → code style
-(def MARKER_RESULT     "\u200D")  ;; zero-width joiner      → result/return value (success)
-(def MARKER_STDOUT     "\uFEFF")  ;; byte-order mark        → stdout output
-(def MARKER_SEP        "\u2060")  ;; word-joiner            → separator line
-(def MARKER_CODE_OK    "\u2061")  ;; function application   → code with success status
-(def MARKER_CODE_ERR   "\u2062")  ;; invisible times        → code with error status
-(def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    → error result line
-(def MARKER_DURATION   "\u2064")  ;; invisible plus         → duration annotation
-(def MARKER_STDERR     "\u2065")  ;; invisible reserved     → stderr output
-(def MARKER_ITERATION_HDR   "\u2066")  ;; LRI                    → iteration header with bg
-(def MARKER_STDOUT_SEP "\u2067")  ;; RLI                    → stdout separator line
-(def MARKER_STDOUT_PAD "\u2068")  ;; FSI                    → stdout empty padding line
-(def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    → answer separator (trace→answer break)
-(def MARKER_CODE_PAD   "\u206A")  ;; ISS                    → running/neutral code block padding line
-(def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   → error code block padding line
-(def MARKER_CODE_OK_PAD "\uE000") ;; PUA                    → successful code block padding line
-(def MARKER_ITERATION_PAD   "\u206C")  ;; IAFS                   → iteration zone padding (margin between blocks)
-(def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   → final answer header
-(def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   → answer text line (with answer bg)
-(def MARKER_ANSWER_PAD "\u206F")  ;; NODS                   → answer padding line
-;; Markdown markers (PUA \uE000+) — guaranteed unique, never collide
+(def MARKER_THINKING   "\u200B")  ;; zero-width space       -> italic, dim (reasoning)
+(def MARKER_CODE       "\u200C")  ;; zero-width non-joiner  -> code style
+(def MARKER_RESULT     "\u200D")  ;; zero-width joiner      -> result/return value (success)
+(def MARKER_STDOUT     "\uFEFF")  ;; byte-order mark        -> stdout output
+(def MARKER_SEP        "\u2060")  ;; word-joiner            -> separator line
+(def MARKER_CODE_OK    "\u2061")  ;; function application   -> code with success status
+(def MARKER_CODE_ERR   "\u2062")  ;; invisible times        -> code with error status
+(def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    -> error result line
+(def MARKER_DURATION   "\u2064")  ;; invisible plus         -> duration annotation
+(def MARKER_STDERR     "\u2065")  ;; invisible reserved     -> stderr output
+(def MARKER_ITERATION_HDR   "\u2066")  ;; LRI                    -> iteration header with bg
+(def MARKER_STDOUT_SEP "\u2067")  ;; RLI                    -> stdout separator line
+(def MARKER_STDOUT_PAD "\u2068")  ;; FSI                    -> stdout empty padding line
+(def MARKER_ANSWER_SEP "\u2069")  ;; PDI                    -> answer separator (trace->answer break)
+(def MARKER_CODE_PAD   "\u206A")  ;; ISS                    -> running/neutral code block padding line
+(def MARKER_CODE_ERR_PAD "\u206B") ;; ASS                   -> error code block padding line
+(def MARKER_CODE_OK_PAD "\uE000") ;; PUA                    -> successful code block padding line
+(def MARKER_ITERATION_PAD   "\u206C")  ;; IAFS                   -> iteration zone padding (margin between blocks)
+(def MARKER_ANSWER_HDR "\u206D")  ;; AAFS                   -> final answer header
+(def MARKER_ANSWER_TXT "\u206E")  ;; NADS                   -> answer text line (with answer bg)
+(def MARKER_ANSWER_PAD "\u206F")  ;; NODS                   -> answer padding line
+;; Markdown markers (PUA \uE000+) - guaranteed unique, never collide
 ;; with the iteration/answer markers above. Two parallel sets:
-;;   - MARKER_MD_*    → answer-zone markdown (answer-bg)
-;;   - MARKER_TH_MD_* → thinking-zone markdown (iteration-header-bg, italic)
+;;   - MARKER_MD_*    -> answer-zone markdown (answer-bg)
+;;   - MARKER_TH_MD_* -> thinking-zone markdown (iteration-header-bg, italic)
 (def MARKER_MD_H1         "\uE001") ;; markdown heading 1 (answer)
 (def MARKER_MD_H2         "\uE002") ;; markdown heading 2 (answer)
 (def MARKER_MD_H3         "\uE003") ;; markdown heading 3 (answer)
@@ -729,7 +733,7 @@
 (def MARKER_TH_MD_HR         "\uE02B") ;; markdown horizontal rule (thinking)
 (def MARKER_TH_MD_SUMMARY    "\uE02C") ;; markdown <summary> disclosure label (thinking)
 
-;; Inline span sentinels (\uE110…\uE117) live in their own section
+;; Inline span sentinels (\uE110...\uE117) live in their own section
 ;; near the top of this file because both the width math
 ;; (`display-width` etc.) AND the painter (`paint-styled-line!`)
 ;; need them; defining them here would force a forward declare.

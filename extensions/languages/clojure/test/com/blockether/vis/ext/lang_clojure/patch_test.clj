@@ -117,7 +117,7 @@
           by-source     (locators-fn path {:source-contains "needle" :limit 20})
           symbol-filter (symbols-fn path {:name 'target-sym})]
       (expect (= 10 (count (:result by-default))))
-      (expect (true? (get-in by-default [:provenance :truncated?])))
+      (expect (true? (get-in by-default [:info :truncated?])))
       (expect (= ['target-sym] (mapv :value (:result by-symbol))))
       (expect (some #(str/includes? (:source %) "needle") (:result by-source)))
       (expect (= ['target-sym] (mapv :value (:result symbol-filter))))))
@@ -127,7 +127,7 @@
           locator-fn (:ext.symbol/fn patch/locator-for-symbol-symbol)
           out        (locator-fn path 'target-sym)]
       (expect (true? (:success? out)))
-      (expect (= :z/locator-for-symbol (get-in out [:provenance :op])))
+      (expect (= :z/locator-for-symbol (get-in out [:info :op])))
       (expect (= 'target-sym (get-in out [:result :value])))))
 
   (it "renders one locator as a compact patch-oriented hint"
@@ -191,15 +191,15 @@
       (patch-fn {:path path :search 'target-sym :replace source-row})
       (expect (= "(ns demo)\n(def a source-sym)\n(def b source-sym)\n" (slurp path)))))
 
-  (it "z/patch public symbol returns a tool envelope with diff provenance"
+  (it "z/patch public symbol returns a tool envelope with diff info"
     (let [path     (write-temp! "patch/tool.clj" "(ns demo)\n(def z 1)\n")
           patch-fn (:ext.symbol/fn patch/patch-symbol)
           out      (patch-fn {:path path :search "(def z 1)" :replace "(def z 3)"})]
       (expect (true? (:success? out)))
-      (expect (= :z/patch (get-in out [:provenance :op])))
+      (expect (= :z/patch (get-in out [:info :op])))
       (expect (= [{:path path}] (:result out)))
       (expect (= "(ns demo)\n(def z 1)\n"
-                (get-in out [:provenance :files 0 :before])))
+                (get-in out [:info :files 0 :before])))
       (expect (= "(ns demo)\n(def z 3)\n"
-                (get-in out [:provenance :files 0 :after])))
+                (get-in out [:info :files 0 :after])))
       (expect (= "(ns demo)\n(def z 3)\n" (slurp path))))))

@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation.transcript
-  "Full conversation transcript — DATA first, presentation second.
+  "Full conversation transcript - DATA first, presentation second.
 
    `transcript` returns one canonical Clojure map with every turn,
    every iteration, every executed block plus the LLM-side context
@@ -18,9 +18,9 @@
 
    Public Clojure surface:
 
-     `(transcript      db-info conv-id)`  → transcript data map
-     `(transcript->md  data)`             → Markdown string
-     `(transcript-md   db-info conv-id)`  → DB lookup + Markdown string
+     `(transcript      db-info conv-id)`  -> transcript data map
+     `(transcript->md  data)`             -> Markdown string
+     `(transcript-md   db-info conv-id)`  -> DB lookup + Markdown string
 
      `cli-command` mounts `vis extensions reproduction <CONVERSATION-ID>`
      through `:ext/cli`, keeping extension-owned commands under
@@ -35,7 +35,7 @@
       :dialog      [{:role :turn-id :content}]
       :calls       [{:kind :ref :parent-ref :turn-id :iteration-id :op :tool
                      :var :code :status :duration-ms :command :target
-                     :result :result-summary :provenance}]
+                     :result :result-summary :info}]
       :timeline    [{:kind :ref :turn-id :iteration-id :content :code
                      :status :duration-ms :result-summary}]
       :llm-diagnostics [{:turn-id :iteration-id :raw-response}]
@@ -102,8 +102,8 @@
 (defn- enrich-iteration
   "Attach `:blocks` and `:vars` to one iteration row.
 
-     `:blocks` — every executed form (Nippy-encoded inline log).
-     `:vars`   — every `(def …)` this iteration produced; reads from
+     `:blocks` - every executed form (Nippy-encoded inline log).
+     `:vars`   - every `(def ...)` this iteration produced; reads from
                 the separate `expression_soul` / `expression_state`
                 facade. Each entry is `{:name :code :value :version}`.
 
@@ -121,7 +121,7 @@
       (assoc :failure-count (count (filter :error blocks))))))
 
 (defn- build-turn
-  "Pure projection: one conversation_turn_soul row + its iterations → the
+  "Pure projection: one conversation_turn_soul row + its iterations -> the
    turn-shaped data map the public `transcript` returns."
   [db-info turn]
   (let [raw-iters (try (vis/db-list-conversation-turn-iterations db-info (:id turn))
@@ -172,7 +172,7 @@
      - unique prefix  => scanned across every channel and expanded
 
    Returns nil on miss or ambiguous prefix. Unlike
-   `db-resolve-conversation-id`, this helper is existence-aware — a
+   `db-resolve-conversation-id`, this helper is existence-aware - a
    well-formed but unknown UUID string must not masquerade as a real
    conversation."
   [db-info conversation-ref]
@@ -198,7 +198,7 @@
 (defn- preview-string
   [s n]
   (let [s (str s)]
-    (if (<= (count s) n) s (str (subs s 0 n) "…"))))
+    (if (<= (count s) n) s (str (subs s 0 n) "..."))))
 
 (defn- preview-value
   [v n]
@@ -228,7 +228,7 @@
 
 (defn- block-ref
   [turn iteration block]
-  (or (get-in block [:provenance :ref])
+  (or (get-in block [:info :ref])
     (str "turn/" (subs (str (:id turn)) 0 8)
       "/iteration/" (:position iteration)
       "/block/" (inc (long (block-index block))))))
@@ -237,7 +237,7 @@
   [value]
   (and (map? value)
     (contains? value :success?)
-    (contains? value :provenance)))
+    (contains? value :info)))
 
 (defn- result-summary
   "Bounded, data-first result preview for timeline/call rows. The full
@@ -285,14 +285,14 @@
 
 (defn- tool-call-row
   [turn iteration block var-row envelope]
-  (let [tool-provenance (:provenance envelope)
+  (let [tool-info (:info envelope)
         result          (:result envelope)
-        op              (or (:op tool-provenance) :v/tool)
+        op              (or (:op tool-info) :v/tool)
         parent-ref      (when block (block-ref turn iteration block))
         ref             (when parent-ref (str parent-ref "/tool/" (op-slug op)))
         status          (event-status (:error envelope) (:success? envelope)
                           (or (:timed-out? result) (:timeout? envelope)))
-        tool            (:tool tool-provenance)]
+        tool            (:tool tool-info)]
     (cond-> {:kind           :tool-call
              :ref            ref
              :parent-ref     parent-ref
@@ -303,17 +303,17 @@
              :tool           (or (:sym tool) (:call tool) tool)
              :status         status
              :success?      (:success? envelope)
-             :duration-ms    (or (:duration-ms tool-provenance)
+             :duration-ms    (or (:duration-ms tool-info)
                                (:duration-ms result)
                                0)
              :code           (:code block)
              :result         result
              :result-summary (result-summary result)
-             :provenance     tool-provenance}
+             :info     tool-info}
       var-row              (assoc :var (:name var-row))
-      (:command tool-provenance) (assoc :command (:command tool-provenance))
+      (:command tool-info) (assoc :command (:command tool-info))
       (:command result)    (assoc :command (:command result))
-      (:target tool-provenance) (assoc :target (:target tool-provenance))
+      (:target tool-info) (assoc :target (:target tool-info))
       (:error envelope)    (assoc :error (:error envelope)))))
 
 (defn- block-by-code
@@ -455,7 +455,7 @@
    `conversation-id` accepts either the canonical UUID or an
    unambiguous string prefix.
 
-   Pure with respect to the database — no writes, no logging.
+   Pure with respect to the database - no writes, no logging.
    `(:db-info env)` is the standard handle; the SCI-bound symbol
    variant uses the live env automatically."
   [db-info conversation-id]
@@ -482,20 +482,20 @@
 
 ;; =============================================================================
 ;; Markdown renderer. Pure transformation over `transcript`'s data
-;; shape — no DB calls, no side effects.
+;; shape - no DB calls, no side effects.
 ;; =============================================================================
 
 (defn- truncate
   [s n]
   (let [s (str s)]
-    (if (<= (count s) n) s (str (subs s 0 n) "…"))))
+    (if (<= (count s) n) s (str (subs s 0 n) "..."))))
 
 (defn- one-line
   [s]
   (-> (or s "") str (str/replace #"\s+" " ") str/trim))
 
 (defn- format-cost-usd
-  "Locale-stable USD formatter — always a dot separator (`$0.0042`),
+  "Locale-stable USD formatter - always a dot separator (`$0.0042`),
    never a locale comma. nil collapses to `$0.0000` so callers don't
    `or`-pad."
   [c]
@@ -544,7 +544,7 @@
   "Per-block forensic dump: status header, optional comment, full code
    in a fenced ```clojure block, result line, fenced stdout/stderr,
    fenced error. `answer?` flips on the block the iteration's
-   `:answer-form-idx` points at — the form that called `(answer …)` —
+   `:answer-form-idx` points at - the form that called `(answer ...)` -
    so the reader spots the terminal block at a glance.
 
    Truncation budgets stay generous (4KB stdout / stderr, 800 chars
@@ -559,7 +559,7 @@
                       error              (conj "error"))
         suffix      (if (seq flags) (str " [" (str/join ", " flags) "]") "")
         has-result? (and (not error) (contains? block :result))]
-    (str "##### Block " idx " — " marker " "
+    (str "##### Block " idx " - " marker " "
       (long (or (:duration-ms block) 0)) "ms" suffix "\n"
       (when (not (str/blank? comment)) (str comment "\n"))
       (render-fenced "clojure" code)
@@ -585,9 +585,9 @@
       "\n")))
 
 (defn- render-iter-error
-  "Render an iteration-level error — the provider call failed before
+  "Render an iteration-level error - the provider call failed before
    any block could run. Persisted on `iteration.llm_error` as JSON.
-   nil/blank → nothing emitted."
+   nil/blank -> nothing emitted."
   [error]
   (when (and error (not (str/blank? (str error))))
     (str "_iteration error:_\n"
@@ -595,9 +595,9 @@
       "\n")))
 
 (defn- render-vars
-  "Compact list of `(def …)` rows produced by this iteration. One
+  "Compact list of `(def ...)` rows produced by this iteration. One
    bullet per var with truncated code preview + truncated value
-   pr-str. Empty / nil → nothing emitted."
+   pr-str. Empty / nil -> nothing emitted."
   [vars]
   (when (seq vars)
     (str "_vars defined this iteration:_\n\n"
@@ -606,9 +606,9 @@
                (str "- `" name "`"
                  (when version (str " (v" version ")"))
                  (when (and code (not (str/blank? code)))
-                   (str " — `" (truncate (one-line code) 80) "`"))
+                   (str " - `" (truncate (one-line code) 80) "`"))
                  (when (some? value)
-                   (str " → `" (truncate (pr-str value) 80) "`"))))
+                   (str " -> `" (truncate (pr-str value) 80) "`"))))
           vars))
       "\n\n")))
 
@@ -635,7 +635,7 @@
   "Collapsible `<details>` block carrying the full LLM message
    envelope for this iteration: every `[{:role :content}]` pair the
    provider was called with. Each message renders as its own
-   `_role:_` fenced text block. Empty / nil envelope → no output."
+   `_role:_` fenced text block. Empty / nil envelope -> no output."
   [messages]
   (when (seq messages)
     (let [body (apply str
@@ -685,11 +685,11 @@
 
 (defn- render-raw-diagnostic-row
   [{:keys [turn-id iteration status raw-length raw-sha256 block-count block-langs]}]
-  (str "| `" turn-id "` | " iteration " | " (or (some-> status name) "—")
-    " | " (or raw-length "—")
-    " | `" (or (sha-prefix raw-sha256) "—") "`"
-    " | " (or block-count "—")
-    " | " (if (seq block-langs) (str/join ", " block-langs) "—")
+  (str "| `" turn-id "` | " iteration " | " (or (some-> status name) "-")
+    " | " (or raw-length "-")
+    " | `" (or (sha-prefix raw-sha256) "-") "`"
+    " | " (or block-count "-")
+    " | " (if (seq block-langs) (str/join ", " block-langs) "-")
     " |\n"))
 
 (defn- render-raw-diagnostic-details
@@ -749,11 +749,11 @@
   [data report-title]
   (let [{:keys [id channel provider model created-at]} (:conversation data)
         conv-title (get-in data [:conversation :title])]
-    (str "# " report-title " — conversation `" id "`\n\n"
-      "- **Title:** " (or conv-title "—") "\n"
-      "- **Channel:** " (or (some-> channel name) "—") "\n"
-      "- **Provider/model:** " (or (some-> provider name) "—") "/" (or model "—") "\n"
-      "- **Created:** " (or created-at "—") "\n\n")))
+    (str "# " report-title " - conversation `" id "`\n\n"
+      "- **Title:** " (or conv-title "-") "\n"
+      "- **Channel:** " (or (some-> channel name) "-") "\n"
+      "- **Provider/model:** " (or (some-> provider name) "-") "/" (or model "-") "\n"
+      "- **Created:** " (or created-at "-") "\n\n")))
 
 (defn- render-prompt-row-table
   [rows]
@@ -761,8 +761,8 @@
     "|---|---:|---|---|---:|---:|---:|\n"
     (apply str
       (map (fn [{:keys [turn-id iteration status provider model system-prompt messages]}]
-             (str "| `" turn-id "` | " iteration " | " (or (some-> status name) "—")
-               " | " (or (some-> provider name) "—") "/" (or model "—")
+             (str "| `" turn-id "` | " iteration " | " (or (some-> status name) "-")
+               " | " (or (some-> provider name) "-") "/" (or model "-")
                " | " (count (str system-prompt))
                " | " (count messages)
                " | " (reduce + 0 (map #(count (str (:content %))) messages))
@@ -821,17 +821,17 @@
 
 (defn- render-iteration-section [include-prompts? iter prev-iter]
   (let [pos     (:position iter)
-        status  (or (some-> (:status iter) name) "—")
+        status  (or (some-> (:status iter) name) "-")
         dur     (or (:duration-ms iter) 0)
         in      (or (:input-tokens iter) 0)
         out     (or (:output-tokens iter) 0)
         cost    (or (:cost-usd iter) 0.0)
         blocks  (:blocks iter)
-        ;; Index of the block that called `(answer …)`. nil for
-        ;; non-terminal iterations — the marker only fires on the
+        ;; Index of the block that called `(answer ...)`. nil for
+        ;; non-terminal iterations - the marker only fires on the
         ;; right block.
         ans-idx (:answer-form-idx iter)]
-    (str "\n#### Iteration " pos " — " status
+    (str "\n#### Iteration " pos " - " status
       " (" in "/" out " tokens, " (format-cost-usd cost) ", " (long dur) "ms)\n\n"
       (render-thinking (:thinking iter))
       (render-iter-error (:error iter))
@@ -854,7 +854,7 @@
 (defn- render-final-answer
   "Final answer text the turn settled on, persisted on
    `conversation_turn_state.metadata.answer`. Rendered after every iteration so
-   the reader sees the trajectory that led to it. nil/blank → nothing
+   the reader sees the trajectory that led to it. nil/blank -> nothing
    emitted."
   [answer]
   (when (not (str/blank? (str answer)))
@@ -869,14 +869,14 @@
   (str
     "### Turn `" id "`\n"
     "- **User request:** " (one-line user-request) "\n"
-    "- **Status:** " (or (some-> status name) "—")
+    "- **Status:** " (or (some-> status name) "-")
     (when prior-outcome (str " (" (name prior-outcome) ")")) "\n"
     "- **Provider/model:** "
     (or (cond
           (and provider model) (str provider "/" model)
           model                model
           provider             provider)
-      "—") "\n"
+      "-") "\n"
     "- **Iterations:** " iteration-count "\n"
     "- **Failures:** " failure-count "\n"
     "- **Tokens (in/out):** " (format-tokens tokens) "\n"
@@ -892,12 +892,12 @@
 
 (defn- render-header [{:keys [conversation totals]}]
   (str
-    "# Diagnostic report — conversation `" (:id conversation) "`\n"
+    "# Diagnostic report - conversation `" (:id conversation) "`\n"
     "\n"
-    "- **Title:** "    (or (:title    conversation) "—") "\n"
-    "- **Channel:** "  (or (some-> (:channel conversation) name) "—") "\n"
-    "- **Model:** "    (or (:model    conversation) "—") "\n"
-    "- **Created:** "  (or (:created-at conversation) "—") "\n"
+    "- **Title:** "    (or (:title    conversation) "-") "\n"
+    "- **Channel:** "  (or (some-> (:channel conversation) name) "-") "\n"
+    "- **Model:** "    (or (:model    conversation) "-") "\n"
+    "- **Created:** "  (or (:created-at conversation) "-") "\n"
     "- **Total turns:** "      (:turns totals) "\n"
     "- **Total iterations:** " (:iterations totals) "\n"
     "- **Total cost (USD):** " (format-cost-usd (:cost-usd totals)) "\n"
@@ -916,7 +916,7 @@
 
 (defn- render-dialog-md
   [{:keys [conversation dialog]}]
-  (str "# Dialog — conversation `" (:id conversation) "`\n\n"
+  (str "# Dialog - conversation `" (:id conversation) "`\n\n"
     (if (seq dialog)
       (apply str (map render-dialog-message dialog))
       "_No dialog messages._\n")))
@@ -935,11 +935,11 @@
    `transcript`'s canonical data shape. Returns a string.
 
    Modes:
-   - `:full`               — complete forensic transcript, including prompt bodies (default).
-   - `:debug`              — alias for the complete forensic transcript.
-   - `:dialog`             — user/assistant dialog only.
-   - `:system-prompts`     — persisted system prompt snapshots only.
-   - `:prompts`            — exact persisted provider prompt envelopes."
+   - `:full`               - complete forensic transcript, including prompt bodies (default).
+   - `:debug`              - alias for the complete forensic transcript.
+   - `:dialog`             - user/assistant dialog only.
+   - `:system-prompts`     - persisted system prompt snapshots only.
+   - `:prompts`            - exact persisted provider prompt envelopes."
   ([data]
    (transcript->md data {:mode :full}))
   ([data {:keys [mode] :or {mode :full}}]
@@ -964,7 +964,7 @@
      (str "Conversation not found: " conversation-id "\n"))))
 
 ;; =============================================================================
-;; CLI command — `vis extensions reproduction <CONVERSATION-ID>`. Foundation owns
+;; CLI command - `vis extensions reproduction <CONVERSATION-ID>`. Foundation owns
 ;; it, mounted through `:ext/cli` rather than direct global registration.
 ;; =============================================================================
 

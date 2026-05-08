@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.channel-tui.provider
-  "TUI provider management dialogs — model picker, model manager, provider router.
+  "TUI provider management dialogs - model picker, model manager, provider router.
    Config I/O and data helpers live in tui/config.clj.
 
    GitHub Copilot OAuth: a hard dep. The TUI ships with the
@@ -415,7 +415,7 @@
   (str "(" (inc idx) ")"))
 
 (defn- url-host
-  "Extract host from URL for display. 'https://llm.blockether.com/v1' → 'llm.blockether.com'"
+  "Extract host from URL for display. 'https://llm.blockether.com/v1' -> 'llm.blockether.com'"
   [url]
   (try
     (.getHost (URI. url))
@@ -473,7 +473,7 @@
 (defn- draw-provider-card!
   "Draw a 2-line provider card.
     Line 1: ① Label  url.host  ●
-    Line 2:    ★ root-model  (+N models) · RPM/TMP summary"
+    Line 2:    ★ root-model  (+N models) / RPM/TMP summary"
   [g left row inner-w idx selected? provider status limits]
   (let [text-w         (max 0 (- inner-w 2))
         text-x         (+ left 2)
@@ -498,7 +498,7 @@
                              (when-let [tpm (get-in limits [:static :tpm])]
                                (str "catalog TPM " tpm))]
                          (remove nil?)
-                         (str/join " · "))
+                         (str/join " / "))
         ;; Layout line 1:  "① Label" ... "host  ●"
         left-part     (str pri " " (or label "?"))
         right-part    (str host "  ●")
@@ -508,14 +508,14 @@
     (doseq [r (range card-rows)]
       (p/fill-rect! g (inc left) (+ row r) inner-w 1))
 
-    ;; Line 1 left — priority + label (bold)
+    ;; Line 1 left - priority + label (bold)
     (if selected?
       (p/set-fg! g t/dialog-title-fg)
       (p/set-fg! g t/dialog-fg))
     (p/styled g [p/BOLD]
       (p/put-str! g text-x row (dlg/ellipsize left-part (- text-w (count right-part) 1))))
 
-    ;; Line 1 right — host (italic dimmed) + status dot
+    ;; Line 1 right - host (italic dimmed) + status dot
     (let [dot-col  (+ text-x text-w -1)
           host-col (- dot-col 2 (count host))]
       ;; Host
@@ -524,27 +524,27 @@
         (p/set-fg! g t/dialog-hint))
       (p/styled g [p/ITALIC]
         (p/put-str! g (max (+ text-x (count left-part) 1) host-col) row host))
-      ;; Status dot — green/red after probe, dim while background checks run.
+      ;; Status dot - green/red after probe, dim while background checks run.
       (p/set-fg! g (cond
                      (or loading-status? loading-limits?) t/dialog-hint-key
                      ok?                              t/status-ok
                      :else                            t/status-bad))
       (p/put-str! g dot-col row "●"))
 
-    ;; Line 2 — model + static limits summary
+    ;; Line 2 - model + static limits summary
     (if selected?
       (p/set-fg! g t/dialog-title-fg)
       (p/set-fg! g t/dialog-fg))
     (p/put-str! g text-x (inc row)
       (dlg/ellipsize (str "   ★ " root-name "  " suffix
                        (when (seq limit-summary)
-                         (str " · " limit-summary)))
+                         (str " / " limit-summary)))
         text-w))))
 
 (defn- draw-model-card!
   "Two-line model card. Mirrors `draw-provider-card!` layout:
      Line 1: ① model-name                         ★ Primary
-     Line 2:    → then {next}  /  after {previous} → then {next}  /  ...
+     Line 2:    -> then {next}  /  after {previous} -> then {next}  /  ...
 
    Line 2 spells out the **default fallback chain**: svar's default
    routing picks `(first candidates)` from this provider's `:models`
@@ -561,32 +561,32 @@
         tag        (when is-root? "★ Primary")
         bg         (if selected? t/dialog-title-bg t/dialog-bg)
         ;; Build the chain breadcrumb. Use Unicode arrows so the flow
-        ;; reads left-to-right at a glance: "after X → then Y".
+        ;; reads left-to-right at a glance: "after X -> then Y".
         subtitle   (cond
                      (and (nil? previous-name) (nil? next-name))
                      "   only model -- no fallback configured"
 
                      (nil? previous-name)
-                     (str "   → then " next-name)
+                     (str "   -> then " next-name)
 
                      (nil? next-name)
                      (str "   after " previous-name " -- last fallback")
 
                      :else
-                     (str "   after " previous-name " → then " next-name))]
+                     (str "   after " previous-name " -> then " next-name))]
     ;; Background fill across both lines
     (p/set-bg! g bg)
     (doseq [r (range card-rows)]
       (p/fill-rect! g (inc left) (+ row r) inner-w 1))
 
-    ;; Line 1 left — priority + model name (bold), trimmed to leave room
+    ;; Line 1 left - priority + model name (bold), trimmed to leave room
     ;; for the right-aligned tag.
     (let [reserved (if tag (+ (count tag) 1) 0)]
       (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-fg))
       (p/styled g [p/BOLD]
         (p/put-str! g text-x row (dlg/ellipsize left-part (max 0 (- text-w reserved))))))
 
-    ;; Line 1 right — ★ Primary tag, right-aligned. Green when not
+    ;; Line 1 right - ★ Primary tag, right-aligned. Green when not
     ;; selected, follows title-fg when the row is selected so it stays
     ;; readable on the highlight stripe.
     (when tag
@@ -595,7 +595,7 @@
         (p/styled g [p/BOLD]
           (p/put-str! g tag-col row tag))))
 
-    ;; Line 2 — dimmed italic chain breadcrumb.
+    ;; Line 2 - dimmed italic chain breadcrumb.
     (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-hint))
     (p/styled g [p/ITALIC]
       (p/put-str! g text-x (inc row) (dlg/ellipsize subtitle text-w)))))
@@ -632,7 +632,7 @@
       (if-let [model-name (select-model! screen (:id provider) base-url api-key
                             (:default-models (vis/provider-template (:id provider))))]
         (swap! models conj {:name model-name})
-        ;; User cancelled — return nil (no changes)
+        ;; User cancelled - return nil (no changes)
         (reset! models [])))
     (when (seq @models)
       (loop []
@@ -641,7 +641,7 @@
               rows    (.getRows size)
               g       (.newTextGraphics screen)
               total   (count @models)
-              ;; Do NOT clear the whole terminal here — the chat
+              ;; Do NOT clear the whole terminal here - the chat
               ;; behind the dialog should stay visible (other modals
               ;; in `dialogs.clj` already behave this way). The dialog
               ;; chrome paints its own background + drop shadow over
@@ -921,7 +921,7 @@
       (when quota
         (str ": " quota))
       (when note
-        (str " — " note)))))
+        (str " - " note)))))
 
 (defn- provider-status-text
   ([provider]
@@ -941,7 +941,7 @@
      (str/join "\n"
        (concat [title
                 ""
-                (str "Base URL: " (or (vis/provider-base-url provider) "—"))
+                (str "Base URL: " (or (vis/provider-base-url provider) "-"))
                 (str "Authenticated: " (if (:authenticated? status) "yes" "no"))]
          (when-let [e (:error status)]
            ["" (str "Error: " e)])
@@ -1055,7 +1055,7 @@
           (let [result (auth-fn print!)]
             ;; Success is silent: typical/standard providers (zai-coding, etc.)
             ;; print "Already authenticated with X." or "Persisted X key from
-            ;; env var.\" on the success path — surfacing those as a popup is
+            ;; env var.\" on the success path - surfacing those as a popup is
             ;; exactly the noise the user vetoed (cf. anthropic/copilot/codex).
             ;; Lines are surfaced ONLY when auth-fn signals it could not
             ;; complete on its own (`:no-credentials`, `nil`, `false`,
@@ -1119,7 +1119,7 @@
              {:provider-id (:provider/id provider)
               :provider    provider
               :label       (str (:provider/label provider)
-                             " · "
+                             " / "
                              (if (:authenticated? status)
                                "authenticated"
                                "not authenticated"))})))
@@ -1187,7 +1187,7 @@
              cols    (.getColumns size)
              rows    (.getRows size)
              g       (.newTextGraphics screen)
-             ;; Do NOT clear the whole terminal here — keep the chat
+             ;; Do NOT clear the whole terminal here - keep the chat
              ;; visible behind the dialog (see model-manager note).
              ;; Sub-dialog artifact concern is moot: every sub-modal
              ;; (`add-provider!`, `confirm-dialog!`, `select-dialog!`,
@@ -1291,7 +1291,7 @@
                      (do (swap! selected #(dlg/clamp (inc %) 0 (max 0 (dec total))))
                        (recur)))
 
-                   ;; Enter — open action menu for selected provider
+                   ;; Enter - open action menu for selected provider
                    (= ktype KeyType/Enter)
                    (do
                      (when (pos? total)
@@ -1330,7 +1330,7 @@
                    (= ktype KeyType/Character)
                    (let [c (Character/toLowerCase (.getCharacter key))]
                      (cond
-                      ;; A — add provider
+                      ;; A - add provider
                        (= c \a)
                        (do (when-let [p (add-provider! screen (into #{} (map :id) @items))]
                              (swap! items conj p)
@@ -1338,7 +1338,7 @@
                              (reset! selected (dec (count @items))))
                          (recur))
 
-                      ;; D — delete provider
+                      ;; D - delete provider
                        (= c \d)
                        (do
                          (when (and (pos? total)

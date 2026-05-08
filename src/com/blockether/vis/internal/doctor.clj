@@ -9,7 +9,7 @@
        the extension self-stamps `:check-id` on each message when it
        wants the formatter's per-section prefix.
      - Output ordering: extensions in registration order; messages
-       in fn-return order. Levels NOT re-sorted within a section —
+       in fn-return order. Levels NOT re-sorted within a section -
        cause-and-effect narrative preserved.
      - Activation contract: the fn runs for EVERY registered
        extension regardless of `:ext/activation-fn`. Check fns must
@@ -123,7 +123,7 @@
 (defn- format-message
   "Render one diagnostic message line:
      `<icon> <check-id-name>: <message>`
-   followed (optionally) by an indented `→ <remediation>`.
+   followed (optionally) by an indented `-> <remediation>`.
    `use-ansi?` controls whether to wrap level-colored bits."
   [{:keys [level message remediation check-id]} use-ansi?]
   (let [icon  (or (ICONS level) "•")
@@ -134,7 +134,7 @@
                 (or (some-> check-id name) "?") ": "
                 message)
         tail  (when (and remediation (not (string/blank? remediation)))
-                (str "\n      " dim "→ " remediation reset))]
+                (str "\n      " dim "-> " remediation reset))]
     (str head tail)))
 
 (defn- format-extension-section
@@ -181,12 +181,12 @@
            "\n\n" summary))))))
 
 ;; ---------------------------------------------------------------------------
-;; Startup hint — one-line warning printed before non-doctor commands
+;; Startup hint - one-line warning printed before non-doctor commands
 ;; when issues exist. Plan §10 last subsection.
 ;; ---------------------------------------------------------------------------
 
 (defn startup-hint-line
-  "Return a single-line string like `⚠ vis: 2 issues detected — run
+  "Return a single-line string like `⚠ vis: 2 issues detected - run
    \\`bin/vis doctor\\` for details.` when warn/error count > 0;
    nil otherwise. Caller decides whether to print (skipped when the
    command being dispatched IS `vis doctor`)."
@@ -200,4 +200,4 @@
          issues (count (filter #(#{:warn :error} (:level %)) msgs))]
      (when (pos? issues)
        (str "⚠ vis: " issues " issue" (when (> issues 1) "s")
-         " detected — run `bin/vis doctor` for details.")))))
+         " detected - run `bin/vis doctor` for details.")))))

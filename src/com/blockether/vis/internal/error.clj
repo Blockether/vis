@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.error
-  "Error formatting — leaf module.
+  "Error formatting - leaf module.
 
    Pure functions for turning exceptions, anomaly maps, and ad-hoc
    error values into human-readable strings. Lives in its own
@@ -8,11 +8,11 @@
    of the SDK.
 
    Public API:
-     `error-message`                 — raw text from a Throwable / map / string
-     `format-error`                  — prefix \"ERROR: \" idempotently
-     `final-answer-code-error-message` — the \"Final-answer code error: ...\" prefix
+     `error-message`                 - raw text from a Throwable / map / string
+     `format-error`                  - prefix \"ERROR: \" idempotently
+     `final-answer-code-error-message` - the \"Final-answer code error: ...\" prefix
                                         used by the iteration loop when an
-                                        `(answer …)` form's own code throws."
+                                        `(answer ...)` form's own code throws."
   (:require
    [clojure.string :as str]))
 

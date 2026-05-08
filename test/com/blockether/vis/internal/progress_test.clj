@@ -69,9 +69,9 @@
 (deftest on-chunk-tool-result-render-test
   (testing ":form-result renders tool envelopes through extension renderer"
     (let [tracker (progress/make-progress-tracker)
-          result  (extension/merge-provenance
+          result  (extension/merge-info
                     (extension/success {:result {:lines ["x"]}
-                                        :provenance {:op :demo}})
+                                        :info {:op :demo}})
                     {:tool {:sym 'cat
                             :call "v/cat"}
                      :extension {:namespace 'com.acme.ext.fs}
@@ -80,22 +80,22 @@
                               :hash-sha256 nil}})]
       (with-redefs [extension/render-tool-result
                     (fn [_surface _result & _]
-                      (str "Tool `:demo` ok — result shape {:type :map, :count 1, :keys (:lines), :shape {:lines {:type :vector, :count 1, :items {:type :string, :chars 1, :lines 1}}}}"
+                      (str "Tool `:demo` ok - result shape {:type :map, :count 1, :keys (:lines), :shape {:lines {:type :vector, :count 1, :items {:type :string, :chars 1, :lines 1}}}}"
                         "; result {:lines [\"x\"]}"
-                        "; provenance {:tool {:sym cat, :call \"v/cat\"}, :extension {:namespace com.acme.ext.fs}, :source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}}."))]
+                        "; info {:tool {:sym cat, :call \"v/cat\"}, :extension {:namespace com.acme.ext.fs}, :source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}}."))]
         ((:on-chunk tracker) {:phase :form-result :iteration 1 :form-idx 0
                               :code "(demo)" :result result
                               :stdout "" :stderr "" :execution-time-ms 5}))
       (let [entry (first ((:get-timeline tracker)))]
-        (is (= [(str "Tool `:demo` ok — result shape {:type :map, :count 1, :keys (:lines), :shape {:lines {:type :vector, :count 1, :items {:type :string, :chars 1, :lines 1}}}}"
+        (is (= [(str "Tool `:demo` ok - result shape {:type :map, :count 1, :keys (:lines), :shape {:lines {:type :vector, :count 1, :items {:type :string, :chars 1, :lines 1}}}}"
                   "; result {:lines [\"x\"]}"
-                  "; provenance {:tool {:sym cat, :call \"v/cat\"}, :extension {:namespace com.acme.ext.fs}, :source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}}.")]
+                  "; info {:tool {:sym cat, :call \"v/cat\"}, :extension {:namespace com.acme.ext.fs}, :source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}}.")]
               (:results entry))))))
   (testing ":form-result marks preview envelopes and carries raw details"
     (let [tracker (progress/make-progress-tracker)
-          result  (extension/merge-provenance
+          result  (extension/merge-info
                     (assoc (extension/success {:result {:lines ["x"]}
-                                               :provenance {:op :v/preview}})
+                                               :info {:op :v/preview}})
                       :preview-eql {:result [[:lines {:from 0 :to 1}]]}
                       :presentation {:kind :source :path "src/demo.clj"})
                     {:tool {:sym 'preview
@@ -111,18 +111,18 @@
         (is (= ["1: x"] (:results entry)))
         (is (nil? (:shape (first (:result-details entry)))))
         (is (= "{:lines [\"x\"]}" (:raw (first (:result-details entry))))))))
-  (testing ":form-result preserves tool provenance needed by TUI summary labels"
+  (testing ":form-result preserves tool info needed by TUI summary labels"
     (let [tracker (progress/make-progress-tracker)
           result  (extension/success
                     {:result {:hits [] :truncated-by :end-of-results}
-                     :provenance {:op :any
-                                  :op-class :op/search
-                                  :presentation-kind :tool/search
-                                  :color-role :tool-color/search
-                                  :spec {:any ["alpha" "beta"] :paths ["src"]}
-                                  :paths ["src"]
-                                  :hit-count 0
-                                  :truncated-by :end-of-results}})]
+                     :info {:op :any
+                            :op-class :op/search
+                            :presentation-kind :tool/search
+                            :color-role :tool-color/search
+                            :spec {:any ["alpha" "beta"] :paths ["src"]}
+                            :paths ["src"]
+                            :hit-count 0
+                            :truncated-by :end-of-results}})]
       (with-redefs [extension/render-tool-result (fn [_surface _result & _] "Searched `src`.")]
         ((:on-chunk tracker) {:phase :form-result :iteration 1 :form-idx 0
                               :code "(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})"

@@ -205,7 +205,7 @@
       (if (zero? button-bits) MouseActionType/SCROLL_UP
         MouseActionType/SCROLL_DOWN)
       drag?
-      ;; button bits 3 (0x03 == 3) means \"no button held\" → plain
+      ;; button bits 3 (0x03 == 3) means \"no button held\" -> plain
       ;; cursor movement; otherwise a drag with that button held.
       (if (= button-bits 3) MouseActionType/MOVE
         MouseActionType/DRAG)

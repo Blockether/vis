@@ -8,8 +8,8 @@
    :url url :kind :url :line nil :scheme :https :enabled? true})
 
 (defn- frame!
-  "Run the renderer-side dance — begin, register every region, commit
-   — so the staged set becomes visible to `lookup`."
+  "Run the renderer-side dance - begin, register every region, commit
+   - so the staged set becomes visible to `lookup`."
   [& regions]
   (cr/begin-frame!)
   (doseq [r regions] (cr/register! r))
@@ -78,7 +78,7 @@
     (cr/reset!)
     (frame! (region 1 0 5 "https://a"))
     (cr/begin-frame!)
-    ;; No register!, no commit-frame! — published set unchanged.
+    ;; No register!, no commit-frame! - published set unchanged.
     (expect (some? (cr/lookup 2 1))))
 
   (it "commit-frame! with empty staging clears the published set"

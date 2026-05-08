@@ -7,7 +7,7 @@ Real incidents from this conversation, with exact code, error messages, root cau
 
 ---
 
-## Failure 1: Wrong File Paths — Blind Assumption
+## Failure 1: Wrong File Paths - Blind Assumption
 
 ### Symptom
 `v/ls` and `v/rg` throw `ExceptionInfo: Path not found`.
@@ -16,8 +16,8 @@ Real incidents from this conversation, with exact code, error messages, root cau
 
 | Attempt | Code | Error |
 |---------|------|-------|
-| iter 2 | `(def tui-ls (v/ls \"src/com/blockether/vis/tui\"))` | `Path not found: …/src/com/blockether/vis/tui` |
-| iter 4 | `(v/rg {:all [\"system_prompt\"] :paths [\"src/com/blockether/vis/internal/db.clj\"]})` | `Path not found: …/db.clj` |
+| iter 2 | `(def tui-ls (v/ls \"src/com/blockether/vis/tui\"))` | `Path not found: .../src/com/blockether/vis/tui` |
+| iter 4 | `(v/rg {:all [\"system_prompt\"] :paths [\"src/com/blockether/vis/internal/db.clj\"]})` | `Path not found: .../db.clj` |
 
 The agent assumed directory layouts and file locations without confirming them first.
 
@@ -47,13 +47,13 @@ hits
 
 Let me dig deeper what \"system prompt copy\" actually is.
 
-Let   → Unable to resolve symbol: Let
-me    → Unable to resolve symbol: me
-dig   → Unable to resolve symbol: dig
+Let   -> Unable to resolve symbol: Let
+me    -> Unable to resolve symbol: me
+dig   -> Unable to resolve symbol: dig
 ...
-\"system prompt copy\" → Bare string literal in :code
+\"system prompt copy\" -> Bare string literal in :code
 
-;; In a code block, this is NOT a comment — it's a syntax error:
+;; In a code block, this is NOT a comment - it's a syntax error:
 Let me check the file structure and find where system-prompt-copy is defined.
 ;; => Unable to resolve symbol: Let
 ;; => Unable to resolve symbol: me
@@ -126,7 +126,7 @@ broken-area
 ;; Step 2: Grep for ALL references to the removed concept
 (v/rg {:any [\"ctx-left\" \"context-limit\" \"ctx-color\"] :paths [\"extensions/channels/vis-channel-tui/src\"]})
 
-;; Step 3: Remove each hit — functions, imports, comments
+;; Step 3: Remove each hit - functions, imports, comments
 (v/edit \"footer.clj\" \"(defn- ctx-left-info ...\" \"\")
 (v/edit \"footer.clj\" \"svar-router\" \"\")  ;; if no other consumer
 

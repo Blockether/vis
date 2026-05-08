@@ -26,7 +26,7 @@
 (deftest format-error-test
   (testing "adds ERROR: prefix"
     (is (= "ERROR: boom" (error/format-error (Exception. "boom")))))
-  (testing "idempotent — does not double-prefix"
+  (testing "idempotent - does not double-prefix"
     (is (= "ERROR: boom" (error/format-error "ERROR: boom"))))
   (testing "works with map input"
     (is (= "ERROR: msg" (error/format-error {:message "msg"}))))

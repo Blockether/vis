@@ -47,7 +47,7 @@
           (asr/transcribe-file! (str dir) (str wav))
           (expect false)
           (catch clojure.lang.ExceptionInfo e
-            (expect (= "Voice recording too short — try again" (ex-message e)))
+            (expect (= "Voice recording too short - try again" (ex-message e)))
             (expect (= :voice-asr/audio-too-short (-> e ex-data :type)))
             (expect (= 0 (-> e ex-data :samples)))
             (expect (= asr/min-audio-seconds (-> e ex-data :min-duration-seconds)))))))))

@@ -162,9 +162,9 @@
      dir
      (let [archive (File/createTempFile "vis-voice-asr-model-" ".tar.bz2")]
        (try
-         (vis/notify! "Downloading Parakeet ASR model (~465MB)…" :level :info :ttl-ms 5000)
+         (vis/notify! "Downloading Parakeet ASR model (~465MB)..." :level :info :ttl-ms 5000)
          (download! model-url archive)
-         (vis/notify! "Extracting Parakeet ASR model…" :level :info :ttl-ms 5000)
+         (vis/notify! "Extracting Parakeet ASR model..." :level :info :ttl-ms 5000)
          (extract-tar-bz2! archive dir)
          (when-not (model-installed? dir)
            (throw (ex-info "Parakeet model download did not produce expected files"
@@ -231,7 +231,7 @@
   [audio-path ^WaveReader reader]
   (let [{:keys [duration-seconds] :as stats} (audio-stats reader)]
     (when (< duration-seconds min-audio-seconds)
-      (throw (ex-info "Voice recording too short — try again"
+      (throw (ex-info "Voice recording too short - try again"
                (assoc stats
                  :type :voice-asr/audio-too-short
                  :path (str audio-path)

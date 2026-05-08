@@ -1,8 +1,8 @@
 # Environment Map
 
-Every callback an extension receives — `:ext/activation-fn`, optional
+Every callback an extension receives - `:ext/activation-fn`, optional
 `:ext/prompt`, `:ext/environment-info-fn`, `:ext/nudge-fn`, and the symbol hooks (`:before-fn`,
-`:after-fn`, `:on-error-fn`) — operates on the **environment**. This
+`:after-fn`, `:on-error-fn`) - operates on the **environment**. This
 is the runtime map that represents one live conversation context.
 
 ## All keys
@@ -15,9 +15,9 @@ These keys exist on every environment for its entire lifetime:
 |-----|------|-------------|
 | `:environment-id` | `string` | Unique UUID string. Stable for the conversation lifetime. Use for log correlation. |
 | `:conversation-id` | `java.util.UUID` | Conversation entity ID in the DB (plain UUID, not a tagged pair). Every turn / iteration / persisted var is parented under this. |
-| `:db-info` | `map` | Database connection handle (`{:datasource ds …}`). Pass to `persistance.core` functions for reads. **Borrow only — the runtime owns the lifecycle and closes it.** |
-| `:router` | `map` | svar LLM router. Provider configs, model list, routing rules. Read-only from extensions, but the runtime itself **reseats** this key when provider config changes mid-conversation — see [Router Lifecycle](../architecture/state.md#router-lifecycle). Always read it fresh from the env handed to your callback; never cache `(:router env)` across iterations. |
-| `:sci-ctx` | `SCI context` | Live SCI sandbox context. Contains the `:env` atom with all namespace maps. Read sandbox state via `(get-in @(:env sci-ctx) [:namespaces 'sandbox])`. **Mutate via `bind-and-bump!` only** — it keeps the var-index revision in lockstep. |
+| `:db-info` | `map` | Database connection handle (`{:datasource ds ...}`). Pass to `persistance.core` functions for reads. **Borrow only - the runtime owns the lifecycle and closes it.** |
+| `:router` | `map` | svar LLM router. Provider configs, model list, routing rules. Read-only from extensions, but the runtime itself **reseats** this key when provider config changes mid-conversation - see [Router Lifecycle](../architecture/state.md#router-lifecycle). Always read it fresh from the env handed to your callback; never cache `(:router env)` across iterations. |
+| `:sci-ctx` | `SCI context` | Live SCI sandbox context. Contains the `:env` atom with all namespace maps. Read sandbox state via `(get-in @(:env sci-ctx) [:namespaces 'sandbox])`. **Mutate via `bind-and-bump!` only** - it keeps the var-index revision in lockstep. |
 | `:sandbox-ns` | `SCI ns` | The `'sandbox` namespace object. Used internally by `eval-string+`. |
 | `:initial-ns-keys` | `set of symbols` | Symbols in the sandbox at creation time (tools, helpers, builtins). Distinguishes user vars from infrastructure. |
 | `:var-index-atom` | `atom` | Cached `<var_index>` render. Shape: `{:index string, :revision int, :current-revision int}`. The rendered string is compact pseudo-source (`(def ^{:v 3 :s :l :t :map :n 12} foo ...)`, `(defn ^{:v 2 :s :l} f [x] ...)`). Bump via `bump-var-index!` after mutating sandbox bindings. |
@@ -49,8 +49,8 @@ environment returned by `create-environment`.
 
 ## Prohibited operations
 
-- **Close** `:db-info` — the runtime owns the connection lifecycle.
-- **Swap** `:extensions` directly — use `register-extension!`.
-- **Reset** `:current-iteration-id-atom` — internal iteration-loop state.
+- **Close** `:db-info` - the runtime owns the connection lifecycle.
+- **Swap** `:extensions` directly - use `register-extension!`.
+- **Reset** `:current-iteration-id-atom` - internal iteration-loop state.
 - **Mutate** `:sci-ctx` namespace maps without calling `bump-var-index!`
-  — the `<var_index>` cache will serve stale data.
+  - the `<var_index>` cache will serve stale data.

@@ -16,9 +16,9 @@
    diagnostic: class, message, ex-data, full stack trace, and the
    cause chain. The whole point is that when an error reaches the
    chat boundary, the next person reading `~/.vis/vis.log` should not
-   have to guess where it came from — the stack is right there.
+   have to guess where it came from - the stack is right there.
 
-   `.printStackTrace` includes nested causes (\"Caused by: …\" blocks)
+   `.printStackTrace` includes nested causes (\"Caused by: ...\" blocks)
    by default, so a single string captures the entire chain without
    manual recursion."
   [^Throwable e]
@@ -33,7 +33,7 @@
   "[provider returned encrypted reasoning; plaintext reasoning is unavailable]")
 
 (defn- visible-thinking [thinking]
-  (let [s (some-> thinking str)]
+  (let [s (some-> thinking str str/trim)]
     (when-not (or (str/blank? (or s "")) (= encrypted-reasoning-placeholder s))
       s)))
 
@@ -78,9 +78,9 @@
                         ;; the answer iteration, per rule b') is
                         ;; ELIDED from the per-iteration parallel
                         ;; vectors so resumed conversations render the
-                        ;; same way live ones do — just the answer
+                        ;; same way live ones do - just the answer
                         ;; text below the iteration trace, never the
-                        ;; `(answer "…")` call as code above it.
+                        ;; `(answer "...")` call as code above it.
                         turn-iterations (vis/db-list-conversation-turn-iterations d (:id q))
                         last-iteration-id (some-> (last turn-iterations) :id)
                         produced-answer? (and (some? answer)
@@ -108,13 +108,13 @@
                                                            (cond
                                                              error :error
                                                              (and (extension/tool-result? result)
-                                                               (= :v/preview (get-in result [:provenance :op]))) :preview
+                                                               (= :v/preview (get-in result [:info :op]))) :preview
                                                              (extension/tool-result? result) :tool
                                                              :else :value))
                                              tool-result-detail
                                              (fn [result]
                                                (when (extension/tool-result? result)
-                                                 (let [prov (:provenance result)]
+                                                 (let [prov (:info result)]
                                                    (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role
                                                                               :spec :paths :hit-count :truncated-by
                                                                               :command :cwd :target])
@@ -154,7 +154,7 @@
                         ;; Surface it as `:status :cancelled` on the
                         ;; assistant message so the bubble renderer
                         ;; emits the trace + dim italic status footer
-                        ;; the same way live cancellations render —
+                        ;; the same way live cancellations render -
                         ;; on bare terminal-bg, no bubble-wide fill.
                         cancelled? (= :cancelled (:prior-outcome q))
                         assistant-message (cond-> (assistant-message (or answer "") (or (:created-at q) (java.util.Date.)))
@@ -208,7 +208,7 @@
    Returns `{:answer str}` or `{:error str}`.
 
    `opts` may contain:
-     :on-chunk          — fn receiving phased chunks `{:phase :iteration ...}`. Phases:
+     :on-chunk          - fn receiving phased chunks `{:phase :iteration ...}`. Phases:
                           `:reasoning` (LLM streaming), `:form-result` (one form done),
                           `:iteration-final` (iteration complete), `:iteration-error`
                           (iteration aborted). See `progress/make-progress-tracker`
@@ -216,14 +216,14 @@
                           on every streaming chunk from the RLM. The TUI uses this
                           to project a live per-iteration progress timeline into
                           the assistant placeholder bubble.
-     :cancel-atom       — (atom bool) honored by the iteration loop; flipping
+     :cancel-atom       - (atom bool) honored by the iteration loop; flipping
                           it to true causes the current turn to terminate at
                           the next safe point and return `{:status :cancelled}`.
-     :reasoning-default — base reasoning effort (`:quick`, `:balanced`, `:deep`)
+     :reasoning-default - base reasoning effort (`:quick`, `:balanced`, `:deep`)
                           forwarded to `vis/send!` for reasoning-capable models.
-     :extra-body        — provider-specific request-body overrides forwarded to
+     :extra-body        - provider-specific request-body overrides forwarded to
                           `vis/send!` unchanged.
-     :turn-features     — per-turn feature flags consumed by extension prompts."
+     :turn-features     - per-turn feature flags consumed by extension prompts."
   ([conversation text] (turn! conversation text {}))
   ([{:keys [id]} text {:keys [on-chunk cancel-atom reasoning-default extra-body turn-features workspace]}]
    (try
@@ -236,7 +236,7 @@
                        (seq workspace)   (merge workspace))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
-           ;; Plain text — the bubble renderer dims it via the
+           ;; Plain text - the bubble renderer dims it via the
            ;; `:status :cancelled` field we propagate below, NOT via
            ;; markdown italic. Underscores would just render as
            ;; literal underscores once markdown processing is
@@ -260,7 +260,7 @@
      ;; future-cancel from the TUI translates to thread interruption.
      ;; The shared channels.cancellation predicate folds in
      ;; InterruptedException, CancellationException, and any runtime
-     ;; wrapper that hides one in its cause chain — surface those as
+     ;; wrapper that hides one in its cause chain - surface those as
      ;; a clean cancelled answer, not a generic error.
      (catch Exception e
        (if (vis/cancellation? e)
@@ -269,7 +269,7 @@
          (do
            ;; Log EVERYTHING. Stripping a stack trace at the channel
            ;; boundary is how a `[SQLITE_CANTOPEN]` ends up untriagable
-           ;; — the user sees a one-liner and the log has the same
+           ;; - the user sees a one-liner and the log has the same
            ;; one-liner. With the full trace, the next failure pinpoints
            ;; the exact JDBC call that opened the bad handle.
            (t/log! {:level :error :id ::turn-failed

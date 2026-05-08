@@ -10,13 +10,13 @@
         (extensions that contribute providers, channels, or
         persistence backends).
      2. Explicit `:ext/kind` always wins over auto-derivation.
-     3. `:ext/subgroup` is no longer part of the spec — the builder
+     3. `:ext/subgroup` is no longer part of the spec - the builder
         neither requires it nor injects it.
      4. The `:ext/symbols` -> `:ext/kind` requirement still bites
         when an extension exports sandbox symbols without a kind.
      5. `:ext/owner` round-trips and coexists with `:ext/author`.
      6. Symbol-level parse rescue is part of the validated builder surface.
-     7. Extension provenance includes cached source markers."
+     7. Extension info includes cached source markers."
   (:require
    [com.blockether.vis.internal.extension :as ext]
    [com.blockether.vis.internal.registry :as registry]
@@ -108,9 +108,9 @@
                                     :ext/rendering-kinds {:diagnostic renderer}})
           old-result {:success? true
                       :result {:exit 0}
-                      :provenance {:op :v/bash
-                                   :extension {:namespace 'test.rendering-kind-fallback}
-                                   :tool {:sym 'bash}}
+                      :info {:op :v/bash
+                             :extension {:namespace 'test.rendering-kind-fallback}
+                             :tool {:sym 'bash}}
                       :presentation {:kind :diagnostic}}]
       (with-redefs [ext/registered-extensions (fn [] [extension])]
         (expect (= "exit=0" (ext/render-tool-result :tui old-result {})))))))
@@ -174,41 +174,6 @@
       (expect (= :tool-start (:phase @started)))
       (expect (= :tts/slow-tool (:op @started)))
       (expect (= :running (:status @started))))))
-
-(defdescribe proof-lifecycle-hook-test
-  (it "accepts and emits structured proof lifecycle events to registered extensions"
-    (let [seen (atom [])
-          e (ext/extension {:ext/namespace 'test.proof-hook
-                            :ext/doc "Proof hook fixture."
-                            :ext/kind "fixture"
-                            :ext/on-proof-event-fn #(swap! seen conj [(ext/current-extension-id) (:proof/event %)])})]
-      (try
-        (ext/register-extension! e)
-        (ext/emit-proof-event! {:proof/event :proof/attestation-accepted
-                                :attestation {:id :a1}})
-        (expect (= [["test.proof-hook" :proof/attestation-accepted]] @seen))
-        (finally
-          (ext/deregister-extension! 'test.proof-hook)))))
-
-  (it "continues proof lifecycle broadcast when one listener throws"
-    (let [seen (atom [])
-          bad (ext/extension {:ext/namespace 'test.bad-proof-hook
-                              :ext/doc "Bad proof hook fixture."
-                              :ext/kind "fixture"
-                              :ext/on-proof-event-fn (fn [_] (throw (ex-info "boom" {})))})
-          good (ext/extension {:ext/namespace 'test.good-proof-hook
-                               :ext/doc "Good proof hook fixture."
-                               :ext/kind "fixture"
-                               :ext/on-proof-event-fn #(swap! seen conj (:proof/event %))})]
-      (try
-        (ext/register-extension! bad)
-        (ext/register-extension! good)
-        (ext/emit-proof-event! {:proof/event :proof/event-appended
-                                :event {:ref "turn/aaaaaaaa/iteration/1/block/1"}})
-        (expect (= [:proof/event-appended] @seen))
-        (finally
-          (ext/deregister-extension! 'test.bad-proof-hook)
-          (ext/deregister-extension! 'test.good-proof-hook))))))
 
 (defdescribe kind-auto-derivation-test
   (it "derives \"providers\" for extensions exporting :ext/providers"
@@ -310,7 +275,7 @@
                :ext/channels  [base-channel]})]
       (expect (= "vis" (:ext/owner e)))))
 
-  (it "is independent of :ext/author — both can coexist with different values"
+  (it "is independent of :ext/author - both can coexist with different values"
     (let [e (ext/extension
               {:ext/namespace 'test.coexist
                :ext/doc       "Author and owner are distinct."
@@ -320,7 +285,7 @@
       (expect (= "Blockether" (:ext/author e)))
       (expect (= "vis" (:ext/owner e)))))
 
-  (it "is optional — omitting it does not break validation"
+  (it "is optional - omitting it does not break validation"
     (let [e (ext/extension
               {:ext/namespace 'test.no-owner
                :ext/doc       "No owner declared."
@@ -350,9 +315,9 @@
         (finally
           (ext/deregister-extension! 'test.fenced-renderer))))))
 
-(defdescribe extension-provenance-test
+(defdescribe extension-info-test
   (it "resolves source markers from the extension namespace when available"
-    (let [prov (ext/extension-provenance
+    (let [prov (ext/extension-info
                  (ext/extension {:ext/namespace 'com.blockether.vis.core
                                  :ext/doc       "vis core"}))]
       (expect (= 'com.blockether.vis.core (:namespace prov)))
@@ -363,8 +328,8 @@
                 (= 64 (count (:source-hash-sha256 prov)))))))
 
   (it "keeps declared authoring metadata"
-    (let [prov (ext/extension-provenance
-                 (ext/extension {:ext/namespace 'test.provenance
+    (let [prov (ext/extension-info
+                 (ext/extension {:ext/namespace 'test.info
                                  :ext/doc       "Fixture"
                                  :ext/kind      "fixture"
                                  :ext/version   "1.2.3"

@@ -22,19 +22,19 @@
     (let [r (sm/resolve-markers
               ['com.blockether.vis.ext.foundation.environment.core
                'com.blockether.vis.ext.foundation.environment.agents
-               'com.blockether.vis.ext.foundation.environment.skills])]
+               'com.blockether.vis.internal.skills])]
       (expect (= 3 (count (:source-paths r))))
       ;; Paths are sorted alphabetically.
       (expect (= (:source-paths r) (sort (:source-paths r))))
       (expect (string? (:source-hash-sha256 r)))))
 
-  (it "missing namespace → empty markers, no throw"
+  (it "missing namespace -> empty markers, no throw"
     (let [r (sm/resolve-markers ['this.namespace.does.not.exist.anywhere])]
       (expect (= [] (:source-paths r)))
       (expect (= -1 (:source-mtime-max r)))
       (expect (nil? (:source-hash-sha256 r)))))
 
-  (it "empty input → empty markers"
+  (it "empty input -> empty markers"
     (let [r (sm/resolve-markers [])]
       (expect (= [] (:source-paths r)))
       (expect (= -1 (:source-mtime-max r)))
@@ -58,6 +58,6 @@
                       'com.blockether.vis.internal.extension]})]
       (expect (= 2 (count (:source-paths r))))))
 
-  (it "missing :ext/namespace and :nses → empty"
+  (it "missing :ext/namespace and :nses -> empty"
     (let [r (sm/resolve-markers-for-extension {})]
       (expect (= [] (:source-paths r))))))

@@ -12,8 +12,8 @@ Nudges are structured host hints injected into the per-iteration context as XML-
 
 They come from two sources:
 
-1. **Built-in nudges** — title and context-pressure hints from the prompt assembler.
-2. **Extension nudges** — any active extension's `:ext/nudge-fn`.
+1. **Built-in nudges** - title and context-pressure hints from the prompt assembler.
+2. **Extension nudges** - any active extension's `:ext/nudge-fn`.
 
 There is no built-in repetition / duplication nudge. The model already sees the previous iteration's result in `<journal>`, which is signal enough to change strategy when it spots itself re-issuing an identical call.
 
@@ -57,13 +57,13 @@ Key names spell out the full word (`:previous-blocks`, not `:prev-blocks`) per t
 
 1. Return `nil`, a non-blank string, or a valid map with `:importance` + text.
 2. Use importance intentionally:
-   - `:low` — reminder / hygiene.
-   - `:normal` — situational guidance.
-   - `:high` — context/risk pressure; act soon.
-   - `:critical` — likely wrong/destructive path; stop or ask.
+   - `:low` - reminder / hygiene.
+   - `:normal` - situational guidance.
+   - `:high` - context/risk pressure; act soon.
+   - `:critical` - likely wrong/destructive path; stop or ask.
 3. Keep nudges short. One actionable instruction beats paragraphs.
 4. Never throw. Throwing is isolated, but it burns signal.
-5. Stay read-only. Nudge-fns are observers, not actors — every mutation belongs in a hook or symbol invocation.
+5. Stay read-only. Nudge-fns are observers, not actors - every mutation belongs in a hook or symbol invocation.
 
 ### Example
 

@@ -37,8 +37,8 @@
   (it "renders canonical prompt text from symbol docstrings + arglists"
     (expect
       (= (str "Filesystem tools (use v/ prefix; positional args only)\n"
-           "- (v/cat path) or (v/cat path offset limit) — Read a file preview.\n"
-           "- v/max-retries — Maximum retry attempts.\n"
+           "- (v/cat path) or (v/cat path offset limit) - Read a file preview.\n"
+           "- v/max-retries - Maximum retry attempts.\n"
            "RULES:\n"
            "- Discover paths first.")
         (vis/render-prompt
@@ -106,10 +106,10 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(vis/invoke-symbol-wrapper ext sym [] {})))))
 
-  (it "accepts a function result that satisfies :result-spec and stamps extension provenance"
+  (it "accepts a function result that satisfies :result-spec and stamps extension info"
     (let [sym (vis/symbol 'good (fn [& _]
                                   (ext/success {:result true
-                                                :provenance {:op :demo}}))
+                                                :info {:op :demo}}))
                 {:doc "good"
                  :arglists '([])
                  :result-spec ::ext/tool-result})
@@ -125,11 +125,11 @@
                               :ext/symbols [sym]})
           out (vis/invoke-symbol-wrapper ext sym [] {})]
       (expect (map? out))
-      (expect (= 'good (get-in out [:provenance :tool :sym])))
-      (expect (= "g/good" (get-in out [:provenance :tool :call])))
-      (expect (= 'com.acme.ext.good (get-in out [:provenance :extension :namespace])))
-      (expect (= "Acme" (get-in out [:provenance :extension :author])))
-      (expect (= [] (get-in out [:provenance :source :paths]))))))
+      (expect (= 'good (get-in out [:info :tool :sym])))
+      (expect (= "g/good" (get-in out [:info :tool :call])))
+      (expect (= 'com.acme.ext.good (get-in out [:info :extension :namespace])))
+      (expect (= "Acme" (get-in out [:info :extension :author])))
+      (expect (= [] (get-in out [:info :source :paths]))))))
 
 (defdescribe extension-settings-declaration-test
   (it "extension/extension accepts extension-owned setting declarations"
@@ -186,8 +186,7 @@
               (get (vis/extension-theme-settings {"THEME_NAME" {:settings {"PADDING" "0px"}}})
                 "THEME_NAME"))))
 
-  (it "re-exports extension provenance and rendering helpers from the public vis.core surface"
-    (expect (ifn? vis/extension-provenance))
+  (it "re-exports extension rendering helpers from the public vis.core surface"
     (expect (ifn? vis/extension-source-markers-of))
     (expect (ifn? vis/render-tool-result)))
 
@@ -243,10 +242,10 @@
       (let [grep (sym-with-parse-rescue 'rg
                    (fn [{:keys [code]}] (str/replace code "X" "Y")))
             ext  (ext-with-syms 'ns-a 'v [grep])]
-      ;; Code mentions `v/rg` — hook fires.
+      ;; Code mentions `v/rg` - hook fires.
         (expect (= "(v/rg \"Y\")"
                   (vis/try-rescue-parse-error [ext] "(v/rg \"X\")" "err" {})))
-      ;; Code does NOT mention rg — hook is skipped.
+      ;; Code does NOT mention rg - hook is skipped.
         (expect (nil?
                   (vis/try-rescue-parse-error [ext] "(other-tool \"X\")" "err" {})))))
 
@@ -278,7 +277,7 @@
     (it "falls back to the EXTENSION-level hook when no symbol matches"
       (let [grep (sym-with-parse-rescue 'rg (fn [_] "NEVER"))
             ext  (ext-with-syms 'ns 'v [grep] (fn [_] "FROM-EXT"))]
-      ;; No mention of rg — symbol hook skipped — ext hook fires.
+      ;; No mention of rg - symbol hook skipped - ext hook fires.
         (expect (= "FROM-EXT"
                   (vis/try-rescue-parse-error [ext] "(unrelated)" "err" {})))))
 
@@ -319,7 +318,7 @@
     ;; `com.blockether.vis.internal.vis/render-extension-prompt-block`):
     ;; the runtime no longer auto-canonicalizes `:ext/symbols` into prompt
     ;; lines. Whatever lands in the prompt is whatever `:ext/prompt`
-    ;; returns — plus the namespace-alias header. Sandbox bindings remain
+    ;; returns - plus the namespace-alias header. Sandbox bindings remain
     ;; callable from `:code` whether advertised or not. Authors who want
     ;; the old auto-render behavior call `vis/render-prompt` from inside
     ;; their own `:ext/prompt` fn (covered by `render-prompt-test`).
@@ -333,11 +332,11 @@
           active-exts   (vis/active-extensions environment)
           system-prompt (vis/assemble-system-prompt environment
                           {:active-extensions active-exts})]
-      ;; Header IS present (alias → namespace marker still added).
-      (expect (str/includes? system-prompt "[namespace: v → vis.ext.tools]"))
+      ;; Header IS present (alias -> namespace marker still added).
+      (expect (str/includes? system-prompt "[namespace: v -> vis.ext.tools]"))
       ;; Author-supplied :ext/prompt content IS present verbatim.
       (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))
-      ;; Auto-canonical render is GONE — no symbol lines, no `:ext/doc`
+      ;; Auto-canonical render is GONE - no symbol lines, no `:ext/doc`
       ;; heading-as-prompt-text. Author can still emit those by calling
       ;; `vis/render-prompt` from inside `:ext/prompt`, but the runtime
       ;; doesn't do it for them anymore.
@@ -351,7 +350,7 @@
 
 (defn- clear-registry! []
   ;; Reach into the registry atom from tests so each `it` starts with
-  ;; a clean slate. Private on purpose — production code never resets.
+  ;; a clean slate. Private on purpose - production code never resets.
   ;; The atom now lives in `com.blockether.vis.commandline`.
   (reset! @(requiring-resolve 'com.blockether.vis.internal.registry/command-registry) []))
 
@@ -480,8 +479,8 @@
       (expect (= [] (vis/unknown-flags specs ["--out" "--weird-value"]))))))
 
 (defdescribe registered-command-with-args-test
-  ;; End-to-end: registered command → mounted into a parent → dispatched
-  ;; with a real arg vector → run-fn sees a fully-coerced parsed map.
+  ;; End-to-end: registered command -> mounted into a parent -> dispatched
+  ;; with a real arg vector -> run-fn sees a fully-coerced parsed map.
   (let [captured (atom nil)]
 
     (it "dispatches a registered command with positional + flag + type coercion"
@@ -708,12 +707,12 @@
         (expect (re-find #"div by zero" message)))))
 
 ;; -----------------------------------------------------------------------------
-;; answer-form-error — Option C scoping helper
+;; answer-form-error - Option C scoping helper
 ;;
 ;; The iteration loop calls `(answer-form-error block-results form-idx)`
 ;; after evaluating a turn's forms. It returns the error from the
 ;; specific form that invoked `(answer ...)`, or nil if that form
-;; succeeded. Sibling errors are intentionally NOT surfaced — they
+;; succeeded. Sibling errors are intentionally NOT surfaced - they
 ;; stay out of the termination gate. This test pins down the contract.
 ;; -----------------------------------------------------------------------------
 
@@ -746,9 +745,9 @@
       (expect (nil? (vis/answer-form-error [] 0))))))
 
 ;; -----------------------------------------------------------------------------
-;; answer-position — rule b' ("answer is alone after iteration 1")
+;; answer-position - rule b' ("answer is alone after iteration 1")
 ;;
-;; `(answer …)` must be the LAST top-level form. Earlier setup/proof
+;; `(answer ...)` must be the LAST top-level form. Earlier setup/helper
 ;; helper forms are allowed so a ready answer does not pay a pointless
 ;; recovery iteration. Wrappers like `(let [...] (answer ...))` stay
 ;; legal because they are still one top-level form. Disallowed answer
@@ -758,19 +757,19 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe answer-position-rule-test
-  (it "single top-level form, answer in form 0 — NOT a violation"
+  (it "single top-level form, answer in form 0 - NOT a violation"
     (expect (false? (vis/answer-position-violation? 0 1))))
 
-  (it "two forms, answer in last (form 1) — NOT a violation"
+  (it "two forms, answer in last (form 1) - NOT a violation"
     (expect (false? (vis/answer-position-violation? 1 2))))
 
-  (it "five forms, answer in last (form 4) — NOT a violation"
+  (it "five forms, answer in last (form 4) - NOT a violation"
     (expect (false? (vis/answer-position-violation? 4 5))))
 
-  (it "two forms, answer in first (form 0) — violation because answer is not alone"
+  (it "two forms, answer in first (form 0) - violation because answer is not alone"
     (expect (true? (vis/answer-position-violation? 0 2))))
 
-  (it "five forms, answer in middle (form 2) — violation"
+  (it "five forms, answer in middle (form 2) - violation"
     (expect (true? (vis/answer-position-violation? 2 5))))
 
   (it "iteration 1 allows answer as the last top-level form"
@@ -785,11 +784,11 @@
     (expect (false? (vis/answer-position-violation? 1 2 2)))
     (expect (false? (vis/answer-position-violation? 4 5 3))))
 
-  (it "nil form-idx (no answer fired) — never a violation"
+  (it "nil form-idx (no answer fired) - never a violation"
     (expect (false? (vis/answer-position-violation? nil 3)))
     (expect (false? (vis/answer-position-violation? nil 0))))
 
-  (it "non-integer form-idx — not a violation (defensive against shape drift)"
+  (it "non-integer form-idx - not a violation (defensive against shape drift)"
     (expect (false? (vis/answer-position-violation? :one 3)))
     (expect (false? (vis/answer-position-violation? "1" 3))))
 
@@ -800,12 +799,12 @@
       (expect (re-find #"3 top-level forms" msg))
       (expect (re-find #"answer fired from form 1" msg))
       (expect (re-find #"LAST top-level form" msg))
-      (expect (re-find #"omit `\(answer …\)`" msg))
+      (expect (re-find #"omit `\(answer ...\)`" msg))
       (expect (re-find #"answer-bearing final form" msg))
-      (expect (re-find #"`\(let \[\.\.\.\] \(answer …\)\)`" msg)))))
+      (expect (re-find #"`\(let \[\.\.\.\] \(answer ...\)\)`" msg)))))
 
 ;; -----------------------------------------------------------------------------
-;; make-progress-tracker — phased chunk accumulation
+;; make-progress-tracker - phased chunk accumulation
 ;;
 ;; The tracker consumes phased chunks from the iteration loop and
 ;; builds a per-iteration timeline that channels render. Key
@@ -816,7 +815,7 @@
 ;;   - :iteration-final WITH :final + :answer-form-idx ELIDES the
 ;;     answer-bearing form's slot from every parallel vector (so
 ;;     the channel renders the answer text below, never the
-;;     `(answer …)` call as code above it)
+;;     `(answer ...)` call as code above it)
 ;;   - :iteration-error sets :error on the entry
 ;; -----------------------------------------------------------------------------
 
@@ -871,7 +870,7 @@
 
   (it "out-of-order :form-result chunks pad with nil"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
-      ;; Form 2 arrives before form 0 / 1 — tracker pads.
+      ;; Form 2 arrives before form 0 / 1 - tracker pads.
       (on-chunk {:phase :form-result :iteration 0 :form-idx 2
                  :code "(def z 3)" :result 3 :stdout "" :stderr ""
                  :execution-time-ms 1 :error nil})
@@ -883,10 +882,10 @@
 
   (it ":reasoning chunks update :thinking"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
-      (on-chunk {:phase :reasoning :iteration 0 :thinking "thinking…"})
-      (expect (= "thinking…" (:thinking (first (get-timeline)))))))
+      (on-chunk {:phase :reasoning :iteration 0 :thinking "thinking..."})
+      (expect (= "thinking..." (:thinking (first (get-timeline)))))))
 
-  (it "reasoning live-render events preserve whitespace-only stream deltas"
+  (it "reasoning live-render events trim boundary whitespace"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (doseq [thinking ["The contract APIs failed in iteration"
                         "The contract APIs failed in iteration "
@@ -904,7 +903,7 @@
         (on-chunk {:phase :reasoning :iteration 0 :thinking thinking}))
       (let [entry         (first (get-timeline))
             reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
-        (expect (= " a" (:thinking entry)))
+        (expect (= "a" (:thinking entry)))
         (expect (= (:thinking entry) reconstructed)))))
 
   (it "reasoning / code / reasoning builds ordered :events for live rendering"
@@ -1005,14 +1004,14 @@
 
   (it "a re-emitted :form-result with :error overwrites the prior success slot"
     ;; The iteration loop emits a `:form-result` chunk the moment a
-    ;; form returns. When `(answer …)` returns its `:vis/answer`
+    ;; form returns. When `(answer ...)` returns its `:vis/answer`
     ;; sentinel and the post-hoc validator (rule b' / own-form-error)
     ;; rejects it, the loop re-emits a second `:form-result` chunk
     ;; carrying `:error <validation-error>`. The tracker MUST
     ;; overwrite the slot so the TUI surfaces the rejection instead
     ;; of the original success.
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
-      ;; iteration had three forms; (answer …) fired from form 1,
+      ;; iteration had three forms; (answer ...) fired from form 1,
       ;; violating rule b' because the answer was not alone. Forms 0
       ;; and 2 ran clean.
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
@@ -1030,7 +1029,7 @@
                  :code "(answer \"early\")" :result :vis/answer
                  :stdout "" :stderr ""
                  :execution-time-ms 1
-                 :error "(answer …) must be the ONLY top-level form of its final iteration. …"})
+                 :error "(answer ...) must be the ONLY top-level form of its final iteration. ..."})
       (let [entry (first (get-timeline))]
         ;; Slots 0 + 2 stay successful; slot 1 flips to error and
         ;; carries the formatted validation message.
@@ -1050,13 +1049,13 @@
   (it ":iteration-error sets :error and :done? true"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :iteration-error :iteration 0
-                 :thinking "about to call LLM…"
+                 :thinking "about to call LLM..."
                  :error {:type :provider/timeout :message "timed out"}
                  :done? true})
       (let [entry (first (get-timeline))]
         (expect (= :provider/timeout (-> entry :error :type)))
         (expect (true? (:done? entry)))
-        (expect (= "about to call LLM…" (:thinking entry))))))
+        (expect (= "about to call LLM..." (:thinking entry))))))
 
   (it "unknown :phase passes through unchanged (forward-compat)"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
@@ -1127,7 +1126,7 @@
                    :ext/symbols   [(vis/symbol 'b-fn (constantly :from-b)
                                      {:doc "B" :arglists '([])})
                                    ;; Collides with ext-a's shared-fn
-                                   ;; — last-write-wins.
+                                   ;; - last-write-wins.
                                    (vis/symbol 'shared-fn (constantly :b-version)
                                      {:doc "shared" :arglists '([])})]})]
       (vis/install-extension! env ext-a)
@@ -1136,7 +1135,7 @@
         ;; Both extensions' unique symbols live under the same ns.
         (expect (contains? bound 'a-fn))
         (expect (contains? bound 'b-fn))
-        ;; Collision still resolves — to ext-B's value (last write wins).
+        ;; Collision still resolves - to ext-B's value (last write wins).
         (expect (contains? bound 'shared-fn)))
       ;; Both extensions show up in the env's :extensions atom.
       (let [registered (set (map :ext/namespace @(:extensions env)))]
@@ -1172,7 +1171,7 @@
                      'active-fn)))))
 
   (it "installing the SAME extension twice replaces it (no duplication)"
-    ;; Pre-existing contract — pin it so the merge change doesn't
+    ;; Pre-existing contract - pin it so the merge change doesn't
     ;; accidentally break re-install hot-swap semantics.
     (let [env (bare-env-for-install-test)
           ext-v1 (vis/extension
@@ -1198,7 +1197,7 @@
                             @(:extensions env))))))))
 
 ;; -----------------------------------------------------------------------------
-;; Parse repair pipeline — edamame → parinfer → edamame → extension hooks
+;; Parse repair pipeline - edamame -> parinfer -> edamame -> extension hooks
 ;;
 ;; Three real-world failure cases extracted verbatim from
 ;; conversation 3931a3ec-e137-4932-9d9e-3144568bed69 (DB rows under
@@ -1212,13 +1211,13 @@
     (expect (nil? (vis/parinfer-rebalance "(def x 1)")))
     (expect (nil? (vis/parinfer-rebalance "(def x 1)\n(def y 2)"))))
 
-  (it "Case A: extra `)` matching `{` — parinfer drops the stray close"
+  (it "Case A: extra `)` matching `{` - parinfer drops the stray close"
     (let [src "(def m {:a 1\n         :b 2)})"
           fixed (vis/parinfer-rebalance src)]
       (expect (string? fixed))
       (expect (not= src fixed))))
 
-  (it "Case B: `]` typed instead of `)` — parinfer rebalances by indent"
+  (it "Case B: `]` typed instead of `)` - parinfer rebalances by indent"
     ;; Parinfer doesn't change paren TYPES but it does close+open
     ;; based on indentation, which produces a parseable program.
     ;; (Semantics may shift slightly from what the model meant; the
@@ -1227,7 +1226,7 @@
           fixed (vis/parinfer-rebalance src)]
       (expect (string? fixed))))
 
-  (it "Case C: missing `)` (EOF) — parinfer auto-closes by indent stack"
+  (it "Case C: missing `)` (EOF) - parinfer auto-closes by indent stack"
     (let [src "(def x (let [y 1]\n  y)"
           fixed (vis/parinfer-rebalance src)]
       (expect (string? fixed))
@@ -1247,19 +1246,19 @@
       (expect (= 2 (count forms)))
       (expect (every? #(not (:repaired? %)) forms))))
 
-  (it "Case A repair: extra `)` matching `{` — parinfer fixes, forms tagged :repaired?"
+  (it "Case A repair: extra `)` matching `{` - parinfer fixes, forms tagged :repaired?"
     (let [src "(def m {:a 1\n         :b 2)})"
           [forms err] (vis/split-top-level-forms src)]
       (expect (nil? err))
       (expect (every? :repaired? forms))))
 
-  (it "Case C repair: missing `)` — parinfer fixes, forms tagged :repaired?"
+  (it "Case C repair: missing `)` - parinfer fixes, forms tagged :repaired?"
     (let [src "(def x (let [y 1]\n  y)"
           [forms err] (vis/split-top-level-forms src)]
       (expect (nil? err))
       (expect (every? :repaired? forms))))
 
-  (it "unrepairable garbage — returns [nil parse-error] for the rescue chain"
+  (it "unrepairable garbage - returns [nil parse-error] for the rescue chain"
     (let [[forms err] (vis/split-top-level-forms "(do \"unterminated")]
       (expect (nil? forms))
       (expect (string? err))
@@ -1332,9 +1331,9 @@
 ;; ─── from var_index_render_test.clj ───
 
 ;; -----------------------------------------------------------------------------
-;; Helpers — build a minimal sandbox map without a real SCI context.
+;; Helpers - build a minimal sandbox map without a real SCI context.
 ;; `build-var-index` accepts an explicit sandbox-map override (the third
-;; arity), so we can hand it any `{sym → val}` map and skip SCI entirely.
+;; arity), so we can hand it any `{sym -> val}` map and skip SCI entirely.
 ;; -----------------------------------------------------------------------------
 
 (defn- index
@@ -1377,7 +1376,7 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe string-rendering-test
-  (it "inlines strings ≤200 chars"
+  (it "inlines strings <=200 chars"
     (let [out (index {'s "hello world"})]
       (expect (re-find #"\(def s \"hello world\"\)" out))))
 
@@ -1397,11 +1396,11 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe map-rendering-test
-  (it "inlines maps with ≤8 keys as {:keys [...]}"
+  (it "inlines maps with <=8 keys as {:keys [...]}"
     (let [m   {:a 1 :b 2 :c 3}
           out (index {'m m})]
       (expect (re-find #"\{:keys \[" out))
-      ;; clojure maps make no order guarantee — verify membership only.
+      ;; clojure maps make no order guarantee - verify membership only.
       (doseq [k [:a :b :c]]
         (expect (re-find (re-pattern (str ":" (name k))) out)))))
 
@@ -1416,7 +1415,7 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe sequential-rendering-test
-  (it "inlines vectors with ≤5 elements"
+  (it "inlines vectors with <=5 elements"
     (let [out (index {'v [1 2 3 4 5]})]
       (expect (re-find #"\(def v \[1 2 3 4 5\]\)" out))))
 
@@ -1428,7 +1427,7 @@
 
   (it "inlines small sets"
     (let [out (index {'s #{1 2}})]
-      ;; sets render through `(vec val)` for inline → may be ordered as
+      ;; sets render through `(vec val)` for inline -> may be ordered as
       ;; vector seq; assert the body is a vector literal of size 2.
       (expect (re-find #"\(def s \[" out)))))
 
@@ -1455,7 +1454,7 @@
       (expect (not (re-find #"Second line\." out))))))
 
 ;; -----------------------------------------------------------------------------
-;; Stats comment shape — `;; v=N scope=...`
+;; Stats comment shape - `;; v=N scope=...`
 ;; -----------------------------------------------------------------------------
 
 (defdescribe stats-comment-test
@@ -1465,8 +1464,8 @@
 
   (it "drops `^{...}` reader-macro metadata entirely"
     ;; The old format injected `^{:v 3 :s :l :t :map :n 12}` onto the
-    ;; symbol — invalid Clojure that confused parser priors. The new
-    ;; format puts stats in a comment line and emits a real `(def …)`.
+    ;; symbol - invalid Clojure that confused parser priors. The new
+    ;; format puts stats in a comment line and emits a real `(def ...)`.
     (let [out (index {'foo {:a 1}})]
       (expect (not (re-find #"\^\{:v" out)))
       (expect (not (re-find #"\^\{:s" out))))))
@@ -1507,14 +1506,14 @@
     (expect (nil? (index {'TURN_USER_REQUEST "x" 'CONVERSATION_PREVIOUS_ANSWER "y" 'ITERATION_PREVIOUS_REASONING "z"})))))
 
 ;; -----------------------------------------------------------------------------
-;; Sort order — newest-touched first by recency-of (no DB → all tied at
-;; Long/MAX_VALUE → falls back to alphabetical ordering by sym name).
+;; Sort order - newest-touched first by recency-of (no DB -> all tied at
+;; Long/MAX_VALUE -> falls back to alphabetical ordering by sym name).
 ;; -----------------------------------------------------------------------------
 
 (defdescribe sort-order-test
   (it "tied recency falls back to alphabetical ordering"
     ;; All vars share the same recency (no DB var-registry passed), so
-    ;; the secondary sort key — `(str sym)` — kicks in.
+    ;; the secondary sort key - `(str sym)` - kicks in.
     (let [out (index {'zoo 1 'apple 2 'mango 3})
           apple-pos (str/index-of out "apple")
           mango-pos (str/index-of out "mango")
@@ -1550,7 +1549,7 @@
 
   (it "returns nil for multi-form code blocks"
     ;; A block with two top-level forms shouldn't be doc-attached
-    ;; ambiguously — only single-form (def…) shapes qualify.
+    ;; ambiguously - only single-form (def...) shapes qualify.
     (expect (nil? (vis/extract-defining-name "(def a 1) (def b 2)"))))
 
   (it "returns nil for parse errors"
@@ -1558,7 +1557,7 @@
     (expect (nil? (vis/extract-defining-name "this is not clojure")))))
 
 ;; -----------------------------------------------------------------------------
-;; End-to-end via execute-code (the private helper) — round-trip through SCI
+;; End-to-end via execute-code (the private helper) - round-trip through SCI
 ;; -----------------------------------------------------------------------------
 
 ;; Helper retained for the `#_`-disabled orphan tests below; ignored
@@ -1606,7 +1605,7 @@
             result (exec environment "(+ 1 2)" "An addition, surely.")]
         (expect (= 3 (:result result)))))
 
-    (it "doc does not leak into siblings — only the targeted var receives it"
+    (it "doc does not leak into siblings - only the targeted var receives it"
       (let [environment (fresh-environment)]
         (exec environment "(def alpha 1)" "First var.")
         (exec environment "(def beta 2)" nil)
@@ -1614,7 +1613,7 @@
         (expect (nil? (def-doc environment 'beta))))))
 
 ;; -----------------------------------------------------------------------------
-;; Render path — `<var_index>` shows the docstring for data vars too
+;; Render path - `<var_index>` shows the docstring for data vars too
 ;; -----------------------------------------------------------------------------
 
 ;; --- ORPHAN: targets removed/changed API. Skipped via #_ --- 
@@ -1637,7 +1636,7 @@
           (expect (re-find #"\(defn doubler \[x\] \"Doubles its argument\." out))))))
 
 ;; -----------------------------------------------------------------------------
-;; safe-pr-str — bound-then-format, never format-then-bound. The whole
+;; safe-pr-str - bound-then-format, never format-then-bound. The whole
 ;; reason this helper exists is to keep `pr-str` from materializing
 ;; unbounded user/model data into the JVM heap before truncation.
 ;; -----------------------------------------------------------------------------
@@ -1660,12 +1659,12 @@
     (let [s   (apply str (repeat 5000 "a"))
           out (vis/safe-pr-str s {:max-chars 100 :print-length 1000 :print-level 10})]
       (expect (<= (count out) 200))                  ;; bounded prefix + suffix
-      (expect (re-find #" …<\+\d+ chars>$" out))))
+      (expect (re-find #" ...<\+\d+ chars>$" out))))
 
   (it "does not clip when input fits within max-chars"
     (let [out (vis/safe-pr-str {:hello "world"} {:max-chars 1000})]
       (expect (= "{:hello \"world\"}" out))
-      (expect (not (re-find #"…" out)))))
+      (expect (not (re-find #"..." out)))))
 
   (it "never materializes more than print-length elements during pr"
     ;; If pr-str were applied to the full value first, this test would
@@ -1766,7 +1765,7 @@
 
 ;; ─── from core_test.clj ───
 
-;; ─── from schema_reject_retry_test.clj — DELETED
+;; ─── from schema_reject_retry_test.clj - DELETED
 ;;
 ;; The schema-reject retry layer was removed when the iteration loop
 ;; switched from `svar/ask!` (JSON spec) to `svar/ask-code!` (plain-
@@ -1949,7 +1948,7 @@
 ;; ─── from parse_rescue_loop_test.clj ───
 
 #_(def ^:private try-extension-parse-rescue
-    ;; private fn in com.blockether.vis.internal.loop — reach in via
+    ;; private fn in com.blockether.vis.internal.loop - reach in via
     ;; requiring-resolve so the test can exercise the parse-rescue path
     ;; without bumping it to public.
     (requiring-resolve 'com.blockether.vis.internal.loop/try-extension-parse-rescue))
@@ -2067,7 +2066,7 @@
     ;; extension whose hook trivially returns its input wrapped in
     ;; a no-op transformation that re-raises the same parse error.
       (let [pathological-hook (fn [{:keys [code]}]
-                              ;; Return code unchanged — should be
+                              ;; Return code unchanged - should be
                               ;; detected as no-progress and stop.
                                 code)
             rg (vis/symbol 'rg (fn [& _] nil)
@@ -2102,7 +2101,7 @@
 (def ^:private repo-root
   ;; The JVM's cwd is the repo root when these tests are launched
   ;; via `clojure -M:test` from the project directory. Resolve from
-  ;; there — `*file*` is unreliable because it's relative to whichever
+  ;; there - `*file*` is unreliable because it's relative to whichever
   ;; classpath source-path the file was loaded from.
   (io/file (System/getProperty "user.dir")))
 
@@ -2111,7 +2110,7 @@
 
 (assert (.exists (io/file vis-bin))
   (str "bin/vis not found at " vis-bin
-    " — run smoke tests from the repo root via `clojure -M:test`."))
+    " - run smoke tests from the repo root via `clojure -M:test`."))
 
 (defn- make-temp-db-dir
   [prefix]
@@ -2185,7 +2184,7 @@
   (it "prints the help tree and exits 0"
     (let [{:keys [exit out]} (run-vis)]
       (expect (zero? exit))
-      (expect (contains-all? out ["vis — iterative coding agent CLI"
+      (expect (contains-all? out ["vis - iterative coding agent CLI"
                                   "COMMANDS"
                                   "run"])))))
 
@@ -2193,7 +2192,7 @@
   (it "prints the help tree and exits 0"
     (let [{:keys [exit out]} (run-vis "help")]
       (expect (zero? exit))
-      (expect (str/includes? out "vis — iterative coding agent CLI")))))
+      (expect (str/includes? out "vis - iterative coding agent CLI")))))
 
 (defdescribe vis-doctor
   (it "prints environment diagnostics from the foundation doctor sections and exits 0"
@@ -2201,7 +2200,7 @@
     ;; sections (system, agents-md, skills, scan-warnings); the host
     ;; aggregator wraps them under the foundation namespace header. Pin
     ;; the markers that survive both the section refactor and any
-    ;; future re-wording — the title banner, the ::system OS+JVM lines,
+    ;; future re-wording - the title banner, the ::system OS+JVM lines,
     ;; the DB path line, the trailing summary.
     (let [{:keys [exit out]} (run-vis "doctor")]
       (expect (zero? exit))

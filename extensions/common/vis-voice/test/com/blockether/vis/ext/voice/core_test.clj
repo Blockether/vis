@@ -62,7 +62,7 @@
       (expect (re-find #"canonical final answer as plain text" prompt))
       (expect (re-find #"saved to the conversation database" prompt))
       (expect (re-find #"manager update" prompt))
-      (expect (re-find #"do not include proof trails" prompt))
+      (expect (re-find #"do not include extra trails" prompt))
       (expect (re-find #"do not read code aloud" prompt))))
 
   (it "mounts voice model commands under vis extensions voice"

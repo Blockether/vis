@@ -5,20 +5,20 @@
    Why a separate ns: the iteration loop already runs every code
    block through edamame, parinfer, and the extension rescue chain,
    so adding more diagnostic logic inline in `internal/loop.clj`
-   buries the intent. Keeping these helpers next to a test file
+   buries the meaning. Keeping these helpers next to a test file
    lets us pin specific real-world LLM mistakes (see the
    conversation-derived regression in the test ns) and grow the
    diagnostic catalogue independently of the iteration runtime.
 
-   Today the catalogue covers ONE class of error — the most common
+   Today the catalogue covers ONE class of error - the most common
    one we've seen in real agent traces: UNBALANCED DOUBLE-QUOTE
-   STRING. The model writes a multi-line `(answer (v/join …))` and
+   STRING. The model writes a multi-line `(answer (v/join ...))` and
    accidentally drops or doubles a `\\` + `\"` escape somewhere in
    the middle. edamame's response is `Invalid symbol: <text>` at a
-   row far BELOW the actual broken line — because the unbalanced
+   row far BELOW the actual broken line - because the unbalanced
    quote hijacks chunks of source as string content, and the reader
    only notices when the hijacked content stops resembling a valid
-   token. See conversation `cf9e29b5-…`'s last answer (pinned in
+   token. See conversation `cf9e29b5-...`'s last answer (pinned in
    `parse-diagnose-test`) for the canonical reproduction.
 
    Diagnostic API:
@@ -79,7 +79,7 @@
    running count goes odd on the line that opens the literal and
    even on the line that closes it. We flag the first odd-at-EOL
    line, which is the open. The CALLER decides whether that's a
-   bug — we just surface the location."
+   bug - we just surface the location."
   [^String code]
   (let [lines (str/split-lines (or code ""))]
     (loop [i 0
@@ -115,13 +115,13 @@
                    " missing escape near line " line-str ".")}))))
 
 ;; -----------------------------------------------------------------------------
-;; Auto-repair — the parinfer-equivalent for unbalanced strings.
+;; Auto-repair - the parinfer-equivalent for unbalanced strings.
 ;; -----------------------------------------------------------------------------
 ;;
 ;; The same intuition that powers parinfer for parens applies to
 ;; quotes: if the user's source has an extra OR a missing `"`,
 ;; ONE local edit on the suspect line is overwhelmingly likely to
-;; restore balance. We don't need a fancy parser — a small search
+;; restore balance. We don't need a fancy parser - a small search
 ;; over plausible edits is plenty.
 ;;
 ;; Strategy:
@@ -130,14 +130,14 @@
 ;;   2. Find the line where running count first goes odd.
 ;;   3. Generate candidate repairs:
 ;;        a. Remove each unescaped `"` on that line, ONE AT A TIME.
-;;           Handles the "extra `\"`" case — exactly what conversation
+;;           Handles the "extra `\"`" case - exactly what conversation
 ;;           cf9e29b5 hit (LLM dropped a `\"` escape and got a stray
 ;;           bare `"` instead).
 ;;        b. Append `"` at end of that line.
-;;           Handles the "missing close-quote" case — less common
+;;           Handles the "missing close-quote" case - less common
 ;;           in practice but cheap to try.
 ;;   4. Each candidate goes through `parse-ok?` (caller-supplied
-;;      — typically `(comp boolean #(try (edamame/parse-string-all
+;;      - typically `(comp boolean #(try (edamame/parse-string-all
 ;;      % opts) true (catch _ false)))`).
 ;;   5. First candidate that parses wins.
 ;;   6. No winner -> nil. The loop falls back to surfacing the
@@ -220,7 +220,7 @@
    `parse-ok?` predicate; the first candidate that returns truthy
    wins.
 
-   `parse-ok?`: `(fn [src] -> bool)` — typically a wrapper around
+   `parse-ok?`: `(fn [src] -> bool)` - typically a wrapper around
    `edamame/parse-string-all` that returns true on success, false
    on any throw. Pure: callers stay in control of the parser opts.
 
@@ -235,7 +235,7 @@
     (when-let [line (first-odd-quote-line code)]
       (let [removals (candidate-removals code line)
             append-c (candidate-append code line)
-            ;; Removals first — the "extra `\"`" case is
+            ;; Removals first - the "extra `\"`" case is
             ;; overwhelmingly more common in real LLM mistakes than
             ;; the "missing close-quote" case (which would normally
             ;; have crashed at the same line, not later).

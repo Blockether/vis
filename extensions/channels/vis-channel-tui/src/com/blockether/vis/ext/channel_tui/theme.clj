@@ -54,14 +54,14 @@
 (def dialog-hint-key (rgb :dialog-hint-key))
 (def input-field-bg  (rgb :input-field-bg))
 
-;; Chat messages — user
+;; Chat messages - user
 (def user-bubble-bg    (rgb :user-bubble-bg))
 (def user-bubble-fg    (rgb :user-bubble-fg))
 (def user-role-fg      (rgb :user-role-fg))
 (def turn-separator-bg (rgb :turn-separator-bg))
 (def turn-separator-fg (rgb :turn-separator-fg))
 
-;; Chat messages — assistant
+;; Chat messages - assistant
 (def ai-bubble-bg      (rgb :ai-bubble-bg))
 (def ai-bubble-fg      (rgb :ai-bubble-fg))
 (def ai-role-fg        (rgb :ai-role-fg))
@@ -120,10 +120,6 @@
 (def md-summary-fg     (rgb :md-summary-fg))
 (def th-md-summary-bg  (rgb :th-md-summary-bg))
 (def th-md-summary-fg  (rgb :th-md-summary-fg))
-(def proof-summary-bg     (rgb :proof-summary-bg))
-(def proof-summary-fg     (rgb :proof-summary-fg))
-(def th-proof-summary-bg  (rgb :th-proof-summary-bg))
-(def th-proof-summary-fg  (rgb :th-proof-summary-fg))
 
 ;; Link chrome
 (def link-chrome-fg       (rgb :link-chrome-fg))
@@ -231,10 +227,6 @@
    :md-summary-fg #'md-summary-fg
    :th-md-summary-bg #'th-md-summary-bg
    :th-md-summary-fg #'th-md-summary-fg
-   :proof-summary-bg #'proof-summary-bg
-   :proof-summary-fg #'proof-summary-fg
-   :th-proof-summary-bg #'th-proof-summary-bg
-   :th-proof-summary-fg #'th-proof-summary-fg
    :link-chrome-fg #'link-chrome-fg
    :link-chrome-arrow-fg #'link-chrome-arrow-fg
    :link-chrome-url-fg #'link-chrome-url-fg

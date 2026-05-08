@@ -150,7 +150,7 @@
   ;; extension-load-failure warnings come from manifest discovery,
   ;; not from skills". Public via `load-failures` (read-only); cleared
   ;; on every `scan!`. The atom is the single point that lets us
-  ;; surface the failure to TWO consumers — the system prompt's
+  ;; surface the failure to TWO consumers - the system prompt's
   ;; `<scan-warnings>` block (so the LLM sees "foundation extension
   ;; failed; v/cat will be unbound") and the launcher's stderr banner
   ;; (so the user running `bin/vis` notices before they spend an
@@ -258,7 +258,7 @@
    Callers that want the docs-registry side effect (reflinks
    computation + the `(v/extension-doc ...)` index) should call
    `com.blockether.vis.internal.extension/discover-extensions!`
-   instead — which wraps this primitive with the docs merge.
+   instead - which wraps this primitive with the docs merge.
 
    Callers that just need the require side effect to drive their own
    registrar (e.g. the persistence facade lazy-discovering backends
@@ -275,7 +275,7 @@
 
 (defn rediscover!
   "Force a fresh classpath scan, discarding the cached manifests.
-   Test/REPL utility — production code should use the idempotent
+   Test/REPL utility - production code should use the idempotent
    `scan-extensions!` instead."
   []
   (reset! discovered? false)

@@ -24,7 +24,7 @@ The extension calls Exa's HTTP MCP endpoint:
 https://mcp.exa.ai/mcp
 ```
 
-Basic usage works without an API key. Set `EXA_API_KEY` or `EXA_MCP_API_KEY` for higher limits. The key is passed as the MCP endpoint query parameter `exaApiKey` and redacted from provenance/errors.
+Basic usage works without an API key. Set `EXA_API_KEY` or `EXA_MCP_API_KEY` for higher limits. The key is passed as the MCP endpoint query parameter `exaApiKey` and redacted from info/errors.
 
 ## Configuration
 

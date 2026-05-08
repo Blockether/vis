@@ -14,14 +14,14 @@ per-iteration nudges into a single validated unit.
 
 ## What an extension can do
 
-An extension is a single `(sdk/extension {…})` data map declaring
-zero or more surfaces. A single `(sdk/register-extension! …)` call handles
+An extension is a single `(sdk/extension {...})` data map declaring
+zero or more surfaces. A single `(sdk/register-extension! ...)` call handles
 all of them; the registrar dispatches each populated slot to its matching
 sub-registry as a side effect.
 
 | Slot | Purpose | Where the user sees it |
 |------|---------|------------------------|
-| `:ext/symbols`     | Functions / constants bound into the SCI sandbox under an alias. | LLM `:code` calls `(alias/fn …)`. |
+| `:ext/symbols`     | Functions / constants bound into the SCI sandbox under an alias. | LLM `:code` calls `(alias/fn ...)`. |
 | `:ext/cli`         | CLI subcommands the extension contributes. **Always auto-mount under `vis extensions <cmd>`**; deeper nests like `vis extensions git status` are allowed via `:cmd/parent ["extensions" "git"]`. | `vis extensions <name>`. |
 | `:ext/channels`    | User-facing front-ends (TUI, Telegram bot, web hook) registered as `vis channels <id>`. | `vis channels <id>`. |
 | `:ext/providers`   | LLM auth providers (OAuth + token exchange). | `vis providers auth <id>`. |
@@ -30,13 +30,13 @@ sub-registry as a side effect.
 
 Alongside those surfaces, every extension may also:
 
-- **Inject prompt context** — static LLM-facing docs via `:ext/prompt` and live environment facts via `:ext/environment-info-fn`.
-- **Emit per-iteration nudges** — situational hints (budget, errors, …) via `:ext/nudge-fn`.
-- **Expose Java classes** — enable `(LocalDate/now)` style interop via `:ext/classes` / `:ext/imports`.
-- **Guard activation** — conditionally enable/disable based on env state via `:ext/activation-fn`.
+- **Inject prompt context** - static LLM-facing docs via `:ext/prompt` and live environment facts via `:ext/environment-info-fn`.
+- **Emit per-iteration nudges** - situational hints (budget, errors, ...) via `:ext/nudge-fn`.
+- **Expose Java classes** - enable `(LocalDate/now)` style interop via `:ext/classes` / `:ext/imports`.
+- **Guard activation** - conditionally enable/disable based on env state via `:ext/activation-fn`.
 - **Declare dependencies** on other extensions via `:ext/requires`.
 
-No extension is required to populate every slot — a TUI jar fills only `:ext/channels`, a backend jar fills only `:ext/persistance`, a tools jar fills only `:ext/symbols`, etc.
+No extension is required to populate every slot - a TUI jar fills only `:ext/channels`, a backend jar fills only `:ext/persistance`, a tools jar fills only `:ext/symbols`, etc.
 
 ## Registration
 
@@ -44,7 +44,7 @@ Two ways to register extensions:
 
 ### Global registry (recommended)
 
-Call `(sdk/register-extension! …)` at namespace load time. When any
+Call `(sdk/register-extension! ...)` at namespace load time. When any
 environment is created, all globally registered extensions are
 automatically installed in dependency order.
 
@@ -60,8 +60,8 @@ automatically installed in dependency order.
      ...}))
 ```
 
-Drop the jar on the classpath → namespace loads → extension
-self-registers → every new environment gets it.
+Drop the jar on the classpath -> namespace loads -> extension
+self-registers -> every new environment gets it.
 
 ### Classpath auto-discovery
 
@@ -83,9 +83,9 @@ calls `com.blockether.vis.core/discover-extensions!` which:
 
 1. Scans the classpath for **all** `META-INF/vis-extension/vis.edn` resources
    (via `ClassLoader.getResources`).
-2. Parses each as the EDN map shape above (`{<id> {:nses […] :docs {…}}}`).
+2. Parses each as the EDN map shape above (`{<id> {:nses [...] :docs {...}}}`).
 3. `require`s every namespace listed under `:nses` exactly once across
-   all URLs, triggering each ns's `(sdk/register-extension! …)` call as
+   all URLs, triggering each ns's `(sdk/register-extension! ...)` call as
    a side effect.
 4. Validates declared docs (rejecting entries without `:description`
    or `:content`), and inverts authored `:links` into `:reflinks` on
@@ -96,7 +96,7 @@ The loader is **type-agnostic**: the same
 `META-INF/vis-extension/vis.edn` resource holds the namespaces for
 every surface (SCI sandbox symbols, channels, CLI commands,
 providers, persistance entries). The author declares everything in
-one `(sdk/extension {…})` map and calls `(sdk/register-extension! …)`
+one `(sdk/extension {...})` map and calls `(sdk/register-extension! ...)`
 once; the registrar dispatches each populated `:ext/<slot>` to its
 matching sub-registry as a side effect. The lower-level
 `register-cmd!` / `register-channel!` / `register-provider!` /
@@ -165,20 +165,20 @@ per-env companion to the global `register-extension!`.
 
 From classpath jar to live tool call:
 
-0. **discover-extensions!** — scan `META-INF/vis-extension/vis.edn` on the classpath
-1. **sdk/extension** — build and validate the extension spec
-2. **sdk/register-extension!** — add to the process-level registry; slot dispatcher fans every populated `:ext/<slot>` out to its sub-registry
-3. **Topo-sort** — order by `:ext/requires` dependencies (throws `missing-dependencies` if a required extension is absent)
-4. **Install** — bind symbols into the aliased SCI namespace; auto-require the alias in `sandbox`
-5. **Prompt** — collect active `:ext/environment-info-fn` sections, then append each active extension's optional `:ext/prompt` block under `[namespace: alias → ns]`
-6. **Activation (per turn)** — `:ext/activation-fn` check; when falsy, symbols stay unbound and prompt/nudge hooks are skipped for the whole turn
-7. **Nudge (per iteration)** — active extensions' `:ext/nudge-fn` is invoked
-8. **Hooks (per call)** — `:before-fn` → `:fn` → `:after-fn`, with `:on-error-fn` catching `:fn` errors
+0. **discover-extensions!** - scan `META-INF/vis-extension/vis.edn` on the classpath
+1. **sdk/extension** - build and validate the extension spec
+2. **sdk/register-extension!** - add to the process-level registry; slot dispatcher fans every populated `:ext/<slot>` out to its sub-registry
+3. **Topo-sort** - order by `:ext/requires` dependencies (throws `missing-dependencies` if a required extension is absent)
+4. **Install** - bind symbols into the aliased SCI namespace; auto-require the alias in `sandbox`
+5. **Prompt** - collect active `:ext/environment-info-fn` sections, then append each active extension's optional `:ext/prompt` block under `[namespace: alias -> ns]`
+6. **Activation (per turn)** - `:ext/activation-fn` check; when falsy, symbols stay unbound and prompt/nudge hooks are skipped for the whole turn
+7. **Nudge (per iteration)** - active extensions' `:ext/nudge-fn` is invoked
+8. **Hooks (per call)** - `:before-fn` -> `:fn` -> `:after-fn`, with `:on-error-fn` catching `:fn` errors
 
 ## Namespace aliases
 
 An extension that ships any `:ext/symbols` **must** declare
-`:ext/ns-alias` — a map with `:ns` (the full SCI namespace symbol)
+`:ext/ns-alias` - a map with `:ns` (the full SCI namespace symbol)
 and `:alias` (the short alias the LLM uses). Pure prompt-only
 extensions (no `:ext/symbols`) may omit it. When present, extension
 symbols are bound **only** into this dedicated namespace, **never**
@@ -203,7 +203,7 @@ The system prompt auto-prepends a namespace header to each extension's
 prompt block:
 
 ```
-[namespace: vis → vis.ext.tools]
+[namespace: vis -> vis.ext.tools]
 Filesystem tools (use v/ prefix):
 - (v/cat path) ...
 - (v/ls ".") ...
@@ -219,10 +219,10 @@ exposes `java.time.LocalDate`.
 Every active extension can contribute two system-prompt surfaces at
 turn start:
 
-- `:ext/environment-info-fn` — live facts rendered inside the shared
+- `:ext/environment-info-fn` - live facts rendered inside the shared
   `<environment-info>` block. Use this for cwd, repository state,
   runtime flags, external service status, or other changing context.
-- `:ext/prompt` — static or semi-static tool guidance rendered as an
+- `:ext/prompt` - static or semi-static tool guidance rendered as an
   extension prompt block. The runtime does **not** auto-render every
   `:ext/symbols` entry; extensions that want a tool list call
   `ext/render-prompt` inside their own `:ext/prompt`.
@@ -238,10 +238,10 @@ builds the complete system message. It:
    when present
 4. Joins all active prompt blocks with `\n\n` and appends to the core prompt
 
-All iteration loop paths call this same function — zero duplication, zero drift.
+All iteration loop paths call this same function - zero duplication, zero drift.
 
 If an extension's `activation-fn` or `prompt` fn throws, the error is
-logged at `:error` level and that extension's prompt is skipped —
+logged at `:error` level and that extension's prompt is skipped -
 the turn still runs.
 
 ## Quick example
@@ -271,9 +271,9 @@ the turn still runs.
 The LLM sees in the system prompt:
 
 ```
-[namespace: search → vis.ext.search]
+[namespace: search -> vis.ext.search]
 Document search (use search/ prefix)
-- (search/find query) — Full-text search.
+- (search/find query) - Full-text search.
 Prefer search before manual file scans.
 ```
 
@@ -282,13 +282,13 @@ And calls `(search/find "neural")` from `:code` blocks. Bare
 
 ## One example per surface
 
-Real in-tree examples — every package below ships exactly one
+Real in-tree examples - every package below ships exactly one
 `META-INF/vis-extension/vis.edn` and exactly one
-`(sdk/register-extension! …)` call.
+`(sdk/register-extension! ...)` call.
 
 ### Sandbox tools
 
-`extensions/common/vis-foundation/.../core.clj` — read / list / search (`v/rg`) / patch:
+`extensions/common/vis-foundation/.../core.clj` - read / list / search (`v/rg`) / patch:
 
 ```clojure
 (sdk/register-extension!
@@ -321,17 +321,17 @@ subcommand as a first-party extension contribution:
 `:ext/cli` ALWAYS mounts under `["extensions"]`. The dispatcher
 defaults `:cmd/parent` for entries that omit it. Three forms work:
 
-1. **Flat** (most common): just `:cmd/name` + `:cmd/run-fn` → `vis extensions <name>`.
-2. **Embedded subcommands**: the entry carries its own `:cmd/subcommands` vector → the whole tree mounts at `vis extensions <name>` and below.
-3. **Deeper nest via parent path**: each entry sets `:cmd/parent ["extensions" "git"]` etc. → `vis extensions git <name>`.
+1. **Flat** (most common): just `:cmd/name` + `:cmd/run-fn` -> `vis extensions <name>`.
+2. **Embedded subcommands**: the entry carries its own `:cmd/subcommands` vector -> the whole tree mounts at `vis extensions <name>` and below.
+3. **Deeper nest via parent path**: each entry sets `:cmd/parent ["extensions" "git"]` etc. -> `vis extensions git <name>`.
 
 Any `:cmd/parent` that doesn't start with `"extensions"` is rejected
 at registration time with `:type :ext/cli-bad-parent`. Top-level
-binary commands (`vis run`, `vis providers`, …) are NOT extension
+binary commands (`vis run`, `vis providers`, ...) are NOT extension
 commands; they call `registry/register-cmd!` directly inside the
 host runtime (see `src/com/blockether/vis/internal/main.clj`).
 
-See [Extension Spec — CLI command slot](spec.md#cli-command-slot) for
+See [Extension Spec - CLI command slot](spec.md#cli-command-slot) for
 full examples of each form.
 
 ### Channel front-end
@@ -387,7 +387,7 @@ full examples of each form.
 
 ### Multiple surfaces at once
 
-Nothing prevents an extension from filling many slots at once —
+Nothing prevents an extension from filling many slots at once -
 an extension that ships SCI tools, a CLI command, AND a channel:
 
 ```clojure

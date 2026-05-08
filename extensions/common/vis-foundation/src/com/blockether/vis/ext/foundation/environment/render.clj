@@ -3,7 +3,7 @@
    `<environment>...</environment>` block injected into the system
    prompt.
 
-   The block is dense and conditionally rendered \u2014 absent git
+   The block is dense and conditionally rendered - absent git
    repository or empty language scan drops the corresponding lines
    instead of emitting empty placeholders. This keeps the prompt
    small for non-repository sessions and expressive for monorepo
@@ -36,7 +36,7 @@
   (when shape
     (let [parts (for [[kind n] (sort-by (fn [[_ n]] (- (long n))) totals)]
                   (str (name kind) ": " n))]
-      (str shape " — " (string/join ", " parts)))))
+      (str shape " - " (string/join ", " parts)))))
 
 (defn- yes-no [v]
   (cond
@@ -105,10 +105,6 @@
     (string/replace "<" "&lt;")
     (string/replace ">" "&gt;")))
 
-(defn- attr-name
-  [v]
-  (attr-str (if (keyword? v) (name v) v)))
-
 (defn render
   "Build the textual `<environment>` block from a snapshot map of
    the shape:
@@ -175,10 +171,11 @@
     (str (string/join "\n" (conj lines "</environment>")) "\n")))
 
 ;; ---------------------------------------------------------------------------
-;; Project guidance + skills + scan-warnings blocks. Rendered
-;; alongside <environment> by the foundation aggregator's prompt fn.
-;; Each format-*-block is a pure fn from data → string-or-nil; the
-;; caller (environment-prompt) drops nil blocks (conditional render).
+;; Project guidance + scan-warnings blocks. Rendered alongside
+;; <environment> by the foundation aggregator's prompt fn. Skills are
+;; host-internal and rendered by the core prompt assembler.
+;; Each format-*-block is a pure fn from data -> string-or-nil; the caller
+;; (environment-prompt) drops nil blocks (conditional render).
 ;; ---------------------------------------------------------------------------
 
 (defn format-project-guidance-block
@@ -193,57 +190,6 @@
       (when-not (.endsWith ^String content "\n") "\n")
       "</project-guidance>")))
 
-(def ^:const SKILLS_PROMPT_BUDGET_BYTES
-  "Total byte cap for the rendered <skills> block. Plan Q7: skills
-   alphabetized; full descriptions; `+ N more skills not shown
-   (prompt budget). Enumerate full list via TURN_ACCESSIBLE_SKILLS.`
-   marker when truncated."
-  8192)
-
-(defn- skill-entry
-  "XML-ish skill preview. The skill name lives in an attribute (not as a
-   dynamic tag name, because skill names may contain non-XML-name chars).
-   Source is metadata. The body is only the prompt preview/description,
-   not path/full SKILL.md body."
-  [{:keys [name source description]}]
-  (str "  <skill name=\"" (attr-str name) "\" source=\"" (attr-name (or source :unknown)) "\">\n"
-    "    <activation_trigger>" (attr-str description) "</activation_trigger>\n"
-    "  </skill>"))
-
-(defn format-skills-block
-  "Render the `<skills>` block. Skills come pre-sorted from
-   `(skills/list-all)` (alphabetical by `:name`). Honors
-   SKILLS_PROMPT_BUDGET_BYTES; remaining skills are dropped from the
-   prompt index but still discoverable via `TURN_ACCESSIBLE_SKILLS`
-   and loadable via `(v/load-skill ...)`.
-   Returns nil when the catalog is empty."
-  [skills]
-  (let [skills (vec skills)]
-    (when (seq skills)
-      (let [tail-line (str "  ;; Filter:   TURN_ACCESSIBLE_SKILLS    ; SYSTEM var, vec of {:name :description :path :source}\n"
-                        "  ;; Activate: (v/load-skill \"name\")    ; loads the full SKILL.md body; returns {:found? bool … :body …}")
-            header    (str "<skills count=\"" (count skills) "\">")
-            footer    "</skills>"
-            ;; Greedily fit lines under the byte budget. Each line ~UTF-8.
-            taken     (loop [acc []  used (+ (count header) 1 (count tail-line) 1 (count footer))
-                             remain skills]
-                        (if (empty? remain)
-                          [acc 0]
-                          (let [line  (skill-entry (first remain))
-                                size  (inc (count line))]
-                            (if (and (seq acc) (> (+ used size) SKILLS_PROMPT_BUDGET_BYTES))
-                              [acc (count remain)]
-                              (recur (conj acc line) (+ used size) (rest remain))))))
-            [lines dropped] taken
-            trunc     (when (pos? dropped)
-                        (str "  + " dropped " more skills not shown (prompt budget). "
-                          "Enumerate full list via TURN_ACCESSIBLE_SKILLS."))
-            body      (->> (cond-> lines
-                             trunc (conj "" trunc)
-                             true  (conj "" tail-line))
-                        (string/join "\n"))]
-        (str header "\n" body "\n" footer)))))
-
 (defn- scan-warning-line
   [{:keys [path reason]}]
   (str "  " path ": " reason))
@@ -251,7 +197,7 @@
 (defn format-scan-warnings-block
   "Render the `<scan-warnings>` block from a vec of warning maps
    like `[{:source :reason :path}]`. Returns nil when warnings is
-   empty (conditional render — don't emit an empty block).
+   empty (conditional render - don't emit an empty block).
    See plan Q10."
   [warnings]
   (when (seq warnings)

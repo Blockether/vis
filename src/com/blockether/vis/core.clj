@@ -1,5 +1,5 @@
 (ns com.blockether.vis.core
-  "vis — broad host facade.
+  "vis - broad host facade.
 
    This is the ONLY namespace extensions, channel adapters, embedded
    callers, and tests should import. It deliberately re-exports host,
@@ -20,7 +20,7 @@
        get-router, rebuild-router!, resolve-effective-model.
      - Extension contract: extension, symbol, value, render-prompt,
        register-extension!, registered-extensions, extension docs,
-       provenance, discovery, reload.
+       discovery, reload.
      - Registries: command, channel, provider, and backend registration
        helpers for host-owned and embedded use.
      - Persistence facade: db-* functions and connection helpers. The
@@ -116,7 +116,7 @@
 ;; =============================================================================
 ;; Notifications
 ;;
-;; Cross-channel ephemeral signals — \"copied\", \"verify.sh passed\",
+;; Cross-channel ephemeral signals - \"copied\", \"verify.sh passed\",
 ;; \"provider switched\". Any extension or channel can push via
 ;; `notify!`; the TUI banner / Telegram chat / CLI agent each
 ;; subscribe with `watch!` and surface entries in their own visual
@@ -135,8 +135,8 @@
 ;;
 ;; Single host-runtime helper for projecting a persisted conversation
 ;; (every turn: user prompt + final answer + optional metadata) into a
-;; Markdown string. Lives in the runtime so EVERY channel — TUI,
-;; Telegram, CLI agent, third-party plug-ins — can ship a `Copy as
+;; Markdown string. Lives in the runtime so EVERY channel - TUI,
+;; Telegram, CLI agent, third-party plug-ins - can ship a `Copy as
 ;; Markdown` / `Export conversation` affordance without re-implementing
 ;; the projection. See `internal.markdown/DEFAULT_OPTS` for tunables.
 ;; =============================================================================
@@ -239,46 +239,6 @@
 (def db-list-conversation-turn-iterations            persistance/db-list-conversation-turn-iterations)
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
 (def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
-(def db-store-provenance-event!      persistance/db-store-provenance-event!)
-(def db-get-provenance-event         persistance/db-get-provenance-event)
-(def db-list-provenance-events       persistance/db-list-provenance-events)
-(def db-create-evidence-bundle!      persistance/db-create-evidence-bundle!)
-(def db-get-evidence-bundle          persistance/db-get-evidence-bundle)
-(def db-create-attestation!          persistance/db-create-attestation!)
-(def db-attest-gate!                 persistance/db-attest-gate!)
-(def db-attest-intent!               persistance/db-attest-intent!)
-(def db-get-attestation              persistance/db-get-attestation)
-(def db-audit-proof                  persistance/db-audit-proof)
-
-;; Conversation-scoped intents, plans, gates, and focus
-(def db-store-intent!                 persistance/db-store-intent!)
-(def db-store-intent-ref!             persistance/db-store-intent-ref!)
-(def db-focus-intent!                 persistance/db-focus-intent!)
-(def db-infer-focus!                  persistance/db-infer-focus!)
-(def db-relate-intents!               persistance/db-relate-intents!)
-(def db-store-plan!                   persistance/db-store-plan!)
-(def db-store-gate!                   persistance/db-store-gate!)
-(def db-offer-proof!                  persistance/db-offer-proof!)
-(def db-prove-gate!                   persistance/db-prove-gate!)
-(def db-impede-gate!                  persistance/db-impede-gate!)
-(def db-block-gate!                   persistance/db-block-gate!)
-(def db-fulfill-intent!               persistance/db-fulfill-intent!)
-(def db-abandon-intent!               persistance/db-abandon-intent!)
-(def db-intents                       persistance/db-intents)
-
-;; Intent lifecycle (PROOF.md Tasks 28–34)
-(def db-list-intents                  persistance/db-list-intents)
-(def db-get-intent                    persistance/db-get-intent)
-(def db-intent-tree                   persistance/db-intent-tree)
-(def db-suggest-intent!               persistance/db-suggest-intent!)
-(def db-accept-intent!                persistance/db-accept-intent!)
-(def db-defer-intent!                 persistance/db-defer-intent!)
-(def db-mark-intent-resumable!        persistance/db-mark-intent-resumable!)
-(def db-resume-intent!                persistance/db-resume-intent!)
-(def db-get-intent-cursor             persistance/db-get-intent-cursor)
-(def db-set-intent-cursor!            persistance/db-set-intent-cursor!)
-(def db-abandon-intent-with-scope!    persistance/db-abandon-intent-with-scope!)
-(def db-deferred-intent-report        persistance/db-deferred-intent-report)
 
 ;; Var registry & turn history
 (def db-latest-var-registry              persistance/db-latest-var-registry)
@@ -318,7 +278,6 @@
 (def registered-extension-ids            extension/registered-extension-ids)
 (def extension-namespaces                extension/extension-namespaces)
 (def extension-id-of-ns                  extension/extension-id-of-ns)
-(def extension-provenance               extension/extension-provenance)
 (def extension-doc                       extension/extension-doc)
 (def extension-docs                      extension/extension-docs)
 (def extension-doc-content               extension/extension-doc-content)
@@ -334,8 +293,6 @@
 (def deregister-extension!               extension/deregister-extension!)
 (def extension-source-markers-of         extension/extension-source-markers-of)
 (def channel-hooks-for                   extension/channel-hooks-for)
-(def proof-event-kinds                   extension/proof-event-kinds)
-(def emit-proof-event!                   extension/emit-proof-event!)
 (def reload-extensions!                  lp/reload-extensions!)
 
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;
@@ -352,7 +309,7 @@
 ;; Doctor protocol
 ;;
 ;; Cross-cutting diagnostic surface. Every extension can declare
-;; `:ext/doctor-check-fn` — a single `(fn [env]) -> seq<msg>` returning
+;; `:ext/doctor-check-fn` - a single `(fn [env]) -> seq<msg>` returning
 ;; diagnostic messages. The host auto-injects `:ext` on each emitted message;
 ;; the extension self-stamps `:check-id` when it wants the formatter's
 ;; per-section grouping. `vis doctor` aggregates across every registered

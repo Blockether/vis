@@ -4,7 +4,7 @@
   {"README.md"
    {:created-at #inst "2026-04-29T00:00:00.000-00:00"
     :description
-    "vis-foundation: ONE SCI alias `v/` for introspection, filesystem/tool helpers, Markdown answer builders, environment awareness, provenance, and conversation-scoped intent/plan/gate APIs."
+    "vis-foundation: ONE SCI alias `v/` for introspection, filesystem/tool helpers, Markdown answer builders, and environment awareness."
     :content
     "# vis-foundation
 
@@ -13,36 +13,6 @@ Pkg: `com.blockether/vis-foundation`. Src: `extensions/common/vis-foundation/`.
 ONE alias `v/` bundles the model-facing host surface.
 
 Normal source installs keep the Vis checkout at `~/.vis/sourcecode`. When an agent needs to inspect Vis itself, that is the expected local source path.
-
-## Conversation intents
-
-```clojure
-(v/issue-intent! {:title \"...\" :rationale \"...\"})
-(v/focus-intent! intent-id {:rationale \"...\"})
-(v/relate-intents! {:from-intent-id ... :to-intent-id ... :relation :subintent})
-(v/issue-plan! {:intent-id ... :summary \"...\" :steps [...]})
-(v/issue-gate! {:plan-id ... :question \"...\" :required? true})
-(v/prove-gate! gate-id {:summary \"...\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})
-(v/block-gate! gate-id {:reason \"...\" :refs [\"turn/3f2a91c0/iteration/5/block/2/error\"]})
-(v/fulfill-intent! intent-id {:summary \"...\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})
-(v/abandon-intent! intent-id {:reason \"...\" :refs [\"turn/3f2a91c0/iteration/5/block/2\"]})
-(v/intents)
-```
-
-`v/intents` is the single read/check/report surface. Final answers are accepted only after focused intents are fulfilled or abandoned.
-
-Writer refs must be canonical, for example `turn/3f2a91c0/iteration/4/block/2`. Compact labels such as `i4.2`, `i4.2/tool`, `E1`, or `G1` are display-only and are rejected as writer input.
-
-## Provenance
-
-```clojure
-(v/provenance-timeline cid?)
-(v/provenance-stats cid?)
-(v/provenance-guards cid?)
-(v/provenance-report cid?)
-```
-
-Provenance is machine data. Markdown and labels are derived by renderers, not stored in provenance maps.
 
 ## File I/O and tools
 

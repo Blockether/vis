@@ -1,11 +1,11 @@
 (ns com.blockether.vis.internal.env
   "SCI sandbox machinery: var-index, sandbox bindings, restore.
 
-   INTERNAL — only `com.blockether.vis.internal.loop` imports this namespace.
+   INTERNAL - only `com.blockether.vis.internal.loop` imports this namespace.
    Foundation utilities (storage facade, extension specs, format helpers,
    etc.) live across `com.blockether.vis.internal.{persistance,extension,config,registry}`. Channels and extensions never
    reach into here; they go through the public iteration entry points
-   in `com.blockether.vis.internal.loop` (`send!`, `create!`, `turn!`, …)."
+   in `com.blockether.vis.internal.loop` (`send!`, `create!`, `turn!`, ...)."
   (:require
    [clojure.set]
    [clojure.spec.alpha]
@@ -26,7 +26,7 @@
 ;; =============================================================================
 
 ;; ---------------------------------------------------------------------------
-;; `shape` — sandbox-bound structural describe.
+;; `shape` - sandbox-bound structural describe.
 ;;
 ;; The model uses this to learn what a value is BEFORE walking it: keys of a
 ;; map AND their value types, element shapes of a collection (with union
@@ -41,12 +41,12 @@
 ;; Bounded: at most `SHAPE_SAMPLE_LIMIT` elements walked per collection (for
 ;; union detection), at most `SHAPE_MAX_KEYS` keys rendered per map,
 ;; recursion capped by `depth` (default 4), and `bounded-count` keeps lazy /
-;; infinite seqs from blowing up. Returns plain Clojure data — readable,
+;; infinite seqs from blowing up. Returns plain Clojure data - readable,
 ;; diff-friendly, safe to embed in the <journal>.
 ;; ---------------------------------------------------------------------------
 
 (def ^:private ^:const SHAPE_MAX_KEYS
-  "Max keys rendered in a map shape before the tail collapses to `…`."
+  "Max keys rendered in a map shape before the tail collapses to `...`."
   16)
 
 (def ^:private ^:const SHAPE_BOUNDED_COUNT_CAP
@@ -58,7 +58,7 @@
 (def ^:private ^:const SHAPE_SAMPLE_LIMIT
   "Number of elements walked when computing a collection's element-shape.
    Drives union detection: if the first N elements all share one shape, the
-   collection is reported as homogeneous; otherwise as `[:union …]`."
+   collection is reported as homogeneous; otherwise as `[:union ...]`."
   16)
 
 (def ^:private ^:const SHAPE_DEFAULT_DEPTH
@@ -71,7 +71,7 @@
   6)
 
 (def ^:private ^:const SHAPE_DOC_MAX_CHARS
-  "Char cap for the first-line docstring excerpt embedded in `[:var …]`
+  "Char cap for the first-line docstring excerpt embedded in `[:var ...]`
    shapes. Keeps output one-screen-wide; the model can resolve the var and
    read the full doc when it actually wants it."
   80)
@@ -87,12 +87,12 @@
           line (apply str line)]
       (when (seq line)
         (if (> (count line) SHAPE_DOC_MAX_CHARS)
-          (str (subs line 0 SHAPE_DOC_MAX_CHARS) "…")
+          (str (subs line 0 SHAPE_DOC_MAX_CHARS) "...")
           line)))))
 
 (defn- var-like?
   "True for both Clojure-side `clojure.lang.Var` and SCI-side `sci.lang.Var`.
-   `clojure.core/var?` only matches the former — inside the sandbox we get
+   `clojure.core/var?` only matches the former - inside the sandbox we get
    SCI vars, so a single predicate on them keeps the shape branch reachable
    from both sides."
   [v]
@@ -101,8 +101,8 @@
 
 (def ^:private ^:const SHAPE_SANDBOX_NS
   "The implicit namespace every model-defined var lives in. Stripped from
-   `[:var …]` shapes so `(def n 42); (shape #'n)` reads as `[:var n :int]`,
-   not the noisier `[:var sandbox/n :int]` — the model never qualifies its
+   `[:var ...]` shapes so `(def n 42); (shape #'n)` reads as `[:var n :int]`,
+   not the noisier `[:var sandbox/n :int]` - the model never qualifies its
    own vars when calling them, the shape shouldn't either. Vars from any
    OTHER namespace (e.g. `#'clojure.core/+`) keep the full qualifier so the
    model can disambiguate library code from its own definitions."
@@ -110,7 +110,7 @@
 
 (defn- var-fq-symbol
   "Build a symbol identifying the var. Strips the implicit `sandbox/` prefix
-   for sandbox-defined vars (their namespace is implicit — the model never
+   for sandbox-defined vars (their namespace is implicit - the model never
    types it). Other namespaces stay fully qualified. Falls back to the bare
    `:name` when the var hasn't been interned, and to `'?` when even that's
    missing."
@@ -126,9 +126,9 @@
 
 (defn- elements-shape
   "Walk up to SHAPE_SAMPLE_LIMIT elements; return a single shape when every
-   sample agrees, or `[:union shape₁ shape₂ …]` (sorted deterministically by
+   sample agrees, or `[:union shape₁ shape₂ ...]` (sorted deterministically by
    pr-str) when they don't. The sample is bounded so heterogeneous tails
-   past the limit are silently ignored — callers wanting full coverage can
+   past the limit are silently ignored - callers wanting full coverage can
    always fold themselves."
   [v depth]
   (let [unique (->> v
@@ -143,7 +143,7 @@
   "Render a collection's shape:
      empty            -> [tag 0]                       ; size only
      depth-capped     -> [tag N]                       ; size only (no element walk)
-     non-empty + room -> [tag N <element-shape>]       ; element-shape may be a [:union …]
+     non-empty + room -> [tag N <element-shape>]       ; element-shape may be a [:union ...]
    `tag` is one of :vec :seq :set :list. Uses bounded-count so lazy /
    infinite seqs report a finite \"4096+\" sentinel instead of looping."
   [tag v depth]
@@ -158,7 +158,7 @@
   "Render a map's shape:
      empty            -> [:map 0]                          ; size only
      depth-capped     -> [:map N]                          ; size only (no keys / values)
-     all keys shown   -> [:map {key value-shape …}]        ; size implicit in (count keys)
+     all keys shown   -> [:map {key value-shape ...}]        ; size implicit in (count keys)
      truncated        -> [:map N {first-16-keys-with-vals}]; size on the outside, sample inside
    Keys are sorted by their string form for deterministic output. Values
    are recursively shaped at `(dec depth)`."
@@ -173,7 +173,7 @@
             child     (long (dec depth))
             pairs     (into {} (mapv (fn [k] [k (shape* (get v k) child)]) shown-ks))]
         (if (> n SHAPE_MAX_KEYS)
-          [:map n (assoc pairs '… '…)]
+          [:map n (assoc pairs '... '...)]
           [:map pairs])))))
 
 (defn- shape*
@@ -187,12 +187,12 @@
     (float? v)      :float
     (ratio? v)      :ratio
     ;; Keywords + symbols carry namespace information that's part of their
-    ;; identity — collapsing `:foo/bar` and `:bar` both to `:keyword` would
+    ;; identity - collapsing `:foo/bar` and `:bar` both to `:keyword` would
     ;; hide a discriminator the model often needs (e.g. `:db/ident` vs
     ;; `:user/ident`). We wrap the value to disambiguate from the type-tag
-    ;; namespace `shape` itself uses (`:int`, `:keyword`, … are RESERVED
-    ;; tags; a literal user keyword always lives behind a `[:keyword …]` /
-    ;; `[:symbol …]` envelope).
+    ;; namespace `shape` itself uses (`:int`, `:keyword`, ... are RESERVED
+    ;; tags; a literal user keyword always lives behind a `[:keyword ...]` /
+    ;; `[:symbol ...]` envelope).
     (keyword? v)    [:keyword v]
     (symbol? v)     [:symbol v]
     (string? v)     [:string (count v)]
@@ -212,7 +212,7 @@
                       ;; doc excerpt when set). Value-bearing vars surface the
                       ;; deref'd shape so the model sees what's behind the
                       ;; `#'` without a separate eval. Deref is wrapped in
-                      ;; try/catch — some vars are unbound, throw on access,
+                      ;; try/catch - some vars are unbound, throw on access,
                       ;; or sit behind side-effecting late-init.
                       (cond
                         arglists      (cond-> [:var sym arglists]
@@ -225,7 +225,7 @@
                           doc-line (doc-first-line (:doc m))]
                       ;; Bare fn values rarely carry meta (the metadata lives
                       ;; on the var, not the value), but anonymous fns built
-                      ;; via `^{:arglists …} (fn …)` and SCI-interned fns can.
+                      ;; via `^{:arglists ...} (fn ...)` and SCI-interned fns can.
                       ;; Surface what we have; fall back to plain `:fn` when
                       ;; nothing's annotated.
                       (cond
@@ -235,7 +235,7 @@
                         :else                   :fn))
     ;; Catch-all: anything we don't have a predicate for surfaces its
     ;; FULLY-QUALIFIED class name as a string. Lossy lowercase shortnames
-    ;; (`:stringbuilder`) hide which package the value came from — a
+    ;; (`:stringbuilder`) hide which package the value came from - a
     ;; `java.io.File` and a `java.nio.file.Path` shouldn't both collapse
     ;; to `:file`. Strings preserve dots + case faithfully.
     :else           (if-let [c (class v)]
@@ -243,13 +243,13 @@
                       "?")))
 
 (defn shape
-  "Describe a value's structure as plain Clojure data — a real schema, not
+  "Describe a value's structure as plain Clojure data - a real schema, not
    just a tag.
 
-   Scalars return a type keyword (`:int`, `:bool`, `:keyword`, …). Strings
+   Scalars return a type keyword (`:int`, `:bool`, `:keyword`, ...). Strings
    return `[:string N]`. Collections return `[tag size <element-shape>]`
    where element-shape is either a single shape (homogeneous) or
-   `[:union …]` (heterogeneous). Maps return `[:map {key value-shape …}]`
+   `[:union ...]` (heterogeneous). Maps return `[:map {key value-shape ...}]`
    when keys fit and `[:map N {first-16-keys-with-values}]` when truncated.
    Recursion depth defaults to 4; the two-arity form lets callers tighten
    or widen.
@@ -267,7 +267,7 @@
      (shape [1 2 3])                          ;; => [:vec 3 :int]
      (shape [1 \"two\" :three])                 ;; => [:vec 3 [:union :int [:keyword :three] [:string 3]]]
      (shape {:a {:b 1}})                      ;; => [:map {:a [:map {:b :int}]}]
-     (shape #'clojure.core/+)                 ;; => [:var clojure.core/+ ([] [x] [x y] [x y & more]) \"Returns the sum of nums. (+) returns 0. …\"]
+     (shape #'clojure.core/+)                 ;; => [:var clojure.core/+ ([] [x] [x y] [x y & more]) \"Returns the sum of nums. (+) returns 0. ...\"]
      (do (def n 42) (shape #'n))              ;; => [:var n :int]                  ; sandbox/ stripped
      (shape #(do %&))                          ;; => :fn
      (shape (StringBuilder. \"hi\"))           ;; => \"java.lang.StringBuilder\"
@@ -282,9 +282,9 @@
 
    NOTE: This mutates the SCI sandbox only. If the caller wants the next
    iteration's `<var_index>` context block to reflect the new binding, they
-   MUST also call `bump-var-index!` on the env — the var-index is cached and
+   MUST also call `bump-var-index!` on the env - the var-index is cached and
    only rebuilds when `:current-revision` advances. Every past cache-staleness
-   bug (4-iteration `(restore-vars …)` spin, turn-3 stale request replay)
+   bug (4-iteration `(restore-vars ...)` spin, turn-3 stale request replay)
    traces back to forgetting this pair. Prefer `bind-and-bump!` below."
   [sci-ctx sym val]
   (let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
@@ -300,10 +300,10 @@
     (swap! atom update :current-revision (fnil inc 0))))
 
 (defn bind-and-bump!
-  "Atomic \"rebind var in SCI + invalidate var-index cache\" — the only API
+  "Atomic \"rebind var in SCI + invalidate var-index cache\" - the only API
    call sites should use when mutating runtime bindings that the LLM needs
    to see on the NEXT iteration. Fixes every instance of the model looping
-   on `(restore-vars …)` / `(def X …)` because the var_index never caught up."
+   on `(restore-vars ...)` / `(def X ...)` because the var_index never caught up."
   [env sym val]
   (sci-update-binding! (:sci-ctx env) sym val)
   (bump-var-index! env))
@@ -324,7 +324,7 @@
 (defn- safe-split
   "Drop-in replacement for `clojure.string/split` that auto-promotes a string
    delimiter to a `java.util.regex.Pattern`. Clojure's native `str/split`
-   requires a Pattern — LLMs frequently write `(str/split s \"\\n\")` and the
+   requires a Pattern - LLMs frequently write `(str/split s \"\\n\")` and the
    error surfaces late (often inside a lazy seq realization), burning
    iterations. This wrapper matches what the LLM expects and never weakens the
    Pattern path."
@@ -358,7 +358,7 @@
    trusts stale content. Better to refuse the call and point at the
    sanctioned `v/` file surface."
   [& _args]
-  (throw (ex-info (str "slurp is banned in the sandbox — use (v/cat \"path\") "
+  (throw (ex-info (str "slurp is banned in the sandbox - use (v/cat \"path\") "
                     "for full-file reads and (v/preview value eql) for journal/TUI projections. "
                     "The sanctioned file surface stays cwd-safe and consistent with the prompt.")
            {:type :tool/banned :tool 'slurp})))
@@ -368,7 +368,7 @@
 
    SCI rebinds `sci.core/out` (NOT Clojure's `*out*`) per-iteration via
    `sci/binding`. SCI's built-in println handles this by rebinding `*out*`
-   from `@sci.core/out` inside the fn body — we do the same so stdout
+   from `@sci.core/out` inside the fn body - we do the same so stdout
    capture keeps working with our override in place."
   [& args]
   (binding [*out* @sci/out]
@@ -382,7 +382,7 @@
     (apply print args)))
 
 ;; =============================================================================
-;; SCI namespace / binding helpers (moved from shared.clj — sandbox-only)
+;; SCI namespace / binding helpers (moved from shared.clj - sandbox-only)
 ;; =============================================================================
 
 (defn ns->sci-map
@@ -420,7 +420,7 @@
                        ;; round-trip and must stay verbatim pr-str.
                        'println sandbox-println
                        'print sandbox-print
-                       ;; LLM footgun shadows: auto-promote string→Pattern so
+                       ;; LLM footgun shadows: auto-promote string->Pattern so
                        ;; (re-find "HITL" s), (re-seq "\\d+" s), etc. stop
                        ;; throwing ClassCastException late inside lazy seqs.
                        're-find safe-re-find
@@ -465,7 +465,7 @@
                                                     'clojure.set (sci/copy-ns clojure.set set-ns)
                                                     'clojure.walk (sci/copy-ns clojure+.walk walk-ns)
                                                     'clojure+.core (sci/copy-ns clojure+.core plus-ns)
-                                                    ;; clojure.spec.alpha — LLMs reach for s/def / s/valid? /
+                                                    ;; clojure.spec.alpha - LLMs reach for s/def / s/valid? /
                                                     ;; s/keys / s/and / s/conform reflexively when given a
                                                     ;; data-shape problem. Pre-fix, none of those resolved in
                                                     ;; the sandbox and the model wasted iterations bouncing
@@ -478,7 +478,7 @@
                                                     ;; `copy-ns` skips vars tagged `^:no-doc` or `^:skip-wiki`,
                                                     ;; and EVERY internal helper the spec macros expand into
                                                     ;; (`def-impl`, `and-spec-impl`, `or-spec-impl`,
-                                                    ;; `cat-impl`, `every-impl`, `keys-spec-impl`, …) carries
+                                                    ;; `cat-impl`, `every-impl`, `keys-spec-impl`, ...) carries
                                                     ;; `^:skip-wiki`. Without an empty exclude list the
                                                     ;; macros expand to symbols that don't exist in the SCI
                                                     ;; namespace and `(s/def ::id int?)` throws "Unable to
@@ -540,8 +540,8 @@
                                                  'java.lang.Number java.lang.Number
                                                  'java.lang.Exception java.lang.Exception
                                                  ;; Throwable + the common JVM runtime exception subclasses
-                                                 ;; the model reaches for after `(catch Throwable t …)` /
-                                                 ;; `(catch Exception e …)`. Pre-fix, only `java.lang.Exception`
+                                                 ;; the model reaches for after `(catch Throwable t ...)` /
+                                                 ;; `(catch Exception e ...)`. Pre-fix, only `java.lang.Exception`
                                                  ;; was on the allow-list; SCI checks method calls against the
                                                  ;; ACTUAL runtime class, so `(catch Exception e (.getMessage e))`
                                                  ;; threw "Method getMessage on class java.lang.NullPointerException
@@ -602,9 +602,9 @@
                                                   Double java.lang.Double
                                                   Exception java.lang.Exception
                                                   ;; Mirror of the new exception classes added to `:classes` above.
-                                                  ;; Without these the model can call `(catch java.lang.Throwable t …)`
-                                                  ;; via the FQN but the more idiomatic `(catch Throwable t …)` /
-                                                  ;; `(catch NullPointerException e …)` short forms wouldn't resolve.
+                                                  ;; Without these the model can call `(catch java.lang.Throwable t ...)`
+                                                  ;; via the FQN but the more idiomatic `(catch Throwable t ...)` /
+                                                  ;; `(catch NullPointerException e ...)` short forms wouldn't resolve.
                                                   Throwable                       java.lang.Throwable
                                                   Error                           java.lang.Error
                                                   RuntimeException                java.lang.RuntimeException
@@ -662,7 +662,7 @@
                                                ;; sanctioned `v/` file helpers. Keeping it as a sandbox
                                                ;; binding (not a deny) gives the LLM a useful error
                                                ;; message instead of SCI's generic "not allowed".
-                                               ;; `spit` stays denied — `v/patch` is the sanctioned mutation path.
+                                               ;; `spit` stays denied - `v/patch` is the sanctioned mutation path.
                                                ;;
                                                ;; `require`, `import`, `find-ns` are NOT denied either
                                                ;; (real Clojure reach for namespace discovery); the tool
@@ -670,7 +670,7 @@
                                                ;; canonical playbook stays narrow.
                                        ;; `*out*` / `*err*` are NOT denied so model
                                        ;; code can reach for them directly:
-                                       ;;   `(binding [*out* writer] …)`,
+                                       ;;   `(binding [*out* writer] ...)`,
                                        ;;   `(.write *out* s)`,
                                        ;;   `(.write *err* s)`.
                                        ;; SCI's `sci/binding [sci/out writer
@@ -712,7 +712,7 @@
 ;;                                 that passed activation for THIS turn.
 ;;                                 Iteration-loop binds it once and never mutates
 ;;                                 again within the turn so the model can rely on
-;;                                 a stable view (`(filter …) TURN_ACTIVE_EXTENSIONS`)
+;;                                 a stable view (`(filter ...) TURN_ACTIVE_EXTENSIONS`)
 ;;                                 without round-tripping through
 ;;                                 `(v/extensions)`. Shape per element:
 ;;                                   {:alias              'vis
@@ -744,16 +744,16 @@
 ;;     CONVERSATION_TITLE            current conversation title ("" until set).
 ;;                                   The model writes via the host primitive
 ;;                                   `(conversation-title "...")`, never by
-;;                                   `def`-ing it directly — the SYSTEM-var write
+;;                                   `def`-ing it directly - the SYSTEM-var write
 ;;                                   guard in `loop.clj` rejects that on principle.
 ;;     CONVERSATION_PREVIOUS_ANSWER  previous turn's final answer string ("" on
 ;;                                   the very first turn). Despite being scoped
 ;;                                   to the conversation, it is rebound at every
-;;                                   iteration so a `(answer …)` call inside
+;;                                   iteration so a `(answer ...)` call inside
 ;;                                   iteration N is observable in iteration N+1.
 ;;
 ;; UPPERCASE marks them as constants. The set is a fixed registry;
-;; adding to it is a deliberate API change. See AGENTS.md → "SYSTEM
+;; adding to it is a deliberate API change. See AGENTS.md -> "SYSTEM
 ;; vars are UPPERCASE and explicitly defined".
 (def SYSTEM_VAR_NAMES
   "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
@@ -768,8 +768,8 @@
    the SCI sandbox (the model can call `v/cat` directly because the var
    is loaded). A skill is ACCESSIBLE when the loader can find it on disk
    and surface its `:name`/`:description`; the body becomes a sandbox var
-   only after the model calls `(v/load-skill \"name\")` — that's the
-   activation step. Hence: TURN_ACTIVE_EXTENSIONS (loaded) vs
+   only after the model calls `(load-skill \"name\")` - that's the
+   internal activation step. Hence: TURN_ACTIVE_EXTENSIONS (loaded) vs
    TURN_ACCESSIBLE_SKILLS (discoverable, lazy-load on demand)."
   '#{TURN_USER_REQUEST
      TURN_CONVERSATION_TURN_ID
@@ -834,7 +834,7 @@
 ;; Cheap values get their actual content inlined so the model never has to
 ;; round-trip via `(var-history 'sym)` just to see what's in a var. Expensive
 ;; values fall back to a schema preview (key list, head, size). The render
-;; emits VALID Clojure shape — stats live in a `;;` comment line, never as
+;; emits VALID Clojure shape - stats live in a `;;` comment line, never as
 ;; reader-macro metadata onto the symbol (the old `^{:v N :s :l :t :map}` form
 ;; was fake-Clojure that confused parser priors).
 ;; ---------------------------------------------------------------------------
@@ -857,7 +857,7 @@
 
 (defn- bounded-pr-str
   "Local mirror of `iteration.core/safe-pr-str` for the var-index render
-   path — reuses `*print-length*` + `*print-level*` to short-circuit
+   path - reuses `*print-length*` + `*print-level*` to short-circuit
    pr during printing, then clips the resulting string. Kept here so
    the env-core namespace doesn't depend on iteration.core (would be
    a cycle)."
@@ -867,7 +867,7 @@
                   (pr-str v))]
     (if (> (count bounded) VAR_INDEX_BODY_MAX_CHARS)
       (str (subs bounded 0 VAR_INDEX_BODY_MAX_CHARS)
-        " …<+" (- (count bounded) VAR_INDEX_BODY_MAX_CHARS) " chars>")
+        " ...<+" (- (count bounded) VAR_INDEX_BODY_MAX_CHARS) " chars>")
       bounded)))
 
 (defn- truncate-string [s n]
@@ -884,7 +884,7 @@
 (defn- seq-head-preview [val]
   (let [n (var-size val false)
         sample-count (cond
-                       (string? n) SEQ_HEAD_SAMPLE_SIZE          ;; "1000+" — lazy/big
+                       (string? n) SEQ_HEAD_SAMPLE_SIZE          ;; "1000+" - lazy/big
                        (number? n) (min n SEQ_HEAD_SAMPLE_SIZE)
                        :else SEQ_HEAD_SAMPLE_SIZE)
         head (vec (take sample-count val))]
@@ -914,8 +914,8 @@
                      (-> (str doc) str/split-lines first str/trim)
                      DOCSTRING_FIRST_LINE_CHARS))
         body (cond
-               doc-line (str " \"" doc-line "\" …")
-               :else " …")
+               doc-line (str " \"" doc-line "\" ...")
+               :else " ...")
         sig  (cond
                single? (pr-str (first arglists))
                (seq arglists) (str/join " " (map pr-str arglists))
@@ -924,9 +924,9 @@
 
 (defn- render-data-form
   "Render a non-fn var with type-aware preview. Cheap values inline; large
-   values fall back to a schema map (`{:n N :keys-sample […]}` etc.).
+   values fall back to a schema map (`{:n N :keys-sample [...]}` etc.).
    When a `:doc` is set on the var meta, embed the first line of the
-   docstring before the body — same UX as render-fn-form, so all
+   docstring before the body - same UX as render-fn-form, so all
    var-defining forms surface their purpose in `<var_index>`."
   [{:keys [sym type val doc] :as entry}]
   (let [stats (stats-comment entry)
@@ -937,7 +937,7 @@
         body  (if (extension/tool-result? val)
                 (bounded-pr-str {:tool-result true
                                  :success?    (:success? val)
-                                 :op          (get-in val [:provenance :op])
+                                 :op          (get-in val [:info :op])
                                  :hit-count   (some-> val :result :hits count)})
                 (case type
                   ;; Scalars: pr-str output is bounded by the type. A
@@ -969,7 +969,7 @@
                       (bounded-pr-str (vec val))
                       :else
                       (bounded-pr-str {:n total :head head})))
-                  ;; unknown type — punt to a value-only stub
+                  ;; unknown type - punt to a value-only stub
                   (pr-str {:type type})))]
     (str stats
       "\n(def " sym
@@ -1019,7 +1019,7 @@
                         (when (pos? (long (or unavailable-count 0)))
                           (str ", unavailable: " unavailable-count)))
                   (render-symbol-summary "recent archived" archived)
-                  ";; use (var-history) to browse symbol history/provenance"))]
+                  ";; use (var-history) to browse symbol history/info"))]
     (seq (keep identity lines))))
 
 (defn build-var-index
@@ -1027,8 +1027,8 @@
 
    Returns nil when no user vars exist; otherwise a multi-line string
    with one entry per `(def ...)`. SYSTEM vars (every name in
-   `SYSTEM_VAR_NAMES` — `TURN_*`, `ITERATION_*`, `CONVERSATION_*`) and
-   initial-ns bindings (tools, helpers) are excluded — the model reads
+   `SYSTEM_VAR_NAMES` - `TURN_*`, `ITERATION_*`, `CONVERSATION_*`) and
+   initial-ns bindings (tools, helpers) are excluded - the model reads
    SYSTEM vars by name directly from the sandbox.
 
    Sort order: most-recently-bound first."
@@ -1092,15 +1092,15 @@
        (str/join "\n" lines)))))
 
 ;; =============================================================================
-;; Sandbox restore — rebuild SCI bindings from DB
+;; Sandbox restore - rebuild SCI bindings from DB
 ;; =============================================================================
 
 (defn restore-sandbox!
   "Restore all persisted vars into a SCI sandbox from the DB.
 
    Reads `db-restore-blocks` (topologically sorted) and for each entry:
-   - Data value (nippy-thawed) → bind directly into the sandbox.
-   - Safe `defn` source with `{:vis/ref :expr}` → eval the `defn` source.
+   - Data value (nippy-thawed) -> bind directly into the sandbox.
+   - Safe `defn` source with `{:vis/ref :expr}` -> eval the `defn` source.
    - Other `{:vis/ref :expr}` values are unavailable and must be recreated
      intentionally; restore never replays arbitrary effectful source.
 
@@ -1129,7 +1129,7 @@
                      :success? false
                      :reason :unsafe-restore
                      :guidance "Recreate intentionally to persist a new version."})
-                  ;; Data value → bind directly
+                  ;; Data value -> bind directly
                   (do (sci-update-binding! sci-ctx sym result)
                     {:name name :restored-via :data :success? true}))
                 (catch Throwable e
