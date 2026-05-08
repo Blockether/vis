@@ -29,26 +29,55 @@
       (expect (not (str/includes? out "(def xd")))
       (expect (str/includes? out "(+ 1 1) -> 2")))))
 
-(defdescribe minimal-system-prompt-test
-  (it "emits ONLY <system_prompt>...</system_prompt>; no skills/extensions/env-info"
+(defdescribe full-system-prompt-assembly-test
+  (it "includes <skills> block when skills are available"
     (with-redefs [skills/list-all (fn [] [{:name "diagnose"
                                            :source :repo
                                            :description "Debug loop."}])]
       (let [out (prompt/assemble-system-prompt {}
                   {:active-extensions []
                    :system-prompt nil})]
-        (expect (str/starts-with? out "<system_prompt>"))
-        (expect (str/ends-with? out "</system_prompt>"))
-        (expect (not (str/includes? out "<skills")))
-        (expect (not (str/includes? out "<extensions>")))
-        (expect (not (str/includes? out "<environment-info>")))
-        (expect (not (str/includes? out "<specific_provider_model_prompt"))))))
+        (expect (str/includes? out "<system_prompt>"))
+        (expect (str/includes? out "</system_prompt>"))
+        (expect (str/includes? out "<skills>"))
+        (expect (str/includes? out "diagnose: Debug loop."))
+        (expect (str/includes? out "</skills>")))))
 
-  (it "empty skills catalog still produces only <system_prompt>"
+  (it "omits <skills> when catalog is empty"
     (with-redefs [skills/list-all (fn [] [])]
       (let [out (prompt/assemble-system-prompt {}
                   {:active-extensions []
                    :system-prompt nil})]
-        (expect (str/starts-with? out "<system_prompt>"))
-        (expect (str/ends-with? out "</system_prompt>"))
-        (expect (not (str/includes? out "<skills")))))))
+        (expect (str/includes? out "<system_prompt>"))
+        (expect (not (str/includes? out "<skills>"))))))
+
+  (it "no extensions = no <extensions>/<environment-info> blocks"
+    (with-redefs [skills/list-all (fn [] [])]
+      (let [out (prompt/assemble-system-prompt {}
+                  {:active-extensions []
+                   :system-prompt nil})]
+        (expect (not (str/includes? out "<extensions>")))
+        (expect (not (str/includes? out "<environment-info>")))
+        (expect (not (str/includes? out "<specific_provider_model_prompt"))))))
+
+  (it "includes <extensions> when an active extension provides :ext/prompt"
+    (with-redefs [skills/list-all (fn [] [])]
+      (let [fake-ext {:ext/namespace 'com.test.ext
+                      :ext/prompt    (constantly "Use test/ prefix for all test fns.")}
+            out (prompt/assemble-system-prompt {}
+                  {:active-extensions [fake-ext]
+                   :system-prompt nil})]
+        (expect (str/includes? out "<extensions>"))
+        (expect (str/includes? out "Use test/ prefix for all test fns."))
+        (expect (str/includes? out "</extensions>")))))
+
+  (it "includes <environment-info> when an active extension provides :ext/environment-info-fn"
+    (with-redefs [skills/list-all (fn [] [])]
+      (let [fake-ext {:ext/namespace 'com.test.env
+                      :ext/environment-info-fn (constantly "OS: macOS 15.1\nCWD: /home/user")}
+            out (prompt/assemble-system-prompt {}
+                  {:active-extensions [fake-ext]
+                   :system-prompt nil})]
+        (expect (str/includes? out "<environment-info>"))
+        (expect (str/includes? out "OS: macOS 15.1"))
+        (expect (str/includes? out "</environment-info>"))))))

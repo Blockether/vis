@@ -77,11 +77,33 @@
    'subedit->  (thread-macro 'vis.ext.clj/subedit-node 'clojure.core/->)
    'subedit->> (thread-macro 'vis.ext.clj/subedit-node 'clojure.core/->>)})
 
+(defn- ensure-var-doc-meta
+  "Return a copy of `v`'s metadata with `:doc` and `:arglists` filled in when
+   the source var didn't carry them. rewrite-clj.zip is a third-party lib and
+   some of its vars ship without docstrings; the new `vis/symbol` API requires
+   one, so we synthesize a minimal stub instead of crashing extension load."
+  [sym v]
+  (let [m (meta v)]
+    {:doc      (or (:doc m) (str "rewrite-clj.zip/" sym))
+     :arglists (or (some-> (:arglists m) vec)
+                 (when-not (fn? @v) nil)
+                 '([& args]))}))
+
 (defn- macro-entry
-  [sym macro-fn doc arglists]
-  (vis/value sym {:vis.sci/macro-fn macro-fn}
-    {:doc (or doc (str "SCI-callable rewrite-clj.zip macro " sym))
-     :arglists arglists}))
+  "Build a value entry for an SCI-callable macro shim. The shim's value is
+   the marker map `{:vis.sci/macro-fn ...}`; doc/arglists are looked up on
+   the underlying rewrite-clj.zip var so the SCI sandbox sees the same docs
+   the library ships."
+  [sym v macro-fn]
+  (let [{:keys [doc arglists]} (ensure-var-doc-meta sym v)
+        ;; Wrap a real var around the macro marker map so `vis/value` can
+        ;; derive `:doc` and `:arglists` from var meta. Naming the var after
+        ;; the SCI symbol keeps the prompt listing aligned with the call.
+        macro-var (intern *ns*
+                    (with-meta sym {:doc doc :arglists arglists
+                                    :private true})
+                    {:vis.sci/macro-fn macro-fn})]
+    (vis/value macro-var)))
 
 (defn- var->symbol-entry
   "Convert a rewrite-clj.zip public var into an SDK symbol entry.
@@ -90,31 +112,35 @@
    expose SCI-local macro shims that expand to same-namespace helper calls so
    `(z/subedit-> ...)` works inside the sandbox."
   [sym v]
-  (let [m        (meta v)
-        arglists (some-> (:arglists m) vec)
-        doc      (or (:doc m) (str "rewrite-clj.zip/" sym))
-        target   @v]
+  (let [m      (meta v)
+        target @v]
     (cond
       (contains? macro-symbols sym)
-      (macro-entry sym (get macro-symbols sym) doc arglists)
+      (macro-entry sym v (get macro-symbols sym))
 
       (:macro m)
       nil
 
       (fn? target)
-      (vis/symbol sym target
-        (cond-> {:doc doc}
-          arglists (assoc :arglists arglists)
-          (nil? arglists) (assoc :arglists '([& args]))))
+      ;; rewrite-clj.zip vars: feed straight in. The new `vis/symbol` API
+      ;; reads `:doc`/`:arglists` from var meta and uses `:sym` to override
+      ;; the SCI-visible name. We re-meta the var first because some lib
+      ;; vars ship without `:doc` or `:arglists`.
+      (let [{:keys [doc arglists]} (ensure-var-doc-meta sym v)
+            patched (alter-meta! v assoc :doc doc :arglists arglists)]
+        (vis/symbol v {:sym sym}))
 
       :else
-      (vis/value sym target {:doc doc}))))
+      (let [{:keys [doc]} (ensure-var-doc-meta sym v)]
+        (alter-meta! v assoc :doc doc)
+        (vis/value v {:sym sym})))))
 
 (def ^:private rewrite-clj-zip-symbols
-  (->> (ns-publics 'rewrite-clj.zip)
-    (sort-by key)
-    (keep (fn [[sym v]] (var->symbol-entry sym v)))
-    vec))
+  (do (require 'rewrite-clj.zip)
+    (->> (ns-publics 'rewrite-clj.zip)
+      (sort-by key)
+      (keep (fn [[sym v]] (var->symbol-entry sym v)))
+      vec)))
 
 (defn- clojure-environment-info
   [_environment]
@@ -128,27 +154,38 @@
                      :symbol sym})))
     args))
 
-(defn- lazy-lsp-symbol
-  [sym doc arglists examples]
-  (vis/symbol sym (fn [& args] (apply lazy-lsp-call sym args))
-    {:doc doc
-     :arglists arglists
-     :examples examples}))
+;; -----------------------------------------------------------------------------
+;; Lazy LSP shims. Each defn carries the canonical docstring + arglists on its
+;; var so `vis/symbol` reads them from var meta. The body just trampolines to
+;; the actual lsp helper, loaded on first call.
+;; -----------------------------------------------------------------------------
+
+(defn- diagnostics-lazy
+  "Return clojure-lsp diagnostics for the project or selected files. Opts: {:project-root p, :filenames [...], :namespace [...], :settings {...}}. Loads clojure-lsp on first call."
+  ([] (lazy-lsp-call 'diagnostics))
+  ([opts] (lazy-lsp-call 'diagnostics opts)))
+
+(defn- ^{:arglists '([from to] [from to opts])} rename-plan-lazy
+  "Dry-run clojure-lsp semantic rename. Returns changed paths and old/new text edits; does not write. Loads clojure-lsp on first call."
+  [from to & [opts]]
+  (apply lazy-lsp-call 'rename-plan from to (when opts [opts])))
+
+(defn- clean-ns-plan-lazy
+  "Dry-run clojure-lsp clean-ns. Returns changed paths and old/new text edits; does not write. Loads clojure-lsp on first call."
+  ([] (lazy-lsp-call 'clean-ns-plan))
+  ([opts] (lazy-lsp-call 'clean-ns-plan opts)))
 
 (def ^:private lsp-symbols
-  [(lazy-lsp-symbol 'diagnostics
-     "Return clojure-lsp diagnostics for the project or selected files. Opts: {:project-root p, :filenames [...], :namespace [...], :settings {...}}. Loads clojure-lsp on first call."
-     '([] [opts])
-     ["(z/diagnostics)"
-      "(z/diagnostics {:filenames [\"src/foo.clj\"]})"])
-   (lazy-lsp-symbol 'rename-plan
-     "Dry-run clojure-lsp semantic rename. Returns changed paths and old/new text edits; does not write. Loads clojure-lsp on first call."
-     '([from to] [from to opts])
-     ["(z/rename-plan 'old.ns/foo 'old.ns/bar)"])
-   (lazy-lsp-symbol 'clean-ns-plan
-     "Dry-run clojure-lsp clean-ns. Returns changed paths and old/new text edits; does not write. Loads clojure-lsp on first call."
-     '([] [opts])
-     ["(z/clean-ns-plan {:filenames [\"src/foo.clj\"]})"])])
+  [(vis/symbol #'diagnostics-lazy
+     {:sym 'diagnostics
+      :examples ["(z/diagnostics)"
+                 "(z/diagnostics {:filenames [\"src/foo.clj\"]})"]})
+   (vis/symbol #'rename-plan-lazy
+     {:sym 'rename-plan
+      :examples ["(z/rename-plan 'old.ns/foo 'old.ns/bar)"]})
+   (vis/symbol #'clean-ns-plan-lazy
+     {:sym 'clean-ns-plan
+      :examples ["(z/clean-ns-plan {:filenames [\"src/foo.clj\"]})"]})])
 
 (def clojure-extension
   (vis/extension

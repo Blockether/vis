@@ -769,9 +769,6 @@
 (def ^:private file-mention-regex
   #"(?<!\S)@(?:\"([^\"]+)\"|([A-Za-z0-9][A-Za-z0-9._/\-]*))")
 
-(def ^:private file-mention-preview-lines 120)
-(def ^:private file-mention-binding-prefix "attached-file")
-
 (defn- file-mention-needs-quotes?
   [path]
   (boolean (re-find #"\s" (str path))))
@@ -800,50 +797,37 @@
         candidate))
     (catch Throwable _ nil)))
 
-(defn- file-mention-binding-symbol
-  [path]
-  (let [slug (-> (str path)
-               str/lower-case
-               (str/replace #"[^a-z0-9]+" "-")
-               (str/replace #"(^-+|-+$)" ""))]
-    (if (seq slug)
-      (str file-mention-binding-prefix "-" slug)
-      file-mention-binding-prefix)))
-
 (defn- file-mention->prompt-block
+  "Agent-facing expansion of `@path`. Minimal directive only - tells
+   the model the user attached a file and to read it via the normal
+   tool surface before answering. Does NOT pre-bind a SCI var, does
+   NOT prescribe a specific `(v/cat ...)` / `(v/preview ...)` form,
+   does NOT inject a line range. The model picks the right tool
+   (`v/cat`, `z/symbols`, `z/locators`, `z/who-calls`, etc.) based on
+   the question.
+
+   Unresolved paths fall back to the visible `@path` token verbatim
+   so the agent still sees the user's exact mention."
   [path]
-  (if-let [file (resolve-local-file path)]
-    (let [binding     (file-mention-binding-symbol path)
-          path-lit    (pr-str (str path))
-          line-count  (try
-                        (with-open [r (io/reader file)]
-                          (count (line-seq r)))
-                        (catch Throwable _ nil))
-          small-file? (and line-count (<= line-count file-mention-preview-lines))]
-      (str "[Attached File: " path "]\n"
-        "IMPORTANT: READ IT NOW. This is a focused attached file reference, not file contents.\n"
-        (if small-file?
-          (str "Before answering about it, acquire runtime truth with `v/cat`, bind the result, and preview the whole file because it appears small ("
-            line-count " lines <= " file-mention-preview-lines "). If `v/cat` reports that it grew, switch to focused relevant lines.\n")
-          "Before answering about it, acquire runtime truth with `v/cat`, bind the result, and preview the relevant lines.\n")
-        "Use this exact first-observation pattern:\n"
-        "```clojure\n"
-        "(def " binding " (v/cat " path-lit "))\n"
-        (if small-file?
-          (str "(v/preview " binding ")\n")
-          (str "(v/preview " binding " {:result [[:lines {:from 1 :to " file-mention-preview-lines "}]]})\n"))
-        "```\n"
-        "Do not answer about this file from memory, the path name, or stale context; answer only after the `v/cat` result is observed."))
+  (if (resolve-local-file path)
+    (str "[Attached File: " path "]\n"
+      "The user attached this file. Read it (via the file/zipper tools) before answering.")
     (format-file-mention path)))
 
 (defn expand-file-mentions
-  "Replace inline `@path/to/file` mentions with read-now prompt directives.
+  "Replace inline `@path/to/file` mentions with a short read-this-file
+   directive aimed at the agent.
 
-   The visible chat transcript keeps the concise `@path` token. The outbound
-   agent prompt gets an explicit attached-file directive that tells the agent
-   to acquire runtime truth with `v/cat`, bind it with `def`, then `v/preview`
-   the whole file when it is small or focused lines when it is larger. Unknown
-   paths pass through unchanged."
+   The visible chat transcript keeps the concise `@path` token (the
+   `:send-message` event passes the un-expanded text as the display
+   value, so the user bubble and persisted `user_request` stay short).
+   The outbound agent prompt - this function's output - carries the
+   directive so the model knows the user attached the file and should
+   read it before answering. We deliberately do NOT inject any
+   `(def ...)` / `(v/cat ...)` / `(v/preview ...)` boilerplate; forcing
+   a specific first-observation form makes the model dump focused-range
+   previews even when the question is structural and wastes iterations.
+   Unknown paths pass through unchanged."
   [^String text]
   (str/replace text file-mention-regex
     (fn [[_ quoted-path bare-path]]

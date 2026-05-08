@@ -278,6 +278,7 @@
                        :after (:source repaired)}]}})))
 
 (defn- repair-range
+  "Repair a Clojure/EDN file range using Vis' parse repair pipeline. Accepts {:path p :range [[sr sc] [er ec]]} or a locator row with :span. Writes by default; pass :dry-run? true to preview."
   ([edit]
    (repair-selection! (coerce-range-request edit)))
   ([path range]
@@ -286,6 +287,7 @@
    (repair-selection! (coerce-range-request path range opts))))
 
 (defn- repair-locator
+  "Repair the source range described by a z/ locator row. The row must include :path and :span (or :range). Same behavior as z/repair-range; pass opts like {:dry-run? true}."
   ([locator-row]
    (repair-locator locator-row nil))
   ([locator-row opts]
@@ -294,6 +296,7 @@
        :op :z/repair-locator))))
 
 (defn- repair-file
+  "Repair a whole Clojure/EDN file using Vis' parse repair pipeline. Writes by default; pass {:dry-run? true} to preview."
   ([path] (repair-file path nil))
   ([path opts]
    (let [file   (ensure-existing-file! (safe-path path))
@@ -331,30 +334,24 @@
             (md/code-block "clojure" (preview-text (:after file)))))))))
 
 (def repair-range-symbol
-  (vis/symbol 'repair-range repair-range
-    {:doc "Repair a Clojure/EDN file range using Vis' parse repair pipeline. Accepts {:path p :range [[sr sc] [er ec]]} or a locator row with :span. Writes by default; pass :dry-run? true to preview."
-     :arglists '([edit] [path range] [path range opts])
-     :examples ["(z/repair-range {:path \"src/foo.clj\" :range [[10 1] [14 2]]})"
+  (vis/symbol #'repair-range
+    {:examples ["(z/repair-range {:path \"src/foo.clj\" :range [[10 1] [14 2]]})"
                 "(z/repair-range (assoc locator-row :dry-run? true))"]
      :result-spec ::extension/tool-result
      :render-fn render-repair-result
      :on-error-fn (tool-failure-on-error :z/repair-range)}))
 
 (def repair-locator-symbol
-  (vis/symbol 'repair-locator repair-locator
-    {:doc "Repair the source range described by a z/ locator row. The row must include :path and :span (or :range). Same behavior as z/repair-range; pass opts like {:dry-run? true}."
-     :arglists '([locator-row] [locator-row opts])
-     :examples ["(z/repair-locator locator-row {:dry-run? true})"
+  (vis/symbol #'repair-locator
+    {:examples ["(z/repair-locator locator-row {:dry-run? true})"
                 "(z/repair-locator (:result (z/locator-for-ref ref-row)))"]
      :result-spec ::extension/tool-result
      :render-fn render-repair-result
      :on-error-fn (tool-failure-on-error :z/repair-locator)}))
 
 (def repair-file-symbol
-  (vis/symbol 'repair-file repair-file
-    {:doc "Repair a whole Clojure/EDN file using Vis' parse repair pipeline. Writes by default; pass {:dry-run? true} to preview."
-     :arglists '([path] [path opts])
-     :examples ["(z/repair-file \"src/foo.clj\" {:dry-run? true})"]
+  (vis/symbol #'repair-file
+    {:examples ["(z/repair-file \"src/foo.clj\" {:dry-run? true})"]
      :result-spec ::extension/tool-result
      :render-fn render-repair-result
      :on-error-fn (tool-failure-on-error :z/repair-file)}))

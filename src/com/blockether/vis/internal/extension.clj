@@ -26,6 +26,7 @@
    [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
+   [com.blockether.anomaly.core :as anomaly]
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.registry :as registry]
@@ -668,49 +669,106 @@
       [(str "(" sym (when (seq args) (str " " args)) ")")])
     [(str "(" sym ")")]))
 
-(defn symbol
-  "Build a function symbol entry.
+(defn- var-meta
+  "Read `:doc` / `:arglists` / `:name` from a var's metadata. Throws when the
+   var lacks a non-blank docstring or non-empty arglists - extension symbols
+   carry their canonical surface from the underlying defn, not from a side
+   map. Without these, the SCI sandbox cannot expose `(doc v/sym)` to the
+   model and the prompt-listing has no doc line to render."
+  [v require-arglists?]
+  (when-not (var? v)
+    (anomaly/incorrect! "vis/symbol and vis/value require a Clojure var (e.g. #'my-tool)"
+      {:type :extension/symbol-not-a-var :given v}))
+  (let [m   (meta v)
+        nm  (:name m)
+        doc (:doc m)
+        al  (:arglists m)]
+    (when-not (non-blank-string? doc)
+      (anomaly/incorrect!
+        (str "Var " v " is missing a docstring; extension symbols inherit "
+          ":doc from the underlying defn (no side maps).")
+        {:type :extension/missing-doc :var v}))
+    ;; defn auto-attaches :arglists as a LIST (e.g. '([x] [x y])); manual
+     ;; ^{:arglists ...} likewise. The downstream spec requires vector?.
+     ;; Accept any non-empty sequential and coerce to a vector here so the
+     ;; spec stays strict at the storage boundary while callers stay free
+     ;; to use either shape.
+    (when (and require-arglists?
+            (not (and (sequential? al) (seq al))))
+      (anomaly/incorrect!
+        (str "Var " v " is missing :arglists in its metadata; extension fn "
+          "symbols inherit :arglists from the underlying defn.")
+        {:type :extension/missing-arglists :var v}))
+    {:sym      nm
+     :doc      doc
+     :arglists (when (seq al) (vec al))}))
 
-   Required: :doc, :arglists
-   Optional: :examples, :before-fn, :after-fn, :on-error-fn,
-             :on-parse-error-fn, :source-rewrite-fn, :result-spec, :render-fn
+(defn symbol
+  "Build a function symbol entry FROM A CLOJURE VAR.
+
+   The var supplies `:sym` (var name), `:fn` (the var's value), `:doc` and
+   `:arglists` (read from var metadata - i.e. the underlying defn's
+   docstring + arglists). Pass it as `#'my-tool`.
+
+   Optional opts:
+     :sym                 - override the SCI sandbox name (default: var name).
+                            Use when the local var is named `xxx-tool` but
+                            the model-facing surface should be `xxx`, or to
+                            dodge a `clojure.core` collision.
+     :examples            - extra usage strings; default: derived from arglists.
+     :before-fn :after-fn :on-error-fn :on-parse-error-fn :source-rewrite-fn
+     :result-spec :render-fn
 
    Defaults:
      :examples  - derived from :arglists when not provided
      :render-fn - `render-value` when not provided
 
    See `docs/src/extensions/hooks.md` for hook semantics."
-  [sym-name f opts]
-  (let [arglists (:arglists opts)
-        arglists (when arglists (if (seq? arglists) (vec arglists) arglists))
-        examples (or (:examples opts)
-                   (when arglists (derive-examples sym-name arglists)))]
-    (validate-symbol-entry!
-      (cond-> #:ext.symbol{:sym      sym-name
-                           :fn       f
-                           :render-fn (or (:render-fn opts) render-value)}
-        (:doc opts)               (assoc :ext.symbol/doc (:doc opts))
-        arglists                  (assoc :ext.symbol/arglists arglists)
-        examples                  (assoc :ext.symbol/examples (vec examples))
-        (:before-fn opts)         (assoc :ext.symbol/before-fn (:before-fn opts))
-        (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))
-        (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
-        (:on-parse-error-fn opts) (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))
-        (:source-rewrite-fn opts) (assoc :ext.symbol/source-rewrite-fn (:source-rewrite-fn opts))
-        (:result-spec opts)       (assoc :ext.symbol/result-spec (:result-spec opts))
-        (:render-fn opts)         (assoc :ext.symbol/render-fn (:render-fn opts))))))
+  ([v] (symbol v nil))
+  ([v opts]
+   (let [{:keys [sym doc arglists]} (var-meta v true)
+         sym      (or (:sym opts) sym)
+         f        @v
+         examples (or (:examples opts) (derive-examples sym arglists))]
+     (when-not (fn? f)
+       (anomaly/incorrect!
+         (str "Var " v " does not hold a function; use vis/value for plain values.")
+         {:type :extension/symbol-not-a-fn :var v}))
+     (validate-symbol-entry!
+       (cond-> #:ext.symbol{:sym       sym
+                            :fn        f
+                            :doc       doc
+                            :arglists  arglists
+                            :examples  (vec examples)
+                            :render-fn (or (:render-fn opts) render-value)}
+         (:before-fn opts)         (assoc :ext.symbol/before-fn (:before-fn opts))
+         (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))
+         (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
+         (:on-parse-error-fn opts) (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))
+         (:source-rewrite-fn opts) (assoc :ext.symbol/source-rewrite-fn (:source-rewrite-fn opts))
+         (:result-spec opts)       (assoc :ext.symbol/result-spec (:result-spec opts)))))))
 
 (defn value
-  "Build a value symbol entry - a plain constant/data binding.
+  "Build a value symbol entry FROM A CLOJURE VAR - a plain constant/data binding.
 
-   (value 'max-retries 3 {:doc \"Maximum retry attempts.\"})
+   The var supplies `:sym` (var name), `:val` (the var's value, unless `:val`
+   is provided in opts to override - used by macro-shim entries), and `:doc`
+   (from var metadata, i.e. the defn's docstring).
 
-   All three args required. :doc in opts is required."
-  [sym-name val opts]
-  (let [entry #:ext.symbol{:sym sym-name
-                           :val val
-                           :doc (:doc opts)}]
-    (validate-symbol-entry! entry)))
+   (def ^{:doc \"Maximum retry attempts.\"} max-retries 3)
+   (vis/value #'max-retries)
+
+   Opts:
+     :sym - override the SCI sandbox name (default: var name).
+     :val - explicit value override (rare; for macro shims that bind a
+            marker map instead of the var's own value)."
+  ([v] (value v nil))
+  ([v opts]
+   (let [{:keys [sym doc]} (var-meta v false)
+         sym (or (:sym opts) sym)
+         val (if (contains? opts :val) (:val opts) @v)
+         entry #:ext.symbol{:sym sym :val val :doc doc}]
+     (validate-symbol-entry! entry))))
 
 (defn- arglist->call-form
   [alias-sym sym-name arglist]

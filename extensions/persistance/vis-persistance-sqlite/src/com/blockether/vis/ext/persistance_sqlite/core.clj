@@ -1007,7 +1007,7 @@
    migration banner). Returns the iteration UUID."
   [db-info {:keys [conversation-turn-id blocks thinking answer answer-form-idx duration-ms vars error metadata
                    llm-messages llm-provider llm-model llm-raw-response llm-executable-code
-                   llm-executable-blocks tokens cost-usd]}]
+                   llm-executable-blocks llm-assistant-message tokens cost-usd]}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
       (fn [tx-info]
@@ -1069,6 +1069,8 @@
                                  :llm_executable_code (some-> llm-executable-code str)
                                  :llm_executable_blocks (when (some? llm-executable-blocks)
                                                           (->json (vec llm-executable-blocks)))
+                                 :llm_assistant_message (when (some? llm-assistant-message)
+                                                          (->json llm-assistant-message))
                                  :created_at           now
                                  :finished_at          now}
                           (some? answer-form-idx)
@@ -1230,6 +1232,10 @@
     (assoc :llm-executable-code (:llm_executable_code row))
     (some? (:llm_executable_blocks row))
     (assoc :llm-executable-blocks (<-json (:llm_executable_blocks row)))
+    ;; Canonical assistant message svar emitted on this iteration; rehydrated
+    ;; on resume so preserved-thinking replay survives a vis restart.
+    (some? (:llm_assistant_message row))
+    (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
     (some? (:answer_form_idx row))      (assoc :answer-form-idx   (:answer_form_idx row))
     (some? (:llm_returned_empty_blocks row))
     (assoc :returned-empty-blocks? (= 1 (long (:llm_returned_empty_blocks row))))

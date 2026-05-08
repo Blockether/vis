@@ -718,18 +718,24 @@
   [env f args]
   {:env env :fn f :args (into [env] args)})
 
+;; -- public, doc-bearing aliases -----------------------------------------------
+;; The two underlying defs (`foundation-inspect`, `foundation-report`) are
+;; private and named for clarity inside this ns. Re-export them under their
+;; SCI-visible names with `:doc` and `:arglists` baked into the var meta so
+;; `vis/symbol` can read both straight off the var.
+(def ^{:doc "Conversation introspection data."
+       :arglists '([] [conversation-id])} inspect foundation-inspect)
+(def ^{:doc "Markdown report from conversation introspection data."
+       :arglists '([] [conversation-id])} report foundation-report)
+
 (def inspect-symbol
-  (vis/symbol 'inspect foundation-inspect
-    {:doc "Conversation introspection data."
-     :arglists '([] [conversation-id])
-     :examples ["(v/inspect)"]
+  (vis/symbol #'inspect
+    {:examples ["(v/inspect)"]
      :before-fn inject-environment}))
 
 (def report-symbol
-  (vis/symbol 'report foundation-report
-    {:doc "Markdown report from conversation introspection data."
-     :arglists '([] [conversation-id])
-     :examples ["(v/report)"]
+  (vis/symbol #'report
+    {:examples ["(v/report)"]
      :before-fn inject-environment}))
 
 (def all-symbols

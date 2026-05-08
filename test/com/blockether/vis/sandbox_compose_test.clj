@@ -249,13 +249,12 @@
               #(sandbox-eval "(slurp \"/etc/hosts\")")))))
 
 ;; -----------------------------------------------------------------------------
-;; (shape v) - sandbox-bound structural describe. The model's first-aid kit
-;; for unknown values: scalar -> type kw, string -> [:string N], collection ->
-;; [tag size <element-shape>], map -> [:map size <sorted-keys>]. Recursion
-;; depth caps at 2 so the output stays one line for a vec-of-maps.
+;; (shape v) was removed - the sandbox no longer ships a structural-describe
+;; helper. The model can use `clojure.repl/doc`, `(meta #'foo)`, and
+;; ordinary destructuring instead.
 ;; -----------------------------------------------------------------------------
 
-(defdescribe shape-fn-test
+#_(defdescribe shape-fn-test
   (it "scalar non-keyword/symbol values resolve to their type keyword"
     (expect (= :nil     (sandbox-eval "(shape nil)")))
     (expect (= :bool    (sandbox-eval "(shape true)")))
@@ -415,7 +414,7 @@
    "iteration N+1: final turn-finisher after observed evidence, exactly one top-level form"
    "<journal>"
    "<var_index>"
-   "TURN_USER_REQUEST"
+   "(v/inspect)"
    "CONVERSATION_TITLE"
    "(answer ARG)"
    "(conversation-title ARG)"
@@ -423,8 +422,7 @@
    ;; with extensions (regression guard for the empty-bullet bug we hit
    ;; on conversation 9b1e460d-c8ed-457e-bf00-b84157235c38).
    "TURN_ACCESSIBLE_SKILLS"
-   "(load-skill name)"
-   "(shape x)"])
+   "(load-skill name)"])
 
 (defdescribe prompt-contract-test
   (it "every pattern this test asserts is also surfaced in CORE_SYSTEM_PROMPT"

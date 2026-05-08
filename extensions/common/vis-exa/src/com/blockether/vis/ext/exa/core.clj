@@ -506,7 +506,7 @@
 (def ^:private tool-result-spec ::extension/tool-result)
 
 (defn web-search
-  "Search the web through Exa MCP. Tool result payload lives under `:result`."
+  "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Tool result; payload under :result."
   ([query] (web-search query {}))
   ([query opts]
    (let [query (str query)
@@ -528,7 +528,7 @@
          (tool-failure :exa/web-search "web_search_exa" query ep t))))))
 
 (defn code-context
-  "Search code/docs through Exa MCP. Tool result payload lives under `:result`."
+  "Search code/docs through Exa MCP for API usage/examples. Tool result; payload under :result."
   ([query] (code-context query {}))
   ([query opts]
    (let [query (str query)
@@ -550,19 +550,15 @@
          (tool-failure :exa/code-context "get_code_context_exa" query ep t))))))
 
 (def web-search-symbol
-  (vis/symbol 'web-search web-search
-    {:doc "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Tool result; payload under :result."
-     :arglists '([query] [query opts])
-     :examples ["(def r (exa/web-search \"latest Clojure release\" {:num-results 5}))"
+  (vis/symbol #'web-search
+    {:examples ["(def r (exa/web-search \"latest Clojure release\" {:num-results 5}))"
                 "(get-in r [:result :content])"]
      :result-spec tool-result-spec
      :render-fn render-exa-result}))
 
 (def code-context-symbol
-  (vis/symbol 'code-context code-context
-    {:doc "Search code/docs through Exa MCP for API usage/examples. Tool result; payload under :result."
-     :arglists '([query] [query opts])
-     :examples ["(def c (exa/code-context \"rewrite-clj z/find-value examples\" {:tokens-num 12000}))"
+  (vis/symbol #'code-context
+    {:examples ["(def c (exa/code-context \"rewrite-clj z/find-value examples\" {:tokens-num 12000}))"
                 "(get-in c [:result :content])"]
      :result-spec tool-result-spec
      :render-fn render-exa-result}))

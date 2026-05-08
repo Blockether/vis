@@ -32,7 +32,12 @@
    [com.blockether.vis.ext.foundation.environment.monorepo :as monorepo]
    [com.blockether.vis.ext.foundation.environment.render :as render]
    [com.blockether.vis.ext.foundation.environment.repositories :as repositories]
-   [com.blockether.vis.ext.foundation.environment.skills :as skills]
+   ;; Skills catalog moved to `com.blockether.vis.internal.skills` during
+   ;; the May 2026 merge consolidation (the legacy
+   ;; `environment.skills` namespace was removed). The internal skills
+   ;; loader is API-compatible: `list-all`, `reload!`, `lookup`,
+   ;; `scan-warnings` all unchanged.
+   [com.blockether.vis.internal.skills :as skills]
    [com.blockether.vis.internal.workspace-context :as workspace-context]
    [taoensso.telemere :as tel]))
 
@@ -99,8 +104,7 @@
      :repositories repos-map}))
 
 (defn snapshot
-  "Return the cached snapshot, computing it on first access or after
-   a `(refresh!)`. Recomputed automatically when cwd changes."
+  "Full environment snapshot as a map: {:host :git :languages :monorepo :repositories}. Cached per cwd; recomputed automatically when cwd changes or after `(refresh!)`."
   []
   (let [cwd     (canonical-cwd)
         cached  @cache]
@@ -111,16 +115,12 @@
         value))))
 
 (defn refresh!
-  "Invalidate the cached snapshot AND cascade into the agents +
-   skills caches. Next call to `snapshot` (and `(v/main-agent-instructions)`,
-   the `TURN_ACCESSIBLE_SKILLS` snapshot) will recompute. Returns the
-   freshly computed snapshot.
-
-   Cascade rationale: users editing `AGENTS.md` reach for
-   `(vis/refresh!)` (existing muscle memory). Without the cascade,
-   `<environment>` would refresh but `<project-guidance>` and
-   `<skills>` would stay stale until the explicit reload fns are
-   called. See plan caveat: `(vis/refresh!) cascades`."
+  "Drop the cached snapshot and recompute. Useful after the working tree changes substantially (new files, branch checkout, etc.). Cascades into agents + skills caches so `<project-guidance>` and `<skills>` also refresh."
+  ;; Cascade rationale: users editing `AGENTS.md` reach for
+  ;; `(vis/refresh!)` (existing muscle memory). Without the cascade,
+  ;; `<environment>` would refresh but `<project-guidance>` and
+  ;; `<skills>` would stay stale until the explicit reload fns are
+  ;; called. See plan caveat: `(vis/refresh!) cascades`.
   []
   (reset! cache {:key nil :value nil})
   (try (agents/reload!)
@@ -137,62 +137,78 @@
 ;; Extension definition.
 ;; ---------------------------------------------------------------------------
 
+;; -----------------------------------------------------------------------------
+;; Local thin wrappers around the snapshot accessors so each `v/` callable
+;; corresponds to a real var with `:doc` + `:arglists` baked in. `vis/symbol`
+;; reads both straight from the var meta - no separate side-map at the
+;; registration callsite.
+;; -----------------------------------------------------------------------------
+
+(defn repositories
+  "Multirepo Git snapshot: {:count :repositories [{:path :branch :dirty? :changes? :stale? :stash-count ...}]}."
+  [] (:repositories (snapshot)))
+
+(defn git
+  "Git submap of the snapshot, or nil when not in a repo. Includes :root :branch :detached? :submodules? :worktree? plus dirty-status counts."
+  [] (:git (snapshot)))
+
+(defn languages
+  "Language scan: {:total-files :total-bytes :primary :languages [...]} sorted by total bytes desc."
+  [] (:languages (snapshot)))
+
+(defn monorepo
+  "Monorepo shape detection: {:shape :totals :files} or :shape nil for single-package repos."
+  [] (:monorepo (snapshot)))
+
+(defn render
+  "Render the current snapshot as the same `<environment>` block embedded in the system prompt. Useful for debugging or surfacing the block on demand."
+  [] (render/render (snapshot)))
+
 (def snapshot-symbol
-  (vis/symbol 'snapshot snapshot
-    {:doc      "Full environment snapshot as a map: {:host :git :languages :monorepo :repositories}. Cached per cwd."
-     :arglists '([])
-     :examples ["(v/snapshot)"
+  (vis/symbol #'snapshot
+    {:examples ["(v/snapshot)"
                 "(get-in (v/snapshot) [:git :branch])"]}))
 
 (def repositories-symbol
-  (vis/symbol 'repositories #(:repositories (snapshot))
-    {:doc      "Multirepo Git snapshot: {:count :repositories [{:path :branch :dirty? :changes? :stale? :stash-count ...}]}."
-     :arglists '([])
-     :examples ["(v/repositories)"
+  (vis/symbol #'repositories
+    {:examples ["(v/repositories)"
                 "(map :path (:repositories (v/repositories)))"]}))
 
 (def git-symbol
-  (vis/symbol 'git #(:git (snapshot))
-    {:doc      "Git submap of the snapshot, or nil when not in a repo. Includes :root :branch :detached? :submodules? :worktree? plus dirty-status counts."
-     :arglists '([])
-     :examples ["(v/git)"
+  (vis/symbol #'git
+    {:examples ["(v/git)"
                 "(:branch (v/git))"]}))
 
 (def languages-symbol
-  (vis/symbol 'languages #(:languages (snapshot))
-    {:doc      "Language scan: {:total-files :total-bytes :primary :languages [...]} sorted by total bytes desc."
-     :arglists '([])
-     :examples ["(v/languages)"
+  (vis/symbol #'languages
+    {:examples ["(v/languages)"
                 "(:primary (v/languages))"]}))
 
 (def monorepo-symbol
-  (vis/symbol 'monorepo #(:monorepo (snapshot))
-    {:doc      "Monorepo shape detection: {:shape :totals :files} or :shape nil for single-package repos."
-     :arglists '([])
-     :examples ["(v/monorepo)"
+  (vis/symbol #'monorepo
+    {:examples ["(v/monorepo)"
                 "(:shape (v/monorepo))"]}))
 
 (def refresh!-symbol
-  (vis/symbol 'refresh! refresh!
-    {:doc      "Drop the cached snapshot and recompute. Useful after the working tree changes substantially (new files, branch checkout, etc.)."
-     :arglists '([])
-     :examples ["(v/refresh!)"]}))
+  (vis/symbol #'refresh!
+    {:examples ["(v/refresh!)"]}))
 
 (def render-symbol
-  (vis/symbol 'render #(render/render (snapshot))
-    {:doc      "Render the current snapshot as the same `<environment>` block embedded in the system prompt. Useful for debugging or surfacing the block on demand."
-     :arglists '([])
-     :examples ["(println (v/render))"]}))
+  (vis/symbol #'render
+    {:examples ["(println (v/render))"]}))
 
 ;; ---------------------------------------------------------------------------
 ;; Project guidance + skills + scan-warnings surface (plan §3).
 ;; ---------------------------------------------------------------------------
 
+(defn main-agent-instructions
+  "Project guidance from AGENTS.md or CLAUDE.md fallback. Returns {:found? ...}."
+  []
+  (agents/instructions))
+
 (def main-agent-instructions-symbol
-  (vis/symbol 'main-agent-instructions agents/instructions
-    {:doc      "Project guidance from AGENTS.md or CLAUDE.md fallback. Returns {:found? ...}."
-     :arglists '([])
-     :examples ["(v/main-agent-instructions)"
+  (vis/symbol #'main-agent-instructions
+    {:examples ["(v/main-agent-instructions)"
                 "(:content (v/main-agent-instructions))"]}))
 
 ;; (v/skills) WAS HERE. Removed: enumeration is now the
@@ -215,11 +231,14 @@
       (swap! active-skills-atom assoc (:name result) result)))
   {:result result})
 
+(defn load-skill
+  "Load skill body by name. Returns {:found? true :body ...} or {:found? false}. Loaded skills appear in <active_skills> with full body on the next iteration."
+  [skill-name]
+  (skills/lookup skill-name))
+
 (def load-skill-symbol
-  (vis/symbol 'load-skill skills/lookup
-    {:doc      "Load skill body by name. Returns {:found? true :body ...} or {:found? false}. Loaded skills appear in <active_skills> with full body on the next iteration."
-     :arglists '([skill-name])
-     :examples ["(v/load-skill \"diagnose\")"
+  (vis/symbol #'load-skill
+    {:examples ["(v/load-skill \"diagnose\")"
                 "(:body (v/load-skill \"caveman\"))"]
      :after-fn remember-active-skill!}))
 
@@ -244,30 +263,42 @@
          (skills/scan-warnings)
          (vis/extension-load-failures))))
 
+(defn ^{:doc "Scan warnings vec: {:source :reason :path}. Empty when clean."
+        :arglists '([])} scan-warnings
+  []
+  (combined-scan-warnings))
+
+(defn reload-instructions!
+  "Reload AGENTS.md / CLAUDE.md cache."
+  []
+  (agents/reload!))
+
+(defn reload-skills!
+  "Reload SKILL.md cache. Returns {:scanned :loaded :dropped :warnings}."
+  []
+  (skills/reload!))
+
+(defn reload-extensions!
+  "Reload extension registry. Returns diff: {:added :removed :reloaded :errors ...}."
+  ([] (vis/reload-extensions!))
+  ([opts] (vis/reload-extensions! opts)))
+
 (def scan-warnings-symbol
-  (vis/symbol 'scan-warnings combined-scan-warnings
-    {:doc      "Scan warnings vec: {:source :reason :path}. Empty when clean."
-     :arglists '([])
-     :examples ["(v/scan-warnings)"
+  (vis/symbol #'scan-warnings
+    {:examples ["(v/scan-warnings)"
                 "(when (seq (v/scan-warnings)) :issues)"]}))
 
 (def reload-instructions!-symbol
-  (vis/symbol 'reload-instructions! agents/reload!
-    {:doc      "Reload AGENTS.md / CLAUDE.md cache."
-     :arglists '([])
-     :examples ["(v/reload-instructions!)"]}))
+  (vis/symbol #'reload-instructions!
+    {:examples ["(v/reload-instructions!)"]}))
 
 (def reload-skills!-symbol
-  (vis/symbol 'reload-skills! skills/reload!
-    {:doc      "Reload SKILL.md cache. Returns {:scanned :loaded :dropped :warnings}."
-     :arglists '([])
-     :examples ["(v/reload-skills!)"]}))
+  (vis/symbol #'reload-skills!
+    {:examples ["(v/reload-skills!)"]}))
 
 (def reload-extensions!-symbol
-  (vis/symbol 'reload-extensions! vis/reload-extensions!
-    {:doc      "Reload extension registry. Returns diff: {:added :removed :reloaded :errors ...}."
-     :arglists '([] [{:reload/timeout-ms n}])
-     :examples ["(v/reload-extensions!)"
+  (vis/symbol #'reload-extensions!
+    {:examples ["(v/reload-extensions!)"
                 "(v/reload-extensions! {:reload/timeout-ms 5000})"]}))
 
 (def environment-symbols

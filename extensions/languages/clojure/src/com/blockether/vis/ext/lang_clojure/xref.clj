@@ -177,6 +177,7 @@
   (:db (current-state opts)))
 
 (defn- xref-analyze!
+  "Analyze Clojure source roots with clj-xref and cache the semantic graph for later z/ xref queries. Opts: {:paths [...], :kondo-config {...}, :project string}."
   ([] (xref-analyze! nil))
   ([opts]
    (let [{:keys [db paths elapsed-ms analyzed-at-ms]} (analyze-db! (or opts {}))]
@@ -191,6 +192,7 @@
                :analyzed-at-ms analyzed-at-ms}}))))
 
 (defn- xref-refresh!
+  "Force-refresh the cached clj-xref semantic graph. Same opts as z/xref-analyze!."
   ([] (xref-refresh! nil))
   ([opts]
    (xref-analyze! (assoc (or opts {}) :force? true))))
@@ -245,30 +247,37 @@
                                  :truncated? truncated?})))
 
 (defn- who-calls
+  "Return call sites of symbol `sym` from the cached clj-xref graph. Opts include {:limit n}; first call auto-analyzes default source roots."
   ([sym] (who-calls sym nil))
   ([sym opts] (ref-query :z/who-calls xref/who-calls sym opts)))
 
 (defn- calls-who
+  "Return vars called by symbol `sym` from the cached clj-xref graph."
   ([sym] (calls-who sym nil))
   ([sym opts] (ref-query :z/calls-who xref/calls-who sym opts)))
 
 (defn- who-references
+  "Return all references to symbol `sym` from the cached clj-xref graph."
   ([sym] (who-references sym nil))
   ([sym opts] (ref-query :z/who-references xref/who-references sym opts)))
 
 (defn- who-macroexpands
+  "Return macro expansion sites for macro symbol `sym`."
   ([sym] (who-macroexpands sym nil))
   ([sym opts] (ref-query :z/who-macroexpands xref/who-macroexpands sym opts)))
 
 (defn- who-implements
+  "Return implementations of protocol symbol `sym`."
   ([sym] (who-implements sym nil))
   ([sym opts] (ref-query :z/who-implements xref/who-implements sym opts)))
 
 (defn- who-dispatches
+  "Return defmethod dispatch sites for multimethod symbol `sym`."
   ([sym] (who-dispatches sym nil))
   ([sym opts] (ref-query :z/who-dispatches xref/who-dispatches sym opts)))
 
 (defn- ns-vars
+  "Return var definitions in namespace `ns-sym`."
   ([ns-sym] (ns-vars ns-sym nil))
   ([ns-sym opts]
    (let [{:keys [rows total-count limit truncated?]} (bounded (mapv normalize-var-row (xref/ns-vars (db opts) ns-sym)) opts)]
@@ -279,6 +288,7 @@
                                           :truncated? truncated?}))))
 
 (defn- ns-deps
+  "Return namespaces that `ns-sym` depends on."
   ([ns-sym] (ns-deps ns-sym nil))
   ([ns-sym opts]
    (let [rows (sort (xref/ns-deps (db opts) ns-sym))]
@@ -286,6 +296,7 @@
                                                 :count (count rows)}))))
 
 (defn- ns-dependents
+  "Return namespaces that depend on `ns-sym`."
   ([ns-sym] (ns-dependents ns-sym nil))
   ([ns-sym opts]
    (let [rows (sort (xref/ns-dependents (db opts) ns-sym))]
@@ -293,6 +304,7 @@
                                                       :count (count rows)}))))
 
 (defn- unused-vars
+  "Return vars defined but never referenced. Opts: {:include-private? true, :limit n}."
   ([] (unused-vars nil))
   ([opts]
    (let [{:keys [rows total-count limit truncated?]} (bounded (mapv normalize-var-row (xref/unused-vars (db opts) opts)) opts)]
@@ -302,6 +314,7 @@
                                               :truncated? truncated?}))))
 
 (defn- call-graph
+  "Return transitive call graph edges for `sym`. Opts: {:depth n :direction :outgoing|:incoming}."
   ([sym] (call-graph sym nil))
   ([sym opts]
    (let [edges (->> (xref/call-graph (db opts) sym opts)
@@ -314,6 +327,7 @@
                                               :count (count edges)}))))
 
 (defn- apropos
+  "Find vars whose fully-qualified name matches string or regex `pattern`."
   ([pattern] (apropos pattern nil))
   ([pattern opts]
    (let [{:keys [rows total-count limit truncated?]} (bounded (mapv normalize-var-row (xref/apropos (db opts) pattern)) opts)]
@@ -403,6 +417,7 @@
       (assoc hit :xref-row (select-keys row [:kind :from :to :name :local-name :method :line :col :end-line :end-col :row :end-row :path :file])))))
 
 (defn- locator-for-ref
+  "Convert an xref row returned by z/who-calls, z/calls-who, z/who-references, etc. into a z/patch-compatible zipper locator row."
   [row]
   (if-let [hit (locator-for-row* row)]
     (query-success :z/locator-for-ref hit nil {:row (select-keys row [:kind :from :to :name :line :col :path :file])})
@@ -411,6 +426,7 @@
               :row row}))))
 
 (defn- locators-for-symbol
+  "Return z/patch-compatible zipper locator rows for a symbol definition and references known to clj-xref."
   ([sym] (locators-for-symbol sym nil))
   ([sym opts]
    (let [d          (db opts)
@@ -426,6 +442,7 @@
                                                       :truncated? truncated?}))))
 
 (defn- definition
+  "Return the definition row and z/patch-compatible locator for fully-qualified symbol `sym`."
   ([sym] (definition sym nil))
   ([sym opts]
    (let [row     (some-> (get (:vars-by-name (db opts)) sym) normalize-var-row)
@@ -440,6 +457,7 @@
         :found? (boolean row)}))))
 
 (defn- call-sites
+  "Return call sites of `sym`, enriched with z/patch-compatible :locator rows."
   ([sym] (call-sites sym nil))
   ([sym opts]
    (let [refs (mapv normalize-ref-row (xref/who-calls (db opts) sym))
@@ -458,6 +476,7 @@
 ;; =============================================================================
 
 (defn- context-for
+  "Return a bounded agent context neighborhood for `sym`: definition, caller refs, callee refs, and relevant files."
   ([sym] (context-for sym nil))
   ([sym opts]
    (let [d            (db opts)
@@ -502,130 +521,32 @@
       (md/code-block "clojure" (pr-str (:result tool-result))))))
 
 (defn- xref-symbol
-  [sym f doc arglists examples]
-  (vis/symbol sym f
-    {:doc doc
-     :arglists arglists
-     :examples examples
+  [v examples]
+  (vis/symbol v
+    {:examples examples
      :result-spec ::extension/tool-result
      :render-fn render-tool-result
-     :on-error-fn (tool-failure-on-error (keyword "z" (name sym)))}))
+     :on-error-fn (tool-failure-on-error (keyword "z" (name (:name (meta v)))))}))
 
-(def xref-analyze-symbol
-  (xref-symbol 'xref-analyze! xref-analyze!
-    "Analyze Clojure source roots with clj-xref and cache the semantic graph for later z/ xref queries. Opts: {:paths [...], :kondo-config {...}, :project string}."
-    '([] [opts])
-    ["(z/xref-analyze!)"
-     "(z/xref-analyze! {:paths [\"src\" \"test\"]})"]))
-
-(def xref-refresh-symbol
-  (xref-symbol 'xref-refresh! xref-refresh!
-    "Force-refresh the cached clj-xref semantic graph. Same opts as z/xref-analyze!."
-    '([] [opts])
-    ["(z/xref-refresh!)"]))
-
-(def who-calls-symbol
-  (xref-symbol 'who-calls who-calls
-    "Return call sites of symbol `sym` from the cached clj-xref graph. Opts include {:limit n}; first call auto-analyzes default source roots."
-    '([sym] [sym opts])
-    ["(z/who-calls 'my.ns/f)"]))
-
-(def calls-who-symbol
-  (xref-symbol 'calls-who calls-who
-    "Return vars called by symbol `sym` from the cached clj-xref graph."
-    '([sym] [sym opts])
-    ["(z/calls-who 'my.ns/f)"]))
-
-(def who-references-symbol
-  (xref-symbol 'who-references who-references
-    "Return all references to symbol `sym` from the cached clj-xref graph."
-    '([sym] [sym opts])
-    ["(z/who-references 'my.ns/f)"]))
-
-(def who-macroexpands-symbol
-  (xref-symbol 'who-macroexpands who-macroexpands
-    "Return macro expansion sites for macro symbol `sym`."
-    '([sym] [sym opts])
-    ["(z/who-macroexpands 'my.ns/m)"]))
-
-(def who-implements-symbol
-  (xref-symbol 'who-implements who-implements
-    "Return implementations of protocol symbol `sym`."
-    '([sym] [sym opts])
-    ["(z/who-implements 'my.ns/Protocol)"]))
-
-(def who-dispatches-symbol
-  (xref-symbol 'who-dispatches who-dispatches
-    "Return defmethod dispatch sites for multimethod symbol `sym`."
-    '([sym] [sym opts])
-    ["(z/who-dispatches 'my.ns/multi)"]))
-
-(def ns-vars-symbol
-  (xref-symbol 'ns-vars ns-vars
-    "Return var definitions in namespace `ns-sym`."
-    '([ns-sym] [ns-sym opts])
-    ["(z/ns-vars 'my.ns)"]))
-
-(def ns-deps-symbol
-  (xref-symbol 'ns-deps ns-deps
-    "Return namespaces that `ns-sym` depends on."
-    '([ns-sym] [ns-sym opts])
-    ["(z/ns-deps 'my.ns)"]))
-
-(def ns-dependents-symbol
-  (xref-symbol 'ns-dependents ns-dependents
-    "Return namespaces that depend on `ns-sym`."
-    '([ns-sym] [ns-sym opts])
-    ["(z/ns-dependents 'my.ns)"]))
-
-(def unused-vars-symbol
-  (xref-symbol 'unused-vars unused-vars
-    "Return vars defined but never referenced. Opts: {:include-private? true, :limit n}."
-    '([] [opts])
-    ["(z/unused-vars)"
-     "(z/unused-vars {:include-private? true :limit 50})"]))
-
-(def call-graph-symbol
-  (xref-symbol 'call-graph call-graph
-    "Return transitive call graph edges for `sym`. Opts: {:depth n :direction :outgoing|:incoming}."
-    '([sym] [sym opts])
-    ["(z/call-graph 'my.ns/f {:depth 2})"]))
-
-(def apropos-symbol
-  (xref-symbol 'apropos apropos
-    "Find vars whose fully-qualified name matches string or regex `pattern`."
-    '([pattern] [pattern opts])
-    ["(z/apropos \"process\")"]))
-
-(def locator-for-ref-symbol
-  (xref-symbol 'locator-for-ref locator-for-ref
-    "Convert an xref row returned by z/who-calls, z/calls-who, z/who-references, etc. into a z/patch-compatible zipper locator row."
-    '([row])
-    ["(z/locator-for-ref (first (:result (z/who-calls 'my.ns/f))))"]))
-
-(def locators-for-symbol-symbol
-  (xref-symbol 'locators-for-symbol locators-for-symbol
-    "Return z/patch-compatible zipper locator rows for a symbol definition and references known to clj-xref."
-    '([sym] [sym opts])
-    ["(z/locators-for-symbol 'my.ns/f)"]))
-
-(def definition-symbol
-  (xref-symbol 'definition definition
-    "Return the definition row and z/patch-compatible locator for fully-qualified symbol `sym`."
-    '([sym] [sym opts])
-    ["(z/definition 'my.ns/f)"]))
-
-(def call-sites-symbol
-  (xref-symbol 'call-sites call-sites
-    "Return call sites of `sym`, enriched with z/patch-compatible :locator rows."
-    '([sym] [sym opts])
-    ["(z/call-sites 'my.ns/f)"]))
-
-(def context-for-symbol
-  (xref-symbol 'context-for context-for
-    "Return a bounded agent context neighborhood for `sym`: definition, caller refs, callee refs, and relevant files."
-    '([sym] [sym opts])
-    ["(z/context-for 'my.ns/f)"]))
+(def xref-analyze-symbol     (xref-symbol #'xref-analyze!     ["(z/xref-analyze!)" "(z/xref-analyze! {:paths [\"src\" \"test\"]})"]))
+(def xref-refresh-symbol     (xref-symbol #'xref-refresh!     ["(z/xref-refresh!)"]))
+(def who-calls-symbol        (xref-symbol #'who-calls         ["(z/who-calls 'my.ns/f)"]))
+(def calls-who-symbol        (xref-symbol #'calls-who         ["(z/calls-who 'my.ns/f)"]))
+(def who-references-symbol   (xref-symbol #'who-references    ["(z/who-references 'my.ns/f)"]))
+(def who-macroexpands-symbol (xref-symbol #'who-macroexpands  ["(z/who-macroexpands 'my.ns/m)"]))
+(def who-implements-symbol   (xref-symbol #'who-implements    ["(z/who-implements 'my.ns/Protocol)"]))
+(def who-dispatches-symbol   (xref-symbol #'who-dispatches    ["(z/who-dispatches 'my.ns/multi)"]))
+(def ns-vars-symbol          (xref-symbol #'ns-vars           ["(z/ns-vars 'my.ns)"]))
+(def ns-deps-symbol          (xref-symbol #'ns-deps           ["(z/ns-deps 'my.ns)"]))
+(def ns-dependents-symbol    (xref-symbol #'ns-dependents     ["(z/ns-dependents 'my.ns)"]))
+(def unused-vars-symbol      (xref-symbol #'unused-vars       ["(z/unused-vars)" "(z/unused-vars {:include-private? true :limit 50})"]))
+(def call-graph-symbol       (xref-symbol #'call-graph        ["(z/call-graph 'my.ns/f {:depth 2})"]))
+(def apropos-symbol          (xref-symbol #'apropos           ["(z/apropos \"process\")"]))
+(def locator-for-ref-symbol  (xref-symbol #'locator-for-ref   ["(z/locator-for-ref (first (:result (z/who-calls 'my.ns/f))))"]))
+(def locators-for-symbol-symbol (xref-symbol #'locators-for-symbol ["(z/locators-for-symbol 'my.ns/f)"]))
+(def definition-symbol       (xref-symbol #'definition        ["(z/definition 'my.ns/f)"]))
+(def call-sites-symbol       (xref-symbol #'call-sites        ["(z/call-sites 'my.ns/f)"]))
+(def context-for-symbol      (xref-symbol #'context-for       ["(z/context-for 'my.ns/f)"]))
 
 (def symbols
   [xref-analyze-symbol
