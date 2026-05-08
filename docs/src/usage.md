@@ -50,6 +50,11 @@ Both installers clone or update Vis under `~/.vis/sourcecode`; Unix-like
 systems symlink `~/.local/bin/vis`, and native Windows writes
 `~/.local/bin/vis.cmd`.
 
+After installation, run `vis update` to fast-forward the source checkout used
+by your installed `vis` command. It runs `git fetch --tags origin` and
+`git pull --ff-only`; local uncommitted work or diverged branches are left for
+you to resolve manually.
+
 ### Method 2: custom install directory
 
 Use this when you want the source checkout under `~/code`, an external
@@ -289,7 +294,10 @@ You can also start the same OpenAI Codex browser OAuth flow from the
 TUI provider picker; the CLI command remains the fallback when the
 localhost callback cannot complete inside the terminal session.
 
-Provider config + credentials live under `~/.vis/`:
+Provider config + credentials live under `~/.vis/` by default. A project may
+also define `.vis/config.edn`; Vis merges global config first and then overlays
+the project-local file, so project keys win when you run `vis` from that
+project.
 
 ```
 ~/.vis/
@@ -300,6 +308,16 @@ Provider config + credentials live under `~/.vis/`:
 
 Run `vis extensions doctor` any time to sanity-check the environment (config
 present, DB writable, providers reachable).
+
+To remove the shell tool from the model sandbox for a project, add this to the
+project-local `.vis/config.edn` (or to `~/.vis/config.edn` globally):
+
+```clojure
+{:tools {:bash {:enabled? false}}}
+```
+
+When disabled, `v/bash` is not registered and the prompt omits shell
+examples. `v/bash` is the single shell tool and runs with strict mode (`set -euo pipefail`).
 
 ## The four ways to talk to the agent
 
@@ -437,10 +455,15 @@ The output table includes the conversation ID; pass it to
 
 Extensions add tools to the SCI sandbox. Drop an extension jar on the
 classpath — it self-registers via the unified `META-INF/vis-extension/vis.edn`
-at startup.
+at startup. Source extensions are also auto-loaded from these directories when
+the Unix `bin/vis` launcher starts:
+
+- `<project>/.vis/vis-extensions/<name>/deps.edn`
+- `~/.vis/vis-extensions/<name>/deps.edn`
 
 ```bash
 vis extensions list                  # list everything that registered
+vis extensions scaffold my-tools     # create .vis/vis-extensions/my-tools
 vis extensions <cmd> [args…]         # run an extension's exported CLI command
 ```
 
@@ -460,6 +483,11 @@ use `v/preview` to display selected hits. It is already wired into the root
         {:local/root "extensions/common/vis-foundation"}}}
 ```
 
+`vis extensions scaffold <name>` writes a minimal deps.edn, extension manifest,
+and Clojure namespace. If you scaffold under the project-local `.vis` directory,
+that project loads it automatically on the next `vis` start; scaffold under
+`~/.vis/vis-extensions` for global user extensions.
+
 To author your own extension, see [Extension System](extensions/overview.md).
 
 ## All top-level sub-commands
@@ -471,9 +499,11 @@ To author your own extension, see [Extension System](extensions/overview.md).
 | `vis channels telegram`    | Telegram long-poll bot.                                                  |
 | `vis providers …`          | Provider auth / status / limits / logout commands.                       |
 | `vis conversations [ch]`   | List conversations, optionally filtered by channel.                      |
+| `vis update`               | Fast-forward the installed source checkout.                              |
 | `vis extensions doctor`    | Environment diagnostics.                                                 |
 | `vis extensions reproduction <conv-id>` | Complete flag-free Markdown reproduction artifact for a persisted conversation. |
 | `vis extensions list`      | List registered extensions.                                              |
+| `vis extensions scaffold <name>` | Create a user extension project scaffold.                         |
 | `vis extensions <cmd> […]` | Run an extension-provided CLI command.                                   |
 | `vis channels <name> […]`  | Run any registered channel by `:channel/cmd` name.                       |
 | `vis help`                 | Print the help tree (same as no args).                                   |

@@ -132,6 +132,23 @@
       (expect (not (str/includes? out "LLM-only private reasoning must stay out")))
       (expect (not (str/includes? out "iteration/1 thinking:")))))
 
+  (it "renders persisted final answer text into <journal>"
+    (let [out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "set")}
+                {:active-extensions   NO_EXTENSIONS
+                 :blocks-by-iteration [[1 {:thinking nil
+                                           :answer "A) Patch + verify."
+                                           :answer-form-idx 0
+                                           :blocks [{:code "(answer \"A) Patch + verify.\")"
+                                                     :result :vis/answer
+                                                     :provenance {:ref "turn/3f2a91c0/iteration/1/block/1"
+                                                                  :op :vis/answer
+                                                                  :status :done}}]}]]
+                 :iteration 0})]
+      (expect (str/includes? out "<final-answer>"))
+      (expect (str/includes? out "A) Patch + verify."))
+      (expect (str/includes? out "turn/3f2a91c0/iteration/1/block/1"))))
+
   (it "renders every preview captured from one block into <journal>"
     (let [preview-a {:success? true :result {:a 1} :error nil
                      :provenance {:op :v/preview}}
@@ -660,7 +677,22 @@
   (it "omits the system slot when no system prompt is supplied"
     (let [msgs (prompt/assemble-initial-messages
                  {:initial-user-content "hi"})]
-      (expect (= [{:role "user" :content "<user_turn_request_main_goal>\nhi\n</user_turn_request_main_goal>"}] msgs)))))
+      (expect (= [{:role "user" :content "<user_turn_request_main_goal>\nhi\n</user_turn_request_main_goal>"}] msgs))))
+
+  (it "prepends the full previous answer so short option replies keep their referent"
+    (let [prefix (apply str (repeat 7000 "x"))
+          answer (str prefix "\nA) Idziemy z całą trójką — patch + verify.")
+          msgs   (prompt/assemble-initial-messages
+                   {:initial-user-content "A"
+                    :previous-turn-context {:user-request "Dobra, co robimy?"
+                                            :answer answer}})
+          content (:content (last msgs))]
+      (expect (str/includes? content "<previous_turn_context>"))
+      (expect (str/includes? content "<previous_user_request>\nDobra, co robimy?"))
+      (expect (str/includes? content "<previous_assistant_answer>"))
+      (expect (str/includes? content (subs prefix 0 200)))
+      (expect (str/includes? content "A) Idziemy z całą trójką — patch + verify."))
+      (expect (str/ends-with? content "<user_turn_request_main_goal>\nA\n</user_turn_request_main_goal>")))))
 
 ;; ---------------------------------------------------------------------------
 ;; CTX1 — Context contract: trivial vs coding model-facing context.
@@ -970,16 +1002,16 @@
 ;;
 ;; The contract documented in FOCUS.md is enforced by the trivial-vs-coding
 ;; tests above. This block measures per-surface byte + token cost through
-;; the public `model-facing-context-stats` helper so callers (autoresearch
-;; runners, judge harness, diagnostic tooling) can attribute prompt size
+;; the public `model-facing-context-stats` helper so callers (regression
+;; tests, diagnostic tooling) can attribute prompt size
 ;; to the system prompt, the current user goal, or the per-iteration
 ;; trailer without reaching into private helpers.
 ;;
 ;; The tokens column uses `prompt/count-tokens` which falls back to
 ;; chars/4 when the encoder lookup fails for an unrecognized model. That
 ;; keeps the floor stable across the test environment (no Anthropic
-;; tokenizer in the bench worktree) and the production path (real
-;; tokenizer for the active model).
+;; tokenizer in CI) and the production path (real tokenizer for the
+;; active model).
 ;; ---------------------------------------------------------------------------
 
 (defn- trivial-stats []
@@ -1065,9 +1097,9 @@
       ;; skill + canonical refs + tool stdout). The actual landing is
       ;; ~330 tokens with the chars/4 fallback; pin a stable floor.
       (expect (> trailer-delta-tokens 250))
-      ;; Surface the exact numbers in test stdout so autoresearch /
-      ;; judge logs capture the "exact token/context impact" the task
-      ;; asks for. This is observability, not a flake — the assertions
+      ;; Surface the exact numbers in test stdout so diagnostics capture
+      ;; the exact token/context impact. This is observability, not a
+      ;; flake — the assertions
       ;; above guard the contract; the println records the measurement.
       (println
         (str "\n[CTX1] model-facing context impact (chars/4 fallback tokenizer):\n"

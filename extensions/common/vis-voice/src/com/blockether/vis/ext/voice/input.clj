@@ -10,7 +10,8 @@
 (defonce state
   (atom {:recorder nil
          :ticker nil
-         :transcribing? false}))
+         :transcribing? false
+         :workspace-id nil}))
 
 (defn- publish!
   [event]
@@ -22,14 +23,23 @@
     (format "%02d:%02d" (quot s 60) (mod s 60))))
 
 (defn- voice-status!
-  [text level]
-  (publish! {:op :status/set
-             :id :voice/input
-             :text text
-             :level level}))
+  ([text level]
+   (voice-status! text level nil))
+  ([text level ttl-ms]
+   (publish! (cond-> {:op :status/set
+                      :id :voice/input
+                      :text text
+                      :level level}
+               ttl-ms (assoc :ttl-ms ttl-ms)))))
 
 (defn- idle-status! []
-  (voice-status! "○ Voice ready" :success))
+  (publish! {:op :status/clear
+             :id :voice/input}))
+
+(defn- ctx-workspace-id
+  [ctx]
+  (or (:workspace-id ctx)
+    (some-> ctx :app-db deref :active-workspace-id)))
 
 (defn- voice-asr-failed-signal
   [audio-file throwable message]
@@ -51,7 +61,7 @@
       (Thread/sleep 1000))))
 
 (defn start-recording!
-  [_ctx]
+  [ctx]
   (cond
     (:transcribing? @state)
     (publish! {:op :notify
@@ -62,14 +72,18 @@
     (publish! {:op :notify :text "Voice recording is already running" :level :warn})
 
     :else
-    (let [rec (recorder/start!)]
-      (reset! state {:recorder rec :ticker nil :transcribing? false})
+    (let [workspace-id (ctx-workspace-id ctx)
+          rec          (recorder/start!)]
+      (reset! state {:recorder rec
+                     :ticker nil
+                     :transcribing? false
+                     :workspace-id workspace-id})
       (let [ticker (start-ticker! rec (:started-at-ms rec))]
         (swap! state assoc :ticker ticker))
       (voice-status! "● Recording 00:00" :warn))))
 
 (defn- transcribe-and-insert!
-  [audio-file]
+  [audio-file workspace-id]
   (future
     (try
       (voice-status! "● Transcribing…" :info)
@@ -77,18 +91,21 @@
         (voice-status! "● Rewrite…" :info)
         (let [rewritten (rewrite/rewrite-transcript! raw)
               text      (if (str/blank? rewritten) raw rewritten)]
-          (publish! {:op :input/append :text text :source :voice/input})
+          (publish! (cond-> {:op :input/append
+                             :text text
+                             :source :voice/input}
+                      workspace-id (assoc :workspace-id workspace-id)))
           (idle-status!)
           (publish! {:op :notify :text "✓ Voice appended to input" :level :success})))
       (catch Throwable t
         (let [message (or (ex-message t) (str t))]
           (log-voice-asr-failed! audio-file t message)
-          (voice-status! "○ Voice failed" :error)
+          (voice-status! "○ Voice failed" :error 3000)
           (publish! {:op :notify
                      :text (str "Voice failed: " message)
                      :level :error})))
       (finally
-        (swap! state assoc :transcribing? false)))))
+        (swap! state assoc :transcribing? false :workspace-id nil)))))
 
 (defn stop-and-transcribe!
   [_ctx]
@@ -99,10 +116,15 @@
                :level :warn})
 
     (:recorder @state)
-    (let [rec (:recorder @state)
-          audio-file (recorder/stop! rec)]
-      (reset! state {:recorder nil :ticker nil :transcribing? true})
-      (transcribe-and-insert! audio-file))
+    (let [recording-state @state
+          rec             (:recorder recording-state)
+          workspace-id    (:workspace-id recording-state)
+          audio-file      (recorder/stop! rec)]
+      (reset! state {:recorder nil
+                     :ticker nil
+                     :transcribing? true
+                     :workspace-id workspace-id})
+      (transcribe-and-insert! audio-file workspace-id))
 
     :else
     (publish! {:op :notify :text "Voice recording is not running" :level :warn})))
@@ -119,7 +141,7 @@
     (do
       (when-let [rec (:recorder @state)]
         (recorder/stop! rec))
-      (reset! state {:recorder nil :ticker nil :transcribing? false})
+      (reset! state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
       (idle-status!)
       (publish! {:op :notify :text "Voice recording cancelled" :level :info}))))
 

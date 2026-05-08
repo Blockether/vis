@@ -118,6 +118,10 @@
                                                    (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role
                                                                               :spec :paths :hit-count :truncated-by
                                                                               :command :cwd :target])
+                                                     (get-in result [:result :stdout])
+                                                     (assoc :stdout (get-in result [:result :stdout]))
+                                                     (get-in result [:result :stderr])
+                                                     (assoc :stderr (get-in result [:result :stderr]))
                                                      (= :v/preview (:op prov))
                                                      (assoc :raw (pr-str (:result result)))))))
                                              result-strs (mapv (fn [{:keys [result error] :as expr}]
@@ -131,6 +135,7 @@
                                                            exprs)
                                              result-details (mapv (comp tool-result-detail :result) exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
+                                             stderr-strs (mapv #(or (:stderr %) "") exprs)
                                              durations   (mapv #(or (:duration-ms %) 0) exprs)]
                                          {:thinking  (visible-thinking (:thinking it))
                                           :code      (mapv :code exprs)
@@ -139,6 +144,7 @@
                                           :result-kinds (mapv result-kind exprs)
                                           :result-details result-details
                                           :stdouts   stdout-strs
+                                          :stderrs   stderr-strs
                                           :durations durations
                                           :successes (mapv #(nil? (:error %)) exprs)})))
                                 turn-iterations)

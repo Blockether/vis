@@ -54,7 +54,17 @@
                             :stdout "" :stderr "" :execution-time-ms 5})
       (let [entry (first ((:get-timeline tracker)))]
         (is (= ["(+ 1 2)"] (:code entry)))
-        (is (= ["\"3\""] (:results entry)))))))
+        (is (= ["\"3\""] (:results entry))))))
+  (testing ":form_result elides forms marked with silent rendering-kind"
+    (let [tracker (progress/make-progress-tracker)]
+      ((:on-chunk tracker) {:phase :form-result :iteration 1 :form-idx 0
+                            :code "(def hits (v/glob \"src\" \"**/*.clj\"))"
+                            :result {:success? true :result ["src/a.clj"] :error nil}
+                            :rendering-kind :vis/silent
+                            :stdout "" :stderr "" :execution-time-ms 5})
+      (let [entry (first ((:get-timeline tracker)))]
+        (is (= [] (:code entry)))
+        (is (= [] (:results entry)))))))
 
 (deftest on-chunk-tool-result-render-test
   (testing ":form-result renders tool envelopes through extension renderer"

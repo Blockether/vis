@@ -78,7 +78,7 @@
     (not= false (:reasoning-effort? info))
     (not= :zai-thinking (:reasoning-style info))))
 
-(def ^:private git-glyph "")
+(def ^:private git-label "git")
 
 (defn- git-repo-label
   [{:keys [repo branch]}]
@@ -108,7 +108,7 @@
 (defn- git-footer-spans
   [{:keys [workspace?] :as status}]
   (if workspace?
-    [{:text (str git-glyph " " (git-repo-label status))
+    [{:text (str git-label " " (git-repo-label status))
       :fg t/footer-fg-strong :bold? true
       :region :right :priority 2}
      {:text (git-dirty-label status)
@@ -117,7 +117,7 @@
      {:text (git-sync-label status)
       :fg t/footer-fg-muted :bold? false
       :region :right :priority 4}]
-    [{:text (str "No " git-glyph)
+    [{:text (str "No " git-label)
       :fg t/footer-error-fg :bold? true
       :region :right :priority 2}]))
 

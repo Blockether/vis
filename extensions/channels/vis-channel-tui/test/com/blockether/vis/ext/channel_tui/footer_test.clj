@@ -187,7 +187,7 @@
                                                              :ahead 4
                                                              :behind 0})}
         (fn []
-          (expect (= [" ~/vis (main)" "6 modified" "commits: ⇡4"]
+          (expect (= ["git ~/vis (main)" "6 modified" "commits: ⇡4"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))
@@ -200,7 +200,7 @@
         (fn []
           (let [spans (->> (build-segments {:messages [] :settings {}} 0)
                         (filter #(= :right (:region %))))]
-            (expect (= ["No "] (mapv :text spans)))
+            (expect (= ["No git"] (mapv :text spans)))
             (expect (= t/footer-error-fg (:fg (first spans))))
             (expect (true? (:bold? (first spans)))))))))
 
@@ -218,7 +218,7 @@
                                                              :ahead 0
                                                              :behind 0})}
         (fn []
-          (expect (= [" ~/vis (main)" "files: clean" "(up to date)"]
+          (expect (= ["git ~/vis (main)" "files: clean" "(up to date)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))
@@ -237,7 +237,7 @@
                                                              :ahead 0
                                                              :behind 0})}
         (fn []
-          (expect (= [" ~/vis (main)" "files: clean" "(no upstream)"]
+          (expect (= ["git ~/vis (main)" "files: clean" "(no upstream)"]
                     (->> (build-segments {:messages [] :settings {}} 0)
                       (filter #(= :right (:region %)))
                       (mapv :text))))))))

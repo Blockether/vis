@@ -39,6 +39,28 @@
       (expect (nil? (:default-models ollama)))
       (expect (= "http://localhost:1234/v1" (:base-url lmstudio))))))
 
+(defdescribe layered-config-test
+  (it "loads project .vis/config.edn as an overlay over global config"
+    (let [global-dir (.toString (Files/createTempDirectory "vis-global-config-test" (make-array java.nio.file.attribute.FileAttribute 0)))
+          project-dir (.toString (Files/createTempDirectory "vis-project-config-test" (make-array java.nio.file.attribute.FileAttribute 0)))
+          global-path (str global-dir "/config.edn")
+          project-vis (str project-dir "/.vis")
+          project-path (str project-vis "/config.edn")]
+      (.mkdirs (java.io.File. project-vis))
+      (spit global-path (pr-str {:providers [{:id :global :models [{:name "g"}]}]
+                                 :tools {:bash {:enabled? true}
+                                         :other {:x 1}}}))
+      (spit project-path (pr-str {:providers [{:id :local :models [{:name "l"}]}]
+                                  :tools {:bash {:enabled? false}}}))
+      (with-redefs [config/config-dir global-dir
+                    config/config-path global-path
+                    config/project-config-path (fn [] project-path)]
+        (expect (= {:providers [{:id :local :models [{:name "l"}]}]
+                    :tools {:bash {:enabled? false}
+                            :other {:x 1}}}
+                  (config/load-config-raw)))
+        (expect (true? (config/bash-disabled?)))))))
+
 (defdescribe extension-env-config-test
   (it "persists extension env overrides and clears blank values"
     (let [dir (.toString (Files/createTempDirectory "vis-extension-env-test" (make-array java.nio.file.attribute.FileAttribute 0)))

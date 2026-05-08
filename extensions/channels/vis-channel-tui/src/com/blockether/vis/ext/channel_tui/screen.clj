@@ -166,11 +166,19 @@
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} handle-channel-event!
   [{:keys [op id text level ttl-ms] :as event}]
   (case op
-    :input/replace (state/dispatch [:external-input :replace text])
-    :input/append  (state/dispatch [:external-input :append text])
-    :input/insert  (state/dispatch [:external-input :insert text])
-    :status/set    (state/dispatch [:channel-status-set (or id (:source event) :external)
-                                    {:text text :level (or level :info)}])
+    :input/replace (state/dispatch [:external-input :replace text (:workspace-id event)])
+    :input/append  (state/dispatch [:external-input :append text (:workspace-id event)])
+    :input/insert  (state/dispatch [:external-input :insert text (:workspace-id event)])
+    :status/set    (let [status-id (or id (:source event) :external)
+                         until     (when ttl-ms (+ (System/currentTimeMillis) (long ttl-ms)))]
+                     (state/dispatch [:channel-status-set status-id
+                                      (cond-> {:text text :level (or level :info)}
+                                        until (assoc :until until))])
+                     (when ttl-ms
+                       (vis/worker-future "vis-tui-status-expire"
+                         #(do
+                            (Thread/sleep (long ttl-ms))
+                            (state/dispatch [:channel-status-clear-if-until status-id until])))))
     :status/clear  (state/dispatch [:channel-status-clear (or id (:source event) :external)])
     :notify        (vis/notify! (or text "") :level (or level :info) :ttl-ms (or ttl-ms copy-success-ttl-ms))
     nil))
@@ -646,7 +654,7 @@
    both the wait-timeout cap and the animate? predicate, so a quiet
    render thread still repaints on the same cadence as the spinner.
    Keep this calm: elapsed-thinking text only needs second-level updates."
-  1000)
+  80)
 
 (defn- render-loop!
   "The render thread's main loop. Sleeps on `state/render-monitor` and

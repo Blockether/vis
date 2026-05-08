@@ -23,6 +23,8 @@
 (def ^:private terminal-width          #'main/terminal-width)
 (def ^:private print-table!            #'main/print-table!)
 (def ^:private parse-run-args          #'main/parse-run-args)
+(def ^:private scaffold-extension-files #'main/scaffold-extension-files)
+(def ^:private parse-scaffold-opts     #'main/parse-scaffold-opts)
 (def ^:private conversation-rows       #'main/conversation-rows)
 (def ^:private strip-global-args       #'main/strip-global-args)
 (def ^:private startup-measure?        #'main/startup-measure?)
@@ -50,6 +52,27 @@
       (expect (= ["k" "v"] (get-in decoded ["trace" 0 "entry"])))
       (expect (= "boom" (get-in decoded ["trace" 0 "exception" "message"])))
       (expect (= "bad-key" (get-in decoded ["trace" 0 "exception" "data" "reason"]))))))
+
+(defdescribe extension-scaffold-test
+  (it "builds a minimal extension project layout"
+    (let [files (scaffold-extension-files {:name "my-tools"})]
+      (expect (= #{"deps.edn"
+                   "resources/META-INF/vis-extension/vis.edn"
+                   "src/vis/ext/my_tools.clj"}
+                (set (keys files))))
+      (expect (str/includes? (get files "src/vis/ext/my_tools.clj")
+                "(def vis-extension"))
+      (expect (str/includes? (get files "src/vis/ext/my_tools.clj")
+                "(vis/register-extension! vis-extension)"))
+      (expect (str/includes? (get files "resources/META-INF/vis-extension/vis.edn")
+                "vis.ext.my-tools"))))
+
+  (it "parses scaffold options from residual argv"
+    (expect (= {:name "My-Extension"
+                :dir "custom-dir"
+                :namespace "my.ns"
+                :force? true}
+              (parse-scaffold-opts {} ["My Extension" "--dir" "custom-dir" "--namespace" "my.ns" "--force"])))))
 
 (defdescribe cli-run-persistence-test
   (it "defaults `vis run` to ephemeral execution and requires --persist for disk writes"
@@ -111,7 +134,7 @@
                                     :api-key "tok"
                                     :models [{:name "glm-5-turbo"}
                                              {:name "glm-5.1"}]}]}
-          db-spec     {:backend :sqlite :path ".verification/proof-autoresearch/test/vis.db"}
+          db-spec     {:backend :sqlite :path ".verification/proof-regression/test/vis.db"}
           events      (atom [])]
       (expect (= [:openai-codex :zai-coding] (mapv :id (:providers base-config))))
       (expect (= [:zai-coding :openai-codex]

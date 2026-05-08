@@ -801,19 +801,23 @@
       (str/blank? next-text)    current-text
       :else                    (str current-text "\n" next-text))))
 
+(defn- apply-external-input
+  [workspace op text]
+  (let [current (:input workspace)
+        next    (case op
+                  :replace (text->input-state text)
+                  :append  (text->input-state (append-input-text current text))
+                  :insert  (input/paste-text current (or text ""))
+                  current)]
+    (assoc workspace :input next
+      :input-history-index nil
+      :input-history-draft nil
+      :slash-command-index 0
+      :slash-command-hidden? false)))
+
 (reg-event-db :external-input
-  (fn [db [_ op text]]
-    (let [current (:input db)
-          next    (case op
-                    :replace (text->input-state text)
-                    :append  (text->input-state (append-input-text current text))
-                    :insert  (input/paste-text current (or text ""))
-                    current)]
-      (assoc db :input next
-        :input-history-index nil
-        :input-history-draft nil
-        :slash-command-index 0
-        :slash-command-hidden? false))))
+  (fn [db [_ op text workspace-id]]
+    (update-workspace db workspace-id #(apply-external-input % op text))))
 
 (reg-event-db :channel-status-set
   (fn [db [_ id status]]
@@ -823,6 +827,12 @@
 (reg-event-db :channel-status-clear
   (fn [db [_ id]]
     (update db :channel-status dissoc id)))
+
+(reg-event-db :channel-status-clear-if-until
+  (fn [db [_ id until]]
+    (if (= until (get-in db [:channel-status id :until]))
+      (update db :channel-status dissoc id)
+      db)))
 
 (defn- drop-pending-turn-messages
   "Remove the transient user + assistant placeholder pair created by

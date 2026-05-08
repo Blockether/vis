@@ -95,7 +95,43 @@
           fixed  (md/normalize-chat-markdown broken)]
       (expect (str/includes? fixed "- **Verification**\n  - All cases verified via nREPL:\n      ```clojure"))
       (expect (str/includes? fixed "      {:bug-fixed true}\n      ```"))
-      (expect (str/includes? fixed "- **verify.sh --quick**\n  - Format check PASS")))))
+      (expect (str/includes? fixed "- **verify.sh --quick**\n  - Format check PASS"))))
+
+  (it "folds loose inline code/link/punctuation islands back into prose"
+    (let [broken (str "One line changed in \n\n"
+                   "[screen.clj:649](screen.clj#L649)\n\n"
+                   ". Nothing else touched.\n\n"
+                   "```diff\n"
+                   "+  80)\n"
+                   "```\n\n"
+                   "`git diff --stat`\n\n"
+                   ": \n\n"
+                   "`1 file changed, 1 insertion(+), 1 deletion(-)`\n\n"
+                   ". No reschedule.")]
+      (expect (= (str "One line changed in [screen.clj:649](screen.clj#L649). Nothing else touched.\n\n"
+                   "```diff\n"
+                   "+  80)\n"
+                   "```\n\n"
+                   "`git diff --stat`: `1 file changed, 1 insertion(+), 1 deletion(-)`. No reschedule.")
+                (md/normalize-chat-markdown broken)))))
+
+  (it "folds split markdown helper output from the opencode auth answer"
+    (let [broken (str "- Prereqs OK: opencode \n  \n  `1.14.41`\n  \n"
+                   "  ; Claude Code keychain credentials present (40-byte sample read).\n"
+                   "- Edited \n  \n  `~/.config/opencode/opencode.json`\n  \n"
+                   "   via the documented Node one-liner; preserved existing \n  \n"
+                   "  `@ex-machina/opencode-anthropic-auth@1.7.4`\n  \n"
+                   "   and added \n  \n  `opencode-claude-auth@latest`\n  \n  .\n"
+                   "- Verified: \n  \n  `grep -c 'opencode-claude-auth@latest'`\n  \n"
+                   "   → \n  \n  `1`\n  \n"
+                   "  ; plugin array confirmed.\n\n"
+                   "The intent was abandoned because \n\n`v/attest-gate!`\n\n"
+                   " repeatedly rejected requirements, and no API is exposed under \n\n`v/`.")]
+      (expect (= (str "- Prereqs OK: opencode `1.14.41`; Claude Code keychain credentials present (40-byte sample read).\n"
+                   "- Edited `~/.config/opencode/opencode.json` via the documented Node one-liner; preserved existing `@ex-machina/opencode-anthropic-auth@1.7.4` and added `opencode-claude-auth@latest`.\n"
+                   "- Verified: `grep -c 'opencode-claude-auth@latest'` → `1`; plugin array confirmed.\n\n"
+                   "The intent was abandoned because `v/attest-gate!` repeatedly rejected requirements, and no API is exposed under `v/`.")
+                (md/normalize-chat-markdown broken))))))
 
 (defdescribe conversation->markdown-test
   (describe "Header"
