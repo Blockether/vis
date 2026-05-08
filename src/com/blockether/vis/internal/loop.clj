@@ -978,44 +978,6 @@
     (remove str/blank?)
     (str/join "\n")))
 
-(defn- block-outcome-hash
-  [blocks]
-  (sha256-hex
-    (pr-str
-      (mapv #(select-keys % [:code :result :error :rendering-kind :stdout :stderr :timeout?])
-        (or blocks [])))))
-
-(defn- repeat-preflight-error-message
-  [{:keys [repeat-count outcome-hash]}]
-  (str "Repeated non-progress operation rejected before evaluation: "
-    "the model emitted executable code already observed " repeat-count
-    " consecutive time(s) with the same outcome hash " outcome-hash ". "
-    "Do not run the same operation again. Read the previous journal result, "
-    "change strategy, ask for missing input, or finish with one final answer."))
-
-(defn- repeat-preflight-error
-  [repeat-state code-hash]
-  (when (and code-hash
-          (= code-hash (:code-hash repeat-state))
-          (<= 2 (long (or (:repeat-count repeat-state) 0))))
-    (repeat-preflight-error-message repeat-state)))
-
-(defn- record-repeat-outcome!
-  [repeat-atom code-hash blocks]
-  (when (and repeat-atom code-hash)
-    (let [outcome-hash (block-outcome-hash blocks)]
-      (swap! repeat-atom
-        (fn [state]
-          (if (and (= code-hash (:code-hash state))
-                (= outcome-hash (:outcome-hash state)))
-            (assoc state
-              :code-hash code-hash
-              :outcome-hash outcome-hash
-              :repeat-count (inc (long (or (:repeat-count state) 1))))
-            {:code-hash code-hash
-             :outcome-hash outcome-hash
-             :repeat-count 1}))))))
-
 (defn- needs-input-call-form?
   [form]
   (and (seq? form)
@@ -1095,10 +1057,8 @@
 
 (defn- code-entries-preflight
   ([iteration-position raw-code]
-   (code-entries-preflight iteration-position raw-code nil nil))
-  ([iteration-position raw-code repeat-state]
-   (code-entries-preflight iteration-position raw-code repeat-state nil))
-  ([iteration-position raw-code repeat-state opts]
+   (code-entries-preflight iteration-position raw-code nil))
+  ([iteration-position raw-code opts]
    (let [raw-code (or raw-code "")
          duplicate-blocks-normalized? (duplicate-fenced-blocks? (:blocks opts))
          raw-code (dedupe-fenced-block-code raw-code (:blocks opts))
@@ -1133,9 +1093,7 @@
          answer-preflight-error (when (some? answer-preflight-form-idx)
                                   (answer-position-preflight-error-message
                                     answer-preflight-form-idx
-                                    parsed-total-blocks))
-         repeat-error (when-not (or raw-fence-error parse-error plain-prose-error answer-preflight-error)
-                        (repeat-preflight-error repeat-state code-hash))]
+                                    parsed-total-blocks))]
      {:code-entries (cond
                       plain-prose-error
                       [{:expr "(vis/preflight-error :plain-prose-code)"
@@ -1147,14 +1105,9 @@
                               (assoc entry :preflight-error answer-preflight-error))
                         parsed-code-entries)
 
-                      repeat-error
-                      [{:expr "(vis/preflight-error :repeat-non-progress)"
-                        :preflight-error repeat-error}]
-
                       :else
                       parsed-code-entries)
       :answer-preflight-error answer-preflight-error
-      :repeat-preflight-error repeat-error
       :plain-prose-preflight-error plain-prose-error
       :raw-fence-preflight-error raw-fence-error
       :duplicate-blocks-normalized? duplicate-blocks-normalized?
@@ -1287,12 +1240,6 @@
    :completion_tokens_details {:reasoning_tokens (long (or (token-number tokens [:reasoning]) 0))}
    :prompt_tokens_details {:cached_tokens (long (or (token-number tokens [:cached :cached-input :input-cached]) 0))}})
 
-(defn- nonblank-str
-  [s]
-  (when-let [s* (some-> s str)]
-    (when-not (str/blank? s*)
-      s*)))
-
 (defn- reasoning-effort-configurable?
   "True when a model accepts a caller-selected reasoning effort.
 
@@ -1306,18 +1253,49 @@
     (not= false (:reasoning-effort? resolved-model))
     (not= :zai-thinking (:reasoning-style resolved-model))))
 
-(defn- zai-preserved-thinking-model?
-  [resolved-model]
-  (and (contains? #{:zai :zai-coding} (:provider resolved-model))
-    (= :zai-thinking (:reasoning-style resolved-model))))
+(def ^:private preserved-thinking-replay-window
+  "Number of most-recent prior iterations whose canonical
+   `:assistant-message` is echoed back to the provider on the next
+   iteration.
 
-(defn- zai-preserved-thinking-message
-  [[_ {:keys [thinking llm-executable-code]}]]
-  (when-let [reasoning (nonblank-str thinking)]
-    (when-let [content (nonblank-str llm-executable-code)]
-      {:role "assistant"
-       :content content
-       :reasoning_content reasoning})))
+   1 is the API minimum (Anthropic's docs require the most recent
+   assistant turn's thinking blocks unchanged; z.ai and OpenAI
+   Responses are also recency-based). 3 gives the model a tiny
+   short-term context window of its own recent reasoning across
+   loop-style multi-step tasks (probe → verify → patch) without
+   re-introducing unbounded growth: each iteration adds exactly
+   `min(N, window)` assistant messages, never more.
+
+   Historical observations beyond this window flow through the
+   `<journal>` user trailer, which the renderer still token-budget-
+   trims, so vis's bounded-context contract holds."
+  3)
+
+(defn- preserved-thinking-replay-messages
+  "Provider-agnostic preserved-thinking replay. Returns the canonical
+   `:assistant-message` of the last
+   `preserved-thinking-replay-window` prior iterations, in chronological
+   order (oldest first); empty vec when none.
+
+   Why a small fixed window instead of all prior iterations: vis's
+   per-iteration contract keeps context bounded. Anthropic / z.ai /
+   OpenAI Responses each only require the MOST RECENT assistant turn's
+   thinking signature to keep the session alive; we send a few extra
+   so the model has its own short-term reasoning context (helpful for
+   probe → verify → patch chains) without growing unboundedly. Older
+   thinking text still reaches the model via the `<journal>` user
+   trailer (budget-trimmed), so nothing is lost — just bounded.
+
+   The wire serializer for the active model translates each canonical
+   message to its native shape; iteration-loop never branches on
+   provider."
+  [journal-iters]
+  (let [iters (vec journal-iters)
+        n     (count iters)
+        from  (max 0 (- n preserved-thinking-replay-window))]
+    (->> (subvec iters from)
+      (keep (fn [[_ {:keys [assistant-message]}]] assistant-message))
+      vec)))
 
 (defn- last-user-message-index
   [messages]
@@ -1346,18 +1324,19 @@
         (into messages* insertions*))
       messages*)))
 
-(defn- append-zai-preserved-thinking-messages
-  "For Z.ai GLM thinking models, echo exact prior assistant content plus
-   `reasoning_content` back to the OpenAI-compatible chat endpoint. Z.ai
-   Preserved Thinking requires the complete unmodified reasoning_content;
-   non-Z.ai providers must never see this provider-specific key."
-  [messages journal-iters resolved-model]
-  (let [messages* (vec (or messages []))]
-    (if (zai-preserved-thinking-model? resolved-model)
-      (insert-before-last-user-message
-        messages*
-        (keep zai-preserved-thinking-message journal-iters))
-      messages*)))
+(defn- append-preserved-thinking-replay
+  "Inserts svar's canonical assistant-replay messages from prior
+   iterations into the outbound `messages` vec right before the
+   current user turn. Replaces the earlier z.ai-only helper: every
+   provider that surfaces preserved-thinking state on `ask-code!`
+   (Anthropic extended thinking, z.ai GLM, OpenAI Responses) flows
+   through the same canonical shape, and providers that don't surface
+   any replay state contribute zero replay messages. The wire
+   serializer in svar handles the per-provider translation."
+  [messages journal-iters]
+  (let [messages* (vec (or messages []))
+        replays   (preserved-thinking-replay-messages journal-iters)]
+    (insert-before-last-user-message messages* replays)))
 
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
@@ -1418,7 +1397,6 @@
                                   :routing  (or routing {})
                                   :check-context? true}
                            effective-reasoning (assoc :reasoning effective-reasoning)
-                           (zai-preserved-thinking-model? resolved-model) (assoc :preserved-thinking? true)
                            streaming-fn        (assoc :on-chunk streaming-fn)
                            extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
           model-reasoning (:reasoning ask-result)
@@ -1435,17 +1413,14 @@
           ;; Parse it into top-level forms; each form becomes one
           ;; expression_state row.
           raw-code (or (:result ask-result) "")
-          repeat-atom (:repeat-preflight-atom environment)
-          {:keys [code-entries answer-preflight-error repeat-preflight-error
-                  code-hash]}
-          (code-entries-preflight iteration-position raw-code (some-> repeat-atom deref)
+          {:keys [code-entries answer-preflight-error]}
+          (code-entries-preflight iteration-position raw-code
             {:blocks (:blocks ask-result)})
           direct-answer-entry (when (= 1 (count code-entries))
                                 (first code-entries))
           final-answer-preflight-error
           (when (and direct-answer-entry
                   (not answer-preflight-error)
-                  (not repeat-preflight-error)
                   (not (:preflight-error direct-answer-entry))
                   (direct-answer-entry? direct-answer-entry)
                   (not (form-contains-needs-input-call? (:expr direct-answer-entry))))
@@ -1455,7 +1430,6 @@
                            :preflight-error final-answer-preflight-error}]
                          code-entries)
           suppress-form-start? (or answer-preflight-error
-                                 repeat-preflight-error
                                  final-answer-preflight-error)
           total-blocks (count code-entries)
           executed (mapv (fn [idx {:keys [expr preflight-error parse-error] form-repaired? :repaired? form-comment :comment}]
@@ -1574,8 +1548,6 @@
                                     :repaired? (:repaired? result)}
                              form-comment (assoc :comment form-comment)))
                      (range) code-blocks block-results block-comments))
-          _ (when-not repeat-preflight-error
-              (record-repeat-outcome! repeat-atom code-hash blocks))
           silent-form-idxs (into #{}
                              (keep-indexed (fn [idx block]
                                              (when (= :vis/silent (:rendering-kind block)) idx)))
@@ -1666,7 +1638,8 @@
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-raw-response (:raw ask-result)
              :llm-executable-code (:result ask-result)
-             :llm-executable-blocks (:blocks ask-result)}
+             :llm-executable-blocks (:blocks ask-result)
+             :assistant-message (:assistant-message ask-result)}
             (let [final-answer* (append-runtime-appendices environment final-answer value)]
               {:thinking thinking
                :blocks (strip-noop-blocks blocks)
@@ -1686,7 +1659,8 @@
                :llm-messages messages :llm-provider provider :llm-model model-name
                :llm-raw-response (:raw ask-result)
                :llm-executable-code (:result ask-result)
-               :llm-executable-blocks (:blocks ask-result)})))
+               :llm-executable-blocks (:blocks ask-result)
+               :assistant-message (:assistant-message ask-result)})))
           ;; Normal path
         {:thinking thinking
          :blocks (strip-noop-blocks blocks)
@@ -1698,7 +1672,8 @@
          :llm-model    (some-> (:name resolved-model) str)
          :llm-raw-response (:raw ask-result)
          :llm-executable-code (:result ask-result)
-         :llm-executable-blocks (:blocks ask-result)}))))
+         :llm-executable-blocks (:blocks ask-result)
+         :assistant-message (:assistant-message ask-result)}))))
 
 ;; =============================================================================
 ;; Multi-iteration turn engine
@@ -1983,7 +1958,6 @@
    registry.
 
    Touches:
-     ITERATION_PREVIOUS_REASONING - last iteration's :thinking text.
      CONVERSATION_PREVIOUS_ANSWER - latest finalized turn answer; only
                                      bumps when this iteration produced
                                      a `final-result` (= terminal answer
@@ -1994,10 +1968,15 @@
                                      so a `(conversation-title \"...\")`
                                      inside iteration N is observable
                                      to the model in iteration N+1
-                                     without a DB round-trip."
-  [environment {:keys [thinking final-result final-answer]}]
-  (when (seq thinking)
-    (env/bind-and-bump! environment 'ITERATION_PREVIOUS_REASONING thinking))
+                                     without a DB round-trip.
+
+   Prior thinking text used to be bound to ITERATION_PREVIOUS_REASONING
+   here. That var was retired once preserved-thinking replay started
+   shipping the canonical assistant message back to the provider; the
+   model now sees its prior reasoning natively in the messages array,
+   and any forensic / inspection use case can read the iteration's
+   `:thinking` column straight from the DB."
+  [environment {:keys [final-result final-answer]}]
   (when final-result
     (env/bind-and-bump! environment 'CONVERSATION_PREVIOUS_ANSWER final-answer))
   (when-let [conversation-title-atom (:conversation-title-atom environment)]
@@ -2017,7 +1996,7 @@
    persisted var history then have ONE row per iteration for each X,
    even when the value is unchanged or blank.
 
-   Yes, turn-frozen vars (TURN_USER_REQUEST, TURN_CONVERSATION_TURN_ID,
+   Yes, turn-frozen vars (TURN_CONVERSATION_TURN_ID,
    TURN_CONVERSATION_SOUL_ID, TURN_CONVERSATION_STATE_ID,
    TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS,
    CONVERSATION_ID, CONVERSATION_SOUL_ID, CONVERSATION_STATE_ID) repeat verbatim across
@@ -2030,7 +2009,7 @@
    Each var is normalized to a non-nil string so `expression_state`
    never stores nil for a SYSTEM var - makes the version vec a clean
    log of values across iterations."
-  [vars-snapshot {:keys [user-request thinking final-answer
+  [vars-snapshot {:keys [final-answer
                          turn-conversation-turn-id iteration-id
                          conversation-soul-id conversation-state-id
                          system-prompt
@@ -2039,7 +2018,6 @@
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
-      (stamp "TURN_USER_REQUEST"            (or user-request ""))
       (stamp "TURN_CONVERSATION_TURN_ID"                (or turn-conversation-turn-id ""))
       (stamp "TURN_CONVERSATION_SOUL_ID"    (or conversation-soul-id ""))
       (stamp "TURN_CONVERSATION_STATE_ID"   (or conversation-state-id ""))
@@ -2047,7 +2025,6 @@
       (stamp "TURN_ACTIVE_EXTENSIONS"       (or extensions-snapshot []))
       (stamp "TURN_ACCESSIBLE_SKILLS"       (or accessible-skills-snapshot []))
       (stamp "ITERATION_ID"                 (or iteration-id ""))
-      (stamp "ITERATION_PREVIOUS_REASONING" (or thinking ""))
       (stamp "CONVERSATION_ID"              (or conversation-soul-id ""))
       (stamp "CONVERSATION_SOUL_ID"         (or conversation-soul-id ""))
       (stamp "CONVERSATION_STATE_ID"        (or conversation-state-id ""))
@@ -2059,7 +2036,7 @@
    conversation-title-atom currently holds. Called once at iteration 0
    so the first iteration sees the live title; per-iteration rebinds
    happen in `update-system-vars!` (alongside
-   ITERATION_PREVIOUS_REASONING / CONVERSATION_PREVIOUS_ANSWER)."
+   `CONVERSATION_PREVIOUS_ANSWER`)."
   [environment]
   (when-let [conversation-title-atom (:conversation-title-atom environment)]
     (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
@@ -2427,7 +2404,9 @@
     ;; iteration boundaries via `update-system-vars!` /
     ;; `update-title-system-var!`.
     ;; -----------------------------------------------------------------
-    (env/bind-and-bump! environment 'TURN_USER_REQUEST user-request)
+    ;; TURN_USER_REQUEST retired. The current human turn text and richer
+    ;; per-iteration / cross-turn history both flow through
+    ;; `(v/inspect)` -> :current-turn :user-request / :transcript :turns.
     (env/bind-and-bump! environment 'TURN_CONVERSATION_TURN_ID conversation-turn-id)
     (env/bind-and-bump! environment 'TURN_CONVERSATION_SOUL_ID
       (:conversation-id environment))
@@ -2454,6 +2433,8 @@
     ;; can filter/map/some over. Bodies are NOT included; loading one
     ;; is the internal activation step via (load-skill name). See
     ;; prompt/accessible-skills-snapshot for the per-element shape.
+    ;; The lazy `(skills)` sandbox fn (internal.skills/sandbox-bindings)
+    ;; returns the same shape on demand; both surfaces stay in sync.
     (env/bind-and-bump! environment 'TURN_ACCESSIBLE_SKILLS
       (prompt/accessible-skills-snapshot))
     ;; Reset ITERATION_ID to nil at turn start; rebound by
@@ -2463,7 +2444,6 @@
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
-    (when-let [a (:repeat-preflight-atom environment)] (reset! a nil))
     ;; Hot symbol compaction is archive-based and runs only after a
     ;; final successful answer. Failed/cancelled turns keep their live
     ;; scratch symbols for recovery.
@@ -2488,7 +2468,11 @@
                         [(or (:position it) 1)
                          {:thinking (:thinking it)
                           :blocks   (try (persistance/db-list-iteration-blocks d (:id it))
-                                      (catch Throwable _ []))}])
+                                      (catch Throwable _ []))
+                          ;; svar canonical assistant message persisted on the
+                          ;; iteration row; rehydrating here keeps preserved-thinking
+                          ;; replay alive across vis restarts.
+                          :assistant-message (:llm-assistant-message it)}])
                   iters)))
             (catch Throwable t
               (tel/log! {:level :warn :id ::cross-turn-journal-seed-failed
@@ -2596,8 +2580,12 @@
                                            ;; string of short turns, which reproduced in
                                            ;; conversation 9a55ca1a.
                                            :title-refresh?      (zero? (long iteration))})
-                      provider-messages (append-zai-preserved-thinking-messages
-                                          messages journal-iters pre-resolved-model)
+                      ;; Single canonical preserved-thinking replay path —
+                      ;; svar's per-provider wire serializer turns the
+                      ;; canonical assistant messages into native
+                      ;; Anthropic / z.ai / Responses shapes.
+                      provider-messages (append-preserved-thinking-replay
+                                          messages journal-iters)
                       effective-messages (insert-before-last-user-message
                                            provider-messages
                                            (when-not (str/blank? iteration-context)
@@ -2738,8 +2726,7 @@
                                                     (:turn-count conversation-row)
                                                     (assoc :turn-count (:turn-count conversation-row))))
                           vars-snapshot (inject-system-var-snapshots vars-snapshot
-                                          {:user-request       user-request
-                                           :thinking           thinking
+                                          {:thinking           thinking
                                            :final-answer       final-answer
                                            :turn-conversation-turn-id      conversation-turn-id
                                            :iteration-id       previous-iteration-id
@@ -2777,6 +2764,7 @@
                                                     :llm-raw-response (:llm-raw-response iteration-result)
                                                     :llm-executable-code (:llm-executable-code iteration-result)
                                                     :llm-executable-blocks (:llm-executable-blocks iteration-result)
+                                                    :llm-assistant-message (:assistant-message iteration-result)
                                                     :metadata (iteration-metadata iteration)}
                                              tc (assoc :tokens (:tokens tc)
                                                   :cost-usd (:cost-usd tc)))))
@@ -2882,9 +2870,17 @@
                                 ;; renderer drops oldest lines by token
                                 ;; budget, not by iteration count.
                                   next-recent (conj (vec (or journal-iters []))
-                                                [(inc (long iteration)) {:thinking thinking
-                                                                         :blocks   blocks
-                                                                         :llm-executable-code (:llm-executable-code iteration-result)}])]
+                                                [(inc (long iteration))
+                                                 {:thinking thinking
+                                                  :blocks   blocks
+                                                  :llm-executable-code (:llm-executable-code iteration-result)
+                                                  ;; svar's canonical replay handle for this
+                                                  ;; iteration. Re-emitted into messages on
+                                                  ;; the next iteration via
+                                                  ;; `append-preserved-thinking-replay`; the
+                                                  ;; per-provider wire serializer translates
+                                                  ;; it to native shapes.
+                                                  :assistant-message (:assistant-message iteration-result)}])]
                               (recur (merge loop-state
                                        {:iteration          (inc iteration)
                                         :messages           messages
@@ -2964,8 +2960,10 @@
           ;; one growing blob. That corrupted three things at once:
           ;;   1. the persisted user request stored the entire transcript
           ;;      for every turn - the sidebar showed "Siema\nSiema!\n...".
-          ;;   2. `TURN_USER_REQUEST` (bound from this same string) grew
-          ;;      with each turn instead of reflecting the current ask.
+          ;;   2. (The retired `TURN_USER_REQUEST` SYSTEM var, bound from
+          ;;      this same string, grew with each turn instead of
+          ;;      reflecting the current ask. Surface now flows through
+          ;;      `(v/inspect)` -> :current-turn :user-request.)
           ;;   3. The synthetic `{:requirement ...}` frame the LLM sees
           ;;      restated the whole conversation as the "requirement".
           ;;
@@ -3530,10 +3528,22 @@
         (str "Auto-require of alias '" alias-sym "' failed")))))
 
 (defn- sci-binding-var
-  [ext-ns sym val]
-  (if (and (map? val) (contains? val :vis.sci/macro-fn))
-    (sci/new-var sym (:vis.sci/macro-fn val) {:ns ext-ns :macro true})
-    (sci/new-var sym val {:ns ext-ns})))
+  "Build the SCI var the model interacts with for an extension symbol.
+
+   Forwards `:doc` and `:arglists` from the symbol entry into the SCI var
+   metadata so `(clojure.repl/doc v/cat)`, `(:doc (meta #'v/cat))`, and
+   `(:arglists (meta #'v/cat))` all work inside the sandbox. Without this,
+   docstrings stayed app-side only and the model could not introspect its
+   own callable surface."
+  [ext-ns sym val sym-entry]
+  (let [doc      (:ext.symbol/doc sym-entry)
+        arglists (:ext.symbol/arglists sym-entry)
+        meta-map (cond-> {:ns ext-ns}
+                   doc      (assoc :doc doc)
+                   arglists (assoc :arglists arglists))]
+    (if (and (map? val) (contains? val :vis.sci/macro-fn))
+      (sci/new-var sym (:vis.sci/macro-fn val) (assoc meta-map :macro true))
+      (sci/new-var sym val meta-map))))
 
 (defn- extension-namespace-bindings
   [environment ns-sym alias-sym active-exts]
@@ -3543,9 +3553,11 @@
            owners    {}]
       (if-let [ext (first remaining)]
         (let [wrapped (extension/wrap-extension ext environment)
+              entry-by-sym (into {} (map (juxt :ext.symbol/sym identity)) (:ext/symbols ext))
               ns-bindings (into {}
                             (map (fn [[sym val]]
-                                   [sym (sci-binding-var ext-ns sym val)]))
+                                   [sym (sci-binding-var ext-ns sym val
+                                          (get entry-by-sym sym))]))
                             wrapped)
               collisions (vec (filter #(contains? bindings %) (keys ns-bindings)))]
           (when (seq collisions)
@@ -3702,7 +3714,6 @@
         current-iteration-id-atom (atom nil)
         current-conversation-turn-id-atom (atom nil)
         current-user-request-atom (atom nil)
-        repeat-preflight-atom (atom nil)
         ;; Title atom: in-memory cache for the conversation title.
         ;; The DB column on `conversation_state` is the persisted
         ;; truth; this atom is the fast read path for  and
@@ -3778,6 +3789,11 @@
                                        db-info conversation-id
                                        conversation-title-atom s)
                                      :vis/silent))
+        ;; The retired `TURN_USER_REQUEST` SYSTEM var has no replacement
+        ;; binding by design - the same data already flows through
+        ;; `(v/inspect)` -> :current-turn :user-request (and through
+        ;; :transcript :turns for cross-turn history), so a separate
+        ;; sandbox primitive would just duplicate the surface.
         env-bindings             (merge {'var-history          var-history-fn
                                          'var-history-timeline var-history-timeline-fn
                                          'answer               answer-fn
@@ -3804,7 +3820,6 @@
              :current-iteration-id-atom current-iteration-id-atom
              :current-conversation-turn-id-atom current-conversation-turn-id-atom
              :current-user-request-atom current-user-request-atom
-             :repeat-preflight-atom repeat-preflight-atom
              :conversation-title-atom            conversation-title-atom
              :extensions            (atom [])}]
     (reset! environment-atom env)

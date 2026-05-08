@@ -145,7 +145,7 @@
     :v/create-dirs :op/create
     (:v/delete :v/delete-if-exists) :op/delete
     (:v/move :v/copy) :op/move
-    (:v/bash :v/nrepl-eval) :op/shell
+    :v/bash :op/shell
     :op/meta))
 
 (defn tool-op->presentation-kind
@@ -764,12 +764,6 @@
    (when (str/blank? command)
      (throw (ex-info "v/bash command must be non-blank"
               {:type :ext.foundation.editing/invalid-bash-command})))
-   (when (and (str/includes? command "clj-nrepl-eval")
-           (> (count command) 240))
-     (throw (ex-info "Use v/nrepl-eval for Clojure runtime checks; v/bash is only for process boundaries."
-              {:type :ext.foundation.editing/bash-nrepl-eval-discouraged
-               :reason :use-v-nrepl-eval
-               :command-preview (subs command 0 (min 240 (count command)))})))
    (when (and (re-find #"(?i)\.(clj|cljc|cljs|edn)(['\"\s]|$)" command)
            (or (re-find #"(?i)\bpython3?\b|\bperl\b|\bruby\b" command)
              (re-find #"(?i)\bsed\s+-i\b" command))
@@ -1043,6 +1037,7 @@
     {:kind (presentation-kind-from-result projection)}))
 
 (defn- preview-tool
+  "Project a value into <journal>/TUI display with EQL. The tool envelope always keeps the raw projected value under `:result`; rendering is separate display metadata. Observation call: use as a standalone display form; leave durable bindings for source/acquisition values. Strategy: bind full reads/searches you need later, then call preview separately; never echo a var just to inspect it. Examples: `(def file (v/cat \"src/foo.clj\"))` followed by `(v/preview file {:result [[:lines {:from 100 :to 180}]]})`, `(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)`, `(v/preview value)`. With no EQL, previews the whole payload. EQL supports keys, [:*], nested pulls, and field ranges like {:result [[:lines {:from 40 :to 120}]]}. Preserves source rendering metadata and info boundary."
   ([value]
    (preview-tool value nil))
   ([value preview-eql]
@@ -1063,6 +1058,7 @@
 ;; =============================================================================
 
 (defn- cat-tool
+  "Read the whole text file into `[:result :lines]`. `v/cat` has no display or pagination opts; use `v/preview` EQL to select ranges for journal/TUI display. Tool result; `:result` = {:path :offset :total-lines :truncated-by :lines}."
   ([path]
    (let [out (read-file path)]
      (tool-success
@@ -1080,6 +1076,7 @@
                        :offset (:offset out)}}))))
 
 (defn- ls-tool
+  "Preview directory tree. Tool result; `:result` = nested tree."
   ([path]
    (ls-tool path nil))
   ([path opts]
@@ -1095,6 +1092,7 @@
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
+  "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; use v/preview for display. Tool result; `:result` = {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
   [spec]
   (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
         out (grep-files spec)]
@@ -1116,6 +1114,7 @@
                       :row-keys [:path :line :text]}})))
 
 (defn- patch-tool
+  "Canonical exact text patch. Takes one edit map or a vector of maps with required keys `:path`, `:search`, `:replace`. Every `:search` must match exactly once in the current file; all edits validate before any write. Tool result envelope."
   [edits]
   (let [plans (patch-safe edits)]
     (tool-success
@@ -1133,6 +1132,7 @@
                        plans)}})))
 
 (defn- patch-check-tool
+  "Preflight canonical exact text patches without writing. Returns match counts for each edit plus bounded search previews; use before v/patch when searches may be stale or multi-edit risk is high."
   [edits]
   (let [out (patch-check edits)]
     (tool-success
@@ -1145,6 +1145,7 @@
               :failure-count (count (:failures out))}})))
 
 (defn- create-dirs-tool
+  "Ensure dir exists. Tool result."
   [path]
   (let [before (fs/exists? (safe-path path))
         out    (create-dirs-safe path)]
@@ -1157,6 +1158,7 @@
               :already-existed? before}})))
 
 (defn- glob-tool
+  "Path matching. Tool result; `:result` = matching cwd-relative path strings. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Opts may include `:scope :children|:recursive`, `:hidden?`, and `:respect-gitignore?`."
   ([root pattern]
    (glob-tool root pattern nil))
   ([root pattern opts]
@@ -1172,6 +1174,7 @@
                :opts opts}}))))
 
 (defn- copy-tool
+  "Copy path. Tool result."
   ([src dest]
    (copy-tool src dest nil))
   ([src dest opts]
@@ -1186,6 +1189,7 @@
                :opts opts}}))))
 
 (defn- move-tool
+  "Move/rename path. Tool result."
   ([src dest]
    (move-tool src dest nil))
   ([src dest opts]
@@ -1200,6 +1204,7 @@
                :opts opts}}))))
 
 (defn- delete-tool
+  "Delete path. Tool result."
   [path]
   (delete-safe path)
   (tool-success
@@ -1210,6 +1215,7 @@
      :info {:deleted? true}}))
 
 (defn- delete-if-exists-tool
+  "Delete path if present. Tool result."
   [path]
   (let [deleted? (delete-if-exists-safe path)]
     (tool-success
@@ -1220,6 +1226,7 @@
        :info {:deleted? deleted?}})))
 
 (defn- exists-tool
+  "Existence check. Tool result; `:result` = boolean."
   [path]
   (let [exists? (exists-safe? path)]
     (tool-success
@@ -1257,74 +1264,11 @@
        :presentation {:kind :diagnostic}})))
 
 (defn- bash-tool
+  "Run bounded `/usr/bin/env bash -lc` in worktree with `set -euo pipefail` prepended. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run) or (:exit run). Refuses shell-driven Clojure/EDN source edits; use z/patch for those. Emits :warnings when stderr looks like a swallowed failure."
   ([command]
    (bash-tool command nil))
   ([command opts]
    (bash-tool-result :v/bash command opts)))
-
-(defn- parse-discovered-nrepl-port
-  [stdout]
-  (some->> (re-seq #"localhost:(\d+)" (str stdout))
-    first
-    second
-    parse-long))
-
-(defn- discover-nrepl-port!
-  [opts]
-  (let [out (run-command-safe ["clj-nrepl-eval" "--discover-ports"]
-              (merge {:timeout-ms 10000 :max-output-chars 10000} opts))
-        port (parse-discovered-nrepl-port (:stdout out))]
-    (when-not (and (zero? (long (:exit out))) port)
-      (throw (ex-info "Could not discover a project nREPL port for v/nrepl-eval."
-               {:type :ext.foundation.editing/nrepl-discovery-failed
-                :result out})))
-    port))
-
-(defn- coerce-nrepl-opts
-  [opts]
-  (let [opts (or opts {})
-        port (or (:port opts) :discover)]
-    (when-not (or (= :discover port) (integer? port))
-      (throw (ex-info "v/nrepl-eval :port must be an integer or :discover"
-               {:type :ext.foundation.editing/invalid-nrepl-opts
-                :opt :port
-                :got port})))
-    (assoc opts :port port)))
-
-(defn- nrepl-eval-tool
-  ([expr]
-   (nrepl-eval-tool expr nil))
-  ([expr opts]
-   (when-not (string? expr)
-     (throw (ex-info "v/nrepl-eval expression must be a string"
-              {:type :ext.foundation.editing/invalid-nrepl-expr
-               :got (type expr)})))
-   (when (str/blank? expr)
-     (throw (ex-info "v/nrepl-eval expression must be non-blank"
-              {:type :ext.foundation.editing/invalid-nrepl-expr})))
-   (let [opts (coerce-nrepl-opts opts)
-         port (if (= :discover (:port opts))
-                (discover-nrepl-port! opts)
-                (:port opts))
-         run-opts (dissoc opts :port)
-         out (run-command-safe ["clj-nrepl-eval" "-p" port expr] run-opts)]
-     (tool-success
-       {:op :v/nrepl-eval
-        :path (:cwd out)
-        :kind :process
-        :result (assoc out :port port :expr expr)
-        :info {:command (:command out)
-               :argv (:argv out)
-               :cwd (:cwd out)
-               :port port
-               :exit (:exit out)
-               :status (if (:timed-out? out) :timeout :done)
-               :timed-out? (:timed-out? out)
-               :timeout-ms (:timeout-ms out)
-               :duration-ms (:duration-ms out)
-               :stdout-truncated? (:stdout-truncated? out)
-               :stderr-truncated? (:stderr-truncated? out)}
-        :presentation {:kind :diagnostic}}))))
 
 ;; =============================================================================
 ;; Structured renderers
@@ -1776,10 +1720,20 @@
 ;; Symbol declarations
 ;; =============================================================================
 
+;; -----------------------------------------------------------------------------
+;; Symbol declarations.
+;;
+;; Each underlying `xxx-tool` defn carries the canonical docstring + arglists
+;; on its var. `vis/symbol` reads them straight from the var meta - the
+;; SCI sandbox sees the same text the prompt-listing renders.
+;; `:sym` overrides the var name (`cat-tool` -> `cat`) for the model-facing
+;; surface; everything else (examples, render-fn, error hook, result spec)
+;; lives in opts because it has nothing to do with the function's signature.
+;; -----------------------------------------------------------------------------
+
 (def cat-symbol
-  (vis/symbol 'cat cat-tool
-    {:doc "Read the whole text file into `[:result :lines]`. `v/cat` has no display or pagination opts; use `v/preview` EQL to select ranges for journal/TUI display. Tool result; `:result` = {:path :offset :total-lines :truncated-by :lines}."
-     :arglists '([path])
+  (vis/symbol #'cat-tool
+    {:sym 'cat
      :examples ["(:result (v/cat \"src/main.clj\"))"
                 "(get-in (v/cat \"src/main.clj\") [:result :lines])"
                 "(v/preview (v/cat \"src/main.clj\") {:result [[:lines {:from 40 :to 120}]]})"]
@@ -1788,9 +1742,8 @@
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
 
 (def preview-symbol
-  (vis/symbol 'preview preview-tool
-    {:doc "Project a value into <journal>/TUI display with EQL. The tool envelope always keeps the raw projected value under `:result`; rendering is separate display metadata. Observation call: use as a standalone display form; leave durable bindings for source/acquisition values. Strategy: bind full reads/searches you need later, then call preview separately; never echo a var just to inspect it. Examples: `(def file (v/cat \"src/foo.clj\"))` followed by `(v/preview file {:result [[:lines {:from 100 :to 180}]]})`, `(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)`, `(v/preview value)`. With no EQL, previews the whole payload. EQL supports keys, [:*], nested pulls, and field ranges like {:result [[:lines {:from 40 :to 120}]]}. Preserves source rendering metadata and info boundary."
-     :arglists '([value] [value preview-eql])
+  (vis/symbol #'preview-tool
+    {:sym 'preview
      :examples ["(v/preview file {:result [[:lines {:from 40 :to 120}]]})"
                 "(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})"
                 "(v/preview state)"]
@@ -1798,9 +1751,8 @@
      :render-fn render-preview}))
 
 (def ls-symbol
-  (vis/symbol 'ls ls-tool
-    {:doc "Preview directory tree. Tool result; `:result` = nested tree."
-     :arglists '([path] [path opts])
+  (vis/symbol #'ls-tool
+    {:sym 'ls
      :examples ["(:result (v/ls \".\"))"
                 "(v/ls \"src\" {:depth 3})"]
      :result-spec tool-result-spec
@@ -1808,9 +1760,8 @@
      :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
 
 (def rg-symbol
-  (vis/symbol 'rg rg-tool
-    {:doc "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; use v/preview for display. Tool result; `:result` = {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
-     :arglists '([spec])
+  (vis/symbol #'rg-tool
+    {:sym 'rg
      :examples ["(:result (v/rg {:all [\"defn render\"]}))"
                 "(v/rg {:all [\"defn\" \"render\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]})"
                 "(v/rg {:any [\"border-top\" \"draw-border\"] :paths [\"src\" \"extensions\"]})"]
@@ -1819,9 +1770,8 @@
      :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
 
 (def patch-symbol
-  (vis/symbol 'patch patch-tool
-    {:doc "Canonical exact text patch. Takes one edit map or a vector of maps with required keys `:path`, `:search`, `:replace`. Every `:search` must match exactly once in the current file; all edits validate before any write. Tool result envelope."
-     :arglists '([edits])
+  (vis/symbol #'patch-tool
+    {:sym 'patch
      :examples ["(v/patch [{:path \"src/main.clj\" :search \"old\" :replace \"new\"}])"
                 "(v/patch {:path \"README.md\" :search \"alpha\" :replace \"beta\"})"]
      :result-spec tool-result-spec
@@ -1829,27 +1779,24 @@
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
 
 (def patch-check-symbol
-  (vis/symbol 'patch-check patch-check-tool
-    {:doc "Preflight canonical exact text patches without writing. Returns match counts for each edit plus bounded search previews; use before v/patch when searches may be stale or multi-edit risk is high."
-     :arglists '([edits])
+  (vis/symbol #'patch-check-tool
+    {:sym 'patch-check
      :examples ["(v/patch-check [{:path \"src/main.clj\" :search \"old\" :replace \"new\"}])"]
      :result-spec tool-result-spec
      :render-fn render-patch-check
      :on-error-fn (tool-failure-on-error :v/patch-check :file nil)}))
 
 (def create-dirs-symbol
-  (vis/symbol 'create-dirs create-dirs-tool
-    {:doc "Ensure dir exists. Tool result."
-     :arglists '([path])
+  (vis/symbol #'create-dirs-tool
+    {:sym 'create-dirs
      :examples ["(v/create-dirs \"target/tmp/cache\")"]
      :result-spec tool-result-spec
      :render-fn render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
 
 (def glob-symbol
-  (vis/symbol 'glob glob-tool
-    {:doc "Path matching. Tool result; `:result` = matching cwd-relative path strings. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Opts may include `:scope :children|:recursive`, `:hidden?`, and `:respect-gitignore?`."
-     :arglists '([root pattern] [root pattern opts])
+  (vis/symbol #'glob-tool
+    {:sym 'glob
      :examples ["(:result (v/glob \"src\" \"*.clj\"))"
                 "(:result (v/glob \"src\" \"**/*.clj\"))"
                 "(v/glob \"resources\" \"*.edn\" {:scope :children :hidden? true})"]
@@ -1858,54 +1805,48 @@
      :on-error-fn (tool-failure-on-error :v/glob :dir nil)}))
 
 (def copy-symbol
-  (vis/symbol 'copy copy-tool
-    {:doc "Copy path. Tool result."
-     :arglists '([src dest] [src dest opts])
+  (vis/symbol #'copy-tool
+    {:sym 'copy
      :examples ["(v/copy \"a.txt\" \"backup/a.txt\")"]
      :result-spec tool-result-spec
      :render-fn render-copy
      :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
 
 (def move-symbol
-  (vis/symbol 'move move-tool
-    {:doc "Move/rename path. Tool result."
-     :arglists '([src dest] [src dest opts])
+  (vis/symbol #'move-tool
+    {:sym 'move
      :examples ["(v/move \"tmp.txt\" \"archive/tmp.txt\")"]
      :result-spec tool-result-spec
      :render-fn render-move
      :on-error-fn (tool-failure-on-error :v/move :path nil)}))
 
 (def delete-symbol
-  (vis/symbol 'delete delete-tool
-    {:doc "Delete path. Tool result."
-     :arglists '([path])
+  (vis/symbol #'delete-tool
+    {:sym 'delete
      :examples ["(v/delete \"tmp.txt\")"]
      :result-spec tool-result-spec
      :render-fn render-delete
      :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
 
 (def delete-if-exists-symbol
-  (vis/symbol 'delete-if-exists delete-if-exists-tool
-    {:doc "Delete path if present. Tool result."
-     :arglists '([path])
+  (vis/symbol #'delete-if-exists-tool
+    {:sym 'delete-if-exists
      :examples ["(v/delete-if-exists \"tmp.txt\")"]
      :result-spec tool-result-spec
      :render-fn render-delete-if-exists
      :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
 
 (def exists?-symbol
-  (vis/symbol 'exists? exists-tool
-    {:doc "Existence check. Tool result; `:result` = boolean."
-     :arglists '([path])
+  (vis/symbol #'exists-tool
+    {:sym 'exists?
      :examples ["(:result (v/exists? \"src/main.clj\"))"]
      :result-spec tool-result-spec
      :render-fn render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
 
 (def bash-symbol
-  (vis/symbol 'bash bash-tool
-    {:doc "Run bounded `/usr/bin/env bash -lc` in worktree with `set -euo pipefail` prepended. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run) or (:exit run). Refuses shell-driven Clojure/EDN source edits; use z/patch for those. Emits :warnings when stderr looks like a swallowed failure."
-     :arglists '([command] [command opts])
+  (vis/symbol #'bash-tool
+    {:sym 'bash
      :examples ["(def run (v/bash \"./verify.sh --quick\"))"
                 "(get-in run [:result :stdout])"
                 "(get-in run [:result :exit])"
@@ -1914,15 +1855,7 @@
      :render-fn render-bash
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
 
-(def nrepl-eval-symbol
-  (vis/symbol 'nrepl-eval nrepl-eval-tool
-    {:doc "Evaluate Clojure in the project nREPL without shell quoting. Use for runtime Clojure checks; opts include {:port 7888 | :discover, :timeout-ms ms, :max-output-chars n, :cwd dir}. Tool result payload lives under :result with :stdout, :stderr, :exit, and :port."
-     :arglists '([expr] [expr opts])
-     :examples ["(v/nrepl-eval \"(require '[com.blockether.vis.core :as vis] :reload)\")"
-                "(get-in (v/nrepl-eval \"(+ 1 2)\" {:port 7888}) [:result :stdout])"]
-     :result-spec tool-result-spec
-     :render-fn render-bash
-     :on-error-fn (tool-failure-on-error :v/nrepl-eval :dir nil)}))
+
 
 (defn available-editing-symbols
   []
@@ -1940,9 +1873,7 @@
            delete-if-exists-symbol
            exists?-symbol]
     (not (config/bash-disabled?))
-    (into [bash-symbol])
-    :always
-    (into [nrepl-eval-symbol])))
+    (into [bash-symbol])))
 
 (defn available-editing-prompt
   []
@@ -1959,8 +1890,8 @@
     "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Use (v/patch-check edits) to preflight match counts without writing. Read exact bytes first; keep searches small and unique; do not invent long paragraphs. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
     "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).\n"
     (if (config/bash-disabled?)
-      "`v/` shell: v/bash is disabled by config. Use v/nrepl-eval for Clojure runtime checks and non-shell tools for file edits.\n"
-      "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). It always prepends `set -euo pipefail`, so multi-step scripts stop on failed commands, unset variables, and failed pipeline stages. Use `v/nrepl-eval` for Clojure runtime checks instead of shell-quoting `clj-nrepl-eval`: (v/nrepl-eval \"(+ 1 2)\" {:port :discover}). `v/bash` refuses shell-driven Clojure/EDN source edits; use z/patch for those.\n")
+      "`v/` shell: v/bash is disabled by config. Use non-shell tools for file edits and Clojure introspection helpers.\n"
+      "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). It always prepends `set -euo pipefail`, so multi-step scripts stop on failed commands, unset variables, and failed pipeline stages. `v/bash` refuses shell-driven Clojure/EDN source edits; use z/patch for those.\n")
     "Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\") [:result :lines]), "
     (when-not (config/bash-disabled?)
       "(get-in (v/bash \"pwd\") [:result :stdout]), ")

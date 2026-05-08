@@ -27,16 +27,16 @@
         `<user_turn_request_main_goal>`, not inside the trailer.
 
    The blocks above plus the SYSTEM vars (every name in
-   `SYSTEM_VAR_NAMES` - `TURN_USER_REQUEST`, `TURN_CONVERSATION_TURN_ID`,
+   `SYSTEM_VAR_NAMES` - `TURN_CONVERSATION_TURN_ID`,
    `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`,
    `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`,
-   `TURN_ACCESSIBLE_SKILLS`, `ITERATION_ID`,
-   `ITERATION_PREVIOUS_REASONING`, `CONVERSATION_ID`,
+   `TURN_ACCESSIBLE_SKILLS`, `ITERATION_ID`, `CONVERSATION_ID`,
    `CONVERSATION_SOUL_ID`, `CONVERSATION_STATE_ID`,
    `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) bound in SCI
    cover everything the model needs. SYSTEM vars are direct sandbox
    bindings - reference them by name; they are not re-serialized
-   into the trailer.
+   into the trailer. The retired `TURN_USER_REQUEST` lives on as the
+   sandbox `(turn-request)` fn; richer history flows through `(v/inspect)`.
 
    Context-floor contract (CTX1; see prompt-test):
 
@@ -47,9 +47,11 @@
      <user_turn_request_main_goal>. Coding turns surface
      observable journal entries, active-skill bodies, var_index
      entries, and extension/host nudges through the XML-tagged
-     blocks above. Prior LLM-only reasoning reaches the model only
-     through the `ITERATION_PREVIOUS_REASONING` SYSTEM var;
-     <journal> stays observed-evidence only.
+     blocks above. Prior LLM-only reasoning reaches the model
+     through preserved-thinking assistant messages echoed in the
+     messages array (svar's canonical `:assistant-message`); the
+     `<journal>` stays observed-evidence only and the iteration's
+     `:thinking` column lives in the DB for forensic use.
 
      Preview / full boundary: <journal>, <var_index>, and tool
      results inside <journal> are bounded previews. Full values
@@ -250,8 +252,9 @@
   "One iteration's full `<journal>` segment: per-block labels
    include the leading `:comment` (when present) right above
    the code->value line. LLM-only iteration `:thinking` is intentionally
-   excluded; the previous value is available only through the
-   `ITERATION_PREVIOUS_REASONING` system var, not the journal."
+   excluded — prior thinking that needs to round-trip flows through
+   preserved-thinking assistant messages echoed in the messages array,
+   not through the journal."
   [iteration-position iteration-data]
   (let [{:keys [blocks answer]} iteration-data
         visible-blocks (filter journal-observable-block? (or blocks []))
@@ -307,8 +310,10 @@
    budget instead of by iteration count.
    `iters` is a seq of `[iteration-position {:thinking :blocks}]` pairs,
    oldest-first. Iteration-level `:thinking` is LLM-only reasoning and is
-   not rendered in `<journal>`; only `ITERATION_PREVIOUS_REASONING` exposes
-   the latest prior value. Each iteration's segment carries:
+   not rendered in `<journal>` — the model sees its prior reasoning via
+   preserved-thinking assistant messages echoed in the wire messages
+   array, and the iteration's `:thinking` column lives in the DB for
+   forensic use. Each iteration's segment carries:
      - per-block `iN.K  ;; <comment>` line above the code line, when
        the model authored a leading `;; ...` / `#_(...)` comment for
        that form
@@ -586,9 +591,10 @@
      <journal>     - newest token-budgeted comments + code + result.
                      Budget is capped at 50% of the model context, then
                      reduced by protected/pinned context and <var_index>.
-                     It never renders LLM-only iteration `:thinking`; the
-                     latest prior value is available as
-                     `ITERATION_PREVIOUS_REASONING`.
+                     It never renders LLM-only iteration `:thinking`;
+                     prior reasoning reaches the model through the
+                     preserved-thinking assistant messages echoed in
+                     the wire messages array.
      <var_index>   - `(def ...)` bindings in the SCI env.
 
    Plus zero or more tagged `<system_nudge importance=\"...\">` entries
@@ -730,28 +736,7 @@
   "You are Vis, a recursive language model (RLM) running in a sandboxed Small Clojure Interpreter (SCI).
 
   Loop: read/eval/observe loop
-    emit Clojure forms -> host evaluates them -> results/errors enter <journal> -> continue or answer.
-
-  State -> decision matrix -> observed new state: UNDERSTAND INTENT EXPLORE OBSERVE ACT VERIFY ANSWER.
-  Correct multi-iteration finish pattern: iteration N+1: final turn-finisher after observed evidence, exactly one top-level form.
-  Host context: <journal> <var_index> turn-state TURN_USER_REQUEST CONVERSATION_TITLE (answer ARG) (conversation-title ARG) (shape x). `(answer ARG)` is terminal.
-
-  Rules:
-    - Runtime truth beats source, docs, and assumption.
-    - For repo work, first iteration probes only; do not answer before observing state.
-    - Reply with exactly one executable clojure fenced block.
-    - If no answer form appears, the host continues the turn.
-    - After iteration 1, answer must be the only top-level form in its final iteration.
-    - Use v/needs-input only when required user material is missing.
-    - No extra workflow ledger.
-    - Verification means concrete command/tool output, not a separate record.
-    - Do normal inspect -> change -> test -> answer; inspect before edit.
-    - Skills are internal: TURN_ACCESSIBLE_SKILLS lists summaries; activate with (load-skill name), reload with (reload-skills!).
-    - Final answers name changed files/actions, checks run, and caveats.
-
-  Useful pattern:
-    (def hits (v/rg {:all [\"foo\"] :paths [\"src\"]}))
-    ;; observe next iteration, then patch/check/answer.
+    emit Clojure forms -> host evaluates them -> results/errors enter <journal> -> continue or use (answer ...) where ... is the FINAL ANSWER to the user request in markdown. 
   ")
 
 (defn build-system-prompt
@@ -870,25 +855,116 @@
         "TURN_ACCESSIBLE_SKILLS snapshot failed; defaulting to []")
       [])))
 
-(defn assemble-system-prompt
-  "MINIMAL system prompt assembly.
+(defn- environment-info-block
+  "Collect `<environment-info>` from every active extension that declares
+   `:ext/environment-info-fn`. Each fn receives the live environment and
+   returns a string or nil. Non-blank results are joined and wrapped in
+   `<environment-info>...</environment-info>`."
+  [environment active-extensions]
+  (let [fragments (keep (fn [ext]
+                          (when-let [f (:ext/environment-info-fn ext)]
+                            (try
+                              (let [result (call-extension-callback ext f environment)]
+                                (when (and (string? result) (not (str/blank? result)))
+                                  result))
+                              (catch Throwable t
+                                (tel/log! {:level :warn
+                                           :id ::environment-info-error
+                                           :data {:ext (:ext/namespace ext)
+                                                  :error (ex-message t)}}
+                                  "Extension environment-info-fn threw")
+                                nil))))
+                    active-extensions)]
+    (when (seq fragments)
+      (prompt-block "environment-info" (str/join "\n\n" fragments)))))
 
-   Returns ONLY `<system_prompt>...CORE_SYSTEM_PROMPT...</system_prompt>`.
-   Skills, extension `<environment-info>`, extension `<extensions>`, and
-   provider `<specific_provider_model_prompt>` blocks are intentionally
-   not assembled. Restore via `git revert` if a richer prompt is needed.
+(defn- extensions-prompt-block
+  "Collect `<extensions>` from every active extension that declares
+   `:ext/prompt`. Each prompt is `(fn [env] -> string)` (normalized at
+   registration). Non-blank results are joined and wrapped in
+   `<extensions>...</extensions>`."
+  [environment active-extensions]
+  (let [fragments (keep (fn [ext]
+                          (when-let [f (:ext/prompt ext)]
+                            (try
+                              (let [result (call-extension-callback ext f environment)]
+                                (when (and (string? result) (not (str/blank? result)))
+                                  result))
+                              (catch Throwable t
+                                (tel/log! {:level :warn
+                                           :id ::extension-prompt-error
+                                           :data {:ext (:ext/namespace ext)
+                                                  :error (ex-message t)}}
+                                  "Extension :ext/prompt fn threw")
+                                nil))))
+                    active-extensions)]
+    (when (seq fragments)
+      (prompt-block "extensions" (str/join "\n\n" fragments)))))
+
+(defn- skills-summary-block
+  "Render `<skills>` with name + description for every accessible skill.
+   Full bodies are NOT included; they arrive only after the model calls
+   `(load-skill ...)`."
+  []
+  (let [all-skills (skills/list-all)]
+    (when (seq all-skills)
+      (prompt-block "skills"
+        (str/join "\n"
+          (map (fn [{:keys [name description]}]
+                 (str "- " name
+                   (when (and description (not (str/blank? description)))
+                     (str ": " description))))
+            (sort-by :name all-skills)))))))
+
+(defn- provider-prompt-block
+  "Render `<specific_provider_model_prompt>` by calling the active
+   provider's `:provider/prompt-fn` with the prompt context built by
+   the loop layer. Returns nil when no provider hook is configured or
+   when it returns blank."
+  [provider-prompt-context]
+  (when-let [{:keys [descriptor] :as ctx} provider-prompt-context]
+    (when-let [f (:provider/prompt-fn descriptor)]
+      (try
+        (let [result (f ctx)]
+          (when (and (string? result) (not (str/blank? result)))
+            (prompt-block "specific_provider_model_prompt" result)))
+        (catch Throwable t
+          (tel/log! {:level :warn
+                     :id ::provider-prompt-error
+                     :data {:provider (:id (:provider ctx))
+                            :error (ex-message t)}}
+            "Provider prompt-fn threw")
+          nil)))))
+
+(defn assemble-system-prompt
+  "Full system prompt assembly.
+
+   Joins tagged blocks:
+     `<system_prompt>`                    - core RLM instructions + caller addendum
+     `<environment-info>`                 - host/git/project facts from extensions
+     `<extensions>`                       - extension `:ext/prompt` fragments
+     `<skills>`                           - skill name + description summaries
+     `<specific_provider_model_prompt>`   - provider-specific prompt hook
+
+   Stable for the conversation lifetime so providers can cache it.
+   Full skill bodies are not in the cached prompt; they arrive only
+   after the model calls `(load-skill ...)`.
 
    Required opts:
-     `:active-extensions` - vec from `(active-extensions env)`. Kept
-        required so loop callers do not silently regress when a
-        non-minimal assembly is reintroduced.
+     `:active-extensions` - vec from `(active-extensions env)`. Drives
+        environment-info, extension prompt, and nudge collection.
 
-   Optional opts (currently ignored by the minimal path; preserved in
-   the signature so callers do not break):
-     `:system-prompt`            - caller addendum (still appended to CORE).
-     `:provider-prompt-context`  - provider hook context (ignored)."
-  [_environment {:keys [system-prompt] :as opts}]
+   Optional opts:
+     `:system-prompt`            - caller addendum appended to CORE.
+     `:provider-prompt-context`  - provider hook context."
+  [environment {:keys [system-prompt active-extensions provider-prompt-context] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-system-prompt requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (prompt-block "system_prompt" (build-system-prompt {:system-prompt system-prompt})))
+  (let [core-block    (prompt-block "system_prompt" (build-system-prompt {:system-prompt system-prompt}))
+        env-block     (environment-info-block environment active-extensions)
+        ext-block     (extensions-prompt-block environment active-extensions)
+        skills-block  (skills-summary-block)
+        prov-block    (provider-prompt-block provider-prompt-context)]
+    (str/join "\n\n"
+      (keep identity [core-block env-block ext-block skills-block prov-block]))))

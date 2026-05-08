@@ -115,6 +115,7 @@
     (mapv safe-path)))
 
 (defn- diagnostics
+  "Return clojure-lsp diagnostics for the project or selected files. Opts: {:project-root p, :filenames [...], :namespace [...], :settings {...}}."
   ([] (diagnostics nil))
   ([opts]
    (let [opts (or opts {})
@@ -131,7 +132,8 @@
                :diagnostic-count (count (normalize-diagnostics (:diagnostics result)))
                :lsp-output output}}))))
 
-(defn- rename-plan
+(defn- ^{:arglists '([from to] [from to opts])} rename-plan
+  "Dry-run clojure-lsp semantic rename. Returns changed paths and old/new text edits; does not write."
   [from to & [opts]]
   (let [opts (or opts {})
         {:keys [result output]} (capture-lsp
@@ -153,6 +155,7 @@
               :lsp-output output}})))
 
 (defn- clean-ns-plan
+  "Dry-run clojure-lsp clean-ns. Returns changed paths and old/new text edits; does not write."
   ([] (clean-ns-plan nil))
   ([opts]
    (let [opts (or opts {})
@@ -184,32 +187,24 @@
       (md/code-block "clojure" (pr-str (:result tool-result))))))
 
 (defn- lsp-symbol
-  [sym f doc arglists examples]
-  (vis/symbol sym f
-    {:doc doc
-     :arglists arglists
-     :examples examples
+  [v examples]
+  (vis/symbol v
+    {:examples examples
      :result-spec ::extension/tool-result
      :render-fn render-tool-result
-     :on-error-fn (tool-failure-on-error (keyword "z" (name sym)))}))
+     :on-error-fn (tool-failure-on-error (keyword "z" (name (:name (meta v)))))}))
 
 (def diagnostics-symbol
-  (lsp-symbol 'diagnostics diagnostics
-    "Return clojure-lsp diagnostics for the project or selected files. Opts: {:project-root p, :filenames [...], :namespace [...], :settings {...}}."
-    '([] [opts])
+  (lsp-symbol #'diagnostics
     ["(z/diagnostics)"
      "(z/diagnostics {:filenames [\"src/foo.clj\"]})"]))
 
 (def rename-plan-symbol
-  (lsp-symbol 'rename-plan rename-plan
-    "Dry-run clojure-lsp semantic rename. Returns changed paths and old/new text edits; does not write."
-    '([from to] [from to opts])
+  (lsp-symbol #'rename-plan
     ["(z/rename-plan 'old.ns/foo 'old.ns/bar)"]))
 
 (def clean-ns-plan-symbol
-  (lsp-symbol 'clean-ns-plan clean-ns-plan
-    "Dry-run clojure-lsp clean-ns. Returns changed paths and old/new text edits; does not write."
-    '([] [opts])
+  (lsp-symbol #'clean-ns-plan
     ["(z/clean-ns-plan {:filenames [\"src/foo.clj\"]})"]))
 
 (def symbols

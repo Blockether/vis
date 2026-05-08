@@ -250,9 +250,26 @@
 (defn list-all
   "Vec of skill maps, alphabetical by `:name`. Empty when no skills
    are found anywhere. Drives both the internal `<skills>` block in the system prompt
-   and the `TURN_ACCESSIBLE_SKILLS` SYSTEM var."
+   and the sandbox `(skills)` discovery fn."
   []
   (or (:loaded (current)) []))
+
+(defn list-summaries
+  "Vec of compact skill-summary maps `{:name :description :path :source
+   :extra?}`. Same shape the retired `TURN_ACCESSIBLE_SKILLS` SYSTEM var
+   carried; now surfaced lazily through the sandbox `(skills)` fn so the
+   model only pays the cost when it actually queries. Bodies are NOT
+   included - load via `(load-skill name)` (the activation step).
+
+   Degrades to `[]` on any scan failure so a partial filesystem never
+   throws into the sandbox."
+  []
+  (try
+    (->> (list-all)
+      (mapv (fn [s]
+              (cond-> (select-keys s [:name :description :path :source])
+                (seq (:extra s)) (assoc :extra (:extra s))))))
+    (catch Throwable _ [])))
 
 (defn lookup
   "Find one skill by `:name`. Always returns a map; `:found?` flag
@@ -284,4 +301,9 @@
        result))
    'reload-skills!
    (fn reload-skills! []
-     (reload!))})
+     (reload!))
+   ;; (skills) - lazy replacement for the retired TURN_ACCESSIBLE_SKILLS
+   ;; SYSTEM var. Returns the same compact summary vec; the model uses
+   ;; plain Clojure (filter, some, map) over the result.
+   'skills
+   (fn skills [] (list-summaries))})
