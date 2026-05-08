@@ -3,7 +3,7 @@
 
    Three contracts to pin:
 
-   1. `estimated-height` is cheap, monotonic, and within 2\u00d7 of the
+   1. `estimated-height` is cheap, monotonic, and within 2x of the
       real `bubble-height` for the message shapes we actually emit
       (user, plain assistant, assistant with trace).
    2. `layout` only projects messages whose viewport interval is
@@ -11,7 +11,7 @@
       `format-answer-with-thinking` (verified by counting projection
       calls through a side-effect counter swap).
    3. `layout`'s `:total-h` and `:eff-scroll` are valid scrollbar
-      inputs (`:eff-scroll \u2208 [0, max(0, total-h - inner-h)]`) and
+      inputs (`:eff-scroll in [0, max(0, total-h - inner-h)]`) and
       visible bubbles' `:top + :height` fits inside the viewport's
       forward extent, even when estimates differ from real heights."
   (:require
@@ -120,13 +120,13 @@
 
 (defdescribe estimated-height-test
   (describe "estimated-height never returns negative or zero"
-    (it "user msg \u2265 1"
+    (it "user msg >= 1"
       (expect (>= (estimated-height (user-msg "hi") bubble-w) 1)))
-    (it "empty user msg \u2265 1"
+    (it "empty user msg >= 1"
       (expect (>= (estimated-height (user-msg "") bubble-w) 1)))
-    (it "plain assistant \u2265 1"
+    (it "plain assistant >= 1"
       (expect (>= (estimated-height (plain-assistant-msg "Done.") bubble-w) 1)))
-    (it "trace assistant \u2265 1"
+    (it "trace assistant >= 1"
       (expect (>= (estimated-height (trace-assistant-msg 1 1 "ok") bubble-w) 1))))
 
   (describe "estimated-height grows monotonically with content"
@@ -198,7 +198,7 @@
         (expect (some #(= (dec (count msgs)) (:idx %)) visible))))
 
     (it "projects the live loading placeholder with progress text"
-      (let [m {:role :assistant :text "Sending request to provider…"}
+      (let [m {:role :assistant :text "Sending request to provider..."}
             {:keys [visible]}
             (virtual/layout [m] bubble-w settings nil 20
               {:loading? true :progress {:iterations []}})
@@ -209,7 +209,7 @@
     (it "passes conversation context to live progress so huge blocks collapse while streaming"
       (render/invalidate-cache!)
       (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
-            m           {:role :assistant :text "Sending request to provider…"}
+            m           {:role :assistant :text "Sending request to provider..."}
             trace       [{:events    [{:type :form-result :form-idx 0}]
                           :code      ["(+ 1 2)"]
                           :comments  [nil]
@@ -232,7 +232,7 @@
 
     (it "keeps long live progress layout inside scroll-frame budget"
       (render/invalidate-cache!)
-      (let [m              {:role :assistant :text "Sending request to provider…"}
+      (let [m              {:role :assistant :text "Sending request to provider..."}
             huge-result    (str/join " " (repeat 1000 "abcdefghij"))
             progress-entry (fn [i done?]
                              {:events    [{:type :form-result :form-idx 0}]
@@ -346,7 +346,7 @@
             (doseq [m msgs]
               (render/format-answer-with-thinking
                 (:raw-answer m) (:trace m) bubble-w settings))
-            ;; Pre-warm warmed both — no fresh format-answer-with-thinking*
+            ;; Pre-warm warmed both - no fresh format-answer-with-thinking*
             ;; calls expected.
             (expect (zero? @calls))))))
     (it "stop-pre-warm! is safe on nil and on already-finished threads"
@@ -359,7 +359,7 @@
   (describe "once a message has been measured, layout returns its REAL height forever"
     ;; Regression: conversation 7b18414d. Before the sticky cache,
     ;; off-screen messages reverted to `estimated-height` on every
-    ;; layout call — `total-h` jittered as visible ↔ off-screen
+    ;; layout call - `total-h` jittered as visible <-> off-screen
     ;; flipped per scroll, scrollbar thumb drifted, click-to-position
     ;; landed in the wrong row.
     (it "`total-h` is stable across many scroll positions after pre-warm"

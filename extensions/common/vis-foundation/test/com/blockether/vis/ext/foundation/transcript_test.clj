@@ -25,18 +25,18 @@
             :stdout-chars (count stdout)
             :stdout-truncated? false
             :stdout stdout}
-   :provenance {:op :v/bash
-                :tool {:sym 'bash :call "v/bash" :alias 'v}
-                :command command
-                :duration-ms 5
-                :started-at-ms 10
-                :finished-at-ms 15
-                :target {:requested "." :kind :dir}}
+   :info {:op :v/bash
+          :tool {:sym 'bash :call "v/bash" :alias 'v}
+          :command command
+          :duration-ms 5
+          :started-at-ms 10
+          :finished-at-ms 15
+          :target {:requested "." :kind :dir}}
    :error nil})
 
 (defn- seed!
   "Two-turn fixture exercising the full transcript surface: one
-   clean turn with comment / result / stdout / a `(def …)` var /
+   clean turn with comment / result / stdout / a `(def ...)` var /
    thinking trace / answer-form-idx, and one failing turn with a
    prose-in-code error block + a clean follow-up block + stderr
    capture. Returns the conversation id."
@@ -48,7 +48,7 @@
         q1  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                 :user-request "First turn"
                                                 :status :running})]
-    ;; Turn 1: terminal iteration with a `(def …)` var, an `(answer …)`
+    ;; Turn 1: terminal iteration with a `(def ...)` var, an `(answer ...)`
     ;; block (idx 1), thinking trace, system prompt, and a full LLM
     ;; message envelope. The persistance layer derives :llm_system_prompt
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
@@ -97,7 +97,7 @@
     cid))
 
 ;; ---------------------------------------------------------------------------
-;; Data \u2014 the canonical contract every consumer (CLI, agent, future
+;; Data - the canonical contract every consumer (CLI, agent, future
 ;; JSON exporter) reads against.
 ;; ---------------------------------------------------------------------------
 
@@ -159,7 +159,7 @@
           (expect (= 180 (:input  (:tokens totals))))
           (expect (= 30  (:output (:tokens totals))))
           ;; Cost summed across both turns: 0.0042 + 0.0021 = 0.0063.
-          ;; Compare with epsilon — IEEE 754 doubles don't land
+          ;; Compare with epsilon - IEEE 754 doubles don't land
           ;; exactly on 0.0063.
           (expect (< (Math/abs (- 0.0063 (double (:cost-usd totals)))) 1.0E-9)
             (str "actual: " (:cost-usd totals))))
@@ -176,7 +176,7 @@
           (expect (= :done  (:status (first turns))))
           (expect (= :error (:status (second turns))))
           ;; Failure count comes from block-level :error keys, not a
-          ;; turn-level flag \u2014 the failing turn must report exactly 1.
+          ;; turn-level flag - the failing turn must report exactly 1.
           (expect (= 0 (:failure-count (first turns))))
           (expect (= 1 (:failure-count (second turns)))))
         (finally (vis/db-dispose-connection! s)))))
@@ -219,9 +219,9 @@
               iter  (first (:iterations turn))]
           ;; Reasoning trace surfaces verbatim on the iteration.
           (expect (= "Reasoning about arithmetic" (:thinking iter)))
-          ;; The terminal block index points at the `(answer …)` form.
+          ;; The terminal block index points at the `(answer ...)` form.
           (expect (= 1 (:answer-form-idx iter)))
-          ;; Per-iteration vars carry the (def …) we persisted.
+          ;; Per-iteration vars carry the (def ...) we persisted.
           (let [vars (:vars iter)]
             (expect (= 1 (count vars)))
             (expect (= "x" (:name (first vars))))
@@ -329,7 +329,7 @@
         (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------
-;; Markdown renderer \u2014 spot-check a few literals the CLI relies on.
+;; Markdown renderer - spot-check a few literals the CLI relies on.
 ;; The data tests above are the real contract.
 ;; ---------------------------------------------------------------------------
 
@@ -370,7 +370,7 @@
         (let [cid  (seed! s)
               data (transcript/transcript s cid)
               out  (transcript/transcript->md data {:mode :dialog})]
-          (expect (str/includes? out "# Dialog — conversation"))
+          (expect (str/includes? out "# Dialog - conversation"))
           (expect (str/includes? out "### User"))
           (expect (str/includes? out "First turn"))
           (expect (str/includes? out "### Assistant"))

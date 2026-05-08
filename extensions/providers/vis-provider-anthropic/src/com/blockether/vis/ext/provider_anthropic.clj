@@ -2,8 +2,8 @@
   "Anthropic providers.
 
    Providers:
-   - `:anthropic` — normal Anthropic API key provider. API key lives in Vis config.
-   - `:anthropic-coding-plan` — Claude subscription OAuth provider. OAuth
+   - `:anthropic` - normal Anthropic API key provider. API key lives in Vis config.
+   - `:anthropic-coding-plan` - Claude subscription OAuth provider. OAuth
      credentials live in `~/.vis/anthropic-auth.json`.
 
    Runtime calls hand the OAuth access token to svar; svar handles only the

@@ -65,7 +65,7 @@
         (spit-rel root "src/a.clj" "(ns a)")
         (spit-rel root "src/b.clj" "(ns b)")
         (spit-rel root "src/c.clj" "(ns c)")
-        ;; A single huge minified JS bundle and a lockfile —
+        ;; A single huge minified JS bundle and a lockfile -
         ;; would dominate by bytes if not excluded.
         (spit-rel root "docs/mermaid.min.js"
           (apply str (repeat 50000 "abcdefgh")))

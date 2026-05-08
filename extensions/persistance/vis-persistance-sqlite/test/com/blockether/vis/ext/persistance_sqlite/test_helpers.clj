@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.persistance-sqlite.test-helpers
-  "Shared test utilities — in-memory SQLite store via lazytest context.
+  "Shared test utilities - in-memory SQLite store via lazytest context.
 
    Usage in test ns:
      (require '[com.blockether.vis.ext.persistance-sqlite.test-helpers :as h])

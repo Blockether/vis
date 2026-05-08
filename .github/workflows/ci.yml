@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
       matrix:
         # Only packages that ship a test/ tree with *_test.clj files. Add
-        # entries here as new packages get their first test \u2014 lazytest
+        # entries here as new packages get their first test - lazytest
         # errors out on "no namespaces to run" if the dir is empty.
         package:
           - vis-loop
@@ -69,7 +69,7 @@ jobs:
 
   # Classpath sanity: every package + every extension must resolve its own
   # deps.edn cleanly. Catches stale local-root paths, missing siblings, or
-  # spec'd deps without a Maven artifact \u2014 problems that wouldn't show up in
+  # spec'd deps without a Maven artifact - problems that wouldn't show up in
   # the aggregate runner because vis-loop pulls everything transitively.
   classpath-sanity:
     runs-on: ubuntu-latest

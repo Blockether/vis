@@ -9,13 +9,13 @@
    Strategy
    ========
 
-   Rewrite the call into a synthetic `(defn sym arglist (do args…))`.
+   Rewrite the call into a synthetic `(defn sym arglist (do args...))`.
    That gives clj-kondo:
      - a real `defn` to register so callers resolve
      - the right arity from the arglist
      - argument references in the body so `unused-binding` stays quiet
 
-   The body is just `(do arg1 arg2 …)` \u2014 the implementation lives at
+   The body is just `(do arg1 arg2 ...)` - the implementation lives at
    runtime (resolved dynamically), so the lint pass focuses on the
    declared shape and skips the body entirely."
   (:require [clj-kondo.hooks-api :as api]))

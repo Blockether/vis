@@ -49,10 +49,10 @@
                          %)
                   @events))
         (expect (not-any? #(= :input/replace (:op %)) @events))
-        (expect (some #(= "● Rewrite…" (:text %)) @events))
+        (expect (some #(= "● Rewrite..." (:text %)) @events))
         (expect (some #(= {:op :status/clear :id :voice/input} %) @events))
         (expect (not-any? #(= "○ Voice ready" (:text %)) @events))
-        (expect (not-any? #(= "● Rewriting…" (:text %)) @events)))))
+        (expect (not-any? #(= "● Rewriting..." (:text %)) @events)))))
 
   (it "starts ticker after recorder is visible in shared state"
     (let [events (atom [])]
@@ -100,7 +100,7 @@
                     recorder/stop! (fn [_] "too-short.wav")
                     asr/transcribe-file! (fn [audio-file]
                                            (expect (= "too-short.wav" audio-file))
-                                           (throw (ex-info "Voice recording too short — try again"
+                                           (throw (ex-info "Voice recording too short - try again"
                                                     {:type :voice-asr/audio-too-short})))
                     rewrite/rewrite-transcript! (fn [_]
                                                   (expect false)
@@ -116,11 +116,11 @@
             (voice/stop-and-transcribe! {})
             (loop [n 50]
               (when (and (pos? n)
-                      (not-any? #(= "Voice failed: Voice recording too short — try again" (:text %)) @events))
+                      (not-any? #(= "Voice failed: Voice recording too short - try again" (:text %)) @events))
                 (Thread/sleep 20)
                 (recur (dec n))))
             (expect (some #(= {:op :notify
-                               :text "Voice failed: Voice recording too short — try again"
+                               :text "Voice failed: Voice recording too short - try again"
                                :level :error}
                              %)
                       @events))
@@ -131,6 +131,6 @@
             (expect (some #(and (= :error (:level %))
                              (= ::voice/voice-asr-failed (:id %))
                              (= "too-short.wav" (get-in % [:data :audio-file]))
-                             (= "Voice recording too short — try again" (get-in % [:data :error]))
+                             (= "Voice recording too short - try again" (get-in % [:data :error]))
                              (= :voice-asr/audio-too-short (get-in % [:data :type])))
                       @logs))))))))

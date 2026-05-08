@@ -1,5 +1,5 @@
 {:paths ["src" "resources"]
- ;; Telegram channel — Bot API long-poll loop wired into the
+ ;; Telegram channel - Bot API long-poll loop wired into the
  ;; conversation runtime. Optional channel package.
  ;;
  ;; Depends on vis-sdk for `conversations/for-telegram-chat!` and

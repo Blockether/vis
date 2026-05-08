@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# verify.sh — pre-commit verification for vis
+# verify.sh - pre-commit verification for vis
 #
 # Modes:
 #   ./verify.sh                 # --full (default): every gate
@@ -10,9 +10,9 @@
 #                               # snapshot current graal warning count as baseline
 #
 # Each gate writes:
-#   .verification/<step>.log    — stdout + stderr
-#   .verification/<step>.code   — exit code (0 / N / "skip")
-#   .verification/summary.log   — final report
+#   .verification/<step>.log    - stdout + stderr
+#   .verification/<step>.code   - exit code (0 / N / "skip")
+#   .verification/summary.log   - final report
 #
 # `.verification/` is gitignored. The graal warning baseline lives in
 # `.verification-baseline/graal-warnings.count` (tracked) so the ratchet
@@ -93,7 +93,7 @@ summary() {
   echo ""
 
   {
-    echo "verify.sh — $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "verify.sh - $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     echo "total=$TOTAL passed=$PASSED failed=$failed skipped=$SKIPPED"
     [ -n "$FAILED_STEP" ] && echo "stopped_at=$FAILED_STEP"
     echo ""
@@ -116,7 +116,7 @@ summary() {
 # --- Format: cljfmt check (no auto-fix; failing tells the dev to run fix). ---
 _format() {
   if ! command -v cljfmt > /dev/null; then
-    echo "cljfmt not found — install with: brew install cljfmt"
+    echo "cljfmt not found - install with: brew install cljfmt"
     return 1
   fi
   cljfmt check src/ test/ extensions/ build.clj || {
@@ -132,7 +132,7 @@ _format() {
 # Errors and warnings fail the build; info-level diagnostics are advisory.
 _lint() {
   if ! command -v clj-kondo > /dev/null; then
-    echo "clj-kondo not found — install with: brew install borkdude/brew/clj-kondo"
+    echo "clj-kondo not found - install with: brew install borkdude/brew/clj-kondo"
     return 1
   fi
   local lint_paths=(src test)
@@ -162,7 +162,7 @@ _lint() {
 #     :warn-on-boxed, and counts warnings emitted from project source
 #     paths.
 #
-# `benchmark/` is excluded — dev/research code, not on the default
+# `benchmark/` is excluded - dev/research code, not on the default
 # classpath, not shipped as a runtime jar.
 #
 # By default this is a RATCHET: fails only if the count grows beyond the
@@ -308,18 +308,18 @@ _graal_safety() {
 
   if [ "$total" -gt "$baseline" ]; then
     echo ""
-    echo "FAILED: warning count grew $baseline → $total (regression of $((total - baseline)))."
+    echo "FAILED: warning count grew $baseline -> $total (regression of $((total - baseline)))."
     echo "Either fix the new warnings or, if intentional, run:"
     echo "  ./verify.sh --update-baseline"
     return 1
   fi
 
   if [ "$total" -lt "$baseline" ]; then
-    echo "Improvement: $baseline → $total (-$((baseline - total))). Consider running:"
+    echo "Improvement: $baseline -> $total (-$((baseline - total))). Consider running:"
     echo "  ./verify.sh --update-baseline"
     echo "to lock in the new lower bound."
   else
-    echo "Ratchet: $total ≤ baseline $baseline (no regression)"
+    echo "Ratchet: $total <= baseline $baseline (no regression)"
   fi
   return 0
 }
@@ -333,7 +333,7 @@ _test() {
 #     changes; this gate ensures docs at least compile. ---
 _docs() {
   if ! command -v mdbook > /dev/null; then
-    echo "mdbook not found — install with: cargo install mdbook"
+    echo "mdbook not found - install with: cargo install mdbook"
     return 1
   fi
   (cd docs && mdbook build) || return 1
@@ -362,7 +362,7 @@ _secret_scan() {
        || git merge-base HEAD main 2>/dev/null \
        || echo "")
   if [ -z "$base" ]; then
-    echo "No base branch found — skipping secret scan"
+    echo "No base branch found - skipping secret scan"
     return 0
   fi
   # Patterns: OpenAI sk_*, Linear lin_api_*, NVIDIA nvapi-*, Google AIzaSy*,

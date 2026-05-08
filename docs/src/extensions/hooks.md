@@ -1,7 +1,7 @@
 # Symbol Decorators
 
 Three of the four hooks on a symbol are **decorators** around the
-target fn — same pattern as Ring middleware, Pedestal interceptors,
+target fn - same pattern as Ring middleware, Pedestal interceptors,
 or AOP around-advice. They wrap `:fn`, can transform inputs, transform
 outputs, short-circuit, and recover from errors.
 
@@ -12,14 +12,14 @@ source string. It's documented in its own section below.
 ## The decorator pipeline
 
 ```
-  parses? ──yes──→ :before-fn ──→ :fn ──→ :after-fn ──→ result
+  parses? ──yes──-> :before-fn ──-> :fn ──-> :after-fn ──-> result
                        │            │
-                       │            └── throws ──→ :on-error-fn
+                       │            └── throws ──-> :on-error-fn
                        │
                        └── {:result v} short-circuits past :fn
                        └── {:fn :args :env} overrides what :fn sees
 
-  parses? ──no───→ :on-parse-error-fn  (see "Parse-Error Rescue" below)
+  parses? ──no───-> :on-parse-error-fn  (see "Parse-Error Rescue" below)
 ```
 
 `wrap-extension` installs the decorators automatically when the
@@ -27,7 +27,7 @@ extension is registered. Direct calls to `invoke-symbol-wrapper` are
 rarely needed.
 
 Every decorator returns a **map**. Missing keys keep the current value
-— there is no positional return, no `nil`-means-default magic. The
+- there is no positional return, no `nil`-means-default magic. The
 return shape is the contract.
 
 ## Entry decorator
@@ -35,7 +35,7 @@ return shape is the contract.
 Slot key: `:before-fn`. Signature:
 
 ```clojure
-(fn [environment f args] → map)
+(fn [environment f args] -> map)
 ```
 
 Runs before `:fn`. Can rewrite inputs or skip the call entirely.
@@ -45,7 +45,7 @@ Runs before `:fn`. Can rewrite inputs or skip the call entirely.
 | `:env` | Override the environment passed to `:fn` |
 | `:fn` | Swap in a different implementation fn |
 | `:args` | Override the args vector |
-| `:result` | **Short-circuit** — skip `:fn` and return this value (the post-`:after-fn` step is bypassed) |
+| `:result` | **Short-circuit** - skip `:fn` and return this value (the post-`:after-fn` step is bypassed) |
 
 Use it for: argument normalization, permission checks that abort with
 a synthetic result, swapping in a mock fn for testing.
@@ -55,7 +55,7 @@ a synthetic result, swapping in a mock fn for testing.
 Slot key: `:after-fn`. Signature:
 
 ```clojure
-(fn [environment f args result] → map)
+(fn [environment f args result] -> map)
 ```
 
 Runs after `:fn` returns successfully. Can transform the result.
@@ -73,7 +73,7 @@ metadata.
 Slot key: `:on-error-fn`. Signature:
 
 ```clojure
-(fn [error environment f args] → map)
+(fn [error environment f args] -> map)
 ```
 
 Runs when `:fn` throws. The return map decides what happens next.
@@ -82,19 +82,19 @@ Runs when `:fn` throws. The return map decides what happens next.
 |------------|--------|
 | `:result` | Swallow the error, return this as the fallback |
 | `:error` | Replace the original exception with this one and rethrow |
-| `:fn` and/or `:args` | **Retry** — re-invoke with the (possibly different) fn and args |
+| `:fn` and/or `:args` | **Retry** - re-invoke with the (possibly different) fn and args |
 
 If no `:on-error-fn` is defined, the original exception propagates to
 the iteration loop unchanged.
 
-Use it for: graceful degradation, "did you mean…?" retries with
+Use it for: graceful degradation, "did you mean...?" retries with
 corrected args, wrapping low-level exceptions in extension-specific
 error types.
 
 ## Composition order
 
 There is **one** decorator of each kind per symbol. Vis does not stack
-multiple `:before-fn`s on the same symbol — if an extension needs to
+multiple `:before-fn`s on the same symbol - if an extension needs to
 compose behavior, the extension author composes the fns themselves
 when building the symbol map. This is deliberate: a single visible
 decorator per slot keeps the call chain debuggable; stacked
@@ -105,11 +105,11 @@ invisible decorators would hide it.
 Not a decorator. Slot key: `:on-parse-error-fn`. Signature:
 
 ```clojure
-(fn [{:keys [code error sym environment]}] → string|nil)
+(fn [{:keys [code error sym environment]}] -> string|nil)
 ```
 
 This fires **before** any dispatch, when SCI/edamame rejects the
-LLM's source. There is no `:fn` to wrap yet — the source string isn't
+LLM's source. There is no `:fn` to wrap yet - the source string isn't
 even a valid form. Conceptually closer to a reader macro or a
 preprocessor than to function decoration.
 
@@ -119,7 +119,7 @@ Symbol-level: only fires when the broken source mentions this symbol
 | Return value | Effect |
 |--------------|--------|
 | A new source string | The iteration loop retries the parse with it. If it parses cleanly the rewritten code runs and the resulting expression is tagged `:repaired? true`. |
-| `nil` | Pass — the next matching symbol's hook is consulted, then the extension-level `:ext/on-parse-error-fn`, then the original error is surfaced to the LLM. |
+| `nil` | Pass - the next matching symbol's hook is consulted, then the extension-level `:ext/on-parse-error-fn`, then the original error is surfaced to the LLM. |
 
 Resolution order, walking every active extension:
 
@@ -129,10 +129,10 @@ Resolution order, walking every active extension:
    cross-cutting rewrites.
 
 First non-`nil` rewrite different from `code` wins. Hooks that throw
-are logged and skipped — a buggy rescue can never break turn
+are logged and skipped - a buggy rescue can never break turn
 execution.
 
-Sketch (hypothetical — no production extension currently ships parse-error
+Sketch (hypothetical - no production extension currently ships parse-error
 rescue; the `v/rg` API is deliberately a single spec map with literal vectors
 so this class of bug becomes unrepresentable on the input side):
 
@@ -149,7 +149,7 @@ edamame would fail. The loop would notice `frob` in the broken form and
 call `rescue-frob-parse`, which could double the backslash so the
 re-parse succeeds and the tool fn runs with the LLM's intended string.
 In practice we prefer to design the API so the bad shape is unreachable
-(`v/rg` spec maps + literal vectors) rather than rescue it at runtime —
+(`v/rg` spec maps + literal vectors) rather than rescue it at runtime -
 cheaper to maintain, easier to reason about.
 
 ## A note on naming

@@ -47,9 +47,9 @@
             (and (map? x)
               (contains? x :success?)
               (contains? x :result)
-              (contains? x :provenance)))
+              (contains? x :info)))
           (tool-payload-hint [x]
-            (case (get-in x [:provenance :op])
+            (case (get-in x [:info :op])
               :v/bash "Use (get-in run [:result :stdout]), [:result :stderr], or [:result :exit]."
               :v/cat  "Use (get-in out [:result :lines]) for file contents."
               :v/rg   "Use (get-in hits [:result :hits]) for matches."
@@ -70,7 +70,7 @@
                  (tool-payload-hint value))
                {:helper helper
                 :arg-name arg-name
-                :tool-op (get-in value [:provenance :op])
+                :tool-op (get-in value [:info :op])
                 :value value}))
 
       :else
@@ -244,7 +244,7 @@
         body  (when (seq bodies) (str/join "\n\n" bodies))]
     (when (> (count sums) 1)
       (throw (ex-info
-               (str "details got " (count sums) " <summary>…</summary> parts — at most one is allowed.")
+               (str "details got " (count sums) " <summary>...</summary> parts - at most one is allowed.")
                {:summary-count (count sums)})))
     (cond
       (and sum body) (str "<details>\n" sum "\n\n" body "\n\n</details>")
@@ -287,10 +287,10 @@
       (every? list-marker? lines))))
 
 (defn- continuation-prefix? [s]
-  (boolean (re-matches #"^(?:\s+|[,;:.)\]}]|[—–-]).*" s)))
+  (boolean (re-matches #"^(?:\s+|[,;:.)\]}]|[---]).*" s)))
 
 (defn- dangling-suffix? [s]
-  (boolean (re-find #"(?:\s|[({\[:;,—–-])$" s)))
+  (boolean (re-find #"(?:\s|[({\[:;,---])$" s)))
 
 (defn- fragmentable-list-item? [x]
   (and (string? x)
@@ -481,7 +481,7 @@
 (def ^:private SHORT_ID_CHARS
   "How many leading characters of a UUID to surface in the header.
    Matches the convention `vis conversations`, the TUI header, and
-   `v/inspect` conversation data \u2014 keeps copy-pasted exports
+   `v/inspect` conversation data - keeps copy-pasted exports
    trivially correlatable with other tooling."
   8)
 
@@ -641,17 +641,17 @@
             (str/starts-with? (str/trim (or s "")) "#"))
           (inline-leading-fragment? [s]
             (boolean
-              (re-find #"^(?:`[^`\n]+`|\[[^\]\n]+\]\([^)\n]+\))(?:[\s.,:;!?)]|$).*"
+              (re-find #"^(?:`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\[[^\]\n]+\]\([^)\n]+\))(?:[\s.,:;!?)]|$).*"
                 (str/trim (or s "")))))
           (inline-ending-fragment? [s]
             (boolean
-              (re-find #"(?:`[^`\n]+`|\[[^\]\n]+\]\([^\)\n]+\))$"
+              (re-find #"(?:`[^`\n]+`|\*\*[^*\n]+\*\*|__[^_\n]+__|\[[^\]\n]+\]\([^\)\n]+\))$"
                 (str/trim (or s "")))))
           (lowercase-continuation? [s]
             (boolean
               (re-find #"^[a-z]" (str/trim (or s "")))))
           (arrow-continuation? [s]
-            (str/starts-with? (str/trim (or s "")) "→"))
+            (str/starts-with? (str/trim (or s "")) "->"))
           (continuation-fragment? [prev current]
             (let [trimmed (str/trim (or current ""))]
               (and (not (str/blank? trimmed))
@@ -767,7 +767,7 @@
         tokens (format-tokens-line turn)
         parts (if tokens (conj parts tokens) parts)]
     (when (seq parts)
-      (str/join " \u00b7 " parts))))
+      (str/join " / " parts))))
 
 (defn- export-blockquote
   "Wrap each line of `text` with `> ` so the whole thing renders as a
@@ -793,7 +793,7 @@
                 (:model conversation)      (conj (:model conversation))
                 (:created-at conversation) (conj (fmt/format-date (:created-at conversation))))
         meta-line (when (seq meta)
-                    (str "> " (str/join " \u00b7 " meta)))]
+                    (str "> " (str/join " / " meta)))]
     (str/join "\n\n"
       (cond-> [(str "# " title)]
         meta-line (conj meta-line)))))
@@ -816,13 +816,13 @@
         user-block  (or (export-blockquote (:user-request turn)) "> *(empty user request)*")
         answer-text (cond
                       (:answer turn) (normalize-chat-markdown (:answer turn))
-                      (= :error (:status turn)) "*(turn errored \u2014 no answer recorded)*"
+                      (= :error (:status turn)) "*(turn errored - no answer recorded)*"
                       :else "*(no answer recorded yet)*")
         sections    [(str "## Turn " (inc index))
                      (str "**" user-label ":**")
                      user-block
                      (str "**" assistant-label ":**"
-                       (when meta (str " *\u2014 " meta "*")))
+                       (when meta (str " *- " meta "*")))
                      answer-text]]
     (str/join "\n\n" sections)))
 
@@ -850,7 +850,7 @@
    located (so callers can pattern-match instead of catching).
 
    See `DEFAULT_OPTS` for tunables. The returned string never ends in
-   a trailing newline \u2014 callers append one (or not) per their
+   a trailing newline - callers append one (or not) per their
    destination's convention (clipboard usually doesn't want one)."
   ([db-info conversation-ref]
    (conversation->markdown db-info conversation-ref nil))

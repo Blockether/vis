@@ -169,7 +169,7 @@
                                 [:v/move :op/move :tool/move :tool-color/move]
                                 [:v/bash :op/shell :tool/shell :tool-color/shell]
                                 [:v/nrepl-eval :op/shell :tool/shell :tool-color/shell]
-                                [:v/intents :op/meta :tool/meta :tool-color/meta]]]
+                                [:v/extensions :op/meta :tool/meta :tool-color/meta]]]
     (expect (= class (editing/tool-op->class op)))
     (expect (= kind (editing/tool-op->presentation-kind op)))
     (expect (= role (editing/tool-op->color-role op)))))
@@ -210,7 +210,7 @@
       (expect (= ["alpha" "beta" "gamma"] (:lines out)))
       (expect (= :end-of-file (:truncated-by out)))))
 
-  (it ":lines carries raw strings — no leading line-number prefix"
+  (it ":lines carries raw strings - no leading line-number prefix"
     (let [path (write-temp! "raw.txt" "   indented\nplain\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
@@ -249,7 +249,7 @@
       (expect (= {:rendering-kind :source} (:preview out)))
       (expect (not (contains? out :source-shape)))
       (expect (not (contains? out :projection-shape)))
-      (expect (= :v/preview (get-in out [:provenance :op])))))
+      (expect (= :v/preview (get-in out [:info :op])))))
 
   (it "records enriched previews through the extension invocation wrapper"
     (let [entry (some #(when (= 'preview (:ext.symbol/sym %)) %)
@@ -262,16 +262,16 @@
                     {}))]
       (expect (= {:result {:x 1}} (:result out)))
       (expect (= [out] @sink))
-      (expect (= 'preview (get-in out [:provenance :tool :sym])))
+      (expect (= 'preview (get-in out [:info :tool :sym])))
       (expect (= 'com.blockether.vis.ext.foundation.core
-                (get-in out [:provenance :extension :namespace])))))
+                (get-in out [:info :extension :namespace])))))
 
   (it "previews the whole payload when called without EQL"
     (let [preview-tool (private-fn "preview-tool")
           value {:result {:lines ["a" "b" "c"]}
                  :stdout "out"
                  :stderr "err"
-                 :provenance {:op :ignored-by-payload}}
+                 :info {:op :ignored-by-payload}}
           out (preview-tool value)]
       (expect (= {:result {:lines ["a" "b" "c"]}
                   :stdout "out"
@@ -299,30 +299,30 @@
 
   (it "supports nested vector field projections"
     (let [preview-tool (private-fn "preview-tool")
-          value {:result {:intents {:success? false
-                                    :focused-intent-ids [1]
+          value {:result {:summary {:success? false
+                                    :focused-ids [1]
                                     :violations [{:type :open}]
                                     :report "long"}
-                          :audit {:success? true
-                                  :counts {:gates 1}
-                                  :extra true}}}
-          out (preview-tool value {:result [[:intents [:success? :focused-intent-ids :violations]]
-                                            [:audit [:success? :counts]]]})]
-      (expect (= {:result {:intents {:success? false
-                                     :focused-intent-ids [1]
+                          :counts {:success? true
+                                   :items {:forms 1}
+                                   :extra true}}}
+          out (preview-tool value {:result [[:summary [:success? :focused-ids :violations]]
+                                            [:counts [:success? :items]]]})]
+      (expect (= {:result {:summary {:success? false
+                                     :focused-ids [1]
                                      :violations [{:type :open}]}
-                           :audit {:success? true
-                                   :counts {:gates 1}}}}
+                           :counts {:success? true
+                                    :items {:forms 1}}}}
                 (:result out)))))
 
   (it "applies :result EQL to raw values that are not tool-result envelopes"
     (let [preview-tool (private-fn "preview-tool")
-          raw {:intents {:success? false :report "big"}
-               :audit {:success? true :counts {:gates 1}}}
-          out (preview-tool raw {:result [[:intents [:success?]]
-                                          [:audit [:counts]]]})]
-      (expect (= {:result {:intents {:success? false}
-                           :audit {:counts {:gates 1}}}}
+          raw {:summary {:success? false :report "big"}
+               :counts {:success? true :items {:forms 1}}}
+          out (preview-tool raw {:result [[:summary [:success?]]
+                                          [:counts [:items]]]})]
+      (expect (= {:result {:summary {:success? false}
+                           :counts {:items {:forms 1}}}}
                 (:result out)))))
 
   (it "records raw preview payloads for journal workflows"
@@ -380,8 +380,8 @@
   (it "keeps read/search renderers concise without model guidance suffixes"
     (let [render-rg (private-fn "render-rg")
           md        (render-rg {:tool-result {:success? true
-                                              :provenance {:spec {:any ["needle"]}
-                                                           :paths ["src"]}
+                                              :info {:spec {:any ["needle"]}
+                                                     :paths ["src"]}
                                               :result {:hits []
                                                        :truncated-by :end-of-results}}})]
       (expect (string/includes? md "Searched"))
@@ -421,12 +421,12 @@
       (expect (= ["foo|bar"] (mapv :text (:hits out))))))
 
   (it "spec {:all [...]} requires all literals on the same line"
-    (let [_    (write-temp! "rgall/a.clj" "(defn provenance-event [x] x)\n(defn other [x] x)\nprovenance-event call\n")
+    (let [_    (write-temp! "rgall/a.clj" "(defn info-event [x] x)\n(defn other [x] x)\ninfo-event call\n")
           grep (private-fn "grep-files")
-          out  (grep {:all ["defn" "provenance-event"]
+          out  (grep {:all ["defn" "info-event"]
                       :paths [(temp-dir-path "rgall")]
                       :include ["*.clj"]})]
-      (expect (= ["(defn provenance-event [x] x)"]
+      (expect (= ["(defn info-event [x] x)"]
                 (mapv :text (:hits out))))))
 
   (it "spec {:any [...]} is explicit OR"
@@ -639,10 +639,10 @@
         (expect (= [] (get-in v [:error :trace])))
         (expect (string/includes? (get-in v [:error :message]) "cancelled"))
         (expect (not (string/includes? (get-in v [:error :message]) "timed out")))
-        (expect (= :interrupted (get-in v [:provenance :status])))
-        (expect (= "sleep 5" (get-in v [:provenance :command])))
-        (expect (= :v/bash (get-in v [:provenance :op])))
-        (expect (= "." (get-in v [:provenance :target :requested])))
+        (expect (= :interrupted (get-in v [:info :status])))
+        (expect (= "sleep 5" (get-in v [:info :command])))
+        (expect (= :v/bash (get-in v [:info :op])))
+        (expect (= "." (get-in v [:info :target :requested])))
         (expect (string/includes? rendered "cancelled"))
         (expect (not (string/includes? rendered "timed out")))
         (expect (not (string/includes? (pr-str (:error v)) "core.clj"))))))
@@ -678,10 +678,10 @@
           rendered (render-patch
                      {:tool-result {:success? true
                                     :result [{:path "target/editing-test/out.txt"}]
-                                    :provenance {:files [{:path "target/editing-test/out.txt"
-                                                          :changed? true
-                                                          :before "alpha\nbeta\n"
-                                                          :after "alpha\ngamma\n"}]}}})]
+                                    :info {:files [{:path "target/editing-test/out.txt"
+                                                    :changed? true
+                                                    :before "alpha\nbeta\n"
+                                                    :after "alpha\ngamma\n"}]}}})]
       (expect (string/includes? rendered "Read back only when exact persisted bytes matter"))
       (expect (string/includes? rendered "```diff"))
       (expect (string/includes? rendered "--- a/target/editing-test/out.txt"))
@@ -717,7 +717,7 @@
     (let [path (write-temp! "contract/read.txt" "alpha\nbeta\n")
           cat-tool (private-fn "cat-tool")
           out (cat-tool path)]
-      (expect (= #{:success? :result :provenance :error :presentation}
+      (expect (= #{:success? :result :info :error :presentation}
                 (set (keys out))))
       (expect (true? (:success? out)))
       (expect (= ["alpha" "beta"] (get-in out [:result :lines])))

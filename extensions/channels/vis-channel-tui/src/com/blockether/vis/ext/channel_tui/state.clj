@@ -28,8 +28,8 @@
 ;;
 ;; Some events are pure side-projections back from the render thread
 ;; (`:set-layout`) and must NOT bump the version, otherwise we'd
-;; livelock: render writes layout → version bumps → render wakes → same
-;; layout → same version bump → …
+;; livelock: render writes layout -> version bumps -> render wakes -> same
+;; layout -> same version bump -> ...
 
 (defonce ^Object render-monitor
   ^{:doc "Monitor object the render thread .waits on. Notify-all on every
@@ -173,7 +173,7 @@
 ;;; ── State shape ────────────────────────────────────────────────────────────
 ;;
 ;; {:config     nil              ;; provider config map or nil
-;;  :conversation nil            ;; {:id conversation-id} or nil — handle to the shared conversations cache
+;;  :conversation nil            ;; {:id conversation-id} or nil - handle to the shared conversations cache
 ;;  :messages   []               ;; [{:role :user|:assistant :text str :timestamp #inst}]
 ;;  :messages-scroll nil              ;; row offset into bubbles, nil = auto-bottom
 ;;  :input      {:lines [""] :crow 0 :ccol 0}
@@ -209,6 +209,43 @@
    fast to read. Lifecycle chunks still flush immediately so code/result/final
    boundaries appear without delay."
   1000)
+
+(def ^:private pending-assistant-text "Sending request to provider...")
+
+(defn- pending-assistant-message? [m]
+  (and (= :assistant (:role m))
+    (or (:pending? m)
+      (= pending-assistant-text (:text m)))))
+
+(defn- replace-pending-assistant
+  "Replace the pending assistant slot for a completed turn. Prefer the
+   stable client turn id; fall back to the oldest pending placeholder for
+   older events/tests. Never pop the tail: newer user messages may already
+   have been appended while this turn was still live."
+  [messages response]
+  (let [messages       (vec (or messages []))
+        client-turn-id (:client-turn-id response)
+        response       (dissoc response :pending?)
+        idx            (or (when client-turn-id
+                             (first (keep-indexed
+                                      (fn [idx m]
+                                        (when (and (pending-assistant-message? m)
+                                                (= client-turn-id (:client-turn-id m)))
+                                          idx))
+                                      messages)))
+                         (first (keep-indexed
+                                  (fn [idx m]
+                                    (when (pending-assistant-message? m) idx))
+                                  messages)))]
+    (cond
+      idx
+      (assoc messages idx response)
+
+      (and (seq messages) (= :assistant (:role (peek messages))))
+      (conj (pop messages) response)
+
+      :else
+      (conj messages response))))
 
 (defn- make-progress-render-updater
   ([dispatch-fn]
@@ -293,28 +330,28 @@
   "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
    `:tui-settings`.
 
-     theme-name — reusable channel theme id. Default `:vis-light`; extension
+     theme-name - reusable channel theme id. Default `:vis-light`; extension
          themes are declared through `:ext/theme` and surfaced in Settings.
 
-     show-thinking / show-iterations  — high-signal content controls.
+     show-thinking / show-iterations  - high-signal content controls.
          Default ON because new users want to SEE the agent reasoning;
          power users turn them off when they want a clean transcript.
 
-     reasoning-level — base model thinking depth for reasoning-capable
+     reasoning-level - base model thinking depth for reasoning-capable
          models. Default `:balanced`; users can cycle it via
-         Ctrl+K → Settings → Providers & Models.
+         Ctrl+K -> Settings -> Providers & Models.
 
-     openai-codex-verbosity — Codex-only output detail knob.
-         Default `:low`; users can cycle it via Ctrl+K → Settings → Providers & Models.
+     openai-codex-verbosity - Codex-only output detail knob.
+         Default `:low`; users can cycle it via Ctrl+K -> Settings -> Providers & Models.
 
-     show-timestamps — chrome control. Default OFF because timestamps
+     show-timestamps - chrome control. Default OFF because timestamps
          duplicate info already on screen.
 
-     differentiate-turns — visual turn separator between a Vis answer and
+     differentiate-turns - visual turn separator between a Vis answer and
          the next You prompt. Default ON so transcript turns read as distinct
          request/response units without drawing borders inside reasoning.
 
-     mouse-selection-copy — app-side terminal selection. Default ON so
+     mouse-selection-copy - app-side terminal selection. Default ON so
          drag-selecting visible text copies it on mouse release even while
          the fullscreen TUI has mouse reporting enabled.
 
@@ -348,7 +385,7 @@
 (defn- persist-settings!
   "Write `settings` back into `~/.vis/config.edn` under
    `:tui-settings`, preserving every other key in the file. Failures
-   are swallowed — a config-save failure should never crash a TUI
+   are swallowed - a config-save failure should never crash a TUI
    that's already otherwise healthy."
   [settings]
   (try
@@ -361,7 +398,7 @@
   ;; Settings (show-thinking?, show-iterations?, etc.) are part of
   ;; every format-answer cache key, so toggling them already
   ;; invalidates cache entries naturally. But the OLD entries
-  ;; linger until the cache fills — which on a quiet conversation
+  ;; linger until the cache fills - which on a quiet conversation
   ;; never happens. Drop them now so memory stays bounded across
   ;; many toggles.
   (render/invalidate-cache!)
@@ -573,7 +610,7 @@
                   ;; Paste registry. Each multi-line / large
                   ;; clipboard payload lands here keyed by an auto-
                   ;; incrementing id; the input buffer carries a
-                  ;; placeholder token `[Pasted #N: …]` instead of the
+                  ;; placeholder token `[Pasted #N: ...]` instead of the
                   ;; raw text. Send-time substitution uses this map
                   ;; to materialise the full content before the
                   ;; message reaches the agent. Cleared on send.
@@ -591,7 +628,7 @@
                     :active-workspace-id nil
                     :workspaces {}
                     :dialog-open? false
-                  ;; Render thread coordination — see render-monitor docstring.
+                  ;; Render thread coordination - see render-monitor docstring.
                     :render-version 0
                     :shutdown? false
                   ;; Populated by the render thread after each frame so the
@@ -940,7 +977,7 @@
       :slash-command-hidden? false
       ;; A new empty input has no placeholder tokens, so the paste
       ;; registry is dead state. Clearing it here keeps memory
-      ;; bounded across long sessions — every send + every history
+      ;; bounded across long sessions - every send + every history
       ;; reset drops orphans.
       :pastes {}
       :paste-counter 0)))
@@ -948,7 +985,7 @@
 (reg-event-db :add-paste
   ;; Stashes a clipboard payload in the registry, returns the new
   ;; id (Integer) via a side-channel atom that the screen loop reads
-  ;; right after dispatch — see `:paste-counter` increment below.
+  ;; right after dispatch - see `:paste-counter` increment below.
   (fn [db [_ content]]
     (let [next-id (inc (or (:paste-counter db) 0))]
       (-> db
@@ -957,7 +994,7 @@
 
 (reg-event-db :remove-paste
   ;; Drop a single paste entry by id. Used when the user backspaces
-  ;; over the closing `]` of a placeholder — the screen loop deletes
+  ;; over the closing `]` of a placeholder - the screen loop deletes
   ;; the token from the input buffer AND drops the matching content
   ;; here so memory tracks what the user can still see.
   (fn [db [_ id]]
@@ -1005,10 +1042,10 @@
     {:text {:verbosity (name (or (:openai-codex-verbosity settings) :low))}}))
 
 (reg-event-fx :send-message
-  ;; `text` is the input-buffer string — it may carry two shorthand
+  ;; `text` is the input-buffer string - it may carry two shorthand
   ;; surfaces:
   ;;
-  ;;   1. `[Pasted #N: …]` tokens for large clipboard payloads. These
+  ;;   1. `[Pasted #N: ...]` tokens for large clipboard payloads. These
   ;;      are expanded for BOTH the visible transcript and the agent.
   ;;   2. `@path/to/file` mentions inserted by the file picker. Those
   ;;      stay concise in the visible transcript, but expand into
@@ -1026,10 +1063,14 @@
                           (get-in db [:settings :voice/respond?])
                           (assoc :voice-response? true))
           reasoning-level (when (reasoning-effort-configurable?)
-                            (get-in db [:settings :reasoning-level]))]
+                            (get-in db [:settings :reasoning-level]))
+          client-turn-id (str (java.util.UUID/randomUUID))]
       {:db (-> db
-             (update :messages conj (chat/user-message visible-text))
-             (update :messages conj (chat/assistant-message "Sending request to provider…"))
+             (update :messages conj (assoc (chat/user-message visible-text)
+                                      :client-turn-id client-turn-id))
+             (update :messages conj (assoc (chat/assistant-message pending-assistant-text)
+                                      :pending? true
+                                      :client-turn-id client-turn-id))
              (update :input-history (fn [xs]
                                       (let [xs (vec (or xs []))]
                                         (if (= visible-text (last xs)) xs (conj xs visible-text)))))
@@ -1047,7 +1088,7 @@
                :slash-command-index 0
                :slash-command-hidden? false))
        :fx [[:rlm-turn workspace-id (:conversation db) agent-text token
-             reasoning-level extra-body turn-features workspace]]})))
+             reasoning-level extra-body turn-features workspace client-turn-id]]})))
 
 (reg-event-fx :cancel-turn
   (fn [db _]
@@ -1059,7 +1100,7 @@
         ;; channels.cancellation/cancel! for the contract.
         (vis/cancel! (:cancel-token db))
         {:db (assoc db :cancelling? true)
-         :fx [[:notify "Cancelling current turn…" :info cancel-notification-ttl-ms]]}))))
+         :fx [[:notify "Cancelling current turn..." :info cancel-notification-ttl-ms]]}))))
 
 (reg-event-db :set-progress-iterations
   (fn [db [_ a b]]
@@ -1074,7 +1115,7 @@
 
 (reg-event-db :message-received
   (fn [db [_ a b c]]
-    (let [[workspace-id answer {:keys [model iteration-count duration-ms tokens cost confidence conversation-turn-id status]}]
+    (let [[workspace-id answer {:keys [model iteration-count duration-ms tokens cost confidence conversation-turn-id status client-turn-id]}]
           (if (keyword? a)
             [a b c]
             [(current-workspace-id db) a b])]
@@ -1095,12 +1136,19 @@
                                tokens     (assoc :tokens tokens)
                                cost       (assoc :cost cost)
                                confidence (assoc :confidence confidence)
-                               status     (assoc :status status)))]
-              (-> workspace
-                (update :messages pop)
-                (update :messages conj response)
-                (assoc :messages-scroll nil :loading? false :progress nil
-                  :cancel-token nil :cancelling? false)
+                               status     (assoc :status status)
+                               client-turn-id (assoc :client-turn-id client-turn-id)))
+                  messages'      (replace-pending-assistant (:messages workspace) response)
+                  still-pending? (boolean (some pending-assistant-message? messages'))]
+              (cond-> (assoc workspace
+                        :messages messages'
+                        :messages-scroll nil
+                        :loading? still-pending?
+                        :cancelling? false)
+                (not still-pending?)
+                (assoc :progress nil :cancel-token nil)
+
+                (not still-pending?)
                 (dissoc :turn-start-ms :submitted-input)))))))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
@@ -1128,7 +1176,7 @@
         (vis/refresh-cached-routers! router)))))
 
 (reg-fx :rlm-turn
-  (fn [workspace-id conversation text token reasoning-level extra-body turn-features workspace]
+  (fn [workspace-id conversation text token reasoning-level extra-body turn-features workspace client-turn-id]
     (let [fut (vis/worker-future "vis-tui-turn"
                 (fn []
                   (try
@@ -1147,23 +1195,27 @@
                                     :turn-features     turn-features
                                     :workspace         workspace})]
                       (if (:error result)
-                        (dispatch [:message-received workspace-id (vis/format-error (:error result))])
+                        (dispatch [:message-received workspace-id (vis/format-error (:error result))
+                                   {:client-turn-id client-turn-id}])
                         (do
                           (dispatch [:message-received workspace-id (:answer result)
-                                     (select-keys result
-                                       [:model :iteration-count :duration-ms :tokens
-                                        :cost :confidence :conversation-turn-id :status])])
+                                     (assoc (select-keys result
+                                              [:model :iteration-count :duration-ms :tokens
+                                               :cost :confidence :conversation-turn-id :status])
+                                       :client-turn-id client-turn-id)])
                           (when (:voice-response? turn-features)
                             (speak-answer-async! (:answer result))))))
                     (catch Throwable t
                     ;; channels.cancellation/cancellation? folds in
                     ;; InterruptedException, CancellationException, and
-                    ;; runtime wrappers around them — keep all the
+                    ;; runtime wrappers around them - keep all the
                     ;; channel-shaped logic in one place. The bubble
                     ;; renderer dims the result based on `:status
                     ;; :cancelled`, so we attach it explicitly here.
                       (if (vis/cancellation? t)
                         (dispatch [:message-received workspace-id "Cancelled by user."
-                                   {:status :cancelled}])
-                        (dispatch [:message-received workspace-id (vis/format-error (or (ex-message t) (str t)))]))))))]
+                                   {:status :cancelled
+                                    :client-turn-id client-turn-id}])
+                        (dispatch [:message-received workspace-id (vis/format-error (or (ex-message t) (str t)))
+                                   {:client-turn-id client-turn-id}]))))))]
       (vis/cancellation-set-future! token fut))))

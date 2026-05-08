@@ -3,7 +3,7 @@
 
    This namespace owns the data shapes and pure rendering helpers
    that every Vis surface (TUI, CLI, Telegram, transcript export,
-   audit reports) projects through. It is intentionally:
+   reports) projects through. It is intentionally:
 
    - HOST-ONLY. Pure Clojure, no Lanterna/graphical/SCI dependency.
      Can be loaded under headless terminals, CI, SSH, REPL, tests.
@@ -27,17 +27,9 @@
    - `:vis.presentation/provider-error` - Provider/schema/parse failure
    - `:vis.presentation/mermaid`      - Mermaid fenced block (source +
                                          optional rendered ASCII)
-   - `:vis.presentation/audit-report` - Audit/proof report with
-                                         events/bundles/attestations/
-                                         gates/plans/intents and an
-                                         optional `:mermaid` graph
 
    The contract is small on purpose: every channel can either dispatch
-   on `:vis.presentation/kind` or call `present` to get Markdown back.
-   Proof, intents, and audit semantics are preserved end-to-end:
-   the audit report carries every counted slot, blocker refs are
-   highlighted, and `:guards`/`:violations` survive collapsed AND
-   expanded summaries."
+   on `:vis.presentation/kind` or call `present` to get Markdown back."
   (:require
    [clojure.pprint :as pp]
    [clojure.string :as str]
@@ -59,8 +51,7 @@
     :vis.presentation/tool-call
     :vis.presentation/system-call
     :vis.presentation/provider-error
-    :vis.presentation/mermaid
-    :vis.presentation/audit-report})
+    :vis.presentation/mermaid})
 
 (defn presentation?
   "True when `x` is a presentation map (carries a recognized
@@ -104,12 +95,12 @@
   "Tool invocation presentation map. Required keys (any one is
    enough): `:op`, `:tool`, or `:label`. Optional: `:args`, `:result`,
    `:stdout`, `:stderr`, `:error`, `:duration-ms`, `:status`,
-   `:provenance`, `:ref`, `:rendering-kind`. The renderer formats the
+   `:info`, `:ref`, `:rendering-kind`. The renderer formats the
    call as a self-describing details block."
   [opts]
   (merge {:vis.presentation/kind :vis.presentation/tool-call}
     (select-keys opts [:op :tool :label :args :result :stdout :stderr
-                       :error :duration-ms :status :provenance :ref
+                       :error :duration-ms :status :info :ref
                        :rendering-kind])))
 
 (defn system-call
@@ -119,7 +110,7 @@
   [opts]
   (merge {:vis.presentation/kind :vis.presentation/system-call}
     (select-keys opts [:op :tool :label :result :error :status
-                       :rendering-kind :provenance :ref :body :args])))
+                       :rendering-kind :info :ref :body :args])))
 
 (defn provider-error
   "Provider/schema/parse failure presentation map. Required:
@@ -141,36 +132,6 @@
   (merge {:vis.presentation/kind :vis.presentation/mermaid}
     (select-keys opts [:source :rendered-lines :diagram-type])))
 
-(defn audit-report
-  "Audit/proof report presentation map. The renderer projects this
-   into a coherent Markdown report with sections for
-   events/bundles/attestations/gates/plans/intents, an optional
-   Mermaid graph, a collapsed summary line, and an expanded body.
-
-   Recognized keys (every section optional):
-
-   - `:title`              human-readable title (default `\"Audit\"`)
-   - `:counts`             `{:events n :bundles n :attestations n
-                              :gates n :plans n :intents n :violations n}`
-   - `:events`             coll of provenance timeline events
-   - `:bundles`            coll of evidence bundles
-   - `:attestations`       coll of attestations
-   - `:gates`              coll of gate snapshots
-   - `:plans`              coll of plan snapshots
-   - `:intents`            coll of intent snapshots
-   - `:guards`             `{:success? bool :violations [...]}`
-   - `:mermaid`            either a Mermaid source string OR a map
-                            `{:source ... :rendered-lines [...]}`
-   - `:summary`            override the collapsed one-line summary
-   - `:collapsed?`         default true (renders summary + details)"
-  [opts]
-  (merge {:vis.presentation/kind :vis.presentation/audit-report
-          :title "Audit"
-          :collapsed? true}
-    (select-keys opts [:title :counts :events :bundles :attestations
-                       :gates :plans :intents :guards :mermaid
-                       :summary :collapsed? :conversation-id])))
-
 ;; ---------------------------------------------------------------------------
 ;; Pure helpers shared between renderers
 ;; ---------------------------------------------------------------------------
@@ -181,7 +142,7 @@
    (when (some? text)
      (let [s (str text)]
        (if (> (count s) limit)
-         (str (subs s 0 limit) "…")
+         (str (subs s 0 limit) "...")
          s)))))
 
 (defn- kw-name
@@ -198,7 +159,7 @@
 (defn- format-status
   ^String [status]
   (cond
-    (nil? status) "·"
+    (nil? status) "/"
     (keyword? status) (kw-name status)
     :else (str status)))
 
@@ -275,20 +236,20 @@
 
    Layout:
 
-       **TOOL** `op` · status · 12ms
+       **TOOL** `op` / status / 12ms
        _label or short summary_
        <args fenced>
        <result fenced or details>
        <stdout/stderr details if non-blank>
        <error block if present>"
   [{:keys [op tool label args result stdout stderr error duration-ms
-           status rendering-kind provenance ref]}]
+           status rendering-kind info ref]}]
   (let [op-str (format-op (or op tool))
         head-bits (cond-> [(md/bold "TOOL")
                            (md/code op-str)]
-                    status (conj (str " · " (format-status status)))
-                    duration-ms (conj (str " · " (format-duration-ms duration-ms)))
-                    ref (conj (str " · " (md/code (str ref)))))
+                    status (conj (str " / " (format-status status)))
+                    duration-ms (conj (str " / " (format-duration-ms duration-ms)))
+                    ref (conj (str " / " (md/code (str ref)))))
         head (str/join "" head-bits)
         sub (when (non-blank? label) (md/italic label))
         args-block (when (some? args)
@@ -330,10 +291,10 @@
           stdout-block
           stderr-block
           error-block
-          (when provenance
-            (md/details (md/summary "provenance")
+          (when info
+            (md/details (md/summary "info")
               (as-markdown-fence "edn"
-                (with-out-str (pp/pprint provenance)))))]
+                (with-out-str (pp/pprint info)))))]
       (remove nil?)
       (remove str/blank?)
       (str/join "\n\n"))))
@@ -341,13 +302,13 @@
 (defn system-call->md
   "Render a `:vis.presentation/system-call` block. Same data shape as
    tool-call; uses `**SYSTEM**` heading and a slightly different
-   default body — system events often carry no args, just a status
+   default body - system events often carry no args, just a status
    + body text."
   [opts]
   (let [{:keys [op label body args result error rendering-kind]} opts
         op-str (format-op (or op (:tool opts)))
         head (str (md/bold "SYSTEM") " " (md/code op-str)
-               (when (:status opts) (str " · " (format-status (:status opts)))))
+               (when (:status opts) (str " / " (format-status (:status opts)))))
         sub (when (non-blank? label) (md/italic label))
         body-text (when body
                     (let [s (->str body)]
@@ -380,8 +341,8 @@
   [{:keys [message type reason received-type raw-preview advice
            iteration provider model classification status]}]
   (let [head (str (md/bold "PROVIDER ERROR")
-               (when classification (str " · " (md/code (kw-name classification))))
-               (when iteration (str " · iteration " iteration)))
+               (when classification (str " / " (md/code (kw-name classification))))
+               (when iteration (str " / iteration " iteration)))
         meta-bits (cond-> []
                     provider (conj (str "provider: " (md/code (kw-name provider))))
                     model (conj (str "model: " (md/code (str model))))
@@ -389,7 +350,7 @@
                     reason (conj (str "reason: " (md/code (kw-name reason))))
                     received-type (conj (str "received: " (md/code (str received-type))))
                     status (conj (str "status: " (md/code (format-status status)))))
-        meta-line (when (seq meta-bits) (str/join " · " meta-bits))
+        meta-line (when (seq meta-bits) (str/join " / " meta-bits))
         msg (when (non-blank? message)
               (str (md/bold "Message:") " " (->str message)))
         raw (when (non-blank? raw-preview)
@@ -422,202 +383,6 @@
       (str/join "\n\n"))))
 
 ;; ---------------------------------------------------------------------------
-;; Audit report builders
-;; ---------------------------------------------------------------------------
-
-(defn- safe-coll [x]
-  (cond
-    (nil? x) []
-    (sequential? x) (vec x)
-    :else [x]))
-
-(defn- summarise-counts
-  "Auto-derive `:counts` if not supplied. Lossless: returns the union
-   of `:counts` and any auto-derived counts."
-  [{:keys [counts events bundles attestations gates plans intents guards]}]
-  (let [auto {:events (count (safe-coll events))
-              :bundles (count (safe-coll bundles))
-              :attestations (count (safe-coll attestations))
-              :gates (count (safe-coll gates))
-              :plans (count (safe-coll plans))
-              :intents (count (safe-coll intents))
-              :violations (count (safe-coll (:violations guards)))}]
-    (merge auto (or counts {}))))
-
-(defn- audit-summary-line
-  "One-line collapsed summary for an audit report.
-
-       Audit · 7 events · 3 attestations · 2 intents (1 fulfilled) · ✓ guards"
-  [{:keys [title counts intents guards]}]
-  (let [counts (or counts {})
-        intent-statuses (frequencies (keep :status (safe-coll intents)))
-        fulfilled (get intent-statuses :fulfilled 0)
-        bits (cond-> []
-               (pos? (or (:events counts) 0))
-               (conj (str (:events counts) " events"))
-
-               (pos? (or (:attestations counts) 0))
-               (conj (str (:attestations counts) " attestations"))
-
-               (pos? (or (:gates counts) 0))
-               (conj (str (:gates counts) " gates"))
-
-               (pos? (or (:plans counts) 0))
-               (conj (str (:plans counts) " plans"))
-
-               (pos? (or (:intents counts) 0))
-               (conj (str (:intents counts) " intents"
-                       (when (pos? fulfilled)
-                         (str " (" fulfilled " fulfilled)")))))
-        guard-str (cond
-                    (nil? guards) nil
-                    (:success? guards) "✓ guards"
-                    :else (str "✗ " (count (or (:violations guards) [])) " guard violations"))]
-    (str (or title "Audit")
-      (when (seq bits)
-        (str " · " (str/join " · " bits)))
-      (when guard-str
-        (str " · " guard-str)))))
-
-(defn- render-event
-  [{:keys [ref parent-ref kind op status duration-ms error]}]
-  (str "- " (md/code (or ref "?")) " "
-    (kw-name (or kind :event)) " " (md/code (format-op op))
-    (when parent-ref (str " parent " (md/code parent-ref)))
-    " → " (format-status status)
-    (when duration-ms (str ", " (format-duration-ms duration-ms)))
-    (when error (str " — " (preview (cond
-                                      (string? error) error
-                                      (map? error) (or (:message error) (pr-str error))
-                                      :else (str error))
-                             180)))))
-
-(defn- render-bundle
-  [{:keys [id kind subject-ref attester decision status]}]
-  (str "- " (md/code (str (or id "?"))) " "
-    (when kind (str (kw-name kind) " "))
-    (when subject-ref (str "→ " (md/code subject-ref) " "))
-    (when attester (str "by " (md/code (str attester)) " "))
-    (when decision (str (kw-name decision) " "))
-    (when status (md/italic (kw-name status)))))
-
-(defn- render-attestation
-  [{:keys [id kind subject-id decision status reason]}]
-  (str "- " (md/code (str (or id "?"))) " "
-    (when kind (str (kw-name kind) " "))
-    (when subject-id (str "→ " (md/code (str subject-id)) " "))
-    (when decision (str (kw-name decision) " "))
-    (when status (md/italic (kw-name status)))
-    (when (non-blank? reason) (str " — " (preview reason 180)))))
-
-(defn- render-gate
-  [{:keys [id proposition question status]}]
-  (str "- " (md/code (str (or id "?"))) " "
-    (md/italic (or proposition question "Gate"))
-    (when status (str " · " (format-status status)))))
-
-(defn- render-plan
-  [{:keys [id summary status]}]
-  (str "- " (md/code (str (or id "?"))) " "
-    (when (non-blank? summary) summary)
-    (when status (str " · " (format-status status)))))
-
-(defn- render-intent
-  [{:keys [id title status rationale]}]
-  (str "- " (md/code (str (or id "?"))) " "
-    (md/bold (or title "Intent"))
-    (when status (str " · " (format-status status)))
-    (when (non-blank? rationale) (str " — " (preview rationale 180)))))
-
-(defn- render-section
-  "Render one audit section as a heading + bullet list, or `nil` when
-   the coll is empty."
-  [title coll renderer]
-  (when (seq coll)
-    (str (md/h3 title) "\n\n"
-      (str/join "\n" (map renderer coll)))))
-
-(defn audit-report->md
-  "Render a `:vis.presentation/audit-report` map as Markdown.
-
-   When `:collapsed?` is true (default), the output is:
-
-       <details>
-         <summary>Audit · 7 events · ...</summary>
-         {full body}
-       </details>
-
-   Otherwise the full body is emitted directly. The body always
-   contains:
-
-   1. counts table (when any counts are non-zero),
-   2. guard status block,
-   3. events / bundles / attestations / gates / plans / intents
-      sections (skipped when empty),
-   4. optional Mermaid graph (always rendered as the source fence;
-      ASCII art is added when `:rendered-lines` is present).
-
-   This shape is stable across surfaces so the TUI, transcripts, and
-   judges can all consume the same Markdown."
-  [{:keys [title counts events bundles attestations gates plans intents
-           guards mermaid summary collapsed?]
-    :as report}]
-  (let [counts (summarise-counts (assoc report :counts counts))
-        title (or title "Audit")
-        summary-line (or summary (audit-summary-line (assoc report :counts counts)))
-        counts-table (when (some pos? (vals counts))
-                       (md/table ["section" "n"]
-                         (mapv (fn [[k v]] [(name k) v])
-                           (sort-by first counts))))
-        guards-block (cond
-                       (nil? guards) nil
-                       (:success? guards)
-                       (str (md/bold "Guards:") " ok")
-                       :else
-                       (str (md/bold "Guards:") " "
-                         "failed " (count (or (:violations guards) []))
-                         " check(s)"
-                         (when (seq (:violations guards))
-                           (str "\n\n"
-                             (str/join "\n"
-                               (map (fn [v]
-                                      (str "- "
-                                        (md/code (kw-name (or (:type v) :unknown)))
-                                        (when (:ref v) (str " " (md/code (:ref v))))
-                                        (when (:message v) (str " — " (:message v)))))
-                                 (:violations guards)))))))
-        mermaid-block (when mermaid
-                        (mermaid->md
-                          (cond
-                            (string? mermaid) {:vis.presentation/kind :vis.presentation/mermaid
-                                               :source mermaid}
-                            (map? mermaid) (merge {:vis.presentation/kind :vis.presentation/mermaid}
-                                             mermaid))))
-        sections (->> [(render-section "Events" events render-event)
-                       (render-section "Bundles" bundles render-bundle)
-                       (render-section "Attestations" attestations render-attestation)
-                       (render-section "Gates" gates render-gate)
-                       (render-section "Plans" plans render-plan)
-                       (render-section "Intents" intents render-intent)]
-                   (remove nil?))
-        body (str/join "\n\n"
-               (remove nil?
-                 (concat [(md/h2 title)
-                          counts-table
-                          guards-block]
-                   sections
-                   [mermaid-block])))]
-    (if collapsed?
-      (md/details (md/summary summary-line) body)
-      body)))
-
-(defn audit-report->summary
-  "One-line collapsed summary for an audit report. Useful for status
-   bars / inline citations."
-  [report]
-  (audit-summary-line (assoc report :counts (summarise-counts report))))
-
-;; ---------------------------------------------------------------------------
 ;; Dispatch
 ;; ---------------------------------------------------------------------------
 
@@ -637,8 +402,7 @@
       :vis.presentation/tool-call       (tool-call->md x)
       :vis.presentation/system-call     (system-call->md x)
       :vis.presentation/provider-error  (provider-error->md x)
-      :vis.presentation/mermaid         (mermaid->md x)
-      :vis.presentation/audit-report    (audit-report->md x))
+      :vis.presentation/mermaid         (mermaid->md x))
     :else (pr-str x)))
 
 (defn markdown-fence?

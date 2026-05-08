@@ -108,13 +108,13 @@
   (testing "resources popup rows keep click target fields and rendered labels"
     (is (= [{:text "Book"
              :url "https://example.com/book"
-             :display "📚 Book → https://example.com/book"
+             :display "📚 Book -> https://example.com/book"
              :markdown "- [Book](https://example.com/book)"
-             :label "📚 Book → https://example.com/book"}]
+             :label "📚 Book -> https://example.com/book"}]
           (dlg/resource-dialog-items
             [{:text "Book"
               :url "https://example.com/book"
-              :display "📚 Book → https://example.com/book"}]))))
+              :display "📚 Book -> https://example.com/book"}]))))
 
   (testing "resource rows use a single selector, not selector plus bullet"
     (let [resource-row-label (var-get #'dlg/resource-row-label)]
@@ -444,10 +444,10 @@
         (is (str/includes? active-label "2024-01-01 01:02"))
         (is (str/includes? active-label "Title"))
         (is (str/includes? fork-label "[forks:3]"))
-        (is (str/includes? active-label "…"))
+        (is (str/includes? active-label "..."))
         (is (str/includes? inactive-label "│ abcdef00 │"))
         (is (str/includes? inactive-label "│     0 │"))
-        (is (str/includes? inactive-label "—"))
+        (is (str/includes? inactive-label "-"))
         (is (str/includes? inactive-label "Untitled conversation"))))
 
     (testing "command palette keeps Configure Providers separate from Settings"

@@ -3,13 +3,13 @@
    real-world reproduction case.
 
    The big one: conversation `cf9e29b5-b0a4-4121-9879-d9706cc2e22a`'s
-   last answer was a multi-line `(answer (v/join …))` Polish-language
+   last answer was a multi-line `(answer (v/join ...))` Polish-language
    write-up about Polish typographic quotes, and the LLM dropped one
    close-quote in the middle. edamame surfaced the failure as
 
        Parse error: Invalid symbol: zobaczył:
 
-   pointing at line 15 — but the actual mistake was on line 14, where
+   pointing at line 15 - but the actual mistake was on line 14, where
    the line carries five (odd) unescaped double-quotes. Without a
    diagnostic hint the next iteration is told 'fix the symbol on
    line 15' and walks straight past the real bug.
@@ -25,19 +25,19 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 ;; -----------------------------------------------------------------------------
-;; Pinned reproducer — verbatim from the broken iteration block.
+;; Pinned reproducer - verbatim from the broken iteration block.
 ;; -----------------------------------------------------------------------------
 
 (def broken-snippet-from-cf9e29b5
-  ;; Verbatim copy of `(answer …)` block that failed to parse.
-  ;; DO NOT 'fix' this string — its odd-quote-count is the whole
+  ;; Verbatim copy of `(answer ...)` block that failed to parse.
+  ;; DO NOT 'fix' this string - its odd-quote-count is the whole
   ;; point of the regression. Pretty-printing or auto-balancing it
   ;; would invalidate the test.
   (str
     "(answer\n"
     "  (v/join\n"
     "    (v/h2 \"Ha, ironia :D\")\n"
-    "    (v/p \"To nie był problem z \" (v/code \"v/\") \" jako takim — to był problem z \"\n"
+    "    (v/p \"To nie był problem z \" (v/code \"v/\") \" jako takim - to był problem z \"\n"
     "      (v/bold \"polskimi cudzysłowami\") \" w stringu.\")\n"
     "    (v/h3 \"Co się stało w iteracji 12.1\")\n"
     "    (v/p \"Kod wyglądał mniej więcej tak:\")\n"
@@ -87,10 +87,10 @@
   (it "balanced plain string -> 2"
     (expect (= 2 (diag/count-unescaped-quotes "say \"hi\""))))
 
-  (it "escaped quote does NOT count — (v/code \"\\\"\") parses as 2 delimiters around the escape"
+  (it "escaped quote does NOT count - (v/code \"\\\"\") parses as 2 delimiters around the escape"
     (expect (= 2 (diag/count-unescaped-quotes "(v/code \"\\\"\")"))))
 
-  (it "a backslash before a quote is treated as the escape — even when the backslash itself was a literal in the source"
+  (it "a backslash before a quote is treated as the escape - even when the backslash itself was a literal in the source"
     ;; Raw source bytes: `say "\"\"" twice`
     ;; (Clojure literal: "say \"\\\"\\\"\" twice")
     ;; Counter walks the BYTES, treating every backslash as the
@@ -117,7 +117,7 @@
                   "  (println \"oops)\n"
                   "(println \"c\")")))))
 
-  (it "the broken snippet flags line 14 — the actual cause"
+  (it "the broken snippet flags line 14 - the actual cause"
     (expect (= 14 (diag/first-odd-quote-line broken-snippet-from-cf9e29b5)))))
 
 (defdescribe diagnose-quote-balance-test
@@ -134,7 +134,7 @@
       (expect (str/includes? (:hint d) "Unbalanced double-quote")))))
 
 ;; -----------------------------------------------------------------------------
-;; Auto-repair — parinfer-equivalent for quotes.
+;; Auto-repair - parinfer-equivalent for quotes.
 ;; -----------------------------------------------------------------------------
 
 (defn- edamame-parses? [^String src]
@@ -165,13 +165,13 @@
       (expect (some? fixed))
       (expect (edamame-parses? fixed))))
 
-  (it "REPAIRS the broken cf9e29b5 snippet — the regression that motivated this whole fn"
+  (it "REPAIRS the broken cf9e29b5 snippet - the regression that motivated this whole fn"
     (let [fixed (diag/try-quote-rebalance broken-snippet-from-cf9e29b5
                   edamame-parses?)]
       (expect (some? fixed))
       (expect (edamame-parses? fixed))
       ;; The repair is local: only the offending line should change.
-      ;; Lines 1–13 and 15+ stay byte-identical.
+      ;; Lines 1-13 and 15+ stay byte-identical.
       (let [original-lines (str/split-lines broken-snippet-from-cf9e29b5)
             fixed-lines    (str/split-lines fixed)]
         (expect (= (count original-lines) (count fixed-lines)))
@@ -180,7 +180,7 @@
             (expect (= (nth original-lines i) (nth fixed-lines i)))))))))
 
 ;; -----------------------------------------------------------------------------
-;; Multi-line unclosed-string regression — eeaf9651-…
+;; Multi-line unclosed-string regression - eeaf9651-...
 ;;
 ;; Different shape of the same LLM-mistake family: the model wrote
 ;; `(let [content "..."])` with a multi-line markdown blob inside
@@ -191,17 +191,17 @@
 ;; to be plain text and stumble on the first colon-suffixed token.
 ;;
 ;; The existing `try-quote-rebalance` only walks repair candidates
-;; on the FIRST odd-quote line — fine for the cf9e29b5 case where
+;; on the FIRST odd-quote line - fine for the cf9e29b5 case where
 ;; the missing close-quote is on the same line as the opener, but
 ;; broken for a multi-line unclosed string. Until the rescue is
 ;; extended to try inserting `\"` at later line breaks, this test
 ;; pins the failure shape so the gap is visible.
 ;;
 ;; Source: conversation eeaf9651-06c7-4dda-9e97-877fcef06337,
-;;         turn 760d9435-…, iter 0 (status :done, no answer).
+;;         turn 760d9435-..., iter 0 (status :done, no answer).
 ;; The verbatim 5 KB block lives at
 ;; `test/resources/parse-fixtures/eeaf9651-multi-line-unclosed-string.clj.txt`
-;; — don't pretty-print or auto-balance it; the broken byte sequence
+;; - don't pretty-print or auto-balance it; the broken byte sequence
 ;; IS the regression signature.
 ;; -----------------------------------------------------------------------------
 
@@ -217,7 +217,7 @@
     ;; The exact word edamame trips on depends on the input shape;
     ;; what matters is that it's a colon-suffixed prose token that
     ;; the reader walked into AFTER the unclosed string opener.
-    ;; In the live blob it's `with:` (line of `… search with re-seq:`).
+    ;; In the live blob it's `with:` (line of `... search with re-seq:`).
     (let [thrown (try
                    (edamame/parse-string-all multi-line-unclosed-string
                      {:all true :readers (fn [_tag] (fn [v] (list 'do v)))})
@@ -226,7 +226,7 @@
       (expect (some? thrown))
       (let [msg (.getMessage ^Throwable thrown)]
         (expect (str/includes? msg "Invalid symbol"))
-        ;; The message ends with `:` — the colon-suffixed word that
+        ;; The message ends with `:` - the colon-suffixed word that
         ;; tripped the reader. Pin the shape, not the exact word.
         (expect (re-find #"Invalid symbol: \S+:" msg)))))
 

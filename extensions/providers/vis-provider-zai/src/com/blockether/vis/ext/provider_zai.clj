@@ -1,17 +1,17 @@
 (ns com.blockether.vis.ext.provider-zai
   "Z.ai (ZhipuAI) static-API-key provider helpers. Each plan is registered as its own extension:
 
-     :zai-coding → coding-plan subscription
+     :zai-coding -> coding-plan subscription
                    (https://api.z.ai/api/coding/paas/v4).
                    Env var: `ZAI_CODING_API_KEY`.
 
-     :zai        → pay-as-you-go / `Pass` gateway
+     :zai        -> pay-as-you-go / `Pass` gateway
                    (https://api.z.ai/api/paas/v4).
                    Env var: `ZAI_API_KEY`.
 
    Both endpoints serve the same GLM model family (`glm-5-turbo`,
-   `glm-5.1`, `glm-4.7`, `glm-4.6`, `glm-4.6v`, …) with binary
-   thinking (`:zai-thinking` reasoning-style — handled by svar). They
+   `glm-5.1`, `glm-4.7`, `glm-4.6`, `glm-4.6v`, ...) with binary
+   thinking (`:zai-thinking` reasoning-style - handled by svar). They
    share helper code, but the runtime extension registry sees one
    extension entry per provider id.
 
@@ -97,7 +97,7 @@
                      (assoc current plan-tag slice))]
     (if (seq next-state)
       (save-auth-file! next-state)
-      ;; Empty file → remove on disk so the file's existence stays
+      ;; Empty file -> remove on disk so the file's existence stays
       ;; truthy with `detect-fn` semantics.
       (let [f (io/file AUTH_FILE)]
         (when (.exists f) (.delete f))))
@@ -367,7 +367,7 @@
                 (str "         export " name* "=<your-zai-api-key>"))
           env-keys)
         [""
-         "    2. Add the provider through the TUI (Ctrl+K → Providers)."
+         "    2. Add the provider through the TUI (Ctrl+K -> Providers)."
          "       The TUI prompts for the key directly and writes it to the config."
          ""
          (str "  Endpoint: " base-url)]))))
@@ -378,7 +378,7 @@
    user-visible output). We can't use `read-line` directly because
    the CLI dispatcher captures stdout/stderr to a log file; the
    shared pattern is to print instructions and accept the key from
-   the env var the user set in the shell that ran `vis providers auth …`. If
+   the env var the user set in the shell that ran `vis providers auth ...`. If
    the env var is already populated we just persist it; otherwise we
    instruct the user to set it and re-run."
   [plan-tag]
@@ -387,7 +387,7 @@
           {:keys [provider-id label env-keys base-url]} (get PLANS plan-tag)
           existing (detect-key plan-tag)]
       (cond
-        ;; Configured or already on disk → no-op so re-running auth doesn't
+        ;; Configured or already on disk -> no-op so re-running auth doesn't
         ;; require re-typing the key.
         (and existing (contains? #{:config :auth-file} (:source existing)))
         (do
@@ -397,7 +397,7 @@
           (print! (str "  Run `vis providers logout " (name provider-id) "` first to switch stored keys."))
           :already-authenticated)
 
-        ;; Env var is set but not persisted → write it through to
+        ;; Env var is set but not persisted -> write it through to
         ;; the file so subsequent runs read the persisted key
         ;; directly, independent of the user's shell env.
         (and existing (= :env-var (:source existing)))
@@ -410,7 +410,7 @@
           (print! (str "  " label " is ready (endpoint: " base-url ")."))
           :ok)
 
-        ;; Nothing anywhere → tell the user how to provide one.
+        ;; Nothing anywhere -> tell the user how to provide one.
         :else
         (do
           (doseq [line (auth-instruction-lines plan-tag)]
@@ -448,7 +448,7 @@
 ;; Provider registration
 ;;
 ;; Loading this namespace registers ONE extension entry per plan.
-;; `:zai-coding` and `:zai` are independent first-class providers —
+;; `:zai-coding` and `:zai` are independent first-class providers -
 ;; `vis providers auth zai-coding`, `vis providers status zai`,
 ;; per-plan logout, etc. all work. The TUI's add-provider picker shows
 ;; them as two separate cards driven by each provider's preset metadata.

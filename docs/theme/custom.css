@@ -1,6 +1,6 @@
-/* Vis docs — clean overrides for mdBook */
+/* Vis docs - clean overrides for mdBook */
 
-/* Light theme only — hide the theme picker */
+/* Light theme only - hide the theme picker */
 #theme-list,
 #theme-toggle {
   display: none !important;

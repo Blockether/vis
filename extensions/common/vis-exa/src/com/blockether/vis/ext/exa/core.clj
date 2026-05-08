@@ -6,7 +6,7 @@
    Important distinction: normal Exa REST APIs require `x-api-key`.
    The public MCP endpoint supports basic unauthenticated usage and an
    optional `exaApiKey` query parameter for higher limits. We never log
-   or surface that key; redacted endpoints are used in provenance and
+   or surface that key; redacted endpoints are used in info and
    errors."
   (:require
    [babashka.http-client :as http]
@@ -438,12 +438,12 @@
 (defn- render-exa-result
   [{:keys [tool-result]}]
   (if-not (:success? tool-result)
-    (let [op    (get-in tool-result [:provenance :op])
+    (let [op    (get-in tool-result [:info :op])
           query (get-in tool-result [:result :query])]
       (md/p "Exa" (md/code op) "failed for" (md/code query) ":"
         (or (get-in tool-result [:error :message]) (pr-str (:error tool-result)))))
     (let [{:keys [query content truncated? temp-file]} (:result tool-result)
-          op (get-in tool-result [:provenance :op])]
+          op (get-in tool-result [:info :op])]
       (md/join
         (md/p "Exa" (md/code op) ":" (md/code query))
         content
@@ -466,11 +466,11 @@
         result    (cond-> result temp-file (assoc :temp-file temp-file))]
     (extension/success
       {:result result
-       :provenance {:op op
-                    :target {:kind :exa-mcp
-                             :tool tool-name
-                             :query query
-                             :endpoint (redact-endpoint endpoint)}}})))
+       :info {:op op
+              :target {:kind :exa-mcp
+                       :tool tool-name
+                       :query query
+                       :endpoint (redact-endpoint endpoint)}}})))
 
 (defn- tool-failure
   [op tool-name query endpoint throwable]
@@ -478,11 +478,11 @@
     {:result {:tool tool-name
               :query query
               :endpoint (when endpoint (redact-endpoint endpoint))}
-     :provenance {:op op
-                  :target {:kind :exa-mcp
-                           :tool tool-name
-                           :query query
-                           :endpoint (when endpoint (redact-endpoint endpoint))}}
+     :info {:op op
+            :target {:kind :exa-mcp
+                     :tool tool-name
+                     :query query
+                     :endpoint (when endpoint (redact-endpoint endpoint))}}
      :throwable throwable}))
 
 (defn- kw-get

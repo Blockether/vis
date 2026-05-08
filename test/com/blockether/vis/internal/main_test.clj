@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.main-test
-  "Smoke tests for `com.blockether.vis.internal.main` — the host CLI
+  "Smoke tests for `com.blockether.vis.internal.main` - the host CLI
    binary's namespace. Exercises the public introspection fn
    (`list-extensions`) plus the private rendering helpers powering
    `vis extensions list`: namespace shortener and word-wrapper."
@@ -40,14 +40,14 @@
           encoded  (main/result->json
                      {:answer "ok"
                       :status :done
-                      :trace [{:expected-proof {:slots {slot-key {:required? true}}}
+                      :trace [{:expected {:slots {slot-key {:required? true}}}
                                :entry (first {:k :v})
                                :exception (ex-info "boom" {:reason :bad-key})}]})
           decoded  (json/read-json encoded)]
       (expect (= "ok" (get decoded "answer")))
       (expect (= "done" (get decoded "status")))
       (expect (= {"required?" true}
-                (get-in decoded ["trace" 0 "expected-proof" "slots"
+                (get-in decoded ["trace" 0 "expected" "slots"
                                  "[#uuid \"00000000-0000-0000-0000-000000000001\" :verification]"])))
       (expect (= ["k" "v"] (get-in decoded ["trace" 0 "entry"])))
       (expect (= "boom" (get-in decoded ["trace" 0 "exception" "message"])))
@@ -134,7 +134,7 @@
                                     :api-key "tok"
                                     :models [{:name "glm-5-turbo"}
                                              {:name "glm-5.1"}]}]}
-          db-spec     {:backend :sqlite :path ".verification/proof-regression/test/vis.db"}
+          db-spec     {:backend :sqlite :path ".verification/model-override/test/vis.db"}
           events      (atom [])]
       (expect (= [:openai-codex :zai-coding] (mapv :id (:providers base-config))))
       (expect (= [:zai-coding :openai-codex]
@@ -267,7 +267,7 @@
           (expect (= ["tui" "telegram" "cli"] (mapv :last-channel rows)))
           (expect (= [1 1 0] (mapv :turns rows)))
           (expect (= [1 0 2] (mapv :forks rows)))
-          (expect (= "—" (:last-turn (last rows)))))))))
+          (expect (= "-" (:last-turn (last rows)))))))))
 
 (defdescribe wrap-str-test
   (describe "short input"

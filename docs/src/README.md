@@ -24,8 +24,8 @@ The point of this book is to explain how to use Vis, how the runtime is shaped, 
 
 Start here:
 
-- [Getting Started](usage.md) — install layouts, fork/dev setup, auth, CLI, TUI, Telegram, and embedding.
-- [Architecture Overview](architecture/overview.md) — the runtime layers and ownership boundaries.
-- [Packages](architecture/packages.md) — how the repo is split into jars/extensions.
-- [Extension System](extensions/overview.md) — how tools and channels plug into Vis.
+- [Getting Started](usage.md) - install layouts, fork/dev setup, auth, CLI, TUI, Telegram, and embedding.
+- [Architecture Overview](architecture/overview.md) - the runtime layers and ownership boundaries.
+- [Packages](architecture/packages.md) - how the repo is split into jars/extensions.
+- [Extension System](extensions/overview.md) - how tools and channels plug into Vis.
 

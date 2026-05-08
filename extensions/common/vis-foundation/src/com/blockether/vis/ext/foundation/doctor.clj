@@ -24,7 +24,7 @@
                           :error level for prominence in the
                           doctor output.
 
-   These section fns are pure data → message-seq; they don't mutate
+   These section fns are pure data -> message-seq; they don't mutate
    anything and don't depend on the runtime environment beyond
    what's needed to read the existing scanners. Activation
    contract per plan: every registered extension's `:ext/doctor-check-fn`
@@ -35,12 +35,12 @@
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.environment.agents :as agents]
-   [com.blockether.vis.ext.foundation.environment.skills :as skills]))
+   [com.blockether.vis.internal.skills :as skills]))
 
 (set! *warn-on-reflection* true)
 
 (defn- format-bytes [^long n]
-  ;; Locale-stable formatting — explicit Locale.US so output is
+  ;; Locale-stable formatting - explicit Locale.US so output is
   ;; deterministic across machines (no `253,1 MB` from a comma-decimal
   ;; locale).
   (cond
@@ -53,7 +53,7 @@
                               (object-array [(/ (double n) (* 1024.0 1024.0 1024.0))]))))
 
 ;; ---------------------------------------------------------------------------
-;; ::system — lifted from the old internal/main.clj's cli-doctor!
+;; ::system - lifted from the old internal/main.clj's cli-doctor!
 ;; ---------------------------------------------------------------------------
 
 (defn- system-check-fn
@@ -80,7 +80,7 @@
       :message (str "DB path: "  db-path)}]))
 
 ;; ---------------------------------------------------------------------------
-;; ::agents-md — project guidance presence
+;; ::agents-md - project guidance presence
 ;; ---------------------------------------------------------------------------
 
 (defn- agents-md-check-fn [_environment]
@@ -100,7 +100,7 @@
         :remediation "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))
 
 ;; ---------------------------------------------------------------------------
-;; ::skills — catalog summary
+;; ::skills - catalog summary
 ;; ---------------------------------------------------------------------------
 
 (defn- skills-check-fn [_environment]
@@ -117,7 +117,7 @@
                    " loaded (" repo-n " repo, " user-n " user-global)")}])))
 
 ;; ---------------------------------------------------------------------------
-;; ::voice — optional voice runtime checks
+;; ::voice - optional voice runtime checks
 ;; ---------------------------------------------------------------------------
 
 (defn- executable? [cmd]
@@ -159,9 +159,9 @@
       (let [data-dir (:data files)]
         (if (.isDirectory (io/file data-dir))
           {:level :info
-           :message (str "Piper espeak-ng-data: installed — " data-dir)}
+           :message (str "Piper espeak-ng-data: installed - " data-dir)}
           {:level       :warn
-           :message     (str "Piper espeak-ng-data: missing — " data-dir)
+           :message     (str "Piper espeak-ng-data: missing - " data-dir)
            :remediation "Run `vis extensions voice models download --piper` or set VIS_PIPER_MODEL_DIR to a complete Piper model directory."}))
       {:level :info
        :message "Piper espeak-ng-data: skipped; voice TTS is not loaded."})
@@ -176,7 +176,7 @@
    (piper-espeak-message)])
 
 ;; ---------------------------------------------------------------------------
-;; ::scan-warnings — promotes scanner warnings into doctor :error msgs
+;; ::scan-warnings - promotes scanner warnings into doctor :error msgs
 ;; ---------------------------------------------------------------------------
 
 (defn- scan-warnings-check-fn [_environment]
@@ -189,7 +189,7 @@
                :remediation (case source
                               :skill-frontmatter
                               (str "Fix the YAML frontmatter (required fields: name, description), "
-                                "then run `(vis/reload-skills!)` from `:code` or `bin/vis extensions doctor` "
+                                "then run `(reload-skills!)` from `:code` or `bin/vis extensions doctor` "
                                 "to revalidate.")
                               :agents-md
                               (str "Verify the file is readable; then run `(vis/reload-instructions!)` "

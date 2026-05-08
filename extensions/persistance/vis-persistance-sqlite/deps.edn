@@ -31,8 +31,8 @@
   com.github.seancorfield/honeysql          {:mvn/version "2.7.1368"}
   ;; Real connection pool. xerial's `SQLiteConnectionPoolDataSource`
   ;; is a JNDI-shaped façade that opens a NEW physical SQLite
-  ;; connection on every `getConnection()` — it does NOT pool. Under
-  ;; bursty workloads (5–10 db-store-iteration! writes per agent turn)
+  ;; connection on every `getConnection()` - it does NOT pool. Under
+  ;; bursty workloads (5-10 db-store-iteration! writes per agent turn)
   ;; this churns WAL/-shm files, can race with directory-level
   ;; events on macOS APFS, and surfaces sporadic SQLITE_CANTOPEN.
   ;; HikariCP wraps the underlying `SQLiteDataSource` with a real
@@ -40,16 +40,16 @@
   ;; thrash and giving us a single dispose hook that actually
   ;; releases handles.
   com.zaxxer/HikariCP                       {:mvn/version "6.2.1"}
-  ;; Flyway core — owns schema migration. The previous arrangement
+  ;; Flyway core - owns schema migration. The previous arrangement
   ;; declared flyway-core in the root vis package and shipped a
   ;; generic `migrate!` helper from `com.blockether.vis.sdk`. That
-  ;; helper had exactly one caller — this extension — so the dep and
+  ;; helper had exactly one caller - this extension - so the dep and
   ;; the helper now live together here. Other backends (none yet)
   ;; ship their own migration entry point, which is the right shape
   ;; for a per-backend concern.
   org.flywaydb/flyway-core                  {:mvn/version "12.4.0"}
   ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
-  ;; — without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
+  ;; - without this jar Flyway can't recognize a `jdbc:sqlite:` URL.
   org.flywaydb/flyway-database-nc-sqlite    {:mvn/version "12.4.0"}}
 
  :aliases

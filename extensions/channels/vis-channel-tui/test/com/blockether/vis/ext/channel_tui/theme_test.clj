@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.theme-test
   "Sanity pins for the visual palette. We can't programmatically verify
-   that 'this colour looks gold' — but we CAN pin:
+   that 'this colour looks gold' - but we CAN pin:
 
      - The constants exist and have the right RGB tuples (catches
        accidental whitespace edits / cherry-pick drops).
@@ -78,7 +78,7 @@
       ;; Per user request: the answer zone no longer paints a coloured
       ;; block. The answer is distinguished by the FINAL ANSWER header
       ;; + heading colours, nothing else. Pinning the equality keeps
-      ;; the renderer honest — if anyone re-introduces a tint, this
+      ;; the renderer honest - if anyone re-introduces a tint, this
       ;; test fails immediately.
       (expect (= [(.getRed t/terminal-bg) (.getGreen t/terminal-bg) (.getBlue t/terminal-bg)]
                 [(.getRed t/answer-bg) (.getGreen t/answer-bg) (.getBlue t/answer-bg)])))

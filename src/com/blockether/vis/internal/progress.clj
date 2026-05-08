@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.progress
-  "Streaming progress tracker — leaf module.
+  "Streaming progress tracker - leaf module.
 
    Channels (TUI, CLI agent, Telegram) consume the iteration loop's
    PHASED chunks via this tracker. Every chunk carries a `:phase`
@@ -37,8 +37,8 @@
 
    Public API:
 
-     `(make-progress-tracker)`              — fresh tracker, no callback
-     `(make-progress-tracker {:on-update})` — invokes `(on-update timeline chunk)`
+     `(make-progress-tracker)`              - fresh tracker, no callback
+     `(make-progress-tracker {:on-update})` - invokes `(on-update timeline chunk)`
                                               on every chunk
 
    Returns `{:on-chunk fn :get-timeline fn}`. Pass the `:on-chunk` fn
@@ -99,14 +99,14 @@
   (cond
     (:error chunk) :error
     (and (extension/tool-result? (:result chunk))
-      (= :v/preview (get-in chunk [:result :provenance :op]))) :preview
+      (= :v/preview (get-in chunk [:result :info :op]))) :preview
     (extension/tool-result? (:result chunk)) :tool
     :else :value))
 
 (defn- tool-result-detail
   [tool-result]
   (when (extension/tool-result? tool-result)
-    (let [prov (:provenance tool-result)]
+    (let [prov (:info tool-result)]
       (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role
                                  :spec :paths :hit-count :truncated-by
                                  :command :cwd :target])
@@ -123,7 +123,7 @@
 
 (defn- format-form-result
   "Pre-format a per-form chunk's result for renderer consumption.
-   Errors get the standard `ERROR: …` prefix; tool results dispatch
+   Errors get the standard `ERROR: ...` prefix; tool results dispatch
    through extension-owned renderers; ordinary successes get
    `safe-pr-str` (bounded pr-str). Mirrors the formatting the
    pre-streaming bulk chunk used so the TUI render code stays the
@@ -173,10 +173,13 @@
           (map (fn [chunk] {:type :thinking :thinking chunk}))
           (string-chunks delta thinking-event-target-chars))))))
 
+(defn- normalize-thinking-text [thinking]
+  (some-> thinking str str/trim))
+
 (defn- write-thinking-event [events prev-thinking new-thinking]
   (let [events       (vec (or events []))
-        prev-text    (or prev-thinking "")
-        current-text (or new-thinking "")]
+        prev-text    (or (normalize-thinking-text prev-thinking) "")
+        current-text (or (normalize-thinking-text new-thinking) "")]
     (cond
       (zero? (count current-text))
       events
@@ -236,8 +239,8 @@
 
 (defn- drop-slot
   "Drop index `idx` from `v`. Out-of-bounds idx returns `v` unchanged.
-   Used to ELIDE the `(answer …)` form from the iteration's per-form
-   parallel vectors when an iteration produces a final answer — the
+   Used to ELIDE the `(answer ...)` form from the iteration's per-form
+   parallel vectors when an iteration produces a final answer - the
    channel renders the answer text below; showing the answer call
    itself in the code trace is redundant noise."
   [v idx]
@@ -261,8 +264,8 @@
 
 (defn- elide-form-slots
   "Remove form slots at the given indices from every parallel vector
-   in `entry`. Indices shift down, which is fine — the channel
-   re-numbers in display order. Used to elide both the `(answer …)`
+   in `entry`. Indices shift down, which is fine - the channel
+   re-numbers in display order. Used to elide both the `(answer ...)`
    form and any form that returned `:vis/silent` (side-effect
    primitives like `conversation-title` that shouldn't appear in
    the code trace)."
@@ -290,7 +293,8 @@
   [entry chunk]
   (case (:phase chunk)
     :reasoning
-    (let [next-thinking (or (:thinking chunk) (:thinking entry))]
+    (let [next-thinking (or (normalize-thinking-text (:thinking chunk))
+                          (normalize-thinking-text (:thinking entry)))]
       (-> entry
         (update :events write-thinking-event (:thinking entry) next-thinking)
         (assoc :thinking next-thinking)))
@@ -307,7 +311,8 @@
     :iteration-final
     (let [duplicate-final? (and (:done? entry) (:final entry) (:final chunk))
           base (assoc entry
-                 :thinking (or (:thinking chunk) (:thinking entry))
+                 :thinking (or (normalize-thinking-text (:thinking chunk))
+                             (normalize-thinking-text (:thinking entry)))
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
           ;; Collect all form indices to elide: the answer-bearing
@@ -325,11 +330,12 @@
 
     :iteration-error
     (assoc entry
-      :thinking (or (:thinking chunk) (:thinking entry))
+      :thinking (or (normalize-thinking-text (:thinking chunk))
+                  (normalize-thinking-text (:thinking entry)))
       :error    (:error chunk)
       :done?    true)
 
-    ;; Unknown / missing :phase — leave the entry as-is.
+    ;; Unknown / missing :phase - leave the entry as-is.
     entry))
 
 (defn make-progress-tracker

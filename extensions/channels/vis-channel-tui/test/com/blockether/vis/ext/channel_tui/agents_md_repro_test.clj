@@ -15,7 +15,7 @@
      1. parser emits a non-empty vector,
      2. every blank line in the input -> at least one corresponding
         blank line in the output (otherwise paragraph breaks are
-        being eaten — the canonical `rozjebane newline` symptom),
+        being eaten - the canonical `rozjebane newline` symptom),
      3. every `#`/`##`/`###`+ heading in the input maps to an H*
         marker in the output (no heading silently demoted to plain),
      4. consecutive bullet items in the input never get merged into
@@ -36,7 +36,7 @@
 
 (def ^:private wrap-w 100)
 
-;; ── marker → label table ──────────────────────────────────────────
+;; ── marker -> label table ──────────────────────────────────────────
 
 (def ^:private marker->label
   {p/MARKER_MD_H1         "H1     "
@@ -70,7 +70,7 @@
     s))
 
 (defn- strip-inline-sentinels
-  "Replace inline span sentinels (\\uE110…\\uE117) with visible
+  "Replace inline span sentinels (\\uE110...\\uE117) with visible
    `[B]/[/B]/[I]/[/I]/[S]/[/S]/[C]/[/C]` so the dump reads like
    pseudo-HTML instead of raw PUA noise."
   ^String [^String s]
@@ -86,13 +86,13 @@
 
 (defn- visible
   "Drop the leading line marker, render inline sentinels as readable
-   tags, render trailing whitespace as `·` so we can see hard breaks."
+   tags, render trailing whitespace as `/` so we can see hard breaks."
   ^String [^String s]
   (let [body (strip-inline-sentinels (body-of s))]
     (cond
       (zero? (count body)) "(blank)"
       :else                (str/replace body #"\s+$"
-                             (fn [m] (str/join (repeat (count m) \·)))))))
+                             (fn [m] (str/join (repeat (count m) \/)))))))
 
 ;; ── dump writer ──────────────────────────────────────────────────
 
@@ -105,10 +105,10 @@
         max-w     50
         clip      (fn [^String s]
                     (if (> (count s) max-w)
-                      (str (subs s 0 (- max-w 1)) "…")
+                      (str (subs s 0 (- max-w 1)) "...")
                       s))
         sb        (StringBuilder.)]
-    (.append sb (str "AGENTS.md → markdown->lines repro\n"
+    (.append sb (str "AGENTS.md -> markdown->lines repro\n"
                   "================================\n"
                   "wrap width : " wrap-w "\n"
                   "input lines: " in-count "\n"
@@ -126,10 +126,10 @@
       (let [in-line  (when (< i in-count) (nth in-lines i))
             out-line (when (< i out-count) (nth out-lines i))
             in-disp  (cond
-                       (nil? in-line)         "·"
+                       (nil? in-line)         "/"
                        (str/blank? in-line)   "(blank)"
                        :else                  (clip in-line))
-            out-disp (if out-line (clip (visible out-line)) "·")
+            out-disp (if out-line (clip (visible out-line)) "/")
             label    (if out-line (label-of out-line) "       ")]
         (.append sb (format " %4d │ %-50s │ %4d │ %-7s │ %s%n"
                       (inc i)
@@ -142,7 +142,7 @@
 ;; ── invariants extracted from the input ──────────────────────────
 
 (defn- count-blank-runs
-  "Count maximal runs of blank lines in `lines` — that's what we
+  "Count maximal runs of blank lines in `lines` - that's what we
    should observe roughly as blank rows in the output."
   [lines]
   (->> lines
@@ -152,7 +152,7 @@
 
 (defn- visually-blank? [^String l]
   ;; A row is visually blank when, after stripping the leading marker
-  ;; (if any), nothing remains — even if the row carries a non-blank
+  ;; (if any), nothing remains - even if the row carries a non-blank
   ;; PUA marker char like `MARKER_MD_CODE`. The marker is invisible
   ;; (zero-width PUA) and only paints background colour, so the row
   ;; reads to the user as a blank visual line.
@@ -194,9 +194,9 @@
                                out-lines))]
           (expect (= in-headings out-headings)
             (str "expected " in-headings " heading rows, got "
-              out-headings " — see " dump-path))))
+              out-headings " - see " dump-path))))
 
-      (it "every blank-line RUN in the input survives as ≥1 blank row in the output"
+      (it "every blank-line RUN in the input survives as >=1 blank row in the output"
         ;; The canonical "rozjebane newline" smell: `md/join` emits
         ;; `\n\n` between blocks, the parser collapses every blank
         ;; line into nothing, and bullets / paragraphs visually fuse.
@@ -207,7 +207,7 @@
               out-blanks    (count-blank out-lines)]
           (expect (>= out-blanks in-blank-runs)
             (str "input had " in-blank-runs " blank-line runs, "
-              "output has only " out-blanks " blank rows — paragraph "
+              "output has only " out-blanks " blank rows - paragraph "
               "breaks are being swallowed; see " dump-path))))
 
       (it "every input bullet maps to a bullet row in the output"
@@ -222,5 +222,5 @@
                               out-lines))]
           (expect (>= out-bullets in-bullets)
             (str "input has " in-bullets " bullet items, output only "
-              out-bullets " bullet rows — bullets are fusing; see "
+              out-bullets " bullet rows - bullets are fusing; see "
               dump-path)))))))

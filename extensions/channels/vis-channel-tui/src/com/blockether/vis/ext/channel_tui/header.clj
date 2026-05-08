@@ -11,7 +11,7 @@
      Color-coded by `:level` (success / info / warn / error). Empty
      when no notification is active. The host notifications module
      is the single source of truth for cross-channel ephemeral
-     signals — any extension or channel can `(v/notify! …)` and the
+     signals - any extension or channel can `(v/notify! ...)` and the
      banner surfaces here. Voice/recording status is NOT rendered here;
      it lives in the RIGHT slot so it cannot collide with notifications.
    - CENTER: conversation title from app-db (`:title`). When the
@@ -22,7 +22,7 @@
      `⧉` affordance that drops the FULL UUID onto the system
      clipboard, followed by `| ⧉ Transcript` for whole-conversation
      Markdown copy. Visual feedback is the LEFT-slot `✓ Copied!` notification
-     — same mechanism every other cross-channel signal flows through.
+     - same mechanism every other cross-channel signal flows through.
 
    Pure draw: reads `:title` and `:conversation` from app-db, the
    active notifications list from `vis.core/notifications`, writes
@@ -30,7 +30,7 @@
 
    Repaint: the banner updates as notifications come and go.
    `screen.clj` registers a watcher on screen mount that bumps the
-   render version for any change, so a `(notify! …)` from anywhere
+   render version for any change, so a `(notify! ...)` from anywhere
    nudges this band to repaint immediately."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
@@ -115,11 +115,11 @@
     (cond
       (<= max-chars 0) ""
       (<= (count text) max-chars) text
-      :else (str (subs text 0 (max 0 (dec max-chars))) "…"))))
+      :else (str (subs text 0 (max 0 (dec max-chars))) "..."))))
 
 (defn- latest-notification
   "Most-recently-pushed active notification, or nil. We display ONE
-   at a time in the header — the LEFT slot is a single row. If
+   at a time in the header - the LEFT slot is a single row. If
    multiple are active simultaneously, the freshest wins; older ones
    stay in the queue and surface as the freshest one expires."
   []
@@ -240,7 +240,7 @@
                        (cond
                          (zero? left-cap)              ""
                          (<= (count notif-text) left-cap) notif-text
-                         :else (str (subs notif-text 0 (max 0 (dec left-cap))) "…")))
+                         :else (str (subs notif-text 0 (max 0 (dec left-cap))) "...")))
         left-w       (or (some-> left-trim count) 0)
         gap          2
         title-max    (max 0 (- cols (* 2 edge-pad) right-w left-w
@@ -297,7 +297,7 @@
     (p/set-colors! g t/footer-fg t/terminal-bg)
     (p/fill-rect! g 0 content-row cols 1)
 
-    ;; LEFT — latest notification banner.
+    ;; LEFT - latest notification banner.
     (when (pos? left-w)
       (p/clear-styles! g)
       (p/set-colors! g (level->fg notif-level) t/terminal-bg)
@@ -305,7 +305,7 @@
       (p/put-str! g edge-pad content-row left-trim)
       (p/clear-styles! g))
 
-    ;; CENTER — current conversation title only. Conversation switching lives
+    ;; CENTER - current conversation title only. Conversation switching lives
     ;; in the Alt+Shift+↑/↓ picker, not as persistent header tabs.
     (when (pos? title-w)
       (p/clear-styles! g)
@@ -316,7 +316,7 @@
       (p/put-str! g title-col content-row title-trim)
       (p/clear-styles! g))
 
-    ;; RIGHT — live channel status (voice recording/transcribing) + copy
+    ;; RIGHT - live channel status (voice recording/transcribing) + copy
     ;; conversation ID block + Markdown transcript export label. Keeping the
     ;; live voice status on the right leaves the left notification lane free.
     ;; Visual hover feedback: when either clickable region is hovered,

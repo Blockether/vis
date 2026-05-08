@@ -1,5 +1,5 @@
 -- =============================================================================
--- V1 — vis schema (SQLite)
+-- V1 - vis schema (SQLite)
 --
 -- Runtime process diagram
 --
@@ -18,10 +18,6 @@
 --          │         │    └─ expression_state (var versions only)
 --          │         │
 --          │
---          ├─ conversation_intent / plan / gate (conversation-scoped)
---          │    └─ conversation_intent_focus (turn-state sidecar)
---          │         refs into iteration.blocks provenance timeline
---          │
 --          └─ expression_soul (branch-local var identities, kind='var')
 --               └─ expression_dependency (var dependency graph, soul-level)
 --
@@ -29,7 +25,7 @@
 --   user ask -> conversation_turn_soul/conversation_turn_state -> iterations
 --     each iteration writes its full block log inline into
 --     iteration.blocks plus one expression_soul + expression_state
---     row per `(def …)` it executed
+--     row per `(def ...)` it executed
 --   -> conversation_turn_state done/error -> next turn (or branch/fork to new conversation_state)
 --
 -- Fork flow:
@@ -42,7 +38,7 @@
 PRAGMA foreign_keys = ON;
 
 -- =============================================================================
--- Conversation soul — pure identity.
+-- Conversation soul - pure identity.
 -- metadata is a JSON blob for channel bindings and external IDs.
 -- =============================================================================
 CREATE TABLE conversation_soul (
@@ -55,7 +51,7 @@ CREATE INDEX idx_conv_soul_created
   ON conversation_soul(created_at DESC);
 
 -- =============================================================================
--- Conversation state — forkable mutable snapshot.
+-- Conversation state - forkable mutable snapshot.
 -- =============================================================================
 CREATE TABLE conversation_state (
   id                    TEXT PRIMARY KEY NOT NULL,
@@ -78,7 +74,7 @@ CREATE INDEX idx_conv_state_parent
   ON conversation_state(parent_state_id);
 
 -- =============================================================================
--- Turn soul — immutable identity of a user request, branch-local.
+-- Turn soul - immutable identity of a user request, branch-local.
 -- =============================================================================
 CREATE TABLE conversation_turn_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
@@ -128,7 +124,7 @@ BEGIN
 END;
 
 -- =============================================================================
--- Conversation turn state — one run of conversation_turn_soul.
+-- Conversation turn state - one run of conversation_turn_soul.
 -- Retry = new state version.
 -- =============================================================================
 CREATE TABLE conversation_turn_state (
@@ -147,14 +143,13 @@ CREATE TABLE conversation_turn_state (
                                CHECK (status IN ('running', 'done', 'error', 'interrupted')),
   metadata                     TEXT,        -- JSON-encoded object/string
   -- Per-turn final outcome, derived at turn end. Lets the next turn's
-  -- handover digest say "previous turn complete | abandoned | cancelled
-  -- | error" without scanning every iteration. Set by the iteration
+  -- handover digest say "previous turn complete | cancelled | error"
+  -- without scanning every iteration. Set by the iteration
   -- loop on the terminal iteration and by
   -- sweep-orphaned-running-turns! for cancelled / orphaned turns.
   prior_outcome                TEXT
                                CHECK (prior_outcome IS NULL OR
-                                      prior_outcome IN ('complete', 'abandoned',
-                                                        'cancelled', 'error')),
+                                      prior_outcome IN ('complete', 'cancelled', 'error')),
   created_at                   INTEGER NOT NULL,
 
   UNIQUE (conversation_turn_soul_id, version)
@@ -167,7 +162,7 @@ CREATE INDEX idx_conversation_turn_state_forked_from
   ON conversation_turn_state(forked_from_conversation_turn_state_id);
 
 -- =============================================================================
--- Iteration — one LLM round-trip within a conversation_turn_state.
+-- Iteration - one LLM round-trip within a conversation_turn_state.
 -- =============================================================================
 CREATE TABLE iteration (
   id                              TEXT PRIMARY KEY NOT NULL,
@@ -194,7 +189,7 @@ CREATE TABLE iteration (
   -- Raw-response diagnostics for provider / extraction forensics.
   -- Full raw text is persisted so investigations can query the DB
   -- instead of grepping process logs. Preview / length / hash keep
-  -- cheap list views and evidence comparison available too.
+  -- cheap list views and diagnostics available too.
   llm_raw_response                TEXT,
   llm_raw_response_preview        TEXT,
   llm_raw_response_length         INTEGER CHECK (
@@ -210,7 +205,7 @@ CREATE TABLE iteration (
   -- cached tokens are subsets of completion / prompt respectively;
   -- callers that want "input minus cached" compute it themselves.
   -- Cost is provider-side estimated USD via the router's pricing
-  -- table — recorded so historical rows survive future price
+  -- table - recorded so historical rows survive future price
   -- changes.
   llm_input_tokens                INTEGER CHECK (
                                     llm_input_tokens IS NULL OR llm_input_tokens >= 0
@@ -242,7 +237,7 @@ CREATE TABLE iteration (
   --     :duration-ms       N
   --     :timeout?          true | absent
   --     :repaired?         true | absent}
-  --    …]
+  --    ...]
   --
   -- \"Block\" matches the LLM-facing prompt vocabulary (each
   -- top-level form inside a fenced ```clojure ... ``` block). The
@@ -250,11 +245,11 @@ CREATE TABLE iteration (
   -- per-iteration anyway, so per-call rows added cost without index
   -- value. Var rows stay
   -- first-class (expression_soul kind='var') because var-history is
-  -- the keystone of the data model — versioned, branched,
+  -- the keystone of the data model - versioned, branched,
   -- dependency-graphed.
   blocks                          BLOB,
 
-  -- Index of the form that called `(answer …)` when the iteration
+  -- Index of the form that called `(answer ...)` when the iteration
   -- produced a final answer. Channels render the answer text below;
   -- this slot lets readers ELIDE that form from the displayed call
   -- log without re-walking the source. NULL for non-terminal
@@ -307,522 +302,7 @@ BEGIN
 END;
 
 -- =============================================================================
--- Provenance event ledger — immutable runtime observations.
--- =============================================================================
-CREATE TABLE provenance_event (
-  id                         TEXT PRIMARY KEY NOT NULL,
-  conversation_soul_id       TEXT NOT NULL
-                             REFERENCES conversation_soul(id) ON DELETE CASCADE,
-  conversation_turn_soul_id  TEXT
-                             REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
-  conversation_turn_state_id TEXT
-                             REFERENCES conversation_turn_state(id) ON DELETE SET NULL,
-  iteration_id               TEXT
-                             REFERENCES iteration(id) ON DELETE SET NULL,
-  ref                        TEXT NOT NULL CHECK (trim(ref) <> ''),
-  parent_ref                 TEXT CHECK (parent_ref IS NULL OR trim(parent_ref) <> ''),
-  kind                       TEXT NOT NULL
-                             CHECK (kind IN ('eval', 'tool', 'error', 'answer', 'system', 'diagnostic', 'lifecycle')),
-  op                         TEXT NOT NULL CHECK (trim(op) <> ''),
-  status                     TEXT NOT NULL
-                             CHECK (status IN ('running', 'done', 'error', 'interrupted', 'timeout', 'cancelled')),
-  rendering_kind             TEXT CHECK (rendering_kind IS NULL OR trim(rendering_kind) <> ''),
-  payload                    BLOB,
-  payload_sha256             TEXT CHECK (payload_sha256 IS NULL OR trim(payload_sha256) <> ''),
-  summary                    TEXT CHECK (summary IS NULL OR trim(summary) <> ''),
-  metadata                   BLOB,
-  created_at                 INTEGER NOT NULL,
-
-  UNIQUE (conversation_soul_id, ref)
-);
-
-CREATE INDEX idx_provenance_event_soul_created
-  ON provenance_event(conversation_soul_id, created_at);
-
-CREATE INDEX idx_provenance_event_ref
-  ON provenance_event(ref);
-
-CREATE INDEX idx_provenance_event_iteration
-  ON provenance_event(iteration_id, created_at);
-
-CREATE TRIGGER trg_provenance_event_immutable_au
-BEFORE UPDATE ON provenance_event
-BEGIN
-  SELECT RAISE(ABORT, 'provenance_event rows are immutable');
-END;
-
-CREATE TABLE evidence_bundle (
-  id                    TEXT PRIMARY KEY NOT NULL,
-  conversation_soul_id  TEXT NOT NULL
-                        REFERENCES conversation_soul(id) ON DELETE CASCADE,
-  kind                  TEXT NOT NULL
-                        CHECK (kind IN ('candidate', 'proof', 'impediment', 'completion', 'closure')),
-  subject_kind          TEXT NOT NULL CHECK (subject_kind IN ('gate', 'plan', 'intent')),
-  subject_id            TEXT NOT NULL CHECK (trim(subject_id) <> ''),
-  source                TEXT NOT NULL CHECK (source IN ('manual', 'derived', 'automatic')),
-  status                TEXT NOT NULL CHECK (status IN ('accepted', 'rejected')),
-  summary               TEXT CHECK (summary IS NULL OR trim(summary) <> ''),
-  metadata              BLOB,
-  created_at            INTEGER NOT NULL
-);
-
-CREATE INDEX idx_evidence_bundle_soul_created
-  ON evidence_bundle(conversation_soul_id, created_at);
-
-CREATE INDEX idx_evidence_bundle_subject
-  ON evidence_bundle(subject_kind, subject_id, created_at);
-
-CREATE TABLE evidence_bundle_member (
-  id              TEXT PRIMARY KEY NOT NULL,
-  bundle_id       TEXT NOT NULL REFERENCES evidence_bundle(id) ON DELETE CASCADE,
-  -- `position` records insertion order so reads return members in requirement
-  -- order. Without this, ORDER BY created_at + id was non-deterministic
-  -- inside one transaction and tests that asserted on `(last members)` flaked
-  -- depending on UUID alpha collation. See PROOF.md Task 26 / 29.
-  position        INTEGER NOT NULL DEFAULT 0,
-  slot            BLOB NOT NULL,
-  event_ref       TEXT NOT NULL CHECK (trim(event_ref) <> ''),
-  extract_path    BLOB NOT NULL,
-  derived_value   BLOB,
-  guard           BLOB,
-  guard_ok        INTEGER NOT NULL CHECK (guard_ok IN (0, 1)),
-  error_code      TEXT CHECK (error_code IS NULL OR trim(error_code) <> ''),
-  error           TEXT CHECK (error IS NULL OR trim(error) <> ''),
-  member_role     TEXT NOT NULL DEFAULT 'observation'
-                  CHECK (member_role IN ('observation', 'support', 'blocker', 'artifact', 'context')),
-  created_at      INTEGER NOT NULL,
-  UNIQUE (bundle_id, position)
-);
-
-CREATE INDEX idx_evidence_bundle_member_bundle
-  ON evidence_bundle_member(bundle_id);
-
-CREATE INDEX idx_evidence_bundle_member_ref
-  ON evidence_bundle_member(event_ref);
-
-CREATE TABLE attestation (
-  id                    TEXT PRIMARY KEY NOT NULL,
-  conversation_soul_id  TEXT NOT NULL
-                        REFERENCES conversation_soul(id) ON DELETE CASCADE,
-  -- PROOF.md Tasks 28–34 add intent lifecycle attestations: every commitment
-  -- transition (suggest/accept/defer/resume) writes an attestation row so
-  -- audit can replay the chain without prompt scraping.
-  kind                  TEXT NOT NULL
-                        CHECK (kind IN ('gate/proven', 'gate/impeded',
-                                        'plan/completed', 'plan/blocked',
-                                        'intent/suggested', 'intent/accepted',
-                                        'intent/deferred', 'intent/resumed',
-                                        'intent/fulfilled', 'intent/abandoned')),
-  subject_kind          TEXT NOT NULL CHECK (subject_kind IN ('gate', 'plan', 'intent')),
-  subject_id            TEXT NOT NULL CHECK (trim(subject_id) <> ''),
-  evidence_bundle_id    TEXT NOT NULL REFERENCES evidence_bundle(id) ON DELETE RESTRICT,
-  decision              TEXT NOT NULL
-                        CHECK (decision IN ('proven', 'impeded',
-                                            'completed', 'blocked',
-                                            'suggested', 'accepted', 'deferred', 'resumed',
-                                            'fulfilled', 'abandoned')),
-  status                TEXT NOT NULL CHECK (status IN ('accepted', 'rejected', 'superseded')),
-  reason                TEXT CHECK (reason IS NULL OR trim(reason) <> ''),
-  policy_version        TEXT CHECK (policy_version IS NULL OR trim(policy_version) <> ''),
-  -- `:user` and `:system-policy` are also legitimate attesters for the
-  -- new intent lifecycle transitions; allow them alongside the legacy set.
-  attester_kind         TEXT CHECK (attester_kind IS NULL OR attester_kind IN ('runtime', 'model', 'user', 'migration', 'system-policy')),
-  attester_id           TEXT CHECK (attester_id IS NULL OR trim(attester_id) <> ''),
-  schema_version        TEXT CHECK (schema_version IS NULL OR trim(schema_version) <> ''),
-  payload               BLOB,
-  payload_sha256        TEXT CHECK (payload_sha256 IS NULL OR trim(payload_sha256) <> ''),
-  created_at            INTEGER NOT NULL
-);
-
-CREATE INDEX idx_attestation_soul_created
-  ON attestation(conversation_soul_id, created_at);
-
-CREATE INDEX idx_attestation_subject
-  ON attestation(subject_kind, subject_id, created_at);
-
-CREATE INDEX idx_attestation_bundle
-  ON attestation(evidence_bundle_id);
-
--- =============================================================================
--- Conversation-scoped intents, plans, blocking gates, and turn focus.
---
--- Intents belong to conversation_soul. Focus belongs to one
--- conversation_turn_state so an old unrelated active intent does not block
--- every later branch/run. Provenance refs cite canonical iteration block paths.
--- =============================================================================
-CREATE TABLE conversation_intent (
-  id TEXT PRIMARY KEY NOT NULL,
-  conversation_soul_id TEXT NOT NULL REFERENCES conversation_soul(id) ON DELETE CASCADE,
-  title TEXT NOT NULL CHECK (trim(title) <> ''),
-  rationale TEXT NOT NULL CHECK (trim(rationale) <> ''),
-  -- PROOF.md Task 29: lifecycle expanded with `:suggested` (extension/system
-  -- proposal, not yet a Vis commitment) and `:deferred` (commitment waiting
-  -- on a Defer Trigger). Existing `active`/`fulfilled`/`abandoned` semantics
-  -- preserved; new states pre-date the running cursor.
-  status TEXT NOT NULL CHECK (status IN ('suggested', 'active', 'deferred', 'fulfilled', 'abandoned')),
-  -- PROOF.md Task 28: source = who proposed. `:user`, `:system`, `:extension`.
-  -- Default `'user'` keeps every existing call site backward-compatible.
-  source TEXT NOT NULL DEFAULT 'user' CHECK (source IN ('user', 'system', 'extension')),
-  -- Optional extension owner id when source = 'extension'.
-  owner_extension_id TEXT CHECK (owner_extension_id IS NULL OR trim(owner_extension_id) <> ''),
-  -- Real intent-tree parent (subintent edge stored on the child for cheap
-  -- depth-first traversal). Distinct from `conversation_intent_relation`,
-  -- which still records non-tree relations like :related, :supports, :blocks.
-  parent_intent_id TEXT REFERENCES conversation_intent(id) ON DELETE SET NULL,
-  -- Acceptance: who/when moved a `:suggested` intent into a commitment.
-  -- `:user` and `:system-policy` are the only legal kinds; extensions cannot
-  -- self-accept.
-  accepted_by_kind TEXT CHECK (accepted_by_kind IS NULL OR accepted_by_kind IN ('user', 'system-policy')),
-  accepted_by_id TEXT CHECK (accepted_by_id IS NULL OR trim(accepted_by_id) <> ''),
-  accepted_at INTEGER,
-  -- Defer trigger and sibling policy. Filled when status = 'deferred'.
-  defer_trigger_kind TEXT CHECK (defer_trigger_kind IS NULL OR defer_trigger_kind IN
-    ('user-input', 'time', 'extension-signal', 'intent')),
-  defer_trigger_payload BLOB,
-  defer_sibling_policy TEXT CHECK (defer_sibling_policy IS NULL OR defer_sibling_policy IN
-    ('continue-siblings', 'block-parent')),
-  -- Resume bookkeeping. `resumable_at` is set when the trigger has been
-  -- observed; `resumed_*` are set when a separate Resume Decision moves the
-  -- cursor.
-  resumable_at INTEGER,
-  resumed_by_kind TEXT CHECK (resumed_by_kind IS NULL OR resumed_by_kind IN ('user', 'system-policy')),
-  resumed_by_id TEXT CHECK (resumed_by_id IS NULL OR trim(resumed_by_id) <> ''),
-  resumed_at INTEGER,
-  -- Abandonment scope: `:abandon/current-intent` (default), `:current-branch`,
-  -- or `:all-running`. `NULL` means "legacy / not specified" so existing
-  -- abandonments keep the implicit `current-intent` semantics.
-  abandonment_scope TEXT CHECK (abandonment_scope IS NULL OR abandonment_scope IN
-    ('current-intent', 'current-branch', 'all-running')),
-  fulfillment_summary TEXT CHECK (fulfillment_summary IS NULL OR trim(fulfillment_summary) <> ''),
-  abandonment_reason TEXT CHECK (abandonment_reason IS NULL OR trim(abandonment_reason) <> ''),
-  created_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
-  resolved_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
-  created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
-  resolved_ref TEXT CHECK (resolved_ref IS NULL OR trim(resolved_ref) <> ''),
-  metadata TEXT,
-  created_at INTEGER NOT NULL,
-  resolved_at INTEGER,
-
-  CHECK (status <> 'fulfilled' OR
-         (fulfillment_summary IS NOT NULL AND abandonment_reason IS NULL AND resolved_at IS NOT NULL)),
-  CHECK (status <> 'abandoned' OR
-         (abandonment_reason IS NOT NULL AND fulfillment_summary IS NULL AND resolved_at IS NOT NULL)),
-  CHECK (status <> 'active' OR
-         (fulfillment_summary IS NULL AND abandonment_reason IS NULL AND resolved_at IS NULL)),
-  -- New states are pre-resolution: never carry a fulfillment/abandonment
-  -- summary or resolved_at.
-  CHECK (status NOT IN ('suggested', 'deferred') OR
-         (fulfillment_summary IS NULL AND abandonment_reason IS NULL AND resolved_at IS NULL)),
-  -- A `:deferred` intent must record at least the trigger kind so the audit
-  -- can explain WHY it was deferred. Sibling policy is recommended; default
-  -- (NULL) means `:continue-siblings`.
-  CHECK (status <> 'deferred' OR defer_trigger_kind IS NOT NULL),
-  -- Extension-owned intents must name the extension; user/system intents
-  -- must NOT.
-  CHECK ((source <> 'extension' AND owner_extension_id IS NULL) OR
-         (source = 'extension' AND owner_extension_id IS NOT NULL))
-);
-
-CREATE INDEX idx_conversation_intent_soul_status
-  ON conversation_intent(conversation_soul_id, status, created_at);
-
-CREATE INDEX idx_conversation_intent_parent
-  ON conversation_intent(parent_intent_id);
-
-CREATE INDEX idx_conversation_intent_owner
-  ON conversation_intent(owner_extension_id) WHERE owner_extension_id IS NOT NULL;
-
-CREATE INDEX idx_conversation_intent_resumable
-  ON conversation_intent(conversation_soul_id, status, resumable_at)
-  WHERE status = 'deferred' AND resumable_at IS NOT NULL;
-
--- Same-conversation parent-tree integrity: a child intent's parent_intent_id
--- must point at an intent in the same conversation, and trees cannot be
--- created across conversation_soul boundaries.
-CREATE TRIGGER trg_conversation_intent_parent_same_soul_ai
-BEFORE INSERT ON conversation_intent
-WHEN NEW.parent_intent_id IS NOT NULL
-BEGIN
-  SELECT CASE
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.parent_intent_id) IS NULL
-    THEN RAISE(ABORT, 'conversation_intent parent intent not found')
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.parent_intent_id) <> NEW.conversation_soul_id
-    THEN RAISE(ABORT, 'conversation_intent parent must belong to same conversation_soul')
-  END;
-END;
-
-CREATE TRIGGER trg_conversation_intent_parent_same_soul_au
-BEFORE UPDATE ON conversation_intent
-WHEN NEW.parent_intent_id IS NOT NULL
-BEGIN
-  SELECT CASE
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.parent_intent_id) IS NULL
-    THEN RAISE(ABORT, 'conversation_intent parent intent not found')
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.parent_intent_id) <> NEW.conversation_soul_id
-    THEN RAISE(ABORT, 'conversation_intent parent must belong to same conversation_soul')
-  END;
-END;
-
--- PROOF.md Task 32: exactly one Intent Cursor per conversation. The cursor
--- points at the currently-running intent (or NULL when nothing is running).
--- This is a single-row-per-conversation table so cardinality is enforced by
--- the PRIMARY KEY rather than a partial unique index.
-CREATE TABLE conversation_intent_cursor (
-  conversation_soul_id TEXT PRIMARY KEY NOT NULL
-    REFERENCES conversation_soul(id) ON DELETE CASCADE,
-  intent_id TEXT REFERENCES conversation_intent(id) ON DELETE SET NULL,
-  updated_at INTEGER NOT NULL
-);
-
-CREATE INDEX idx_conversation_intent_cursor_intent
-  ON conversation_intent_cursor(intent_id) WHERE intent_id IS NOT NULL;
-
--- Cursor integrity: the intent it points at must live in the same
--- conversation, must be `:active`, and must not be a descendant of an
--- abandoned ancestor. SQLite triggers cover the same-conversation rule
--- structurally; the runtime enforces the active-status rule because
--- intent state is not always known at cursor-set time.
-CREATE TRIGGER trg_conversation_intent_cursor_same_soul_ai
-BEFORE INSERT ON conversation_intent_cursor
-WHEN NEW.intent_id IS NOT NULL
-BEGIN
-  SELECT CASE
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
-    THEN RAISE(ABORT, 'conversation_intent_cursor intent not found')
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) <> NEW.conversation_soul_id
-    THEN RAISE(ABORT, 'conversation_intent_cursor intent must belong to same conversation_soul')
-  END;
-END;
-
-CREATE TRIGGER trg_conversation_intent_cursor_same_soul_au
-BEFORE UPDATE ON conversation_intent_cursor
-WHEN NEW.intent_id IS NOT NULL
-BEGIN
-  SELECT CASE
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
-    THEN RAISE(ABORT, 'conversation_intent_cursor intent not found')
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) <> NEW.conversation_soul_id
-    THEN RAISE(ABORT, 'conversation_intent_cursor intent must belong to same conversation_soul')
-  END;
-END;
-
-CREATE TABLE conversation_intent_ref (
-  id TEXT PRIMARY KEY NOT NULL,
-  intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
-  ref TEXT NOT NULL CHECK (trim(ref) <> ''),
-  role TEXT NOT NULL CHECK (role IN ('fulfillment-evidence', 'abandonment-evidence', 'context')),
-  metadata TEXT,
-  created_at INTEGER NOT NULL,
-  UNIQUE (intent_id, ref, role)
-);
-
-CREATE INDEX idx_conversation_intent_ref_intent ON conversation_intent_ref(intent_id);
-CREATE INDEX idx_conversation_intent_ref_ref ON conversation_intent_ref(ref);
-
-CREATE TABLE conversation_intent_relation (
-  id TEXT PRIMARY KEY NOT NULL,
-  from_intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
-  to_intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
-  relation TEXT NOT NULL CHECK (relation IN ('subintent', 'related', 'supports', 'blocks')),
-  rationale TEXT CHECK (rationale IS NULL OR trim(rationale) <> ''),
-  metadata TEXT,
-  created_at INTEGER NOT NULL,
-  CHECK (from_intent_id <> to_intent_id),
-  UNIQUE (from_intent_id, to_intent_id, relation)
-);
-
-CREATE TRIGGER trg_conversation_intent_relation_same_soul_ai
-BEFORE INSERT ON conversation_intent_relation
-BEGIN
-  SELECT CASE
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) IS NULL
-      OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id) IS NULL
-    THEN RAISE(ABORT, 'conversation_intent_relation endpoint not found')
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) <>
-         (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id)
-    THEN RAISE(ABORT, 'conversation_intent_relation endpoints must belong to same conversation_soul')
-  END;
-END;
-
-CREATE TRIGGER trg_conversation_intent_relation_same_soul_au
-BEFORE UPDATE ON conversation_intent_relation
-BEGIN
-  SELECT CASE
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) IS NULL
-      OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id) IS NULL
-    THEN RAISE(ABORT, 'conversation_intent_relation endpoint not found')
-    WHEN (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.from_intent_id) <>
-         (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.to_intent_id)
-    THEN RAISE(ABORT, 'conversation_intent_relation endpoints must belong to same conversation_soul')
-  END;
-END;
-
-CREATE TABLE conversation_intent_plan (
-  id TEXT PRIMARY KEY NOT NULL,
-  intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
-  status TEXT NOT NULL CHECK (status IN ('active', 'completed', 'superseded', 'abandoned')),
-  summary TEXT NOT NULL CHECK (trim(summary) <> ''),
-  plan_dsl BLOB,
-  steps BLOB,
-  supersedes_plan_id TEXT REFERENCES conversation_intent_plan(id) ON DELETE SET NULL,
-  created_conversation_turn_id TEXT REFERENCES conversation_turn_soul(id) ON DELETE SET NULL,
-  created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
-  metadata BLOB,
-  created_at INTEGER NOT NULL
-);
-
-CREATE INDEX idx_conversation_intent_plan_intent
-  ON conversation_intent_plan(intent_id, created_at);
-
-CREATE UNIQUE INDEX uq_conversation_intent_plan_one_active
-  ON conversation_intent_plan(intent_id)
-  WHERE status = 'active';
-
-CREATE TRIGGER trg_conversation_intent_plan_supersedes_ai
-BEFORE INSERT ON conversation_intent_plan
-BEGIN
-  SELECT CASE
-    WHEN NEW.supersedes_plan_id IS NOT NULL
-         AND (SELECT intent_id FROM conversation_intent_plan WHERE id = NEW.supersedes_plan_id) <> NEW.intent_id
-    THEN RAISE(ABORT, 'conversation_intent_plan supersedes must target same intent')
-  END;
-END;
-
-CREATE TRIGGER trg_conversation_intent_plan_supersedes_au
-BEFORE UPDATE ON conversation_intent_plan
-BEGIN
-  SELECT CASE
-    WHEN NEW.intent_id <> OLD.intent_id
-    THEN RAISE(ABORT, 'conversation_intent_plan intent is immutable')
-  END;
-
-  SELECT CASE
-    WHEN NEW.supersedes_plan_id IS NOT NULL
-         AND (SELECT intent_id FROM conversation_intent_plan WHERE id = NEW.supersedes_plan_id) <> NEW.intent_id
-    THEN RAISE(ABORT, 'conversation_intent_plan supersedes must target same intent')
-  END;
-END;
-
-CREATE TABLE conversation_intent_gate (
-  id TEXT PRIMARY KEY NOT NULL,
-  plan_id TEXT NOT NULL REFERENCES conversation_intent_plan(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'proven', 'impeded')),
-  required INTEGER NOT NULL DEFAULT 1 CHECK (required IN (0, 1)),
-  proposition TEXT NOT NULL CHECK (trim(proposition) <> ''),
-  expected_proof BLOB NOT NULL,
-  candidate_proof BLOB,
-  proof BLOB,
-  impediment BLOB,
-  metadata BLOB,
-  created_ref TEXT CHECK (created_ref IS NULL OR trim(created_ref) <> ''),
-  resolved_ref TEXT CHECK (resolved_ref IS NULL OR trim(resolved_ref) <> ''),
-  created_at INTEGER NOT NULL,
-  resolved_at INTEGER,
-
-  CHECK (status <> 'proven' OR
-         (proof IS NOT NULL AND impediment IS NULL AND resolved_at IS NOT NULL)),
-  CHECK (status <> 'impeded' OR
-         (impediment IS NOT NULL AND proof IS NULL AND resolved_at IS NOT NULL)),
-  CHECK (status <> 'open' OR
-         (proof IS NULL AND impediment IS NULL AND resolved_at IS NULL))
-);
-
-CREATE INDEX idx_conversation_intent_gate_plan
-  ON conversation_intent_gate(plan_id, created_at);
-
-CREATE TABLE conversation_intent_gate_ref (
-  id TEXT PRIMARY KEY NOT NULL,
-  gate_id TEXT NOT NULL REFERENCES conversation_intent_gate(id) ON DELETE CASCADE,
-  ref TEXT NOT NULL CHECK (trim(ref) <> ''),
-  role TEXT NOT NULL DEFAULT 'proof' CHECK (role IN ('proof', 'impediment', 'context')),
-  intent_id TEXT,
-  slot TEXT,
-  metadata BLOB,
-  created_at INTEGER NOT NULL,
-  UNIQUE (gate_id, ref, role, intent_id, slot)
-);
-
-CREATE INDEX idx_conversation_intent_gate_ref_gate ON conversation_intent_gate_ref(gate_id);
-CREATE INDEX idx_conversation_intent_gate_ref_ref ON conversation_intent_gate_ref(ref);
-
-CREATE TRIGGER trg_conversation_intent_gate_ref_terminal_au
-BEFORE UPDATE ON conversation_intent_gate_ref
-BEGIN
-  SELECT CASE
-    WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'impeded')
-    THEN RAISE(ABORT, 'conversation_intent_gate refs are immutable after gate is proven or impeded')
-  END;
-END;
-
-CREATE TRIGGER trg_conversation_intent_gate_ref_terminal_ad
-BEFORE DELETE ON conversation_intent_gate_ref
-BEGIN
-  SELECT CASE
-    WHEN (SELECT status FROM conversation_intent_gate WHERE id = OLD.gate_id) IN ('proven', 'impeded')
-    THEN RAISE(ABORT, 'conversation_intent_gate refs cannot be deleted after gate is proven or impeded')
-  END;
-END;
-
-CREATE TABLE conversation_intent_focus (
-  id TEXT PRIMARY KEY NOT NULL,
-  conversation_turn_state_id TEXT NOT NULL REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
-  intent_id TEXT NOT NULL REFERENCES conversation_intent(id) ON DELETE CASCADE,
-  source TEXT NOT NULL CHECK (source IN ('created', 'touched', 'inferred')),
-  metadata TEXT,
-  created_at INTEGER NOT NULL,
-  UNIQUE (conversation_turn_state_id, intent_id)
-);
-
-CREATE INDEX idx_conversation_intent_focus_turn_state
-  ON conversation_intent_focus(conversation_turn_state_id, created_at);
-
-CREATE INDEX idx_conversation_intent_focus_intent
-  ON conversation_intent_focus(intent_id);
-
-CREATE TRIGGER trg_conversation_intent_focus_same_soul_ai
-BEFORE INSERT ON conversation_intent_focus
-BEGIN
-  SELECT CASE
-    WHEN (SELECT cs.conversation_soul_id
-          FROM conversation_turn_state cts
-          JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
-          JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
-          WHERE cts.id = NEW.conversation_turn_state_id) IS NULL
-      OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
-    THEN RAISE(ABORT, 'conversation_intent_focus endpoint not found')
-    WHEN (SELECT cs.conversation_soul_id
-          FROM conversation_turn_state cts
-          JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
-          JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
-          WHERE cts.id = NEW.conversation_turn_state_id) <>
-         (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id)
-    THEN RAISE(ABORT, 'conversation_intent_focus intent must belong to turn-state conversation_soul')
-  END;
-END;
-
-CREATE TRIGGER trg_conversation_intent_focus_same_soul_au
-BEFORE UPDATE ON conversation_intent_focus
-BEGIN
-  SELECT CASE
-    WHEN (SELECT cs.conversation_soul_id
-          FROM conversation_turn_state cts
-          JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
-          JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
-          WHERE cts.id = NEW.conversation_turn_state_id) IS NULL
-      OR (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id) IS NULL
-    THEN RAISE(ABORT, 'conversation_intent_focus endpoint not found')
-    WHEN (SELECT cs.conversation_soul_id
-          FROM conversation_turn_state cts
-          JOIN conversation_turn_soul cturn ON cturn.id = cts.conversation_turn_soul_id
-          JOIN conversation_state cs ON cs.id = cturn.conversation_state_id
-          WHERE cts.id = NEW.conversation_turn_state_id) <>
-         (SELECT conversation_soul_id FROM conversation_intent WHERE id = NEW.intent_id)
-    THEN RAISE(ABORT, 'conversation_intent_focus intent must belong to turn-state conversation_soul')
-  END;
-END;
-
--- =============================================================================
--- Expression soul — identity for var bindings (and reserved literal
+-- Expression soul - identity for var bindings (and reserved literal
 -- slot). Branch-local: belongs to conversation_state.
 --
 -- kind:
@@ -866,7 +346,7 @@ CREATE UNIQUE INDEX uq_expression_soul_state_name
   WHERE name IS NOT NULL;
 
 -- =============================================================================
--- Expression dependency — downstream depends on upstream (soul-level graph).
+-- Expression dependency - downstream depends on upstream (soul-level graph).
 --
 -- Direction:
 --   upstream_expression_soul_id -> downstream_expression_soul_id
@@ -928,7 +408,7 @@ BEGIN
 END;
 
 -- =============================================================================
--- Expression state — versioned durable state emitted by expression_soul.
+-- Expression state - versioned durable state emitted by expression_soul.
 -- NOTE: write rows here only for expression_soul.state_mode='stateful'.
 -- =============================================================================
 CREATE TABLE expression_state (
@@ -1012,13 +492,12 @@ BEGIN
 END;
 
 -- =============================================================================
--- Extension aggregate — extension-owned durable sidecar state.
+-- Extension aggregate - extension-owned durable sidecar state.
 --
 -- extension_id is filled by runtime extension helpers from the registered
 -- extension identity. Extension callers should not supply or spoof it.
 --
--- iteration_block_id is a logical block id for future first-class block rows /
--- provenance ids. Current block payloads still live in iteration.blocks BLOB, so
+-- iteration_block_id is a logical block id for future first-class block rows. Current block payloads still live in iteration.blocks BLOB, so
 -- iteration_block_id is intentionally not a foreign key yet. Use
 -- iteration_block_index with iteration_id for current block-scoped state.
 -- =============================================================================
@@ -1093,7 +572,7 @@ CREATE INDEX idx_extension_aggregate_iteration_block_id
   WHERE iteration_block_id IS NOT NULL;
 
 -- =============================================================================
--- Log — structured logs.
+-- Log - structured logs.
 -- Event envelope:
 --   - event: machine-stable event key (e.g. "iteration.llm.error")
 --   - data: JSON-encoded object/string with all event payload fields
@@ -1161,7 +640,7 @@ CREATE INDEX idx_log_expression_state
   WHERE expression_state_id IS NOT NULL;
 
 -- =============================================================================
--- FTS5 — full-text search over user requests + expression state expr snapshots.
+-- FTS5 - full-text search over user requests + expression state expr snapshots.
 -- =============================================================================
 CREATE VIRTUAL TABLE search USING fts5(
   owner_table  UNINDEXED,

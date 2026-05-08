@@ -6,7 +6,7 @@
    Telegram-facing primitives:
    - `get-updates`      long-poll for incoming messages
    - `send-message!`    send text back (auto-splits at Telegram's limit)
-   - `send-chat-action!`  show 'typing…' while the LLM works
+   - `send-chat-action!`  show 'typing...' while the LLM works
    - `set-my-commands!` install the slash-command menu shown by Telegram"
   (:require [babashka.http-client :as http]
             [charred.api :as json]
@@ -25,8 +25,8 @@
 (defn get-updates
   "Long-poll Telegram for new updates.
 
-   `offset`  — lowest update_id we haven't processed (0 on first call).
-   `timeout` — seconds Telegram may hold the connection (up to 50). The HTTP
+   `offset`  - lowest update_id we haven't processed (0 on first call).
+   `timeout` - seconds Telegram may hold the connection (up to 50). The HTTP
                client timeout is bumped by 10s to cover network slack.
 
    Returns a vector of update maps (Telegram's `Update` objects)."
@@ -186,8 +186,8 @@
    Auto-splits at 4096 chars.
 
    `opts` supports:
-   - `:reply-markup` — Telegram reply_markup map, e.g. inline keyboard;
-   - `:html?` — send `text` as Telegram HTML without Markdown conversion."
+   - `:reply-markup` - Telegram reply_markup map, e.g. inline keyboard;
+   - `:html?` - send `text` as Telegram HTML without Markdown conversion."
   ([token chat-id text]
    (send-message! token chat-id text nil))
   ([token chat-id text {:keys [reply-markup html?]}]
@@ -231,7 +231,7 @@
      (catch Exception _ nil))))
 
 (defn send-chat-action!
-  "Show a transient indicator in the chat (e.g. 'typing…'). Best-effort: errors
+  "Show a transient indicator in the chat (e.g. 'typing...'). Best-effort: errors
    are swallowed because it's UX decoration, not correctness."
   [token chat-id action]
   (try

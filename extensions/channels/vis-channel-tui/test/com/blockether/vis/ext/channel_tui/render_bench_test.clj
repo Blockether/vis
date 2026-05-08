@@ -3,7 +3,7 @@
 
    Why this file exists: conversation 954bf315 (40 iterations across 5
    queries, ~2 MB of stored prompt+blocks payload) wouldn't open in
-   the TUI — `markdown->inline` ran a `str/replace` regex pre-pass
+   the TUI - `markdown->inline` ran a `str/replace` regex pre-pass
    over EVERY line of EVERY assistant bubble on EVERY redraw, which
    pegged the input thread before the first frame ever made it to the
    terminal. The pre-pass got rewritten as a hand-rolled
@@ -15,13 +15,13 @@
 
    Two surfaces:
 
-   1. `equivalence-test` — a real lazytest `defdescribe` that runs in
+   1. `equivalence-test` - a real lazytest `defdescribe` that runs in
       the default suite. Checks that the new `strip-md-links` and
       `markdown->inline` produce byte-identical output to the old
       regex-based versions on a representative corpus. This is the
       regression net.
 
-   2. `run-bench!` — invokes `criterium.core/quick-benchmark` for each
+   2. `run-bench!` - invokes `criterium.core/quick-benchmark` for each
       variant and prints the raw stats. NOT a deftest. NOT auto-run.
       Invoke explicitly:
 
@@ -50,7 +50,7 @@
 ;; 545fd16's body of `markdown->inline`, plus the standalone regex
 ;; pre-pass). Kept here forever as the baseline. If the comparison ever
 ;; gets less interesting (because someone "improves" the OLD copy), it
-;; stops being a fair fight — so DO NOT touch these unless you're
+;; stops being a fair fight - so DO NOT touch these unless you're
 ;; deliberately establishing a new baseline.
 
 (defn- strip-OLD
@@ -116,7 +116,7 @@
 ;; assistant emits when describing a code change.
 
 (def ^:private corpus-link-heavy
-  ["The bug was in [extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj:1490](extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj:1490) — the inline tokenizer was emitting the URL after the anchor text."
+  ["The bug was in [extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj:1490](extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj:1490) - the inline tokenizer was emitting the URL after the anchor text."
    "Edited [render.clj:1505](extensions/.../render.clj:1505) and added a regex pre-pass that strips `[text](url)` to just `text` before the sentinel scan."
    "**Files touched**: [render.clj](src/render.clj), [render_test.clj](test/render_test.clj), [README.md](README.md), [AGENTS.md](AGENTS.md), [deps.edn](deps.edn)."
    "See also [`docs/src/architecture.md`](docs/src/architecture.md) and [`docs/src/SUMMARY.md`](docs/src/SUMMARY.md)."])
@@ -129,10 +129,10 @@
    "Just a single [foo](bar)."])
 
 (def ^:private corpus-plain
-  ["Plain prose with no markup at all — the common case for code lines and stdout snippets."
+  ["Plain prose with no markup at all - the common case for code lines and stdout snippets."
    "Another plain line with **bold** and *italic* and `code` but no links."
    "VARIABLE_LIKE_THIS_WITH_UNDERSCORES inside text."
-   "Verified with bin/vis run --conversation-id 954bf315 — all 14 iterations render cleanly."
+   "Verified with bin/vis run --conversation-id 954bf315 - all 14 iterations render cleanly."
    ""
    "    indented code line, four spaces"])
 
@@ -174,7 +174,7 @@
 (defn- fmt-time
   "Pretty-print `seconds` using whichever unit best fits its
    magnitude (ns / µs / ms / s). Locale-pinned to ROOT so the output
-   is the same on macOS-PL, en_US, CI, etc. — comma-vs-dot drift
+   is the same on macOS-PL, en_US, CI, etc. - comma-vs-dot drift
    used to make these numbers unparseable in scripts."
   ^String [^double seconds]
   (cond
@@ -186,7 +186,7 @@
 (defn- bench-quick
   "Run criterium's quick-benchmark on `f` over the workload `xs` and
    print one line of raw stats. `quick-benchmark*` does its own JIT
-   warm-up and statistical sampling — no hand-rolled timing loops.
+   warm-up and statistical sampling - no hand-rolled timing loops.
    Returns the stats map so callers can compute speedup ratios."
   [label f xs]
   (let [body  #(run! f xs)
@@ -197,7 +197,7 @@
         upper (first (:upper-q stats))
         sample-count    (:sample-count stats)
         execution-count (:execution-count stats)]
-    (println (format "  %-46s mean=%s  sd=%s  q25=%s  q75=%s   (%d samples × %d execs)"
+    (println (format "  %-46s mean=%s  sd=%s  q25=%s  q75=%s   (%d samples x %d execs)"
                label
                (fmt-time mean)
                (fmt-time sd)
@@ -208,7 +208,7 @@
     stats))
 
 (defn- speedup-line
-  "Print 'NEW is N× faster than OLD' (or '× slower' if we regressed)
+  "Print 'NEW is Nx faster than OLD' (or 'x slower' if we regressed)
    for two stats maps returned by `bench-quick`."
   [label-old stats-old label-new stats-new]
   (let [m-old (first (:mean stats-old))
@@ -217,7 +217,7 @@
         verb  (if (>= ratio 1.0) "FASTER" "SLOWER")
         x     (if (>= ratio 1.0) ratio (/ 1.0 ratio))]
     (println (String/format java.util.Locale/ROOT
-               "  → %s vs %s: %.2f× %s"
+               "  -> %s vs %s: %.2fx %s"
                (object-array [label-new label-old x verb])))))
 
 (defn run-bench!
@@ -230,10 +230,10 @@
    deserve and bury the algorithmic delta. Both wins ship together
    in the user-visible TUI; we just attribute them honestly.
 
-       1. strip-only             — link/image pre-pass in isolation
-       2. markdown->inline cold  — full strip + tokenize, cache cleared
-                                   → isolates the algorithmic win
-       3. markdown->inline hot   — finalized bubble re-renders;
+       1. strip-only             - link/image pre-pass in isolation
+       2. markdown->inline cold  - full strip + tokenize, cache cleared
+                                   -> isolates the algorithmic win
+       3. markdown->inline hot   - finalized bubble re-renders;
                                    compares NEW-hot vs NEW-cold so
                                    the cache layer's contribution is
                                    measured against itself, not
@@ -246,7 +246,7 @@
   (let [workload corpus-all
         chars    (reduce + (map count workload))]
     (println)
-    (println (format "Workload: %d unique lines, %d chars total — measured per workload pass"
+    (println (format "Workload: %d unique lines, %d chars total - measured per workload pass"
                (count workload) chars))
     (println "(JIT warm-up + sampling handled by criterium/quick-benchmark*)")
 
@@ -315,7 +315,7 @@
 (defn run-virtual-bench!
   "Compare cold-paint cost: eager projection of every assistant
    message vs `virtual/layout` projecting only the visible subset.
-   Workload models conversation 954bf315 — 12 messages, two of which
+   Workload models conversation 954bf315 - 12 messages, two of which
    are huge trace bubbles. Cache is invalidated between iterations so
    each run pays full cold cost (the case the user sees on TUI
    startup)."
@@ -357,12 +357,12 @@
       (speedup-line "old eager" eager "new virtual" virt))
 
     (println)
-    (println "── Cold paint scrolled to TOP — the big tail bubbles must NOT format ──")
+    (println "── Cold paint scrolled to TOP - the big tail bubbles must NOT format ──")
     (bench-quick "virtual/layout (scroll=0)"
       (fn [_]
         (render/invalidate-cache!)
         (layout-fn msgs bubble-w settings 0 inner-h {}))
       [nil])
-    (println "  → only the top-of-viewport bubbles paid format cost; the")
+    (println "  -> only the top-of-viewport bubbles paid format cost; the")
     (println "    14-iter and 22-iter tail bubbles stayed as cheap estimates.")
     nil))

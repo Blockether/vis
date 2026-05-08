@@ -12,7 +12,7 @@
 
 (defn- section-msgs
   "Run the composite `check-fn` against `env`, then keep only the
-   messages stamped with the given `:check-id` — the test sees just
+   messages stamped with the given `:check-id` - the test sees just
    the section it cares about."
   [check-id env]
   (->> (doctor/check-fn env)
@@ -115,7 +115,7 @@
                         ::doctor/voice
                         ::doctor/scan-warnings}
                 ids))
-      ;; Sections appear in the documented order — system, agents-md, skills,
+      ;; Sections appear in the documented order - system, agents-md, skills,
       ;; voice, scan-warnings. Any present subset preserves that ordering.
       (let [section-order [::doctor/system ::doctor/agents-md
                            ::doctor/skills ::doctor/voice ::doctor/scan-warnings]
