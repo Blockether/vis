@@ -40,7 +40,7 @@ fi
 judge_required="$(jq -r '.judge_required // false' <<<"$task_json")"
 prompt="$(jq -r '.prompt // ""' <<<"$task_json")"
 pi_tools="$(jq -r '.pi_tools // "read,bash,edit,write,grep,find,ls"' <<<"$task_json")"
-timeout_seconds="$(jq -r '.timeout_seconds // 1800' <<<"$task_json")"
+timeout_seconds="${SIDE_TIMEOUT_SECONDS:-$(jq -r '.timeout_seconds // 1800' <<<"$task_json")}"
 
 run_id="$(date +%Y%m%d-%H%M%S)-${TASK_ID}"
 root="$repo_root/$RUN_ROOT_BASE/$run_id"
@@ -123,7 +123,7 @@ fi
 set +e
 (
   cd "$pi_wt"
-  /usr/bin/time -p -o "$root/pi/time.txt" timeout "$timeout_seconds" "${pi_cmd[@]}" \
+  /usr/bin/time -p -o "$root/pi/time.txt" timeout --kill-after=30s "${timeout_seconds}s" "${pi_cmd[@]}" \
     > "$root/pi/events.jsonl" 2> "$root/pi/stderr.txt"
 )
 pi_exit=$?
@@ -140,7 +140,7 @@ set +e
 (
   cd "$vis_wt"
   VIS_DB_PATH="$root/vis/db" VIS_CRAC=0 \
-    /usr/bin/time -p -o "$root/vis/time.txt" timeout "$timeout_seconds" \
+    /usr/bin/time -p -o "$root/vis/time.txt" timeout --kill-after=30s "${timeout_seconds}s" \
     ./bin/vis run --json --trace --model "$VIS_MODEL" --db "$root/vis/db" "$prompt" \
     > "$root/vis/result.json" 2> "$root/vis/stderr.txt"
 )
