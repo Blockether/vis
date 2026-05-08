@@ -677,25 +677,77 @@
         (let [parse-error (parse-clojure-syntax code)]
           (if parse-error
             (if-let [rescued (try-extension-parse-rescue environment code parse-error)]
-              (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time tool-event-fn)]
-                (when (nil? (:error exec))
+              (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time tool-event-fn)
+                    eval-ok? (nil? (:error exec))]
+                (when eval-ok?
                   (attach-doc-meta! environment rescued doc))
-                (assoc exec
-                  :repaired? true
-                  :original-code code
-                  :original-error parse-error))
+                ;; `:repaired? true` ONLY when the rescued source
+                ;; actually evaluated cleanly. Setting it on a
+                ;; still-failing eval misleads the journal/transcript
+                ;; ("repaired" tag) and the model. Keep
+                ;; `:original-error`/`:original-code` regardless so
+                ;; the next iteration sees what we tried.
+                (cond-> exec
+                  true     (assoc :original-code code
+                             :original-error parse-error)
+                  eval-ok? (assoc :repaired? true)))
               {:result nil :stdout "" :stderr "" :error parse-error
                :execution-time-ms 0 :timeout? false})
             (let [rewritten-code (try-extension-source-rewrite environment code)
                   eval-code      (or rewritten-code code)
-                  exec           (run-with-timing sci-ctx eval-code sandbox-ns timeout-ms start-time tool-event-fn)]
-              (when (nil? (:error exec))
-                (attach-doc-meta! environment eval-code doc))
+                  initial-exec   (run-with-timing sci-ctx eval-code sandbox-ns timeout-ms start-time tool-event-fn)
+                  initial-ok?    (nil? (:error initial-exec))
+                  ;; Eval-time auto-repair scoped to `(answer ...)`
+                  ;; forms. SCI surfaces `Unable to resolve symbol:
+                  ;; X` when the model wrote a bare prose word
+                  ;; inside a vector of strings (the iter-0/iter-1
+                  ;; pattern in conv ec64266c-...). Only fires when
+                  ;; the source carries `(answer`, X is prose-shaped,
+                  ;; and X sits in a missing-quote-shaped context.
+                  ;; Each candidate is re-evaluated; first that
+                  ;; succeeds wins. A failed restitch falls through
+                  ;; to the hint-enrichment path below.
+                  restitched     (when (and (not initial-ok?) (string? (:error initial-exec)))
+                                   (when-let [sym (some-> ^String (:error initial-exec)
+                                                    (->> (re-find #"Unable to resolve symbol: (\S+)"))
+                                                    second)]
+                                     (when-let [candidates (parse-diagnose/try-answer-string-restitch
+                                                             eval-code sym)]
+                                       (some (fn [candidate]
+                                               (let [retry (run-with-timing sci-ctx candidate sandbox-ns
+                                                             timeout-ms start-time tool-event-fn)]
+                                                 (when (nil? (:error retry))
+                                                   {:retry retry :candidate candidate})))
+                                         candidates))))
+                  original-error (when restitched (:error initial-exec))
+                  exec           (or (:retry restitched) initial-exec)
+                  eval-ok?       (or (some? restitched) initial-ok?)
+                  ;; Eval-time prose-as-symbol HINT for the surfaced
+                  ;; error - only relevant when restitch did NOT
+                  ;; recover. Pure advisory; never rewrites source.
+                  enriched-error (when (and (not eval-ok?) (string? (:error exec)))
+                                   (when-let [hint (parse-diagnose/unresolved-symbol-hint
+                                                     (:error exec) eval-code)]
+                                     (str (:error exec) hint)))]
+              (when eval-ok?
+                (attach-doc-meta! environment
+                  (or (:candidate restitched) eval-code) doc))
               (cond-> exec
-                rewritten-code
+                enriched-error              (assoc :error enriched-error)
+                ;; `:repaired?` ONLY when the source was actually
+                ;; mutated AND eval was clean. A rewrite that still
+                ;; throws is not a repair - it's an attempt that
+                ;; fell through.
+                (and rewritten-code eval-ok? (not restitched))
                 (assoc :repaired? true
                   :original-code code
-                  :repair :extension-source-rewrite)))))))))
+                  :repair :extension-source-rewrite)
+
+                restitched
+                (assoc :repaired? true
+                  :original-code code
+                  :original-error original-error
+                  :repair :answer-string-restitch)))))))))
 
 ;; Print-cap defaults for `prompt/safe-pr-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -1690,6 +1742,27 @@
     (and (= :svar.core/stream-incomplete (:type data))
       (= "max_output_tokens" (str (:reason data))))))
 
+(def ^:private stream-truncated-types
+  "Error types that indicate the provider dropped the SSE stream before
+   emitting content or the terminal `[DONE]` marker. These are transient
+   server-side failures — the model never saw the request fail, so
+   retrying the identical call is safe and cheap."
+  #{:svar.core/stream-truncated})
+
+(def ^:private MAX_STREAM_TRUNCATED_RETRIES
+  "Maximum transparent retries for stream-truncated errors per iteration.
+   Each retry re-sends the identical messages; reasoning starts fresh on
+   the provider side. 2 retries = 3 total attempts."
+  2)
+
+(defn- stream-truncated-error?
+  "True when an exception represents a provider stream that was cut
+   before any content arrived. Safe to retry transparently."
+  [^Throwable e]
+  (let [data (ex-data e)]
+    (and (contains? stream-truncated-types (:type data))
+      (zero? (or (:content-acc-len data) 0)))))
+
 (defn- iteration-error-feedback
   [iteration iteration-error-data user-request]
   (if (stream-output-overflow? iteration-error-data)
@@ -2593,19 +2666,36 @@
                                              [{:role "user" :content iteration-context}]))
                       resolved-model pre-resolved-model
                       effective-routing (or routing {})
-                      iteration-result (try
-                                         (run-iteration environment effective-messages
-                                           {:iteration iteration :reasoning-level reasoning-level
-                                            :routing effective-routing
-                                            :resolved-model resolved-model
-                                            :on-chunk on-chunk
-                                            :extra-body (assoc (or extra-body {})
-                                                          :copilot-initiator
-                                                          (copilot-initiator-for-iteration iteration))})
-                                         (catch Exception e
+                      iteration-result
+                      (loop [attempt 0]
+                        (let [result (try
+                                       (run-iteration environment effective-messages
+                                         {:iteration iteration :reasoning-level reasoning-level
+                                          :routing effective-routing
+                                          :resolved-model resolved-model
+                                          :on-chunk on-chunk
+                                          :extra-body (assoc (or extra-body {})
+                                                        :copilot-initiator
+                                                        (copilot-initiator-for-iteration iteration))})
+                                       (catch Exception e
+                                         (if (and (stream-truncated-error? e)
+                                               (< attempt MAX_STREAM_TRUNCATED_RETRIES))
+                                           (do
+                                             (tel/log! {:level :warn
+                                                        :id ::stream-truncated-retry
+                                                        :data {:iteration iteration
+                                                               :attempt (inc attempt)
+                                                               :max-retries MAX_STREAM_TRUNCATED_RETRIES
+                                                               :type (:type (ex-data e))}}
+                                               (str "Stream truncated, transparent retry "
+                                                 (inc attempt) "/" MAX_STREAM_TRUNCATED_RETRIES))
+                                             ::retry)
                                            (handle-iteration-exception! e
                                              {:iteration iteration :messages effective-messages
-                                              :routing effective-routing :reasoning-level reasoning-level})))]
+                                              :routing effective-routing :reasoning-level reasoning-level}))))]
+                          (if (= result ::retry)
+                            (recur (inc attempt))
+                            result)))]
                   (if-let [iteration-error-data (::iteration-error iteration-result)]
                   ;; Cancellation short-circuit. When the user pressed Esc
                   ;; mid-call, `cancel!` flipped the flag BEFORE
