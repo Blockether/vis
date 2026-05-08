@@ -332,14 +332,13 @@
           active-exts   (vis/active-extensions environment)
           system-prompt (vis/assemble-system-prompt environment
                           {:active-extensions active-exts})]
-      ;; Header IS present (alias -> namespace marker still added).
-      (expect (str/includes? system-prompt "[namespace: v -> vis.ext.tools]"))
-      ;; Author-supplied :ext/prompt content IS present verbatim.
-      (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))
-      ;; Auto-canonical render is GONE - no symbol lines, no `:ext/doc`
-      ;; heading-as-prompt-text. Author can still emit those by calling
-      ;; `vis/render-prompt` from inside `:ext/prompt`, but the runtime
-      ;; doesn't do it for them anymore.
+      ;; MINIMAL assembly: extension `<extensions>` blocks are
+      ;; suppressed entirely. Header, :ext/prompt body, and old
+      ;; auto-render output are all absent. Sandbox bindings remain
+      ;; callable from `:code` whether advertised or not.
+      (expect (not (str/includes? system-prompt "<extensions>")))
+      (expect (not (str/includes? system-prompt "[namespace: v -> vis.ext.tools]")))
+      (expect (not (str/includes? system-prompt "RULES:\n- Discover paths first.")))
       (expect (not (str/includes? system-prompt "Filesystem tools (use v/ prefix)")))
       (expect (not (str/includes? system-prompt "- (v/cat path)")))
       (expect (not (str/includes? system-prompt "- v/max-retries"))))))

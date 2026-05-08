@@ -303,21 +303,22 @@
 
 (defn environment-prompt
   "Renders the live foundation prompt extras: <project-guidance> (when
-   present) → <scan-warnings> (when issues exist) → <skills> (when
-   populated) → FN_INDEX. The <environment> block now flows through
-   `:ext/environment-info-fn` so other extensions can add sibling
-   environment-info sections without owning the whole prompt fragment."
+   present) → <scan-warnings> (when issues exist) → FN_INDEX. The
+   <environment> block flows through `:ext/environment-info-fn` so
+   other extensions can add sibling environment-info sections without
+   owning the whole prompt fragment.
+
+   The previous `<skills>` block was removed when skills moved to the
+   internal sandbox path: discovery now flows through
+   `TURN_ACCESSIBLE_SKILLS` + `(load-skill name)`."
   [_environment]
   (try
     (let [pg-block       (render/format-project-guidance-block (agents/instructions))
           warnings       (combined-scan-warnings)
           warnings-block (render/format-scan-warnings-block warnings)
-          skills-list    (skills/list-all)
-          skills-block   (render/format-skills-block skills-list)
           parts          (cond-> []
                            pg-block       (conj pg-block)
                            warnings-block (conj warnings-block)
-                           skills-block   (conj skills-block)
                            true           (conj FN_INDEX))]
       (string/join "\n\n" parts))
     (catch Throwable t

@@ -104,11 +104,19 @@
                                                                (when-not (contains? elide-idxs idx)
                                                                  expr)))
                                                            all-exprs)
-                                             result-kind (fn [{:keys [result error]}]
+                                             preview-result?
+                                             (fn [result]
+                                               (and (extension/tool-result? result)
+                                                 (= :v/preview (get-in result [:info :op]))))
+                                             preview-results
+                                             (fn [{:keys [previews result]}]
+                                               (or (seq previews)
+                                                 (when (preview-result? result)
+                                                   [result])))
+                                             result-kind (fn [{:keys [result error] :as expr}]
                                                            (cond
                                                              error :error
-                                                             (and (extension/tool-result? result)
-                                                               (= :v/preview (get-in result [:info :op]))) :preview
+                                                             (preview-results expr) :preview
                                                              (extension/tool-result? result) :tool
                                                              :else :value))
                                              tool-result-detail
@@ -123,17 +131,33 @@
                                                      (get-in result [:result :stderr])
                                                      (assoc :stderr (get-in result [:result :stderr]))
                                                      (= :v/preview (:op prov))
-                                                     (assoc :raw (pr-str (:result result)))))))
+                                                     (assoc :raw (vis/safe-pr-str (:result result)))))))
+                                             preview-results-detail
+                                             (fn [previews]
+                                               (let [details (mapv tool-result-detail previews)
+                                                     raw     (str/join "\n" (map #(vis/safe-pr-str (:result %)) previews))]
+                                                 (if (= 1 (count details))
+                                                   (assoc (or (first details) {}) :raw raw)
+                                                   {:op :v/preview
+                                                    :op-class :op/preview
+                                                    :previews details
+                                                    :raw raw})))
                                              result-strs (mapv (fn [{:keys [result error] :as expr}]
                                                                  (cond
                                                                    error (vis/format-error error)
                                                                    (and (map? result) (= :expr (:vis/ref result)))
                                                                    "<runtime value; re-evaluate expression to restore>"
+                                                                   (preview-results expr)
+                                                                   (str/join "\n" (map #(extension/render-tool-result :tui % {:block expr}) (preview-results expr)))
                                                                    (extension/tool-result? result)
                                                                    (extension/render-tool-result :tui result {:block expr})
                                                                    :else (pr-str result)))
                                                            exprs)
-                                             result-details (mapv (comp tool-result-detail :result) exprs)
+                                             result-details (mapv (fn [expr]
+                                                                    (if-let [previews (preview-results expr)]
+                                                                      (preview-results-detail previews)
+                                                                      (tool-result-detail (:result expr))))
+                                                              exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
                                              stderr-strs (mapv #(or (:stderr %) "") exprs)
                                              durations   (mapv #(or (:duration-ms %) 0) exprs)]

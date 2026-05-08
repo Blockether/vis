@@ -796,31 +796,20 @@
     (catch Throwable _
       [])))
 
-(defn- read-or-search-tool-result?
-  [value]
-  (and (extension/tool-result? value)
-    (contains? #{:op/read :op/search}
-      (get-in value [:info :op-class]))))
-
 (defn- def-display-result
-  "For single value defs, persist the bound value, not the Var return.
+  "Single top-level `def` / `defonce` forms are acquisition, not observation.
 
-   Read/search tool defs are acquisition, not observation. Keep their full
-   value in the sandbox/DB for later use, but mark the form silent so the TUI
-   does not render the same payload again before a following `v/preview`."
-  [environment code result]
-  (if (or (:error result) (:timeout? result) (nil? (:sci-ctx environment)))
+   SCI returns a Var from `(def ...)`; older Vis dereferenced that Var and
+   surfaced the bound value in the journal/TUI, so a bare `(def x ...)` looked
+   like an implicit read of `x`. Keep the sandbox/DB value durable through the
+   normal var-snapshot path, but mark the form silent for display; explicit
+   observation belongs in a later bare symbol or `v/preview` call."
+  [_environment code result]
+  (if (or (:error result) (:timeout? result))
     result
     (let [defs (top-level-value-def-symbols code)]
       (if (= 1 (count defs))
-        (let [locals (get-locals environment)
-              name   (first defs)]
-          (if (contains? locals name)
-            (let [value (get locals name)]
-              (cond-> (assoc result :result value)
-                (read-or-search-tool-result? value)
-                (assoc :rendering-kind :vis/silent)))
-            result))
+        (assoc result :rendering-kind :vis/silent)
         result))))
 
 ;; ---------------------------------------------------------------------------

@@ -94,12 +94,22 @@
     (into v (repeat (- target-count (count v)) nil))
     v))
 
+(defn- preview-result?
+  [result]
+  (and (extension/tool-result? result)
+    (= :v/preview (get-in result [:info :op]))))
+
+(defn- preview-results
+  [chunk]
+  (or (seq (:previews chunk))
+    (when (preview-result? (:result chunk))
+      [(:result chunk)])))
+
 (defn- form-result-kind
   [chunk]
   (cond
     (:error chunk) :error
-    (and (extension/tool-result? (:result chunk))
-      (= :v/preview (get-in chunk [:result :info :op]))) :preview
+    (preview-results chunk) :preview
     (extension/tool-result? (:result chunk)) :tool
     :else :value))
 
@@ -117,9 +127,22 @@
         (= :v/preview (:op prov))
         (assoc :raw (prompt/safe-pr-str (:result tool-result)))))))
 
+(defn- preview-results-detail
+  [previews]
+  (let [details (mapv tool-result-detail previews)
+        raw     (str/join "\n" (map #(prompt/safe-pr-str (:result %)) previews))]
+    (if (= 1 (count details))
+      (assoc (or (first details) {}) :raw raw)
+      {:op :v/preview
+       :op-class :op/preview
+       :previews details
+       :raw raw})))
+
 (defn- form-result-detail
   [chunk]
-  (tool-result-detail (:result chunk)))
+  (if-let [previews (preview-results chunk)]
+    (preview-results-detail previews)
+    (tool-result-detail (:result chunk))))
 
 (defn- format-form-result
   "Pre-format a per-form chunk's result for renderer consumption.
@@ -131,10 +154,12 @@
   [chunk]
   (if (:error chunk)
     (error/format-error (:error chunk))
-    (let [result (:result chunk)]
-      (if (extension/tool-result? result)
-        (extension/render-tool-result :tui result {:chunk chunk})
-        (prompt/safe-pr-str result)))))
+    (if-let [previews (preview-results chunk)]
+      (str/join "\n" (map #(extension/render-tool-result :tui % {:chunk chunk}) previews))
+      (let [result (:result chunk)]
+        (if (extension/tool-result? result)
+          (extension/render-tool-result :tui result {:chunk chunk})
+          (prompt/safe-pr-str result))))))
 
 (def ^:private thinking-event-target-chars
   "Target max chars per live thinking event.
