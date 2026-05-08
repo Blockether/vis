@@ -61,6 +61,53 @@ measure_log() {
   fi
 }
 
+edn_escape_string() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  printf '%s' "$s"
+}
+
+extension_dep_symbol() {
+  local scope="$1"
+  local name="$2"
+  name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+  [[ -n "$name" ]] || name="extension"
+  printf 'vis-user-extension.%s/%s' "$scope" "$name"
+}
+
+collect_user_extension_sdeps() {
+  local roots=("project:$invocation_cwd/.vis/vis-extensions" "global:$HOME/.vis/vis-extensions")
+  local root_spec root_scope root deps_file ext_dir ext_name dep_sym escaped
+  local -a entries=()
+  shopt -s nullglob
+  for root_spec in "${roots[@]}"; do
+    root_scope="${root_spec%%:*}"
+    root="${root_spec#*:}"
+    for deps_file in "$root"/*/deps.edn; do
+      [[ -f "$deps_file" ]] || continue
+      ext_dir="$(cd -P "$(dirname "$deps_file")" && pwd)"
+      ext_name="$(basename "$ext_dir")"
+      dep_sym="$(extension_dep_symbol "$root_scope" "$ext_name")"
+      escaped="$(edn_escape_string "$ext_dir")"
+      entries+=("$dep_sym {:local/root \"$escaped\"}")
+    done
+  done
+  shopt -u nullglob
+  if (( ${#entries[@]} > 0 )); then
+    printf '{:deps {'
+    printf '%s ' "${entries[@]}"
+    printf '}}'
+  fi
+}
+
+user_extension_sdeps="$(collect_user_extension_sdeps)"
+vis_extension_sdeps=()
+if [[ -n "$user_extension_sdeps" ]]; then
+  vis_extension_sdeps=(-Sdeps "$user_extension_sdeps")
+  measure_log "user extension deps enabled"
+fi
+
 run_measured_or_exec() {
   local label="$1"
   shift
@@ -181,6 +228,8 @@ crac_fingerprint() {
 
 if crac_disabled; then
   measure_log "crac disabled by VIS_CRAC=$VIS_CRAC"
+elif [[ -n "$user_extension_sdeps" ]]; then
+  measure_log "crac disabled because user extension classpath is dynamic"
 else
   crac_probe_start_ms="$(measure_now_ms)"
   if crac_supported; then
@@ -208,12 +257,12 @@ else
       if ! clojure -J-XX:+IgnoreUnrecognizedVMOptions "-J-Duser.dir=$invocation_cwd" -J-XX:CRaCCheckpointTo="$image_dir" -M:vis-crac-bootstrap; then
         measure_log_since "crac checkpoint failed" "$checkpoint_start_ms"
         echo "vis: CRaC bootstrap failed; falling back to cold Clojure startup. Set VIS_CRAC=0 to disable." >&2
-        run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
+        run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${vis_extension_sdeps[@]}" -M:vis "$@"
       fi
       measure_log_since "crac checkpoint" "$checkpoint_start_ms"
       if ! crac_image_has_entries "$image_dir"; then
         echo "vis: CRaC bootstrap produced no image; falling back to cold Clojure startup." >&2
-        run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
+        run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${vis_extension_sdeps[@]}" -M:vis "$@"
       fi
       printf '%s\n' "$fingerprint" > "$stamp_file"
     else
@@ -230,4 +279,4 @@ else
 fi
 
 measure_log "exec cold clojure -M:vis"
-run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" -M:vis "$@"
+run_measured_or_exec "process cold clojure -M:vis" clojure "-J-Duser.dir=$invocation_cwd" "${vis_extension_sdeps[@]}" -M:vis "$@"

@@ -107,14 +107,23 @@
 (defn h5 ^String [& parts] (str "##### "  (compose-text parts)))
 (defn h6 ^String [& parts] (str "###### " (compose-text parts)))
 
+(defn- normalize-inline-spacing
+  ^String [s]
+  (-> s
+    (str/replace #"\(\s+" "(")
+    (str/replace #"\[\s+" "[")
+    (str/replace #"\{\s+" "{")
+    (str/replace #"\s+([\)\]\}\.,;:!?])" "$1")))
+
 (defn p
   "Paragraph. Joins parts with single spaces. nil dropped, seqs spliced one
-   level deep."
+   level deep. Spaces next to punctuation are tightened so generated prose
+   renders as `(`x`)`, not `( `x` )`."
   ^String [& parts]
   (let [joined (str/join " " (keep (fn [p] (when-not (str/blank? p) (str/trim p)))
                                (mapv ->str (expand-parts parts))))]
     (loop [s joined]
-      (let [next (str/replace s "  " " ")]
+      (let [next (normalize-inline-spacing (str/replace s "  " " "))]
         (if (str/includes? next "  ")
           (recur next)
           next)))))
@@ -610,6 +619,82 @@
                (recur rst false false false nil (conj acc line))))))
     (str/join "\n")))
 
+(defn- punctuation-leading?
+  [s]
+  (boolean (re-find #"^[.,:;!?]" (str/trim (or s "")))))
+
+(defn- merge-inline-fragment
+  [prev fragment]
+  (let [fragment (str/trim fragment)]
+    (if (punctuation-leading? fragment)
+      (str (str/trimr prev) fragment)
+      (str (str/trimr prev) " " fragment))))
+
+(defn- normalize-loose-inline-islands
+  "Repair answers where inline Markdown fragments were emitted as their own
+   paragraphs, e.g. `link` / `.` / `:` islands split away from prose. This is
+   intentionally narrow: only single-line inline code spans, single-line links,
+   punctuation-led fragments, and lowercase continuation fragments are joined,
+   and fenced code blocks are left byte-for-byte alone."
+  [text]
+  (letfn [(heading-line? [s]
+            (str/starts-with? (str/trim (or s "")) "#"))
+          (inline-leading-fragment? [s]
+            (boolean
+              (re-find #"^(?:`[^`\n]+`|\[[^\]\n]+\]\([^)\n]+\))(?:[\s.,:;!?)]|$).*"
+                (str/trim (or s "")))))
+          (inline-ending-fragment? [s]
+            (boolean
+              (re-find #"(?:`[^`\n]+`|\[[^\]\n]+\]\([^\)\n]+\))$"
+                (str/trim (or s "")))))
+          (lowercase-continuation? [s]
+            (boolean
+              (re-find #"^[a-z]" (str/trim (or s "")))))
+          (arrow-continuation? [s]
+            (str/starts-with? (str/trim (or s "")) "→"))
+          (continuation-fragment? [prev current]
+            (let [trimmed (str/trim (or current ""))]
+              (and (not (str/blank? trimmed))
+                (not (fence-line? trimmed))
+                (not (heading-line? trimmed))
+                (not (list-marker? trimmed))
+                (not (root-list-block? trimmed))
+                (or (punctuation-leading? trimmed)
+                  (arrow-continuation? trimmed)
+                  (inline-leading-fragment? trimmed)
+                  (and (inline-ending-fragment? prev)
+                    (lowercase-continuation? trimmed))))))]
+    (let [lines (str/split-lines text)]
+      (->> (loop [remaining lines
+                  in-code?  false
+                  pending   []
+                  acc       []]
+             (if-not (seq remaining)
+               (into acc pending)
+               (let [line     (first remaining)
+                     trimmed  (str/trim line)
+                     fence?   (fence-line? line)
+                     blank?   (str/blank? line)
+                     prev     (peek acc)
+                     join?    (and (seq pending)
+                                (not in-code?)
+                                (not blank?)
+                                (seq acc)
+                                (string? prev)
+                                (not (str/blank? prev))
+                                (not (fence-line? prev))
+                                (continuation-fragment? prev trimmed))]
+                 (cond
+                   join?
+                   (recur (next remaining) fence? [] (conj (pop acc) (merge-inline-fragment prev line)))
+
+                   blank?
+                   (recur (next remaining) in-code? (conj pending line) acc)
+
+                   :else
+                   (recur (next remaining) (if fence? (not in-code?) in-code?) [] (into acc (conj pending line)))))))
+        (str/join "\n")))))
+
 (defn normalize-chat-markdown
   "Repair narrow classes of malformed Markdown emitted by LLM answers.
 
@@ -626,6 +711,11 @@
       sibling evidence bullets are normalized into nested bullets, with
       a following fenced code block nested under the evidence bullet.
 
+   4. Loose inline islands caused by LLM over-formatting are folded back
+      into their paragraph:
+        `in\n\n[link](x)\n\n. Done` -> `in [link](x). Done`
+        `` `git diff`\n\n:\n\n`1 file`\n\n.`` -> `` `git diff`: `1 file`.``
+
    This preserves the visible prose while making the answer renderable
    in chat/export surfaces. Forensic transcript views intentionally
    keep the stored raw text and do NOT call this helper."
@@ -634,7 +724,8 @@
     text
     (-> text
       normalize-glued-fences
-      normalize-summary-section-bullets)))
+      normalize-summary-section-bullets
+      normalize-loose-inline-islands)))
 
 (defn- comma-int
   "Group-3 thousands separator for integers, US locale-style. Used by

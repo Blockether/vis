@@ -25,7 +25,33 @@
                           :render-version 0})
     (state/dispatch [:select-preview-mode "cid" "iteration:t11111111:i1:b1:preview-switch" :raw])
     (expect (= {["cid" "iteration:t11111111:i1:b1:preview-switch"] :raw}
-              (:detail-expansions @state/app-db)))))
+              (:detail-expansions @state/app-db))))
+
+  (it "applies external input to an inactive recording-origin workspace"
+    (let [external-input-fn (-> #'state/event-registry deref deref (get :external-input) :fn)
+          input-state       (fn [text] {:lines [text] :crow 0 :ccol (count text)})
+          db                {:active-workspace-id :second
+                             :workspace-tabs [{:id :first :label "First"}
+                                              {:id :second :label "Second" :active? true}]
+                             :input (input-state "second draft")
+                             :input-history-index :second-index
+                             :input-history-draft "second-draft"
+                             :slash-command-index 7
+                             :slash-command-hidden? true
+                             :workspaces {:first {:input (input-state "first draft")
+                                                  :input-history-index :first-index
+                                                  :input-history-draft "first-draft"
+                                                  :slash-command-index 3
+                                                  :slash-command-hidden? true}}}
+          next-db           (external-input-fn db [:external-input :append "rewrite" :first])]
+      (expect (= "second draft" (input/input->text (:input next-db))))
+      (expect (= :second-index (:input-history-index next-db)))
+      (expect (= "first draft\nrewrite"
+                (input/input->text (get-in next-db [:workspaces :first :input]))))
+      (expect (nil? (get-in next-db [:workspaces :first :input-history-index])))
+      (expect (nil? (get-in next-db [:workspaces :first :input-history-draft])))
+      (expect (= 0 (get-in next-db [:workspaces :first :slash-command-index])))
+      (expect (false? (get-in next-db [:workspaces :first :slash-command-hidden?]))))))
 
 (defdescribe external-input-test
   (it "append adds transcript text without replacing draft input"
@@ -38,6 +64,18 @@
               (input/input->text (:input @state/app-db))))
     (expect (nil? (:input-history-index @state/app-db)))
     (expect (nil? (:input-history-draft @state/app-db)))))
+
+(defdescribe channel-status-test
+  (it "clears ttl-bound statuses only when the deadline still matches"
+    (reset! state/app-db {:channel-status {}
+                          :render-version 0})
+    (state/dispatch [:channel-status-set :voice/input {:text "○ Voice ready"
+                                                       :level :info
+                                                       :until 100}])
+    (state/dispatch [:channel-status-clear-if-until :voice/input 99])
+    (expect (= "○ Voice ready" (get-in @state/app-db [:channel-status :voice/input :text])))
+    (state/dispatch [:channel-status-clear-if-until :voice/input 100])
+    (expect (nil? (get-in @state/app-db [:channel-status :voice/input])))))
 
 (defdescribe slash-command-selection-test
   (it "cycles selected slash suggestion index for arrows and mouse wheel"

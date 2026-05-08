@@ -687,6 +687,7 @@
 (def MARKER_CODE_ERR   "\u2062")  ;; invisible times        → code with error status
 (def MARKER_ERR_RESULT "\u2063")  ;; invisible separator    → error result line
 (def MARKER_DURATION   "\u2064")  ;; invisible plus         → duration annotation
+(def MARKER_STDERR     "\u2065")  ;; invisible reserved     → stderr output
 (def MARKER_ITERATION_HDR   "\u2066")  ;; LRI                    → iteration header with bg
 (def MARKER_STDOUT_SEP "\u2067")  ;; RLI                    → stdout separator line
 (def MARKER_STDOUT_PAD "\u2068")  ;; FSI                    → stdout empty padding line

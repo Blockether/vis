@@ -74,16 +74,18 @@
        :kind      kind})))
 
 (defn- tool-success
-  [{:keys [op path kind result provenance]}]
+  [{:keys [op path kind result provenance presentation]}]
   (let [t (now-ms)]
-    (extension/success
-      {:result     result
-       :provenance (merge {:op             op
-                           :target         (path->target path kind)
-                           :started-at-ms  t
-                           :finished-at-ms t
-                           :duration-ms    0}
-                     provenance)})))
+    (cond->
+      (extension/success
+        {:result     result
+         :provenance (merge {:op             op
+                             :target         (path->target path kind)
+                             :started-at-ms  t
+                             :finished-at-ms t
+                             :duration-ms    0}
+                       provenance)})
+      presentation (assoc :presentation presentation))))
 
 (defn- first-edit-path
   [args]
@@ -482,6 +484,7 @@
         :path path
         :kind :file
         :result rows
+        :presentation {:kind :clojure/locators}
         :provenance {:count (count rows)
                      :total-count total-count
                      :limit limit
@@ -501,6 +504,7 @@
         :path path
         :kind :file
         :result rows
+        :presentation {:kind :clojure/locators}
         :provenance {:count (count rows)
                      :total-count total-count
                      :limit limit
@@ -540,6 +544,14 @@
           (md/code-block "text" (str/join "\n\n" row-lines)))
         (when patch-hint
           (md/code-block "clojure" patch-hint))))))
+
+(defn- render-locators-kind
+  [{:keys [value]}]
+  (render-locators-result {:tool-result {:success? true
+                                         :result (vec (or value []))}}))
+
+(def rendering-kind-fns
+  {:clojure/locators render-locators-kind})
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -586,7 +598,7 @@
 
 (def z-prompt
   "`z/` Clojure/EDN zipper patching:
-  Use (z/patch {:path p :search locator :replace replacement}) or vector of same maps. Same map shape as v/patch. :search is a parsed Clojure/EDN locator, not raw text; exactly one match required before write.
-  Discover focused locators with (z/locator-for-symbol path 'foo), (z/locators path {:symbol 'foo}), (z/locators path {:source-contains <text> :limit 20}), or symbols only with (z/symbols path {:name 'foo}). Default locator display is bounded. Rows include :path/:index/:span and can become edits by adding :replace. Use (z/repair-range {:path p :range [[sr sc] [er ec]]}), (z/repair-locator locator-row {:dry-run? true}), or (z/repair-file p {:dry-run? true}) for parinfer/quote repair over row/col ranges. Full rewrite-clj.zip API is also under z/, including z/subedit->.
+  Use (z/patch {:path p :search locator :replace replacement}) or vector of same maps. Same map shape as v/patch. :search is parsed Clojure/EDN and must match once.
+  Find targets with (z/locator-for-symbol path 'foo), (z/locators path {:symbol 'foo}), (z/locators path {:source-contains <text> :limit 20}), or (z/symbols path {:name 'foo}). Rows include :path/:index/:span and become edits by adding :replace. If a row identifies the target, patch immediately: (z/patch (assoc row :replace \"<new source>\")); do not re-preview unless patch fails. Repair with z/repair-range, z/repair-locator, or z/repair-file. Full rewrite-clj.zip API is under z/, including z/subedit->.
 Examples: (z/patch [{:path \"src/foo.clj\" :search \"old-sym\" :replace \"new-sym\"}])
           (z/patch [{:path \"src/foo.clj\" :search \"(def x 1)\" :replace \"(def x 2)\"}])")

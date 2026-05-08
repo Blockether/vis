@@ -351,12 +351,6 @@ BEGIN
   SELECT RAISE(ABORT, 'provenance_event rows are immutable');
 END;
 
-CREATE TRIGGER trg_provenance_event_immutable_ad
-BEFORE DELETE ON provenance_event
-BEGIN
-  SELECT RAISE(ABORT, 'provenance_event rows are immutable');
-END;
-
 CREATE TABLE evidence_bundle (
   id                    TEXT PRIMARY KEY NOT NULL,
   conversation_soul_id  TEXT NOT NULL

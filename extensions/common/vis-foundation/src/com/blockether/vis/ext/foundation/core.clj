@@ -45,7 +45,7 @@
     "\n\n"
     introspection/introspection-prompt
     "\n\n"
-    editing/editing-prompt
+    (editing/available-editing-prompt)
     "\n\n"
     markdown/markdown-prompt))
 
@@ -99,7 +99,7 @@
      :ext/prompt         combined-prompt
      :ext/rendering-kinds editing/rendering-kind-fns
      :ext/symbols        (vec (concat introspection/all-symbols
-                                editing/editing-symbols
+                                (editing/available-editing-symbols)
                                 markdown/markdown-symbols
                                 environment/environment-symbols))
      :ext/doctor-check-fn lazy-doctor-check-fn

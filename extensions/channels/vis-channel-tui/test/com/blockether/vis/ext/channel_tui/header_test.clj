@@ -83,7 +83,40 @@
                   @writes))
         (expect (= uuid (:text md-hit)))
         (expect (= {:row 1 :col expected-md-col :width md-w}
-                  (:bounds md-hit)))))))
+                  (:bounds md-hit))))))
+
+  (it "keeps voice channel status on the right without stealing the notification lane"
+    (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
+          status-text   "● Recording 00:01"
+          notification  "✓ Copied!"
+          status-w      (p/display-width status-text)
+          gap-w         (p/display-width "  ")
+          id-rendered   "⧉ 123e4567"
+          action-w      (p/display-width (right-block-text "123e4567"))
+          id-w          (p/display-width id-rendered)
+          cols          80
+          expected-right-col (- cols 1 status-w gap-w action-w)
+          expected-id-col    (+ expected-right-col status-w gap-w)
+          db            {:title "Chat"
+                         :conversation {:id uuid}
+                         :channel-status {:voice/input {:text status-text
+                                                        :level :warn
+                                                        :updated-at-ms 1}}}
+          writes        (atom [])]
+      (cr/reset!)
+      (with-redefs-fn {#'header/latest-notification (fn [] {:text notification :level :success})}
+        (fn []
+          (cr/begin-frame!)
+          (header/draw-header! (dummy-text-graphics writes) db 0 cols)
+          (cr/commit-frame!)))
+      (let [write-by-text (fn [text]
+                            (some #(when (= text (:text %)) %) @writes))
+            copy-hit      (some #(when (= :copy-id (:kind %)) %) (cr/current))]
+        (expect (= 1 (:col (write-by-text notification))))
+        (expect (= expected-right-col (:col (write-by-text status-text))))
+        (expect (= t/footer-warning-fg (:fg (write-by-text status-text))))
+        (expect (= {:row 1 :col expected-id-col :width id-w}
+                  (:bounds copy-hit)))))))
 
 (defdescribe draw-header-color-test
   (it "renders placeholder/title, conversation id, transcript label, and copy icons in header foreground"

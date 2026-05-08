@@ -700,6 +700,7 @@
 (def ^:private code-marker      p/MARKER_CODE)
 (def ^:private result-marker    p/MARKER_RESULT)
 (def ^:private stdout-marker    p/MARKER_STDOUT)
+(def ^:private stderr-marker    p/MARKER_STDERR)
 (def ^:private sep-marker       p/MARKER_SEP)
 (def ^:private code-ok-marker   p/MARKER_CODE_OK)
 (def ^:private code-err-marker  p/MARKER_CODE_ERR)
@@ -728,6 +729,16 @@
 (def ^:private md-quote-marker      p/MARKER_MD_QUOTE)
 (def ^:private md-hr-marker         p/MARKER_MD_HR)
 (def ^:private md-summary-marker    p/MARKER_MD_SUMMARY)
+
+(def ^:private tool-output-indent
+  "Visible left margin for result/stdout/stderr rows under a tool call."
+  "  ")
+
+(def ^:private tool-output-indent-cols
+  (p/display-width tool-output-indent))
+
+(def ^:private output-indentable-markers
+  #{stdout-marker stderr-marker stdout-sep-marker stdout-pad-marker code-err-pad-marker})
 
 (def ^:private th-md-h1-marker         p/MARKER_TH_MD_H1)
 (def ^:private th-md-h2-marker         p/MARKER_TH_MD_H2)
@@ -881,27 +892,43 @@
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
    ANSI foreground codes are translated to Lanterna foreground colors;
    `bg` is always controlled by Vis so success/running/error code
-   zones keep their own background."
+   zones keep their own background.
+
+   Tool render-fns now return Markdown for result bodies. That Markdown
+   may contain Vis inline-style sentinels (U+E110..U+E117) for spans like
+   `v/preview`. These sentinels are paint directives, not glyphs; consume
+   them here before they hit Lanterna's raw putString path."
   [^TextGraphics g x y ^String line base-fg bg]
-  (loop [i 0 col 0 fg base-fg]
-    (if (>= i (.length line))
-      g
-      (let [esc-idx (str/index-of line "\u001b[" i)]
-        (if (or (nil? esc-idx) (< i esc-idx))
-          (let [end   (or esc-idx (.length line))
-                chunk (subs line i end)]
+  (letfn [(sentinel-chunk? [^String chunk]
+            (boolean
+              (some #(str/index-of chunk ^String %)
+                [p/INLINE_BOLD_ON p/INLINE_BOLD_OFF
+                 p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF
+                 p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF
+                 p/INLINE_CODE_ON p/INLINE_CODE_OFF])))
+          (paint-chunk! [col ^String chunk fg]
             (p/set-colors! g fg bg)
-            (p/put-str! g (+ x col) y chunk)
-            (recur end (+ col (p/display-width chunk)) fg))
-          (let [m-idx (str/index-of line "m" (+ esc-idx 2))]
-            (if (nil? m-idx)
-              (let [chunk (subs line esc-idx)]
-                (p/set-colors! g fg bg)
-                (p/put-str! g (+ x col) y chunk)
-                g)
-              (let [codes (parse-ansi-codes (subs line (+ esc-idx 2) m-idx))
-                    fg*   (ansi-codes->fg codes fg base-fg)]
-                (recur (inc m-idx) col fg*)))))))))
+            (if (sentinel-chunk? chunk)
+              (p/paint-styled-line! g (+ x col) y chunk
+                fg bg t/code-block-fg t/code-block-bg)
+              (p/put-str! g (+ x col) y chunk)))]
+    (loop [i 0 col 0 fg base-fg]
+      (if (>= i (.length line))
+        g
+        (let [esc-idx (str/index-of line "\u001b[" i)]
+          (if (or (nil? esc-idx) (< i esc-idx))
+            (let [end   (or esc-idx (.length line))
+                  chunk (subs line i end)]
+              (paint-chunk! col chunk fg)
+              (recur end (+ col (p/display-width chunk)) fg))
+            (let [m-idx (str/index-of line "m" (+ esc-idx 2))]
+              (if (nil? m-idx)
+                (let [chunk (subs line esc-idx)]
+                  (paint-chunk! col chunk fg)
+                  g)
+                (let [codes (parse-ansi-codes (subs line (+ esc-idx 2) m-idx))
+                      fg*   (ansi-codes->fg codes fg base-fg)]
+                  (recur (inc m-idx) col fg*))))))))))
 
 (defn- warning-message? [text]
   (and (string? text) (str/starts-with? text "Warning:")))
@@ -1288,7 +1315,17 @@
                 ;; the right edge by h-pad even though the bg fills past them.
                     x   (+ bx h-pad) y (+ btop i)
                     iw  bubble-w
-                    fbx bx]
+                    fbx bx
+                    marker (when (pos? (count line)) (subs line 0 1))
+                    body   (when marker (subs line 1))
+                    output-indented? (and (contains? output-indentable-markers marker)
+                                       (str/starts-with? body tool-output-indent))
+                    line (if output-indented?
+                           (str marker (subs body (count tool-output-indent)))
+                           line)
+                    x   (if output-indented? (+ x tool-output-indent-cols) x)
+                    iw  (if output-indented? (max 0 (- iw tool-output-indent-cols)) iw)
+                    fbx (if output-indented? (+ fbx tool-output-indent-cols) fbx)]
             ;; Pre-fill answer zone bg so ALL line types get it
                 (when in-answer?
                   (p/set-bg! g t/answer-bg)
@@ -1362,6 +1399,13 @@
               ;; ── Stdout text — distinct stdout bg, italic ──
                   (str/starts-with? line stdout-marker)
                   (do (p/set-colors! g t/stdout-fg t/stdout-bg)
+                    (p/fill-rect! g fbx y iw 1)
+                    (p/styled g [p/ITALIC]
+                      (p/put-str! g x y (subs line 1))))
+
+              ;; ── Stderr text — light red, italic ──
+                  (str/starts-with? line stderr-marker)
+                  (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
                     (p/fill-rect! g fbx y iw 1)
                     (p/styled g [p/ITALIC]
                       (p/put-str! g x y (subs line 1))))
@@ -2186,7 +2230,7 @@
                     :op/create "CREATE"
                     :op/delete "DELETE"
                     :op/move "MOVE"
-                    :op/shell "SHELL"
+                    :op/shell "BASH"
                     :op/meta "META"
                     nil)]
       (when label
@@ -2318,6 +2362,18 @@
                          (str body-marker line))
                  :meta nil})
           rendered)))))
+
+(defn- indent-output-entry
+  [entry]
+  (update entry :line
+    (fn [line]
+      (if (and (string? line) (pos? (count line)))
+        (str (subs line 0 1) tool-output-indent (subs line 1))
+        line))))
+
+(defn- indent-output-entries
+  [entries]
+  (mapv indent-output-entry entries))
 
 (defn- maybe-collapse-block
   [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
@@ -2740,7 +2796,7 @@
           (subvec remaining run))))))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking events code comments results result-kinds result-details stdouts durations successes started-at-ms error repeat-count]}
+  [{:keys [thinking events code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines]
        :or   {show-header? true preview-default-lines 4}}]]
@@ -2861,6 +2917,7 @@
                 result-detail (when result-details (get result-details idx))
                 tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
+                output-fill-w (max 1 (- fill-w tool-output-indent-cols))
                 result-lines  (when (and result-str (not (str/blank? (str result-str))))
                                 (if (= :preview result-kind)
                                   (let [switch-id            (detail-node-id {:conversation-turn-id conversation-turn-id
@@ -2915,39 +2972,42 @@
                                                                 :toggle-node-id body-id})
                                         body-entries         (mapv #(line-entry (str r-marker %)) mode-lines)]
                                     (vec (concat [switcher-entry] body-entries)))
-                                  (let [color-role (when (map? result-detail) (:color-role result-detail))
-                                        badge-entry (when (and tool-badge
-                                                            (not (self-describing-tool-result? result-detail)))
-                                                      {:line (str md-summary-marker tool-badge)
-                                                       :meta {:kind :tool-badge
-                                                              :color-role color-role}})]
+                                  (let [color-role     (when (map? result-detail) (:color-role result-detail))
+                                        detail-entries (maybe-collapse-raw-text-block
+                                                         {:conversation-id      conversation-id
+                                                          :detail-expansions   detail-expansions
+                                                          :conversation-turn-id conversation-turn-id
+                                                          :iteration-number    iteration-number
+                                                          :block-number        block-number
+                                                          :kind                :result
+                                                          :summary             (or tool-badge "RESULT")
+                                                          :color-role          color-role
+                                                          :summary-marker      md-summary-marker
+                                                          :body-marker         r-marker
+                                                          :raw-text            result-str
+                                                          :max-w               fill-w
+                                                          ;; Tool render-fns return Markdown by
+                                                          ;; the extension contract (see
+                                                          ;; `internal/extension.clj` `render-tool-result`).
+                                                          ;; Render the body via the markdown
+                                                          ;; pipeline so headings/bullets/code
+                                                          ;; fences inside details paint as
+                                                          ;; markdown instead of as raw text.
+                                                          ;; Errors stay raw because
+                                                          ;; err-result-marker carries its own
+                                                          ;; styling and error payloads are
+                                                          ;; rarely full markdown.
+                                                          :render-as           (when-not is-error? :markdown)})
+                                        summary-entry?  (= :toggle-details (get-in (first detail-entries) [:meta :kind]))
+                                        badge-entry     (when (and tool-badge
+                                                                (not summary-entry?)
+                                                                (not (self-describing-tool-result? result-detail)))
+                                                          {:line (str md-summary-marker tool-badge)
+                                                           :meta {:kind :tool-badge
+                                                                  :color-role color-role}})]
                                     (vec (concat
                                            (when badge-entry [badge-entry])
-                                           (maybe-collapse-raw-text-block
-                                             {:conversation-id      conversation-id
-                                              :detail-expansions   detail-expansions
-                                              :conversation-turn-id conversation-turn-id
-                                              :iteration-number    iteration-number
-                                              :block-number        block-number
-                                              :kind                :result
-                                              :summary             (or tool-badge "RESULT")
-                                              :color-role          color-role
-                                              :summary-marker      md-summary-marker
-                                              :body-marker         r-marker
-                                              :raw-text            result-str
-                                              :max-w               fill-w
-                                              ;; Tool render-fns return Markdown by
-                                              ;; the extension contract (see
-                                              ;; `internal/extension.clj` `render-tool-result`).
-                                              ;; Render the body via the markdown
-                                              ;; pipeline so headings/bullets/code
-                                              ;; fences inside details paint as
-                                              ;; markdown instead of as raw text.
-                                              ;; Errors stay raw because
-                                              ;; err-result-marker carries its own
-                                              ;; styling and error payloads are
-                                              ;; rarely full markdown.
-                                              :render-as           (when-not is-error? :markdown)}))))))
+                                           detail-entries)))))
                 code-block    (vec (concat
                                      (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
                                      (when (seq comment-lines)
@@ -2956,13 +3016,20 @@
                                          [(line-entry (str thinking-marker ""))]))
                                      [(line-entry (str c-pad ""))]
                                      c-lines
-                                     (when (seq result-lines) [(line-entry (str c-pad ""))])
-                                     result-lines
                                      (when status-line [status-line])
                                      [(line-entry (str c-pad ""))]))
-                stdout-str    (when stdouts (get stdouts idx))
+                stdout-str    (when-not (= :op/shell (:op-class result-detail))
+                                (or (when-let [s (when stdouts (get stdouts idx))]
+                                      (when-not (str/blank? (str s)) s))
+                                  (when-let [s (:stdout result-detail)]
+                                    (when-not (str/blank? (str s)) s))))
+                stderr-str    (when-not (= :op/shell (:op-class result-detail))
+                                (or (when-let [s (when stderrs (get stderrs idx))]
+                                      (when-not (str/blank? (str s)) s))
+                                  (when-let [s (:stderr result-detail)]
+                                    (when-not (str/blank? (str s)) s))))
                 stdout-block  (when (and stdout-str (not (str/blank? (str stdout-str))))
-                                (let [text-lines      (wrap-text (str/trim (str stdout-str)) fill-w)
+                                (let [text-lines      (wrap-text (str/trim (str stdout-str)) output-fill-w)
                                       plain-entries   (mapv #(line-entry (str stdout-marker %)) text-lines)
                                       collapsed-entries
                                       (maybe-collapse-block
@@ -2976,21 +3043,53 @@
                                          :summary-marker      md-summary-marker
                                          :body-marker         stdout-marker
                                          :lines               text-lines
-                                         :max-w               fill-w})]
+                                         :max-w               output-fill-w})]
                                   (if (not= collapsed-entries plain-entries)
-                                    collapsed-entries
+                                    (indent-output-entries collapsed-entries)
                                     (let [slabel     (label-text "stdout")
-                                          slabel-pad (max 0 (- fill-w (count slabel) 1))
-                                          slabel-ln  (line-entry (str iteration-hdr-marker
+                                          slabel-pad (max 0 (- output-fill-w (count slabel) 1))
+                                          slabel-ln  (line-entry (str stdout-marker
                                                                    (repeat-str \space slabel-pad)
                                                                    slabel " "))]
-                                      (vec (concat
-                                             (when show-header? [slabel-ln])
-                                             [(line-entry (str stdout-pad-marker ""))]
-                                             plain-entries
-                                             [(line-entry (str stdout-pad-marker ""))]))))))
-                margin        (when (seq stdout-block) [(line-entry (str iteration-pad-marker ""))])]
-            (vec (concat code-block margin stdout-block))))
+                                      (indent-output-entries
+                                        (vec (concat
+                                               (when show-header? [slabel-ln])
+                                               [(line-entry (str stdout-pad-marker ""))]
+                                               plain-entries
+                                               [(line-entry (str stdout-pad-marker ""))])))))))
+                stderr-block  (when (and stderr-str (not (str/blank? (str stderr-str))))
+                                (let [text-lines        (wrap-text (str/trim (str stderr-str)) output-fill-w)
+                                      plain-entries     (mapv #(line-entry (str stderr-marker %)) text-lines)
+                                      collapsed-entries (maybe-collapse-block
+                                                          {:conversation-id      conversation-id
+                                                           :detail-expansions   detail-expansions
+                                                           :conversation-turn-id conversation-turn-id
+                                                           :iteration-number    iteration-number
+                                                           :block-number        block-number
+                                                           :kind                :stderr
+                                                           :summary             "STDERR"
+                                                           :summary-marker      md-summary-marker
+                                                           :body-marker         stderr-marker
+                                                           :lines               text-lines
+                                                           :max-w               output-fill-w
+                                                           :color-role          :tool-color/delete})]
+                                  (if (not= collapsed-entries plain-entries)
+                                    (indent-output-entries collapsed-entries)
+                                    (let [slabel     (label-text "stderr")
+                                          slabel-pad (max 0 (- output-fill-w (count slabel) 1))
+                                          slabel-ln  (line-entry (str stderr-marker
+                                                                   (repeat-str \space slabel-pad)
+                                                                   slabel " "))]
+                                      (indent-output-entries
+                                        (vec (concat
+                                               (when show-header? [slabel-ln])
+                                               [(line-entry (str code-err-pad-marker ""))]
+                                               plain-entries
+                                               [(line-entry (str code-err-pad-marker ""))])))))))
+                result-margin (when (seq result-lines) [(line-entry (str iteration-pad-marker ""))])
+                margin        (when (or (seq stdout-block) (seq stderr-block)) [(line-entry (str iteration-pad-marker ""))])
+                stderr-margin (when (and (seq stdout-block) (seq stderr-block)) [(line-entry (str iteration-pad-marker ""))])]
+            (vec (concat code-block result-margin result-lines margin stdout-block stderr-margin stderr-block))))
         grouped
         (when (seq code)
           (let [code+result-lines

@@ -251,7 +251,7 @@
    excluded; the previous value is available only through the
    `ITERATION_PREVIOUS_REASONING` system var, not the journal."
   [iteration-position iteration-data]
-  (let [{:keys [blocks]} iteration-data
+  (let [{:keys [blocks answer answer-form-idx]} iteration-data
         block-lines (vec (mapcat (fn [[k blk]]
                                    (let [comment-text (some-> (:comment blk) str/trim)
                                          comment-line (when (and comment-text
@@ -265,8 +265,17 @@
                                        comment-line (conj comment-line)
                                        :always      (conj (format-block-line iteration-position
                                                             k blk)))))
-                           (map-indexed vector (or blocks []))))]
-    block-lines))
+                           (map-indexed vector (or blocks []))))
+        answer-text (some-> answer str str/trim)
+        answer-ref  (or (when (integer? answer-form-idx)
+                          (get-in (vec (or blocks [])) [answer-form-idx :provenance :ref]))
+                      (some-> (last (or blocks [])) :provenance :ref)
+                      (str "<missing-canonical-ref iteration=" iteration-position " answer>"))
+        answer-line (when (and answer-text (not (str/blank? answer-text)))
+                      (str "  " answer-ref "  <final-answer> → "
+                        (pr-str (truncate answer-text MAX_RESULT_DISPLAY_CHARS))))]
+    (cond-> block-lines
+      answer-line (conj answer-line))))
 
 (defn- trim-journal-lines
   "Keep newest journal lines within the supplied journal token budget.
@@ -687,17 +696,43 @@
 ;; Initial messages
 ;; =============================================================================
 
+(defn previous-turn-context-block
+  "Full previous exchange context for follow-up turns.
+
+   Vis deliberately does not replay the whole chat transcript; prior work
+   flows through <journal>/<var_index>. But one-turn follow-ups like `A`,
+   `yes`, or `do it` need the complete immediately previous answer as their
+   referent. Do not truncate this block: provider/context management owns the
+   final context budget."
+  [{:keys [user-request answer]}]
+  (let [answer (some-> answer str str/trim)]
+    (when (and answer (not (str/blank? answer)))
+      (prompt-block
+        "previous_turn_context"
+        (str
+          (when-not (str/blank? (str user-request))
+            (str (prompt-block "previous_user_request" user-request)
+              "\n\n"))
+          (prompt-block "previous_assistant_answer" answer))))))
+
 (defn assemble-initial-messages
-  "Initial provider messages for one turn. Deliberately excludes prior
+  "Initial provider messages for one turn. Deliberately excludes full prior
    dialog transcript: Vis state flows through SYSTEM vars, <journal>,
    <var_index>, and DB-backed tools. The current user request is tagged as
-   <user_turn_request_main_goal>."
-  [{:keys [system-prompt initial-user-content]}]
-  (vec
-    (concat
-      (when system-prompt [{:role "system" :content system-prompt}])
-      (when initial-user-content
-        [{:role "user" :content (prompt-block "user_turn_request_main_goal" initial-user-content)}]))))
+   <user_turn_request_main_goal>.
+
+   One full previous-turn context block may be prepended so short follow-ups
+   (`A`, `do it`, `yes`) keep the referent from the prior final answer without
+   replaying the whole conversation."
+  [{:keys [system-prompt initial-user-content previous-turn-context]}]
+  (let [previous-block (previous-turn-context-block previous-turn-context)
+        user-block     (when initial-user-content
+                         (prompt-block "user_turn_request_main_goal" initial-user-content))]
+    (vec
+      (concat
+        (when system-prompt [{:role "system" :content system-prompt}])
+        (when user-block
+          [{:role "user" :content (str/join "\n\n" (keep identity [previous-block user-block]))}])))))
 
 ;; =============================================================================
 ;; System prompt
@@ -742,7 +777,7 @@ State → decision matrix → observed new state:
 | ANSWER | Is work resolved or explicitly impeded with evidence? | One final Markdown answer-bearing form; after iteration 1 it is the only top-level form. It may wrap final intent resolution plus `(answer ...)` when every cited ref is already observed. | Turn ends; answer cites observed evidence when evidence was used. | done. |
 
 Host-enforced gates before final answer:
-  focused intents are checked via db-intents / `(v/intents)` and persisted proof audit / `(v/audit)`; every focused intent must be fulfilled or abandoned through attestation-backed closure or explicit blocker evidence; active focused work must have one active plan with gates; required open gates prevent final answer; required impeded gates require re-plan or abandonment; evidence refs must be observed canonical refs with lifecycle status :done; impediment refs must be terminal non-running error/timeout/cancel evidence; running future/deferred refs prove only start, never completion.
+  focused intents are checked via db-intents / `(v/intents)` and persisted proof audit / `(v/audit)`; every focused intent must be fulfilled or abandoned through attestation-backed closure or explicit blocker evidence; active focused work must have one active plan with gates; required open gates prevent final answer; required impeded gates require re-plan or abandonment; evidence refs must be observed canonical refs with lifecycle status :done; explicit abandonment requires terminal impediment evidence: cite an observed `v/impede-gate!` result whose returned status is `:impeded`, or a terminal error/timeout/cancel/interrupted ref; ordinary successful prose/design/tool output cannot justify `v/abandon-intent!`; running future/deferred refs prove only start, never completion.
 
 Evidence taxonomy:
   evidence producers create observed journal facts with canonical refs: eval results, tool results, `provider-limits`, runtime snapshots. Diagnostic enrichers explain evidence: `parse-diagnose`, error classifiers, doctor checks; they are not proof unless their own observed diagnostic ref is cited. Resolution state consumes refs: intents, plans, gates, proof slots. A proof slot is a gate/plan expectation, not a separate proof object and not evidence until filled with an observed ref. Do not call this a standalone proof layer.
@@ -1260,7 +1295,7 @@ Extension aliases such as v/, z/, clj/ are preloaded when their extensions are a
 ;;   - diagnostic tooling that wants to attribute prompt size to a
 ;;     specific surface (system / user goal / iteration trailer) without
 ;;     reaching into private helpers;
-;;   - autoresearch + judge runners that need a single, reproducible
+;;   - regression and diagnostic callers that need a single, reproducible
 ;;     "exact token/context impact" number per turn.
 ;;
 ;; Surfaces, in send order:

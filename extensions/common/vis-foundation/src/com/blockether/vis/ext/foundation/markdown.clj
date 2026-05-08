@@ -6,8 +6,11 @@
    registers the same fns as SCI symbols under the unified `v/` foundation
    alias."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.markdown :as md]))
+   [com.blockether.vis.internal.markdown :as md]
+   [edamame.core :as edamame]
+   [sci.core :as sci]))
 
 (set! *warn-on-reflection* true)
 
@@ -47,6 +50,69 @@
 (def lines md/lines)
 (def section md/section)
 (def escape md/escape)
+
+(def ^:private prose-helper-names
+  '#{h h1 h2 h3 h4 h5 h6
+     p bold strong italic em bold-italic strike
+     code summary kbd link image file-link anchor
+     code-block blockquote quote details li ul ol checklist table join
+     needs-input lines section escape})
+
+(def ^:private prose-helper-symbols
+  (set (concat prose-helper-names
+         (map #(symbol "v" (name %)) prose-helper-names))))
+
+(defn- sci-resolves-symbol?
+  [{:keys [sci-ctx sandbox-ns]} sym]
+  (when sci-ctx
+    (try
+      (let [sandbox (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
+        (boolean (:val (sci/eval-string+ sci-ctx (str "(resolve '" sym ")") (when sandbox {:ns sandbox})))))
+      (catch Throwable _ false))))
+
+(defn- prose-symbol?
+  [environment sym]
+  (and (symbol? sym)
+    (nil? (namespace sym))
+    (not (sci-resolves-symbol? environment sym))))
+
+(defn- auto-quote-prose-form
+  [environment form]
+  (letfn [(rewrite [x direct-markdown-arg?]
+            (cond
+              (seq? x)
+              (let [head (first x)]
+                (if (contains? prose-helper-symbols head)
+                  (apply list head (map #(rewrite % true) (rest x)))
+                  (apply list (map #(rewrite % false) x))))
+
+              (vector? x)
+              (mapv #(rewrite % false) x)
+
+              (map? x)
+              (into (empty x) (map (fn [[k v]] [(rewrite k false) (rewrite v false)])) x)
+
+              (set? x)
+              (into (empty x) (map #(rewrite % false)) x)
+
+              (and direct-markdown-arg? (prose-symbol? environment x))
+              (name x)
+
+              :else x))]
+    (rewrite form false)))
+
+(defn rescue-markdown-prose
+  "Foundation source-rewrite hook. Repairs valid Clojure that would fail while
+   building final Markdown because prose was emitted as bare symbols inside
+   direct `v/` markdown helper args, e.g. `(v/p Spokojnie — gotowe)`. Bound
+   symbols are preserved for interpolation. Returns rewritten source or nil."
+  [{:keys [code environment]}]
+  (try
+    (let [forms    (edamame/parse-string-all (or code ""))
+          repaired (mapv #(auto-quote-prose-form environment %) forms)]
+      (when (not= forms repaired)
+        (str/join "\n" (map pr-str repaired))))
+    (catch Throwable _ nil)))
 
 (def ^:private symbol-entries
   [(vis/symbol 'h1 h1
@@ -217,9 +283,14 @@
       :arglists '([s])
       :examples ["(v/escape \"1 + 2 = *3*\")"]})])
 
+(defn- with-source-rewrite
+  [entry]
+  (cond-> entry
+    (:ext.symbol/fn entry) (assoc :ext.symbol/source-rewrite-fn rescue-markdown-prose)))
+
 (def markdown-symbols
   "All `v/`-aliased symbols exposed in the SCI sandbox."
-  symbol-entries)
+  (mapv with-source-rewrite symbol-entries))
 
 (def markdown-prompt
   "Prompt fragment listing the `v/` surface for the iteration prompt."

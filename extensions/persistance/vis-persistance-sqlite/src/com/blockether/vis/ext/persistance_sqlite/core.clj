@@ -1140,46 +1140,63 @@
     (:summary row) (assoc :summary (:summary row))
     (:metadata row) (assoc :metadata (<-blob (:metadata row)))))
 
+(defn- insert-provenance-event!
+  [tx-info {:keys [conversation-id conversation-turn-id conversation-turn-state-id iteration-id
+                   ref parent-ref kind op status rendering-kind payload payload-sha256 summary metadata]}]
+  (let [ref (str ref)]
+    (when-not (proof/canonical-ref? ref)
+      (throw (ex-info "provenance ref must be canonical"
+               {:ref ref
+                :accepted "turn/<turn8>/iteration/<n>/block/<k>[/tool/<tool-id>|/error]"})))
+    (when (and parent-ref (not (proof/canonical-ref? parent-ref)))
+      (throw (ex-info "provenance parent ref must be canonical" {:parent-ref parent-ref})))
+    (let [id (new-id)
+          row {:id id
+               :conversation_soul_id (->ref conversation-id)
+               :conversation_turn_soul_id (some-> conversation-turn-id ->ref)
+               :conversation_turn_state_id (some-> conversation-turn-state-id ->ref)
+               :iteration_id (some-> iteration-id ->ref)
+               :ref ref
+               :parent_ref parent-ref
+               :kind (proof-kind-sql kind)
+               :op (or (kw-sql op) "event")
+               :status (proof-status-sql status)
+               :rendering_kind (kw-sql rendering-kind)
+               :payload (when (some? payload) (->blob payload))
+               :payload_sha256 (or payload-sha256 (when (some? payload) (payload-digest payload)))
+               :summary summary
+               :metadata (when (some? metadata) (->blob metadata))
+               :created_at (now-ms)}]
+      (execute! tx-info {:insert-into :provenance_event
+                         :values [(into {} (remove (comp nil? val) row))]})
+      (let [event-row (row->provenance-event
+                        (require-row tx-info :provenance_event id "provenance_event not found after insert"))]
+        (emit-proof-event! :proof/event-appended {:event event-row})
+        event-row))))
+
+(defn- insert-provenance-event-if-absent!
+  "Best-effort runtime capture for iteration-derived observations. Public
+   db-store-provenance-event! stays strict, but auto-capture must be idempotent
+   across retries/replays and databases already containing transcript-derived
+   refs from earlier builds."
+  [tx-info {:keys [conversation-id ref] :as opts}]
+  (or (query-one! tx-info {:select [:*]
+                           :from :provenance_event
+                           :where [:and
+                                   [:= :conversation_soul_id (->ref conversation-id)]
+                                   [:= :ref (str ref)]]})
+    (insert-provenance-event! tx-info opts)))
+
 (defn db-store-provenance-event!
   "Append one immutable provenance_event row.
 
    This is the first proof-grade ledger slice. It records runtime observations;
    evidence bundles and attestations consume these rows later."
-  [db-info {:keys [conversation-id conversation-turn-id conversation-turn-state-id iteration-id
-                   ref parent-ref kind op status rendering-kind payload payload-sha256 summary metadata]}]
+  [db-info opts]
   (when (ds db-info)
-    (let [ref (str ref)]
-      (when-not (proof/canonical-ref? ref)
-        (throw (ex-info "provenance ref must be canonical"
-                 {:ref ref
-                  :accepted "turn/<turn8>/iteration/<n>/block/<k>[/tool/<tool-id>|/error]"})))
-      (when (and parent-ref (not (proof/canonical-ref? parent-ref)))
-        (throw (ex-info "provenance parent ref must be canonical" {:parent-ref parent-ref})))
-      (sqlite-write-tx! db-info
-        (fn [tx-info]
-          (let [id (new-id)
-                row {:id id
-                     :conversation_soul_id (->ref conversation-id)
-                     :conversation_turn_soul_id (some-> conversation-turn-id ->ref)
-                     :conversation_turn_state_id (some-> conversation-turn-state-id ->ref)
-                     :iteration_id (some-> iteration-id ->ref)
-                     :ref ref
-                     :parent_ref parent-ref
-                     :kind (proof-kind-sql kind)
-                     :op (or (kw-sql op) "event")
-                     :status (proof-status-sql status)
-                     :rendering_kind (kw-sql rendering-kind)
-                     :payload (when (some? payload) (->blob payload))
-                     :payload_sha256 (or payload-sha256 (when (some? payload) (payload-digest payload)))
-                     :summary summary
-                     :metadata (when (some? metadata) (->blob metadata))
-                     :created_at (now-ms)}]
-            (execute! tx-info {:insert-into :provenance_event
-                               :values [(into {} (remove (comp nil? val) row))]})
-            (let [event-row (row->provenance-event
-                              (require-row tx-info :provenance_event id "provenance_event not found after insert"))]
-              (emit-proof-event! :proof/event-appended {:event event-row})
-              event-row)))))))
+    (sqlite-write-tx! db-info
+      (fn [tx-info]
+        (insert-provenance-event! tx-info opts)))))
 
 (defn db-get-provenance-event
   [db-info conversation-id ref]
@@ -2553,6 +2570,28 @@
       vec)
     []))
 
+(defn- abandonment-impediment-ref?
+  "True only for refs that prove an actual terminal blocker for abandoning
+   intent work: a failed/timeout/cancel/interrupted runtime event, or a
+   successful call whose result is itself an impeded gate/plan artifact.
+   Generic successful blocks are not enough; they caused abandon-intent! to be
+   used as an escape hatch after ordinary design/prose output."
+  [db-info conversation-soul-id ref]
+  (let [event  (observed-event-at-canonical-ref db-info conversation-soul-id (canonical-ref-or-throw! ref))
+        status (get-in event [:provenance :status])]
+    (or (proof/blocker? status)
+      (= :impeded (-> event :result :status ->kw-back))
+      (= :blocked (-> event :result :status ->kw-back)))))
+
+(defn- validate-abandonment-impediment-refs!
+  [db-info conversation-soul-id refs]
+  (let [ref-strings (mapv (comp :ref #(normalize-ref-entry :abandonment-evidence %)) refs)]
+    (when-not (some #(abandonment-impediment-ref? db-info conversation-soul-id %) ref-strings)
+      (throw (ex-info "abandoned intent requires terminal impediment evidence; cite an impeded gate result or a terminal error/timeout/cancel/interrupted ref"
+               {:type :intent/abandon-without-impediment
+                :refs ref-strings
+                :accepted "impeded gate result, blocked plan result, or runtime status :error/:timeout/:cancelled/:interrupted"})))))
+
 (defn- store-intent-resolution-refs!
   [db-info intent-id refs role now]
   (doseq [{:keys [ref role metadata]} (map #(normalize-ref-entry role %) refs)]
@@ -2645,6 +2684,8 @@
           (when-not (seq refs-v)
             (throw (ex-info "abandoned intent requires at least one evidence ref" {:intent-id intent-id})))
           (validate-provenance-refs! tx-info soul-id refs-v :blocker)
+          (when (seq explicit-refs)
+            (validate-abandonment-impediment-refs! tx-info soul-id explicit-refs))
           (store-intent-resolution-refs! tx-info intent-id refs-v :abandonment-evidence now)
           (execute! tx-info
             {:update :conversation_intent
@@ -3521,6 +3562,70 @@
     (contains? v :success?)
     (contains? v :provenance)))
 
+(defn- tool-envelope-status
+  [envelope]
+  (let [tool-provenance (:provenance envelope)
+        result (:result envelope)]
+    (or (:status tool-provenance)
+      (cond
+        (or (:timed-out? result) (:timeout? envelope)) :timeout
+        (:error envelope) :error
+        (false? (:success? envelope)) :error
+        :else :done))))
+
+(defn- tool-envelope-payload
+  [envelope]
+  (cond-> {:result (freeze-safe (:result envelope))
+           :success? (:success? envelope)}
+    (contains? envelope :error) (assoc :error (:error envelope))))
+
+(defn- tool-provenance-event-row
+  [conversation-soul-id conversation-turn-soul-id conversation-turn-state-id iteration-id parent-ref envelope]
+  (let [tool-provenance (:provenance envelope)
+        op (or (:op tool-provenance) :v/tool)]
+    {:conversation-id conversation-soul-id
+     :conversation-turn-id conversation-turn-soul-id
+     :conversation-turn-state-id conversation-turn-state-id
+     :iteration-id iteration-id
+     :ref (proof/child-ref parent-ref {:op op})
+     :parent-ref parent-ref
+     :kind :tool
+     :op op
+     :status (tool-envelope-status envelope)
+     :rendering-kind :vis/tool
+     :payload (tool-envelope-payload envelope)
+     :metadata (-> tool-provenance
+                 (dissoc :op :status :ref :parent-ref :duration-ms :started-at-ms :finished-at-ms)
+                 (assoc :duration-ms (:duration-ms tool-provenance)
+                   :started-at-ms (:started-at-ms tool-provenance)
+                   :finished-at-ms (:finished-at-ms tool-provenance)))}))
+
+(defn- block-by-code
+  [blocks]
+  (reduce (fn [acc block]
+            (if (contains? acc (:code block))
+              acc
+              (assoc acc (:code block) block)))
+    {}
+    blocks))
+
+(defn- provenance-event-rows-for-iteration
+  [conversation-soul-id conversation-turn-soul-id conversation-turn-state-id iteration-id blocks vars]
+  (let [blocks-by-code (block-by-code blocks)
+        direct-tool-rows (keep (fn [block]
+                                 (when (structural-tool-result? (:result block))
+                                   (tool-provenance-event-row conversation-soul-id conversation-turn-soul-id conversation-turn-state-id iteration-id
+                                     (get-in block [:provenance :ref])
+                                     (:result block))))
+                           blocks)
+        var-tool-rows (keep (fn [{:keys [code value name]}]
+                              (when (structural-tool-result? value)
+                                (when-let [parent-ref (get-in (get blocks-by-code code) [:provenance :ref])]
+                                  (assoc (tool-provenance-event-row conversation-soul-id conversation-turn-soul-id conversation-turn-state-id iteration-id parent-ref value)
+                                    :summary (str "tool result captured in var " name)))))
+                        vars)]
+    (vec (concat direct-tool-rows var-tool-rows))))
+
 (defn- lifecycle-child-events
   [parent-provenance exec]
   (let [parent-ref (:ref parent-provenance)
@@ -3626,6 +3731,12 @@
                                          {:select [:conversation_state_id]
                                           :from   :conversation_turn_soul
                                           :where  [:= :id conversation-turn-soul-id-s]})))
+              conversation-soul-id (when conversation-state-id
+                                     (:conversation_soul_id
+                                      (query-one! tx-info
+                                        {:select [:conversation_soul_id]
+                                         :from   :conversation_state
+                                         :where  [:= :id conversation-state-id]})))
               ;; Compute position (1-indexed within this conversation_turn_state)
               ;; Next position is `MAX(position)+1` (monotonic and survives
               ;; row deletions), aliased as `:next_position` so the SQL
@@ -3687,7 +3798,14 @@
                           (some? (:output tokens))    (assoc :llm_output_tokens    (long (:output tokens)))
                           (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
                           (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
-                          (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]}))
+                          (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]})
+            (doseq [event-row (provenance-event-rows-for-iteration conversation-soul-id
+                                conversation-turn-soul-id-s
+                                conversation-turn-state-id-s
+                                iteration-id-s
+                                blocks-vec
+                                vars)]
+              (insert-provenance-event-if-absent! tx-info event-row)))
           ;; 3. Vars → expression_soul (kind=var, stateful) + expression_state (versioned)
           (when conversation-state-id
             (doseq [{:keys [name value code time-ms metadata]} (or vars [])]

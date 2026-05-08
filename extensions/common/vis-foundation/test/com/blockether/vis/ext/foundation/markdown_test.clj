@@ -8,6 +8,31 @@
    [com.blockether.vis.ext.foundation.markdown :as md]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
+(defdescribe markdown-prose-rescue-test
+  (it "quotes unbound prose words in v markdown helpers"
+    (let [code "(answer (v/p Spokojnie — patche są w toku))"
+          repaired (md/rescue-markdown-prose {:code code :environment {}})]
+      (expect (= "(answer (v/p \"Spokojnie\" \"—\" \"patche\" \"są\" \"w\" \"toku\"))"
+                repaired))))
+
+  (it "keeps bound symbols used for markdown interpolation"
+    (with-redefs-fn {#'md/sci-resolves-symbol? (fn [_ sym] (= 'n sym))}
+      (fn []
+        (let [code "(v/p Patched n files)"
+              repaired (md/rescue-markdown-prose {:code code :environment {}})]
+          (expect (= "(v/p \"Patched\" n \"files\")" repaired))))))
+
+  (it "quotes bare file refs in markdown helpers"
+    (let [code "(v/p (v/code core.clj:2632) wymaga poprawki)"
+          repaired (md/rescue-markdown-prose {:code code :environment {}})]
+      (expect (= "(v/p (v/code \"core.clj:2632\") \"wymaga\" \"poprawki\")" repaired))))
+
+  (it "attaches the source rewrite hook to each markdown function symbol"
+    (let [fn-symbols (filter :ext.symbol/fn md/markdown-symbols)]
+      (expect (seq fn-symbols))
+      (expect (every? #(= md/rescue-markdown-prose (:ext.symbol/source-rewrite-fn %))
+                fn-symbols)))))
+
 (defdescribe headings-test
   (it "h1..h6 prefix the right number of `#`"
     (expect (= "# Title"     (md/h1 "Title")))
@@ -171,6 +196,12 @@
     (expect (= "a b c" (md/p "a  " "  b" "c")))
     (expect (= "a b c" (md/p "a  b" "c")))
     (expect (= "foo `bar`" (md/p "foo " (md/code "bar")))))
+
+  (it "p tightens punctuation around inline fragments"
+    (expect (= "(`core.clj:2632`) wymaga"
+              (md/p "(" (md/code "core.clj:2632") ")" "wymaga")))
+    (expect (= "Status: `ok`, done."
+              (md/p "Status" ":" (md/code "ok") "," "done" "."))))
 
   (it "p with no args yields the empty string"
     (expect (= "" (md/p))))

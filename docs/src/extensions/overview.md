@@ -110,6 +110,19 @@ ensure it has a `META-INF/vis-extension/vis.edn` in its resources,
 and it will be loaded automatically. No imports, no requires, no
 wiring.
 
+For user-installed source extensions, the Unix `bin/vis` launcher also scans
+`<project>/.vis/vis-extensions/*/deps.edn` and
+`~/.vis/vis-extensions/*/deps.edn` before JVM startup, adding each extension
+project as a `:local/root` dependency. Use:
+
+```bash
+vis extensions scaffold my-tools
+```
+
+to create `.vis/vis-extensions/my-tools` with a minimal `deps.edn`, manifest,
+and namespace. Move or scaffold under `~/.vis/vis-extensions` when the
+extension should load for every project.
+
 **Directory layout for an extension:**
 
 ```

@@ -687,6 +687,16 @@
                      :data {:name (str defining-name)
                             :error (ex-message t)}}))))))
 
+(defn- try-extension-source-rewrite
+  "Walk active extensions for parsed-source normalization before SCI eval.
+   Extension-owned: the loop only supplies the hook seam and validates that
+   rewritten source still parses."
+  [environment code]
+  (when-let [exts (some-> (:extensions environment) deref seq)]
+    (when-let [rewritten (extension/try-rewrite-source exts code environment)]
+      (when-not (parse-clojure-syntax rewritten)
+        rewritten))))
+
 (defn- execute-code
   "Run a single :code block through the SCI sandbox.
 
@@ -720,10 +730,16 @@
                   :original-error parse-error))
               {:result nil :stdout "" :stderr "" :error parse-error
                :execution-time-ms 0 :timeout? false})
-            (let [exec (run-with-timing sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn)]
+            (let [rewritten-code (try-extension-source-rewrite environment code)
+                  eval-code      (or rewritten-code code)
+                  exec           (run-with-timing sci-ctx eval-code sandbox-ns timeout-ms start-time tool-event-fn)]
               (when (nil? (:error exec))
-                (attach-doc-meta! environment code doc))
-              exec)))))))
+                (attach-doc-meta! environment eval-code doc))
+              (cond-> exec
+                rewritten-code
+                (assoc :repaired? true
+                  :original-code code
+                  :repair :extension-source-rewrite)))))))))
 
 ;; Print-cap defaults for `prompt/safe-pr-str` — chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
@@ -824,8 +840,18 @@
     (catch Throwable _
       [])))
 
+(defn- read-or-search-tool-result?
+  [value]
+  (and (extension/tool-result? value)
+    (contains? #{:op/read :op/search}
+      (get-in value [:provenance :op-class]))))
+
 (defn- def-display-result
-  "For single value defs, display and persist the bound value, not the Var return."
+  "For single value defs, persist the bound value, not the Var return.
+
+   Read/search tool defs are acquisition, not observation. Keep their full
+   value in the sandbox/DB for later use, but mark the form silent so the TUI
+   does not render the same payload again before a following `v/preview`."
   [environment code result]
   (if (or (:error result) (:timeout? result) (nil? (:sci-ctx environment)))
     result
@@ -834,7 +860,10 @@
         (let [locals (get-locals environment)
               name   (first defs)]
           (if (contains? locals name)
-            (assoc result :result (get locals name))
+            (let [value (get locals name)]
+              (cond-> (assoc result :result value)
+                (read-or-search-tool-result? value)
+                (assoc :rendering-kind :vis/silent)))
             result))
         result))))
 
@@ -1096,16 +1125,28 @@
       str
       str/trim)))
 
-(defn- duplicate-fenced-block-error
+(defn- executable-block-sources
   [blocks]
-  (let [sources (->> (or blocks [])
-                  (keep executable-block-source)
-                  (remove str/blank?)
-                  vec)
-        duplicate? (< (count (distinct sources)) (count sources))]
-    (when duplicate?
-      (str "Provider returned duplicate executable fenced blocks. "
-        "Aborting before evaluation; emit exactly one clojure fence."))))
+  (->> (or blocks [])
+    (keep executable-block-source)
+    (remove str/blank?)
+    vec))
+
+(defn- duplicate-fenced-blocks?
+  [blocks]
+  (let [sources (executable-block-sources blocks)]
+    (< (count (distinct sources)) (count sources))))
+
+(defn- dedupe-fenced-block-code
+  "Providers sometimes stutter and return the same fenced code block multiple
+   times (` ```clojure ... ``````clojure ... ````). Treat exact duplicate
+   executable blocks as transport noise: execute the first copy once instead
+   of burning a retry iteration."
+  [raw-code blocks]
+  (let [sources (executable-block-sources blocks)]
+    (if (< (count (distinct sources)) (count sources))
+      (str/join "\n\n" (distinct sources))
+      raw-code)))
 
 (defn- code-entries-preflight
   ([iteration-position raw-code]
@@ -1114,19 +1155,14 @@
    (code-entries-preflight iteration-position raw-code repeat-state nil))
   ([iteration-position raw-code repeat-state opts]
    (let [raw-code (or raw-code "")
-         duplicate-block-error (duplicate-fenced-block-error (:blocks opts))
-         raw-fence-error (when-not duplicate-block-error
-                           (raw-markdown-fence-leak-error raw-code))
-         [forms parse-error] (if (or duplicate-block-error raw-fence-error)
-                               [nil (when raw-fence-error
-                                      (ex-info raw-fence-error
-                                        {:vis/error :raw-markdown-fence-leak}))]
+         duplicate-blocks-normalized? (duplicate-fenced-blocks? (:blocks opts))
+         raw-code (dedupe-fenced-block-code raw-code (:blocks opts))
+         raw-fence-error (raw-markdown-fence-leak-error raw-code)
+         [forms parse-error] (if raw-fence-error
+                               [nil (ex-info raw-fence-error
+                                      {:vis/error :raw-markdown-fence-leak})]
                                (split-top-level-forms raw-code))
          parsed-code-entries (cond
-                               duplicate-block-error
-                               [{:expr "(vis/preflight-error :duplicate-fenced-blocks)"
-                                 :preflight-error duplicate-block-error}]
-
                                raw-fence-error
                                [{:expr "(vis/preflight-error :raw-markdown-fence-leak)"
                                  :preflight-error raw-fence-error}]
@@ -1137,14 +1173,13 @@
                                :else
                                (vec (filter #(not (str/blank? (:expr %)))
                                       (or forms []))))
-         plain-prose-error (when-not (or duplicate-block-error raw-fence-error parse-error)
+         plain-prose-error (when-not (or raw-fence-error parse-error)
                              (plain-prose-code-error raw-code parsed-code-entries))
          parsed-total-blocks (count parsed-code-entries)
          normalized-code (normalized-code-source parsed-code-entries)
          code-hash (when-not (str/blank? normalized-code)
                      (sha256-hex normalized-code))
-         answer-preflight-form-idx (when (and (not duplicate-block-error)
-                                           (not raw-fence-error)
+         answer-preflight-form-idx (when (and (not raw-fence-error)
                                            (not plain-prose-error)
                                            (pos? parsed-total-blocks))
                                      (answer-position-preflight-form-idx
@@ -1154,12 +1189,9 @@
                                   (answer-position-preflight-error-message
                                     answer-preflight-form-idx
                                     parsed-total-blocks))
-         repeat-error (when-not (or duplicate-block-error raw-fence-error parse-error plain-prose-error answer-preflight-error)
+         repeat-error (when-not (or raw-fence-error parse-error plain-prose-error answer-preflight-error)
                         (repeat-preflight-error repeat-state code-hash))]
      {:code-entries (cond
-                      duplicate-block-error
-                      parsed-code-entries
-
                       plain-prose-error
                       [{:expr "(vis/preflight-error :plain-prose-code)"
                         :comment (prose->comment raw-code)
@@ -1180,7 +1212,7 @@
       :repeat-preflight-error repeat-error
       :plain-prose-preflight-error plain-prose-error
       :raw-fence-preflight-error raw-fence-error
-      :duplicate-block-preflight-error duplicate-block-error
+      :duplicate-blocks-normalized? duplicate-blocks-normalized?
       :normalized-code normalized-code
       :code-hash code-hash
       :original-total-blocks parsed-total-blocks})))
@@ -1696,7 +1728,7 @@
           ;; resolved-model)` would land a stringified map in
           ;; `iteration.llm_model`; surface `:name` and `:provider`
           ;; separately so both columns get clean values.
-        (let [final-answer    (answer-value-string value)
+        (let [final-answer    (answer-str {:result value})
               total-forms     (count code-entries)
               position-bad?   (answer-position-violation? form-idx total-forms iteration-position)
               own-form-error  (when-not position-bad?
@@ -2320,21 +2352,46 @@
     (re-find auto-diagnose-request-pattern (str user-request))
     (conj "diagnose")))
 
-(defn- activate-auto-skills!
-  [environment user-request]
-  (when-let [active-skills-atom (:active-skills-atom environment)]
-    (doseq [skill-name (auto-skill-names user-request)]
-      (try
-        (when-let [lookup (requiring-resolve
-                            'com.blockether.vis.ext.foundation.environment.skills/lookup)]
-          (let [skill (lookup skill-name)]
-            (when (:found? skill)
-              (swap! active-skills-atom assoc (:name skill) (assoc skill :auto? true)))))
-        (catch Throwable t
-          (tel/log! {:level :warn :id ::auto-skill-activation-failed
-                     :data {:skill skill-name
-                            :error (ex-message t)}}))))
-    @active-skills-atom))
+(do
+  (defn- activate-auto-skills!
+    [environment user-request]
+    (when-let [active-skills-atom (:active-skills-atom environment)]
+      (doseq [skill-name (auto-skill-names user-request)]
+        (try
+          (when-let [lookup (requiring-resolve
+                              'com.blockether.vis.ext.foundation.environment.skills/lookup)]
+            (let [skill (lookup skill-name)]
+              (when (:found? skill)
+                (swap! active-skills-atom assoc (:name skill) (assoc skill :auto? true)))))
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::auto-skill-activation-failed
+                       :data {:skill skill-name
+                              :error (ex-message t)}}))))
+      @active-skills-atom))
+
+  (defn- previous-turn-context
+    "Latest completed prior turn answer for short follow-up disambiguation.
+
+     Full chat replay stays out of provider messages. This bounded map is
+     passed to prompt/assemble-initial-messages so `A`, `yes`, and `do it` can
+     resolve against the immediately previous final answer instead of only the
+     token-budgeted journal."
+    [{:keys [db-info conversation-id]} current-turn-id]
+    (try
+      (when (and db-info conversation-id)
+        (some->> (persistance/db-list-conversation-turns db-info conversation-id)
+          (remove #(= (str (:id %)) (str current-turn-id)))
+          (filter #(and (= :complete (:prior-outcome %))
+                     (not (str/blank? (str (:answer %))))))
+          (sort-by (fn [turn]
+                     [(long (or (:position turn) 0))
+                      (str (or (:created-at turn) ""))]))
+          last
+          (#(select-keys % [:id :position :user-request :answer]))))
+      (catch Throwable t
+        (tel/log! {:level :warn :id ::previous-turn-context-failed
+                   :data {:error (ex-message t)}})
+        nil))))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble → ask LLM → execute → persist
@@ -2375,7 +2432,8 @@
         initial-user-content user-request
         initial-messages (prompt/assemble-initial-messages
                            {:system-prompt system-prompt
-                            :initial-user-content initial-user-content})
+                            :initial-user-content initial-user-content
+                            :previous-turn-context (previous-turn-context environment conversation-turn-id)})
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0
                           :cache-creation-tokens 0})
         accumulate-usage! (fn [api-usage]

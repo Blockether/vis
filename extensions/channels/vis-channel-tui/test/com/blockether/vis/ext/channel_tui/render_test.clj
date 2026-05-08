@@ -824,6 +824,49 @@
         ;; (NOT bold) is what the caller sees on exit.
         (expect (= #{com.googlecode.lanterna.SGR/ITALIC} @active))))))
 
+(defdescribe paint-ansi-line-inline-sentinel-test
+  ;; Tool render-fns return Markdown. Inline code spans in that Markdown
+  ;; become private-use sentinels before result painting. The result painter
+  ;; must consume them; otherwise Lanterna renders glyphs like  / .
+  (it "consumes inline code sentinels instead of painting PUA glyphs"
+    (let [paint-ansi-line! @#'render/paint-ansi-line!
+          captured        (atom [])
+          active          (atom #{})
+          fg              (atom nil)
+          bg              (atom nil)
+          graphics        (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                            (clearModifiers []
+                              (reset! active #{})
+                              this)
+                            (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                              (swap! active into (seq arr))
+                              this)
+                            (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                              (apply swap! active disj (seq arr))
+                              this)
+                            (getActiveModifiers []
+                              (if (empty? @active)
+                                (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                                (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                            (setForegroundColor [c] (reset! fg c) this)
+                            (setBackgroundColor [c] (reset! bg c) this)
+                            (putString
+                              ([col row text]
+                               (swap! captured conj [text {:fg @fg :bg @bg :sgr @active}])
+                               this)))
+          line            (str "Searched "
+                            p/INLINE_CODE_ON "[\"extensions\"]" p/INLINE_CODE_OFF
+                            " with "
+                            p/INLINE_CODE_ON "{:any [\"circling\"]}" p/INLINE_CODE_OFF
+                            ". Use "
+                            p/INLINE_CODE_ON "v/preview" p/INLINE_CODE_OFF)
+          visible         "Searched [\"extensions\"] with {:any [\"circling\"]}. Use v/preview"]
+      (paint-ansi-line! graphics 0 0 line t/code-result-fg t/code-ok-bg)
+      (let [painted (apply str (map first @captured))]
+        (expect (= visible painted))
+        (expect (not (str/includes? painted p/INLINE_CODE_ON)))
+        (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
+
 (defdescribe round-trip-pad-cell-test
   (describe "pad-cell tolerates sentinel-bearing text"
     (let [pad-cell @#'render/pad-cell]
@@ -2007,6 +2050,28 @@
       (expect (str/includes? (:text payload) "EDIT patch"))
       (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
 
+  (it "does not duplicate edit badges when tool results auto-collapse"
+    (render/invalidate-cache!)
+    (let [huge-result (str "Patched file.\n" (str/join " " (repeat 500 "diff-line")))
+          trace       [{:code ["(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"]
+                        :results [huge-result]
+                        :result-kinds [:tool]
+                        :result-details [{:op :v/patch
+                                          :op-class :op/edit
+                                          :presentation-kind :tool/edit
+                                          :color-role :tool-color/edit}]
+                        :stdouts [""]
+                        :durations [1]
+                        :successes [true]}]
+          payload     (render/format-answer-with-thinking-data
+                        "" trace 96 {:show-iterations true} nil false
+                        {:conversation-id "conversation"
+                         :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          body        (strip-ansi (:text payload))]
+      (expect (= 1 (count (re-seq #"EDIT patch" body))))
+      (expect (some #(str/starts-with? (body-of %) "▸ EDIT patch") (:lines payload)))
+      (expect (not-any? #(str/starts-with? (body-of %) "  ▸ EDIT patch") (:lines payload)))))
+
   (it "does not duplicate self-describing shell result summaries"
     (render/invalidate-cache!)
     (let [huge-result (str "Ran bash in `.` - exit `0`, 1 ms.\n"
@@ -2027,7 +2092,161 @@
                         {:conversation-id "conversation"
                          :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
-      (expect (= 1 (count (re-seq #"SHELL bash" body))))))
+      (expect (= 1 (count (re-seq #"BASH bash" body))))))
+
+  (it "renders nrepl-eval as bash-class output, not duplicated META"
+    (render/invalidate-cache!)
+    (let [huge-result (str "Ran bash in `.` - exit `0`, 85 ms.\n"
+                        "Command: `clj-nrepl-eval -p 7888 (+ 1 2)`\n"
+                        (str/join " " (repeat 500 "eval-output")))
+          trace       [{:code ["(v/nrepl-eval \"(+ 1 2)\" {:port 7888})"]
+                        :results [huge-result]
+                        :result-kinds [:tool]
+                        :result-details [{:op :v/nrepl-eval
+                                          :op-class :op/shell
+                                          :presentation-kind :tool/shell
+                                          :color-role :tool-color/shell}]
+                        :stdouts [""]
+                        :durations [85]
+                        :successes [true]}]
+          payload     (render/format-answer-with-thinking-data
+                        "" trace 96 {:show-iterations true} nil false
+                        {:conversation-id "conversation"
+                         :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          body        (strip-ansi (:text payload))]
+      (expect (= 1 (count (re-seq #"BASH nrepl-eval" body))))
+      (expect (not (str/includes? body "META nrepl-eval")))))
+
+  (it "keeps shell stderr inside the shell result zone"
+    (let [lines (format-iteration-entry {:iteration      0
+                                         :code           ["(v/bash \"boom\")"]
+                                         :results        ["Ran bash in `.` - exit `1`, 1 ms.\n\nstderr:\n\n```text\nExecution error\n```"]
+                                         :result-kinds   [:tool]
+                                         :result-details [{:op :v/bash
+                                                           :op-class :op/shell
+                                                           :presentation-kind :tool/shell
+                                                           :color-role :tool-color/shell
+                                                           :stderr "Execution error"}]
+                                         :stdouts        [""]
+                                         :stderrs        [""]
+                                         :successes      [false]
+                                         :durations      [1]}
+                  48 1 {})
+          stderr-label (first (filter #(str/includes? % "STDERR") lines))
+          stderr-body  (first (filter #(str/includes? % "Execution error") lines))]
+      (expect (nil? stderr-label))
+      (expect (= p/MARKER_ERR_RESULT (marker-of stderr-body)))))
+
+  (it "keeps shell stdout inside the shell result zone"
+    (let [lines (format-iteration-entry {:iteration      0
+                                         :code           ["(v/bash \"echo hello\")"]
+                                         :results        ["Ran bash in `.` - exit `0`, 1 ms.\n\nstdout:\n\n```text\nhello\nworld\n```"]
+                                         :result-kinds   [:tool]
+                                         :result-details [{:op :v/bash
+                                                           :op-class :op/shell
+                                                           :presentation-kind :tool/shell
+                                                           :color-role :tool-color/shell
+                                                           :stdout "hello\nworld"
+                                                           :stderr ""}]
+                                         :stdouts        [""]
+                                         :stderrs        [""]
+                                         :successes      [true]
+                                         :durations      [1]}
+                  56 1 {})
+          result-line  (first (filter #(str/includes? % "Ran bash") lines))
+          stdout-label (first (filter #(str/includes? % "STDOUT") lines))
+          stderr-label (first (filter #(str/includes? % "STDERR") lines))
+          stdout-body  (first (filter #(str/includes? % "hello") lines))]
+      (expect (some? result-line))
+      (let [result-idx (.indexOf lines result-line)]
+        (expect (= p/MARKER_ITERATION_PAD (marker-of (nth lines (dec result-idx))))))
+      (expect (not (str/starts-with? (body-of result-line) "  ")))
+      (expect (nil? stdout-label))
+      (expect (nil? stderr-label))
+      (expect (some? stdout-body))))
+
+  (it "paints merged shell output on the shell result background"
+    (let [trace   [{:code ["(v/bash \"echo ok\")"]
+                    :results ["Ran bash in `.` - exit `0`, 1 ms.\n\nstdout:\n\n```text\nstdout-line\n```"]
+                    :result-kinds [:tool]
+                    :result-details [{:op :v/bash
+                                      :op-class :op/shell
+                                      :presentation-kind :tool/shell
+                                      :color-role :tool-color/shell
+                                      :stdout "stdout-line"}]
+                    :stdouts [""]
+                    :durations [1]
+                    :successes [true]}]
+          payload (render/format-answer-with-thinking-data
+                    "" trace 80 {:show-iterations true} nil false
+                    {:conversation-id "conversation"
+                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
+          fills   (atom [])
+          puts    (atom [])
+          active  (atom #{})
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString [col row text]
+                       (swap! puts conj {:col col :row row :text text})
+                       this)
+                     (fillRectangle [pos size _ch]
+                       (swap! fills conj {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
+                                          :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
+                                          :w   (.getColumns ^com.googlecode.lanterna.TerminalSize size)})
+                       this)
+                     (setCharacter [_ _ _] this))]
+      (render/draw-chat-bubble! graphics
+        {:role :assistant
+         :text (:text payload)
+         :prewrapped-lines (:lines payload)
+         :line-meta (:line-meta payload)}
+        0 2 80 {:viewport-h 50})
+      (let [code-put   (some #(when (str/includes? (:text %) "v/bash") %) @puts)
+            stdout-put (some #(when (= "stdout-line" (:text %)) %) @puts)
+            result-put (some #(when (str/includes? (:text %) "Ran bash") %) @puts)
+            code-fill-col (apply max (map :col (filter #(= (:row code-put) (:row %)) @fills)))
+            stdout-fill-col (apply max (map :col (filter #(= (:row stdout-put) (:row %)) @fills)))
+            result-fill-col (apply max (map :col (filter #(= (:row result-put) (:row %)) @fills)))]
+        (expect (some? code-put))
+        (expect (some? result-put))
+        (expect (some? stdout-put))
+        (expect (= code-fill-col result-fill-col))
+        (expect (= code-fill-col stdout-fill-col)))))
+
+  (it "omits blank shell result/stdout/stderr blocks"
+    (let [lines (format-iteration-entry {:iteration      0
+                                         :code           ["(v/bash \"true\")"]
+                                         :results        [""]
+                                         :result-kinds   [:tool]
+                                         :result-details [{:op :v/bash
+                                                           :op-class :op/shell
+                                                           :presentation-kind :tool/shell
+                                                           :color-role :tool-color/shell
+                                                           :stdout ""
+                                                           :stderr ""}]
+                                         :stdouts        [""]
+                                         :stderrs        [""]
+                                         :successes      [true]
+                                         :durations      [1]}
+                  56 1 {})]
+      (expect (not-any? #(str/includes? % "BASH") lines))
+      (expect (not-any? #(str/includes? % "RESULT") lines))
+      (expect (not-any? #(str/includes? % "STDOUT") lines))
+      (expect (not-any? #(str/includes? % "STDERR") lines))))
 
   (it "does not emit vague duplicate search-any rows"
     (render/invalidate-cache!)
