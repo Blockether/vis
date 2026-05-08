@@ -2224,6 +2224,251 @@
         (expect (= t/md-summary-bg (:bg summary-put)))
         (expect (contains? (:sgr summary-put) com.googlecode.lanterna.SGR/BOLD))))))
 
+;; ─────────────────────────────────────────────────────────────────────────
+;; Tool detail Markdown rendering — preserves the presentation contract:
+;; tool render-fns return Markdown, so an expanded tool-result details
+;; block must paint headings/bullets/inline emphasis as Markdown rows,
+;; not as raw `**bold**` text.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(defdescribe tool-detail-markdown-rendering-test
+  (describe "expanded tool result body renders Markdown structurally"
+    (it "bullets inside an expanded tool result paint as bullet rows"
+      (render/invalidate-cache!)
+      (let [body (str "Tool finished:\n"
+                   "- alpha line\n"
+                   "- beta line\n"
+                   "- gamma line")
+            ;; Pad with filler so the auto-collapse threshold trips and
+            ;; we get a real expand/collapse path. Then expand it via
+            ;; `:detail-expansions`.
+            big-body (str body "\n\n" (apply str (repeat 4096 "x")))
+            trace [{:code ["(v/bash \"echo hi\")"]
+                    :results [big-body]
+                    :result-kinds [:tool]
+                    :result-details [{:op :v/bash :op-class :op/shell
+                                      :presentation-kind :tool/shell
+                                      :color-role :tool-color/shell}]
+                    :stdouts [""] :durations [1] :successes [true]}]
+            opts {:conversation-id "conversation"
+                  :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                  :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
+            payload (render/format-answer-with-thinking-data
+                      "" trace 96 {:show-iterations true} nil false opts)
+            lines   (:lines payload)]
+        (expect (some #(and (= p/MARKER_MD_BULLET (marker-of %))
+                         (str/includes? % "alpha line")) lines))
+        (expect (some #(and (= p/MARKER_MD_BULLET (marker-of %))
+                         (str/includes? % "beta line")) lines))
+        (expect (some #(and (= p/MARKER_MD_BULLET (marker-of %))
+                         (str/includes? % "gamma line")) lines))
+        ;; The literal raw-Markdown bullet markers must not leak into
+        ;; the user-visible row text.
+        (expect (not-any? #(str/includes? % "- alpha line") lines))))
+
+    (it "inline bold/italic inside tool results paints with inline sentinels"
+      (render/invalidate-cache!)
+      (let [body "Result: **important** and *subtle*."
+            ;; Trip auto-collapse with filler.
+            big-body (str body "\n" (apply str (repeat 4096 "y")))
+            trace [{:code ["(v/bash \"echo hi\")"]
+                    :results [big-body]
+                    :result-kinds [:tool]
+                    :result-details [{:op :v/bash :op-class :op/shell
+                                      :presentation-kind :tool/shell
+                                      :color-role :tool-color/shell}]
+                    :stdouts [""] :durations [1] :successes [true]}]
+            opts {:conversation-id "conversation"
+                  :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                  :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
+            payload (render/format-answer-with-thinking-data
+                      "" trace 96 {:show-iterations true} nil false opts)
+            text    (:text payload)]
+        ;; The body row carries inline-bold sentinels so the painter
+        ;; styles "important" as bold instead of leaving the literal
+        ;; `**important**` text on the row.
+        (expect (str/includes? text p/INLINE_BOLD_ON))
+        (expect (str/includes? text p/INLINE_BOLD_OFF))
+        (expect (str/includes? text p/INLINE_ITALIC_ON))
+        (expect (str/includes? text p/INLINE_ITALIC_OFF))
+        (expect (str/includes? text "important"))
+        (expect (str/includes? text "subtle"))
+        (expect (not (str/includes? text "**important**")))
+        (expect (not (str/includes? text "*subtle*")))))
+
+    (it "errors keep raw rendering — error formatting handles its own marker"
+      ;; Errors come through err-result-marker; we explicitly opt OUT
+      ;; of `:render-as :markdown` for them in `form-lines`. This test
+      ;; pins that contract: the error body still appears verbatim and
+      ;; does NOT pick up bullet markers from accidental Markdown re-parse.
+      (render/invalidate-cache!)
+      (let [trace [{:code ["(boom)"]
+                    :results ["- pretend-bullet"]
+                    :result-kinds [:tool]
+                    :stdouts [""] :durations [1] :successes [false]}]
+            opts {:conversation-id "conversation"
+                  :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                  :detail-expansions {}}
+            payload (render/format-answer-with-thinking-data
+                      "" trace 96 {:show-iterations true} nil false opts)
+            lines   (:lines payload)]
+        ;; The literal `- pretend-bullet` text stays in the row; we
+        ;; never re-render error bodies as Markdown.
+        (expect (some #(str/includes? % "- pretend-bullet") lines))))))
+
+;; ─────────────────────────────────────────────────────────────────────────
+;; Mermaid fenced rendering — `vis-mermaid` registers a fenced renderer.
+;; The TUI must route ` ```mermaid ` fences through the extension and
+;; paint the rendered ASCII rows on the code-block band.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(defdescribe mermaid-fenced-rendering-test
+  (it "renders mermaid fences via the registered extension into MD_CODE rows"
+    (render/invalidate-cache!)
+    (let [;; Lazily ensure the extension is loaded — its require side-effect
+          ;; registers the fenced renderer in the global extension registry.
+          _ (require 'com.blockether.vis.ext.mermaid.core)
+          source "```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```"
+          lines (md->lines source 80)
+          code-rows (filter #(= p/MARKER_MD_CODE (marker-of %)) lines)
+          bodies (map (comp strip-ansi body-of) code-rows)]
+      (expect (some #(str/includes? % "Mermaid (flowchart)") bodies))
+      (expect (some #(str/includes? % "Start") bodies))
+      (expect (some #(str/includes? % "End") bodies))))
+
+  (it "falls back to the plain code-block renderer when source is empty"
+    ;; Robustness: a malformed mermaid block (empty body) should not
+    ;; crash and should still paint as a CODE-marked region so the
+    ;; user sees "there was a fence here".
+    (render/invalidate-cache!)
+    (let [_ (require 'com.blockether.vis.ext.mermaid.core)
+          source "```mermaid\n```"
+          lines (md->lines source 80)]
+      (expect (some #(= p/MARKER_MD_CODE (marker-of %)) lines)))))
+
+;; ─────────────────────────────────────────────────────────────────────────
+;; Details with Markdown body — markdown inside <details> renders fully.
+;; Regression test for the user-facing `<details>` block in answers:
+;; bullets, headings, and inline emphasis must render as such, not as
+;; raw markdown text.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(defdescribe details-with-markdown-body-test
+  (it "<details> with markdown body renders the body as markdown when expanded"
+    (let [src (str "<details>\n<summary>Plan</summary>\n\n"
+                "## Step 1\n\n"
+                "- alpha\n- beta\n\n"
+                "Then **bold** word.\n\n"
+                "</details>")
+          payload (render/format-answer-markdown-data src 80
+                    {:conversation-id "cid"
+                     :detail-expansions {["cid" "answer:proofs:d1"] true
+                                         ["cid" "answer:details:d1"] true}})
+          lines (:lines payload)]
+      (expect (some #(= p/MARKER_MD_H2 (marker-of %)) lines)
+        "H2 from inside details renders with H2 marker")
+      (expect (some #(and (= p/MARKER_MD_BULLET (marker-of %))
+                       (str/includes? % "alpha")) lines))
+      (expect (some #(and (= p/MARKER_MD_BULLET (marker-of %))
+                       (str/includes? % "beta")) lines))
+      ;; Inline bold sentinels appear in the rendered row so "bold"
+      ;; reads as bold instead of literal `**bold**`.
+      (let [text (:text payload)]
+        (expect (str/includes? text p/INLINE_BOLD_ON))
+        (expect (str/includes? text p/INLINE_BOLD_OFF))
+        (expect (not (str/includes? text "**bold**"))))))
+
+  (it "collapsed <details> hides body but keeps summary visible"
+    ;; `<details>` defaults to expanded; the user (or persisted state)
+    ;; can collapse the disclosure by writing the expansion key as
+    ;; `false`. We exercise the explicit-collapse path so the regression
+    ;; pins both halves of the toggle (open + closed).
+    (let [src (str "<details>\n<summary>Plan</summary>\n\n"
+                "- alpha\n- beta\n\n"
+                "</details>")
+          payload (render/format-answer-markdown-data src 80
+                    {:conversation-id "cid"
+                     :detail-expansions {["cid" "answer:details:d1"] false}})
+          lines (:lines payload)
+          summary-line (first (filter #(and (= p/MARKER_MD_SUMMARY (marker-of %))
+                                         (str/includes? % "Plan"))
+                                lines))]
+      (expect (some? summary-line))
+      ;; Collapsed glyph (▸) replaces the expanded glyph (▾) so the
+      ;; user sees "closed" at a glance.
+      (expect (str/includes? summary-line "▸"))
+      (expect (not-any? #(str/includes? % "alpha") lines))
+      (expect (not-any? #(str/includes? % "beta") lines)))))
+
+;; ─────────────────────────────────────────────────────────────────────────
+;; Provider-error / system-call / tool-call presentation contract — these
+;; lean on the shared `internal.presentation` ns. We exercise the cross
+;; surface contract from the TUI side too: presentation maps must round-
+;; trip into Markdown that the TUI can then tokenise as usual.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(defdescribe presentation-contract-tui-roundtrip-test
+  (it "presentation/tool-call rendered Markdown tokenises into TUI rows"
+    (require 'com.blockether.vis.internal.presentation)
+    (let [present (resolve 'com.blockether.vis.internal.presentation/tool-call->md)
+          md      (present {:op :v/bash
+                            :args {:cmd "ls"}
+                            :result "# Output\n\n- file1\n- file2"
+                            :status :done
+                            :duration-ms 5})
+          lines   (md->lines md 80 :answer)]
+      (expect (some #(= p/MARKER_MD_SUMMARY (marker-of %)) lines)
+        "`<summary>` rows from the presentation map become SUMMARY-marker rows")
+      ;; The `**TOOL**` inline-bold survives tokenisation as bold sentinels.
+      (expect (str/includes? (str/join "\n" lines) p/INLINE_BOLD_ON))))
+
+  (it "presentation/provider-error rendered Markdown carries advice as plain prose"
+    (require 'com.blockether.vis.internal.presentation)
+    (let [present (resolve 'com.blockether.vis.internal.presentation/provider-error->md)
+          md      (present {:message "Schema rejected"
+                            :type :svar.spec/schema-rejected
+                            :advice "Switch model and retry."
+                            :raw-preview "…raw…"})
+          lines   (md->lines md 80 :answer)
+          text    (str/join "\n" lines)]
+      (expect (str/includes? text "PROVIDER ERROR"))
+      (expect (str/includes? text "Switch model and retry."))
+      (expect (some #(= p/MARKER_MD_SUMMARY (marker-of %)) lines)
+        "raw preview embeds as a <summary> row")))
+
+  (it "presentation/system-call rendered Markdown surfaces SYSTEM heading + body"
+    (require 'com.blockether.vis.internal.presentation)
+    (let [present (resolve 'com.blockether.vis.internal.presentation/system-call->md)
+          md      (present {:op :vis/system
+                            :body "Need user input."
+                            :rendering-kind :vis/system})
+          text    (str/join "\n" (md->lines md 80 :answer))]
+      (expect (str/includes? text "SYSTEM"))
+      (expect (str/includes? text "vis/system"))
+      (expect (str/includes? text "Need user input."))))
+
+  (it "presentation/audit-report renders summary + collapsed body as Markdown rows"
+    (require 'com.blockether.vis.internal.presentation)
+    (let [build  (resolve 'com.blockether.vis.internal.presentation/audit-report)
+          render (resolve 'com.blockether.vis.internal.presentation/audit-report->md)
+          md     (render (build {:title "Audit"
+                                 :events [{:ref "turn/abcd1234/iteration/1/block/1"
+                                           :kind :eval :op :sci/eval
+                                           :status :done :duration-ms 1}]
+                                 :intents [{:id "intent-1" :title "Ship"
+                                            :status :fulfilled
+                                            :rationale "Shipped."}]
+                                 :guards {:success? true :violations []}
+                                 :mermaid "flowchart TD\nA --> B"}))
+          lines  (md->lines md 96 :answer)
+          text   (str/join "\n" lines)]
+      (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
+                       (str/includes? % "Audit")) lines)
+        "the collapsed audit summary surfaces as a SUMMARY row")
+      (expect (str/includes? text "intent-1"))
+      (expect (some #(= p/MARKER_MD_CODE (marker-of %)) lines)
+        "mermaid graph fences appear as MD_CODE rows after tokenisation"))))
+
 (defdescribe answer-separator-test
   (it "does not draw a bottom border between reasoning and final answer"
     (render/invalidate-cache!)

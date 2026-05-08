@@ -2273,12 +2273,64 @@
   (or (> (count lines) auto-collapse-line-threshold)
     (> (count (str (or raw-text ""))) auto-collapse-char-threshold)))
 
+(declare markdown->lines-plain)
+
+(defn- markdown-marker-prefix?
+  "True when the line starts with a markdown structural marker emitted
+   by `markdown->lines-plain` (`MARKER_MD_H1`, `MARKER_MD_BULLET`, etc.).
+   Such a line owns its row paint; we must not steal its first character
+   with the body-marker (e.g. result-bg) or we lose heading/bullet/code
+   rendering. Inline-marker codepoints (\\uE110-style sentinels) are
+   embedded mid-line, never as a first character on a structural row."
+  [^String line]
+  (and (string? line) (pos? (count line))
+    (let [c (.charAt line 0)]
+      (or (and (>= (int c) (int \uE000)) (<= (int c) (int \uE0FF)))
+        (= c \u200B) (= c \u200C) (= c \u200D) (= c \uFEFF)))))
+
+(defn- markdown-body-entries
+  "Render `text` as Markdown via `markdown->lines-plain`, then return
+   one entry per visual row.
+
+   For each rendered line:
+
+   - If the line already starts with a markdown structural marker
+     (`MARKER_MD_H1`, `MARKER_MD_BULLET`, fenced-code marker, etc.),
+     keep it verbatim. Headings/bullets/code blocks own their row paint;
+     stacking another structural marker would either steal the row or
+     lose the heading/code rendering.
+   - Otherwise prepend `body-marker` so plain prose still picks up the
+     surrounding details bg (e.g. result-bg).
+
+   Inline marker sentinels (\\uE11x for bold/italic/code spans) live
+   mid-line and are preserved verbatim by `wrap-text` so this helper
+   does not need to special-case them.
+
+   Returns `nil` for blank input so the caller can fall back to the
+   plain `wrap-text` path."
+  [text body-marker max-w]
+  (when-not (str/blank? text)
+    (let [rendered (markdown->lines-plain (str/trim text) max-w :answer)]
+      (when (seq rendered)
+        (mapv (fn [line]
+                {:line (if (markdown-marker-prefix? line)
+                         line
+                         (str body-marker line))
+                 :meta nil})
+          rendered)))))
+
 (defn- maybe-collapse-block
   [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
-           block-number kind summary summary-marker body-marker lines max-w color-role]}]
-  (let [entries (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines)]
+           block-number kind summary summary-marker body-marker lines max-w color-role
+           render-as raw-text]}]
+  (let [md-entries (when (= :markdown render-as)
+                     (markdown-body-entries (or raw-text (str/join "\n" lines))
+                       body-marker max-w))
+        entries (or md-entries
+                  (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines))
+        size-text (or raw-text (str/join "\n" lines))]
     (if (or (nil? conversation-id)
-          (not (auto-collapse-needed? lines (str/join "\n" lines))))
+          (not (auto-collapse-needed? lines size-text)))
       entries
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
@@ -2369,7 +2421,7 @@
                                     :collapsed? true
                                     :node-id node-id))
           (let [lines (wrap-text raw-text max-w)]
-            (maybe-collapse-block (assoc opts :lines lines))))))))
+            (maybe-collapse-block (assoc opts :lines lines :raw-text raw-text))))))))
 
 (defn- entries->payload
   [entries]
@@ -2883,7 +2935,19 @@
                                               :summary-marker      md-summary-marker
                                               :body-marker         r-marker
                                               :raw-text            result-str
-                                              :max-w               fill-w}))))))
+                                              :max-w               fill-w
+                                              ;; Tool render-fns return Markdown by
+                                              ;; the extension contract (see
+                                              ;; `internal/extension.clj` `render-tool-result`).
+                                              ;; Render the body via the markdown
+                                              ;; pipeline so headings/bullets/code
+                                              ;; fences inside details paint as
+                                              ;; markdown instead of as raw text.
+                                              ;; Errors stay raw because
+                                              ;; err-result-marker carries its own
+                                              ;; styling and error payloads are
+                                              ;; rarely full markdown.
+                                              :render-as           (when-not is-error? :markdown)}))))))
                 code-block    (vec (concat
                                      (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
                                      (when (seq comment-lines)
