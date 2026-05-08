@@ -1,0 +1,11 @@
+(answer
+  (v/join
+    (v/p "Dobre pytanie. Odpowiedź: to artefakt renderowania Unicode emoji, nie niespójność w moim kodzie.")
+    (v/p "W kodzie źródłowym każde nagłówki wygenerowałem identycznie — jeden spacja po emoji:")
+    (v/code-block "clojure"
+      "(v/h3 \"🔍 Analiza kodu\")\n(v/h3 \"✏️ Edycja kodu\")\n(v/h3 \"🧪 Testowanie i weryfikacja\")")
+    (v/p "Ale emoji to Unicode i różne znaki mają różne właściwości:")
+    (v/ul ["Niektóre emoji mają (lub nie mają) variation selector U+FE0F, co wpływa na to jak renderer interpretuje spacing"
+           "Różne markdown renderery (GitHub, terminal, przeglądarka) traktują emoji + spacja inaczej"
+           Szerokość wizualna emoji różni się między znakami — 🔍 może „zjadać" sąsiednią spację wizualnie, podczas gdy 🧪 nie"])
+    (v/p "W skrócie: kod jest spójny, renderowanie Unicode nie. Żeby wymusić jednolity wygląd, mogę dodać podwójną spację po każdym emoji, ale to raczej kosmetyka niż bug.")))
