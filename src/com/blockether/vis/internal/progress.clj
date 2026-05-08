@@ -110,6 +110,10 @@
       (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role
                                  :spec :paths :hit-count :truncated-by
                                  :command :cwd :target])
+        (get-in tool-result [:result :stdout])
+        (assoc :stdout (get-in tool-result [:result :stdout]))
+        (get-in tool-result [:result :stderr])
+        (assoc :stderr (get-in tool-result [:result :stderr]))
         (= :v/preview (:op prov))
         (assoc :raw (prompt/safe-pr-str (:result tool-result)))))))
 
@@ -295,7 +299,8 @@
     (write-form-start-slot entry chunk)
 
     :form-result
-    (if (= :vis/silent (:result chunk))
+    (if (or (= :vis/silent (:result chunk))
+          (= :vis/silent (:rendering-kind chunk)))
       (elide-form-slots entry #{(:form-idx chunk)})
       (write-form-slot entry chunk))
 

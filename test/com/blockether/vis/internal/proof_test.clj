@@ -112,8 +112,8 @@
       (expect (false? (:gate/proven? result)))
       ;; Compact display aliases must surface the precise `:non-canonical-ref`
       ;; error code instead of being swallowed by the spec catch-all.
-      ;; This is the bug autoresearch Task 26 hit when the persistence
-      ;; ref-rejection regression saw `:invalid-requirement` instead of
+      ;; This is the bug the persistence ref-rejection regression hit when
+      ;; it saw `:invalid-requirement` instead of
       ;; the expected canonical-ness diagnostic. The runtime branch in
       ;; `derive-binding` is the source of truth for ref shape; the spec
       ;; on `:evidence/from-ref` no longer pre-empts it.

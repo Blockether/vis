@@ -31,6 +31,12 @@
 
 (def config-dir  (str (System/getProperty "user.home") "/.vis"))
 (def config-path (str config-dir "/config.edn"))
+(defn project-config-path
+  "Project-local config override path. `bin/vis` preserves the invocation cwd
+   as JVM `user.dir`, so this resolves to `<project>/.vis/config.edn` for the
+   user project, not the Vis install checkout."
+  []
+  (str (System/getProperty "user.dir") "/.vis/config.edn"))
 (def db-path     (str config-dir "/vis.mdb"))
 (def default-db-spec {:backend :sqlite :path db-path})
 
@@ -308,15 +314,44 @@
 
 ;;; ── Config I/O ──────────────────────────────────────────────────────────
 
-(defn load-config-raw
-  "Load raw `config.edn` map (or nil on read/parse error)."
-  []
-  (let [f (io/file config-path)]
+(defn- read-config-map
+  [path]
+  (let [f (io/file path)]
     (when (.exists f)
       (try
         (let [raw (edn/read-string (slurp f))]
           (when (map? raw) raw))
         (catch Exception _ nil)))))
+
+(defn- deep-merge-config
+  [& maps]
+  (letfn [(merge* [a b]
+            (cond
+              (nil? a) b
+              (nil? b) a
+              (and (map? a) (map? b)) (merge-with merge* a b)
+              :else b))]
+    (reduce merge* nil maps)))
+
+(defn load-global-config-raw
+  "Load only the global `~/.vis/config.edn` map (or nil on read/parse error)."
+  []
+  (read-config-map config-path))
+
+(defn load-project-config-raw
+  "Load only `<invocation-cwd>/.vis/config.edn` (or nil on read/parse error)."
+  []
+  (let [global-file (io/file config-path)
+        project-file (io/file (project-config-path))]
+    (when-not (= (.getCanonicalPath global-file) (.getCanonicalPath project-file))
+      (read-config-map (.getPath project-file)))))
+
+(defn load-config-raw
+  "Load raw config as global `~/.vis/config.edn` plus project-local
+   `.vis/config.edn` overlay. Project values win; nested maps merge;
+   scalar/vector values replace."
+  []
+  (deep-merge-config (load-global-config-raw) (load-project-config-raw)))
 
 (defn- apply-provider-metadata
   "Attach catalog metadata needed by the runtime while preserving the
@@ -374,7 +409,7 @@
    config persistence."
   ([config] (save-config! config nil))
   ([config source]
-   (let [previous-provider (active-provider-entry (load-config-raw))
+   (let [previous-provider (active-provider-entry (load-global-config-raw))
          selected-provider (active-provider-entry config)
          dir (io/file config-dir)]
      (when-not (.exists dir) (.mkdirs dir))
@@ -387,11 +422,12 @@
 
 (defn remove-config-provider!
   "Remove every persisted provider entry for `provider-id` from
-   `~/.vis/config.edn`, preserving unrelated config keys. Returns true
-   when the file changed."
+   `~/.vis/config.edn`, preserving unrelated global config keys. Project-local
+   `.vis/config.edn` is an overlay and is not edited by this writer. Returns
+   true when the global file changed."
   ([provider-id] (remove-config-provider! provider-id nil))
   ([provider-id source]
-   (let [raw        (or (load-config-raw) {})
+   (let [raw        (or (load-global-config-raw) {})
          providers  (vec (:providers raw))
          providers* (vec (remove #(= provider-id (:id %)) providers))]
      (when (not= providers providers*)
@@ -454,7 +490,7 @@
    value again if one exists. Preserves all other config keys."
   [name value]
   (let [name' (str name)
-        raw   (or (load-config-raw) {})
+        raw   (or (load-global-config-raw) {})
         value' (when (string? value) (not-empty (str/trim value)))
         envs  (cond-> (or (get raw extension-env-config-key) {})
                 value' (assoc name' value')
@@ -464,6 +500,16 @@
                     (dissoc raw extension-env-config-key))
       :environment)
     (extension-env-status name')))
+
+(defn bash-disabled?
+  "True when config disables the sandbox bash symbols. Either global
+   `~/.vis/config.edn` or project-local `.vis/config.edn` may set:
+
+     {:tools {:bash {:enabled? false}}}
+
+   Project-local config wins via `load-config-raw`."
+  []
+  (false? (get-in (load-config-raw) [:tools :bash :enabled?])))
 
 (defn resolve-db-spec
   "Resolve DB spec: explicit → VIS_DB_PATH env → `:db-spec` from

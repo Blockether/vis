@@ -306,8 +306,8 @@ This checklist is the single detailed plan for the context contract. `TASKS.md` 
 - [x] Auto-skill activation is gated by user-request keywords; trivial chat ("hi", "hello there") loads zero skills (`auto-skill-activation-test`).
 - [x] Bench worktree no longer depends on `.agents/skills/` filesystem state for the auto-skill activation test (uses `with-redefs` over the foundation skill lookup).
 - [x] Public `prompt/model-facing-context-stats` reports per-surface
-      bytes + tokens for any turn shape so autoresearch / judge
-      runners and diagnostic tooling can attribute prompt size to
+      bytes + tokens for any turn shape so regression tests
+      and diagnostic tooling can attribute prompt size to
       `<system_prompt>`, `<user_turn_request_main_goal>`, or the
       per-iteration trailer without reaching into private helpers.
       Trivial / no-tool turns return `:iteration-trailer-empty? true`
@@ -346,7 +346,7 @@ delta.
 
 These numbers are pinned by `model-facing-context-stats-test` in
 `prompt-test`, which prints the per-surface bytes/tokens on every
-test run so autoresearch / judge logs capture the exact impact.
+test run so diagnostics capture the exact impact.
 
 ### C. Full data retrieval
 

@@ -38,6 +38,66 @@
     :provider/on-selected-fn (fn [_ctx] nil)
     :provider/prompt-fn (fn [_ctx] "provider prompt")))
 
+(defdescribe source-rewrite-test
+  (it "symbol carries optional :source-rewrite-fn"
+    (let [hook (fn [_] "repaired")
+          s    (ext/symbol 'p (fn [& _] nil)
+                 {:doc "Paragraph."
+                  :arglists '([& parts])
+                  :source-rewrite-fn hook})]
+      (expect (= hook (:ext.symbol/source-rewrite-fn s)))))
+
+  (it "prefers symbol-level parsed-source rewrite hooks"
+    (let [hook (fn [{:keys [code sym]}] (str code "\n:" sym))
+          sym-entry (ext/symbol 'p (fn [& _] nil)
+                      {:doc "Paragraph."
+                       :arglists '([& parts])
+                       :source-rewrite-fn hook})
+          extension (ext/extension {:ext/namespace 'test.symbol-source-rewrite
+                                    :ext/doc "Symbol source rewrite fixture."
+                                    :ext/kind "fixture"
+                                    :ext/ns-alias {:ns 'test.symbol-source-rewrite :alias 't}
+                                    :ext/symbols [sym-entry]
+                                    :ext/source-rewrite-fn (fn [_] ":extension")})]
+      (expect (= "(t/p hi)\n:p"
+                (ext/try-rewrite-source [extension] "(t/p hi)" {})))))
+
+  (it "walks extension-level parsed-source rewrite hooks"
+    (let [hook (fn [{:keys [code]}] (str code "\n:rewritten"))
+          extension (ext/extension {:ext/namespace 'test.source-rewrite
+                                    :ext/doc "Source rewrite fixture."
+                                    :ext/kind "fixture"
+                                    :ext/source-rewrite-fn hook})]
+      (expect (= "(+ 1 2)\n:rewritten"
+                (ext/try-rewrite-source [extension] "(+ 1 2)" {})))))
+
+  (it "skips unchanged or non-string source rewrite results"
+    (let [same-ext (ext/extension {:ext/namespace 'test.source-same
+                                   :ext/doc "Source same fixture."
+                                   :ext/kind "fixture"
+                                   :ext/source-rewrite-fn (fn [{:keys [code]}] code)})
+          nil-ext  (ext/extension {:ext/namespace 'test.source-nil
+                                   :ext/doc "Source nil fixture."
+                                   :ext/kind "fixture"
+                                   :ext/source-rewrite-fn (fn [_] nil)})]
+      (expect (nil? (ext/try-rewrite-source [same-ext nil-ext] "(+ 1 2)" {}))))))
+
+(defdescribe tool-result-render-fallback-test
+  (it "renders historical tool results through their presentation kind when the symbol is gone"
+    (let [renderer (fn [{:keys [value]}] (str "exit=" (:exit value)))
+          extension (ext/extension {:ext/namespace 'test.rendering-kind-fallback
+                                    :ext/doc "Rendering kind fallback fixture."
+                                    :ext/kind "fixture"
+                                    :ext/rendering-kinds {:diagnostic renderer}})
+          old-result {:success? true
+                      :result {:exit 0}
+                      :provenance {:op :v/bash
+                                   :extension {:namespace 'test.rendering-kind-fallback}
+                                   :tool {:sym 'bash}}
+                      :presentation {:kind :diagnostic}}]
+      (with-redefs [ext/registered-extensions (fn [] [extension])]
+        (expect (= "exit=0" (ext/render-tool-result :tui old-result {})))))))
+
 (defdescribe symbol-parse-rescue-test
   (it "symbol carries optional :on-parse-error-fn"
     (let [hook (fn [_] "repaired")

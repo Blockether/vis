@@ -561,8 +561,8 @@
       ;; aliases (e.g. "i1.1", "E1", "G1"). Otherwise the spec on
       ;; `:evidence/from-ref` (typed as ::canonical-ref) would mask the
       ;; specific failure as a generic `:invalid-requirement` and the
-      ;; downstream branch below would be dead code. Caught by autoresearch
-      ;; Task 26 persistence ref-rejection regressions.
+      ;; downstream branch below would be dead code. Caught by persistence
+      ;; ref-rejection regression coverage.
       (not (canonical-ref? from-ref))
       (binding-error requirement :non-canonical-ref "Evidence requirement must cite a canonical ref")
 

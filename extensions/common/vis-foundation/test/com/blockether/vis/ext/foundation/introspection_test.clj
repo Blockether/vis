@@ -972,11 +972,12 @@
           {:keys [conversation-id conversation-turn-id]} (bootstrap s)
           e (assoc (env s conversation-id)
               :current-conversation-turn-id-atom (atom conversation-turn-id))
-          ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1")]
+          ref (str "turn/" (subs (str conversation-turn-id) 0 8) "/iteration/1/block/1/error")]
       (db-store-iteration! s conversation-turn-id
         {:blocks [{:id 0
                    :code "(v/needs-input \"Paste the ideas to review.\")"
                    :result :vis/system
+                   :error {:message "missing input"}
                    :execution-time-ms 1
                    :rendering-kind :vis/system}]})
       (let [intent ((private-fn "foundation-issue-intent!") e {:title "Review ideas"
@@ -1243,3 +1244,4 @@
             environment {:db-info s}]
         (expect (empty-result? ((private-fn "foundation-turn") environment)))
         (expect (empty-result? ((private-fn "foundation-conversation") environment)))))))
+

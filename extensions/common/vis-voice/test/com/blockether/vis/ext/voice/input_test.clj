@@ -19,8 +19,9 @@
         (expect (every? ifn? (map :run-fn commands))))))
 
   (it "appends rewritten transcript without replacing existing input"
-    (let [events (atom [])]
-      (reset! voice/state {:recorder nil :ticker nil :transcribing? false})
+    (let [events (atom [])
+          app-db (atom {:active-workspace-id :first})]
+      (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
       (with-redefs [recorder/start! (fn [] {:started-at-ms (System/currentTimeMillis)})
                     recorder/stop! (fn [_] :audio-file)
                     asr/transcribe-file! (fn [audio-file]
@@ -32,25 +33,30 @@
                     vis/publish-channel-event! (fn [channel event]
                                                  (expect (= :tui channel))
                                                  (swap! events conj event))]
-        (voice/start-recording! {})
-        (voice/stop-and-transcribe! {})
+        (voice/start-recording! {:app-db app-db})
+        (reset! app-db {:active-workspace-id :second})
+        (voice/stop-and-transcribe! {:app-db app-db})
         (loop [n 50]
           (when (and (pos? n)
-                  (not-any? #(= :input/append (:op %)) @events))
+                  (not (and (some #(= :input/append (:op %)) @events)
+                         (some #(= {:op :status/clear :id :voice/input} %) @events))))
             (Thread/sleep 20)
             (recur (dec n))))
         (expect (some #(= {:op :input/append
                            :text "Rewrite"
-                           :source :voice/input}
+                           :source :voice/input
+                           :workspace-id :first}
                          %)
                   @events))
         (expect (not-any? #(= :input/replace (:op %)) @events))
         (expect (some #(= "● Rewrite…" (:text %)) @events))
+        (expect (some #(= {:op :status/clear :id :voice/input} %) @events))
+        (expect (not-any? #(= "○ Voice ready" (:text %)) @events))
         (expect (not-any? #(= "● Rewriting…" (:text %)) @events)))))
 
   (it "starts ticker after recorder is visible in shared state"
     (let [events (atom [])]
-      (reset! voice/state {:recorder nil :ticker nil :transcribing? false})
+      (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
       (with-redefs [recorder/start! (fn [] {:started-at-ms 1000})
                     vis/publish-channel-event! (fn [_ event]
                                                  (swap! events conj event))]
@@ -118,7 +124,9 @@
                                :level :error}
                              %)
                       @events))
-            (expect (some #(= "○ Voice failed" (:text %)) @events))
+            (expect (some #(and (= "○ Voice failed" (:text %))
+                             (= 3000 (:ttl-ms %)))
+                      @events))
             (expect (= false (:transcribing? @voice/state)))
             (expect (some #(and (= :error (:level %))
                              (= ::voice/voice-asr-failed (:id %))

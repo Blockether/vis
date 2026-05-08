@@ -87,6 +87,8 @@
           old-row     (first (filter #(= 'old-sym (:value %)) (:result locators)))]
       (expect (true? (:success? locators)))
       (expect (true? (:success? symbols)))
+      (expect (= {:kind :clojure/locators} (:presentation locators)))
+      (expect (= {:kind :clojure/locators} (:presentation symbols)))
       (expect (every? #(= path (:path %)) (:result locators)))
       (expect (every? #(integer? (:index %)) (:result locators)))
       (expect (every? #(= #{:path :index :tag :value :locator :source :span}
@@ -139,7 +141,15 @@
       (expect (str/includes? out "Patch hint"))
       (expect (str/includes? out "(z/patch"))
       (expect (str/includes? out "src/demo.clj"))
-      (expect (not (str/includes? out " <- ")))))
+      (expect (not (str/includes? out " <- "))))
+    (let [render-fn (private-fn "render-locators-kind")
+          out       (render-fn {:value [{:path "src/demo.clj"
+                                         :tag :list
+                                         :locator "(defn f [] :ok)"
+                                         :source "(defn f []\n  :ok)"
+                                         :span [[1 1] [2 6]]}]})]
+      (expect (str/includes? out "Found 1 zipper locator"))
+      (expect (str/includes? out "Patch hint"))))
 
   (it "accepts locator rows from z/symbols as span-specific search locators"
     (let [path        (write-temp! "patch/locator-row.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")

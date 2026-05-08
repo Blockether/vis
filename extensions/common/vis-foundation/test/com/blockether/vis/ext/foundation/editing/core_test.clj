@@ -15,6 +15,7 @@
    [clojure.string :as string]
    [com.blockether.vis.ext.foundation.core :as foundation]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
+   [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
@@ -49,7 +50,7 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 16 (count editing/editing-symbols)))
+    (expect (= 15 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
@@ -63,14 +64,23 @@
     (do
       (expect (some #{'bash}
                 (map :ext.symbol/sym editing/editing-symbols)))
-      (expect (some #{'bash-strict}
-                (map :ext.symbol/sym editing/editing-symbols)))
+      (expect (= 1 (count (filter #{'bash}
+                            (map :ext.symbol/sym editing/editing-symbols)))))
       (expect (some #{'nrepl-eval}
                 (map :ext.symbol/sym editing/editing-symbols))))
     (expect (some #{'preview}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'silent!}
               (map :ext.symbol/sym editing/editing-symbols))))
+
+  (it "omits bash symbols and prompt examples when bash is disabled by config"
+    (with-redefs [config/bash-disabled? (fn [] true)]
+      (let [symbols (map :ext.symbol/sym (editing/available-editing-symbols))
+            prompt (editing/available-editing-prompt)]
+        (expect (not-any? #{'bash} symbols))
+        (expect (some #{'nrepl-eval} symbols))
+        (expect (string/includes? prompt "v/bash is disabled"))
+        (expect (not (string/includes? prompt "(get-in (v/bash \"pwd\")"))))))
 
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
     (doseq [s editing/editing-symbols
@@ -120,7 +130,7 @@
                 (:ext.symbol/examples bash-symbol)))))
 
   (it "registers custom structured renderers for rich tool outputs"
-    (doseq [sym-name '[cat preview ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash bash-strict nrepl-eval]]
+    (doseq [sym-name '[cat preview ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash nrepl-eval]]
       (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
                     editing/editing-symbols)]
         (expect (ifn? (:ext.symbol/render-fn entry))))))
@@ -144,7 +154,7 @@
       (expect (some #(string/includes? % "[:result :exit]")
                 (:ext.symbol/examples bash-symbol)))
       (expect (string/includes? (:ext.symbol/doc bash-symbol) "Refuses shell-driven Clojure/EDN source edits"))
-      (expect (string/includes? editing/editing-prompt "v/bash-strict"))
+      (expect (string/includes? editing/editing-prompt "Use `v/bash`"))
       (expect (string/includes? editing/editing-prompt "set -euo pipefail")))))
 
 (it "classifies operations into stable classes, presentation kinds, and color roles"
@@ -157,7 +167,7 @@
                                 [:v/delete :op/delete :tool/delete :tool-color/delete]
                                 [:v/move :op/move :tool/move :tool-color/move]
                                 [:v/bash :op/shell :tool/shell :tool-color/shell]
-                                [:v/bash-strict :op/shell :tool/shell :tool-color/shell]
+                                [:v/nrepl-eval :op/shell :tool/shell :tool-color/shell]
                                 [:v/intents :op/meta :tool/meta :tool-color/meta]]]
     (expect (= class (editing/tool-op->class op)))
     (expect (= kind (editing/tool-op->presentation-kind op)))
@@ -268,20 +278,51 @@
                 (:result out)))
       (expect (nil? (:preview-eql out)))))
 
-  (it "supports literal :from/:to keys, wildcard, and ranged item projection"
+  (it "supports literal :from/:to keys, wildcard, one-key vectors, and ranged item projection"
     (let [preview-tool (private-fn "preview-tool")
           value {:result {:from "literal-from"
                           :to "literal-to"
+                          :stdout "hello"
                           :hits [{:path "a" :line 1 :text "x" :extra true}
                                  {:path "b" :line 2 :text "y" :extra false}]}}
           literal (preview-tool value {:result [:from :to]})
+          stdout (preview-tool value {:result [[:stdout]]})
           wildcard (preview-tool value {:result [:*]})
           hits (preview-tool value {:result [[:hits {:from 0 :to 1} [:path :line :text]]]})]
       (expect (= {:result {:from "literal-from" :to "literal-to"}}
                 (:result literal)))
+      (expect (= {:result {:stdout "hello"}} (:result stdout)))
       (expect (= (:result value) (get-in wildcard [:result :result])))
       (expect (= {:result {:hits [{:path "a" :line 1 :text "x"}]}}
                 (:result hits)))))
+
+  (it "supports nested vector field projections"
+    (let [preview-tool (private-fn "preview-tool")
+          value {:result {:intents {:success? false
+                                    :focused-intent-ids [1]
+                                    :violations [{:type :open}]
+                                    :report "long"}
+                          :audit {:success? true
+                                  :counts {:gates 1}
+                                  :extra true}}}
+          out (preview-tool value {:result [[:intents [:success? :focused-intent-ids :violations]]
+                                            [:audit [:success? :counts]]]})]
+      (expect (= {:result {:intents {:success? false
+                                     :focused-intent-ids [1]
+                                     :violations [{:type :open}]}
+                           :audit {:success? true
+                                   :counts {:gates 1}}}}
+                (:result out)))))
+
+  (it "applies :result EQL to raw values that are not tool-result envelopes"
+    (let [preview-tool (private-fn "preview-tool")
+          raw {:intents {:success? false :report "big"}
+               :audit {:success? true :counts {:gates 1}}}
+          out (preview-tool raw {:result [[:intents [:success?]]
+                                          [:audit [:counts]]]})]
+      (expect (= {:result {:intents {:success? false}
+                           :audit {:counts {:gates 1}}}}
+                (:result out)))))
 
   (it "records raw preview payloads for journal workflows"
     (let [entry (some #(when (= 'preview (:ext.symbol/sym %)) %)
@@ -334,6 +375,16 @@
       (expect (string/includes? text "```text"))
       (expect (string/includes? diff "```diff"))
       (expect (string/includes? data "{:a 1}"))))
+
+  (it "keeps read/search renderers concise without model guidance suffixes"
+    (let [render-rg (private-fn "render-rg")
+          md        (render-rg {:tool-result {:success? true
+                                              :provenance {:spec {:any ["needle"]}
+                                                           :paths ["src"]}
+                                              :result {:hits []
+                                                       :truncated-by :end-of-results}}})]
+      (expect (string/includes? md "Searched"))
+      (expect (not (string/includes? md "Use `v/preview`")))))
 
   (it "renders TUI previews as direct display text without markdown fences or shape dump"
     (let [preview-tool (private-fn "preview-tool")
@@ -536,13 +587,13 @@
       (expect (= :stderr-traceback-with-zero-exit
                 (get-in out [:result :warnings 0 :type])))
       (expect (string/includes? rendered "warning(s)"))
-      (expect (string/includes? rendered "set -euo pipefail"))))
+      (expect (string/includes? rendered "swallowed"))))
 
-  (it "bash-strict prepends strict mode and keeps original command in result"
-    (let [strict-command   (private-fn "strict-bash-command")
-          bash-strict-tool (private-fn "bash-strict-tool")
-          out              (bash-strict-tool "false\necho SHOULD_NOT_RUN" {:timeout-ms 5000})
-          result           (:result out)]
+  (it "bash prepends strict mode and keeps original command in result"
+    (let [strict-command (private-fn "strict-bash-command")
+          bash-tool      (private-fn "bash-tool")
+          out            (bash-tool "false\necho SHOULD_NOT_RUN" {:timeout-ms 5000})
+          result         (:result out)]
       (expect (= "set -euo pipefail\nfalse\necho SHOULD_NOT_RUN"
                 (strict-command "false\necho SHOULD_NOT_RUN")))
       (expect (true? (:success? out)))
@@ -581,6 +632,7 @@
         (expect (not (string/includes? (get-in v [:error :message]) "timed out")))
         (expect (= :interrupted (get-in v [:provenance :status])))
         (expect (= "sleep 5" (get-in v [:provenance :command])))
+        (expect (= :v/bash (get-in v [:provenance :op])))
         (expect (= "." (get-in v [:provenance :target :requested])))
         (expect (string/includes? rendered "cancelled"))
         (expect (not (string/includes? rendered "timed out")))
@@ -625,7 +677,31 @@
       (expect (string/includes? rendered "```diff"))
       (expect (string/includes? rendered "--- a/target/editing-test/out.txt"))
       (expect (string/includes? rendered "-beta"))
-      (expect (string/includes? rendered "+gamma")))))
+      (expect (string/includes? rendered "+gamma"))))
+  (it "search-hits renderer formats partial-projection hits without raw EDN fallback"
+    (let [render-hits (private-fn "render-search-hits-kind")
+          rendered (render-hits
+                     {:surface :markdown
+                      :value {:result {:hits [{:line 462
+                                               :text "  (inc (reduce max 0 ...))"}
+                                              {:line 472
+                                               :text "(defn- workspace-tabs-or-base"}]}}})]
+      (expect (string? rendered))
+      (expect (not (string/includes? rendered "{:line 462")))
+      (expect (not (string/includes? rendered ":text \"")))
+      (expect (string/includes? rendered "line 462"))
+      (expect (string/includes? rendered "(inc (reduce max 0"))
+      (expect (string/includes? rendered "line 472"))
+      (expect (string/includes? rendered "workspace-tabs-or-base"))))
+  (it "search-hits renderer keeps full path:line backtick prefix when path present"
+    (let [render-hits (private-fn "render-search-hits-kind")
+          rendered (render-hits
+                     {:surface :markdown
+                      :value {:result {:hits [{:path "src/foo.clj"
+                                               :line 10
+                                               :text "(def x 1)"}]}}})]
+      (expect (string/includes? rendered "`src/foo.clj:10`"))
+      (expect (string/includes? rendered "(def x 1)")))))
 
 (defdescribe tool-envelope-test
   (it "tool wrappers return the required contract keys"

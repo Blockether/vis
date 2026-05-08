@@ -286,6 +286,10 @@
 ;; Runs BEFORE dispatch when SCI/edamame cannot parse the source.
 (s/def :ext.symbol/on-parse-error-fn fn?)
 
+;; Optional parsed-source normalizer: (fn [{:keys [code sym environment]}] → string|nil).
+;; Runs before SCI eval when source already parses. Use for symbol-local sugar / repair.
+(s/def :ext.symbol/source-rewrite-fn fn?)
+
 ;; Optional result contract enforced on the final public return value
 ;; after `:before-fn` / call / `:after-fn` complete.
 (s/def :ext.symbol/result-spec some?)
@@ -326,7 +330,7 @@
                 :ext.symbol/render-fn]
     :opt [:ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn
-          :ext.symbol/result-spec]))
+          :ext.symbol/source-rewrite-fn :ext.symbol/result-spec]))
 
 (s/def ::val-symbol-entry
   (s/keys :req [:ext.symbol/sym :ext.symbol/val :ext.symbol/doc]))
@@ -403,6 +407,12 @@
 
 ;; Optional source-code rewriter for SCI/edamame parse errors.
 (s/def :ext/on-parse-error-fn fn?)
+
+;; Optional pre-eval source normalizer. Runs after source parses but before SCI
+;; eval, so extensions can repair source-shape footguns that are valid Clojure
+;; syntax but would fail during evaluation (for example unquoted prose in
+;; markdown helper calls).
+(s/def :ext/source-rewrite-fn fn?)
 
 ;; ----------------------------------------------------------------------------
 ;; Iteration-loop lifecycle hooks. Side-effecting fns invoked by the
@@ -624,7 +634,7 @@
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
             :ext/ns-alias :ext/prompt :ext/environment-info-fn :ext/nudge-fn
-            :ext/on-parse-error-fn :ext/rendering-kinds :ext/fenced-renderers
+            :ext/on-parse-error-fn :ext/source-rewrite-fn :ext/rendering-kinds :ext/fenced-renderers
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
@@ -675,7 +685,7 @@
 
    Required: :doc, :arglists
    Optional: :examples, :before-fn, :after-fn, :on-error-fn,
-             :on-parse-error-fn, :result-spec, :render-fn
+             :on-parse-error-fn, :source-rewrite-fn, :result-spec, :render-fn
 
    Defaults:
      :examples  — derived from :arglists when not provided
@@ -698,6 +708,7 @@
         (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))
         (:on-error-fn opts)       (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
         (:on-parse-error-fn opts) (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))
+        (:source-rewrite-fn opts) (assoc :ext.symbol/source-rewrite-fn (:source-rewrite-fn opts))
         (:result-spec opts)       (assoc :ext.symbol/result-spec (:result-spec opts))
         (:render-fn opts)         (assoc :ext.symbol/render-fn (:render-fn opts))))))
 
@@ -1127,6 +1138,60 @@
   [extensions code error environment]
   (or (try-symbol-parse-rescue extensions code error environment)
     (try-extension-parse-rescue extensions code error environment)))
+
+(defn- try-symbol-source-rewrite
+  [extensions code environment]
+  (loop [exts (seq extensions)]
+    (when exts
+      (let [ext   (first exts)
+            alias (some-> (:ext/ns-alias ext) :alias clojure.core/name)
+            hit
+            (loop [syms (seq (:ext/symbols ext))]
+              (when syms
+                (let [entry (first syms)
+                      sym   (:ext.symbol/sym entry)
+                      hook  (:ext.symbol/source-rewrite-fn entry)]
+                  (if (and hook sym (code-mentions-symbol? code (str sym) alias))
+                    (let [out (run-parse-rescue-hook
+                                (str (:ext/namespace ext) "/" sym "/source-rewrite")
+                                hook
+                                {:code        code
+                                 :sym         sym
+                                 :environment environment})]
+                      (if (and (string? out) (not= out code))
+                        out
+                        (recur (next syms))))
+                    (recur (next syms))))))]
+        (or hit (recur (next exts)))))))
+
+(defn- try-extension-source-rewrite
+  [extensions code environment]
+  (loop [exts (seq extensions)]
+    (when exts
+      (let [ext  (first exts)
+            hook (:ext/source-rewrite-fn ext)
+            out  (when hook
+                   (run-parse-rescue-hook (str (:ext/namespace ext) "/source-rewrite")
+                     hook
+                     {:code code :environment environment}))]
+        (if (and (string? out) (not= out code))
+          out
+          (recur (next exts)))))))
+
+(defn try-rewrite-source
+  "Walk active extensions and let source-rewrite hooks normalize parsed source
+   before SCI eval. This is not parse-error rescue: callers use it for valid
+   Clojure source that is likely to fail during eval because of extension-local
+   surface syntax.
+
+   Resolution order mirrors parse rescue:
+     1. Per-symbol `:ext.symbol/source-rewrite-fn` whose symbol appears in code.
+     2. Extension-level `:ext/source-rewrite-fn` fallback.
+
+   Hooks are pure source→source; throw/non-string/unchanged results are skipped."
+  [extensions code environment]
+  (or (try-symbol-source-rewrite extensions code environment)
+    (try-extension-source-rewrite extensions code environment)))
 
 ;; =============================================================================
 ;; Public API — extension builder
@@ -1699,14 +1764,25 @@
   ([surface tool-result]
    (render-tool-result surface tool-result {}))
   ([surface tool-result ctx]
-   (let [ctx*     (assoc ctx :surface surface :tool-result tool-result)
-         render-fn (some-> (tool-result-symbol-entry tool-result)
-                     :ext.symbol/render-fn)]
-     (assert render-fn
-       (str "No render-fn for tool result with op "
-         (pr-str (get-in tool-result [:provenance :op]))))
-     (let [rendered (render-fn ctx*)]
-       (if (string? rendered) rendered (pr-str rendered))))))
+   (let [ctx*              (assoc ctx :surface surface :tool-result tool-result)
+         render-fn         (some-> (tool-result-symbol-entry tool-result)
+                             :ext.symbol/render-fn)
+         presentation-kind (get-in tool-result [:presentation :kind])]
+     (cond
+       render-fn
+       (let [rendered (render-fn ctx*)]
+         (if (string? rendered) rendered (pr-str rendered)))
+
+       presentation-kind
+       (or (render-rendering-kind surface presentation-kind (:result tool-result) ctx*)
+         (throw (AssertionError.
+                  (str "No render-fn for tool result with op "
+                    (pr-str (get-in tool-result [:provenance :op]))))))
+
+       :else
+       (throw (AssertionError.
+                (str "No render-fn for tool result with op "
+                  (pr-str (get-in tool-result [:provenance :op])))))))))
 
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.

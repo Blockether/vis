@@ -67,6 +67,27 @@
                                 :summary "Done."}))))
 
 (do
+  (defdescribe previous-turn-context-test
+    (it "selects latest completed answered prior turn and excludes current turn"
+      (let [previous-turn-context @#'loop/previous-turn-context]
+        (with-redefs [persistance/db-list-conversation-turns
+                      (fn [db cid]
+                        (expect (= :db db))
+                        (expect (= :cid cid))
+                        [{:id :old :position 1 :prior-outcome :complete
+                          :user-request "old" :answer "old answer"}
+                         {:id :current :position 2 :prior-outcome nil
+                          :user-request "A" :answer ""}
+                         {:id :latest :position 3 :prior-outcome :complete
+                          :user-request "choose" :answer "A) patch + verify"}
+                         {:id :empty :position 4 :prior-outcome :complete
+                          :user-request "empty" :answer ""}])]
+          (expect (= {:id :latest
+                      :position 3
+                      :user-request "choose"
+                      :answer "A) patch + verify"}
+                    (previous-turn-context {:db-info :db :conversation-id :cid} :current)))))))
+
   (defdescribe llm-text-helper-test
     (it "uses svar cost optimization and returns plain text"
       (let [seen (atom nil)]
@@ -611,6 +632,35 @@
         (finally
           (loop/dispose-environment! environment)))))
 
+  (it "marks read/search tool defs silent while preserving their bound value"
+    (let [environment (loop/create-environment
+                        {:providers [{:id :test :models [{:name "model"}]}]}
+                        {:db :memory :channel :cli})
+          chunks      (atom [])]
+      (try
+        (with-redefs-fn {#'svar/ask-code! (fn [_ _]
+                                            {:raw "```clojure\n(def state-tests (v/glob \"test\" \"**/loop_test.clj\"))\n```"
+                                             :blocks [{:lang "clojure"
+                                                       :source "(def state-tests (v/glob \"test\" \"**/loop_test.clj\"))"}]
+                                             :result "(def state-tests (v/glob \"test\" \"**/loop_test.clj\"))"
+                                             :tokens {:input 1 :output 1}
+                                             :duration-ms 1})}
+          (fn []
+            (let [result (loop/run-iteration environment
+                           [{:role "user" :content "bind glob"}]
+                           {:iteration 0
+                            :resolved-model {:provider :test :name "model"}
+                            :on-chunk #(swap! chunks conj %)})
+                  block  (-> result :blocks first)
+                  chunk  (->> @chunks (filter #(= :form-result (:phase %))) first)]
+              (expect (= :op/read (get-in block [:result :provenance :op-class])))
+              (expect (string? (-> block :result :result first)))
+              (expect (= :vis/silent (:rendering-kind block)))
+              (expect (= :vis/silent (:rendering-kind chunk)))
+              (expect (= (:result block) (:result chunk))))))
+        (finally
+          (loop/dispose-environment! environment)))))
+
   (it "binds Copilot initiator for svar headers and strips internal extra-body keys"
     (let [seen (atom nil)
           environment {:router ::router
@@ -720,10 +770,11 @@
           (expect (= :vis/silent (get-in (first @chunks) [:result :rendering-kind]))))))))
 
 (defdescribe run-iteration-answer-position-test
-  (it "accepts first-iteration final answers mixed with earlier top-level forms when answer is last"
+  (it "accepts and normalizes first-iteration final answers mixed with earlier top-level forms when answer is last"
     (let [environment {:router ::router
                        :answer-atom (atom nil)
-                       :current-form-idx-atom (atom nil)}]
+                       :current-form-idx-atom (atom nil)}
+          ugly-answer "Edited \n\n`~/.config/opencode/opencode.json`\n\n via documented setup."]
       (with-redefs-fn {#'svar/ask-code! (fn [_ _]
                                           {:raw "```clojure\n(def observed 1)\n(answer \"done\")\n```"
                                            :blocks [{:lang "clojure" :source "(def observed 1)\n(answer \"done\")"}]
@@ -734,7 +785,7 @@
                                              (if (= "(answer \"done\")" code)
                                                (do
                                                  (reset! (:answer-atom env)
-                                                   {:value "done"
+                                                   {:value ugly-answer
                                                     :form-idx @(:current-form-idx-atom env)})
                                                  {:result :vis/answer
                                                   :stdout ""
@@ -750,7 +801,7 @@
                          {:iteration 0
                           :resolved-model {:provider :test :name "model"}})]
             (expect (= {:final? true
-                        :answer "done"
+                        :answer "Edited `~/.config/opencode/opencode.json` via documented setup."
                         :answer-form-idx 1}
                       (:final-result result)))
             (expect (= 2 (count (:blocks result)))))))))
@@ -1169,8 +1220,8 @@
               (loop/dispose-environment! env-2))))))))
 
 (defdescribe auto-skill-activation-test
-  ;; The bench worktree (and CI checkouts) doesn't ship `.agents/skills/`,
-  ;; so we stub the foundation skill lookup via `with-redefs` instead of
+  ;; Some checkouts do not ship `.agents/skills/`, so we stub the
+  ;; foundation skill lookup via `with-redefs` instead of
   ;; relying on filesystem state. Trivial chat must NOT load any skill
   ;; (this is part of the trivial-turn context-floor contract; see
   ;; `context-floor-trivial-vs-coding-test` in prompt-test).
@@ -1333,16 +1384,16 @@
       (expect (not (:answer-preflight-error result)))
       (expect (:preflight-error (first (:code-entries result))))))
 
-  (it "code-entries-preflight rejects duplicate executable fenced blocks before parsing"
+  (it "code-entries-preflight normalizes duplicate executable fenced blocks before parsing"
     (let [preflight (var-get (ns-resolve 'com.blockether.vis.internal.loop
                                'code-entries-preflight))
           result (preflight 1 "(def x 1)\n(def x 1)\n" nil
                    {:blocks [{:source "(def x 1)"}
                              {:source "(def x 1)"}]})]
       (expect (= 1 (count (:code-entries result))))
-      (expect (:duplicate-block-preflight-error result))
-      (expect (:preflight-error (first (:code-entries result))))
-      (expect (= "(vis/preflight-error :duplicate-fenced-blocks)"
+      (expect (:duplicate-blocks-normalized? result))
+      (expect (nil? (:preflight-error (first (:code-entries result)))))
+      (expect (= "(def x 1)"
                 (:expr (first (:code-entries result)))))))
 
   (it "code-entries-preflight flags answer position violations on every entry"

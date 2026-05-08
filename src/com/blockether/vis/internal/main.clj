@@ -31,6 +31,7 @@
   (:require
    [babashka.process :as process]
    [charred.api :as json]
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.commandline :as commandline]
@@ -1293,6 +1294,148 @@
         (stdout! (str "\n  " (count exts) " extension(s)\n")))))
   (shutdown-agents))
 
+(defn- safe-extension-name
+  [s]
+  (let [name (some-> s str str/trim (str/replace #"[^A-Za-z0-9._-]+" "-") (str/replace #"^-+|-+$" ""))]
+    (when (seq name) name)))
+
+(defn- extension-namespace
+  [name explicit]
+  (let [base (or (some-> explicit str/trim not-empty)
+               (str "vis.ext." (-> name
+                                 str/lower-case
+                                 (str/replace #"[^a-z0-9._-]+" "-")
+                                 (str/replace #"[-_]+" "-"))))]
+    (symbol base)))
+
+(defn- namespace->path
+  [ns-sym]
+  (str (-> (str ns-sym)
+         (str/replace "-" "_")
+         (str/replace "." "/"))
+    ".clj"))
+
+(defn- scaffold-extension-files
+  [{:keys [name namespace]}]
+  (let [ns-sym (extension-namespace name namespace)
+        ns-path (namespace->path ns-sym)]
+    {"deps.edn" (str "{:paths [\"src\" \"resources\"]\n"
+                  " :deps {}}\n")
+     "resources/META-INF/vis-extension/vis.edn" (pr-str {(symbol name) {:nses [ns-sym]}})
+     (str "src/" ns-path) (str "(ns " ns-sym "\n"
+                            "  (:require [com.blockether.vis.core :as vis]))\n\n"
+                            "(defn hello\n"
+                            "  []\n"
+                            "  \"hello from " name "\")\n\n"
+                            "(def vis-extension\n"
+                            "  (vis/extension\n"
+                            "    {:ext/namespace '" ns-sym "\n"
+                            "     :ext/doc \"User extension " name "\"\n"
+                            "     :ext/version \"0.1.0\"\n"
+                            "     :ext/author \"local\"\n"
+                            "     :ext/owner \"local\"\n"
+                            "     :ext/kind \"user\"}))\n\n"
+                            "(vis/register-extension! vis-extension)\n")}))
+
+(defn- parse-scaffold-opts
+  [parsed residual]
+  (let [argv (vec residual)
+        parsed-name (:name parsed)
+        parsed-dir (:dir parsed)
+        parsed-namespace (:namespace parsed)
+        force? (boolean (or (:force parsed) (some #{"--force"} argv)))
+        parsed-argv (loop [xs argv
+                           positional []
+                           opts {}]
+                      (if-let [x (first xs)]
+                        (case x
+                          "--force" (recur (rest xs) positional opts)
+                          "--dir" (recur (nnext xs) positional (assoc opts :dir (second xs)))
+                          "--namespace" (recur (nnext xs) positional (assoc opts :namespace (second xs)))
+                          (recur (rest xs) (conj positional x) opts))
+                        (assoc opts :positional positional)))
+        dir (or parsed-dir (:dir parsed-argv))
+        namespace (or parsed-namespace (:namespace parsed-argv))
+        name (safe-extension-name (or parsed-name (first (:positional parsed-argv))))]
+    {:name name :dir dir :namespace namespace :force? force?}))
+
+(defn- cli-extensions-scaffold!
+  [parsed residual]
+  (config/init-cli!)
+  (let [{:keys [name dir force?] :as opts} (parse-scaffold-opts parsed residual)]
+    (when-not name
+      (throw (ex-info "Usage: vis extensions scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+               {:type :cli/usage})))
+    (let [target-path (or dir (str ".vis/vis-extensions/" name))
+          target (let [f (io/file target-path)]
+                   (if (.isAbsolute f)
+                     f
+                     (io/file (System/getProperty "user.dir") target-path)))
+          files (scaffold-extension-files opts)]
+      (doseq [[rel content] files]
+        (let [f (io/file target rel)]
+          (when (and (.exists f) (not force?))
+            (throw (ex-info "Refusing to overwrite existing extension file"
+                     {:type :extension/scaffold-file-exists
+                      :path (.getPath f)})))
+          (.mkdirs (.getParentFile f))
+          (spit f content)))
+      (stdout! (str "Created extension scaffold at " (.getPath target) "\n"
+                 "It is auto-loaded when you run vis from this project (or from ~/.vis/vis-extensions)."))))
+  (shutdown-agents))
+
+(defn- source-checkout-root
+  []
+  (or (some-> (System/getenv "VIS_SOURCE_ROOT") not-empty io/file)
+    (some-> (io/resource "com/blockether/vis/internal/main.clj")
+      str
+      (str/replace-first #"^file:" "")
+      java.net.URLDecoder/decode
+      io/file
+      .getParentFile .getParentFile .getParentFile .getParentFile .getParentFile
+      .getParentFile)
+    (io/file ".")))
+
+(defn- git-checkout?
+  [dir]
+  (.exists (io/file dir ".git")))
+
+(defn- process-result
+  [cmd dir]
+  (let [p (process/process {:cmd cmd :dir (.getPath (io/file dir)) :out :string :err :string})
+        proc (:proc p)
+        _ (.waitFor ^Process proc)
+        result @p]
+    {:exit (:exit result)
+     :out (:out result)
+     :err (:err result)}))
+
+(defn- cli-update!
+  [_parsed _residual]
+  (config/init-cli!)
+  (let [root (source-checkout-root)]
+    (when-not (git-checkout? root)
+      (throw (ex-info "Vis update requires a git source checkout"
+               {:type :update/not-git-checkout
+                :path (.getPath root)})))
+    (stdout! (str "Updating Vis source at " (.getPath root)))
+    (let [fetch (process-result ["git" "fetch" "--tags" "origin"] root)
+          pull (when (zero? (:exit fetch))
+                 (process-result ["git" "pull" "--ff-only"] root))]
+      (when-not (zero? (:exit fetch))
+        (throw (ex-info "git fetch failed"
+                 {:type :update/git-fetch-failed
+                  :stderr (:err fetch)
+                  :stdout (:out fetch)})))
+      (when-not (zero? (:exit pull))
+        (throw (ex-info "git pull --ff-only failed"
+                 {:type :update/git-pull-failed
+                  :stderr (:err pull)
+                  :stdout (:out pull)})))
+      (stdout! (str/trim (or (:out pull) "")))
+      (stdout! "Vis update complete.")))
+  (shutdown-agents))
+
 ;;; ── Top-level binary built-ins (registry/register-cmd! direct) ─────────
 ;;
 ;; `run`, `providers`, `conversations`, `doctor` are the binary's own
@@ -1342,7 +1485,12 @@
          {:cmd/name  "doctor"
           :cmd/doc   "Run cross-extension diagnostics."
           :cmd/usage "vis doctor"
-          :cmd/run-fn cli-doctor!}]]
+          :cmd/run-fn cli-doctor!}
+
+         {:cmd/name  "update"
+          :cmd/doc   "Update the source checkout used by this Vis installation."
+          :cmd/usage "vis update"
+          :cmd/run-fn cli-update!}]]
   (registry/register-cmd! spec))
 
 ;;; ── Extensions-namespaced subcommand: `vis extensions list` ─────────────
@@ -1400,7 +1548,14 @@
           :cmd/parent ["extensions"]
           :cmd/doc    "List every registered extension with metadata."
           :cmd/usage  "vis extensions list"
-          :cmd/run-fn cli-extensions!}]]
+          :cmd/run-fn cli-extensions!}
+         {:cmd/name   "scaffold"
+          :cmd/parent ["extensions"]
+          :cmd/doc    "Create a user extension project scaffold."
+          :cmd/usage  "vis extensions scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+          :cmd/examples ["vis extensions scaffold my-tools"
+                         "vis extensions scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
+          :cmd/run-fn cli-extensions-scaffold!}]]
   (registry/register-cmd! spec))
 
 ;; =============================================================================

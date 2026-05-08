@@ -42,6 +42,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.markdown :as md])
@@ -143,7 +144,7 @@
     :v/create-dirs :op/create
     (:v/delete :v/delete-if-exists) :op/delete
     (:v/move :v/copy) :op/move
-    (:v/bash :v/bash-strict) :op/shell
+    (:v/bash :v/nrepl-eval) :op/shell
     :op/meta))
 
 (defn tool-op->presentation-kind
@@ -749,7 +750,7 @@
       (string? stderr)
       (re-find #"(?m)^Traceback \(most recent call last\):" stderr))
     (conj {:type :stderr-traceback-with-zero-exit
-           :message "stderr contains a Python Traceback even though bash exited 0; a swallowed script error may have occurred. Prefer v/bash-strict or set -euo pipefail for multi-step scripts."})))
+           :message "stderr contains a Python Traceback even though bash exited 0; a swallowed script error may have occurred. v/bash runs with set -euo pipefail; inspect the child command for swallowed failures."})))
 
 (defn- run-bash-safe
   ([command]
@@ -866,11 +867,15 @@
 
 (declare bounded-render-text)
 
+(defn- payload-envelope?
+  [value]
+  (and (map? value)
+    (or (extension/tool-result? value) (contains? value :provenance))
+    (some value [:result :stdout :stderr :error])))
+
 (defn- payload-map
   [value]
-  (if (and (map? value)
-        (or (extension/tool-result? value) (contains? value :provenance))
-        (some value [:result :stdout :stderr :error]))
+  (if (payload-envelope? value)
     (select-keys value [:result :stdout :stderr :error])
     value))
 
@@ -937,6 +942,17 @@
     (range-param-map? (second entry))
     (<= 2 (count entry) 3)))
 
+(defn- field-nested-entry?
+  [entry]
+  (and (vector? entry)
+    (= 2 (count entry))
+    (keyword? (first entry))
+    (not (range-param-map? (second entry)))))
+
+(defn- apply-field-nested-entry
+  [value [k nested-eql]]
+  {k (apply-preview-eql (when (map? value) (get value k)) nested-eql)})
+
 (defn- apply-field-range-entry
   [value [k params nested-eql]]
   (let [field-value (when (map? value) (get value k))
@@ -964,11 +980,15 @@
         (cond
           (= :* entry) (merge acc value)
           (keyword? entry) (assoc acc entry (get value entry))
+          (and (vector? entry) (= 1 (count entry)) (keyword? (first entry)))
+          (assoc acc (first entry) (get value (first entry)))
           (field-range-entry? entry) (merge acc (apply-field-range-entry value entry))
+          (field-nested-entry? entry) (merge acc (apply-field-nested-entry value entry))
           (map? entry) (merge acc (apply-preview-eql value entry))
           :else (throw (ex-info "Invalid v/preview EQL entry"
                          {:type :ext.foundation.editing/invalid-preview-eql
-                          :entry entry}))))
+                          :entry entry
+                          :hint "Use :field for a plain key, or [:field {:from n :to m}] for a range."}))))
       {}
       preview-eql)
 
@@ -987,7 +1007,12 @@
       (vector? preview-eql) (apply-preview-vector-eql value preview-eql)
       (map? preview-eql) (reduce-kv
                            (fn [acc k nested-eql]
-                             (merge acc (apply-map-entry value k nested-eql)))
+                             (merge acc
+                               (if (and (= :result k)
+                                     (not (payload-envelope? value))
+                                     (not (and (map? value) (contains? value :result))))
+                                 {:result (apply-preview-eql value nested-eql)}
+                                 (apply-map-entry value k nested-eql))))
                            {}
                            preview-eql)
       :else (throw (ex-info "Invalid v/preview EQL"
@@ -1080,7 +1105,7 @@
        :kind :dir
        :result out
        :provenance {:spec spec
-                    :op (:op coerced)
+                    :query-op (:op coerced)
                     :paths paths
                     :include include
                     :exclude exclude
@@ -1209,26 +1234,25 @@
 
 (defn- bash-tool-result
   [op command opts]
-  (let [strict? (= :v/bash-strict op)
-        out     (run-bash-safe (if strict? (strict-bash-command command) command) opts)]
+  (let [out (run-bash-safe (strict-bash-command command) opts)]
     (tool-success
       {:op op
        :path (:cwd out)
        :kind :dir
-       :result (cond-> out strict? (assoc :strict? true :original-command command))
-       :provenance (cond-> {:command command
-                            :cwd (:cwd out)
-                            :exit (:exit out)
-                            :status (if (:timed-out? out) :timeout :done)
-                            :timed-out? (:timed-out? out)
-                            :timeout-ms (:timeout-ms out)
-                            :duration-ms (:duration-ms out)
-                            :stdout-truncated? (:stdout-truncated? out)
-                            :stderr-truncated? (:stderr-truncated? out)
-                            :warnings (:warnings out)
-                            :opts (dissoc opts :stdin)}
-                     strict? (assoc :strict? true
-                               :strict-command (:command out)))
+       :result (assoc out :strict? true :original-command command)
+       :provenance {:command command
+                    :cwd (:cwd out)
+                    :exit (:exit out)
+                    :status (if (:timed-out? out) :timeout :done)
+                    :timed-out? (:timed-out? out)
+                    :timeout-ms (:timeout-ms out)
+                    :duration-ms (:duration-ms out)
+                    :stdout-truncated? (:stdout-truncated? out)
+                    :stderr-truncated? (:stderr-truncated? out)
+                    :warnings (:warnings out)
+                    :opts (dissoc opts :stdin)
+                    :strict? true
+                    :strict-command (:command out)}
        :presentation {:kind :diagnostic}})))
 
 (defn- bash-tool
@@ -1236,12 +1260,6 @@
    (bash-tool command nil))
   ([command opts]
    (bash-tool-result :v/bash command opts)))
-
-(defn- bash-strict-tool
-  ([command]
-   (bash-strict-tool command nil))
-  ([command opts]
-   (bash-tool-result :v/bash-strict command opts)))
 
 (defn- parse-discovered-nrepl-port
   [stdout]
@@ -1452,11 +1470,29 @@
   (if-let [hits (seq (result-hits value))]
     (let [body (->> hits
                  (map (fn [{:keys [path line text] :as hit}]
-                        (if (and path line text)
-                          (if (= :tui surface)
-                            (str "- " path ":" line " " text)
-                            (str "- `" path ":" line "` " text))
-                          (str "- " (bounded-render-text (pr-str hit))))))
+                        (let [loc (cond
+                                    (and path line) (str path ":" line)
+                                    path            path
+                                    line            (str "line " line)
+                                    :else           nil)
+                              txt (or text
+                                    (some #(get hit %) [:match :snippet :content]))]
+                          (cond
+                            (and loc txt)
+                            (if (= :tui surface)
+                              (str "- " loc " " txt)
+                              (str "- `" loc "` " txt))
+
+                            loc
+                            (if (= :tui surface)
+                              (str "- " loc)
+                              (str "- `" loc "`"))
+
+                            txt
+                            (str "- " txt)
+
+                            :else
+                            (str "- " (bounded-render-text (pr-str hit)))))))
                  (str/join "\n"))]
       (md/lines (bounded-render-text body)))
     (render-edn-block surface value)))
@@ -1697,8 +1733,7 @@
       (md/p "Read" (md/code (:path out)) "- returned"
         (count (:lines out)) "line(s), offset" (:offset out)
         ", total" (:total-lines out)
-        ", truncated-by" (md/code (name (:truncated-by out)))
-        ". Use" (md/code "v/preview") "to project lines into the journal/TUI."))))
+        ", truncated-by" (md/code (name (:truncated-by out))) "."))))
 
 (defn- render-rg
   [{:keys [tool-result]}]
@@ -1709,8 +1744,7 @@
           paths (or (get-in tool-result [:provenance :paths])
                   [(get-in tool-result [:provenance :target :requested])])]
       (md/p "Searched" (md/code (pr-str paths)) "with" (md/code (pr-str spec)) "-"
-        (count (:hits out)) "hit(s), truncated-by" (md/code (name (:truncated-by out)))
-        ". Use" (md/code "v/preview") "to project selected hits into the journal/TUI."))))
+        (count (:hits out)) "hit(s), truncated-by" (md/code (name (:truncated-by out))) "."))))
 
 (defn- render-bash
   [{:keys [tool-result]}]
@@ -1869,7 +1903,7 @@
 
 (def bash-symbol
   (vis/symbol 'bash bash-tool
-    {:doc "Run bounded `/usr/bin/env bash -lc` in worktree. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run) or (:exit run). Refuses shell-driven Clojure/EDN source edits; use z/patch for those. Emits :warnings when stderr looks like a swallowed failure."
+    {:doc "Run bounded `/usr/bin/env bash -lc` in worktree with `set -euo pipefail` prepended. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run) or (:exit run). Refuses shell-driven Clojure/EDN source edits; use z/patch for those. Emits :warnings when stderr looks like a swallowed failure."
      :arglists '([command] [command opts])
      :examples ["(def run (v/bash \"./verify.sh --quick\"))"
                 "(get-in run [:result :stdout])"
@@ -1878,15 +1912,6 @@
      :result-spec tool-result-spec
      :render-fn render-bash
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
-
-(def bash-strict-symbol
-  (vis/symbol 'bash-strict bash-strict-tool
-    {:doc "Run bounded bash with `set -euo pipefail` prepended. Same result envelope as v/bash."
-     :arglists '([command] [command opts])
-     :examples ["(v/bash-strict \"./verify.sh --quick\")"]
-     :result-spec tool-result-spec
-     :render-fn render-bash
-     :on-error-fn (tool-failure-on-error :v/bash-strict :dir nil)}))
 
 (def nrepl-eval-symbol
   (vis/symbol 'nrepl-eval nrepl-eval-tool
@@ -1898,25 +1923,28 @@
      :render-fn render-bash
      :on-error-fn (tool-failure-on-error :v/nrepl-eval :dir nil)}))
 
-(def editing-symbols
-  [cat-symbol
-   preview-symbol
-   ls-symbol
-   rg-symbol
-   patch-symbol
-   patch-check-symbol
-   create-dirs-symbol
-   glob-symbol
-   copy-symbol
-   move-symbol
-   delete-symbol
-   delete-if-exists-symbol
-   exists?-symbol
-   bash-symbol
-   bash-strict-symbol
-   nrepl-eval-symbol])
+(defn available-editing-symbols
+  []
+  (cond-> [cat-symbol
+           preview-symbol
+           ls-symbol
+           rg-symbol
+           patch-symbol
+           patch-check-symbol
+           create-dirs-symbol
+           glob-symbol
+           copy-symbol
+           move-symbol
+           delete-symbol
+           delete-if-exists-symbol
+           exists?-symbol]
+    (not (config/bash-disabled?))
+    (into [bash-symbol])
+    :always
+    (into [nrepl-eval-symbol])))
 
-(def editing-prompt
+(defn available-editing-prompt
+  []
   (str
     "`v/` files: Use structured tools for discovery and reads: (v/cat path), (v/rg spec), (v/glob root pat opts?), (v/ls path opts?). "
     "v/rg has one spec-map grammar: {:all [\"a\" \"b\"]} requires ALL literals on the same line; {:any [\"a\" \"b\"]} is explicit OR; :paths defaults to [\".\"] and must be a vector; use :include [\"*.clj\" \"*.cljc\"] / :exclude [...] for file filters; no regex, no positional args, no public limit. "
@@ -1929,7 +1957,22 @@
     "Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. "
     "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Use (v/patch-check edits) to preflight match counts without writing. Read exact bytes first; keep searches small and unique; do not invent long paragraphs. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
     "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).\n"
-    "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). Use `v/bash-strict` for multi-step scripts; it prepends `set -euo pipefail`. Use `v/nrepl-eval` for Clojure runtime checks instead of shell-quoting `clj-nrepl-eval`: (v/nrepl-eval \"(+ 1 2)\" {:port :discover}). `v/bash` and `v/bash-strict` refuse shell-driven Clojure/EDN source edits; use z/patch for those.
-"
-    "Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\") [:result :lines]), (get-in (v/bash \"pwd\") [:result :stdout]), (-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits). "
+    (if (config/bash-disabled?)
+      "`v/` shell: v/bash is disabled by config. Use v/nrepl-eval for Clojure runtime checks and non-shell tools for file edits.\n"
+      "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). It always prepends `set -euo pipefail`, so multi-step scripts stop on failed commands, unset variables, and failed pipeline stages. Use `v/nrepl-eval` for Clojure runtime checks instead of shell-quoting `clj-nrepl-eval`: (v/nrepl-eval \"(+ 1 2)\" {:port :discover}). `v/bash` refuses shell-driven Clojure/EDN source edits; use z/patch for those.\n")
+    "Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\") [:result :lines]), "
+    (when-not (config/bash-disabled?)
+      "(get-in (v/bash \"pwd\") [:result :stdout]), ")
+    "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits). "
     "Tools own rendering metadata; preview preserves it. Provenance/lifecycle metadata stays unchanged and remains the proof substrate. For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))
+
+(def editing-symbols
+  "Default editing symbol set for docs/tests. Runtime extension registration calls
+   `available-editing-symbols` so project-local config can disable bash symbols
+   before the sandbox is assembled."
+  (available-editing-symbols))
+
+(def editing-prompt
+  "Default editing prompt for docs/tests. Runtime prompt assembly calls
+   `available-editing-prompt` so bash guidance matches project-local config."
+  (available-editing-prompt))

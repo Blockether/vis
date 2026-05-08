@@ -4,15 +4,16 @@
    Three-region layout:
 
        [LEFT]                    [CENTER]                    [RIGHT]
-       ✓ Copied!                 Conversation title          ⧉ d8d6a0a1 | ⧉ Transcript
-       (notification banner)     (or fallback placeholder)   (id + click target)
+       ✓ Copied!                 Conversation title          ● Recording 00:01  ⧉ d8d6a0a1 | ⧉ Transcript
+       (notification banner)     (or fallback placeholder)   (channel status + id + click target)
 
    - LEFT: latest active host notification (`com.blockether.vis.core/notify!`).
      Color-coded by `:level` (success / info / warn / error). Empty
      when no notification is active. The host notifications module
      is the single source of truth for cross-channel ephemeral
      signals — any extension or channel can `(v/notify! …)` and the
-     banner surfaces here.
+     banner surfaces here. Voice/recording status is NOT rendered here;
+     it lives in the RIGHT slot so it cannot collide with notifications.
    - CENTER: conversation title from app-db (`:title`). When the
      conversation has no title yet, falls back to a placeholder so
      the row never looks broken on a fresh run.
@@ -71,6 +72,11 @@
   "Compact Markdown transcript export affordance painted after the conversation-id copy block."
   (str copy-icon " Transcript"))
 
+(def ^:private status-action-separator
+  "Gap between a live channel status (voice recording/transcribing) and
+   persistent right-side copy actions."
+  "  ")
+
 (defn- workspace-tabs
   [db]
   (let [tabs (:workspace-tabs db)]
@@ -119,12 +125,19 @@
   []
   (last (vis/notifications)))
 
+(defn- status-expired?
+  [status now-ms]
+  (when-let [until (:until status)]
+    (<= (long until) (long now-ms))))
+
 (defn- latest-channel-status
   [{:keys [channel-status]}]
-  (->> (vals channel-status)
-    (filter #(seq (:text %)))
-    (sort-by #(long (or (:updated-at-ms %) 0)))
-    last))
+  (let [now-ms (System/currentTimeMillis)]
+    (->> (vals channel-status)
+      (filter #(seq (:text %)))
+      (remove #(status-expired? % now-ms))
+      (sort-by #(long (or (:updated-at-ms %) 0)))
+      last)))
 
 (defn- level->fg
   "Map a notification level to a foreground color. Falls back to the
@@ -194,17 +207,31 @@
         full-uuid    (full-id  (:conversation db))
         id-copy-text (id-copy-block-text id-short)
         md-copy-text (markdown-copy-block-text id-short)
-        right-text   (right-block-text id-short)
+        action-text  (right-block-text id-short)
+        status       (latest-channel-status db)
+        status-raw   (some-> status :text)
+        status-cap   (max 0 (quot cols 3))
+        status-text  (when (seq status-raw)
+                       (ellipsize status-raw status-cap))
+        status-w     (p/display-width (or status-text ""))
+        action-w     (p/display-width action-text)
+        status-gap   (if (and (pos? status-w) (pos? action-w))
+                       status-action-separator
+                       "")
+        status-gap-w (p/display-width status-gap)
+        right-text   (str (or status-text "") status-gap action-text)
         right-w      (p/display-width right-text)
         id-copy-w    (p/display-width id-copy-text)
         md-copy-w    (p/display-width md-copy-text)
         right-col    (when (pos? right-w) (max 0 (- cols edge-pad right-w)))
+        action-col   (when right-col (+ right-col status-w status-gap-w))
         separator-w  (p/display-width right-block-separator)
-        md-copy-col  (when (and right-col (pos? md-copy-w))
-                       (+ right-col id-copy-w separator-w))
-        banner       (or (latest-channel-status db) (latest-notification))
+        md-copy-col  (when (and action-col (pos? md-copy-w))
+                       (+ action-col id-copy-w separator-w))
+        banner       (latest-notification)
         notif-text   (some-> banner :text)
         notif-level  (some-> banner :level)
+        status-level (some-> status :level)
         ;; Reserve up to 1/3 of the row for the LEFT banner so the
         ;; centered title still has room. Banner truncates with an
         ;; ellipsis if the notification text is longer.
@@ -289,42 +316,55 @@
       (p/put-str! g title-col content-row title-trim)
       (p/clear-styles! g))
 
-    ;; RIGHT — copy conversation ID block + Markdown transcript export label.
+    ;; RIGHT — live channel status (voice recording/transcribing) + copy
+    ;; conversation ID block + Markdown transcript export label. Keeping the
+    ;; live voice status on the right leaves the left notification lane free.
     ;; Visual hover feedback: when either clickable region is hovered,
     ;; that exact affordance shifts to header-hover-fg and gains BOLD. Terminal emulators
     ;; don't allow applications to control the mouse cursor shape, so this
     ;; is the strongest affordance we can offer.
     (when (pos? right-w)
-      (let [hovered-region   (cr/hovered)
-            hovered-kind     (:kind hovered-region)
-            hovered-row?     (= content-row (get-in hovered-region [:bounds :row]))
-            id-hovered?      (and hovered-row? (= :copy-id hovered-kind))
+      (let [hovered-region    (cr/hovered)
+            hovered-kind      (:kind hovered-region)
+            hovered-row?      (= content-row (get-in hovered-region [:bounds :row]))
+            id-hovered?       (and hovered-row? (= :copy-id hovered-kind))
             markdown-hovered? (and hovered-row? (= :copy-as-markdown hovered-kind))]
-        (p/clear-styles! g)
-        (p/set-colors! g (if id-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
-        (when id-hovered?
-          (p/enable! g p/BOLD))
-        (p/put-str! g right-col content-row id-copy-text)
-        (p/clear-styles! g)
-        (p/set-colors! g t/header-fg t/terminal-bg)
-        (p/put-str! g (+ right-col id-copy-w) content-row right-block-separator)
-        (p/clear-styles! g)
-        (p/set-colors! g (if markdown-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
-        (when markdown-hovered?
-          (p/enable! g p/BOLD))
-        (p/put-str! g md-copy-col content-row md-copy-text)
-        (p/clear-styles! g)
-        (when full-uuid
-          (cr/register!
-            {:bounds   {:row content-row :col right-col :width id-copy-w}
-             :kind     :copy-id
-             :text     full-uuid
-             :enabled? true})
-          (cr/register!
-            {:bounds   {:row content-row :col md-copy-col :width md-copy-w}
-             :kind     :copy-as-markdown
-             :text     full-uuid
-             :enabled? true}))))
+        (when (pos? status-w)
+          (p/clear-styles! g)
+          (p/set-colors! g (level->fg status-level) t/terminal-bg)
+          (p/enable! g p/BOLD)
+          (p/put-str! g right-col content-row status-text)
+          (p/clear-styles! g)
+          (when (pos? status-gap-w)
+            (p/set-colors! g t/header-fg t/terminal-bg)
+            (p/put-str! g (+ right-col status-w) content-row status-gap)
+            (p/clear-styles! g)))
+        (when (pos? action-w)
+          (p/clear-styles! g)
+          (p/set-colors! g (if id-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+          (when id-hovered?
+            (p/enable! g p/BOLD))
+          (p/put-str! g action-col content-row id-copy-text)
+          (p/clear-styles! g)
+          (p/set-colors! g t/header-fg t/terminal-bg)
+          (p/put-str! g (+ action-col id-copy-w) content-row right-block-separator)
+          (p/clear-styles! g)
+          (p/set-colors! g (if markdown-hovered? t/header-hover-fg t/header-fg) t/terminal-bg)
+          (when markdown-hovered?
+            (p/enable! g p/BOLD))
+          (p/put-str! g md-copy-col content-row md-copy-text)
+          (p/clear-styles! g)
+          (when full-uuid
+            (cr/register!
+              {:bounds   {:row content-row :col action-col :width id-copy-w}
+               :kind     :copy-id
+               :text     full-uuid
+               :enabled? true})
+            (cr/register!
+              {:bounds   {:row content-row :col md-copy-col :width md-copy-w}
+               :kind     :copy-as-markdown
+               :text     full-uuid
+               :enabled? true})))))
 
     (draw-rule! g bottom-row cols)
 

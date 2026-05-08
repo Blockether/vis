@@ -141,6 +141,97 @@
       (expect (= [ref] (mapv :ref listed)))
       (expect (= 1 (raw-count s :provenance_event)))))
 
+  (it "stores iteration block and var tool observations in the proof ledger"
+    (let [s             (h/store)
+          cid           (vis/db-store-conversation! s {:channel :tui})
+          tid           (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                            :user-request "prove from iteration"
+                                                            :status :running})
+          intent        (vis/db-store-intent! s {:conversation-turn-id tid
+                                                 :title "Prove iteration"
+                                                 :rationale "Regression for iteration provenance persistence."})
+          plan          (vis/db-store-plan! s {:intent-id (:id intent) :summary "Verify."})
+          gate          (vis/db-store-gate! s {:plan-id (:id plan)
+                                               :question "Command passed?"})
+          code          "(def verify (v/bash \"true\"))"
+          tool-envelope {:success? true
+                         :result {:exit 0 :stdout "" :stderr ""}
+                         :provenance {:op :v/bash
+                                      :duration-ms 1
+                                      :started-at-ms 10
+                                      :finished-at-ms 11}}
+          iid           (vis/db-store-iteration! s {:conversation-turn-id tid
+                                                    :blocks [{:id 0
+                                                              :code code
+                                                              :result #:vis{:ref :expr}
+                                                              :stdout ""
+                                                              :stderr ""
+                                                              :error nil
+                                                              :execution-time-ms 1}]
+                                                    :vars [{:name 'verify
+                                                            :value tool-envelope
+                                                            :code code}]})
+          block-ref     (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          tool-ref      (str block-ref "/tool/v.bash")
+          event         (vis/db-get-provenance-event s cid tool-ref)
+          bundle        (vis/db-create-evidence-bundle! s {:conversation-id cid
+                                                           :kind :proof
+                                                           :subject-kind :gate
+                                                           :subject-id (:id gate)
+                                                           :requirements [{:evidence/slot [(:id intent) :exit]
+                                                                           :evidence/from-ref tool-ref
+                                                                           :evidence/extract [:result :exit]
+                                                                           :evidence/guard [:= [:value] 0]
+                                                                           :event/kind :tool
+                                                                           :event/op :v/bash}]})
+          attestation   (vis/db-attest-gate! s {:gate-id (:id gate)
+                                                :evidence-bundle-id (:id bundle)
+                                                :kind :gate/proven
+                                                :reason "Stored iteration provenance proves exit zero."})]
+      (expect (= iid (:iteration-id event)))
+      (expect (= :tool (:kind event)))
+      (expect (= :done (:status event)))
+      (expect (= {:result {:exit 0 :stdout "" :stderr ""}
+                  :success? true}
+                (:payload event)))
+      (expect (= :accepted (:status bundle)))
+      (expect (= true (:accepted? bundle)))
+      (expect (= 0 (:value (first (:members bundle)))))
+      (expect (= :accepted (:status attestation)))
+      (expect (= 1 (raw-count s :provenance_event)))))
+
+  (it "auto-capturing iteration tool provenance is idempotent when refs already exist"
+    (let [s             (h/store)
+          cid           (vis/db-store-conversation! s {:channel :tui})
+          tid           (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                            :user-request "idempotent provenance"
+                                                            :status :running})
+          code          "(def verify (v/bash \"true\"))"
+          block-ref     (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          tool-ref      (str block-ref "/tool/v.bash")
+          tool-envelope {:success? true
+                         :result {:exit 0}
+                         :provenance {:op :v/bash}}]
+      (vis/db-store-provenance-event! s {:conversation-id cid
+                                         :conversation-turn-id tid
+                                         :ref tool-ref
+                                         :kind :tool
+                                         :op :v/bash
+                                         :status :done
+                                         :payload {:result {:exit 0}}})
+      (vis/db-store-iteration! s {:conversation-turn-id tid
+                                  :blocks [{:id 0
+                                            :code code
+                                            :result #:vis{:ref :expr}
+                                            :error nil
+                                            :execution-time-ms 1}]
+                                  :vars [{:name 'verify
+                                          :value tool-envelope
+                                          :code code}]})
+      (expect (= 1 (raw-count s :provenance_event)))
+      (expect (= {:result {:exit 0}}
+                (:payload (vis/db-get-provenance-event s cid tool-ref))))))
+
   (it "rejects duplicate canonical refs in one conversation ledger"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
@@ -1282,6 +1373,52 @@
         (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))
         (expect (= 1 (raw-count s :conversation_intent_ref))))))
 
+  (it "rejects explicit abandonment refs that only cite ordinary successful work"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "ship patch"
+                                                     :status :running})
+          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(answer \"design only\")"
+                                                       :result "design only"
+                                                       :rendering-kind :vis/answer}]})
+          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Ship patch"
+                                          :rationale "User asked."})
+          thrown (try
+                   (vis/db-abandon-intent! s (:id intent)
+                     {:reason "No patch shipped."
+                      :refs [ref]})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+      (expect (= :intent/abandon-without-impediment (-> thrown ex-data :type)))
+      (expect (= :active (:status (vis/db-get-intent s (:id intent)))))
+      (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))))
+
+  (it "accepts explicit abandonment refs that cite an impeded gate result"
+    (let [s      (h/store)
+          cid    (vis/db-store-conversation! s {:channel :tui})
+          tid    (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                     :user-request "ship patch"
+                                                     :status :running})
+          iid    (vis/db-store-iteration! s {:conversation-turn-id tid
+                                             :blocks [{:code "(v/impede-gate! gate opts)"
+                                                       :result {:status :impeded
+                                                                :reason "Missing credentials."}
+                                                       :rendering-kind :vis/sci}]})
+          ref    (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          intent (vis/db-store-intent! s {:conversation-turn-id tid
+                                          :title "Ship patch"
+                                          :rationale "User asked."})
+          abandoned (vis/db-abandon-intent! s (:id intent)
+                      {:reason "Blocked by missing credentials."
+                       :refs [ref]})]
+      (expect (= :abandoned (:status abandoned)))
+      (expect (= ref (-> abandoned :refs first :ref)))
+      (expect (= ref (get-in (vis/db-list-iteration-blocks s iid) [0 :provenance :ref])))))
+
   (it "rejects compact provenance refs in evidence bundles"
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
@@ -1602,8 +1739,9 @@
           _   (vis/db-store-iteration! s {:conversation-turn-id tid
                                           :blocks [{:code "(v/bash \"false\")"
                                                     :result :vis/error
+                                                    :error {:message "failed"}
                                                     :rendering-kind :vis/system}]})
-          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/error")
           sug (vis/db-suggest-intent! s {:conversation-id cid :title "x"
                                          :rationale "r" :source :user})
           _   (vis/db-accept-intent! s (:id sug) {:actor-kind :user})
@@ -1688,8 +1826,9 @@
           _   (vis/db-store-iteration! s {:conversation-turn-id tid
                                           :blocks [{:code "(v/bash \"false\")"
                                                     :result :vis/error
+                                                    :error {:message "failed"}
                                                     :rendering-kind :vis/system}]})
-          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1")
+          ref (str "turn/" (subs (str tid) 0 8) "/iteration/1/block/1/error")
           parent (vis/db-suggest-intent! s {:conversation-id cid :title "p"
                                             :rationale "r" :source :user})
           _ (vis/db-accept-intent! s (:id parent) {:actor-kind :user})
