@@ -45,7 +45,8 @@
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
-   [com.blockether.vis.internal.markdown :as md])
+   [com.blockether.vis.internal.markdown :as md]
+   [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import
    (java.io File InputStream Reader Writer)
    (java.util.concurrent TimeUnit)
@@ -70,7 +71,7 @@
   ^File [p]
   ;; Resolve `p` against `(fs/cwd)` and reject any traversal that escapes
   ;; the working directory.
-  (let [cwd (fs/cwd)
+  (let [cwd (workspace-context/cwd)
         resolved (.toAbsolutePath (fs/path cwd (str p)))
         normalized (.normalize resolved)
         cwd-norm (.normalize (.toAbsolutePath (fs/path cwd)))]
@@ -98,12 +99,12 @@
   f)
 
 (defn- rel-path [^File f]
-  (let [cwd (.toAbsolutePath (fs/path (fs/cwd)))
+  (let [cwd (.toAbsolutePath (fs/path (workspace-context/cwd)))
         p   (.toAbsolutePath (.toPath f))]
     (str (.relativize cwd p))))
 
 (defn- display-path [p]
-  (let [cwd  (.normalize (.toAbsolutePath (fs/path (fs/cwd))))
+  (let [cwd  (.normalize (.toAbsolutePath (fs/path (workspace-context/cwd))))
         path (.normalize (.toAbsolutePath (fs/path p)))]
     (if (= path cwd)
       "."

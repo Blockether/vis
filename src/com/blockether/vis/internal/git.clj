@@ -5,6 +5,7 @@
    own JGit calls. It reports small, renderable facts about the current
    repository: whether a git workspace exists, repo/branch identity,
    dirty counts, and ahead/behind counts for the configured upstream."
+  (:require [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import [java.io File]
            [org.eclipse.jgit.api Git Status]
            [org.eclipse.jgit.lib BranchTrackingStatus Repository]
@@ -20,7 +21,7 @@
 (defn cwd-file
   "Canonical current working directory as a File. Indirected for tests."
   ^File []
-  (.getCanonicalFile (File. ".")))
+  (.getCanonicalFile (workspace-context/cwd)))
 
 (defn open-repository
   "Open the git repository containing `start`, or nil when `start` is
@@ -120,6 +121,8 @@
    git workspace facts. Keep the cache here so every caller shares one
    resolved view instead of each UI namespace running JGit independently."
   ([] (cached-workspace-status (System/currentTimeMillis) default-cache-ms))
+  ([^File start]
+   (cached-workspace-status start (System/currentTimeMillis) default-cache-ms))
   ([now-ms ttl-ms]
    (let [cwd (.getPath (cwd-file))
          {:keys [expires-at value]} @workspace-status-cache]
@@ -127,6 +130,17 @@
            (< (long now-ms) (long expires-at)))
        value
        (let [value (workspace-status)]
+         (reset! workspace-status-cache {:cwd cwd
+                                         :expires-at (+ (long now-ms) (long ttl-ms))
+                                         :value value})
+         value))))
+  ([^File start now-ms ttl-ms]
+   (let [cwd (.getPath (.getCanonicalFile start))
+         {:keys [expires-at value]} @workspace-status-cache]
+     (if (and (= cwd (:cwd @workspace-status-cache))
+           (< (long now-ms) (long expires-at)))
+       value
+       (let [value (workspace-status start)]
          (reset! workspace-status-cache {:cwd cwd
                                          :expires-at (+ (long now-ms) (long ttl-ms))
                                          :value value})

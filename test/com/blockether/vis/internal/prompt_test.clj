@@ -19,6 +19,7 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.prompt :as prompt]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private NO_EXTENSIONS [])
@@ -573,6 +574,17 @@
       (prompt/assemble-system-prompt {} {:active-extensions [ext]})
       (expect (= "test.env-info.context" @seen))))
 
+  (it "binds workspace root while environment-info fragments render"
+    (let [seen (atom nil)
+          ext (extension/extension
+                {:ext/namespace 'test.env-info.workspace
+                 :ext/doc       "Environment workspace."
+                 :ext/environment-info-fn (fn [_env]
+                                            (reset! seen workspace-context/*workspace-root*)
+                                            "ok")})]
+      (prompt/assemble-system-prompt {:workspace/root "."} {:active-extensions [ext]})
+      (expect (= (workspace-context/workspace-root ".") @seen))))
+
   (it "skips blank environment-info fragments"
     (let [ext (extension/extension
                 {:ext/namespace 'test.env-info.blank
@@ -605,6 +617,29 @@
                 {:active-extensions [ext]})]
       (expect (str/includes? out "<environment-info-error>"))
       (expect (str/includes? out "clojure.lang.PersistentArrayMap")))))
+
+(defdescribe workspace-prompt-test
+  (it "injects a bounded workspace block when env carries a workspace root"
+    (let [out (prompt/assemble-system-prompt
+                {:conversation-id "c1"
+                 :workspace {:workspace/id "ws-1"
+                             :workspace/repo-id "vis"
+                             :workspace/root "."
+                             :workspace/state :ready
+                             :main {:branch "feature/ws"
+                                    :head "abc123"}}
+                 :workspace/root "."}
+                {:active-extensions []})]
+      (expect (str/includes? out "<workspace>"))
+      (expect (str/includes? out "id: ws-1"))
+      (expect (str/includes? out "repo-id: vis"))
+      (expect (str/includes? out "branch: feature/ws"))
+      (expect (str/includes? out "head: abc123"))
+      (expect (str/includes? out "</workspace>"))))
+
+  (it "omits workspace block when no workspace root is active"
+    (let [out (prompt/assemble-system-prompt {} {:active-extensions []})]
+      (expect (not (str/includes? out "<workspace>"))))))
 
 (defdescribe extension-prompt-test
   (it "binds extension context while extension prompt fragments render"

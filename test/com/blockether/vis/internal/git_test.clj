@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.git-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.git :as git]
+            [com.blockether.vis.internal.workspace-context :as workspace-context]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe count-status-sets-test
@@ -8,6 +9,19 @@
     (expect (= 3 (git/count-status-sets #{"a" "b"} #{"c"} nil)))))
 
 (defdescribe workspace-status-shape-test
+  (it "resolves cwd from the active workspace root binding"
+    (let [root (-> (java.nio.file.Files/createTempDirectory
+                     "vis-git-cwd-"
+                     (into-array java.nio.file.attribute.FileAttribute []))
+                 .toFile)]
+      (try
+        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+          (expect (= (.getCanonicalPath root)
+                    (.getCanonicalPath (git/cwd-file)))))
+        (finally
+          (doseq [f (reverse (file-seq root))]
+            (.delete f))))))
+
   (it "reports whether the current directory is inside a git workspace"
     (let [status (git/workspace-status)]
       (expect (contains? status :workspace?))
@@ -42,6 +56,7 @@
           (let [config (.. g getRepository getConfig)]
             (.setString config "user" nil "name" "test")
             (.setString config "user" nil "email" "test@example.com")
+            (.setBoolean config "commit" nil "gpgsign" false)
             (.save config))
           (spit-rel "README.md" "# init")
           (spit-rel ".gitignore" ".claude/settings.local.json\n")

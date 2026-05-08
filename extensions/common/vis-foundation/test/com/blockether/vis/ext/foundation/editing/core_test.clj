@@ -17,6 +17,7 @@
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defn- private-fn [name]
@@ -576,6 +577,14 @@
       (expect (= "err" (:stderr out)))
       (expect (= "." (:cwd out)))
       (expect (false? (:timed-out? out)))))
+
+  (it "bash default cwd follows the active workspace root binding"
+    (let [run-bash (private-fn "run-bash-safe")
+          root     (.getCanonicalPath (fs/file (temp-dir-path "workspace-root")))]
+      (binding [workspace-context/*workspace-root* root]
+        (let [out (run-bash "pwd" {:timeout-ms 5000})]
+          (expect (= root (string/trim (:stdout out))))
+          (expect (= "." (:cwd out)))))))
 
   (it "bash warns when Traceback appears on stderr despite exit 0"
     (let [bash-tool   (private-fn "bash-tool")
