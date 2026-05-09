@@ -499,6 +499,152 @@
 (def ^:private goal-symbols
   [status-symbol set-symbol pause-symbol resume-symbol clear-symbol mark-symbol])
 
+;; =============================================================================
+;; TUI slash command — `/goal ...`
+;;
+;; Registered as a `:ext/channel-hooks` entry under `:tui`. The TUI's
+;; slash dispatcher invokes `run-fn` with a ctx map carrying
+;; `:command/argv` (split arg tokens) and `:app-db` (atom). We read
+;; the active conversation id off `(:conversation @app-db)`, then
+;; route to the matching public Clojure API. Errors surface as host
+;; notifications via `(vis/notify! ...)` so the LEFT slot of the
+;; header shows them — same path every other channel uses.
+;; =============================================================================
+
+(defn- notify!
+  [text level]
+  (vis/notify! (str text) :level level :ttl-ms 4000))
+
+(defn- ctx-conv-id [ctx]
+  (some-> (:app-db ctx) deref :conversation :id str))
+
+(defn- summary-line [g]
+  (or (goal-pure/format-goal-summary g) "<no goal>"))
+
+(defn- run-set! [ctx objective]
+  (let [cid (ctx-conv-id ctx)]
+    (cond
+      (not cid)
+      (notify! "/goal: no active conversation" :warn)
+
+      (str/blank? objective)
+      (notify! "/goal: objective is required (e.g. /goal Finish the migration)" :warn)
+
+      :else
+      (try
+        (let [g (set-goal! (vis/db-info) cid {:objective (str/trim objective)
+                                              :set-by    :user})]
+          (notify! (str "goal set · " (summary-line g)) :success))
+        (catch clojure.lang.ExceptionInfo e
+          (notify! (str "/goal failed: " (or (ex-message e) "unknown error"))
+            :error))
+        (catch Throwable e
+          (notify! (str "/goal failed: " (.getMessage e)) :error))))))
+
+(defn- run-show! [ctx]
+  (when-let [cid (ctx-conv-id ctx)]
+    (if-let [g (get-goal (vis/db-info) cid)]
+      (notify! (summary-line g) :info)
+      (notify! "no goal set on this conversation" :info))))
+
+(defn- run-mutation!
+  "Wrap a 0-arity goal mutation (`pause-goal!` / `resume-goal!` /
+   `clear-goal!`) so failures land in the notification banner instead
+   of crashing the slash dispatcher. Reads cid + db at call time so a
+   stale ctx (e.g. user switched conversation between the keypress and
+   the dispatch) can't fire on the previous conversation."
+  [ctx label mutate-fn success-fmt]
+  (let [cid (ctx-conv-id ctx)]
+    (cond
+      (not cid)
+      (notify! (str "/goal " label ": no active conversation") :warn)
+
+      :else
+      (try
+        (let [g (mutate-fn (vis/db-info) cid)]
+          (notify! (success-fmt g) :success))
+        (catch clojure.lang.ExceptionInfo e
+          (notify! (str "/goal " label " failed: "
+                     (or (ex-message e) "unknown error")) :error))
+        (catch Throwable e
+          (notify! (str "/goal " label " failed: " (.getMessage e)) :error))))))
+
+(defn- run-mark!
+  [ctx reason]
+  (let [cid (ctx-conv-id ctx)]
+    (if (not cid)
+      (notify! "/goal mark: no active conversation" :warn)
+      (try
+        (let [g (mark-goal-done! (vis/db-info) cid reason)]
+          (notify! (str "goal → done (" (name reason) ") · " (summary-line g))
+            :success))
+        (catch clojure.lang.ExceptionInfo e
+          (notify! (str "/goal mark failed: "
+                     (or (ex-message e) "unknown error")) :error))
+        (catch Throwable e
+          (notify! (str "/goal mark failed: " (.getMessage e)) :error))))))
+
+(defn- goal-slash-run!
+  "Dispatcher for `/goal ...`. Routes by the first arg token:
+     pause | resume | clear                   -> lifecycle mutation
+     achieved | unmet | budget-limited        -> mark-done
+     <empty>                                  -> show current goal status
+     <anything else>                          -> set goal to the full arg string
+
+   `:command/argv` carries the split tokens; the raw arg string is in
+   `:command/args` so multi-word objectives like `/goal Finish the
+   migration and keep tests green` round-trip without re-joining."
+  [{:keys [command/args command/argv] :as ctx}]
+  (let [;; Derive argv from args when the dispatcher caller didn't pre-split
+        ;; (some channels pass only the raw arg string). Splitting on
+        ;; whitespace matches the same convention `command-argv` uses in
+        ;; channel-tui/screen.clj, so a typed `/goal Round 2` keeps
+        ;; argv = ["Round" "2"], routes to :set with the FULL args text.
+        argv*     (or (seq argv)
+                    (when-not (str/blank? (str args))
+                      (str/split (str/trim (str args)) #"\s+")))
+        first-arg (str/lower-case (str (first argv*)))]
+    (case first-arg
+      ""               (run-show! ctx)
+      "pause"          (run-mutation! ctx "pause"  pause-goal!
+                         (fn [g] (str "goal paused · " (summary-line g))))
+      "resume"         (run-mutation! ctx "resume" resume-goal!
+                         (fn [g] (str "goal resumed · " (summary-line g))))
+      "clear"          (run-mutation! ctx "clear"  clear-goal!
+                         (fn [_] "goal cleared"))
+      "achieved"       (run-mark! ctx :achieved)
+      "unmet"          (run-mark! ctx :unmet)
+      "budget-limited" (run-mark! ctx :budget-limited)
+      ;; default: treat the entire arg string as a goal objective.
+      ;; This is the canonical Codex `/goal X` shape and what the
+      ;; cmd-args field documents.
+      (run-set! ctx (str args)))))
+
+(defn- goal-tui-commands
+  "Returns the list of TUI slash commands the goal extension contributes.
+   The dispatcher always shows `/goal` in the slash menu (via
+   `:label`); subcommands are documented under `:doc` so the user
+   discovers them inline."
+  [_ctx]
+  [{:id      :goal
+    :label   "Goal: set / pause / resume / clear / mark"
+    :doc     (str "Per-conversation goal (Codex-style). Usage:\n"
+               "  /goal <objective>            — set or replace\n"
+               "  /goal                        — show current status\n"
+               "  /goal pause                  — freeze the elapsed-ms timer\n"
+               "  /goal resume                 — unfreeze the elapsed-ms timer\n"
+               "  /goal clear                  — tombstone (done :cleared)\n"
+               "  /goal achieved               — finish, marked successful\n"
+               "  /goal unmet                  — finish, marked blocked\n"
+               "  /goal budget-limited         — finish, marked over budget")
+    :args    [{:name "objective | subcommand"
+               :kind :positional
+               :required false}]
+    ;; `:palette? false` keeps `/goal` out of the universal command
+    ;; palette (Ctrl+K) since the slash menu is the canonical entry.
+    :palette? false
+    :run-fn  goal-slash-run!}])
+
 (def vis-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.goal.core
@@ -520,6 +666,12 @@
      ;; Static fragment injected via the canonical extensions surface.
      ;; No `requiring-resolve` from internal/prompt.clj — the goal
      ;; extension hooks itself in like every other extension.
-     :ext/prompt    ext-prompt-fn}))
+     :ext/prompt    ext-prompt-fn
+     ;; TUI surface: `/goal ...` slash command. Registered as a
+     ;; channel-hook so the TUI's command-suggest / dispatcher pick it
+     ;; up automatically; no TUI code change needed.
+     :ext/channel-hooks [{:channel-id  :tui
+                          :hook-id     :goal/slash
+                          :commands-fn #'goal-tui-commands}]}))
 
 (vis/register-extension! vis-extension)
