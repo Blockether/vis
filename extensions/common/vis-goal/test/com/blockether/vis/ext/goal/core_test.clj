@@ -474,3 +474,123 @@
           [_ notes] (run-with-stub-notifier s ctx #(#'goal/goal-slash-run! ctx))]
       (expect (= :success (:level (first notes))))
       (expect (= "Round 2" (:objective (goal/get-goal s cid)))))))
+
+;; =============================================================================
+;; Cross-restart liveness — process-level regression (P8)
+;;
+;; The pure soul-level tests above use an in-memory store. The goal also
+;; needs to survive a JVM restart against a persistent on-disk store.
+;; This is the test that catches a future "we accidentally tied goal
+;; rows to JVM-local state" bug.
+;;
+;; Approach: spawn a child JVM (via clojure.main -e), have it open the
+;; same persistent SQLite dir, write a goal, and exit. Then the parent
+;; re-opens the same dir and reads the goal back. The Nippy blob in the
+;; extension_aggregate row must thaw to the same shape the child wrote.
+;; =============================================================================
+
+(require '[babashka.fs :as fs])
+(import '[java.util.concurrent TimeUnit])
+
+(def ^:private goal-child-write-code
+  "(require '[com.blockether.vis.core :as vis]
+            '[com.blockether.vis.ext.goal.core :as goal])
+   (let [dir       (System/getProperty \"vis.test.db-dir\")
+         objective (or (System/getProperty \"vis.test.objective\") \"child-set\")
+         s         (vis/db-create-connection! dir)
+         marker    (System/getProperty \"vis.test.marker\")]
+     (try
+       ;; First, store a conversation so we have a soul to attach
+       ;; the goal to. cid is returned as a Java UUID; goal extension
+       ;; round-trips both UUID and string forms via ->ref.
+       (let [cid (vis/db-store-conversation! s {:channel :child :title \"child-conv\"})]
+         (goal/set-goal! s cid {:objective objective :set-by :user})
+         ;; Communicate the soul id back so the parent can look it up.
+         (when marker (spit marker (str cid))))
+       (println \"CHILD-DONE\")
+       (finally
+         (vis/db-dispose-connection! s))))")
+
+(defn- vis-goal-extra-classpath
+  "Returns the extra classpath segments needed to run the goal
+   extension in a fresh child JVM, in case the parent JVM's
+   `java.class.path` was set up before vis-goal was added to deps.edn
+   (typical of long-running dev nREPL sessions). When `clojure -M:test`
+   spawns the harness from a clean classpath, these are already
+   present and the dedupe in the cp builder makes the addition a
+   no-op."
+  []
+  (let [project-root (fs/cwd)
+        candidates   ["extensions/common/vis-goal/src"
+                      "extensions/common/vis-goal/resources"]]
+    (->> candidates
+      (map #(str (fs/file project-root %)))
+      (filter fs/exists?)
+      vec)))
+
+(defn- child-classpath
+  "Build the child JVM's classpath by appending any missing vis-goal
+   directories to the parent's inherited cp. Dedupes so a clean
+   `:test` run doesn't double-list anything."
+  []
+  (let [sep   (System/getProperty "path.separator")
+        parts (vec (str/split (System/getProperty "java.class.path") (re-pattern sep)))
+        extra (vis-goal-extra-classpath)
+        seen  (atom (set parts))
+        merged (cond-> parts
+                 :add (into (filter (fn [p]
+                                      (when-not (contains? @seen p)
+                                        (swap! seen conj p)
+                                        true))
+                              extra)))]
+    (str/join sep merged)))
+
+(defn- start-goal-child-writer!
+  [dir marker objective]
+  (let [pb (ProcessBuilder.
+             ^java.util.List
+             [(str (fs/file (System/getProperty "java.home") "bin" "java"))
+              "-cp" (child-classpath)
+              (str "-Dvis.test.db-dir=" dir)
+              (str "-Dvis.test.marker=" marker)
+              (str "-Dvis.test.objective=" objective)
+              "clojure.main"
+              "-e" goal-child-write-code])]
+    (.redirectErrorStream pb true)
+    (let [child (.start pb)]
+      [child (future (slurp (.getInputStream child)))])))
+
+(defdescribe goal-cross-restart-test
+  (it "goal survives a JVM restart on a persistent on-disk store"
+    ;; Skipped when the project's classpath isn't reachable to a
+    ;; subprocess — the test relies on `clojure.main` being on PATH
+    ;; via the same javaHome as the test JVM. CI sets this up; local
+    ;; dev does too via `clojure -M:test`.
+    (let [dir     (fs/create-temp-dir {:prefix "vis-db-goal-cross-restart-"})
+          marker  (fs/file dir "child-cid")]
+      (try
+        (let [[child output-fut] (start-goal-child-writer!
+                                   (str dir) (str marker)
+                                   "Cross-restart objective")]
+          ;; Wait for the child JVM to finish writing + exit.
+          (expect (true? (.waitFor child 30 TimeUnit/SECONDS)))
+          (let [output (deref output-fut 1000 "")]
+            (expect (= 0 (.exitValue child)))
+            (expect (str/includes? output "CHILD-DONE"))
+            ;; Now open the same persistent store from THIS JVM and
+            ;; read the goal back. If the goal isn't there or doesn't
+            ;; thaw to the right shape, the test fails — this is the
+            ;; smoking gun for cross-restart persistence regressions.
+            (expect (fs/exists? marker))
+            (let [cid-str (str/trim (slurp marker))
+                  parent  (vis/db-create-connection! (str dir))]
+              (try
+                (let [g (goal/get-goal parent cid-str)]
+                  (expect (some? g))
+                  (expect (= "Cross-restart objective" (:objective g)))
+                  (expect (= :active (:status g)))
+                  (expect (= :user   (:set-by g))))
+                (finally
+                  (vis/db-dispose-connection! parent))))))
+        (finally
+          (fs/delete-tree dir))))))
