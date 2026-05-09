@@ -342,9 +342,18 @@
     (expect (nil? (diag/try-answer-string-restitch
                     "(answer (v/ul [\"a\" foo-bar \"b\"]))" "foo-bar"))))
 
-  (it "returns nil when the prose symbol isn't in a missing-quote context"
-    (expect (nil? (diag/try-answer-string-restitch
-                    "(answer Niektóre)" "Niektóre"))))
+  (it "the leading-bare path now fires for `(answer Niektóre)` (was nil pre-fix; the bare ident leading an answer form is itself the missing-quote signal)"
+    ;; Behavior change from the original prose+context guard: with
+    ;; the leading-bare path active, a bare ident immediately after
+    ;; `(answer ` is enough to restitch. The old test treated this
+    ;; as out-of-scope; the new contract treats it as the strongest
+    ;; possible signal because the answer-form arity has no slot
+    ;; for a bare symbol. Pin candidate count + at least one parses
+    ;; (strategy C: `(answer \"Niektóre\")`).
+    (let [cands (diag/try-answer-string-restitch
+                  "(answer Niektóre)" "Niektóre")]
+      (expect (some? cands))
+      (expect (some edamame-parses? cands))))
 
   (it "returns nil when the symbol isn't found in source"
     (expect (nil? (diag/try-answer-string-restitch
@@ -405,3 +414,85 @@
       (doseq [i (range (count orig-lines))]
         (when (not= 9 i)
           (expect (= (nth orig-lines i) (nth fixed-lines i))))))))
+
+;;; -----------------------------------------------------------------------
+;;; Bare leading symbol in `(answer SYM ...)` (conv
+;;; a1ccbb8c-a1a3-434c-86ad-b0f79cd2dee8)
+;;;
+;;; The pre-fix path required `looks-like-prose?` to fire (3+ chars,
+;;; uppercase first letter, contains a non-ASCII letter). That
+;;; correctly stays conservative for the
+;;; "bare-symbol-inside-vector-of-strings" case (a real Clojure
+;;; binding could legitimately be there). But when the bare symbol
+;;; LEADS the answer form (`(answer Co znaczy ...)`), the arity
+;;; contract guarantees there is no legitimate symbol — the model
+;;; just forgot the opening `"`. Path 2 in `try-answer-string-restitch`
+;;; restitches unconditionally for that shape. These tests pin both
+;;; the new path's wins and that we didn't accidentally widen the
+;;; existing path.
+;;; -----------------------------------------------------------------------
+
+(defdescribe try-answer-string-restitch-leading-bare-symbol-test
+  (it "restitches `(answer Co znaczy \u201eddd\"? ...)` (the a1ccbb8c repro, short ASCII word)"
+    ;; Exact code captured from the iteration-0 :code-exec log line
+    ;; in conversation a1ccbb8c. The first arg to `answer` is the
+    ;; ASCII 2-char word `Co`, which the prose detector skips (too
+    ;; short, no non-ASCII letters). Without the leading-bare path
+    ;; this whole turn burns iteration 0 on `Unable to resolve
+    ;; symbol: Co` and only recovers on iteration 1.
+    (let [src    "(answer Co znaczy \u201eddd\"? Daj wi\u0119cej kontekstu \u2014 co chcesz zrobi\u0107?\")"
+          cands  (diag/try-answer-string-restitch src "Co")
+          parsed (some #(when (edamame-parses? %) %) cands)]
+      (expect (some? cands))
+      (expect (some? parsed))
+      ;; The repaired form must keep `(answer ` and the closing `)`
+      ;; intact — we only inserted/escaped quotes inside.
+      (expect (str/starts-with? parsed "(answer \""))
+      (expect (str/ends-with? parsed "\")"))))
+
+  (it "handles even shorter words like `(answer Hi)` and `(answer Ok)` — the prose detector skips them, leading-bare path catches them"
+    (doseq [[src sym] [["(answer Hi there)" "Hi"]
+                       ["(answer Ok)"        "Ok"]]]
+      (let [parsed (some #(when (edamame-parses? %) %)
+                     (diag/try-answer-string-restitch src sym))]
+        (expect (some? parsed)))))
+
+  (it "does NOT fire when the bare symbol is NOT the first arg to answer (avoids overreach)"
+    ;; `Co` here is a binding from `let` — a plain Clojure ident, not a missing-quote.
+    ;; The leading-bare path looks for `(answer SYM` literally, so it
+    ;; should NOT match an inner usage. The prose path won't either
+    ;; (Co is too short / ASCII).
+    (expect (nil? (diag/try-answer-string-restitch
+                    "(answer (let [Co 1] (str Co)))"
+                    "Co"))))
+
+  (it "does NOT fire when the answer form already opens with a string literal"
+    ;; Nothing to restitch: `(answer \"...\")` is the healthy shape.
+    ;; The first non-whitespace token after `(answer ` is `\"`, not a
+    ;; bare ident, so the regex shouldn't match.
+    (expect (nil? (diag/try-answer-string-restitch
+                    "(answer \"hello\")"
+                    ;; even if the caller hands us a fake sym, the
+                    ;; pattern must not match — the symbol doesn't
+                    ;; literally lead the form.
+                    "hello"))))
+
+  (it "does NOT fire when the answer form opens with a renderable call (e.g. v/lines)"
+    ;; First token is `(`, not a bare ident.
+    (expect (nil? (diag/try-answer-string-restitch
+                    "(answer (v/lines \"a\" \"b\"))"
+                    "v"))))
+
+  (it "strategy B (prepend + escape inner quotes) is what wins for the a1ccbb8c shape"
+    ;; The captured repro has THREE unescaped `\"` between the
+    ;; restitch point and the enclosing `)`: one after `\u201eddd`,
+    ;; one mid-string, and one at the end. Strategy A would close
+    ;; early on the first one and trip the parser; strategy B
+    ;; escapes all but the last so the body becomes one valid
+    ;; string. Pin which candidate is the survivor so a future
+    ;; refactor can't quietly drop strategy B.
+    (let [src    "(answer Co znaczy \u201eddd\"? Daj wi\u0119cej kontekstu \u2014 co chcesz zrobi\u0107?\")"
+          [a b]  (diag/try-answer-string-restitch src "Co")]
+      (expect (some? b))
+      (expect (not (edamame-parses? a)))
+      (expect (edamame-parses? b)))))

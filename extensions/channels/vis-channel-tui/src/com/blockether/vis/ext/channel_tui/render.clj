@@ -4390,7 +4390,15 @@
           ;; has `(\n\nfoo\n\n,\n\nbar\n\n)` which would otherwise
           ;; emerge as `( foo , bar )`. The replacements collapse
           ;; ` ,` / ` .` / ` ;` / ` :` / ` )` and `( ` back to their
-          ;; natural prose forms.
+          ;; natural prose forms — BUT only OUTSIDE inline-code
+          ;; spans, because Clojure / EDN forms inside `` `...` ``
+          ;; legitimately carry whitespace before `:` (keyword args,
+          ;; map literals like `{:k :v}`). Pre-fix the punctuation
+          ;; reflow ran on the whole joined string and ate the
+          ;; spaces inside `` `{:rendering-kind :vis/silent :result
+          ;; title}` ``, surfacing it as `{:rendering-kind:vis/
+          ;; silent:result title}` to the user (conv
+          ;; e4167d48-8632-4d5b-bfb1-5ae1092eeb5e).
           ;;
           ;; `[` / `]` are intentionally NOT reflowed: in real prose
           ;; they almost always appear inside quoted text or code
@@ -4400,9 +4408,30 @@
           (let [cont (str/trim line)
                 joined (if (str/blank? cont)
                          current
-                         (-> (str (str/trimr current) " " cont)
-                           (str/replace #" +([,;:.\)])" "$1")
-                           (str/replace #"(\() +" "$1")))]
+                         (let [raw (str (str/trimr current) " " cont)
+                               ;; Tokenise into balanced inline-code
+                               ;; spans (`` `...` ``) vs prose; only
+                               ;; the prose segments get the
+                               ;; punctuation-tightening regexes
+                               ;; applied. The `re-seq` pattern is
+                               ;; the same one used by
+                               ;; `markdown/normalize-inline-spacing`
+                               ;; — backtick-delimited spans first,
+                               ;; then non-backtick runs, then a
+                               ;; lone backtick fallback.
+                               tighten-prose
+                               (fn [^String t]
+                                 (-> t
+                                   (str/replace #" +([,;:.\)])" "$1")
+                                   (str/replace #"(\() +" "$1")))]
+                           (->> (re-seq #"`[^`\n]+`|[^`]+|`" raw)
+                             (map (fn [^String tok]
+                                    (if (and (> (count tok) 1)
+                                          (str/starts-with? tok "`")
+                                          (str/ends-with? tok "`"))
+                                      tok
+                                      (tighten-prose tok))))
+                             (apply str))))]
             (recur rst joined 0 acc))
 
           ;; Idle, see a list marker -> enter list scope.

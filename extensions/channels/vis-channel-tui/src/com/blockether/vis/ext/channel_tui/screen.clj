@@ -693,7 +693,13 @@
         inner-h        (max 0 (- messages-bottom messages-top 2))
         text-top       (+ messages-top render/MESSAGE_MARGIN_TOP)
         header-top     0
-        footer-row     (dec rows)
+        ;; Footer is two rows tall (model row + limits/subscription row),
+        ;; drawn starting at `footer-row`. Using `(dec rows)` here painted
+        ;; the model row over the bottom row and pushed the limits row
+        ;; off-screen, so during streaming the subscription line was
+        ;; replaced by a duplicate of the model line. Must match the full
+        ;; render path: `(- rows 2)`.
+        footer-row     (- rows 2)
         progress-extra {:now-ms        now-ms
                         :turn-start-ms turn-start-ms
                         :cancelling?   (boolean cancelling?)
