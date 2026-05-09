@@ -33,6 +33,27 @@
     (expect (str/includes? (:ext.symbol/doc patch/patch-symbol)
               "Same input shape as v/patch"))))
 
+(defdescribe zpatch-check-test
+  (it "reports valid? true and 1 match for a unique-search edit (no write)"
+    (let [path  (write-temp! "patch-check/ok.clj" "(ns demo)\n(def x 1)\n")
+          out   (patch/patch-check [{:path path :search "(def x 1)" :replace "(def x 2)"}])]
+      (expect (true? (:valid? out)))
+      (expect (= 1 (count (:checks out))))
+      (expect (empty? (:failures out)))
+      (expect (= 1 (:matches (first (:checks out)))))
+      ;; Dry-run must not mutate the file.
+      (expect (= "(ns demo)\n(def x 1)\n" (slurp path)))))
+
+  (it "reports valid? false with failure rows for a missing search"
+    (let [path (write-temp! "patch-check/miss.clj" "(ns demo)\n(def x 1)\n")
+          out  (patch/patch-check [{:path path :search "(def nope 1)" :replace "x"}])]
+      (expect (false? (:valid? out)))
+      (expect (= 1 (count (:failures out))))
+      (expect (= 0 (:matches (first (:failures out)))))))
+
+  (it "is exposed as a registered z/patch-check symbol"
+    (expect (= 'patch-check (:ext.symbol/sym patch/patch-check-symbol)))))
+
 (defdescribe zpatch-behavior-test
   (it "patch replaces the form found by a zipper locator when search is unique"
     (let [path     (write-temp! "patch/core.clj" "(ns demo)\n(def x 1)\n")

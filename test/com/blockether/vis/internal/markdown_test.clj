@@ -84,6 +84,19 @@
     (let [valid "Intro\n```text\nbody\n```\nTail"]
       (expect (= valid (md/normalize-chat-markdown valid)))))
 
+  (it "collapses a blank line between prose and an opening fence to a single newline"
+    (expect (= "Intro:\n```clojure\n(def x 1)\n```\nTail"
+              (md/normalize-chat-markdown "Intro:\n\n```clojure\n(def x 1)\n```\n\nTail"))))
+
+  (it "collapses many blank lines around fences to a single newline on each side"
+    (expect (= "A:\n```text\nbody\n```\nB"
+              (md/normalize-chat-markdown "A:\n\n\n\n```text\nbody\n```\n\n\nB"))))
+
+  (it "preserves blank lines that live inside the fenced body"
+    (let [src "Intro\n\n```text\nfirst\n\nsecond\n```\n\nTail"]
+      (expect (= "Intro\n```text\nfirst\n\nsecond\n```\nTail"
+                (md/normalize-chat-markdown src)))))
+
   (it "capitalizes lowercase prose sentence starts in terse answers"
     (expect (= "Tak. Opcje:\n\n### clojure.spec.alpha"
               (md/normalize-chat-markdown "tak. opcje:\n### clojure.spec.alpha")))
@@ -131,10 +144,10 @@
                    ": \n\n"
                    "`1 file changed, 1 insertion(+), 1 deletion(-)`\n\n"
                    ". No reschedule.")]
-      (expect (= (str "One line changed in [screen.clj:649](screen.clj#L649). Nothing else touched.\n\n"
+      (expect (= (str "One line changed in [screen.clj:649](screen.clj#L649). Nothing else touched.\n"
                    "```diff\n"
                    "+  80)\n"
-                   "```\n\n"
+                   "```\n"
                    "`git diff --stat`: `1 file changed, 1 insertion(+), 1 deletion(-)`. No reschedule.")
                 (md/normalize-chat-markdown broken)))))
 

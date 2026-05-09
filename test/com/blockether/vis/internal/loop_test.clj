@@ -256,3 +256,40 @@
       (expect (str/includes? (:result ask-out) "(answer"))
       ;; :raw is preserved verbatim for forensic / DB rows.
       (expect (= raw (:raw ask-out))))))
+
+(defdescribe detect-common-mistakes-test
+  (it "rejects a string-as-fn call inside (answer ...) (regression: convo 0d25a3e1)"
+    ;; Reduced from turn 6 / iter 1 / block 36, offset 6151 of the
+    ;; broken 6623-char (answer ...) body. The reader is happy; SCI
+    ;; would crash with `String cannot be cast to IFn`. The lint must
+    ;; reject before evaluation.
+    (let [bad "(answer (v/p (v/bold(\"treating a structured Clojure codebase like a plain text file.\"))))"
+          msg (#'loop/detect-common-mistakes bad)]
+      (expect (string? msg))
+      (expect (str/includes? msg "String-as-fn"))
+      (expect (str/includes? msg "ClassCastException"))))
+
+  (it "leaves valid Clojure source alone"
+    (expect (nil? (#'loop/detect-common-mistakes "(answer (v/p (v/bold \"text\")))")))
+    (expect (nil? (#'loop/detect-common-mistakes "(def x 1)\n(println x)")))
+    (expect (nil? (#'loop/detect-common-mistakes ""))))
+
+  (it "tolerates unparseable source by deferring to parse-clojure-syntax"
+    ;; Reader error -> nil here; the broader pipeline still surfaces
+    ;; the parse error via parse-clojure-syntax.
+    (expect (nil? (#'loop/detect-common-mistakes "(answer (v/p"))))
+
+  (it "fires inside any nested form within (answer ...)"
+    (let [nested "(answer (v/p (let [x 1] (\"oops\" x))))"
+          msg    (#'loop/detect-common-mistakes nested)]
+      (expect (string? msg))
+      (expect (str/includes? msg "String-as-fn"))))
+
+  (it "ignores string-as-fn shapes OUTSIDE (answer ...) -- regular code is its own owner"
+    ;; Scope: the lint only polices the user-facing markdown DSL inside
+    ;; (answer ...). A weird shape in regular evaluation code is the
+    ;; model's own problem and will surface as a normal SCI error.
+    (expect (nil? (#'loop/detect-common-mistakes
+                   "(let [x 1] (when x (\"oops\" :extra)))")))
+    (expect (nil? (#'loop/detect-common-mistakes
+                   "(def y (\"nope\" 1))\n(println y)")))))
