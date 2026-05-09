@@ -238,15 +238,49 @@
   [v]
   (extension/journal-render-tool-result v))
 
+(defn- format-sink-error-text
+  "Render a sink failure entry's `:error` map via the same
+   default-journal-error-text path the engine uses for whole-form
+   failures, but synthesizing a tiny tool-result envelope so the
+   formatter sees a compatible shape."
+  [entry]
+  (extension/default-journal-error-text
+    {:success? false
+     :result   nil
+     :info     {:op (when-let [f (:form entry)] f)}
+     :error    (:error entry)}))
+
+(defn- format-sink-sub-row
+  "One `iN.K.M` sub-row per :journal sink entry. Success entries surface
+   the renderer's pre-rendered text; failure entries route through the
+   engine's default error formatter (or the symbol's error-fn at
+   write-time, if it had supplied one—its output already lives in
+   :result if so, but with the spec invariant we keep one path here)."
+  [iteration-position form-position {:keys [position form success? result] :as entry}]
+  (let [label   (str "  i" iteration-position "." (inc form-position) "." position "  ")
+        body    (if success?
+                  result
+                  (format-sink-error-text entry))]
+    (str label form " -> " body)))
+
 (defn- format-block-line
-  "One iteration's single block as a `<journal>` line. Renders
-   `iN.K  <code> -> <value>` plus any non-blank stdout/stderr and a
-   slow-suffix when execution exceeded 5s. Bare-symbol blocks read
-   naturally because the `<code>` IS the symbol and `<value>` is its
-   bound content. Tool-result envelopes render through shared display text
-   instead of dumping the full map into the journal."
+  "One iteration's single top-level form as journal text. Layout:
+
+     iN.K     <code>   -> <form's last-expression value>
+     iN.K.0   <form>   -> <result or error>     (from :journal sink)
+     iN.K.1   <form>   -> <result or error>
+     ...
+
+   The iN.K row is the form's directly-returned value (truncated
+   pr-str of the last-expression value, or ERROR on form throw). One
+   iN.K.M sub-row per :journal sink entry surfaces every tool call the
+   form made, regardless of nesting (do, let, deeply-nested calls, def
+   bindings).
+
+   Slow-suffix and per-form stdout/stderr suffixes still hang off the
+   header row."
   [iteration-position k expr]
-  (let [{:keys [code error result stdout stderr execution-time-ms]} expr
+  (let [{:keys [code error result stdout stderr execution-time-ms journal]} expr
         block-label   (str "i" iteration-position "." (inc k))
         code-str      (truncate (str/trim (or code "")) MAX_RESULT_DISPLAY_CHARS)
         stdout-suffix (when-not (str/blank? stdout)
@@ -263,11 +297,16 @@
                           (let [v (realize-value result)
                                 [value-str truncated?] (truncated-pr-str v)]
                             (str value-str
-                              (when truncated? " :truncated? true")))))]
-    (str "  " block-label "  " code-str " -> " value-part
-      (or slow-suffix "")
-      (or stdout-suffix "")
-      (or stderr-suffix ""))))
+                              (when truncated? " :truncated? true")))))
+        header        (str "  " block-label "  " code-str " -> " value-part
+                        (or slow-suffix "")
+                        (or stdout-suffix "")
+                        (or stderr-suffix ""))
+        sub-rows      (when (seq journal)
+                        (mapv #(format-sink-sub-row iteration-position k %) journal))]
+    (if (seq sub-rows)
+      (str/join "\n" (cons header sub-rows))
+      header)))
 
 (defn- format-journal-iteration-block
   "One iteration's full `<journal>` segment: per-block labels
