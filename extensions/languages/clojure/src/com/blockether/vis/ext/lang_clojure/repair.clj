@@ -311,47 +311,38 @@
 ;; Rendering/symbols
 ;; =============================================================================
 
-(defn- preview-text
-  [s]
-  (let [s (str s)]
-    (if (> (count s) 2000)
-      (str (subs s 0 2000) "\n...<+" (- (count s) 2000) " chars>")
-      s)))
+(defn- journal-render-repair
+  [result]
+  ;; Repair :result is the unified diff/patch summary; pr-str truncated.
+  (let [s (pr-str result)
+        n (count s)]
+    (if (<= n 800) s (str (subs s 0 800) "…<+" (- n 800) " chars>"))))
 
-(defn- render-repair-result
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (md/p "Tool" (md/code (get-in tool-result [:info :op])) "failed:" (get-in tool-result [:error :message]))
-    (let [file (first (get-in tool-result [:info :files]))]
-      (md/join
-        (md/p "Repair" (md/code (:path file))
-          "range" (md/code (pr-str (:range file)))
-          "changed?" (md/code (pr-str (:changed? file)))
-          "engine" (md/code (pr-str (:engine file))))
-        (when (:changed? file)
-          (md/join
-            (md/code-block "clojure" (preview-text (:before file)))
-            (md/code-block "clojure" (preview-text (:after file)))))))))
+(defn- channel-render-repair
+  [result _chan-id]
+  ;; `result` is the inner repair payload only (no :info access from
+  ;; the new contract). Show the canonical pr-str inside a clojure block.
+  (md/code-block "clojure" (pr-str result)))
 
 (def repair-range-symbol
   (vis/symbol #'repair-range
-    {
-     :result-spec ::extension/tool-result
-     :render-fn render-repair-result
+    {:result-spec ::extension/tool-result
+     :journal-render-fn journal-render-repair
+     :channel-render-fn channel-render-repair
      :on-error-fn (tool-failure-on-error :z/repair-range)}))
 
 (def repair-locator-symbol
   (vis/symbol #'repair-locator
-    {
-     :result-spec ::extension/tool-result
-     :render-fn render-repair-result
+    {:result-spec ::extension/tool-result
+     :journal-render-fn journal-render-repair
+     :channel-render-fn channel-render-repair
      :on-error-fn (tool-failure-on-error :z/repair-locator)}))
 
 (def repair-file-symbol
   (vis/symbol #'repair-file
-    {
-     :result-spec ::extension/tool-result
-     :render-fn render-repair-result
+    {:result-spec ::extension/tool-result
+     :journal-render-fn journal-render-repair
+     :channel-render-fn channel-render-repair
      :on-error-fn (tool-failure-on-error :z/repair-file)}))
 
 (def symbols

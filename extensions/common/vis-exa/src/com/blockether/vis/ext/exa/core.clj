@@ -435,20 +435,24 @@
      :max-lines (min (positive-long (:max-lines opts) (:max-lines cfg))
                   (:max-lines cfg))}))
 
-(defn- render-exa-result
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (let [op    (get-in tool-result [:info :op])
-          query (get-in tool-result [:result :query])]
-      (md/p "Exa" (md/code op) "failed for" (md/code query) ":"
-        (or (get-in tool-result [:error :message]) (pr-str (:error tool-result)))))
-    (let [{:keys [query content truncated? temp-file]} (:result tool-result)
-          op (get-in tool-result [:info :op])]
-      (md/join
-        (md/p "Exa" (md/code op) ":" (md/code query))
-        content
-        (when truncated?
-          (md/p "Output truncated; full output saved to" (md/code temp-file) "."))))))
+(defn- journal-render-exa
+  [result]
+  (let [{:keys [tool query content truncated?]} result
+        n (count (or content ""))
+        head (if (<= n 1500) content (str (subs content 0 1500) "…<+" (- n 1500) " chars>"))]
+    (str "exa/" tool " \"" query "\"— "
+      n " char(s)"
+      (when truncated? " (truncated)")
+      "\n" head)))
+
+(defn- channel-render-exa
+  [result _chan-id]
+  (let [{:keys [tool query content truncated? temp-file]} result]
+    (md/join
+      (md/p "Exa" (md/code tool) ":" (md/code query))
+      content
+      (when truncated?
+        (md/p "Output truncated; full output saved to" (md/code temp-file) ".")))))
 
 (defn- tool-success
   [{:keys [tool-name op query args mcp endpoint limits]}]
@@ -551,15 +555,15 @@
 
 (def web-search-symbol
   (vis/symbol #'web-search
-    {
-     :result-spec tool-result-spec
-     :render-fn render-exa-result}))
+    {:result-spec tool-result-spec
+     :journal-render-fn journal-render-exa
+     :channel-render-fn channel-render-exa}))
 
 (def code-context-symbol
   (vis/symbol #'code-context
-    {
-     :result-spec tool-result-spec
-     :render-fn render-exa-result}))
+    {:result-spec tool-result-spec
+     :journal-render-fn journal-render-exa
+     :channel-render-fn channel-render-exa}))
 
 (def exa-symbols
   [web-search-symbol

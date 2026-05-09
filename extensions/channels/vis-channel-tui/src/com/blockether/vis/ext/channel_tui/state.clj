@@ -915,6 +915,10 @@
       messages)))
 
 (defn- restore-submitted-input
+  "Drop the pending turn pair AND repopulate the editor. Used when
+   a turn was cancelled before any iteration produced visible work
+   - the user pressed Esc fast, no trace exists, so dropping the
+   placeholder bubble keeps the transcript clean."
   [db {:keys [text pastes paste-counter input-history]}]
   (-> db
     (assoc :messages (drop-pending-turn-messages (:messages db))
@@ -932,6 +936,30 @@
       :cancel-token nil
       :cancelling? false)
     (dissoc :turn-start-ms :submitted-input)))
+
+(defn- restore-editor-only
+  "Repopulate the editor without touching `:messages`. Used when
+   a turn was cancelled AFTER iterations produced visible work -
+   we keep the cancelled bubble (with its `:trace`) in the
+   transcript so the user can see what the agent did, AND we
+   refill the input box with the original prompt so they can
+   tweak/resubmit without retyping. The conversation-turn row,
+   each completed iteration, and any blocks they wrote already
+   landed in SQLite via the iteration loop's per-iteration
+   `db-store-iteration!` calls and `finalize-turn-result`'s
+   `db-update-conversation-turn!`, so reopening the conversation
+   shows the same partial trace."
+  [db {:keys [text pastes paste-counter input-history]}]
+  (-> db
+    (assoc :input (text->input-state text)
+      :input-history (vec (or input-history []))
+      :input-history-index nil
+      :input-history-draft nil
+      :slash-command-index 0
+      :slash-command-hidden? false
+      :pastes (or pastes {})
+      :paste-counter (or paste-counter 0))
+    (dissoc :submitted-input)))
 
 (reg-event-db :history-up
   (fn [db _]
@@ -1130,35 +1158,52 @@
             [(current-workspace-id db) a b])]
       (update-workspace db workspace-id
         (fn [workspace]
-          (if (and (= :cancelled status) (:submitted-input workspace))
-            (restore-submitted-input workspace (:submitted-input workspace))
-            (let [start    (:turn-start-ms workspace)
-                  wall-ms  (when start (- (System/currentTimeMillis) start))
-                  trace    (get-in workspace [:progress :iterations])
-                  response (-> (chat/assistant-message (or answer ""))
-                             (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
-                               (seq trace)
-                               (assoc :trace trace :raw-answer (or answer ""))
-                               (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
-                               model      (assoc :model model)
-                               iteration-count (assoc :iteration-count iteration-count)
-                               tokens     (assoc :tokens tokens)
-                               cost       (assoc :cost cost)
-                               confidence (assoc :confidence confidence)
-                               status     (assoc :status status)
-                               client-turn-id (assoc :client-turn-id client-turn-id)))
-                  messages'      (replace-pending-assistant (:messages workspace) response)
-                  still-pending? (boolean (some pending-assistant-message? messages'))]
-              (cond-> (assoc workspace
-                        :messages messages'
-                        :messages-scroll nil
-                        :loading? still-pending?
-                        :cancelling? false)
-                (not still-pending?)
-                (assoc :progress nil :cancel-token nil)
+          (let [trace (get-in workspace [:progress :iterations])
+                cancelled? (= :cancelled status)
+                ;; A cancellation that captured zero iterations is
+                ;; usually a stray Esc - drop the placeholder pair
+                ;; and restore the editor as before. A cancellation
+                ;; with a non-empty trace means the agent already
+                ;; did visible work (and persisted those iterations
+                ;; to SQLite); KEEP the bubble so the user can read
+                ;; what happened, and only repopulate the editor.
+                no-work? (empty? trace)]
+            (if (and cancelled? (:submitted-input workspace) no-work?)
+              (restore-submitted-input workspace (:submitted-input workspace))
+              (let [start    (:turn-start-ms workspace)
+                    wall-ms  (when start (- (System/currentTimeMillis) start))
+                    response (-> (chat/assistant-message (or answer ""))
+                               (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
+                                 (seq trace)
+                                 (assoc :trace trace :raw-answer (or answer ""))
+                                 (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
+                                 model      (assoc :model model)
+                                 iteration-count (assoc :iteration-count iteration-count)
+                                 tokens     (assoc :tokens tokens)
+                                 cost       (assoc :cost cost)
+                                 confidence (assoc :confidence confidence)
+                                 status     (assoc :status status)
+                                 client-turn-id (assoc :client-turn-id client-turn-id)))
+                    messages'      (replace-pending-assistant (:messages workspace) response)
+                    still-pending? (boolean (some pending-assistant-message? messages'))
+                    workspace'     (cond-> (assoc workspace
+                                             :messages messages'
+                                             :messages-scroll nil
+                                             :loading? still-pending?
+                                             :cancelling? false)
+                                     (not still-pending?)
+                                     (assoc :progress nil :cancel-token nil)
 
-                (not still-pending?)
-                (dissoc :turn-start-ms :submitted-input)))))))))
+                                     (not still-pending?)
+                                     (dissoc :turn-start-ms))]
+                ;; Cancelled-with-work: keep the bubble we just
+                ;; built AND refill the editor from the snapshot so
+                ;; the user can edit/resubmit the prompt that
+                ;; produced this trace without retyping.
+                (if (and cancelled? (:submitted-input workspace) (not no-work?))
+                  (restore-editor-only workspace' (:submitted-input workspace))
+                  (cond-> workspace'
+                    (not still-pending?) (dissoc :submitted-input)))))))))))
 
 ;;; ── Side effects ───────────────────────────────────────────────────────────
 

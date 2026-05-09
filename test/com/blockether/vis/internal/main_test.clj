@@ -113,10 +113,10 @@
                     lp/get-router (fn [] :router)
                     svar/make-router (fn [providers]
                                        {:providers providers})
-                    lp/create-environment (fn [router opts]
+                    lp/create-environment (fn [router _opts]
                                             (swap! events conj [:create-environment router])
                                             :env)
-                    lp/turn! (fn [env messages opts]
+                    lp/turn! (fn [_env _messages opts]
                                (swap! events conj [:turn (:model opts)])
                                {:answer "ok" :iteration-count 1 :duration-ms 2})
                     lp/dispose-environment! (fn [_])]

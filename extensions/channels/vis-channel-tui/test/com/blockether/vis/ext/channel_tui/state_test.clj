@@ -631,4 +631,51 @@
           (expect (= ["prior"] (:input-history restored-db)))
           (expect (false? (:loading? restored-db)))
           (expect (not-any? #(= "Cancelled by user." (:text %))
-                    (:messages restored-db))))))))
+                    (:messages restored-db)))))))
+
+  (it "keeps the cancelled bubble (with trace) when iterations already produced work"
+    ;; Regression: pre-fix the cancel handler dropped the
+    ;; user+assistant pair AND the progress trace whenever
+    ;; `:submitted-input` was set, no matter how many iterations
+    ;; the agent had completed. Users who hit Esc after seeing
+    ;; the agent finish iterations 1-3 watched all that work
+    ;; vanish from the TUI even though SQLite already had each
+    ;; iteration row persisted via `db-store-iteration!`. The
+    ;; bubble now sticks around with `:status :cancelled` + the
+    ;; live trace, the editor still gets refilled for retry, and
+    ;; the editor refill no longer competes with the visible
+    ;; transcript history.
+    (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)
+          reset-input-fn      (-> #'state/event-registry deref deref (get :reset-input) :fn)
+          set-progress-fn     (-> #'state/event-registry deref deref (get :set-progress-iterations) :fn)
+          message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
+          text                "summarize this codebase"
+          db                  {:conversation {:id "c1"}
+                               :messages [{:role :assistant :text "earlier"}]
+                               :input-history []
+                               :settings {:reasoning-level :balanced}}
+          fake-trace          [{:iteration 1 :thinking "plan" :code ["(+ 1 1)"] :results [2]}
+                               {:iteration 2 :thinking "more plan"}]]
+      (with-redefs [vis/cancellation-token (fn [] :token)]
+        (let [sent-db     (:db (send-message-fn db [:send-message text]))
+              reset-db    (reset-input-fn sent-db [:reset-input])
+              ;; Live progress had time to land two iterations
+              ;; before the user pressed Esc.
+              traced-db   (set-progress-fn reset-db [:set-progress-iterations fake-trace])
+              restored-db (message-received-fn traced-db
+                            [:message-received "Cancelled by user."
+                             {:status :cancelled :iteration-count 2}])
+              cancelled-bubble (last (:messages restored-db))]
+          ;; The cancelled bubble survives, carries the trace, and
+          ;; reports its status so the painter dims it.
+          (expect (= :assistant (:role cancelled-bubble)))
+          (expect (= :cancelled (:status cancelled-bubble)))
+          (expect (= fake-trace (:trace cancelled-bubble)))
+          (expect (= "Cancelled by user." (:text cancelled-bubble)))
+          ;; And the editor is refilled for easy retry.
+          (expect (= text (input/input->text (:input restored-db))))
+          ;; Loading flags clear so the spinner stops.
+          (expect (false? (:loading? restored-db)))
+          (expect (nil? (:progress restored-db)))
+          ;; And we don't leak the snapshot once it has been used.
+          (expect (nil? (:submitted-input restored-db))))))))

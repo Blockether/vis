@@ -35,7 +35,7 @@ re-listing it.
 | `src/com/blockether/vis/internal/cancellation.clj` | In-flight turn cancellation tokens. |
 | `src/com/blockether/vis/internal/commandline.clj` | Argument parser, command tree renderer, dispatcher. |
 | `src/com/blockether/vis/internal/config.clj` | Config loader, db-path (`~/.vis/vis.mdb`), router builder, provider presets. |
-| `src/com/blockether/vis/internal/env.clj` | SCI sandbox, var-index, `SYSTEM_VAR_NAMES`, `system-var-sym?`. |
+| `src/com/blockether/vis/internal/env.clj` | SCI sandbox, bindings, `SYSTEM_VAR_NAMES`, `system-var-sym?`. |
 | `src/com/blockether/vis/internal/error.clj` | Shared exception -> user message formatter. |
 | `src/com/blockether/vis/internal/extension.clj` | Extension spec, slot dispatch (`:ext/symbols`, `:ext/cli`, `:ext/channels`, `:ext/providers`, `:ext/persistance`), `register-extension!`, `discover-extensions!`. |
 | `src/com/blockether/vis/internal/format.clj` | `format-clojure`, `format-tokens`, `format-cost`, `format-iterations`. |

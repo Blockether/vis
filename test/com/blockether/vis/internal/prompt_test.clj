@@ -6,10 +6,34 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe core-system-prompt-test
-  (it "keeps the prompt on inspect/change/test/answer workflow"
+  (it "states the GROUND RULE: generate -> evaluate -> populate -> observe -> decide"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "inspect before edit"))
-      (expect (str/includes? p "Do normal inspect -> change -> test -> answer")))))
+      (expect (str/includes? p "GROUND RULE"))
+      (expect (str/includes? p "GENERATE one OR MORE fenced ```clojure blocks"))
+      (expect (str/includes? p "AUTOMATICALLY populates results into <journal>"))
+      (expect (str/includes? p "OBSERVE"))
+      (expect (str/includes? p "DECIDE"))
+      (expect (str/includes? p "(answer"))))
+
+  (it "SILENT FORMS sub-rule explains def acquisition vs observation"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "SILENT FORMS"))
+      (expect (str/includes? p "<bindings>"))
+      (expect (str/includes? p "acquisition, not observation"))
+      (expect (str/includes? p "contiguous"))))
+
+  (it "BATCHING sub-rule documents (do ...) for one-entry observation"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "BATCHING"))
+      (expect (str/includes? p "(do"))
+      (expect (str/includes? p "ONE journal entry"))))
+
+  (it "BINDINGS sub-rule documents *1/*2/*3/*e as escape hatches"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "BINDINGS"))
+      (expect (str/includes? p "`*1`"))
+      (expect (str/includes? p "`*e`"))
+      (expect (str/includes? p "prefer durable names")))))
 
 (defdescribe journal-rendering-test
   (it "omits silent def/acquisition blocks from <journal>"

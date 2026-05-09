@@ -162,68 +162,79 @@
         (str/join "\n" (map pr-str repaired))))
     (catch Throwable _ nil)))
 
+(defn- string-renderers
+  "Markdown helpers all return strings; auto-attach the pass-through
+   string renderers so each entry below stays a one-liner."
+  [opts]
+  (merge {:journal-render-fn vis/render-string-journal
+          :channel-render-fn vis/render-string-channel}
+    opts))
+
+(defn- vmd-symbol
+  ([v] (vmd-symbol v {}))
+  ([v opts] (vis/symbol v (string-renderers opts))))
+
 (def ^:private symbol-entries
   [;; All `:doc` and `:arglists` for these entries live on the var meta of
    ;; the `(def ^{...} h1 md/h1)` re-exports above. `vis/symbol` reads them
    ;; straight from the var so the SCI sandbox can `(doc v/h1)` against
    ;; the same canonical text we render into the prompt listing.
-   (vis/symbol #'h1
+   (vmd-symbol #'h1
      {})
-   (vis/symbol #'h2 {})
-   (vis/symbol #'h3 {})
-   (vis/symbol #'h4 {})
-   (vis/symbol #'h5 {})
-   (vis/symbol #'h6 {})
-   (vis/symbol #'h
+   (vmd-symbol #'h2 {})
+   (vmd-symbol #'h3 {})
+   (vmd-symbol #'h4 {})
+   (vmd-symbol #'h5 {})
+   (vmd-symbol #'h6 {})
+   (vmd-symbol #'h
      {})
-   (vis/symbol #'p
+   (vmd-symbol #'p
      {})
-   (vis/symbol #'bold
+   (vmd-symbol #'bold
      {})
-   (vis/symbol #'strong   {})
-   (vis/symbol #'italic   {})
-   (vis/symbol #'em       {})
-   (vis/symbol #'bold-italic {})
-   (vis/symbol #'strike   {})
-   (vis/symbol #'code
+   (vmd-symbol #'strong   {})
+   (vmd-symbol #'italic   {})
+   (vmd-symbol #'em       {})
+   (vmd-symbol #'bold-italic {})
+   (vmd-symbol #'strike   {})
+   (vmd-symbol #'code
      {})
-   (vis/symbol #'summary
+   (vmd-symbol #'summary
      {})
-   (vis/symbol #'kbd      {})
-   (vis/symbol #'link
+   (vmd-symbol #'kbd      {})
+   (vmd-symbol #'link
      {})
-   (vis/symbol #'image
+   (vmd-symbol #'image
      {})
-   (vis/symbol #'file-link
+   (vmd-symbol #'file-link
      {})
-   (vis/symbol #'anchor
+   (vmd-symbol #'anchor
      {})
-   (vis/symbol #'code-block
+   (vmd-symbol #'code-block
      {})
-   (vis/symbol #'blockquote
+   (vmd-symbol #'blockquote
      {})
    ;; `quote-md` re-exports `md/blockquote` under a different local name so
    ;; the local var name doesn't clash with `clojure.core/quote`. The SCI
    ;; sandbox name is overridden via `:sym` so the model still calls it `v/quote`.
-   (vis/symbol #'quote-md {:sym 'quote
-                           })
+   (vmd-symbol #'quote-md {:sym 'quote})
    (vis/value #'hr)
    (vis/value #'br)
-   (vis/symbol #'details
+   (vmd-symbol #'details
      {})
-   (vis/symbol #'li      {})
-   (vis/symbol #'ul      {})
-   (vis/symbol #'ol      {})
-   (vis/symbol #'checklist {})
-   (vis/symbol #'table
+   (vmd-symbol #'li      {})
+   (vmd-symbol #'ul      {})
+   (vmd-symbol #'ol      {})
+   (vmd-symbol #'checklist {})
+   (vmd-symbol #'table
      {})
-   (vis/symbol #'join    {})
-   (vis/symbol #'needs-input
+   (vmd-symbol #'join    {})
+   (vmd-symbol #'needs-input
      {})
-   (vis/symbol #'lines   {})
-   (vis/symbol #'section
+   (vmd-symbol #'lines   {})
+   (vmd-symbol #'section
      {})
-   (vis/symbol #'escape  {})])
+   (vmd-symbol #'escape  {})])
 
 (defn- with-source-rewrite
   [entry]

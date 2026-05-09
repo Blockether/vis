@@ -124,8 +124,8 @@
 (defn- normalize-inline-spacing
   "Tokenise `s` into balanced inline-code spans (`` `...` ``) and surrounding
    prose, normalize only the prose. Preserves whitespace inside code spans so
-   `(extension/render-tool-result :journal v)` keeps the space before
-   `:journal` instead of collapsing to `render-tool-result:journal`."
+   `(extension/journal-render-tool-result v)` keeps the space before
+   the var name instead of collapsing to `extension/...`."
   ^String [s]
   (let [tokens (re-seq #"`[^`\n]+`|[^`]+|`" s)]
     (->> tokens
@@ -272,11 +272,27 @@
       body           (str "<details>\n" body "\n\n</details>")
       :else          "<details>\n\n</details>")))
 
-(defn- normalize-list-items [items]
+(defn- normalize-list-items
+  "Flatten a single-vector arg and drop empties.
+
+   Filters both `nil` and blank strings (\"\", \" \", \"\\n\"). LLMs
+   sometimes emit a leading `\"\"` placeholder inside `(ol [...])` /
+   `(ul [...])`; without this the placeholder materialises as an empty
+   `1. ` / `- ` line because nothing in the downstream coalescer would
+   ever attach to it (it has no dangling suffix and the next fragment
+   typically starts with `**` rather than a connector).
+
+   Dropping blanks here is intentional: an item with no content is not
+   a meaningful list entry, only a markdown rendering artifact.
+
+   See markdown_test.clj `ol/ul list helpers` for the regression that
+   pinned this (conversation ccacd40a, iteration 14)."
+  [items]
   (let [unwrapped (if (and (= 1 (count items)) (sequential? (first items)))
                     (first items)
-                    items)]
-    (remove nil? unwrapped)))
+                    items)
+        blank-string? (fn [x] (and (string? x) (str/blank? x)))]
+    (remove (some-fn nil? blank-string?) unwrapped)))
 
 (defn- item-text [x]
   (if (sequential? x)

@@ -3,10 +3,9 @@
 
    Two layers:
 
-   1. Structured helpers for preview / tree / search:
+   1. Structured helpers for read / tree / search:
 
         (v/cat path)            ; -> {:path :offset :total-lines :truncated-by :lines ...}
-        (v/preview value eql?)  ; -> selected projection for journal/TUI
         (v/ls path)             ; -> nested {:name :path :type :size :children} tree
         (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
         (v/rg spec)            ; -> {:hits :truncated-by}; spec = {:all|:any [...] :paths [...]}
@@ -44,7 +43,6 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.markdown :as md]
    [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import
@@ -61,7 +59,6 @@
 (def ^:private default-bash-timeout-ms 30000)
 (def ^:private default-bash-max-output-chars 20000)
 (def ^:private journal-render-chars 3000)
-(def ^:private diff-context-lines 3)
 
 ;; =============================================================================
 ;; Path safety
@@ -140,27 +137,12 @@
   (case op
     (:v/cat :v/ls :v/glob :v/exists? :z/locators :z/symbols :z/locator-for-symbol) :op/read
     (:v/rg :all :any) :op/search
-    :v/preview :op/preview
     (:v/patch :z/patch :v/write) :op/edit
     :v/create-dirs :op/create
     (:v/delete :v/delete-if-exists) :op/delete
     (:v/move :v/copy) :op/move
     :v/bash :op/shell
     :op/meta))
-
-(defn tool-op->presentation-kind
-  "Return stable presentation kind for operation class badges/cards."
-  [op]
-  (case (tool-op->class op)
-    :op/read :tool/read
-    :op/search :tool/search
-    :op/preview :tool/preview
-    :op/edit :tool/edit
-    :op/create :tool/create
-    :op/delete :tool/delete
-    :op/move :tool/move
-    :op/shell :tool/shell
-    :tool/meta))
 
 (defn tool-op->color-role
   "Return semantic TUI color role for operation class. Themes can map these
@@ -169,7 +151,6 @@
   (case (tool-op->class op)
     :op/read :tool-color/read
     :op/search :tool-color/search
-    :op/preview :tool-color/preview
     :op/edit :tool-color/edit
     :op/create :tool-color/create
     :op/delete :tool-color/delete
@@ -180,23 +161,20 @@
 (defn- op-presentation
   [op]
   {:op-class (tool-op->class op)
-   :presentation-kind (tool-op->presentation-kind op)
    :color-role (tool-op->color-role op)})
 
 (defn- tool-success
-  [{:keys [op path kind result info presentation]}]
+  [{:keys [op path kind result info]}]
   (let [t (now-ms)]
-    (cond->
-      (extension/success
-        {:result     result
-         :info (merge {:op             op
-                       :target         (path->target path kind)
-                       :started-at-ms  t
-                       :finished-at-ms t
-                       :duration-ms    0}
-                 (op-presentation op)
-                 info)})
-      presentation (assoc :presentation (merge (op-presentation op) presentation)))))
+    (extension/success
+      {:result     result
+       :info (merge {:op             op
+                     :target         (path->target path kind)
+                     :started-at-ms  t
+                     :finished-at-ms t
+                     :duration-ms    0}
+               (op-presentation op)
+               info)})))
 
 (defn- tool-failure-on-error
   [op kind _render-fn]
@@ -256,7 +234,7 @@
 (defn- unsupported-cat-opts!
   [opts]
   (when (some? opts)
-    (throw (ex-info "v/cat reads the whole file; use v/preview EQL for display ranges"
+    (throw (ex-info "v/cat reads the whole file; bind the result and slice with plain Clojure for ranges"
              {:type :ext.foundation.editing/invalid-cat-opts
               :opts opts}))))
 
@@ -264,8 +242,8 @@
   "Read the whole text file as pure structured data.
 
    Returns :path, :offset, :total-lines, :truncated-by, and raw :lines.
-   No prose footer, no line-number prefix, no display limit. Use
-   `v/preview` EQL to project ranges into the journal/TUI."
+   No prose footer, no line-number prefix, no display limit. Bind the
+   result and slice with `subvec`/`get-in` for ranges."
   ([path] (read-file path nil))
   ([path opts]
    (unsupported-cat-opts! opts)
@@ -378,7 +356,7 @@
   "Search with the one public v/rg spec map. Exactly one of :all or
    :any is required. :paths defaults to the current directory.
    :include/:exclude are glob vectors. Acquisition has a private hard
-   cap; v/preview controls display only."
+   cap; bind the result and slice for tighter display."
   [spec]
   (let [{:keys [op needles paths include exclude hidden? respect-gitignore?]} (coerce-rg-spec spec)
         limit default-grep-limit
@@ -813,252 +791,14 @@
          (future-cancel stdin-f)
          (throw e))))))
 
-(defn- run-command-safe
-  [argv opts]
-  (let [{:keys [cwd timeout-ms max-output-chars stdin]} (coerce-bash-opts opts)
-        cwd-file (ensure-existing-dir! (safe-path cwd))
-        cwd-rel (display-path cwd-file)
-        argv (mapv str argv)
-        pb (doto (ProcessBuilder. ^java.util.List (java.util.ArrayList. argv))
-             (.directory cwd-file))
-        started (now-ms)
-        ^Process process (.start pb)
-        stdout-f (future (read-stream-limited (.getInputStream process) max-output-chars))
-        stderr-f (future (read-stream-limited (.getErrorStream process) max-output-chars))
-        stdin-f (future (write-stdin-and-close! process stdin))]
-    (try
-      (let [done? (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
-            _ (when-not done?
-                (.destroyForcibly process)
-                (.waitFor process 1000 TimeUnit/MILLISECONDS))
-            finished (now-ms)
-            stdout @stdout-f
-            stderr @stderr-f
-            exit (if done? (.exitValue process) 124)
-            _ (try @stdin-f (catch Throwable _ nil))]
-        {:command (str/join " " argv)
-         :argv argv
-         :cwd cwd-rel
-         :exit exit
-         :timed-out? (not done?)
-         :timeout-ms timeout-ms
-         :duration-ms (long (max 0 (- finished started)))
-         :stdout (:text stdout)
-         :stderr (:text stderr)
-         :stdout-chars (:chars stdout)
-         :stderr-chars (:chars stderr)
-         :stdout-truncated? (:truncated? stdout)
-         :stderr-truncated? (:truncated? stderr)})
-      (catch InterruptedException e
-        (.destroyForcibly process)
-        (future-cancel stdout-f)
-        (future-cancel stderr-f)
-        (future-cancel stdin-f)
-        (throw e)))))
-
-;; =============================================================================
-;; Preview EQL
-;; =============================================================================
-
 (declare bounded-render-text)
-
-(defn- payload-envelope?
-  [value]
-  (and (map? value)
-    (or (extension/tool-result? value) (contains? value :info))
-    (some value [:result :stdout :stderr :error])))
-
-(defn- payload-map
-  [value]
-  (if (payload-envelope? value)
-    (select-keys value [:result :stdout :stderr :error])
-    value))
-
-(defn- small-head
-  [value]
-  (let [value (payload-map value)]
-    (cond
-      (string? value) (bounded-render-text value)
-      (map? value) (into {} (take 8 value))
-      (vector? value) (vec (take 8 value))
-      (sequential? value) (vec (take 8 value))
-      (set? value) (set (take 8 value))
-      :else value)))
-
-(defn- range-param-map?
-  [x]
-  (and (map? x) (or (contains? x :from) (contains? x :to))))
-
-(defn- validate-range-bound!
-  [k v]
-  (when (and (some? v) (or (not (integer? v)) (neg? v)))
-    (throw (ex-info (str "v/preview range " k " must be a non-negative integer")
-             {:type :ext.foundation.editing/invalid-preview-eql
-              :key k
-              :value v}))))
-
-(defn- slice-value
-  [value {:keys [from to] :as params}]
-  (let [_ (validate-range-bound! :from from)
-        _ (validate-range-bound! :to to)
-        from (or from 0)]
-    (cond
-      (string? value)
-      (let [n (count value)
-            to (or to n)]
-        (when (> from to)
-          (throw (ex-info "v/preview range :from cannot be greater than :to"
-                   {:type :ext.foundation.editing/invalid-preview-eql
-                    :params params})))
-        (subs value (min from n) (min to n)))
-
-      (sequential? value)
-      (let [v (vec value)
-            n (count v)
-            to (or to n)]
-        (when (> from to)
-          (throw (ex-info "v/preview range :from cannot be greater than :to"
-                   {:type :ext.foundation.editing/invalid-preview-eql
-                    :params params})))
-        (subvec v (min from n) (min to n)))
-
-      :else
-      (throw (ex-info "v/preview range can only be applied to text or sequential values"
-               {:type :ext.foundation.editing/invalid-preview-eql
-                :params params
-                :value-type (some-> value class .getName)})))))
-
-(declare apply-preview-eql)
-
-(defn- field-range-entry?
-  [entry]
-  (and (vector? entry)
-    (keyword? (first entry))
-    (range-param-map? (second entry))
-    (<= 2 (count entry) 3)))
-
-(defn- field-nested-entry?
-  [entry]
-  (and (vector? entry)
-    (= 2 (count entry))
-    (keyword? (first entry))
-    (not (range-param-map? (second entry)))))
-
-(defn- apply-field-nested-entry
-  [value [k nested-eql]]
-  {k (apply-preview-eql (when (map? value) (get value k)) nested-eql)})
-
-(defn- apply-field-range-entry
-  [value [k params nested-eql]]
-  (let [field-value (when (map? value) (get value k))
-        ranged      (slice-value field-value params)
-        projected   (if (some? nested-eql)
-                      (if (and (sequential? ranged) (not (string? ranged)))
-                        (mapv #(apply-preview-eql % nested-eql) ranged)
-                        (apply-preview-eql ranged nested-eql))
-                      ranged)]
-    {k projected}))
-
-(defn- apply-map-entry
-  [value k nested-eql]
-  {k (apply-preview-eql (when (map? value) (get value k)) nested-eql)})
-
-(defn- apply-preview-vector-eql
-  [value preview-eql]
-  (cond
-    (= [:*] preview-eql)
-    (if (map? value) value (small-head value))
-
-    (map? value)
-    (reduce
-      (fn [acc entry]
-        (cond
-          (= :* entry) (merge acc value)
-          (keyword? entry) (assoc acc entry (get value entry))
-          (and (vector? entry) (= 1 (count entry)) (keyword? (first entry)))
-          (assoc acc (first entry) (get value (first entry)))
-          (field-range-entry? entry) (merge acc (apply-field-range-entry value entry))
-          (field-nested-entry? entry) (merge acc (apply-field-nested-entry value entry))
-          (map? entry) (merge acc (apply-preview-eql value entry))
-          :else (throw (ex-info "Invalid v/preview EQL entry"
-                         {:type :ext.foundation.editing/invalid-preview-eql
-                          :entry entry
-                          :hint "Use :field for a plain key, or [:field {:from n :to m}] for a range."}))))
-      {}
-      preview-eql)
-
-    (and (sequential? value) (not (string? value)))
-    (mapv #(apply-preview-eql % preview-eql) value)
-
-    :else
-    (small-head value)))
-
-(defn- apply-preview-eql
-  [value preview-eql]
-  (let [value (payload-map value)]
-    (cond
-      (nil? preview-eql) value
-      (keyword? preview-eql) (if (map? value) {preview-eql (get value preview-eql)} (small-head value))
-      (vector? preview-eql) (apply-preview-vector-eql value preview-eql)
-      (map? preview-eql) (reduce-kv
-                           (fn [acc k nested-eql]
-                             (merge acc
-                               (if (and (= :result k)
-                                     (not (payload-envelope? value))
-                                     (not (and (map? value) (contains? value :result))))
-                                 {:result (apply-preview-eql value nested-eql)}
-                                 (apply-map-entry value k nested-eql))))
-                           {}
-                           preview-eql)
-      :else (throw (ex-info "Invalid v/preview EQL"
-                     {:type :ext.foundation.editing/invalid-preview-eql
-                      :preview-eql preview-eql})))))
-
-(defn- presentation-kind-from-result
-  [result]
-  (cond
-    (and (map? result) (vector? (get-in result [:result :hits]))
-      (every? #(and (map? %) (contains? % :path) (contains? % :line) (contains? % :text))
-        (get-in result [:result :hits])))
-    :search-hits
-
-    (and (map? result) (vector? (get-in result [:result :lines])))
-    :source
-
-    (string? result)
-    :text
-
-    :else
-    :data))
-
-(defn- preview-presentation
-  [value projection]
-  (or (:presentation value)
-    {:kind (presentation-kind-from-result projection)}))
-
-(defn- preview-tool
-  "Project a value into <journal>/TUI display with EQL. The tool envelope always keeps the raw projected value under `:result`; rendering is separate display metadata. Observation call: use as a standalone display form; leave durable bindings for source/acquisition values. Strategy: bind full reads/searches you need later, then call preview separately; never echo a var just to inspect it. Examples: `(def file (v/cat \"src/foo.clj\"))` followed by `(v/preview file {:result [[:lines {:from 100 :to 180}]]})`, `(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)`, `(v/preview value)`. With no EQL, previews the whole payload. EQL supports keys, [:*], nested pulls, and field ranges like {:result [[:lines {:from 40 :to 120}]]}. Preserves source rendering metadata and info boundary."
-  ([value]
-   (preview-tool value nil))
-  ([value preview-eql]
-   (let [projection (apply-preview-eql value preview-eql)
-         t (now-ms)]
-     (assoc (extension/success
-              {:result projection
-               :info {:op :v/preview
-                      :started-at-ms t
-                      :finished-at-ms t
-                      :duration-ms 0}})
-       :preview-eql preview-eql
-       :preview {:rendering-kind (get (preview-presentation value projection) :kind)}
-       :presentation (preview-presentation value projection)))))
 
 ;; =============================================================================
 ;; Tool-result facades
 ;; =============================================================================
 
 (defn- cat-tool
-  "Read the whole text file into `[:result :lines]`. `v/cat` has no display or pagination opts; use `v/preview` EQL to select ranges for journal/TUI display. Tool result; `:result` = {:path :offset :total-lines :truncated-by :lines}."
+  "Read the whole text file into `[:result :lines]`. `v/cat` has no display or pagination opts; the journal renders a bounded preview (first 50 + last 50 lines) and the full vector stays bound for slicing. Tool result; `:result` = {:path :offset :total-lines :truncated-by :lines}."
   ([path]
    (let [out (read-file path)]
      (tool-success
@@ -1092,7 +832,7 @@
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
-  "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; use v/preview for display. Tool result; `:result` = {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
+  "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; bind the result and slice for display. Tool result; `:result` = {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
   [spec]
   (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
         out (grep-files spec)]
@@ -1282,222 +1022,14 @@
         "\n...<+" (- (count s) journal-render-chars) " chars>")
       s)))
 
-(defn- split-preserve-trailing-empty
-  [s]
-  (if (nil? s)
-    []
-    (str/split s #"\n" -1)))
-
-(defn- diff-edit-chunks
-  [a b]
-  (loop [prefix []
-         left   a
-         right  b]
-    (cond
-      (= left right)
-      [{:type :equal :lines prefix}]
-
-      (and (seq left) (seq right) (= (first left) (first right)))
-      (recur (conj prefix (first left)) (rest left) (rest right))
-
-      :else
-      (let [leftv  (vec left)
-            rightv (vec right)
-            shared-suffix (loop [n 0]
-                            (if (and (< n (count leftv))
-                                  (< n (count rightv))
-                                  (= (nth leftv (- (count leftv) (inc n)))
-                                    (nth rightv (- (count rightv) (inc n)))))
-                              (recur (inc n))
-                              n))
-            left-core  (subvec leftv 0 (- (count leftv) shared-suffix))
-            right-core (subvec rightv 0 (- (count rightv) shared-suffix))
-            suffix     (subvec leftv (- (count leftv) shared-suffix))]
-        (cond-> []
-          (seq prefix) (conj {:type :equal :lines prefix})
-          (seq left-core) (conj {:type :delete :lines left-core})
-          (seq right-core) (conj {:type :insert :lines right-core})
-          (seq suffix) (conj {:type :equal :lines suffix}))))))
-
-(defn- trim-context
-  [chunks]
-  (let [vec-chunks (vec chunks)
-        last-idx   (dec (count vec-chunks))]
-    (->> vec-chunks
-      (map-indexed
-        (fn [idx {:keys [type lines] :as chunk}]
-          (if (and (= type :equal) (> (count lines) (* 2 diff-context-lines)))
-            (cond
-              (= idx 0)
-              (assoc chunk :lines (subvec (vec lines) (- (count lines) diff-context-lines)))
-
-              (= idx last-idx)
-              (assoc chunk :lines (subvec (vec lines) 0 diff-context-lines))
-
-              :else
-              {:type :equal-gap
-               :lines [(str "... " (- (count lines) (* 2 diff-context-lines)) " unchanged line(s) ...")]})
-            chunk)))
-      (remove #(and (= :equal (:type %)) (empty? (:lines %)))))))
-
-(defn- unified-diff-text
-  [path before after]
-  (let [before-lines (split-preserve-trailing-empty before)
-        after-lines  (split-preserve-trailing-empty after)
-        chunks       (trim-context (diff-edit-chunks before-lines after-lines))
-        body         (->> chunks
-                       (mapcat (fn [{:keys [type lines]}]
-                                 (case type
-                                   :equal (map #(str " " %) lines)
-                                   :equal-gap lines
-                                   :delete (map #(str "-" %) lines)
-                                   :insert (map #(str "+" %) lines))))
-                       (str/join "\n"))]
-    (bounded-render-text
-      (str "--- a/" path "\n"
-        "+++ b/" path "\n"
-        "@@\n"
-        body))))
-
-(defn- tool-error-text
-  [tool-result]
-  (let [op   (get-in tool-result [:info :op])
-        path (get-in tool-result [:info :target :requested])
-        err  (:error tool-result)]
-    (md/p "Tool" (md/code op) "failed"
-      (when path (str "for " (md/code path)))
-      ":"
-      (or (:message err) (pr-str err)))))
-
-(defn- result-lines
-  [result]
-  (or (get-in result [:result :lines])
-    (:lines result)
-    (when (and (sequential? result) (every? string? result)) result)))
-
-(defn- result-hits
-  [result]
-  (or (get-in result [:result :hits])
-    (:hits result)
-    (when (and (sequential? result)
-            (every? #(and (map? %) (contains? % :path) (contains? % :line) (contains? % :text)) result))
-      result)))
-
-(defn- preview-range-start
-  [tool-result]
-  (or (some-> (re-find #":from\s+(\d+)" (pr-str (:preview-eql tool-result))) second parse-long)
-    0))
-
 (defn- render-edn-block
   ([value]
-   (render-edn-block nil value))
+   (render-edn-block :channel value))
   ([surface value]
    (let [text (bounded-render-text (pr-str value))]
-     (if (= :tui surface)
-       (fmt/format-clojure text 100)
+     (case surface
+       :journal text
        (md/code-block "edn" text)))))
-
-(defn render-source-kind
-  [{:keys [surface tool-result value]}]
-  (if-let [lines (seq (result-lines value))]
-    (let [from (preview-range-start tool-result)
-          body (->> (vec lines)
-                 (map-indexed (fn [idx line] (str (+ from idx 1) ": " line)))
-                 (str/join "\n"))
-          body (bounded-render-text body)]
-      (if (= :tui surface)
-        body
-        (md/code-block "text" body)))
-    (render-edn-block surface value)))
-
-(defn render-search-hits-kind
-  [{:keys [surface value]}]
-  (if-let [hits (seq (result-hits value))]
-    (let [body (->> hits
-                 (map (fn [{:keys [path line text] :as hit}]
-                        (let [loc (cond
-                                    (and path line) (str path ":" line)
-                                    path            path
-                                    line            (str "line " line)
-                                    :else           nil)
-                              txt (or text
-                                    (some #(get hit %) [:match :snippet :content]))]
-                          (cond
-                            (and loc txt)
-                            (if (= :tui surface)
-                              (str "- " loc " " txt)
-                              (str "- `" loc "` " txt))
-
-                            loc
-                            (if (= :tui surface)
-                              (str "- " loc)
-                              (str "- `" loc "`"))
-
-                            txt
-                            (str "- " txt)
-
-                            :else
-                            (str "- " (bounded-render-text (pr-str hit)))))))
-                 (str/join "\n"))]
-      (md/lines (bounded-render-text body)))
-    (render-edn-block surface value)))
-
-(defn render-text-kind
-  [{:keys [surface value]}]
-  (let [text (bounded-render-text value)]
-    (if (= :tui surface)
-      text
-      (md/code-block "text" text))))
-
-(defn render-markdown-kind
-  [{:keys [value]}]
-  (bounded-render-text value))
-
-(defn render-diff-kind
-  [{:keys [surface value]}]
-  (let [diff-text (or (:diff value)
-                    (:unified-diff value)
-                    (when (string? value) value)
-                    (pr-str value))
-        diff-text (bounded-render-text diff-text)]
-    (if (= :tui surface)
-      diff-text
-      (md/code-block "diff" diff-text))))
-
-(defn- table-columns
-  [rows]
-  (->> rows
-    (keep #(when (map? %) (keys %)))
-    (mapcat identity)
-    distinct
-    (take 8)
-    vec))
-
-(defn- table-cell
-  [v]
-  (cond
-    (nil? v) ""
-    (string? v) (bounded-render-text v)
-    (or (keyword? v) (symbol? v) (number? v) (boolean? v)) (str v)
-    :else (bounded-render-text (pr-str v))))
-
-(defn render-table-kind
-  [{:keys [value]}]
-  (cond
-    (and (sequential? value) (every? map? value))
-    (let [rows    (vec value)
-          columns (table-columns rows)]
-      (if (seq columns)
-        (md/table (mapv name columns)
-          (mapv (fn [row] (mapv #(table-cell (get row %)) columns)) rows))
-        (render-edn-block value)))
-
-    (map? value)
-    (md/table ["key" "value"]
-      (mapv (fn [[k v]] [(table-cell k) (table-cell v)]) value))
-
-    :else
-    (render-edn-block value)))
 
 (defn- tree-entry-line
   [depth {:keys [name path type size] :as entry}]
@@ -1521,200 +1053,237 @@
      :else
      [(str (apply str (repeat depth "  ")) "- " (pr-str entry))])))
 
-(defn render-tree-kind
-  [{:keys [surface value]}]
-  (let [text (bounded-render-text (str/join "\n" (tree-lines value)))]
-    (if (= :tui surface)
-      text
-      (md/code-block "text" text))))
+(def ^:private journal-head-tail-lines
+  "How many leading and trailing lines a bounded reader (v/cat) shows in
+   <journal>. The full value stays bound to the model's def; this slice is
+   only the working-memory peek."
+  50)
 
-(defn render-diagnostic-kind
-  [{:keys [surface value]}]
-  (let [error  (or (:error value) (get-in value [:result :error]))
-        stdout (or (:stdout value) (get-in value [:result :stdout]))
-        stderr (or (:stderr value) (get-in value [:result :stderr]))
-        exit   (or (:exit value) (get-in value [:result :exit]))]
-    (if (= :tui surface)
-      (md/join
-        (when (some? exit) (str "Exit " exit "."))
-        (when error (md/join "error:" (bounded-render-text (pr-str error))))
-        (when (seq stdout) (md/join "stdout:" (bounded-render-text stdout)))
-        (when (seq stderr) (md/join "stderr:" (bounded-render-text stderr)))
-        (when-not (or (some? exit) error (seq stdout) (seq stderr))
-          (render-edn-block surface value)))
-      (md/join
-        (when (some? exit) (md/p "Exit" (md/code exit) "."))
-        (when error (md/join "error:" (render-edn-block error)))
-        (when (seq stdout) (md/join "stdout:" (md/code-block "text" (bounded-render-text stdout))))
-        (when (seq stderr) (md/join "stderr:" (md/code-block "text" (bounded-render-text stderr))))
-        (when-not (or (some? exit) error (seq stdout) (seq stderr))
-          (render-edn-block value))))))
+(defn- numbered-line-block
+  "Format a sub-vector of source lines with absolute 1-based line numbers.
+   `start-line` is the 1-based line number of `(first lines)`."
+  [start-line lines]
+  (->> lines
+    (map-indexed (fn [idx line] (str (+ start-line idx) ": " line)))
+    (str/join "\n")))
 
-(defn render-data-kind
-  [{:keys [surface value]}]
-  (render-edn-block surface value))
+(defn- read-more-hint
+  "Tail line on every bounded read renderer. Tells the model exactly how to
+   reach the values that didn't fit."
+  [bound-name]
+  (str "… (bound to `" bound-name "`; slice with subvec/get-in to see more)"))
 
-(def rendering-kind-fns
-  {:source render-source-kind
-   :search-hits render-search-hits-kind
-   :table render-table-kind
-   :tree render-tree-kind
-   :diagnostic render-diagnostic-kind
-   :text render-text-kind
-   :markdown render-markdown-kind
-   :diff render-diff-kind
-   :data render-data-kind})
+;; ---------------------------------------------------------------------------
+;; Per-symbol renderers
+;;
+;; Engine contract:
+;;   journal-render-fn -> (fn [result] string)
+;;   channel-render-fn -> (fn [result chan-id] string)
+;;
+;; `result` is the unwrapped `(:result tool-result)`. Engine handles
+;; `:success? false` separately - error fns are optional and fall back to
+;; `default-{journal,channel}-error-text`.
+;; ---------------------------------------------------------------------------
 
-(defn- render-preview-body
-  [surface tool-result]
-  (let [result (:result tool-result)
-        kind   (or (get-in tool-result [:preview :rendering-kind])
-                 (get-in tool-result [:presentation :kind]))]
-    (or (extension/render-rendering-kind surface kind result {:tool-result tool-result})
-      (render-data-kind {:surface surface :tool-result tool-result :value result}))))
+(defn- journal-render-cat
+  "v/cat journal preview: first 50 + last 50 lines, total counts, read-more
+   hint. Plaintext for token-budgeted <journal>."
+  [result]
+  (let [{:keys [path lines total-lines offset truncated-by]} result
+        n   (count lines)
+        head (vec (take journal-head-tail-lines lines))
+        tail (vec (drop (max (- n journal-head-tail-lines) 0) lines))
+        head-block (numbered-line-block (inc offset) head)
+        tail-block (numbered-line-block
+                     (+ offset (max 0 (- n journal-head-tail-lines)) 1)
+                     tail)
+        elided (max 0 (- n (* 2 journal-head-tail-lines)))]
+    (str "v/cat " path " — " n " line(s), total " total-lines
+      ", truncated-by " (name (or truncated-by :none)) "\n"
+      head-block
+      (when (pos? elided) (str "\n… (" elided " line(s) elided)\n"))
+      (when (pos? elided) tail-block)
+      "\n" (read-more-hint "<your binding>"))))
 
-(defn- render-preview
-  [{:keys [surface tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (render-preview-body surface tool-result)))
+(defn- channel-render-cat
+  [result _chan-id]
+  (let [{:keys [path lines]} result
+        body (numbered-line-block (inc (:offset result)) (vec lines))]
+    (md/join
+      (md/p "Read" (md/code path) "—" (count lines) "line(s).")
+      (md/code-block "text" (bounded-render-text body)))))
 
-(defn- render-ls
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [out (:result tool-result)]
-      (md/p "Directory tree of" (md/code (:path out)) "-"
-        (count (:children out)) "top-level entries."))))
+(defn- journal-render-ls
+  [result]
+  (str "v/ls " (:path result) " — "
+    (count (:children result)) " top-level entries\n"
+    (bounded-render-text (str/join "\n" (tree-lines result)))))
 
-(defn- render-patch
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [files (get-in tool-result [:info :files])]
-      (md/join
-        (md/p "Patched" (count files) "file(s). Each :search matched exactly once before any write. Read back only when exact persisted bytes matter or external writers may interfere.")
-        (for [{:keys [path changed? before after]} files
-              :let [diff-txt (when changed? (unified-diff-text path before after))]]
-          (md/join
-            (md/p (md/code path) (when (false? changed?) "(no change)"))
-            (when diff-txt
-              (md/code-block "diff" diff-txt))))))))
+(defn- channel-render-ls
+  [result _chan-id]
+  (md/p "Directory tree of" (md/code (:path result)) "-"
+    (count (:children result)) "top-level entries."))
 
-(defn- render-patch-check
-  [{:keys [surface tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (render-edn-block surface (:result tool-result))))
+(defn- journal-render-rg
+  [result]
+  (let [hits (or (:hits result) [])
+        n    (count hits)
+        shown (vec (take 20 hits))
+        body (->> shown
+               (map (fn [{:keys [path line text]}]
+                      (str path ":" line " " text)))
+               (str/join "\n"))]
+    (str "v/rg — " n " hit(s), truncated-by "
+      (name (or (:truncated-by result) :none)) "\n"
+      body
+      (when (> n (count shown))
+        (str "\n… (" (- n (count shown)) " more; bind hits and slice)")))))
 
-(defn- render-create-dirs
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [path (:result tool-result)]
-      (md/p "Ensured dir" (md/code path) "."))))
+(defn- channel-render-rg
+  [result _chan-id]
+  (let [hits (or (:hits result) [])]
+    (md/join
+      (md/p "Searched —" (count hits) "hit(s), truncated-by"
+        (md/code (name (or (:truncated-by result) :none))) ".")
+      (when (seq hits)
+        (md/code-block "text"
+          (bounded-render-text
+            (str/join "\n"
+              (map (fn [{:keys [path line text]}]
+                     (str path ":" line " " text)) hits))))))))
 
-(defn- render-glob
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [pattern (get-in tool-result [:info :pattern])
-          root (get-in tool-result [:info :target :requested])
-          scope (get-in tool-result [:info :scope])
-          matches (:result tool-result)]
-      (md/join
-        (md/p "Glob" (md/code pattern) "in" (md/code root) "-" (count matches) "match(es)"
-          (when scope (str "(" (md/code (name scope)) " scope)"))
-          ".")
-        (when (seq matches)
-          (md/code-block "text" (bounded-render-text (str/join "\n" matches))))))))
+(defn- journal-render-patch
+  [_result]
+  ;; Patch result is the per-file path map; the interesting data lives on
+  ;; :info (which the journal renderer does not see). Keep the journal
+  ;; entry minimal - one line confirming a write happened.
+  "v/patch — wrote edit(s) (full diff visible in channel render)")
 
-(defn- render-copy
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [src (get-in tool-result [:info :src :requested])
-          dest (:result tool-result)]
-      (md/p "Copied" (md/code src) "->" (md/code dest) "."))))
+(defn- channel-render-patch
+  [result _chan-id]
+  ;; `result` here is the [{:path ...}] vec, but the rich diff data lives on
+  ;; the tool-result `:info` map which the contract does not expose to
+  ;; renderers. Show the per-file paths; full diff is recoverable via
+  ;; (get-in tool-result [:info :files]) when the model binds the result.
+  (let [files (if (sequential? result) result [result])]
+    (md/join
+      (md/p "Patched" (count files) "file(s).")
+      (md/ul (map (fn [{:keys [path]}] (md/code path)) files)))))
 
-(defn- render-move
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [src (get-in tool-result [:info :src :requested])
-          dest (:result tool-result)]
-      (md/p "Moved" (md/code src) "->" (md/code dest) "."))))
+(defn- journal-render-patch-check
+  [result]
+  (str "v/patch-check — " (pr-str result)))
 
-(defn- render-delete
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [path (get-in tool-result [:info :target :requested])]
-      (md/p "Deleted" (md/code path) "."))))
+(defn- channel-render-patch-check
+  [result _chan-id]
+  (render-edn-block :channel result))
 
-(defn- render-delete-if-exists
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [path (get-in tool-result [:info :target :requested])
-          deleted? (:result tool-result)]
-      (if deleted?
-        (md/p "Deleted" (md/code path) ".")
-        (md/p "Already absent" (md/code path) ".")))))
+(defn- journal-render-create-dirs
+  [result]
+  (str "v/create-dirs — ensured " result))
 
-(defn- render-exists?
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [path (get-in tool-result [:info :target :requested])
-          exists? (:result tool-result)]
-      (md/p "Exists?" (md/code path) "->" (pr-str exists?)))))
+(defn- channel-render-create-dirs
+  [result _chan-id]
+  (md/p "Ensured dir" (md/code result) "."))
 
-(defn- render-cat
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [out (:result tool-result)]
-      (md/p "Read" (md/code (:path out)) "- returned"
-        (count (:lines out)) "line(s), offset" (:offset out)
-        ", total" (:total-lines out)
-        ", truncated-by" (md/code (name (:truncated-by out))) "."))))
+(defn- journal-render-glob
+  [result]
+  (let [matches (vec (or result []))
+        n (count matches)
+        shown (vec (take 40 matches))]
+    (str "v/glob — " n " match(es)\n"
+      (str/join "\n" shown)
+      (when (> n (count shown))
+        (str "\n… (" (- n (count shown)) " more; bind result and slice)")))))
 
-(defn- render-rg
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [out (:result tool-result)
-          spec (get-in tool-result [:info :spec])
-          paths (or (get-in tool-result [:info :paths])
-                  [(get-in tool-result [:info :target :requested])])]
-      (md/p "Searched" (md/code (pr-str paths)) "with" (md/code (pr-str spec)) "-"
-        (count (:hits out)) "hit(s), truncated-by" (md/code (name (:truncated-by out))) "."))))
+(defn- channel-render-glob
+  [result _chan-id]
+  (let [matches (vec (or result []))]
+    (md/join
+      (md/p "Glob —" (count matches) "match(es).")
+      (when (seq matches)
+        (md/code-block "text" (bounded-render-text (str/join "\n" matches)))))))
 
-(defn- render-bash
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [{:keys [command cwd exit timed-out? timeout-ms duration-ms stdout stderr
-                  stdout-truncated? stderr-truncated? warnings]} (:result tool-result)
-          warning-text (when (seq warnings)
-                         (md/join "warnings:"
-                           (md/ul (map :message warnings))))
-          out (cond-> []
-                (seq warning-text)
-                (conj warning-text)
-                (not (str/blank? stdout))
-                (conj (md/join "stdout:" (md/code-block "text" (bounded-render-text stdout))))
-                (not (str/blank? stderr))
-                (conj (md/join "stderr:" (md/code-block "text" (bounded-render-text stderr)))))]
-      (md/join
-        (md/p "Ran bash in" (md/code cwd) "- exit" (md/code exit) "," duration-ms "ms"
-          (when timed-out? (str ", timed out after " timeout-ms "ms"))
-          (when (or stdout-truncated? stderr-truncated?) ", output truncated")
-          (when (seq warnings) (str ", " (count warnings) " warning(s)"))
-          ".")
-        (md/p "Command:" (md/code command))
-        (when (seq out) (apply md/join out))))))
+(defn- journal-render-copy
+  [result]
+  (str "v/copy — wrote " result))
+
+(defn- channel-render-copy
+  [result _chan-id]
+  (md/p "Copied to" (md/code result) "."))
+
+(defn- journal-render-move
+  [result]
+  (str "v/move — wrote " result))
+
+(defn- channel-render-move
+  [result _chan-id]
+  (md/p "Moved to" (md/code result) "."))
+
+(defn- journal-render-delete
+  [result]
+  (str "v/delete — " (pr-str result)))
+
+(defn- channel-render-delete
+  [result _chan-id]
+  (md/p "Deleted." (md/code (pr-str result))))
+
+(defn- journal-render-delete-if-exists
+  [result]
+  (str "v/delete-if-exists — "
+    (if result "deleted" "already absent")))
+
+(defn- channel-render-delete-if-exists
+  [result _chan-id]
+  (if result
+    (md/p "Deleted.")
+    (md/p "Already absent.")))
+
+(defn- journal-render-exists?
+  [result]
+  (str "v/exists? — " (pr-str result)))
+
+(defn- channel-render-exists?
+  [result _chan-id]
+  (md/p "Exists?" (md/code (pr-str result))))
+
+(defn- journal-render-bash
+  [result]
+  (let [{:keys [command exit duration-ms stdout stderr stdout-truncated? stderr-truncated?]} result
+        head (fn [s n] (let [s (or s "")]
+                         (if (<= (count s) n) s
+                           (str (subs s 0 n) "…<+" (- (count s) n) " chars>"))))]
+    (str "v/bash — exit " exit ", " duration-ms "ms"
+      (when stdout-truncated? " (stdout truncated)")
+      (when stderr-truncated? " (stderr truncated)")
+      "\ncmd: " (head command 200)
+      (when-not (str/blank? stdout)
+        (str "\nstdout: " (head stdout 600)))
+      (when-not (str/blank? stderr)
+        (str "\nstderr: " (head stderr 600))))))
+
+(defn- channel-render-bash
+  [result _chan-id]
+  (let [{:keys [command cwd exit timed-out? timeout-ms duration-ms stdout stderr
+                stdout-truncated? stderr-truncated? warnings]} result
+        warning-text (when (seq warnings)
+                       (md/join "warnings:"
+                         (md/ul (map :message warnings))))
+        out (cond-> []
+              (seq warning-text)
+              (conj warning-text)
+              (not (str/blank? stdout))
+              (conj (md/join "stdout:" (md/code-block "text" (bounded-render-text stdout))))
+              (not (str/blank? stderr))
+              (conj (md/join "stderr:" (md/code-block "text" (bounded-render-text stderr)))))]
+    (md/join
+      (md/p "Ran bash in" (md/code cwd) "- exit" (md/code exit) "," duration-ms "ms"
+        (when timed-out? (str ", timed out after " timeout-ms "ms"))
+        (when (or stdout-truncated? stderr-truncated?) ", output truncated")
+        (when (seq warnings) (str ", " (count warnings) " warning(s)"))
+        ".")
+      (md/p "Command:" (md/code command))
+      (when (seq out) (apply md/join out)))))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -1736,22 +1305,17 @@
     {:sym 'cat
 
      :result-spec tool-result-spec
-     :render-fn render-cat
+     :journal-render-fn journal-render-cat
+     :channel-render-fn channel-render-cat
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
-
-(def preview-symbol
-  (vis/symbol #'preview-tool
-    {:sym 'preview
-
-     :result-spec tool-result-spec
-     :render-fn render-preview}))
 
 (def ls-symbol
   (vis/symbol #'ls-tool
     {:sym 'ls
 
      :result-spec tool-result-spec
-     :render-fn render-ls
+     :journal-render-fn journal-render-ls
+     :channel-render-fn channel-render-ls
      :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
 
 (def rg-symbol
@@ -1759,7 +1323,8 @@
     {:sym 'rg
 
      :result-spec tool-result-spec
-     :render-fn render-rg
+     :journal-render-fn journal-render-rg
+     :channel-render-fn channel-render-rg
      :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
 
 (def patch-symbol
@@ -1767,7 +1332,8 @@
     {:sym 'patch
 
      :result-spec tool-result-spec
-     :render-fn render-patch
+     :journal-render-fn journal-render-patch
+     :channel-render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
 
 (def patch-check-symbol
@@ -1775,7 +1341,8 @@
     {:sym 'patch-check
 
      :result-spec tool-result-spec
-     :render-fn render-patch-check
+     :journal-render-fn journal-render-patch-check
+     :channel-render-fn channel-render-patch-check
      :on-error-fn (tool-failure-on-error :v/patch-check :file nil)}))
 
 (def create-dirs-symbol
@@ -1783,7 +1350,8 @@
     {:sym 'create-dirs
 
      :result-spec tool-result-spec
-     :render-fn render-create-dirs
+     :journal-render-fn journal-render-create-dirs
+     :channel-render-fn channel-render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
 
 (def glob-symbol
@@ -1791,7 +1359,8 @@
     {:sym 'glob
 
      :result-spec tool-result-spec
-     :render-fn render-glob
+     :journal-render-fn journal-render-glob
+     :channel-render-fn channel-render-glob
      :on-error-fn (tool-failure-on-error :v/glob :dir nil)}))
 
 (def copy-symbol
@@ -1799,7 +1368,8 @@
     {:sym 'copy
 
      :result-spec tool-result-spec
-     :render-fn render-copy
+     :journal-render-fn journal-render-copy
+     :channel-render-fn channel-render-copy
      :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
 
 (def move-symbol
@@ -1807,7 +1377,8 @@
     {:sym 'move
 
      :result-spec tool-result-spec
-     :render-fn render-move
+     :journal-render-fn journal-render-move
+     :channel-render-fn channel-render-move
      :on-error-fn (tool-failure-on-error :v/move :path nil)}))
 
 (def delete-symbol
@@ -1815,7 +1386,8 @@
     {:sym 'delete
 
      :result-spec tool-result-spec
-     :render-fn render-delete
+     :journal-render-fn journal-render-delete
+     :channel-render-fn channel-render-delete
      :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
 
 (def delete-if-exists-symbol
@@ -1823,7 +1395,8 @@
     {:sym 'delete-if-exists
 
      :result-spec tool-result-spec
-     :render-fn render-delete-if-exists
+     :journal-render-fn journal-render-delete-if-exists
+     :channel-render-fn channel-render-delete-if-exists
      :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
 
 (def exists?-symbol
@@ -1831,7 +1404,8 @@
     {:sym 'exists?
 
      :result-spec tool-result-spec
-     :render-fn render-exists?
+     :journal-render-fn journal-render-exists?
+     :channel-render-fn channel-render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
 
 (def bash-symbol
@@ -1839,13 +1413,13 @@
     {:sym 'bash
 
      :result-spec tool-result-spec
-     :render-fn render-bash
+     :journal-render-fn journal-render-bash
+     :channel-render-fn channel-render-bash
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
 
 (defn available-editing-symbols
   []
   (cond-> [cat-symbol
-           preview-symbol
            ls-symbol
            rg-symbol
            patch-symbol
@@ -1866,11 +1440,9 @@
     "`v/` files: Use structured tools for discovery and reads: (v/cat path), (v/rg spec), (v/glob root pat opts?), (v/ls path opts?). "
     "v/rg has one spec-map grammar: {:all [\"a\" \"b\"]} requires ALL literals on the same line; {:any [\"a\" \"b\"]} is explicit OR; :paths defaults to [\".\"] and must be a vector; use :include [\"*.clj\" \"*.cljc\"] / :exclude [...] for file filters; no regex, no positional args, no public limit. "
     "v/rg strategy: use :all to find definitions or narrow noisy searches, e.g. {:all [\"defn\" \"target-name\"] :include [\"*.clj\"]}; use :any to find any of several related names; if :truncated-by is :internal-cap, narrow :all/:paths/:include instead of asking for a limit. "
-    "`v/cat` reads the whole file into [:result :lines]; bind full reads/searches once, then use `v/preview` to project what enters <journal>/TUI: (v/preview file {:result [[:lines {:from 40 :to 120}]]}), (v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]}), (v/preview value). "
-    "`v/preview` is an observation call that writes the selected projection into <journal>/TUI; use it as a standalone display form and keep `def` for full source/acquisition values needed later. Do not echo a var/tool result just to inspect it; preview it. "
-    "Correct strategies: `(def file (v/cat \"src/foo.clj\"))` then `(v/preview file {:result [[:lines {:from 100 :to 180}]]})`; `(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)` when the block needs a non-preview return value; `(v/preview value)` for whole-payload display. "
-    "With no EQL, `v/preview` previews the whole payload. Every preview emitted in a block is rendered. EQL supports [:*] for all map keys at one level; plain keywords are payload keys, so :from/:to are selectable keys and ranges use field params like [[:hits {:from 0 :to 12} [:path :line :text]]]. "
-    "`v/silent!` is removed. `v/cat` has no opts; cat is full acquisition only. `v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. "
+    "`v/cat` reads the whole file into [:result :lines]. The journal renders a BOUNDED preview (first 50 + last 50 lines) plus a hint; bind the full result so you can slice further on a later iteration with plain Clojure: (def file (v/cat \"src/foo.clj\")) then (subvec (get-in file [:result :lines]) 100 200). "
+    "Same pattern for v/rg / v/glob / v/ls: bind the result, slice with get-in/subvec/take/drop. Do not echo a var to \"see\" it - the journal entry the engine appended is your preview. "
+    "`v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. "
     "Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. "
     "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Use (v/patch-check edits) to preflight match counts without writing. Read exact bytes first; keep searches small and unique; do not invent long paragraphs. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
     "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).\n"
@@ -1881,7 +1453,7 @@
     (when-not (config/bash-disabled?)
       "(get-in (v/bash \"pwd\") [:result :stdout]), ")
     "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits). "
-    "Tools own rendering metadata; preview preserves it. For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))
+    "For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests. Runtime extension registration calls

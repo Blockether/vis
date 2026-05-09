@@ -156,6 +156,44 @@
                    "The task stopped because `the command` repeatedly failed, and no API is exposed under `v/`.")
                 (md/normalize-chat-markdown broken))))))
 
+(defdescribe ol-ul-list-helpers-test
+  ;; Regression for conversation ccacd40a-d0be-4e4e-9811-c4801d31fdd9.
+  ;; The model emitted `(v/ol ["" (v/bold ...) ...])` with a leading
+  ;; `""` placeholder, which surfaced as an empty `1. ` list item and
+  ;; made the visible list start at `2.`. `normalize-list-items` must
+  ;; drop nil AND blank strings so that authoring quirks like this do
+  ;; not leak into rendered output.
+  (describe "normalize-list-items drops empty placeholders"
+    (it "drops a leading empty-string item in `ol` so numbering starts at 1"
+      (let [out (md/ol ["" (md/bold "Host primitive") " — RLM calls "
+                        (md/code "set-conversation-title!")
+                        " — a SCI-evaluated form"
+                        (md/bold "Atom bridge") " — see notes"])]
+        (expect (str/starts-with? out "1. **Host primitive**"))
+        (expect (str/includes?    out "\n2. **Atom bridge**"))
+        (expect (not (re-find #"(?m)^1\.\s*$" out)))
+        (expect (not (re-find #"(?m)^\d+\.\s*$" out)))))
+
+    (it "drops blank-only and nil items in `ul`"
+      (let [out (md/ul ["" nil "   " "alpha" nil "beta"])]
+        (expect (= "- alpha\n- beta" out))))
+
+    (it "keeps a single legitimate item when everything else is blank"
+      (let [out (md/ol ["" nil "\n" "only-real-item"])]
+        (expect (= "1. only-real-item" out))))
+
+    (it "preserves whitespace-bearing connector strings (not blank)"
+      ;; " — descr" looks whitespace-y but carries an em-dash, so it must
+      ;; survive normalisation and coalesce onto the previous fragment.
+      (let [out (md/ol [(md/bold "X") " — descr"])]
+        (expect (= "1. **X** — descr" out))))
+
+    (it "does not break ordinary three-item lists"
+      (expect (= "1. alpha\n2. beta\n3. gamma"
+                (md/ol ["alpha" "beta" "gamma"])))
+      (expect (= "- alpha\n- beta\n- gamma"
+                (md/ul ["alpha" "beta" "gamma"]))))))
+
 (defdescribe conversation->markdown-test
   (describe "Header"
     (it "Renders the title as a top-level H1"

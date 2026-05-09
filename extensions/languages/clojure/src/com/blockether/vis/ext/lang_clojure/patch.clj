@@ -75,18 +75,16 @@
        :kind      kind})))
 
 (defn- tool-success
-  [{:keys [op path kind result info presentation]}]
+  [{:keys [op path kind result info]}]
   (let [t (now-ms)]
-    (cond->
-      (extension/success
-        {:result     result
-         :info (merge {:op             op
-                       :target         (path->target path kind)
-                       :started-at-ms  t
-                       :finished-at-ms t
-                       :duration-ms    0}
-                 info)})
-      presentation (assoc :presentation presentation))))
+    (extension/success
+      {:result     result
+       :info (merge {:op             op
+                     :target         (path->target path kind)
+                     :started-at-ms  t
+                     :finished-at-ms t
+                     :duration-ms    0}
+               info)})))
 
 (defn- first-edit-path
   [args]
@@ -312,7 +310,6 @@
 ;; =============================================================================
 
 (def ^:private journal-preview-chars 3000)
-(def ^:private diff-context-lines 3)
 
 (defn- preview-text
   [s]
@@ -322,106 +319,18 @@
         "\n...<+" (- (count s) journal-preview-chars) " chars>")
       s)))
 
-(defn- split-preserve-trailing-empty
-  [s]
-  (if (nil? s)
-    []
-    (str/split s #"\n" -1)))
+(defn- journal-render-patch-result
+  [_result]
+  ;; z/patch result is the per-file path map; the diff data lives on :info
+  ;; which renderers no longer see. Single-line confirmation.
+  "z/patch — wrote zipper edit(s) (full diff visible in channel render)")
 
-(defn- diff-edit-chunks
-  [a b]
-  (loop [prefix []
-         left   a
-         right  b]
-    (cond
-      (= left right)
-      [{:type :equal :lines prefix}]
-
-      (and (seq left) (seq right) (= (first left) (first right)))
-      (recur (conj prefix (first left)) (rest left) (rest right))
-
-      :else
-      (let [leftv  (vec left)
-            rightv (vec right)
-            shared-suffix (loop [n 0]
-                            (if (and (< n (count leftv))
-                                  (< n (count rightv))
-                                  (= (nth leftv (- (count leftv) (inc n)))
-                                    (nth rightv (- (count rightv) (inc n)))))
-                              (recur (inc n))
-                              n))
-            left-core  (subvec leftv 0 (- (count leftv) shared-suffix))
-            right-core (subvec rightv 0 (- (count rightv) shared-suffix))
-            suffix     (subvec leftv (- (count leftv) shared-suffix))]
-        (cond-> []
-          (seq prefix) (conj {:type :equal :lines prefix})
-          (seq left-core) (conj {:type :delete :lines left-core})
-          (seq right-core) (conj {:type :insert :lines right-core})
-          (seq suffix) (conj {:type :equal :lines suffix}))))))
-
-(defn- trim-context
-  [chunks]
-  (let [vec-chunks (vec chunks)
-        last-idx   (dec (count vec-chunks))]
-    (->> vec-chunks
-      (map-indexed
-        (fn [idx {:keys [type lines] :as chunk}]
-          (if (and (= type :equal) (> (count lines) (* 2 diff-context-lines)))
-            (cond
-              (= idx 0)
-              (assoc chunk :lines (subvec (vec lines) (- (count lines) diff-context-lines)))
-
-              (= idx last-idx)
-              (assoc chunk :lines (subvec (vec lines) 0 diff-context-lines))
-
-              :else
-              {:type :equal-gap
-               :lines [(str "... " (- (count lines) (* 2 diff-context-lines)) " unchanged line(s) ...")]})
-            chunk)))
-      (remove #(and (= :equal (:type %)) (empty? (:lines %)))))))
-
-(defn- unified-diff-text
-  [path before after]
-  (let [before-lines (split-preserve-trailing-empty before)
-        after-lines  (split-preserve-trailing-empty after)
-        chunks       (trim-context (diff-edit-chunks before-lines after-lines))
-        body         (->> chunks
-                       (mapcat (fn [{:keys [type lines]}]
-                                 (case type
-                                   :equal (map #(str " " %) lines)
-                                   :equal-gap lines
-                                   :delete (map #(str "-" %) lines)
-                                   :insert (map #(str "+" %) lines))))
-                       (str/join "\n"))]
-    (preview-text
-      (str "--- a/" path "\n"
-        "+++ b/" path "\n"
-        "@@\n"
-        body))))
-
-(defn- tool-error-text
-  [tool-result]
-  (let [op   (get-in tool-result [:info :op])
-        path (get-in tool-result [:info :target :requested])
-        err  (:error tool-result)]
-    (md/p "Tool" (md/code op) "failed"
-      (when path (str "for " (md/code path)))
-      ":"
-      (or (:message err) (pr-str err)))))
-
-(defn- render-patch-result
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [files (get-in tool-result [:info :files])]
-      (md/join
-        (md/p "Patched" (count files) "Clojure file(s). Each :search locator matched exactly once before any write.")
-        (for [{:keys [path changed? before after]} files
-              :let [diff-txt (when changed? (unified-diff-text path before after))]]
-          (md/join
-            (md/p (md/code path) (when (false? changed?) "(no change)"))
-            (when diff-txt
-              (md/code-block "diff" diff-txt))))))))
+(defn- channel-render-patch-result
+  [result _chan-id]
+  (let [files (if (sequential? result) result [result])]
+    (md/join
+      (md/p "Patched" (count files) "Clojure file(s).")
+      (md/ul (map (fn [{:keys [path]}] (md/code path)) files)))))
 
 ;; =============================================================================
 ;; Locator discovery
@@ -485,7 +394,6 @@
         :path path
         :kind :file
         :result rows
-        :presentation {:kind :clojure/locators}
         :info {:count (count rows)
                :total-count total-count
                :limit limit
@@ -506,7 +414,6 @@
         :path path
         :kind :file
         :result rows
-        :presentation {:kind :clojure/locators}
         :info {:count (count rows)
                :total-count total-count
                :limit limit
@@ -523,38 +430,32 @@
               :op :z/locator-for-symbol
               :symbol sym))))
 
-(defn- render-locators-result
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (tool-error-text tool-result)
-    (let [rows       (vec (:result tool-result))
-          shown      (take 8 rows)
-          one?       (= 1 (count rows))
-          row-lines  (->> shown
-                       (map-indexed
-                         (fn [idx {:keys [path tag locator source span]}]
-                           (str (inc idx) ". " path " " (pr-str span) " " tag "\n"
-                             (preview-text (or source locator ""))))))
-          patch-hint (when one?
-                       (str "Patch hint:\n"
-                         "(z/patch [{:path \"" (:path (first rows))
-                         "\" :search <locator-row> :replace <new-source>}])"))]
-      (md/join
-        (md/p "Found" (count rows) "zipper locator(s)."
-          (when (get-in tool-result [:info :truncated?])
-            " Narrow filters before patching."))
-        (when (seq row-lines)
-          (md/code-block "text" (str/join "\n\n" row-lines)))
-        (when patch-hint
-          (md/code-block "clojure" patch-hint))))))
+(defn- journal-render-locators
+  [result]
+  (let [rows (vec (or result []))]
+    (str (count rows) " zipper locator(s)\n"
+      (str/join "\n"
+        (map-indexed
+          (fn [idx {:keys [path tag locator span]}]
+            (str (inc idx) ". " path " " (pr-str span) " " tag " "
+              (preview-text (or locator ""))))
+          (take 8 rows)))
+      (when (> (count rows) 8)
+        (str "\n… (" (- (count rows) 8) " more; bind result and slice)")))))
 
-(defn- render-locators-kind
-  [{:keys [value]}]
-  (render-locators-result {:tool-result {:success? true
-                                         :result (vec (or value []))}}))
-
-(def rendering-kind-fns
-  {:clojure/locators render-locators-kind})
+(defn- channel-render-locators
+  [result _chan-id]
+  (let [rows (vec (or result []))]
+    (md/join
+      (md/p "Found" (count rows) "zipper locator(s).")
+      (when (seq rows)
+        (md/code-block "text"
+          (str/join "\n\n"
+            (map-indexed
+              (fn [idx {:keys [path tag locator source span]}]
+                (str (inc idx) ". " path " " (pr-str span) " " tag "\n"
+                  (preview-text (or source locator ""))))
+              (take 8 rows))))))))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -565,7 +466,8 @@
     {:sym 'patch
 
      :result-spec ::extension/tool-result
-     :render-fn render-patch-result
+     :journal-render-fn journal-render-patch-result
+     :channel-render-fn channel-render-patch-result
      :on-error-fn (tool-failure-on-error :z/patch)}))
 
 (def locators-symbol
@@ -573,7 +475,8 @@
     {:sym 'locators
 
      :result-spec ::extension/tool-result
-     :render-fn render-locators-result
+     :journal-render-fn journal-render-locators
+     :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/locators)}))
 
 (def symbols-symbol
@@ -581,7 +484,8 @@
     {:sym 'symbols
 
      :result-spec ::extension/tool-result
-     :render-fn render-locators-result
+     :journal-render-fn journal-render-locators
+     :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/symbols)}))
 
 (def locator-for-symbol-symbol
@@ -589,7 +493,8 @@
     {:sym 'locator-for-symbol
 
      :result-spec ::extension/tool-result
-     :render-fn render-locators-result
+     :journal-render-fn journal-render-locators
+     :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/locator-for-symbol)}))
 
 (def z-prompt

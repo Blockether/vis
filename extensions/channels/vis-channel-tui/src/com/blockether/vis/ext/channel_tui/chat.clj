@@ -104,59 +104,33 @@
                                                                (when-not (contains? elide-idxs idx)
                                                                  expr)))
                                                            all-exprs)
-                                             preview-result?
-                                             (fn [result]
-                                               (and (extension/tool-result? result)
-                                                 (= :v/preview (get-in result [:info :op]))))
-                                             preview-results
-                                             (fn [{:keys [previews result]}]
-                                               (or (seq previews)
-                                                 (when (preview-result? result)
-                                                   [result])))
-                                             result-kind (fn [{:keys [result error] :as expr}]
+                                             result-kind (fn [{:keys [result error]}]
                                                            (cond
                                                              error :error
-                                                             (preview-results expr) :preview
                                                              (extension/tool-result? result) :tool
                                                              :else :value))
                                              tool-result-detail
                                              (fn [result]
                                                (when (extension/tool-result? result)
                                                  (let [prov (:info result)]
-                                                   (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role
+                                                   (cond-> (select-keys prov [:op :op-class :color-role
                                                                               :spec :paths :hit-count :truncated-by
                                                                               :command :cwd :target])
                                                      (get-in result [:result :stdout])
                                                      (assoc :stdout (get-in result [:result :stdout]))
                                                      (get-in result [:result :stderr])
-                                                     (assoc :stderr (get-in result [:result :stderr]))
-                                                     (= :v/preview (:op prov))
-                                                     (assoc :raw (vis/safe-pr-str (:result result)))))))
-                                             preview-results-detail
-                                             (fn [previews]
-                                               (let [details (mapv tool-result-detail previews)
-                                                     raw     (str/join "\n" (map #(vis/safe-pr-str (:result %)) previews))]
-                                                 (if (= 1 (count details))
-                                                   (assoc (or (first details) {}) :raw raw)
-                                                   {:op :v/preview
-                                                    :op-class :op/preview
-                                                    :previews details
-                                                    :raw raw})))
-                                             result-strs (mapv (fn [{:keys [result error] :as expr}]
+                                                     (assoc :stderr (get-in result [:result :stderr]))))))
+                                             result-strs (mapv (fn [{:keys [result error]}]
                                                                  (cond
                                                                    error (vis/format-error error)
                                                                    (and (map? result) (= :expr (:vis/ref result)))
                                                                    "<runtime value; re-evaluate expression to restore>"
-                                                                   (preview-results expr)
-                                                                   (str/join "\n" (map #(extension/render-tool-result :tui % {:block expr}) (preview-results expr)))
                                                                    (extension/tool-result? result)
-                                                                   (extension/render-tool-result :tui result {:block expr})
+                                                                   (extension/channel-render-tool-result result :channel-tui)
                                                                    :else (pr-str result)))
                                                            exprs)
                                              result-details (mapv (fn [expr]
-                                                                    (if-let [previews (preview-results expr)]
-                                                                      (preview-results-detail previews)
-                                                                      (tool-result-detail (:result expr))))
+                                                                    (tool-result-detail (:result expr)))
                                                               exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
                                              stderr-strs (mapv #(or (:stderr %) "") exprs)

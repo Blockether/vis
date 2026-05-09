@@ -53,12 +53,13 @@
       (expect (= 'com.acme.ext.fs (get-in out [:info :extension :namespace])))
       (expect (= ["/tmp/ext.clj"] (get-in out [:info :source :paths])))))
 
-  (it "renders through the owning symbol render-fn when registered"
+  (it "renders through the owning symbol's journal/channel render-fns when registered"
     (let [sym (tr/symbol 'exists? (constantly nil)
                 {:doc "exists"
                  :arglists '([path])
-                 :render-fn (fn [{:keys [surface tool-result]}]
-                              (str (name surface) ":" (:result tool-result)))})
+                 :journal-render-fn (fn [result] (str "journal:" result))
+                 :channel-render-fn (fn [result chan-id]
+                                      (str (name chan-id) ":" result))})
           ext (tr/extension {:ext/namespace 'com.acme.ext.fs
                              :ext/doc "fs"
                              :ext/kind "filesystem"
@@ -71,56 +72,35 @@
                     {:tool {:sym 'exists? :call "fs/exists?"}
                      :extension {:namespace 'com.acme.ext.fs}
                      :source {:paths [] :mtime-max -1 :hash-sha256 nil}})]
-          (expect (= "journal:true" (tr/render-tool-result :journal out))))
+          (expect (= "journal:true" (tr/journal-render-tool-result out)))
+          (expect (= "channel-tui:true" (tr/channel-render-tool-result out :channel-tui))))
         (finally
           (tr/deregister-extension! 'com.acme.ext.fs)))))
 
-  (it "renders semantic rendering kinds through extension-owned functions"
-    (let [ext (tr/extension {:ext/namespace 'com.acme.ext.rendering-kind
-                             :ext/doc "rendering kind"
-                             :ext/kind "rendering"
-                             :ext/rendering-kinds {:demo (fn [{:keys [surface value]}]
-                                                           (str (name surface) ":" (:x value)))}})]
-      (try
-        (tr/register-extension! ext)
-        (expect (= "journal:42"
-                  (tr/render-rendering-kind :journal :demo {:x 42})))
-        (finally
-          (tr/deregister-extension! 'com.acme.ext.rendering-kind)))))
-
-  (it "tool results require an owning symbol render-fn"
-    (let [sym (tr/symbol 'cat (constantly nil)
-                {:doc "cat"
-                 :arglists '([path])
-                 :render-fn (fn [{:keys [tool-result]}]
-                              (str "ok=" (:success? tool-result)
-                                "; result=" (pr-str (:result tool-result))
-                                "; info=" (pr-str (select-keys (:info tool-result)
-                                                    [:tool :extension :source]))))})
-          ext (tr/extension {:ext/namespace 'com.acme.ext.fs.render
-                             :ext/doc "fs render"
+  (it "failure path falls back to the engine's default error formatters"
+    (let [sym (tr/symbol 'noisy (constantly nil)
+                {:doc "noisy"
+                 :arglists '([])
+                 :journal-render-fn (fn [_] "never called on failure")
+                 :channel-render-fn (fn [_ _] "never called on failure")})
+          ext (tr/extension {:ext/namespace 'com.acme.ext.noisy
+                             :ext/doc "noisy"
                              :ext/kind "filesystem"
-                             :ext/ns-alias {:ns 'vis.ext.fs.render :alias 'fsr}
+                             :ext/ns-alias {:ns 'vis.ext.noisy :alias 'n}
                              :ext/symbols [sym]})]
       (try
         (tr/register-extension! ext)
-        (let [out (tr/merge-info
-                    (tr/success {:result {:lines ["a" "b"]}
-                                 :info {:op :demo}})
-                    {:tool {:sym 'cat
-                            :call "fsr/cat"}
-                     :extension {:namespace 'com.acme.ext.fs.render}
-                     :source {:paths ["/tmp/ext.clj"]
-                              :mtime-max 1
-                              :hash-sha256 nil}})
-              rendered (tr/render-tool-result :journal out)]
-          (expect (str/includes? rendered "ok=true"))
-          (expect (str/includes? rendered "result={:lines [\"a\" \"b\"]}"))
-          (expect (str/includes? rendered ":tool {:sym cat, :call \"fsr/cat\"}"))
-          (expect (str/includes? rendered ":extension {:namespace com.acme.ext.fs.render}"))
-          (expect (str/includes? rendered ":source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}")))
+        (let [ex  (try (throw (ex-info "boom" {})) (catch Throwable t t))
+              out (tr/merge-info
+                    (tr/failure {:result nil :info {:op :n/noisy} :throwable ex})
+                    {:tool {:sym 'noisy :call "n/noisy"}
+                     :extension {:namespace 'com.acme.ext.noisy}
+                     :source {:paths [] :mtime-max -1 :hash-sha256 nil}})]
+          (expect (str/includes? (tr/journal-render-tool-result out) "ERROR"))
+          (expect (str/includes? (tr/journal-render-tool-result out) ":n/noisy"))
+          (expect (str/includes? (tr/channel-render-tool-result out :channel-tui) "**ERROR**")))
         (finally
-          (tr/deregister-extension! 'com.acme.ext.fs.render))))))
+          (tr/deregister-extension! 'com.acme.ext.noisy))))))
 
 (defdescribe tool-result-trace-test
   (it "normalizes a frame into {:class :method :file :line :origin}"
