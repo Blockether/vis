@@ -1,5 +1,5 @@
 (ns com.blockether.vis.internal.env
-  "SCI sandbox machinery: var-index, sandbox bindings, restore.
+  "SCI sandbox machinery: bindings, sandbox bindings, restore.
 
    INTERNAL - only `com.blockether.vis.internal.loop` imports this namespace.
    Foundation utilities (storage facade, extension specs, format helpers,
@@ -21,7 +21,7 @@
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
-;; SCI sandbox + var-index
+;; SCI sandbox + bindings
 ;; =============================================================================
 
 (defn sci-update-binding!
@@ -30,8 +30,8 @@
    since bindings from sci/init :namespaces are not SCI vars.
 
    NOTE: This mutates the SCI sandbox only. If the caller wants the next
-   iteration's `<var_index>` context block to reflect the new binding, they
-   MUST also call `bump-var-index!` on the env - the var-index is cached and
+   iteration's `<bindings>` context block to reflect the new binding, they
+   MUST also call `bump-bindings!` on the env - the bindings is cached and
    only rebuilds when `:current-revision` advances. Every past cache-staleness
    bug (4-iteration `(restore-vars ...)` spin, turn-3 stale request replay)
    traces back to forgetting this pair. Prefer `bind-and-bump!` below."
@@ -40,22 +40,58 @@
     (sci/eval-string+ sci-ctx (str "(def " sym " nil)") {:ns ns-obj})
     (sci/intern sci-ctx ns-obj sym val)))
 
-(defn bump-var-index!
-  "Invalidate the env's cached `<var_index>` so the next `get-var-index` call
+(defn bump-bindings!
+  "Invalidate the env's cached `<bindings>` so the next `get-bindings` call
    rebuilds it from the live SCI sandbox. No-op when the env has no
-   `:var-index-atom` (e.g. ad-hoc test contexts)."
+   `:bindings-atom` (e.g. ad-hoc test contexts)."
   [env]
-  (when-let [atom (:var-index-atom env)]
+  (when-let [atom (:bindings-atom env)]
     (swap! atom update :current-revision (fnil inc 0))))
 
 (defn bind-and-bump!
-  "Atomic \"rebind var in SCI + invalidate var-index cache\" - the only API
+  "Atomic \"rebind var in SCI + invalidate bindings cache\" - the only API
    call sites should use when mutating runtime bindings that the LLM needs
    to see on the NEXT iteration. Fixes every instance of the model looping
-   on `(restore-vars ...)` / `(def X ...)` because the var_index never caught up."
+   on `(restore-vars ...)` / `(def X ...)` because the bindings never caught up."
   [env sym val]
   (sci-update-binding! (:sci-ctx env) sym val)
-  (bump-var-index! env))
+  (bump-bindings! env))
+
+(defn push-eval-result!
+  "REPL-style stack push for the sandbox `*1` `*2` `*3` recovery slots.
+   Called by the iteration loop after each successful top-level form
+   eval. Bypasses `<bindings>` invalidation - these vars are filtered
+   out of the model-visible binding view by `:initial-ns-keys`."
+  [env value]
+  (let [sci-ctx (:sci-ctx env)
+        ns-obj  (sci/find-ns sci-ctx 'sandbox)]
+    (when ns-obj
+      ;; Read current *1, *2 first so we can shift them down without losing
+      ;; intermediate state. `sci/intern` overwrites the var binding directly.
+      (let [v1 (:val (sci/eval-string+ sci-ctx "*1" {:ns ns-obj}))
+            v2 (:val (sci/eval-string+ sci-ctx "*2" {:ns ns-obj}))]
+        (sci/intern sci-ctx ns-obj '*3 v2)
+        (sci/intern sci-ctx ns-obj '*2 v1)
+        (sci/intern sci-ctx ns-obj '*1 value)))))
+
+(defn push-eval-error!
+  "Park the most recent uncaught exception in the sandbox `*e` slot. Stack
+   `*1`/`*2`/`*3` does NOT advance on exception (the form produced no value)."
+  [env throwable]
+  (let [sci-ctx (:sci-ctx env)
+        ns-obj  (sci/find-ns sci-ctx 'sandbox)]
+    (when ns-obj
+      (sci/intern sci-ctx ns-obj '*e throwable))))
+
+(defn reset-eval-bindings!
+  "Clear `*1` `*2` `*3` `*e` to nil. Called at turn start so a follow-up
+   turn does not see the previous turn's leftover values."
+  [env]
+  (let [sci-ctx (:sci-ctx env)
+        ns-obj  (sci/find-ns sci-ctx 'sandbox)]
+    (when ns-obj
+      (doseq [s '[*1 *2 *3 *e]]
+        (sci/intern sci-ctx ns-obj s nil)))))
 
 ;; =============================================================================
 ;; SCI Context Creation
@@ -429,11 +465,21 @@
                                                intern
                                                sh
                                                *in* *command-line-args*]}))]
+    ;; REPL-style recovery bindings: `*1` `*2` `*3` carry the last three
+    ;; evaluated form values (most recent first); `*e` carries the most
+    ;; recent uncaught exception. The iteration loop pushes onto the
+    ;; stack after each form's eval and resets all four to nil at turn
+    ;; start. They live in the sandbox so model code reads them as plain
+    ;; symbols, but they are interned BEFORE `:initial-ns-keys` so the
+    ;; baseline filter excludes them from `<bindings>` (they're noise to
+    ;; the model's user-binding view).
+    (sci/eval-string+ sci-ctx "(def *1 nil) (def *2 nil) (def *3 nil) (def *e nil)"
+      {:ns sandbox-ns})
     {:sci-ctx sci-ctx
      :sandbox-ns sandbox-ns
      :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))}))
 
-(def ^:private ^:const MAX_VAR_INDEX_COUNT 1000)
+(def ^:private ^:const MAX_BINDINGS_COUNT 1000)
 
 ;; SYSTEM vars are read-only bindings the loop maintains for the
 ;; agent. Three lifetime tiers, each tagged by its prefix:
@@ -512,7 +558,7 @@
 ;; vars are UPPERCASE and explicitly defined".
 (def SYSTEM_VAR_NAMES
   "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
-   var?' check is needed: var-index sort+status, archive guard, etc.
+   var?' check is needed: bindings sort+status, archive guard, etc.
 
    See the comment block above this def for full per-name documentation
    and the prefix-based lifetime convention
@@ -577,8 +623,8 @@
     (string? val) (count val)
     (or (map? val) (vector? val) (set? val)) (count val)
     (sequential? val)
-    (let [n (bounded-count MAX_VAR_INDEX_COUNT val)]
-      (if (= n MAX_VAR_INDEX_COUNT) (str MAX_VAR_INDEX_COUNT "+") n))
+    (let [n (bounded-count MAX_BINDINGS_COUNT val)]
+      (if (= n MAX_BINDINGS_COUNT) (str MAX_BINDINGS_COUNT "+") n))
     :else nil))
 
 ;; ---------------------------------------------------------------------------
@@ -602,25 +648,25 @@
 ;; Per-entry char cap when rendering collection bodies. A 5-element
 ;; vector of 1000-char strings would otherwise blow up to 5000+ chars
 ;; even though our element-count check passes. This is the SAFETY net.
-(def ^:private VAR_INDEX_BODY_MAX_CHARS 600)
-(def ^:private VAR_INDEX_PRINT_LENGTH 32)
-(def ^:private VAR_INDEX_PRINT_LEVEL 6)
-(def ^:private MAX_VAR_INDEX_ENTRIES 100)
-(def ^:private VAR_INDEX_SUMMARY_MAX_NAMES 10)
+(def ^:private BINDINGS_BODY_MAX_CHARS 600)
+(def ^:private BINDINGS_PRINT_LENGTH 32)
+(def ^:private BINDINGS_PRINT_LEVEL 6)
+(def ^:private MAX_BINDINGS_ENTRIES 100)
+(def ^:private BINDINGS_SUMMARY_MAX_NAMES 10)
 
 (defn- bounded-pr-str
-  "Local mirror of `iteration.core/safe-pr-str` for the var-index render
+  "Local mirror of `iteration.core/safe-pr-str` for the bindings render
    path - reuses `*print-length*` + `*print-level*` to short-circuit
    pr during printing, then clips the resulting string. Kept here so
    the env-core namespace doesn't depend on iteration.core (would be
    a cycle)."
   [v]
-  (let [bounded (binding [*print-length* VAR_INDEX_PRINT_LENGTH
-                          *print-level*  VAR_INDEX_PRINT_LEVEL]
+  (let [bounded (binding [*print-length* BINDINGS_PRINT_LENGTH
+                          *print-level*  BINDINGS_PRINT_LEVEL]
                   (pr-str v))]
-    (if (> (count bounded) VAR_INDEX_BODY_MAX_CHARS)
-      (str (subs bounded 0 VAR_INDEX_BODY_MAX_CHARS)
-        " ...<+" (- (count bounded) VAR_INDEX_BODY_MAX_CHARS) " chars>")
+    (if (> (count bounded) BINDINGS_BODY_MAX_CHARS)
+      (str (subs bounded 0 BINDINGS_BODY_MAX_CHARS)
+        " ...<+" (- (count bounded) BINDINGS_BODY_MAX_CHARS) " chars>")
       bounded)))
 
 (defn- truncate-string [s n]
@@ -680,7 +726,7 @@
    values fall back to a schema map (`{:n N :keys-sample [...]}` etc.).
    When a `:doc` is set on the var meta, embed the first line of the
    docstring before the body - same UX as render-fn-form, so all
-   var-defining forms surface their purpose in `<var_index>`."
+   var-defining forms surface their purpose in `<bindings>`."
   [{:keys [sym type val doc] :as entry}]
   (let [stats (stats-comment entry)
         doc-line (when (and (string? doc) (not (str/blank? doc)))
@@ -757,11 +803,11 @@
   [label syms]
   (when (seq syms)
     (str ";; " label ": "
-      (str/join ", " (map display-sym-name (take VAR_INDEX_SUMMARY_MAX_NAMES syms)))
-      (when (> (count syms) VAR_INDEX_SUMMARY_MAX_NAMES)
-        (str " (+" (- (count syms) VAR_INDEX_SUMMARY_MAX_NAMES) " more)")))))
+      (str/join ", " (map display-sym-name (take BINDINGS_SUMMARY_MAX_NAMES syms)))
+      (when (> (count syms) BINDINGS_SUMMARY_MAX_NAMES)
+        (str " (+" (- (count syms) BINDINGS_SUMMARY_MAX_NAMES) " more)")))))
 
-(defn- render-var-index-summary
+(defn- render-bindings-summary
   [{:keys [overflow-live archived unavailable-count]}]
   (let [lines (cond-> []
                 (seq overflow-live)
@@ -775,8 +821,8 @@
                   ";; use (var-history) to browse symbol history/info"))]
     (seq (keep identity lines))))
 
-(defn build-var-index
-  "Build the `<var_index>` block from user-defined vars in the SCI sandbox.
+(defn build-bindings
+  "Build the `<bindings>` block from user-defined vars in the SCI sandbox.
 
    Returns nil when no user vars exist; otherwise a multi-line string
    with one entry per `(def ...)`. SYSTEM vars (every name in
@@ -786,11 +832,11 @@
 
    Sort order: most-recently-bound first."
   ([sci-ctx initial-ns-keys]
-   (build-var-index sci-ctx initial-ns-keys nil nil nil nil))
+   (build-bindings sci-ctx initial-ns-keys nil nil nil nil))
   ([sci-ctx initial-ns-keys sandbox]
-   (build-var-index sci-ctx initial-ns-keys sandbox nil nil nil))
+   (build-bindings sci-ctx initial-ns-keys sandbox nil nil nil))
   ([sci-ctx initial-ns-keys sandbox db-info conversation-id]
-   (build-var-index sci-ctx initial-ns-keys sandbox db-info conversation-id nil))
+   (build-bindings sci-ctx initial-ns-keys sandbox db-info conversation-id nil))
   ([sci-ctx initial-ns-keys sandbox db-info conversation-id _opts]
    (let [sandbox-map (or sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
          var-registry (when (and db-info conversation-id)
@@ -824,8 +870,8 @@
                                  :val val
                                  :arglists arglists
                                  :doc doc})))
-         rendered-live (take MAX_VAR_INDEX_ENTRIES live-entries)
-         overflow-live (mapv :sym (drop MAX_VAR_INDEX_ENTRIES live-entries))
+         rendered-live (take MAX_BINDINGS_ENTRIES live-entries)
+         overflow-live (mapv :sym (drop MAX_BINDINGS_ENTRIES live-entries))
          live-syms     (set (keys live-info))
          archived-entries (->> (or var-registry {})
                             (remove (fn [[sym _]]
@@ -837,9 +883,9 @@
                             vec)
          archived-syms (mapv first archived-entries)
          unavailable-count (count (filter (comp unavailable-archive-entry? second) archived-entries))
-         summary-lines (render-var-index-summary {:overflow-live overflow-live
-                                                  :archived archived-syms
-                                                  :unavailable-count unavailable-count})
+         summary-lines (render-bindings-summary {:overflow-live overflow-live
+                                                 :archived archived-syms
+                                                 :unavailable-count unavailable-count})
          lines (vec (concat (map render-var-form rendered-live) summary-lines))]
      (when (seq lines)
        (str/join "\n" lines)))))

@@ -510,43 +510,46 @@
 ;; Rendering and symbol entries
 ;; =============================================================================
 
-(defn- render-tool-result
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (md/p "Tool" (md/code (get-in tool-result [:info :op])) "failed:" (get-in tool-result [:error :message]))
-    (md/join
-      (md/p (md/code (get-in tool-result [:info :op])) "returned" (if (sequential? (:result tool-result))
-                                                                    (count (:result tool-result))
-                                                                    "a") "result(s).")
-      (md/code-block "clojure" (pr-str (:result tool-result))))))
+(defn- journal-render-xref
+  [result]
+  (str (if (sequential? result) (count result) 1) " result(s)— "
+    (let [s (pr-str result)
+          n (count s)]
+      (if (<= n 800) s (str (subs s 0 800) "…<+" (- n 800) " chars>")))))
+
+(defn- channel-render-xref
+  [result _chan-id]
+  (md/join
+    (md/p (if (sequential? result) (count result) 1) "result(s).")
+    (md/code-block "clojure" (pr-str result))))
 
 (defn- xref-symbol
-  [v examples]
+  [v]
   (vis/symbol v
-    {
-     :result-spec ::extension/tool-result
-     :render-fn render-tool-result
+    {:result-spec ::extension/tool-result
+     :journal-render-fn journal-render-xref
+     :channel-render-fn channel-render-xref
      :on-error-fn (tool-failure-on-error (keyword "z" (name (:name (meta v)))))}))
 
-(def xref-analyze-symbol     (xref-symbol #'xref-analyze!     ["(z/xref-analyze!)" "(z/xref-analyze! {:paths [\"src\" \"test\"]})"]))
-(def xref-refresh-symbol     (xref-symbol #'xref-refresh!     ["(z/xref-refresh!)"]))
-(def who-calls-symbol        (xref-symbol #'who-calls         ["(z/who-calls 'my.ns/f)"]))
-(def calls-who-symbol        (xref-symbol #'calls-who         ["(z/calls-who 'my.ns/f)"]))
-(def who-references-symbol   (xref-symbol #'who-references    ["(z/who-references 'my.ns/f)"]))
-(def who-macroexpands-symbol (xref-symbol #'who-macroexpands  ["(z/who-macroexpands 'my.ns/m)"]))
-(def who-implements-symbol   (xref-symbol #'who-implements    ["(z/who-implements 'my.ns/Protocol)"]))
-(def who-dispatches-symbol   (xref-symbol #'who-dispatches    ["(z/who-dispatches 'my.ns/multi)"]))
-(def ns-vars-symbol          (xref-symbol #'ns-vars           ["(z/ns-vars 'my.ns)"]))
-(def ns-deps-symbol          (xref-symbol #'ns-deps           ["(z/ns-deps 'my.ns)"]))
-(def ns-dependents-symbol    (xref-symbol #'ns-dependents     ["(z/ns-dependents 'my.ns)"]))
-(def unused-vars-symbol      (xref-symbol #'unused-vars       ["(z/unused-vars)" "(z/unused-vars {:include-private? true :limit 50})"]))
-(def call-graph-symbol       (xref-symbol #'call-graph        ["(z/call-graph 'my.ns/f {:depth 2})"]))
-(def apropos-symbol          (xref-symbol #'apropos           ["(z/apropos \"process\")"]))
-(def locator-for-ref-symbol  (xref-symbol #'locator-for-ref   ["(z/locator-for-ref (first (:result (z/who-calls 'my.ns/f))))"]))
-(def locators-for-symbol-symbol (xref-symbol #'locators-for-symbol ["(z/locators-for-symbol 'my.ns/f)"]))
-(def definition-symbol       (xref-symbol #'definition        ["(z/definition 'my.ns/f)"]))
-(def call-sites-symbol       (xref-symbol #'call-sites        ["(z/call-sites 'my.ns/f)"]))
-(def context-for-symbol      (xref-symbol #'context-for       ["(z/context-for 'my.ns/f)"]))
+(def xref-analyze-symbol         (xref-symbol #'xref-analyze!))
+(def xref-refresh-symbol         (xref-symbol #'xref-refresh!))
+(def who-calls-symbol            (xref-symbol #'who-calls))
+(def calls-who-symbol            (xref-symbol #'calls-who))
+(def who-references-symbol       (xref-symbol #'who-references))
+(def who-macroexpands-symbol     (xref-symbol #'who-macroexpands))
+(def who-implements-symbol       (xref-symbol #'who-implements))
+(def who-dispatches-symbol       (xref-symbol #'who-dispatches))
+(def ns-vars-symbol              (xref-symbol #'ns-vars))
+(def ns-deps-symbol              (xref-symbol #'ns-deps))
+(def ns-dependents-symbol        (xref-symbol #'ns-dependents))
+(def unused-vars-symbol          (xref-symbol #'unused-vars))
+(def call-graph-symbol           (xref-symbol #'call-graph))
+(def apropos-symbol              (xref-symbol #'apropos))
+(def locator-for-ref-symbol      (xref-symbol #'locator-for-ref))
+(def locators-for-symbol-symbol  (xref-symbol #'locators-for-symbol))
+(def definition-symbol           (xref-symbol #'definition))
+(def call-sites-symbol           (xref-symbol #'call-sites))
+(def context-for-symbol          (xref-symbol #'context-for))
 
 (def symbols
   [xref-analyze-symbol

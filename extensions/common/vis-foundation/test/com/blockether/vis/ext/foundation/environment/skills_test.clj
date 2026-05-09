@@ -5,7 +5,7 @@
   (:require
    [babashka.fs :as fs]
    [clojure.string :as str]
-   [com.blockether.vis.ext.foundation.environment.skills :as skills]
+   [com.blockether.vis.internal.skills :as skills]
    [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe expect it]]))
 

@@ -17,10 +17,10 @@ These keys exist on every environment for its entire lifetime:
 | `:conversation-id` | `java.util.UUID` | Conversation entity ID in the DB (plain UUID, not a tagged pair). Every turn / iteration / persisted var is parented under this. |
 | `:db-info` | `map` | Database connection handle (`{:datasource ds ...}`). Pass to `persistance.core` functions for reads. **Borrow only - the runtime owns the lifecycle and closes it.** |
 | `:router` | `map` | svar LLM router. Provider configs, model list, routing rules. Read-only from extensions, but the runtime itself **reseats** this key when provider config changes mid-conversation - see [Router Lifecycle](../architecture/state.md#router-lifecycle). Always read it fresh from the env handed to your callback; never cache `(:router env)` across iterations. |
-| `:sci-ctx` | `SCI context` | Live SCI sandbox context. Contains the `:env` atom with all namespace maps. Read sandbox state via `(get-in @(:env sci-ctx) [:namespaces 'sandbox])`. **Mutate via `bind-and-bump!` only** - it keeps the var-index revision in lockstep. |
+| `:sci-ctx` | `SCI context` | Live SCI sandbox context. Contains the `:env` atom with all namespace maps. Read sandbox state via `(get-in @(:env sci-ctx) [:namespaces 'sandbox])`. **Mutate via `bind-and-bump!` only** - it keeps the bindings revision in lockstep. |
 | `:sandbox-ns` | `SCI ns` | The `'sandbox` namespace object. Used internally by `eval-string+`. |
 | `:initial-ns-keys` | `set of symbols` | Symbols in the sandbox at creation time (tools, helpers, builtins). Distinguishes user vars from infrastructure. |
-| `:var-index-atom` | `atom` | Cached `<var_index>` render. Shape: `{:index string, :revision int, :current-revision int}`. The rendered string is compact pseudo-source (`(def ^{:v 3 :s :l :t :map :n 12} foo ...)`, `(defn ^{:v 2 :s :l} f [x] ...)`). Bump via `bump-var-index!` after mutating sandbox bindings. |
+| `:bindings-atom` | `atom` | Cached `<bindings>` render. Shape: `{:index string, :revision int, :current-revision int}`. The rendered string is compact pseudo-source (`(def ^{:v 3 :s :l :t :map :n 12} foo ...)`, `(defn ^{:v 2 :s :l} f [x] ...)`). Bump via `bump-bindings!` after mutating sandbox bindings. |
 | `:extensions` | `atom of vector` | All registered extensions. Managed by `register-extension!` (replaces by `:ext/namespace`). Read by the iteration loop for nudges. |
 | `:state-atom` | `atom` | Internal: `{:custom-bindings {sym val}, :environment <self-ref>, :conversation-id uuid}`. Extensions should not poke this. |
 | `:depth-atom` | `atom of int` | Sub-RLM recursion depth. 0 for top-level turns. |
@@ -42,7 +42,7 @@ environment returned by `create-environment`.
 - **Read** any key for conditional logic (`:db-info`, `:conversation-id`,
   `:sci-ctx`, `:router`, `:initial-ns-keys`).
 - **Call** `persistance.core` functions with `:db-info` for DB reads.
-- **Bump** the var-index cache via `bump-var-index!` after your tool
+- **Bump** the bindings cache via `bump-bindings!` after your tool
   mutates sandbox state.
 - **Read** sandbox vars via
   `(get-in @(:env (:sci-ctx env)) [:namespaces 'sandbox sym])`.
@@ -52,5 +52,5 @@ environment returned by `create-environment`.
 - **Close** `:db-info` - the runtime owns the connection lifecycle.
 - **Swap** `:extensions` directly - use `register-extension!`.
 - **Reset** `:current-iteration-id-atom` - internal iteration-loop state.
-- **Mutate** `:sci-ctx` namespace maps without calling `bump-var-index!`
-  - the `<var_index>` cache will serve stale data.
+- **Mutate** `:sci-ctx` namespace maps without calling `bump-bindings!`
+  - the `<bindings>` cache will serve stale data.

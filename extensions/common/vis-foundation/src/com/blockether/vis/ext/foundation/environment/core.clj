@@ -164,32 +164,49 @@
   "Render the current snapshot as the same `<environment>` block embedded in the system prompt. Useful for debugging or surfacing the block on demand."
   [] (render/render (snapshot)))
 
+(defn- env-data-symbol
+  "Environment helpers all return Clojure data structures; share the same
+   pr-str renderers so each entry below stays a one-liner."
+  [v opts]
+  (vis/symbol v
+    (merge {:journal-render-fn vis/render-pr-str-journal
+            :channel-render-fn vis/render-pr-str-channel}
+      opts)))
+
+(defn- env-string-symbol
+  "Environment helpers that already return strings (markdown render)."
+  [v opts]
+  (vis/symbol v
+    (merge {:journal-render-fn vis/render-string-journal
+            :channel-render-fn vis/render-string-channel}
+      opts)))
+
 (def snapshot-symbol
-  (vis/symbol #'snapshot
+  (env-data-symbol #'snapshot
     {}))
 
 (def repositories-symbol
-  (vis/symbol #'repositories
+  (env-data-symbol #'repositories
     {}))
 
 (def git-symbol
-  (vis/symbol #'git
+  (env-data-symbol #'git
     {}))
 
 (def languages-symbol
-  (vis/symbol #'languages
+  (env-data-symbol #'languages
     {}))
 
 (def monorepo-symbol
-  (vis/symbol #'monorepo
+  (env-data-symbol #'monorepo
     {}))
 
 (def refresh!-symbol
-  (vis/symbol #'refresh!
+  (env-data-symbol #'refresh!
     {}))
 
 (def render-symbol
-  (vis/symbol #'render
+  (env-string-symbol #'render
     {}))
 
 ;; ---------------------------------------------------------------------------
@@ -202,7 +219,7 @@
   (agents/instructions))
 
 (def main-agent-instructions-symbol
-  (vis/symbol #'main-agent-instructions
+  (env-data-symbol #'main-agent-instructions
     {}))
 
 ;; (v/skills) WAS HERE. Removed: enumeration is now the
@@ -231,9 +248,8 @@
   (skills/lookup skill-name))
 
 (def load-skill-symbol
-  (vis/symbol #'load-skill
-    {
-     :after-fn remember-active-skill!}))
+  (env-data-symbol #'load-skill
+    {:after-fn remember-active-skill!}))
 
 (defn- combined-scan-warnings []
   ;; Three sources, all `{:source :reason :path}` shaped so the
@@ -277,19 +293,19 @@
   ([opts] (vis/reload-extensions! opts)))
 
 (def scan-warnings-symbol
-  (vis/symbol #'scan-warnings
+  (env-data-symbol #'scan-warnings
     {}))
 
 (def reload-instructions!-symbol
-  (vis/symbol #'reload-instructions!
+  (env-data-symbol #'reload-instructions!
     {}))
 
 (def reload-skills!-symbol
-  (vis/symbol #'reload-skills!
+  (env-data-symbol #'reload-skills!
     {}))
 
 (def reload-extensions!-symbol
-  (vis/symbol #'reload-extensions!
+  (env-data-symbol #'reload-extensions!
     {}))
 
 (def environment-symbols

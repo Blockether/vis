@@ -45,7 +45,8 @@
                       {:doc "Return bound workspace root."
                        :arglists '([])
 
-                       :render-fn (fn [_] "")})
+                       :journal-render-fn (fn [_] "")
+                       :channel-render-fn (fn [_ _] "")})
           extension (ext/extension {:ext/namespace 'test.workspace-root
                                     :ext/doc "Workspace root fixture."
                                     :ext/kind "fixture"
@@ -61,6 +62,8 @@
           s    (ext/symbol 'p (fn [& _] nil)
                  {:doc "Paragraph."
                   :arglists '([& parts])
+                  :journal-render-fn (fn [_] "")
+                  :channel-render-fn (fn [_ _] "")
                   :source-rewrite-fn hook})]
       (expect (= hook (:ext.symbol/source-rewrite-fn s)))))
 
@@ -69,6 +72,8 @@
           sym-entry (ext/symbol 'p (fn [& _] nil)
                       {:doc "Paragraph."
                        :arglists '([& parts])
+                       :journal-render-fn (fn [_] "")
+                       :channel-render-fn (fn [_ _] "")
                        :source-rewrite-fn hook})
           extension (ext/extension {:ext/namespace 'test.symbol-source-rewrite
                                     :ext/doc "Symbol source rewrite fixture."
@@ -99,28 +104,14 @@
                                    :ext/source-rewrite-fn (fn [_] nil)})]
       (expect (nil? (ext/try-rewrite-source [same-ext nil-ext] "(+ 1 2)" {}))))))
 
-(defdescribe tool-result-render-fallback-test
-  (it "renders historical tool results through their presentation kind when the symbol is gone"
-    (let [renderer (fn [{:keys [value]}] (str "exit=" (:exit value)))
-          extension (ext/extension {:ext/namespace 'test.rendering-kind-fallback
-                                    :ext/doc "Rendering kind fallback fixture."
-                                    :ext/kind "fixture"
-                                    :ext/rendering-kinds {:diagnostic renderer}})
-          old-result {:success? true
-                      :result {:exit 0}
-                      :info {:op :v/bash
-                             :extension {:namespace 'test.rendering-kind-fallback}
-                             :tool {:sym 'bash}}
-                      :presentation {:kind :diagnostic}}]
-      (with-redefs [ext/registered-extensions (fn [] [extension])]
-        (expect (= "exit=0" (ext/render-tool-result :tui old-result {})))))))
-
 (defdescribe symbol-parse-rescue-test
   (it "symbol carries optional :on-parse-error-fn"
     (let [hook (fn [_] "repaired")
           s    (ext/symbol 'cat (fn [& _] nil)
                  {:doc "Read a file."
                   :arglists '([path])
+                  :journal-render-fn (fn [_] "")
+                  :channel-render-fn (fn [_ _] "")
                   :on-parse-error-fn hook})]
       (expect (= hook (:ext.symbol/on-parse-error-fn s))))))
 
@@ -128,7 +119,9 @@
   (it "logs normal invoke lifecycle at debug level"
     (let [levels (atom [])
           sym-entry (ext/symbol 'ping (fn [] :pong)
-                      {:doc "Ping." :arglists '([])})
+                      {:doc "Ping." :arglists '([])
+                       :journal-render-fn (fn [_] "")
+                       :channel-render-fn (fn [_ _] "")})
           extension (ext/extension {:ext/namespace 'test.invoke-log
                                     :ext/doc "Invoke log fixture."
                                     :ext/kind "fixture"
@@ -145,7 +138,9 @@
                       (fn []
                         (reset! seen (ext/current-extension-id))
                         :done)
-                      {:doc "Record current extension." :arglists '([])})
+                      {:doc "Record current extension." :arglists '([])
+                       :journal-render-fn (fn [_] "")
+                       :channel-render-fn (fn [_ _] "")})
           extension (ext/extension {:ext/namespace 'test.current-extension
                                     :ext/doc "Current extension fixture."
                                     :ext/kind "fixture"
@@ -162,7 +157,9 @@
                         (expect (realized? started))
                         (deliver can-return true)
                         :done)
-                      {:doc "Slow tool." :arglists '([])})
+                      {:doc "Slow tool." :arglists '([])
+                       :journal-render-fn (fn [_] "")
+                       :channel-render-fn (fn [_ _] "")})
           extension (ext/extension {:ext/namespace 'test.tool-start
                                     :ext/doc "Tool start fixture."
                                     :ext/kind "fixture"

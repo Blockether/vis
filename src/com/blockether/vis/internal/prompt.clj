@@ -15,7 +15,7 @@
         XML-tagged blocks, each a preview not a full payload:
           <journal>        newest code + result lines that fit the
                            dynamic journal token budget.
-          <var_index>      compact summaries of user-defined `(def ...)`
+          <bindings>      compact summaries of user-defined `(def ...)`
                            bindings live in the SCI env (shape, not
                            full value).
           <active_skills>  full SKILL.md bodies for skills the model
@@ -41,11 +41,11 @@
    Context-floor contract (CTX1; see prompt-test):
 
      Trivial / no-tool turns produce a NIL per-iteration trailer
-     (no <journal>, no <active_skills>, no <var_index>, no
+     (no <journal>, no <active_skills>, no <bindings>, no
      <system_nudges>). The model-facing context for a trivial turn
      is just the cached system prompt + the current
      <user_turn_request_main_goal>. Coding turns surface
-     observable journal entries, active-skill bodies, var_index
+     observable journal entries, active-skill bodies, bindings
      entries, and extension/host nudges through the XML-tagged
      blocks above. Prior LLM-only reasoning reaches the model
      through preserved-thinking assistant messages echoed in the
@@ -53,7 +53,7 @@
      `<journal>` stays observed-evidence only and the iteration's
      `:thinking` column lives in the DB for forensic use.
 
-     Preview / full boundary: <journal>, <var_index>, and tool
+     Preview / full boundary: <journal>, <bindings>, and tool
      results inside <journal> are bounded previews. Full values
      stay in SCI vars and persisted iteration / block rows. The
      renderer never emits a full multi-KB tool / file payload
@@ -89,12 +89,12 @@
    There is no fixed iteration-count cap. The window is token-budgeted:
    newest evidence stays, oldest journal lines drop when the rendered
    journal would exceed this cap. Actual journal budget may be smaller
-   after protected/pinned context and <var_index> consume tokens."
+   after protected/pinned context and <bindings> consume tokens."
   0.50)
 
-(def ^:const VAR_INDEX_CONTEXT_FRACTION
+(def ^:const BINDINGS_CONTEXT_FRACTION
   "Maximum fraction of the model context window reserved for rendered
-   <var_index>. Entry count alone is not enough: 100 live string vars at
+   <bindings>. Entry count alone is not enough: 100 live string vars at
    8k chars each can consume ~200k tokens. Keep newest entries and drop
    older entries with an explicit marker."
   0.15)
@@ -114,8 +114,8 @@
    journal window."
   24000)
 
-(def ^:const MAX_VAR_INDEX_TOKENS
-  "Absolute token cap for rendered <var_index>. Live vars can contain large
+(def ^:const MAX_BINDINGS_TOKENS
+  "Absolute token cap for rendered <bindings>. Live vars can contain large
    tool outputs; the model sees a compact index, not the full sandbox heap."
   12000)
 
@@ -208,7 +208,7 @@
 
 (defn- tool-result-journal-text
   [v]
-  (extension/render-tool-result :journal v))
+  (extension/journal-render-tool-result v))
 
 (defn- format-block-line
   "One iteration's single block as a `<journal>` line. Renders
@@ -218,7 +218,7 @@
    bound content. Tool-result envelopes render through shared display text
    instead of dumping the full map into the journal."
   [iteration-position k expr]
-  (let [{:keys [code error result previews stdout stderr execution-time-ms]} expr
+  (let [{:keys [code error result stdout stderr execution-time-ms]} expr
         block-label   (str "i" iteration-position "." (inc k))
         code-str      (truncate (str/trim (or code "")) MAX_RESULT_DISPLAY_CHARS)
         stdout-suffix (when-not (str/blank? stdout)
@@ -232,13 +232,10 @@
                         (str "ERROR: " (truncate error 600))
                         (if (extension/tool-result? result)
                           (tool-result-journal-text result)
-                          (if-let [preview-values (seq previews)]
-                            (str/join "\n"
-                              (map tool-result-journal-text preview-values))
-                            (let [v (realize-value result)
-                                  [value-str truncated?] (truncated-pr-str v)]
-                              (str value-str
-                                (when truncated? " :truncated? true"))))))]
+                          (let [v (realize-value result)
+                                [value-str truncated?] (truncated-pr-str v)]
+                            (str value-str
+                              (when truncated? " :truncated? true")))))]
     (str "  " block-label "  " code-str " -> " value-part
       (or slow-suffix "")
       (or stdout-suffix "")
@@ -282,7 +279,7 @@
   "Keep newest journal lines within the supplied journal token budget.
 
    By default, that budget is capped at 50% of the active model context,
-   then may be reduced by protected/pinned context and <var_index> usage.
+   then may be reduced by protected/pinned context and <bindings> usage.
 
    Returns `[lines dropped-count budget-tokens used-tokens]`. Lines are
    indivisible; truncating inside a line would create misleading half-output.
@@ -339,55 +336,55 @@
        (str "<journal>\n" (str/join "\n" rendered-lines) "\n</journal>")))))
 
 ;; =============================================================================
-;; <var_index> - read/cache the current SCI sandbox shape
+;; <bindings> - read/cache the current SCI sandbox shape
 ;; =============================================================================
 
-(defn read-var-index-str
-  "Lazily build (and cache) the <var_index> body for the active env.
+(defn read-bindings-str
+  "Lazily build (and cache) the <bindings> body for the active env.
    Returns nil when the env has no SCI context (test fixtures)."
   [environment]
   (when-let [sci-ctx (:sci-ctx environment)]
-    (let [var-index-atom (or (:var-index-atom environment)
-                           (atom {:index nil :revision -1 :current-revision 0}))
-          {:keys [index revision current-revision]} @var-index-atom]
+    (let [bindings-atom (or (:bindings-atom environment)
+                          (atom {:index nil :revision -1 :current-revision 0}))
+          {:keys [index revision current-revision]} @bindings-atom]
       (if (= revision current-revision)
         index
         (let [sandbox-map (get-in @(:env sci-ctx) [:namespaces 'sandbox])
-              idx         (env/build-var-index
+              idx         (env/build-bindings
                             sci-ctx (:initial-ns-keys environment)
                             sandbox-map
                             (:db-info environment) (:conversation-id environment)
                             nil)]
-          (swap! var-index-atom assoc :index idx :revision current-revision)
+          (swap! bindings-atom assoc :index idx :revision current-revision)
           idx)))))
 
-(defn- var-index-token-budget
+(defn- bindings-token-budget
   [context-limit remaining-budget]
-  (let [fraction-budget (long (Math/floor (* VAR_INDEX_CONTEXT_FRACTION
+  (let [fraction-budget (long (Math/floor (* BINDINGS_CONTEXT_FRACTION
                                             (double context-limit))))
-        capped-budget   (min fraction-budget (long MAX_VAR_INDEX_TOKENS))]
+        capped-budget   (min fraction-budget (long MAX_BINDINGS_TOKENS))]
     (max 1 (min capped-budget (max 1 (long (or remaining-budget capped-budget)))))))
 
-(defn- var-index-entry-start? [line]
+(defn- bindings-entry-start? [line]
   (str/starts-with? (str line) ";; v="))
 
-(defn- split-var-index-entries
-  [var-index-str]
-  (let [lines (str/split-lines (or var-index-str ""))]
+(defn- split-bindings-entries
+  [bindings-str]
+  (let [lines (str/split-lines (or bindings-str ""))]
     (loop [remaining lines
            current   []
            entries   []]
       (if-let [line (first remaining)]
-        (if (and (var-index-entry-start? line) (seq current))
+        (if (and (bindings-entry-start? line) (seq current))
           (recur (rest remaining) [line] (conj entries (str/join "\n" current)))
           (recur (rest remaining) (conj current line) entries))
         (cond-> entries
           (seq current) (conj (str/join "\n" current)))))))
 
-(defn- trim-var-index-str
-  [model var-index-str token-budget]
-  (when (and (string? var-index-str) (not (str/blank? var-index-str)))
-    (let [entries (split-var-index-entries var-index-str)
+(defn- trim-bindings-str
+  [model bindings-str token-budget]
+  (when (and (string? bindings-str) (not (str/blank? bindings-str)))
+    (let [entries (split-bindings-entries bindings-str)
           budget  (max 1 (long token-budget))]
       (loop [remaining entries
              kept      []
@@ -399,9 +396,9 @@
             (if (and (seq kept) (> next-used budget))
               (let [dropped (count remaining)
                     marker  (str ";; ... " dropped
-                              " older <var_index> entries omitted to fit var-index token budget "
+                              " older <bindings> entries omitted to fit bindings token budget "
                               used "/" budget " tokens ("
-                              (long (* 100 VAR_INDEX_CONTEXT_FRACTION))
+                              (long (* 100 BINDINGS_CONTEXT_FRACTION))
                               "% of model context max)")]
                 (str/join "\n" (conj kept marker)))
               (recur (rest remaining) (conj kept entry) next-used)))
@@ -466,7 +463,7 @@
           used-tokens " / " limit-tokens " tokens). Older <journal>\n"
           "  lines drop when the journal exceeds its token budget. Curate the\n"
           "  insight you've earned BEFORE that happens - emit a structured\n"
-          "  `(def ...)` so the value lands in <var_index> + persisted var store and\n"
+          "  `(def ...)` so the value lands in <bindings> + persisted var store and\n"
           "  survives the roll. Chain-of-Density-style recipe (use only\n"
           "  facts that already appeared in the journal; no new\n"
           "  characterizations / evaluative adjectives):\n"
@@ -590,12 +587,12 @@
    Two slots:
      <journal>     - newest token-budgeted comments + code + result.
                      Budget is capped at 50% of the model context, then
-                     reduced by protected/pinned context and <var_index>.
+                     reduced by protected/pinned context and <bindings>.
                      It never renders LLM-only iteration `:thinking`;
                      prior reasoning reaches the model through the
                      preserved-thinking assistant messages echoed in
                      the wire messages array.
-     <var_index>   - `(def ...)` bindings in the SCI env.
+     <bindings>   - `(def ...)` bindings in the SCI env.
 
    Plus zero or more tagged `<system_nudge importance=\"...\">` entries
    wrapped in `<system_nudges>`. Built-ins:
@@ -629,15 +626,15 @@
         pinned-text (str/join "\n\n" (keep identity [system-prompt current-user-content active-skills-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
         budget-after-pinned (max 1 (- ctx-limit (long pinned-tokens)))
-        var-index-str (read-var-index-str environment)
-        var-index-budget (var-index-token-budget ctx-limit budget-after-pinned)
-        var-index-str* (trim-var-index-str model var-index-str var-index-budget)
-        var-block (when (and (string? var-index-str*)
-                          (not (str/blank? var-index-str*)))
-                    (str "<var_index>\n" var-index-str* "\n</var_index>"))
-        var-tokens (or (count-prompt-tokens model (or var-block "")) 0)
+        bindings-str (read-bindings-str environment)
+        bindings-budget (bindings-token-budget ctx-limit budget-after-pinned)
+        bindings-str* (trim-bindings-str model bindings-str bindings-budget)
+        bindings-block (when (and (string? bindings-str*)
+                               (not (str/blank? bindings-str*)))
+                         (str "<bindings>\n" bindings-str* "\n</bindings>"))
+        bindings-tokens (or (count-prompt-tokens model (or bindings-block "")) 0)
         journal-budget (max 1 (min (journal-token-budget model ctx-limit)
-                                (- budget-after-pinned (long var-tokens))))
+                                (- budget-after-pinned (long bindings-tokens))))
         recent-block (format-journal-block model blocks-by-iteration journal-budget)
         last-iteration-blocks (some-> blocks-by-iteration last second)
         title-line (title-nudge environment iteration title-refresh?)
@@ -647,7 +644,7 @@
         ;; `CONTEXT_PRESSURE_THRESHOLD`.
         prompt-text (str/join "\n\n"
                       (keep identity
-                        [system-prompt current-user-content active-skills-block recent-block var-block]))
+                        [system-prompt current-user-content active-skills-block recent-block bindings-block]))
         used-tokens (count-prompt-tokens model prompt-text)
         pressure-line (when (and used-tokens ctx-limit)
                         (context-pressure-nudge model used-tokens ctx-limit))
@@ -682,7 +679,7 @@
                      (seq ext-nudges) (into ext-nudges))
         nudges-block (system-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [active-skills-block recent-block var-block nudges-block])]
+                [active-skills-block recent-block bindings-block nudges-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -694,7 +691,7 @@
   "Full previous exchange context for follow-up turns.
 
    Vis deliberately does not replay the whole chat transcript; prior work
-   flows through <journal>/<var_index>. But one-turn follow-ups like `A`,
+   flows through <journal>/<bindings>. But one-turn follow-ups like `A`,
    `yes`, or `do it` need the complete immediately previous answer as their
    referent. Do not truncate this block: provider/context management owns the
    final context budget."
@@ -712,7 +709,7 @@
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
    dialog transcript: Vis state flows through SYSTEM vars, <journal>,
-   <var_index>, and DB-backed tools. The current user request is tagged as
+   <bindings>, and DB-backed tools. The current user request is tagged as
    <user_turn_request_main_goal>.
 
    One full previous-turn context block may be prepended so short follow-ups
@@ -733,11 +730,127 @@
 ;; =============================================================================
 
 (def CORE_SYSTEM_PROMPT
-  "You are Vis, a recursive language model (RLM) running in a sandboxed Small Clojure Interpreter (SCI).
+  "You are Vis, a recursive language model (RLM) running in a sandboxed
+Small Clojure Interpreter (SCI).
 
-  Loop: read/eval/observe loop
-    emit Clojure forms -> host evaluates them -> results/errors enter <journal> -> continue or use (answer ...) where ... is the FINAL ANSWER to the user request in markdown. 
-  ")
+GROUND RULE — how you operate every turn:
+
+  1. You GENERATE one OR MORE fenced ```clojure blocks per
+     iteration. Multiple blocks are concatenated by the engine and
+     parsed into top-level forms in order — emit several when it
+     reads naturally (setup batch, then observation batch).
+  2. The ENGINE evaluates each top-level form, in order, across
+     every fenced block in the iteration.
+  3. The ENGINE AUTOMATICALLY populates results into <journal>,
+     one line per OBSERVABLE form (see SILENT FORMS below).
+     You never write results yourself. You never imagine them.
+     You never pre-fill values you have not yet evaluated.
+  4. You OBSERVE the <journal> entries the engine produced for the
+     forms YOU just emitted, plus the live shape of every binding
+     in <bindings>.
+  5. You DECIDE — either emit more ```clojure block(s) to learn
+     more, or call (answer \"...\") with the final markdown answer
+     to end the turn.
+
+The ONLY way to learn a value is to evaluate a form and read what
+the engine appended to <journal> (or what surfaced in <bindings>).
+Do not narrate hypothetical results. Do not echo a var to \"see\"
+it — bind it, then look at the journal/bindings entry the engine
+appended.
+
+SILENT FORMS — defs are acquisition, not observation:
+
+  A lone top-level `(def x ...)` (or `defonce`) is SILENT in
+  <journal>. It will not produce an `iN.K` line. The bound name
+  appears in <bindings> as a compact shape summary (keys, type,
+  size — not the full value), and the live value stays in the SCI
+  sandbox reachable on every later iteration.
+
+  Sprinkle defs freely. They keep <journal> focused on real
+  observations and do NOT bloat per-iteration context. To inspect
+  a bound value, evaluate the bare symbol or extract a slice
+  (`(get-in x [...])`, `(subvec x i j)`) — those ARE observation
+  forms and DO render in <journal>.
+
+  Block numbering is contiguous over OBSERVABLE forms only. Seven
+  silent defs followed by one observation render as a single
+  `iN.1` line, not `iN.8`.
+
+TOP-LEVEL DEFS — do NOT wrap plain defs in `(do ...)`:
+
+  Always write `(def x ...)` at the TOP level of your block, never
+  nested inside `(do ...)`/`(let ...)`/etc. Top-level defs are silent
+  in <journal> and visible in <bindings> — wrapping them buys NOTHING
+  in journal compactness and LOSES forensic granularity (a throwing
+  def at top-level localizes to its own row; the same def inside
+  `(do ...)` kills the whole batch with one error).
+
+      ✗ (do (def file (v/cat \"x\"))            ; bad: defs hidden
+            (def hits (v/rg ...))               ;      inside `do`,
+            (subvec ...))                       ;      no granularity
+
+      ✓ (def file (v/cat \"x\"))                 ; good: top-level
+        (def hits (v/rg ...))                   ;       silent defs,
+        (subvec ...)                            ;       last form is
+                                                ;       the observation
+
+BATCHING — `(do ...)` is for non-def side effects + final-value
+selection, NOT for grouping defs:
+
+  Reach for `(do ...)` when you want several non-def forms to count
+  as ONE observation, or when you need to force a specific
+  final-value into <journal> after some side-effecting setup:
+
+      (do (println \"checking ports\")
+          (let [ports (scan)]
+            (println \"found\" (count ports))
+            ports))
+
+  That is ONE top-level form → ONE journal entry whose value is the
+  last expression, with all printlns merged into the row's :stdout.
+
+BINDINGS — prefer durable names; *1/*2/*3/*e are escape hatches:
+
+  Read-shaped symbols (v/cat, v/rg, v/ls, v/glob, v/exists?, exa
+  search, lsp queries, ...) render a BOUNDED preview of their
+  result into <journal>. To slice a value further on a later
+  iteration, bind it first:
+
+      (def file (v/cat \"src/foo.clj\"))                ; preferred
+      ...next iteration...
+      (subvec (get-in file [:result :lines]) 100 200)
+
+  The engine's bounded render only fires when a form's RETURN VALUE
+  is itself a tool-result envelope (what v/cat / v/rg / ... return).
+  `(def f (v/cat \"x\"))` hides the tool-result inside `f`; to surface
+  the preview, end the form with `f` (e.g.
+  `(do (def f (v/cat \"x\")) f)`) or call the read bare and bind from
+  `*1` afterward. Plain values fall through to bounded pr-str.
+
+  If you forgot to bind, the engine also keeps the last three
+  evaluated values as `*1` `*2` `*3` (most recent first) and the
+  last thrown exception as `*e`, scoped to the current turn. Use
+  these only to recover; prefer named bindings for anything you
+  expect to reach for more than once.
+
+DIAGNOSTIC OUTPUT — println surfaces text into <journal>:
+
+  Anything you write to *out* via `(println ...)` is captured as the
+  form's :stdout and appended to the same <journal> row, suffixed
+  after the form's value. Use it for sanity counts, step-through
+  reasoning, or surfacing a single computed string without wrapping
+  it in a tool-result envelope:
+
+      (do (def hits (v/rg {:all [\"needle\"]}))
+          (println \"hits =\" (count (get-in hits [:result :hits])))
+          :ok)
+
+  Journal entry shape:  i3.1  (do ...) -> :ok :stdout \"hits = 7\\n\"
+
+  Reach for `println` when you want diagnostic text in <journal>
+  WITHOUT a tool-result; reach for `def` + tail-binding when you
+  want the engine's bounded preview of an actual tool-result.
+")
 
 (defn build-system-prompt
   "Core system prompt: agent rules + optional caller addendum.

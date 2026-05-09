@@ -58,13 +58,6 @@
    one subtitle row."
   3)
 
-(def ^:private goal-subtitle-objective-max
-  "How wide the goal objective gets in the subtitle row before we
-   ellipsis-truncate. The full objective is up to 4000 chars but we
-   never paint more than this on a single header row — the model can
-   still see it in full via the system-prompt block."
-  80)
-
 (def ^:private placeholder-title
   "Shown center when the conversation has no title yet (fresh run,
    first turn not finished yet). Italicised so it reads as a hint."

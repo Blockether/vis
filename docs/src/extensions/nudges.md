@@ -93,5 +93,5 @@ Inside `build-iteration-context` (called every iteration):
    c. normalize to {:importance ... :text ...};
    d. skip invalid/blank results with a warn log.
 3. Render all nudges under <system_nudges>.
-4. Append after <journal>/<var_index> in iteration context.
+4. Append after <journal>/<bindings> in iteration context.
 ```

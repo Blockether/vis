@@ -845,18 +845,6 @@
                        :created_at    now}]})
           soul-id)))))
 
-(defn db-conversation-turn-position
-  "Return the 1-based `position` integer of `conversation-turn-id`
-   from `conversation_turn_soul`, or `nil` when the row is absent.
-   Lightweight - one indexed lookup on the soul table."
-  [db-info conversation-turn-id]
-  (when (and (ds db-info) conversation-turn-id)
-    (:position
-     (query-one! db-info
-       {:select [:position]
-        :from   :conversation_turn_soul
-        :where  [:= :id (->ref conversation-turn-id)]}))))
-
 (defn- latest-conversation-turn-state [db-info conversation-turn-soul-id-s]
   (query-one! db-info
     {:select [:*]

@@ -373,21 +373,21 @@
                      (diag/try-answer-string-restitch
                        bare-prose-symbol-iter0 "Szerokość"))]
       (expect (some? parsable))
+      ;; Find the `(v/ul [...])` form in the parse tree.
       (let [parsed (edamame/parse-string-all parsable
-                     {:all true :readers (fn [_tag] (fn [v] (list 'do v)))})]
-        ;; Find the `(v/ul [...])` form in the parse tree.
-        (let [v-ul-form (some (fn walk [form]
-                                (cond
-                                  (and (seq? form) (= 'v/ul (first form)))
-                                  form
-                                  (coll? form) (some walk form)))
-                          parsed)]
-          (expect (some? v-ul-form))
-          (let [vec-arg (second v-ul-form)
-                third   (nth vec-arg 2)]
-            (expect (vector? vec-arg))
-            (expect (string? third))
-            (expect (str/includes? third "Szerokość")))))))
+                     {:all true :readers (fn [_tag] (fn [v] (list 'do v)))})
+            v-ul-form (some (fn walk [form]
+                              (cond
+                                (and (seq? form) (= 'v/ul (first form)))
+                                form
+                                (coll? form) (some walk form)))
+                        parsed)
+            vec-arg (second v-ul-form)
+            third   (nth vec-arg 2)]
+        (expect (some? v-ul-form))
+        (expect (vector? vec-arg))
+        (expect (string? third))
+        (expect (str/includes? third "Szerokość")))))
 
   (it "only mutates source between the symbol and the enclosing `]`/`)`"
     ;; Lines outside the offending element stay byte-identical so

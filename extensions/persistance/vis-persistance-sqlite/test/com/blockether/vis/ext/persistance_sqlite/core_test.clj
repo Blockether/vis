@@ -2005,7 +2005,7 @@
 
 (defdescribe auto-archive-hot-symbols-test
 
-  (it "archives live user symbols down to the post-answer target and bumps the var-index revision"
+  (it "archives live user symbols down to the post-answer target and bumps the bindings revision"
     (let [s       (h/store)
           cid     (vis/db-store-conversation! s {:channel :tui})
           qid     (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
@@ -2026,7 +2026,7 @@
                    :conversation-id cid
                    :sci-ctx         sci-ctx
                    :initial-ns-keys #{}
-                   :var-index-atom  via}]
+                   :bindings-atom  via}]
       (#'lp/auto-archive-hot-symbols! rlm-env)
       (expect (= 80 (count (sandbox-syms sci-ctx))))
       (expect (not (contains? (sandbox-syms sci-ctx) 'v00)))
@@ -2056,7 +2056,7 @@
                    :conversation-id cid
                    :sci-ctx         sci-ctx
                    :initial-ns-keys #{}
-                   :var-index-atom  via}]
+                   :bindings-atom  via}]
       (#'lp/auto-archive-hot-symbols! rlm-env)
       (expect (contains? (sandbox-syms sci-ctx) 'protected))
       (expect (= 80 (count (sandbox-syms sci-ctx)))))))
@@ -2070,7 +2070,7 @@
 ;; spec/validate-plan-state) were deleted in the
 ;; "Drastically simplify the agent" cull (commit cad5f7d) and the
 ;; columns were dropped from V1__schema.sql in the follow-up sweep.
-;; The agent now relies on <journal> + <var_index> only; no projection
+;; The agent now relies on <journal> + <bindings> only; no projection
 ;; layer carries plan/breadcrumb data. Tests that targeted any of the
 ;; above had nothing live to assert against and were orphaned.
 ;; ───
@@ -2124,6 +2124,6 @@
 ;; (:plan-state, :breadcrumbs, :recent-thought, :system-vars,
 ;;  :prior-turn, :loop-nudges) that were removed in the same
 ;; simplification cull. The current build-iteration-context only
-;; emits <journal> + <var_index> and is exercised end-to-end by
+;; emits <journal> + <bindings> and is exercised end-to-end by
 ;; the agent loop tests; an isolated unit test was not preserved.
 ;; =============================================================================

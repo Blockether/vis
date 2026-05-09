@@ -729,7 +729,7 @@
    each row corresponds to one iteration and carries the assembled
    system prompt plus the exact provider message envelope persisted on
    the iteration row. The last user message in `:messages` is the
-   per-iteration journal/var-index snapshot the model saw."
+   per-iteration journal/bindings snapshot the model saw."
   [data]
   (vec
     (mapcat (fn [turn]

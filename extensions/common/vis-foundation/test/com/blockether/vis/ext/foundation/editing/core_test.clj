@@ -122,16 +122,14 @@
               "recursive patterns like `**/*.clj` walk descendants"))
     (expect (string/includes? editing/editing-prompt
               "immediate children"))
-    (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
-                        editing/editing-symbols)]
-      (expect (not-any? #(string/includes? % "grep")
-                (:ext.symbol/examples bash-symbol)))))
+    nil)
 
-  (it "registers custom structured renderers for rich tool outputs"
-    (doseq [sym-name '[cat preview ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash]]
+  (it "registers journal + channel renderers on every fn-symbol"
+    (doseq [sym-name '[cat ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash]]
       (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
                     editing/editing-symbols)]
-        (expect (ifn? (:ext.symbol/render-fn entry))))))
+        (expect (ifn? (:ext.symbol/journal-render-fn entry)))
+        (expect (ifn? (:ext.symbol/channel-render-fn entry))))))
 
   (it "teaches the model that file and shell payloads live under the tool envelope :result"
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
@@ -140,25 +138,21 @@
       (expect (string/includes? editing/editing-prompt "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits)"))
       (expect (string/includes? editing/editing-prompt "[:result :stdout]"))
       (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
-      (expect (some #(string/includes? % "[:result :exit]")
-                (:ext.symbol/examples bash-symbol)))
       (expect (string/includes? (:ext.symbol/doc bash-symbol) "Refuses shell-driven Clojure/EDN source edits"))
       (expect (string/includes? editing/editing-prompt "Use `v/bash`"))
       (expect (string/includes? editing/editing-prompt "set -euo pipefail")))))
 
-(it "classifies operations into stable classes, presentation kinds, and color roles"
-  (doseq [[op class kind role] [[:v/cat :op/read :tool/read :tool-color/read]
-                                [:z/locators :op/read :tool/read :tool-color/read]
-                                [:v/rg :op/search :tool/search :tool-color/search]
-                                [:v/preview :op/preview :tool/preview :tool-color/preview]
-                                [:v/patch :op/edit :tool/edit :tool-color/edit]
-                                [:v/create-dirs :op/create :tool/create :tool-color/create]
-                                [:v/delete :op/delete :tool/delete :tool-color/delete]
-                                [:v/move :op/move :tool/move :tool-color/move]
-                                [:v/bash :op/shell :tool/shell :tool-color/shell]
-                                [:v/extensions :op/meta :tool/meta :tool-color/meta]]]
+(it "classifies operations into stable classes and color roles"
+  (doseq [[op class role] [[:v/cat :op/read :tool-color/read]
+                           [:z/locators :op/read :tool-color/read]
+                           [:v/rg :op/search :tool-color/search]
+                           [:v/patch :op/edit :tool-color/edit]
+                           [:v/create-dirs :op/create :tool-color/create]
+                           [:v/delete :op/delete :tool-color/delete]
+                           [:v/move :op/move :tool-color/move]
+                           [:v/bash :op/shell :tool-color/shell]
+                           [:v/extensions :op/meta :tool-color/meta]]]
     (expect (= class (editing/tool-op->class op)))
-    (expect (= kind (editing/tool-op->presentation-kind op)))
     (expect (= role (editing/tool-op->color-role op)))))
 
 (defdescribe editing-prompt-read-policy-test
@@ -223,168 +217,34 @@
                         2]]
         (expect (throws? clojure.lang.ExceptionInfo #(read-file path bad-opts)))))))
 
-(defdescribe vis-preview-tool-test
-  (it "projects nested EQL ranges without source/projection shapes"
-    (let [preview-tool (private-fn "preview-tool")
-          value {:result {:lines ["a" "b" "c" "d"]
-                          :from "literal-from"
-                          :to "literal-to"}}
-          out (preview-tool value {:result [[:lines {:from 1 :to 3}]]})]
-      (expect (extension/tool-result? out))
-      (expect (= {:result {:lines ["b" "c"]}} (:result out)))
-      (expect (= {:result [[:lines {:from 1 :to 3}]]} (:preview-eql out)))
-      (expect (= {:rendering-kind :source} (:preview out)))
-      (expect (not (contains? out :source-shape)))
-      (expect (not (contains? out :projection-shape)))
-      (expect (= :v/preview (get-in out [:info :op])))))
+(defdescribe new-renderer-contract-test
+  (it "v/cat journal renderer shows head/tail with read-more hint"
+    (let [journal-render-cat (private-fn "journal-render-cat")
+          result {:path "src/demo.clj" :offset 0 :total-lines 6 :truncated-by :end-of-file
+                  :lines ["alpha" "beta" "gamma" "delta" "epsilon" "zeta"]}
+          out (journal-render-cat result)]
+      (expect (string/includes? out "v/cat src/demo.clj"))
+      (expect (string/includes? out "6 line(s)"))
+      (expect (string/includes? out "alpha"))
+      (expect (string/includes? out "<your binding>"))))
 
-  (it "records enriched previews through the extension invocation wrapper"
-    (let [entry (some #(when (= 'preview (:ext.symbol/sym %)) %)
-                  (:ext/symbols foundation/vis-extension))
-          sink  (atom [])
-          out   (binding [extension/*preview-sink* sink]
-                  (extension/invoke-symbol-wrapper
-                    foundation/vis-extension entry
-                    [{:result {:x 1}} {:result [:x]}]
-                    {}))]
-      (expect (= {:result {:x 1}} (:result out)))
-      (expect (= [out] @sink))
-      (expect (= 'preview (get-in out [:info :tool :sym])))
-      (expect (= 'com.blockether.vis.ext.foundation.core
-                (get-in out [:info :extension :namespace])))))
+  (it "v/cat channel renderer wraps lines in a code block"
+    (let [channel-render-cat (private-fn "channel-render-cat")
+          result {:path "src/demo.clj" :offset 0 :total-lines 1 :truncated-by :end-of-file
+                  :lines ["only-line"]}
+          out (channel-render-cat result :channel-tui)]
+      (expect (string/includes? out "```text"))
+      (expect (string/includes? out "1: only-line"))))
 
-  (it "previews the whole payload when called without EQL"
-    (let [preview-tool (private-fn "preview-tool")
-          value {:result {:lines ["a" "b" "c"]}
-                 :stdout "out"
-                 :stderr "err"
-                 :info {:op :ignored-by-payload}}
-          out (preview-tool value)]
-      (expect (= {:result {:lines ["a" "b" "c"]}
-                  :stdout "out"
-                  :stderr "err"}
-                (:result out)))
-      (expect (nil? (:preview-eql out)))))
-
-  (it "supports literal :from/:to keys, wildcard, one-key vectors, and ranged item projection"
-    (let [preview-tool (private-fn "preview-tool")
-          value {:result {:from "literal-from"
-                          :to "literal-to"
-                          :stdout "hello"
-                          :hits [{:path "a" :line 1 :text "x" :extra true}
-                                 {:path "b" :line 2 :text "y" :extra false}]}}
-          literal (preview-tool value {:result [:from :to]})
-          stdout (preview-tool value {:result [[:stdout]]})
-          wildcard (preview-tool value {:result [:*]})
-          hits (preview-tool value {:result [[:hits {:from 0 :to 1} [:path :line :text]]]})]
-      (expect (= {:result {:from "literal-from" :to "literal-to"}}
-                (:result literal)))
-      (expect (= {:result {:stdout "hello"}} (:result stdout)))
-      (expect (= (:result value) (get-in wildcard [:result :result])))
-      (expect (= {:result {:hits [{:path "a" :line 1 :text "x"}]}}
-                (:result hits)))))
-
-  (it "supports nested vector field projections"
-    (let [preview-tool (private-fn "preview-tool")
-          value {:result {:summary {:success? false
-                                    :focused-ids [1]
-                                    :violations [{:type :open}]
-                                    :report "long"}
-                          :counts {:success? true
-                                   :items {:forms 1}
-                                   :extra true}}}
-          out (preview-tool value {:result [[:summary [:success? :focused-ids :violations]]
-                                            [:counts [:success? :items]]]})]
-      (expect (= {:result {:summary {:success? false
-                                     :focused-ids [1]
-                                     :violations [{:type :open}]}
-                           :counts {:success? true
-                                    :items {:forms 1}}}}
-                (:result out)))))
-
-  (it "applies :result EQL to raw values that are not tool-result envelopes"
-    (let [preview-tool (private-fn "preview-tool")
-          raw {:summary {:success? false :report "big"}
-               :counts {:success? true :items {:forms 1}}}
-          out (preview-tool raw {:result [[:summary [:success?]]
-                                          [:counts [:items]]]})]
-      (expect (= {:result {:summary {:success? false}
-                           :counts {:items {:forms 1}}}}
-                (:result out)))))
-
-  (it "records raw preview payloads for journal workflows"
-    (let [entry (some #(when (= 'preview (:ext.symbol/sym %)) %)
-                  (:ext/symbols foundation/vis-extension))
-          row   {:path "src/foo.clj"
-                 :index 7
-                 :tag :token
-                 :value 'old-sym
-                 :locator "old-sym"
-                 :source "old-sym"
-                 :span [[10 3] [10 10]]}
-          sink  (atom [])
-          out   (binding [extension/*preview-sink* sink]
-                  (extension/invoke-symbol-wrapper
-                    foundation/vis-extension entry
-                    [{:result [row]}]
-                    {}))]
-      (expect (= {:result [row]} (:result out)))
-      (expect (= [out] @sink))
-      (expect (not (contains? out :markdown)))
-      (expect (not (contains? out :rendered)))
-      (expect (= row (get-in out [:result :result 0]))))))
-
-(defdescribe rendering-kind-strategies-test
-  (it "renders source, search hits, table, tree, diagnostic, markdown, text, diff, and data kinds"
-    (let [source (extension/render-rendering-kind
-                   :journal :source {:lines ["alpha" "beta"]}
-                   {:tool-result {:preview-eql {:result [[:lines {:from 9 :to 11}]]}}})
-          hits (extension/render-rendering-kind
-                 :journal :search-hits [{:path "src/a.clj" :line 7 :text "needle"}])
-          table (extension/render-rendering-kind
-                  :journal :table [{:path "a" :line 1} {:path "b" :line 2}])
-          tree (extension/render-rendering-kind
-                 :journal :tree {:name "root" :type :dir
-                                 :children [{:name "a.clj" :type :file :size 3}]})
-          diagnostic (extension/render-rendering-kind
-                       :journal :diagnostic {:exit 1 :stdout "out" :stderr "err"})
-          markdown (extension/render-rendering-kind :journal :markdown "**ok**")
-          text (extension/render-rendering-kind :journal :text "plain")
-          diff (extension/render-rendering-kind :journal :diff "-a\n+b")
-          data (extension/render-rendering-kind :journal :data {:a 1})]
-      (expect (string/includes? source "10: alpha"))
-      (expect (string/includes? hits "`src/a.clj:7` needle"))
-      (expect (string/includes? table "| path | line |"))
-      (expect (string/includes? tree "- root (dir)"))
-      (expect (string/includes? tree "- a.clj (file) 3B"))
-      (expect (string/includes? diagnostic "Exit `1`"))
-      (expect (string/includes? diagnostic "stdout:"))
-      (expect (= "**ok**" markdown))
-      (expect (string/includes? text "```text"))
-      (expect (string/includes? diff "```diff"))
-      (expect (string/includes? data "{:a 1}"))))
-
-  (it "keeps read/search renderers concise without model guidance suffixes"
-    (let [render-rg (private-fn "render-rg")
-          md        (render-rg {:tool-result {:success? true
-                                              :info {:spec {:any ["needle"]}
-                                                     :paths ["src"]}
-                                              :result {:hits []
-                                                       :truncated-by :end-of-results}}})]
-      (expect (string/includes? md "Searched"))
-      (expect (not (string/includes? md "Use `v/preview`")))))
-
-  (it "renders TUI previews as direct display text without markdown fences or shape dump"
-    (let [preview-tool (private-fn "preview-tool")
-          render-preview (private-fn "render-preview")
-          out (preview-tool {:result {:lines ["alpha" "beta" "gamma"]}}
-                {:result [[:lines {:from 1 :to 3}]]})
-          rendered (render-preview {:surface :tui :tool-result out})]
-      (expect (not (string/includes? rendered "Preview.")))
-      (expect (string/includes? rendered "2: beta"))
-      (expect (string/includes? rendered "3: gamma"))
-      (expect (not (string/includes? rendered "```")))
-      (expect (not (string/includes? rendered "Shape:"))))))
+  (it "engine-default channel error formatter renders failures without symbol error-fn"
+    (let [out (extension/default-channel-error-text
+                {:success? false :info {:op :v/cat}
+                 :error {:type "java.io.FileNotFoundException"
+                         :message "src/missing.clj (No such file)"}}
+                :channel-tui)]
+      (expect (string/includes? out "**ERROR**"))
+      (expect (string/includes? out "v/cat"))
+      (expect (string/includes? out "FileNotFoundException")))))
 
 (defdescribe vis-rg-structured-shape-test
   (it "returns a 2-key map: :hits + :truncated-by"
@@ -644,9 +504,7 @@
           (expect false)
           (catch clojure.lang.ExceptionInfo e
             (expect (= :ext.foundation.editing/bash-clojure-source-edit-blocked (:type (ex-data e))))
-            (expect (= :use-z-patch (:reason (ex-data e)))))))))
-
-  )
+            (expect (= :use-z-patch (:reason (ex-data e))))))))))
 
 (defdescribe editing-renderer-guidance-test
   (it "patch renderer avoids mandatory duplicate read-back and shows fenced diffs"

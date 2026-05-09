@@ -55,7 +55,7 @@
               {:doc "Read a file." :arglists '([path])})]
       (expect (= 'cat (:ext.symbol/sym s)))
       (expect (= "Read a file." (:ext.symbol/doc s)))
-      (expect (= ["(cat path)"] (:ext.symbol/examples s)))))
+      (expect (= '([path]) (:ext.symbol/arglists s)))))
 
   (it "extension/symbol carries optional :result-spec"
     (let [s (vis/symbol 'cat (fn [& _] nil)
@@ -188,7 +188,12 @@
 
   (it "re-exports extension rendering helpers from the public vis.core surface"
     (expect (ifn? vis/extension-source-markers-of))
-    (expect (ifn? vis/render-tool-result)))
+    (expect (ifn? vis/journal-render-tool-result))
+    (expect (ifn? vis/channel-render-tool-result))
+    (expect (ifn? vis/render-pr-str-journal))
+    (expect (ifn? vis/render-pr-str-channel))
+    (expect (ifn? vis/render-string-journal))
+    (expect (ifn? vis/render-string-channel)))
 
   (it "re-exports the config path on the public vis.core surface"
     (expect (= (str (System/getProperty "user.home") "/.vis/config.edn")
@@ -1327,11 +1332,11 @@
 
 ;; ─── from core_test.clj ───
 
-;; ─── from var_index_render_test.clj ───
+;; ─── from bindings_render_test.clj ───
 
 ;; -----------------------------------------------------------------------------
 ;; Helpers - build a minimal sandbox map without a real SCI context.
-;; `build-var-index` accepts an explicit sandbox-map override (the third
+;; `build-bindings` accepts an explicit sandbox-map override (the third
 ;; arity), so we can hand it any `{sym -> val}` map and skip SCI entirely.
 ;; -----------------------------------------------------------------------------
 
@@ -1340,9 +1345,9 @@
    to empty, so every key in the sandbox is treated as a user var."
   ([sandbox] (index sandbox #{}))
   ([sandbox initial-ns-keys]
-   (vis/build-var-index nil initial-ns-keys sandbox nil nil nil)))
+   (vis/build-bindings nil initial-ns-keys sandbox nil nil nil)))
 
-(defdescribe var-index-hot-cap-test
+(defdescribe bindings-hot-cap-test
   (it "renders at most 100 live user vars plus a compact overflow summary"
     (let [sandbox (into {}
                     (map (fn [i]
@@ -1610,7 +1615,7 @@
         (expect (nil? (def-doc environment 'beta))))))
 
 ;; -----------------------------------------------------------------------------
-;; Render path - `<var_index>` shows the docstring for data vars too
+;; Render path - `<bindings>` shows the docstring for data vars too
 ;; -----------------------------------------------------------------------------
 
 ;; --- ORPHAN: targets removed/changed API. Skipped via #_ --- 
@@ -1620,7 +1625,7 @@
         (exec environment "(def width 1024)" "Pixel width of the canvas.\nSecond line ignored.")
         (let [sandbox (get-in @(:env (:sci-ctx environment)) [:namespaces 'sandbox])
               initial (:initial-ns-keys environment)
-              out (vis/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
+              out (vis/build-bindings (:sci-ctx environment) initial sandbox nil nil nil)]
           (expect (re-find #"\(def width \"Pixel width of the canvas\.\" 1024\)" out))
           (expect (not (re-find #"Second line" out))))))
 
@@ -1629,7 +1634,7 @@
         (exec environment "(defn doubler [x] (* 2 x))" "Doubles its argument.")
         (let [sandbox (get-in @(:env (:sci-ctx environment)) [:namespaces 'sandbox])
               initial (:initial-ns-keys environment)
-              out (vis/build-var-index (:sci-ctx environment) initial sandbox nil nil nil)]
+              out (vis/build-bindings (:sci-ctx environment) initial sandbox nil nil nil)]
           (expect (re-find #"\(defn doubler \[x\] \"Doubles its argument\." out))))))
 
 ;; -----------------------------------------------------------------------------
