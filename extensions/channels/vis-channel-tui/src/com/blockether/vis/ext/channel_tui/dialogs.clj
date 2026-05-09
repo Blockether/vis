@@ -215,25 +215,37 @@
         (p/draw-space-between! g text-x row text-w hint)))))
 
 (defn- draw-list-item!
+  ;; Selection visual: `> ` cursor glyph at the start of the row in
+  ;; place of the previous full-row accent-bg fill. The row background
+  ;; stays `dialog-bg` so inline styling (BOLD, ITALIC) on the label
+  ;; survives the selection paint. See `p/SELECTION_GLYPH` for the
+  ;; project-wide convention.
   [g left row inner-w selected? label]
-  (let [prefix    (if selected? "▸ " "  ")
+  (let [prefix    (p/selection-prefix selected?)
         draw-text (ellipsize (str prefix label) (max 0 (- inner-w 2)))]
-    (if selected?
-      (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-      (p/set-colors! g t/dialog-fg t/dialog-bg))
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
-    (p/put-str! g (+ left 2) row draw-text)))
+    (if selected?
+      (p/styled g [p/BOLD]
+        (p/put-str! g (+ left 2) row draw-text))
+      (p/put-str! g (+ left 2) row draw-text))))
 
 (defn- draw-checkbox-item!
+  ;; `> [✓] label` when selected, `  [✓] label` otherwise. The cursor
+  ;; glyph and the checkbox glyph carry independent meaning: the
+  ;; first says "this row is the cursor", the second says "this
+  ;; option is currently on". Drop the accent-bg highlight — the `>`
+  ;; alone is the selection cue.
   [g left row inner-w selected? checked? label]
   (let [mark      (if checked? "✓" " ")
-        prefix    (str "[" mark "] ")
+        prefix    (str (p/selection-prefix selected?) "[" mark "] ")
         draw-text (ellipsize (str prefix label) (max 0 (- inner-w 2)))]
-    (if selected?
-      (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-      (p/set-colors! g t/dialog-fg t/dialog-bg))
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
-    (p/put-str! g (+ left 2) row draw-text)))
+    (if selected?
+      (p/styled g [p/BOLD]
+        (p/put-str! g (+ left 2) row draw-text))
+      (p/put-str! g (+ left 2) row draw-text))))
 
 (defn- draw-text-input-field!
   [g left row inner-w text cursor]
@@ -372,7 +384,7 @@
 
 (defn- resource-row-label
   [selected? title max-w]
-  (ellipsize (str (if selected? "▸ " "  ") "[" (or title "Resource") "]") max-w))
+  (ellipsize (str (p/selection-prefix selected?) "[" (or title "Resource") "]") max-w))
 
 (defn resource-dialog-items
   "Build selectable rows for a resources popup from renderer refs.
@@ -389,6 +401,10 @@
     refs))
 
 (defn- draw-resource-item!
+  ;; Selection visual: leading `> ` glyph from `resource-row-label`.
+  ;; Body keeps the link-chrome colors regardless of selection so the
+  ;; URL/badge stays readable; previously the inverse-on-accent path
+  ;; squashed both colors into `dialog-bg` and the URL hint vanished.
   [g left row inner-w selected? {:keys [text url kind]}]
   (let [title      (or text "Resource")
         target     (or url "")
@@ -401,20 +417,18 @@
         target-w   (min 32 (max 0 (- body-w (count title) 10)))
         target-txt (when (pos? target-w) (ellipsize target target-w))
         label      (resource-row-label selected? title body-w)]
-    (if selected?
-      (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-      (p/set-colors! g t/dialog-fg t/dialog-bg))
+    (p/set-colors! g t/dialog-fg t/dialog-bg)
     (p/fill-rect! g (inc left) row inner-w 1)
     (let [x (+ left 2)]
-      ;; Render the Markdown link shape as a link, not as raw markup:
-      ;; bullet + blue bracketed title + muted URL tail. The original
-      ;; markdown string remains on the item under `:markdown`.
-      (p/set-colors! g (if selected? t/dialog-bg t/link-chrome-fg)
-        (if selected? t/dialog-title-bg t/dialog-bg))
-      (p/put-str! g x row label)
+      ;; Bracketed title in link color (BOLD on selected for cursor cue).
+      (p/set-colors! g t/link-chrome-fg t/dialog-bg)
+      (if selected?
+        (p/styled g [p/BOLD]
+          (p/put-str! g x row label))
+        (p/put-str! g x row label))
+      ;; Badge + URL tail in dimmed hint color.
       (when target-txt
-        (p/set-colors! g (if selected? t/dialog-bg t/dialog-hint)
-          (if selected? t/dialog-title-bg t/dialog-bg))
+        (p/set-colors! g t/dialog-hint t/dialog-bg)
         (p/put-str! g (+ x (count label) 1) row (str "(" badge ") " target-txt))))))
 
 (defn resources-dialog!
@@ -598,12 +612,20 @@
       (map #(p/horiz-line (+ % 2)) widths))))
 
 (defn- draw-file-picker-table-line!
+  ;; File-picker rows are TABLES; the table body has fixed columns
+  ;; (size, modified, name) that must not shift between selected and
+  ;; unselected states. The `> ` cursor glyph is therefore painted by
+  ;; the caller in the dialog's left padding column (outside the
+  ;; table-x origin) via `p/draw-selection-marker!`. This function
+  ;; just paints the table body in the normal palette — BOLD on the
+  ;; selected row so the cursor cue carries onto the row text too.
   [g x row table-w selected? line]
-  (if selected?
-    (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-    (p/set-colors! g t/dialog-fg t/dialog-bg))
+  (p/set-colors! g t/dialog-fg t/dialog-bg)
   (p/fill-rect! g x row table-w 1)
-  (p/put-str! g x row (ellipsize line table-w)))
+  (if selected?
+    (p/styled g [p/BOLD]
+      (p/put-str! g x row (ellipsize line table-w)))
+    (p/put-str! g x row (ellipsize line table-w))))
 
 (defn scrollbar-geometry
   [height total scroll]
@@ -693,9 +715,16 @@
                   row (+ list-top i)]
               (cond
                 (< idx total)
-                (draw-file-picker-table-line! g table-x row table-content-w (= idx @selected)
-                  (file-picker-table-row-line widths
-                    (file-picker-table-cells (nth items idx))))
+                (do
+                  (draw-file-picker-table-line! g table-x row table-content-w (= idx @selected)
+                    (file-picker-table-row-line widths
+                      (file-picker-table-cells (nth items idx))))
+                  ;; `> ` cursor glyph in the dialog padding column,
+                  ;; outside the table body. Anchored at `(+ left 1)`
+                  ;; so it sits one col inside the dialog frame and
+                  ;; one col before the table content begins.
+                  (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                  (p/draw-selection-marker! g (inc left) row (= idx @selected)))
 
                 (and (zero? total) (zero? i))
                 (do
@@ -1648,18 +1677,29 @@
                      (p/put-str! g (+ left 2) row-y
                        (ellipsize (str label gap desc-trunc) (max 1 (- paint-w 2)))))
 
-                   (if selected?
-                     (do
-                       (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-                       (p/fill-rect! g (inc left) row-y paint-w 1)
+                   ;; Selection visual: leading `> ` cursor glyph and
+                   ;; BOLD label text. The body palette stays normal
+                   ;; (`dialog-fg` / `dialog-bg`) so the description
+                   ;; column keeps its dim hint color either way —
+                   ;; previously the inverse-on-accent path squashed
+                   ;; both columns into the title-fg color.
+                   (do
+                     (p/set-colors! g t/dialog-fg t/dialog-bg)
+                     (p/fill-rect! g (inc left) row-y paint-w 1)
+                     ;; Cursor glyph in the dialog padding column.
+                     (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+                     (p/draw-selection-marker! g (inc left) row-y selected?)
+                     ;; Option label (left half).
+                     (p/set-colors! g t/dialog-fg t/dialog-bg)
+                     (if selected?
+                       (p/styled g [p/BOLD]
+                         (p/put-str! g option-x row-y
+                           (ellipsize (str state-mark label-pad) option-w)))
                        (p/put-str! g option-x row-y
-                         (ellipsize (str state-mark label-pad gap desc-trunc) option-w)))
-                     (do
-                       (p/set-colors! g t/dialog-fg t/dialog-bg)
-                       (p/fill-rect! g (inc left) row-y paint-w 1)
-                       (p/put-str! g option-x row-y (ellipsize (str state-mark label-pad) option-w))
-                       (p/set-colors! g t/dialog-hint t/dialog-bg)
-                       (p/put-str! g (+ option-x check-w label-w gap-w) row-y desc-trunc)))))
+                         (ellipsize (str state-mark label-pad) option-w)))
+                     ;; Description (right half), dimmed.
+                     (p/set-colors! g t/dialog-hint t/dialog-bg)
+                     (p/put-str! g (+ option-x check-w label-w gap-w) row-y desc-trunc))))
                (do
                  (p/set-colors! g t/dialog-fg t/dialog-bg)
                  (p/fill-rect! g (inc left) row-y paint-w 1)))))
@@ -1851,14 +1891,18 @@
 
 (defn- draw-conversation-row!
   [g left row inner-w selected? label]
-  ;; Do not add the generic list selector prefix here. The conversation
-  ;; picker is a table; injected "▸ " shifted body columns two cells right
-  ;; of the header. Full-row highlight is the selection affordance.
-  (if selected?
-    (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-    (p/set-colors! g t/dialog-fg t/dialog-bg))
+  ;; Conversation picker is a TABLE — do NOT inline `> ` into the
+  ;; label or columns shift. The cursor glyph is painted in the
+  ;; dialog's left padding column by the caller (see the row loop in
+  ;; `conversation-picker-dialog!`). Here we just paint the body in
+  ;; the normal palette, BOLD on selected so the row text echoes the
+  ;; cursor cue.
+  (p/set-colors! g t/dialog-fg t/dialog-bg)
   (p/fill-rect! g (inc left) row inner-w 1)
-  (p/put-str! g (+ left 2) row (ellipsize label (max 0 (- inner-w 2)))))
+  (if selected?
+    (p/styled g [p/BOLD]
+      (p/put-str! g (+ left 2) row (ellipsize label (max 0 (- inner-w 2)))))
+    (p/put-str! g (+ left 2) row (ellipsize label (max 0 (- inner-w 2))))))
 
 (defn conversation-picker-dialog!
   "Show recent TUI conversations in a fixed-size table. Returns
@@ -1901,7 +1945,12 @@
                 row (+ body-top i)]
             (when (< idx total)
               (draw-conversation-row! g left row inner-w (= idx @selected)
-                (:label (nth items idx))))))
+                (:label (nth items idx)))
+              ;; `> ` cursor glyph in the dialog padding column,
+              ;; outside the table body — same convention as the
+              ;; file picker.
+              (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+              (p/draw-selection-marker! g (inc left) row (= idx @selected)))))
 
         (draw-hint-bar! g left hint-row inner-w [["↑/↓" "move"] ["Enter" "select"] ["N" "new"] ["F" "fork"] ["Esc" "cancel"]])
         (.setCursorPosition screen (p/cursor-pos 0 0))
