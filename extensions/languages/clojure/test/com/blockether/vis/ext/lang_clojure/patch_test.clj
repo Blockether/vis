@@ -224,3 +224,36 @@
       (expect (= "(ns demo)\n(def z 3)\n"
                 (get-in out [:info :files 0 :after])))
       (expect (= "(ns demo)\n(def z 3)\n" (slurp path))))))
+
+(defdescribe zpatch-file-extension-precheck-test
+  (it "rejects z/patch on a non-Clojure file before any rewrite-clj parse (regression: ANALYSIS.md §1)"
+    (let [md-path  (write-temp! "ext-check/AGENTS.md" "# heading\n\nbody with infinity ∞ symbol.\n")
+          patch-fn (private-fn "patch-safe")]
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(patch-fn [{:path md-path :search "heading" :replace "title"}])))))
+
+  (it "rejects z/locators on a non-Clojure file"
+    (let [yml-path (write-temp! "ext-check/config.yaml" "key: value\n")
+          locators (private-fn "locators-file")]
+      (expect (throws? clojure.lang.ExceptionInfo #(locators yml-path)))))
+
+  (it "rejects z/symbols on a non-Clojure file"
+    (let [json-path (write-temp! "ext-check/data.json" "{\"x\":1}\n")
+          symbols   (private-fn "symbols-file")]
+      (expect (throws? clojure.lang.ExceptionInfo #(symbols json-path)))))
+
+  (it "accepts every legal Clojure/EDN extension"
+    (doseq [ext ["clj" "cljc" "cljs" "edn"]]
+      (let [path     (write-temp! (str "ext-check/ok." ext) "(def x 1)\n")
+            patch-fn (private-fn "patch-safe")]
+        (expect (= [{:path path :before "(def x 1)\n" :after "(def x 2)\n"}]
+                  (mapv #(select-keys % [:path :before :after])
+                    (patch-fn [{:path path :search "(def x 1)" :replace "(def x 2)"}])))))))
+
+  (it "extension check is case-insensitive"
+    ;; macOS / case-insensitive FS users frequently end up with .CLJ / .EDN.
+    (let [path     (write-temp! "ext-check/upper.CLJ" "(def y 1)\n")
+          patch-fn (private-fn "patch-safe")]
+      (expect (= [{:path path :before "(def y 1)\n" :after "(def y 2)\n"}]
+                (mapv #(select-keys % [:path :before :after])
+                  (patch-fn [{:path path :search "(def y 1)" :replace "(def y 2)"}])))))))

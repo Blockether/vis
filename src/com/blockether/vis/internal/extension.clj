@@ -2348,6 +2348,103 @@
               cleared cleared)]
         with-reflinks))))
 
+(def op-classes
+  "Closed set of operation classes a tool can declare. The classification
+   names a USER-VISIBLE EFFECT, deliberately divorced from any rendering
+   concern (color, glyph, layout). Channels that want to color tools by
+   class look the class up themselves; the engine never carries
+   presentation in the tool envelope.
+
+     :op/read    pure observation: file/dir/source content out, no mutation.
+     :op/search  read-with-query semantics (regex, locator search). Logically a read.
+     :op/edit    in-place file mutation (patch, write).
+     :op/create  brings new path(s) into existence (mkdir, touch).
+     :op/delete  removes path(s) from the filesystem.
+     :op/move    relocates / copies path(s) (move, copy).
+     :op/shell   shells out (bash). Effect is undefined at the engine
+                 level; treat as side-effecting.
+     :op/meta    everything else: env queries, dry-run checks, registry
+                 introspection. Default class for unannotated tools."
+  #{:op/read :op/search :op/edit :op/create :op/delete :op/move :op/shell :op/meta})
+
+(def side-effect-op-classes
+  "Subset of `op-classes` whose calls cannot be observed in the
+   write-then-read SCI loop without an intervening journal step.
+   Iterations that combine any of these with `(answer ...)` are
+   rejected by `loop/code-entries-preflight`."
+  #{:op/edit :op/create :op/delete :op/move :op/shell})
+
+(def ^:private op-keyword->class
+  "Canonical op-keyword -> op-class table. Tool envelopes carry an
+   `:info :op` keyword (e.g. `:v/patch`); this is the engine-owned
+   classification of those op-keywords. Extensions register through
+   `register-op-class!` if they need additional entries; the table here
+   covers the in-tree foundation + lang-clojure tools."
+  (atom
+    {;; foundation editing (alias `v`)
+     :v/cat              :op/read
+     :v/ls               :op/read
+     :v/glob             :op/read
+     :v/exists?          :op/read
+     :v/rg               :op/search
+     :v/patch            :op/edit
+     :v/patch-check      :op/meta
+     :v/write            :op/edit
+     :v/append           :op/edit
+     :v/create-dirs      :op/create
+     :v/delete           :op/delete
+     :v/delete-if-exists :op/delete
+     :v/move             :op/move
+     :v/copy             :op/move
+     :v/bash             :op/shell
+     ;; lang-clojure (alias `z`)
+     :z/locators           :op/read
+     :z/symbols            :op/read
+     :z/locator-for-symbol :op/read
+     :z/patch              :op/edit
+     :z/patch-check        :op/meta
+     :z/repair-range       :op/edit
+     :z/repair-locator     :op/edit
+     :z/repair-file        :op/edit
+     ;; clojure.core mutators reachable through SCI sandbox
+     :spit                 :op/edit}))
+
+(defn register-op-class!
+  "Register or override the op-class for `op-keyword` (e.g. `:my-ext/foo`).
+   `class` MUST be a member of `op-classes`. Idempotent."
+  [op-keyword class]
+  (when-not (contains? op-classes class)
+    (anomaly/incorrect!
+      (str "register-op-class!: unknown class " (pr-str class)
+        "; must be one of " op-classes)
+      {:type :extension/unknown-op-class :class class :allowed op-classes}))
+  (swap! op-keyword->class assoc op-keyword class)
+  op-keyword)
+
+(defn op-class-of
+  "Return the `:op/...` class for `op-keyword`. Defaults to `:op/meta`
+   for unknown ops so unannotated tools stay observable in the same
+   iteration as `(answer ...)` (read-only-by-default — the safer side
+   if the engine cannot prove side-effects)."
+  [op-keyword]
+  (get @op-keyword->class op-keyword :op/meta))
+
+(defn side-effect-op?
+  "True when `op-keyword`'s class is in `side-effect-op-classes`."
+  [op-keyword]
+  (contains? side-effect-op-classes (op-class-of op-keyword)))
+
+(defn op-presentation
+  "Engine-owned metadata for a tool's `:op` keyword. Returned shape is
+   intentionally minimal — `{:op-class :op/...}` only. Tool wrappers
+   merge this into their `:info` map so downstream consumers (channels,
+   the iteration-loop preflight, telemetry) read one canonical key.
+
+   Presentation (color, glyph, layout) is NOT in here on purpose:
+   it is a channel concern and lives under the channel that cares."
+  [op]
+  {:op-class (op-class-of op)})
+
 (defn registered-extensions-summary
   "Pure data view of the docs registry: returns
    `{<id> {:nses [...] :docs {<name> <summary>}}}` for every loaded
