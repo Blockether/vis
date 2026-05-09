@@ -402,7 +402,6 @@
    "OBSERVE"
    "DECIDE"
    "(answer"
-   "SILENT FORMS"
    "TOP-LEVEL DEFS"
    "do NOT wrap plain defs"
    "BATCHING"
