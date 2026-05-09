@@ -812,9 +812,11 @@ GROUND RULE — how you operate every turn:
   2. The ENGINE evaluates each top-level form, in order, across
      every fenced block in the iteration.
   3. The ENGINE AUTOMATICALLY populates results into <journal>,
-     one line per top-level form. You never write results
-     yourself. You never imagine them. You never pre-fill values
-     you have not yet evaluated.
+     one row per top-level form PLUS one sub-row for every tool
+     call inside that form (regardless of nesting — `(do ...)`,
+     `(let ...)`, deeply-nested calls, `def` bindings; every call
+     surfaces). You never write results yourself. You never imagine
+     them. You never pre-fill values you have not yet evaluated.
   4. You OBSERVE the <journal> entries the engine produced for the
      forms YOU just emitted, plus the live shape of every binding
      in <bindings>.
@@ -844,80 +846,25 @@ DEFS RENDER — every top-level form shows up in <journal>:
   Block numbering is contiguous over every executed form: three
   defs followed by one bare-symbol read render as `iN.1`..`iN.4`.
 
-TOP-LEVEL DEFS — do NOT wrap plain defs in `(do ...)`:
-
-  Always write `(def x ...)` at the TOP level of your block, never
-  nested inside `(do ...)`/`(let ...)`/etc. Top-level defs each get
-  their own <journal> row and their own <bindings> entry — wrapping
-  them in `(do ...)` LOSES forensic granularity (a throwing def at
-  top level localizes to its own row; the same def inside `(do ...)`
-  kills the whole batch with one error).
-
-      ✗ (do (def file (v/cat \"x\"))            ; bad: defs hidden
-            (def hits (v/rg ...))               ;      inside `do`,
-            (subvec ...))                       ;      no granularity
-
-      ✓ (def file (v/cat \"x\"))                 ; good: top-level
-        (def hits (v/rg ...))                   ;       defs render,
-        (subvec ...)                            ;       each on its
-                                                ;       own row
-
-BATCHING — `(do ...)` is for non-def side effects + final-value
-selection, NOT for grouping defs:
-
-  Reach for `(do ...)` when you want several non-def forms to count
-  as ONE observation, or when you need to force a specific
-  final-value into <journal> after some side-effecting setup:
-
-      (do (println \"checking ports\")
-          (let [ports (scan)]
-            (println \"found\" (count ports))
-            ports))
-
-  That is ONE top-level form → ONE journal entry whose value is the
-  last expression, with all printlns merged into the row's :stdout.
-
 BINDINGS — prefer durable names; *1/*2/*3/*e are escape hatches:
 
   Read-shaped symbols (v/cat, v/rg, v/ls, v/glob, v/exists?, exa
-  search, lsp queries, ...) render a BOUNDED preview of their
-  result into <journal>. To slice a value further on a later
-  iteration, bind it first:
+  search, lsp queries, ...) render a BOUNDED preview into <journal>
+  EVERY time you call them, regardless of where the call sits in
+  your code (top-level, inside `(do ...)`, `(let ...)`, deeply
+  nested, bound to a `def` — doesn't matter; every call surfaces).
 
-      (def file (v/cat \"src/foo.clj\"))                ; preferred
+  To slice a value further on a later iteration, bind it first:
+
+      (def file (v/cat \"src/foo.clj\"))                ; bind once
       ...next iteration...
-      (subvec (get-in file [:result :lines]) 100 200)
-
-  The engine's bounded render only fires when a form's RETURN VALUE
-  is itself a tool-result envelope (what v/cat / v/rg / ... return).
-  `(def f (v/cat \"x\"))` hides the tool-result inside `f`; to surface
-  the preview, end the form with `f` (e.g.
-  `(do (def f (v/cat \"x\")) f)`) or call the read bare and bind from
-  `*1` afterward. Plain values fall through to bounded pr-str.
+      (subvec (get-in file [:result :lines]) 100 200)  ; slice later
 
   If you forgot to bind, the engine also keeps the last three
   evaluated values as `*1` `*2` `*3` (most recent first) and the
   last thrown exception as `*e`, scoped to the current turn. Use
   these only to recover; prefer named bindings for anything you
   expect to reach for more than once.
-
-DIAGNOSTIC OUTPUT — println surfaces text into <journal>:
-
-  Anything you write to *out* via `(println ...)` is captured as the
-  form's :stdout and appended to the same <journal> row, suffixed
-  after the form's value. Use it for sanity counts, step-through
-  reasoning, or surfacing a single computed string without wrapping
-  it in a tool-result envelope:
-
-      (do (def hits (v/rg {:all [\"needle\"]}))
-          (println \"hits =\" (count (get-in hits [:result :hits])))
-          :ok)
-
-  Journal entry shape:  i3.1  (do ...) -> :ok :stdout \"hits = 7\\n\"
-
-  Reach for `println` when you want diagnostic text in <journal>
-  WITHOUT a tool-result; reach for `def` + tail-binding when you
-  want the engine's bounded preview of an actual tool-result.
 ")
 
 (defn build-system-prompt

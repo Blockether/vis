@@ -111,18 +111,23 @@
       (expect (not (str/includes? p "SILENT FORMS")))
       (expect (not (str/includes? p "acquisition, not observation")))))
 
-  (it "BATCHING sub-rule documents (do ...) for one-entry observation"
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "BATCHING"))
-      (expect (str/includes? p "(do"))
-      (expect (str/includes? p "ONE journal entry"))))
-
   (it "BINDINGS sub-rule documents *1/*2/*3/*e as escape hatches"
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "BINDINGS"))
       (expect (str/includes? p "`*1`"))
       (expect (str/includes? p "`*e`"))
-      (expect (str/includes? p "prefer durable names")))))
+      (expect (str/includes? p "prefer durable names"))))
+
+  (it "GROUND RULE step 3 promises every tool call surfaces in <journal>"
+    ;; The sink design makes prompt-level shape coaching (TOP-LEVEL DEFS,
+    ;; BATCHING, DIAGNOSTIC OUTPUT) redundant - the engine captures every
+    ;; call regardless of nesting. The prompt must promise that invariant
+    ;; so the model knows it can write any shape.
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "every call surfaces"))
+      (expect (not (str/includes? p "TOP-LEVEL DEFS")))
+      (expect (not (str/includes? p "BATCHING")))
+      (expect (not (str/includes? p "DIAGNOSTIC OUTPUT"))))))
 
 (defdescribe journal-rendering-test
   (it "renders every block in <journal> (no silent elision)"
