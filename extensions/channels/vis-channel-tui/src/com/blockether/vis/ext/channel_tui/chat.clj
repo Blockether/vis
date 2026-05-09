@@ -120,11 +120,23 @@
                                                      (assoc :stdout (get-in result [:result :stdout]))
                                                      (get-in result [:result :stderr])
                                                      (assoc :stderr (get-in result [:result :stderr]))))))
-                                             result-strs (mapv (fn [{:keys [result error]}]
+                                             result-strs (mapv (fn [{:keys [result error channel]}]
                                                                  (cond
                                                                    error (vis/format-error error)
                                                                    (and (map? result) (= :expr (:vis/ref result)))
                                                                    "<runtime value; re-evaluate expression to restore>"
+                                                                   (seq channel)
+                                                                   ;; Per-form sink entries: walk each, surface
+                                                                   ;; pre-rendered markdown on success, format the
+                                                                   ;; error map on failure. Same shape as the live
+                                                                   ;; progress path in `internal/progress.clj`.
+                                                                   (str/join "\n\n"
+                                                                     (map (fn [{:keys [success? result error]}]
+                                                                            (if success?
+                                                                              result
+                                                                              (extension/default-channel-error-text
+                                                                                {:success? false :result nil :info {} :error error})))
+                                                                       channel))
                                                                    (extension/tool-result? result)
                                                                    (extension/channel-render-tool-result result)
                                                                    :else (pr-str result)))

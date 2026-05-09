@@ -119,18 +119,37 @@
 
 (defn- format-form-result
   "Pre-format a per-form chunk's result for renderer consumption.
-   Errors get the standard `ERROR: ...` prefix; tool results dispatch
-   through extension-owned renderers; ordinary successes get
-   `safe-pr-str` (bounded pr-str). Mirrors the formatting the
-   pre-streaming bulk chunk used so the TUI render code stays the
-   same."
+
+   Errors get the standard `ERROR: ...` prefix.
+
+   Tool calls inside the form land in `:channel` as a vec of sink
+   entries (one per call, regardless of nesting). When non-empty, we
+   concat their pre-rendered markdown so the TUI bubble shows EVERY
+   call's render, not just the form's last-expression value.
+
+   When `:channel` is empty (plain-value form: `(+ 1 2)`, a `def` whose
+   value isn't a tool-result, etc.) we fall back to the legacy path:
+   render via `channel-render-tool-result` if the result is a tool-result
+   envelope, otherwise bounded `safe-pr-str`."
   [chunk]
   (if (:error chunk)
     (error/format-error (:error chunk))
-    (let [result (:result chunk)]
-      (if (extension/tool-result? result)
-        (extension/channel-render-tool-result result)
-        (prompt/safe-pr-str result)))))
+    (let [channel-entries (seq (:channel chunk))]
+      (cond
+        channel-entries
+        (str/join "\n\n"
+          (map (fn [{:keys [success? result error]}]
+                 (if success?
+                   result
+                   (extension/default-channel-error-text
+                     {:success? false :result nil :info {} :error error})))
+            channel-entries))
+
+        (extension/tool-result? (:result chunk))
+        (extension/channel-render-tool-result (:result chunk))
+
+        :else
+        (prompt/safe-pr-str (:result chunk))))))
 
 (def ^:private thinking-event-target-chars
   "Target max chars per live thinking event.
