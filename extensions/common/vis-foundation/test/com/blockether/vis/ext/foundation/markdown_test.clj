@@ -203,6 +203,27 @@
     (expect (= "Status: `ok`, done."
               (md/p "Status" ":" (md/code "ok") "," "done" "."))))
 
+  (it "p preserves whitespace inside inline-code spans (Clojure forms keep ` :keyword`)"
+    ;; Regression: punctuation-tightening regex used to nuke whitespace before
+    ;; `:`, `;`, `.`, `,`, `!`, `?` ANYWHERE in the joined string - including
+    ;; inside backtick spans. That collapsed `(extension/render-tool-result
+    ;; :journal v)` to `(extension/render-tool-result:journal v)` and broke
+    ;; every Clojure code citation in answer markdown.
+    (expect (= "`tool-result-journal-text` calls `(extension/render-tool-result :journal v)`. rest."
+              (md/p (md/code "tool-result-journal-text") " calls "
+                (md/code "(extension/render-tool-result :journal v)")
+                ". rest.")))
+    ;; Other punctuation classes the regex used to grab also stay intact:
+    (expect (= "`(if x ; comment\\n  y)`"
+              (md/p (md/code "(if x ; comment\\n  y)"))))
+    (expect (= "`{:a 1 , :b 2}`"
+              (md/p (md/code "{:a 1 , :b 2}"))))
+    ;; English-prose tightening still applies OUTSIDE code spans:
+    (expect (= "foo: `bar`"
+              (md/p "foo" ":" (md/code "bar"))))
+    (expect (= "(`x`)"
+              (md/p "(" (md/code "x") ")"))))
+
   (it "p with no args yields the empty string"
     (expect (= "" (md/p))))
 
@@ -392,6 +413,23 @@
                       "Nowe API: " (md/code "v/inspect") ", " (md/code "v/report")
                       "5 nowych tabel"]))))
 
+  (it "ul coalesces slash-connected inline-code fragments into one bullet"
+    ;; Regression: the LLM emits `(v/code \":all\") \"/\" (v/code \":paths\") \"/\" (v/code \":include\")`
+    ;; as a flat fragment series. The dangling-suffix / continuation-prefix
+    ;; predicates used to ignore `/` (and `+`, `&`, `=`), so each slash and
+    ;; each backtick'd keyword exploded into its own bullet:
+    ;;   - Narrow with `:all`
+    ;;   - /
+    ;;   - `:paths`
+    ;;   - /
+    ;;   - `:include`.
+    ;; Now they coalesce into a single bullet.
+    (expect (= "- Narrow with `:all`/`:paths`/`:include`."
+              (md/ul ["Narrow with " (md/code ":all") "/" (md/code ":paths") "/"
+                      (md/code ":include") "."])))
+    (expect (= "- `a` + `b` & `c` = `d`"
+              (md/ul [(md/code "a") " + " (md/code "b") " & " (md/code "c") " = " (md/code "d")]))))
+
   (it "ol coalesces LLM-flattened inline fragments without eating next item"
     (expect (= "1. Path: `src/foo.clj`, `src/bar.clj`\n2. Run tests"
               (md/ol ["Path: " (md/code "src/foo.clj") ", " (md/code "src/bar.clj")
@@ -454,6 +492,23 @@
                    "| --- | --- |\n"
                    "| a | 1 |\n"
                    "| b | 2 |") out))))
+
+  (it "folds row overflow into the last cell instead of silently dropping"
+    ;; Regression: `pad-row` used to truncate to `(count headers)` so trailing
+    ;; cells were silently discarded. The LLM naturally writes a 5-element
+    ;; row for a 3-column table when one cell is `[\"via \" (code \"x\") \" suffix\"]`
+    ;; flattened. Overflow now composes into the final cell.
+    (let [out (md/table ["Aspect" "Error" "Tool-result (v/rg)"]
+                [["full detail" "DB/transcript only"
+                  "via " (md/code "v/preview") " EQL projection"]])]
+      (expect (str/includes? out "| via `v/preview` EQL projection |"))))
+
+  (it "composes sequential cells via compose-text"
+    ;; Sister rule to the overflow fold: nested vector cells are first-class.
+    ;; `(table hdrs [[\"a\" [\"via \" (code \"x\") \" suffix\"]]])` should not throw.
+    (let [out (md/table ["k" "v"]
+                [["renderer" [(md/code "render-tool-result") " :journal"]]])]
+      (expect (str/includes? out "| renderer | `render-tool-result` :journal |"))))
 
   (it "pads short rows with empty cells"
     (let [out (md/table ["a" "b" "c"] [["x"]])]

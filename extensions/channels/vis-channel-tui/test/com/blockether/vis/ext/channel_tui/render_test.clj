@@ -1313,6 +1313,35 @@
         (expect (some #(= :toggle-details (:kind %)) metas))
         (expect (not-any? #(str/includes? % "body") lines))))
 
+    (it "clicking the disclosure toggles between collapsed and expanded"
+      ;; Regression: the renderer used to default-expand `<details>`
+      ;; while the toggle handler stored only `true` (and treated
+      ;; missing-key as collapsed). The two layers disagreed on
+      ;; "absent" semantics, so a single click landed in a state
+      ;; (key=true, default-expanded=true) where the user saw zero
+      ;; visual change. The pin here forces both render-paths
+      ;; agree on collapsed-by-default.
+      (let [text "<details>
+<summary>Details / OK</summary>
+
+body
+
+</details>"
+            base-opts {:conversation-id "cid" :detail-expansions {}}
+            click-opts {:conversation-id "cid"
+                        :detail-expansions {["cid" "answer:details:d1"] true}}
+            collapsed (render/format-answer-markdown-data text 60 base-opts)
+            expanded  (render/format-answer-markdown-data text 60 click-opts)]
+        ;; Initial render: collapsed, body hidden, click region present.
+        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
+                         (str/includes? % "▸ Details / OK")) (:lines collapsed)))
+        (expect (not-any? #(str/includes? % "body") (:lines collapsed)))
+        (expect (some #(= :toggle-details (:kind %)) (:line-meta collapsed)))
+        ;; After one click the renderer flips to expanded and the body shows.
+        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
+                         (str/includes? % "▾ Details / OK")) (:lines expanded)))
+        (expect (some #(str/includes? % "body") (:lines expanded)))))
+
     (it "answer disclosure node ids are scoped by conversation turn"
       (let [text "<details>\n<summary>Details / OK</summary>\n\nbody\n\n</details>"
             expanded (render/format-answer-markdown-data

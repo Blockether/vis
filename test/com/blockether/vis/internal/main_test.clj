@@ -14,7 +14,7 @@
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry :as registry]
-   [lazytest.core :refer [defdescribe describe expect it]]))
+   [lazytest.core :refer [defdescribe describe expect it throws?]]))
 
 (def ^:private short-ext-ns            #'main/short-ext-ns)
 (def ^:private wrap-str                #'main/wrap-str)
@@ -32,6 +32,7 @@
 (def ^:private help-request?           #'main/help-request?)
 (def ^:private channel-help-request?   #'main/channel-help-request?)
 (def ^:private config-with-model-override #'main/config-with-model-override)
+(def ^:private config-with-provider-override #'main/config-with-provider-override)
 
 (defdescribe result-json-test
   (it "normalizes nested non-string map keys in the trace envelope"
@@ -80,6 +81,49 @@
               (parse-run-args ["throwaway" "probe"])))
     (expect (= {:persist? true :prompt "keep this"}
               (parse-run-args ["--persist" "keep" "this"]))))
+
+  (it "parses --provider and --model as separate flags"
+    (expect (= {:provider "anthropic" :model "claude-sonnet-4-20250514" :prompt "hi"}
+              (parse-run-args ["--provider" "anthropic" "--model" "claude-sonnet-4-20250514" "hi"])))
+    (expect (= {:provider "openai" :prompt "hi"}
+              (parse-run-args ["--provider" "openai" "hi"])))
+    (expect (= {:model "gpt-4o" :prompt "hi"}
+              (parse-run-args ["--model" "gpt-4o" "hi"]))))
+
+  (it "config-with-provider-override promotes provider to first position"
+    (let [base-config {:providers [{:id :openai :models [{:name "gpt-5"}]}
+                                   {:id :anthropic :models [{:name "claude-4"}]}]}]
+      (let [result (config-with-provider-override base-config :anthropic)]
+        (expect (= :anthropic (-> result :providers first :id)))
+        (expect (= [:anthropic :openai] (mapv :id (:providers result)))))
+      ;; original not mutated
+      (expect (= :openai (-> base-config :providers first :id)))))
+
+  (it "config-with-provider-override throws for unknown provider"
+    (let [base-config {:providers [{:id :openai :models [{:name "gpt-5"}]}]}]
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(config-with-provider-override base-config :nonexistent)))))
+
+  (it "run! applies --provider before --model"
+    (let [events (atom [])]
+      (with-redefs [config/resolve-config (fn ([] {:providers [{:id :openai :models [{:name "gpt-5"}]}
+                                                               {:id :anthropic :models [{:name "claude-4"}]}]})
+                                            ([_] {:providers [{:id :openai :models [{:name "gpt-5"}]}
+                                                              {:id :anthropic :models [{:name "claude-4"}]}]}))
+                    lp/get-router (fn [] :router)
+                    svar/make-router (fn [providers]
+                                       {:providers providers})
+                    lp/create-environment (fn [router opts]
+                                            (swap! events conj [:create-environment router])
+                                            :env)
+                    lp/turn! (fn [env messages opts]
+                               (swap! events conj [:turn (:model opts)])
+                               {:answer "ok" :iteration-count 1 :duration-ms 2})
+                    lp/dispose-environment! (fn [_])]
+        (main/run! (main/agent {:name "cli"}) "hi" {:provider "anthropic" :model "claude-4"})
+        ;; Router was built with anthropic first
+        (let [router-args (first @events)]
+          (expect (= :anthropic (-> router-args second :providers first :id)))))))
 
   (it "run! uses an in-memory environment unless persistence is explicitly requested"
     (let [events (atom [])]
