@@ -2996,3 +2996,115 @@ body
       (expect (= p/MARKER_CODE_OK (marker-of clipped)))
       (expect (str/includes? clipped "\u001b[32m"))
       (expect (<= (p/display-width (strip-ansi (body-of clipped))) 12)))))
+
+(defdescribe slash-command-suggestions-overlay-test
+  (it "draws a bordered, BOLD, accent-stripe title with flex hint pairs"
+    (let [puts   (atom [])
+          fills  (atom [])
+          fg     (atom nil)
+          bg     (atom nil)
+          active (atom #{})
+          g (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+              (clearModifiers []
+                (reset! active #{})
+                this)
+              (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                (swap! active into (seq arr))
+                this)
+              (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                (apply swap! active disj (seq arr))
+                this)
+              (getActiveModifiers []
+                (if (empty? @active)
+                  (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                  (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+              (setForegroundColor [c] (reset! fg c) this)
+              (setBackgroundColor [c] (reset! bg c) this)
+              (putString [col row text]
+                (swap! puts conj {:col col :row row :text text
+                                  :fg @fg :bg @bg :sgr @active})
+                this)
+              (fillRectangle [pos _size _ch]
+                (swap! fills conj {:row (.getRow pos) :col (.getColumn pos)
+                                   :fg @fg :bg @bg})
+                this)
+              (setCharacter [_ _ _] this))
+          suggestions [{:label "first"  :slash/usage "/first"  :slash/selected? true}
+                       {:label "second" :slash/usage "/second" :slash/selected? false}]
+          input-top   10
+          cols        80
+          n           (count suggestions)
+          title-row   (- input-top n 1)
+          border-row  (dec title-row)]
+      (render/draw-slash-command-suggestions! g suggestions input-top cols)
+
+      ;; Border row: a horizontal rule rendered at border-row.
+      (expect (some #(and (= border-row (:row %))
+                       (str/starts-with? (:text %) "─")
+                       (= t/dialog-border (:fg %))
+                       (= t/terminal-bg (:bg %)))
+                @puts))
+
+      ;; Title row: full-width accent stripe (fillRectangle) on title-bg.
+      (expect (some #(and (= title-row (:row %))
+                       (= t/dialog-title-bg (:bg %)))
+                @fills))
+
+      ;; Title row: BOLD label "Slash commands" on the accent stripe.
+      (expect (some #(and (= title-row (:row %))
+                       (str/includes? (:text %) "Slash commands")
+                       (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)
+                       (= t/dialog-title-fg (:fg %))
+                       (= t/dialog-title-bg (:bg %)))
+                @puts))
+
+      ;; Title row: BOLD keys for each [key action] hint pair.
+      (doseq [k ["↑↓/wheel" "Tab" "Enter"]]
+        (expect (some #(and (= title-row (:row %))
+                         (= k (:text %))
+                         (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
+                  @puts)))
+
+      ;; Title row: action words rendered NON-BOLD next to their keys.
+      (doseq [a [" select" " complete" " run"]]
+        (expect (some #(and (= title-row (:row %))
+                         (= a (:text %))
+                         (not (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)))
+                  @puts)))
+
+      ;; Items spread across the row (space-between): the leftmost
+      ;; title token sits at col 1 and the rightmost hint key sits in
+      ;; the right half of the screen.
+      (let [title-puts (filter #(= title-row (:row %)) @puts)
+            cols-used  (mapv :col title-puts)]
+        (expect (some #(<= % 2) cols-used))
+        (expect (some #(>= % (quot cols 2)) cols-used)))))
+
+  (it "drops the border row when there is not enough vertical space"
+    (let [puts   (atom [])
+          active (atom #{})
+          g (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+              (clearModifiers [] (reset! active #{}) this)
+              (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                (swap! active into (seq arr)) this)
+              (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                (apply swap! active disj (seq arr)) this)
+              (getActiveModifiers []
+                (if (empty? @active)
+                  (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                  (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+              (setForegroundColor [_] this)
+              (setBackgroundColor [_] this)
+              (putString [col row text]
+                (swap! puts conj {:col col :row row :text text}) this)
+              (fillRectangle [_ _ _] this)
+              (setCharacter [_ _ _] this))
+          ;; input-top = n + 1 leaves room for title only, no border.
+          suggestions [{:label "a" :slash/usage "/a" :slash/selected? true}]
+          input-top   2]
+      (render/draw-slash-command-suggestions! g suggestions input-top 40)
+      ;; Title row exists at row 0; no horizontal-rule border was drawn.
+      (expect (some #(= 0 (:row %)) @puts))
+      (expect (not-any? #(and (neg? (:row %))
+                           (str/starts-with? (:text %) "─"))
+                @puts)))))
