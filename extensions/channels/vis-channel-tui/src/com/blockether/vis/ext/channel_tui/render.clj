@@ -1235,6 +1235,23 @@
 ;; the var here so Clojure can resolve the symbol at compile time.
 (declare markdown->inline markdown->lines)
 
+(defn- op-class->color-role
+  "Channel-local mapping from the engine `:op/...` class to a TUI color
+   role. Editing extensions emit `:op-class` ONLY — they don't decide
+   colors. This is the single point where the TUI binds the engine
+   contract to its own theme vocabulary."
+  [op-class]
+  (case op-class
+    :op/read   :tool-color/read
+    :op/search :tool-color/search
+    :op/edit   :tool-color/edit
+    :op/create :tool-color/create
+    :op/delete :tool-color/delete
+    :op/move   :tool-color/move
+    :op/shell  :tool-color/shell
+    :op/meta   :tool-color/meta
+    nil))
+
 (defn- tool-color-role->fg
   [role]
   (case role
@@ -1248,6 +1265,14 @@
     :tool-color/shell t/tool-color-shell
     :tool-color/meta t/tool-color-meta
     nil))
+
+(defn- meta->color-role
+  "Resolve a color role from a meta map carrying `:op-class` and/or a
+   legacy `:color-role`. Prefers explicit `:color-role` for backcompat
+   with any leftover emitter; falls back to the engine class."
+  [m]
+  (or (:color-role m)
+    (op-class->color-role (:op-class m))))
 
 (defn- paint-preview-switcher!
   [g x y fbx iw abs-row meta bg fg inactive-fg base-styles]
@@ -3358,7 +3383,7 @@
                                                                 :toggle-node-id body-id})
                                         body-entries         (mapv #(line-entry (str r-marker %)) mode-lines)]
                                     (vec (concat [switcher-entry] body-entries)))
-                                  (let [color-role     (when (map? result-detail) (:color-role result-detail))
+                                  (let [color-role     (when (map? result-detail) (meta->color-role result-detail))
                                         detail-entries (maybe-collapse-raw-text-block
                                                          {:conversation-id      conversation-id
                                                           :detail-expansions   detail-expansions

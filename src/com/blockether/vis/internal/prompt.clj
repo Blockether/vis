@@ -263,6 +263,20 @@
                   (format-sink-error-text entry))]
     (str label form " -> " body)))
 
+(defn- first-failed-sink-entry
+  "Return the first sink-entry in `journal` whose `:success?` is false,
+   or nil. Used to lift a buried tool failure into the block header so
+   the next-iteration prompt cannot miss it (regression: convo
+   `73f3d325` turn 5, where a `(z/patch ...)` returned
+   `:success? false` but the parent block header rendered as a tidy
+   `RESULT / N chars hidden` summary while the failure detail lived
+   five keys deep, and the model claimed `Now fixed` in the same
+   iteration)."
+  [journal]
+  (some (fn [entry]
+          (when (false? (:success? entry)) entry))
+    (or journal [])))
+
 (defn- format-block-line
   "One iteration's single top-level form as journal text. Layout:
 
@@ -277,6 +291,11 @@
    form made, regardless of nesting (do, let, deeply-nested calls, def
    bindings).
 
+   When the block-level `:error` is nil but a sink-entry in `:journal`
+   reports `:success? false`, the failure is LIFTED into the header
+   value-part as `ERROR: <op> ...` so the model cannot mistake a
+   tool-failure tool-result envelope for a successful run.
+
    Slow-suffix and per-form stdout/stderr suffixes still hang off the
    header row."
   [iteration-position k expr]
@@ -290,20 +309,32 @@
         time-ms       (or execution-time-ms 0)
         slow-suffix   (when (> time-ms 5000)
                         (str " (" time-ms "ms)"))
-        value-part    (if error
+        lifted-failure (when-not error (first-failed-sink-entry journal))
+        value-part    (cond
+                        error
                         (str "ERROR: " (truncate error 600))
-                        (if (extension/tool-result? result)
-                          (tool-result-journal-text result)
-                          (let [v (realize-value result)
-                                [value-str truncated?] (truncated-pr-str v)]
-                            (str value-str
-                              (when truncated? " :truncated? true")))))
+
+                        lifted-failure
+                        (str "ERROR: " (truncate (format-sink-error-text lifted-failure) 600))
+
+                        (extension/tool-result? result)
+                        (tool-result-journal-text result)
+
+                        :else
+                        (let [v (realize-value result)
+                              [value-str truncated?] (truncated-pr-str v)]
+                          (str value-str
+                            (when truncated? " :truncated? true"))))
         header        (str "  " block-label "  " code-str " -> " value-part
                         (or slow-suffix "")
                         (or stdout-suffix "")
                         (or stderr-suffix ""))
         sub-rows      (when (seq journal)
-                        (mapv #(format-sink-sub-row iteration-position k %) journal))]
+                        ;; Sort by :position so racy futures (which can land
+                        ;; in vec-completion order rather than source order)
+                        ;; render in canonical source order.
+                        (mapv #(format-sink-sub-row iteration-position k %)
+                          (sort-by :position journal)))]
     (if (seq sub-rows)
       (str/join "\n" (cons header sub-rows))
       header)))

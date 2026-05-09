@@ -152,6 +152,35 @@
       (expect (str/includes? out "XDDD"))
       (expect (str/includes? out "(+ 1 1) -> 2")))))
 
+(defdescribe lifted-sink-failure-test
+  (it "lifts a tool-envelope :success? false sink-entry into the block header (regression: convo 73f3d325)"
+    ;; Reduced repro: a (z/patch ...) returned a tool-result envelope
+    ;; with :success? false. The block-level :error was nil so the
+    ;; previous header rendered the parent envelope as a tidy summary,
+    ;; and the failure detail lived inside the journal sink-entry.
+    ;; The model wrote (answer \"Now fixed\") in the same iteration
+    ;; without ever observing the failure. Now the failed sink lifts
+    ;; into the header `value-part` so the next-iter prompt cannot
+    ;; miss it.
+    (let [out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "Lifted-sink regression")}
+                {:active-extensions   []
+                 :model               "test-model"
+                 :context-limit       4096
+                 :iteration           1
+                 :blocks-by-iteration [[1 {:blocks [{:code    "(z/patch [{:path \"x.clj\" :search \"y\" :replace \"z\"}])"
+                                                     :result  nil
+                                                     :error   nil
+                                                     :journal [{:position  0
+                                                                :form      "(z/patch [{:path \"x.clj\" :search \"y\" :replace \"z\"}])"
+                                                                :success?  false
+                                                                :result    nil
+                                                                :error     {:type    "clojure.lang.ExceptionInfo"
+                                                                            :message "z/patch :search locator must match exactly once; matched 4 time(s)"
+                                                                            :trace   []}}]}]}]]})]
+      (expect (str/includes? out "ERROR"))
+      (expect (str/includes? out "matched 4 time(s)")))))
+
 (defdescribe full-system-prompt-assembly-test
   (it "includes <skills> block when skills are available"
     (with-redefs [skills/list-all (fn [] [{:name "diagnose"

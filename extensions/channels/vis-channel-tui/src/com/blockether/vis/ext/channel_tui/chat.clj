@@ -113,7 +113,7 @@
                                              (fn [result]
                                                (when (extension/tool-result? result)
                                                  (let [prov (:info result)]
-                                                   (cond-> (select-keys prov [:op :op-class :color-role
+                                                   (cond-> (select-keys prov [:op :op-class
                                                                               :spec :paths :hit-count :truncated-by
                                                                               :command :cwd :target])
                                                      (get-in result [:result :stdout])
@@ -129,14 +129,16 @@
                                                                    ;; Per-form sink entries: walk each, surface
                                                                    ;; pre-rendered markdown on success, format the
                                                                    ;; error map on failure. Same shape as the live
-                                                                   ;; progress path in `internal/progress.clj`.
+                                                                   ;; progress path in `internal/progress.clj`. Sort
+                                                                   ;; by :position so racy futures land in canonical
+                                                                   ;; source order.
                                                                    (str/join "\n\n"
                                                                      (map (fn [{:keys [success? result error]}]
                                                                             (if success?
                                                                               result
                                                                               (extension/default-channel-error-text
                                                                                 {:success? false :result nil :info {} :error error})))
-                                                                       channel))
+                                                                       (sort-by :position channel)))
                                                                    (extension/tool-result? result)
                                                                    (extension/channel-render-tool-result result)
                                                                    :else (pr-str result)))

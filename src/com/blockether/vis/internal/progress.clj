@@ -105,7 +105,7 @@
   [tool-result]
   (when (extension/tool-result? tool-result)
     (let [prov (:info tool-result)]
-      (cond-> (select-keys prov [:op :op-class :color-role
+      (cond-> (select-keys prov [:op :op-class
                                  :spec :paths :hit-count :truncated-by
                                  :command :cwd :target])
         (get-in tool-result [:result :stdout])
@@ -137,13 +137,16 @@
     (let [channel-entries (seq (:channel chunk))]
       (cond
         channel-entries
+        ;; Sort by :position so racy futures (which can land in
+        ;; completion order rather than source order) render in canonical
+        ;; source order.
         (str/join "\n\n"
           (map (fn [{:keys [success? result error]}]
                  (if success?
                    result
                    (extension/default-channel-error-text
                      {:success? false :result nil :info {} :error error})))
-            channel-entries))
+            (sort-by :position channel-entries)))
 
         (extension/tool-result? (:result chunk))
         (extension/channel-render-tool-result (:result chunk))

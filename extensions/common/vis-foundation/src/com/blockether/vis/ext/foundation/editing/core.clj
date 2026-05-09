@@ -131,37 +131,13 @@
        :absolute  nil
        :kind      kind})))
 
-(defn tool-op->class
-  "Classify editing/language tool operations by user-visible effect."
-  [op]
-  (case op
-    (:v/cat :v/ls :v/glob :v/exists? :z/locators :z/symbols :z/locator-for-symbol) :op/read
-    (:v/rg :all :any) :op/search
-    (:v/patch :z/patch :v/write) :op/edit
-    :v/create-dirs :op/create
-    (:v/delete :v/delete-if-exists) :op/delete
-    (:v/move :v/copy) :op/move
-    :v/bash :op/shell
-    :op/meta))
-
-(defn tool-op->color-role
-  "Return semantic TUI color role for operation class. Themes can map these
-   roles without render code hard-coding RGB values."
-  [op]
-  (case (tool-op->class op)
-    :op/read :tool-color/read
-    :op/search :tool-color/search
-    :op/edit :tool-color/edit
-    :op/create :tool-color/create
-    :op/delete :tool-color/delete
-    :op/move :tool-color/move
-    :op/shell :tool-color/shell
-    :tool-color/meta))
-
-(defn- op-presentation
-  [op]
-  {:op-class (tool-op->class op)
-   :color-role (tool-op->color-role op)})
+;; Engine contract lives in `com.blockether.vis.internal.extension`:
+;;   `extension/op-class-of`     - canonical op-keyword -> :op/... class.
+;;   `extension/side-effect-op?` - predicate used by the iteration loop.
+;;   `extension/op-presentation` - `:info` metadata embedded in tool envelopes.
+;; Editing used to keep its own copies; they were thin shims and crossed
+;; the abstraction boundary (color-role lived here too). Use the engine
+;; functions directly.
 
 (defn- tool-success
   [{:keys [op path kind result info]}]
@@ -173,7 +149,7 @@
                      :started-at-ms  t
                      :finished-at-ms t
                      :duration-ms    0}
-               (op-presentation op)
+               (extension/op-presentation op)
                info)})))
 
 (defn- tool-failure-on-error
@@ -197,7 +173,7 @@
                                         :started-at-ms  t
                                         :finished-at-ms t
                                         :duration-ms    0}
-                                  (op-presentation op))
+                                  (extension/op-presentation op))
                           bash?
                           (assoc :command (first args)
                             :cwd path
