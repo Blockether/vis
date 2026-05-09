@@ -3120,17 +3120,20 @@ body
                        (= t/dialog-bg (:bg %)))
                 @fills))
 
-      ;; The selected row carries a BOLD `> ` cursor glyph in the
-      ;; left margin (col 0), painted in `dialog-hint-key`. The
-      ;; non-selected row gets nothing painted in that column.
+      ;; The selected row carries a BOLD `> ` cursor glyph at the
+      ;; FIRST col of the inset body (col `pad`), painted in
+      ;; `dialog-hint-key` on `dialog-bg` so the marker reads as
+      ;; INSIDE the menu rather than floating in the terminal margin.
+      ;; The non-selected row gets nothing painted in that column.
       (expect (some #(and (= first-sug (:row %))
-                       (= 0 (:col %))
+                       (= pad (:col %))
                        (= "> " (:text %))
                        (= t/dialog-hint-key (:fg %))
+                       (= t/dialog-bg (:bg %))
                        (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                 @puts))
       (expect (not-any? #(and (= (inc first-sug) (:row %))
-                           (= 0 (:col %))
+                           (= pad (:col %))
                            (= "> " (:text %)))
                 @puts))
 
@@ -3149,12 +3152,16 @@ body
         (expect (= n (count descs)))
         ;; Layout invariants per row: chip wraps the usage with 1 col
         ;; padding on each side, ` - ` follows the chip, italic desc
-        ;; follows the separator.
+        ;; follows the separator. The chip starts AFTER the selection
+        ;; gutter (`p/SELECTION_WIDTH` cols inside the inset body).
         (doseq [[chip u s d] (map vector
                                (sort-by :row chip-fills)
                                (sort-by :row usages)
                                (sort-by :row seps)
                                (sort-by :row descs))]
+          ;; Chip lives past the selection gutter — first chip col is
+          ;; at least `pad + p/SELECTION_WIDTH` (cursor + 1-col margin).
+          (expect (>= (:col chip) (+ pad com.blockether.vis.ext.channel-tui.primitives/SELECTION_WIDTH)))
           ;; Chip starts one col before the usage and is exactly
           ;; (usage-width + 2) wide.
           (expect (= (:col u) (inc (:col chip))))
