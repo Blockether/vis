@@ -178,14 +178,13 @@
 (def ^:private lsp-symbols
   [(vis/symbol #'diagnostics-lazy
      {:sym 'diagnostics
-      :examples ["(z/diagnostics)"
-                 "(z/diagnostics {:filenames [\"src/foo.clj\"]})"]})
+      })
    (vis/symbol #'rename-plan-lazy
      {:sym 'rename-plan
-      :examples ["(z/rename-plan 'old.ns/foo 'old.ns/bar)"]})
+      })
    (vis/symbol #'clean-ns-plan-lazy
      {:sym 'clean-ns-plan
-      :examples ["(z/clean-ns-plan {:filenames [\"src/foo.clj\"]})"]})])
+      })])
 
 (def clojure-extension
   (vis/extension

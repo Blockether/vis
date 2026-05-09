@@ -551,15 +551,13 @@
 
 (def web-search-symbol
   (vis/symbol #'web-search
-    {:examples ["(def r (exa/web-search \"latest Clojure release\" {:num-results 5}))"
-                "(get-in r [:result :content])"]
+    {
      :result-spec tool-result-spec
      :render-fn render-exa-result}))
 
 (def code-context-symbol
   (vis/symbol #'code-context
-    {:examples ["(def c (exa/code-context \"rewrite-clj z/find-value examples\" {:tokens-num 12000}))"
-                "(get-in c [:result :content])"]
+    {
      :result-spec tool-result-spec
      :render-fn render-exa-result}))
 

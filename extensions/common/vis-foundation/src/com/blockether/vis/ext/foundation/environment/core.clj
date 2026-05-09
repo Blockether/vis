@@ -166,36 +166,31 @@
 
 (def snapshot-symbol
   (vis/symbol #'snapshot
-    {:examples ["(v/snapshot)"
-                "(get-in (v/snapshot) [:git :branch])"]}))
+    {}))
 
 (def repositories-symbol
   (vis/symbol #'repositories
-    {:examples ["(v/repositories)"
-                "(map :path (:repositories (v/repositories)))"]}))
+    {}))
 
 (def git-symbol
   (vis/symbol #'git
-    {:examples ["(v/git)"
-                "(:branch (v/git))"]}))
+    {}))
 
 (def languages-symbol
   (vis/symbol #'languages
-    {:examples ["(v/languages)"
-                "(:primary (v/languages))"]}))
+    {}))
 
 (def monorepo-symbol
   (vis/symbol #'monorepo
-    {:examples ["(v/monorepo)"
-                "(:shape (v/monorepo))"]}))
+    {}))
 
 (def refresh!-symbol
   (vis/symbol #'refresh!
-    {:examples ["(v/refresh!)"]}))
+    {}))
 
 (def render-symbol
   (vis/symbol #'render
-    {:examples ["(println (v/render))"]}))
+    {}))
 
 ;; ---------------------------------------------------------------------------
 ;; Project guidance + skills + scan-warnings surface (plan §3).
@@ -208,8 +203,7 @@
 
 (def main-agent-instructions-symbol
   (vis/symbol #'main-agent-instructions
-    {:examples ["(v/main-agent-instructions)"
-                "(:content (v/main-agent-instructions))"]}))
+    {}))
 
 ;; (v/skills) WAS HERE. Removed: enumeration is now the
 ;; `TURN_ACCESSIBLE_SKILLS` SYSTEM var (frozen at turn start, vec of
@@ -238,8 +232,7 @@
 
 (def load-skill-symbol
   (vis/symbol #'load-skill
-    {:examples ["(v/load-skill \"diagnose\")"
-                "(:body (v/load-skill \"caveman\"))"]
+    {
      :after-fn remember-active-skill!}))
 
 (defn- combined-scan-warnings []
@@ -285,21 +278,19 @@
 
 (def scan-warnings-symbol
   (vis/symbol #'scan-warnings
-    {:examples ["(v/scan-warnings)"
-                "(when (seq (v/scan-warnings)) :issues)"]}))
+    {}))
 
 (def reload-instructions!-symbol
   (vis/symbol #'reload-instructions!
-    {:examples ["(v/reload-instructions!)"]}))
+    {}))
 
 (def reload-skills!-symbol
   (vis/symbol #'reload-skills!
-    {:examples ["(v/reload-skills!)"]}))
+    {}))
 
 (def reload-extensions!-symbol
   (vis/symbol #'reload-extensions!
-    {:examples ["(v/reload-extensions!)"
-                "(v/reload-extensions! {:reload/timeout-ms 5000})"]}))
+    {}))
 
 (def environment-symbols
   [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol

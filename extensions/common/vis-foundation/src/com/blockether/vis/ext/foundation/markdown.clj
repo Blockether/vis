@@ -168,83 +168,62 @@
    ;; straight from the var so the SCI sandbox can `(doc v/h1)` against
    ;; the same canonical text we render into the prompt listing.
    (vis/symbol #'h1
-     {:examples ["(v/h1 \"Patch report\")"
-                 "(v/h1 \"Build of \" (v/code \"v1.2.3\"))"]})
-   (vis/symbol #'h2 {:examples ["(v/h2 \"Summary\")"]})
-   (vis/symbol #'h3 {:examples ["(v/h3 \"Proposal: \" (v/code \":vis/silent\") \" sentinel\")"]})
-   (vis/symbol #'h4 {:examples ["(v/h4 \"Notes\")"]})
-   (vis/symbol #'h5 {:examples ["(v/h5 \"Caveat\")"]})
-   (vis/symbol #'h6 {:examples ["(v/h6 \"Footnote\")"]})
+     {})
+   (vis/symbol #'h2 {})
+   (vis/symbol #'h3 {})
+   (vis/symbol #'h4 {})
+   (vis/symbol #'h5 {})
+   (vis/symbol #'h6 {})
    (vis/symbol #'h
-     {:examples ["(v/h 3 \"Step 1\")"
-                 "(v/h 2 \"Build of \" (v/code \"v1.2.3\"))"]})
+     {})
    (vis/symbol #'p
-     {:examples ["(v/p \"Done.\")"
-                 "(v/p \"Patched\" n \"files\")"
-                 "(v/p \"Status:\" (v/bold \"OK\"))"]})
+     {})
    (vis/symbol #'bold
-     {:examples ["(v/bold \"important\")"
-                 "(v/bold \"build \" (v/code \"v1.2.3\"))"]})
-   (vis/symbol #'strong   {:examples ["(v/strong \"important\")"]})
-   (vis/symbol #'italic   {:examples ["(v/italic \"subtle\")"]})
-   (vis/symbol #'em       {:examples ["(v/em \"subtle\")"]})
-   (vis/symbol #'bold-italic {:examples ["(v/bold-italic \"!!!\")"]})
-   (vis/symbol #'strike   {:examples ["(v/strike \"obsolete\")"]})
+     {})
+   (vis/symbol #'strong   {})
+   (vis/symbol #'italic   {})
+   (vis/symbol #'em       {})
+   (vis/symbol #'bold-italic {})
+   (vis/symbol #'strike   {})
    (vis/symbol #'code
-     {:examples ["(v/code \"v/cat\")"
-                 "(v/code \"v/\" tool-name)"]})
+     {})
    (vis/symbol #'summary
-     {:examples ["(v/summary \"Logs\")"
-                 "(v/summary (v/bold \"Logs\") \" (\" (v/code \"42\") \")\")"
-                 "(v/details (v/summary (v/bold \"Logs\")) body)"]})
-   (vis/symbol #'kbd      {:examples ["(v/kbd \"Ctrl+K\")"]})
+     {})
+   (vis/symbol #'kbd      {})
    (vis/symbol #'link
-     {:examples ["(v/link \"docs\" \"https://example.com\")"
-                 "(v/link \"spec\" \"docs/spec.md\" \"Full spec\")"]})
+     {})
    (vis/symbol #'image
-     {:examples ["(v/image \"diagram\" \"./diagram.png\")"
-                 "(v/image \"flow\" \"./flow.png\" \"Iteration flow\")"]})
+     {})
    (vis/symbol #'file-link
-     {:examples ["(v/file-link \"src/main.clj\")"
-                 "(v/file-link \"src/main.clj\" 142)"]})
+     {})
    (vis/symbol #'anchor
-     {:examples ["(v/anchor \"Patch report\")"
-                 "(v/anchor \"Jump to summary\" \"summary\")"]})
+     {})
    (vis/symbol #'code-block
-     {:examples ["(v/code-block \"clojure\" \"(println :ok)\")"
-                 "(v/code-block :clojure (pp/pprint-str {:k 1}))"
-                 "(v/code-block 'edn \"{:k 1}\")"
-                 "(v/code-block \"plain text\")"]})
+     {})
    (vis/symbol #'blockquote
-     {:examples ["(v/blockquote \"caveat\")"
-                 "(v/blockquote \"line1\\nline2\")"]})
+     {})
    ;; `quote-md` re-exports `md/blockquote` under a different local name so
    ;; the local var name doesn't clash with `clojure.core/quote`. The SCI
    ;; sandbox name is overridden via `:sym` so the model still calls it `v/quote`.
    (vis/symbol #'quote-md {:sym 'quote
-                           :examples ["(v/quote \"caveat\")"]})
+                           })
    (vis/value #'hr)
    (vis/value #'br)
    (vis/symbol #'details
-     {:examples ["(v/details (v/summary \"Logs\") body)"
-                 "(v/details intro snippet (v/summary \"Trace\"))"
-                 "(v/details para1 para2)"]})
-   (vis/symbol #'li      {:examples ["(v/li \"hello\")" "(v/li \"build \" (v/code \"v1.2.3\"))"]})
-   (vis/symbol #'ul      {:examples ["(v/ul [\"a\" \"b\" \"c\"])"]})
-   (vis/symbol #'ol      {:examples ["(v/ol [\"first\" \"second\"])"]})
-   (vis/symbol #'checklist {:examples ["(v/checklist [[\"done\" true] [\"todo\" false]])"]})
+     {})
+   (vis/symbol #'li      {})
+   (vis/symbol #'ul      {})
+   (vis/symbol #'ol      {})
+   (vis/symbol #'checklist {})
    (vis/symbol #'table
-     {:examples ["(v/table [\"file\" \"lines\"] [[\"a\" 12] [\"b\" 30]])"
-                 "(v/table [\"k\" \"v\"] [[\"x\" 1]] {:align [:left :right]})"]})
-   (vis/symbol #'join    {:examples ["(v/join (v/h1 \"x\") (v/p \"y\"))"]})
+     {})
+   (vis/symbol #'join    {})
    (vis/symbol #'needs-input
-     {:examples ["(answer (v/needs-input \"Please paste the ideas you want reviewed.\"))"
-                 "(answer (v/needs-input {:missing \"the ideas to review\" :ask \"Please paste the ideas you currently have.\"}))"]})
-   (vis/symbol #'lines   {:examples ["(v/lines \"a\" \"b\")"]})
+     {})
+   (vis/symbol #'lines   {})
    (vis/symbol #'section
-     {:examples ["(v/section \"Summary\" \"...\")"
-                 "(v/section 3 \"Details\" \"...\")"]})
-   (vis/symbol #'escape  {:examples ["(v/escape \"1 + 2 = *3*\")"]})])
+     {})
+   (vis/symbol #'escape  {})])
 
 (defn- with-source-rewrite
   [entry]

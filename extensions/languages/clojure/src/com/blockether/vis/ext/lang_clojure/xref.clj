@@ -523,7 +523,7 @@
 (defn- xref-symbol
   [v examples]
   (vis/symbol v
-    {:examples examples
+    {
      :result-spec ::extension/tool-result
      :render-fn render-tool-result
      :on-error-fn (tool-failure-on-error (keyword "z" (name (:name (meta v)))))}))
