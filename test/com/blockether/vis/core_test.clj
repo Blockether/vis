@@ -858,7 +858,11 @@
         (expect (= [1000] (:durations entry)))
         (expect (= [{:type :form-result :form-idx 0}] (:events entry))))))
 
-  (it ":vis/silent form results immediately elide a prior form-start slot"
+  (it ":vis/silent results no longer elide live slots (always-show)"
+    ;; Regression: `:vis/silent` was a sentinel host primitives
+    ;; returned to make the TUI hide the source form. The whole
+    ;; mechanism has been removed; the form survives in the live
+    ;; trace and the result keyword is just another value.
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-start :iteration 0 :form-idx 0
                  :form-of 1 :code "(conversation-title \"x\")"
@@ -868,9 +872,9 @@
                  :code "(conversation-title \"x\")" :result :vis/silent
                  :stdout "" :stderr "" :execution-time-ms 1 :error nil})
       (let [entry (first (get-timeline))]
-        (expect (= [] (:code entry)))
-        (expect (= [] (:events entry)))
-        (expect (= [] (:started-at-ms entry))))))
+        (expect (= ["(conversation-title \"x\")"] (:code entry)))
+        (expect (= 1 (count (:events entry))))
+        (expect (= 1 (count (:started-at-ms entry)))))))
 
   (it "out-of-order :form-result chunks pad with nil"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
@@ -967,24 +971,24 @@
         (expect (= 2 (count (:durations entry))))
         (expect (= "12 hits across 3 files" (-> entry :final :answer))))))
 
-  (it ":iteration-final remaps ordered events after eliding silent and answer slots"
+  (it ":iteration-final remaps ordered events after eliding the answer slot"
+    ;; Earlier this test also exercised silent-block elision via
+    ;; `:silent-form-idxs`. That whole mechanism has been removed;
+    ;; only the answer-bearing form is elided here so its prose
+    ;; doesn't double-render above the rendered answer.
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
-                 :code "(conversation-title \"x\")" :result :vis/silent
-                 :stdout "" :stderr "" :execution-time-ms 1 :error nil})
-      (on-chunk {:phase :form-result :iteration 0 :form-idx 1
                  :code "(def checks {})" :result #:vis{:ref :expr}
                  :stdout "" :stderr "" :execution-time-ms 1 :error nil})
-      (on-chunk {:phase :form-result :iteration 0 :form-idx 2
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 1
                  :code "checks" :result {:success? true}
                  :stdout "" :stderr "" :execution-time-ms 1 :error nil})
-      (on-chunk {:phase :form-result :iteration 0 :form-idx 3
+      (on-chunk {:phase :form-result :iteration 0 :form-idx 2
                  :code "(answer \"ok\")" :result :vis/answer
                  :stdout "" :stderr "" :execution-time-ms 1 :error nil})
       (on-chunk {:phase :iteration-final :iteration 0
                  :final {:answer "ok" :iteration-count 1 :status :success}
-                 :answer-form-idx 3
-                 :silent-form-idxs #{0}
+                 :answer-form-idx 2
                  :done? true})
       (let [entry (first (get-timeline))]
         (expect (= ["(def checks {})" "checks"] (:code entry)))

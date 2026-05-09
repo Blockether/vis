@@ -59,7 +59,7 @@
                                           :stdout            "hello from clojure"
                                           :execution-time-ms 5}
                                          {:code              "(answer \"42\")"
-                                          :result            :vis/silent
+                                          :result            :vis/answer
                                           :execution-time-ms 2}]
                                 :answer        "42"
                                 :answer-form-idx 1

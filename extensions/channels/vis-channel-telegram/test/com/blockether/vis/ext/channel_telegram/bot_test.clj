@@ -379,3 +379,45 @@
           (expect (= "c1" id))
           (expect (= "hello" text))
           (expect (= {:voice-response? true} (:turn/features opts))))))))
+
+(defdescribe model-cycle-merges-live-catalog-test
+  (it "merges svar live model catalog with configured models, flagging live-only entries"
+    (let [model-cycle-entries (private-var 'model-cycle-entries)
+          live-catalog        {:foo ["bar-pinned" "bar-fresh-1" "bar-fresh-2"]}]
+      (with-redefs [com.blockether.vis.ext.channel-telegram.bot/fetch-live-models
+                    (fn [provider] (get live-catalog (:id provider)))]
+        ;; Reset cache so the redef takes effect.
+        (reset! (private-var 'model-catalog-cache)
+          {:fetched-at-ms 0 :ttl-ms 60000 :by-provider {}})
+        (let [config  {:providers [{:id :foo :models [{:name "bar-pinned"}]}]}
+              entries (model-cycle-entries config)]
+          (expect (= [{:provider-id :foo :model "bar-pinned"}
+                      {:provider-id :foo :model "bar-fresh-1" :live-only? true}
+                      {:provider-id :foo :model "bar-fresh-2" :live-only? true}]
+                    entries)))))))
+
+(defdescribe select-model-entry-promotes-live-only-test
+  (it "persists a live-only model into the provider's :models on selection"
+    (let [select-model-entry (private-var 'select-model-entry)
+          base               {:providers [{:id :foo
+                                           :models [{:name "bar-pinned"}]}
+                                          {:id :other
+                                           :models [{:name "x"}]}]}
+          chosen             {:provider-id :foo :model "bar-fresh-1" :live-only? true}
+          result             (select-model-entry base chosen)]
+      ;; :foo provider is moved to front, with the chosen model promoted
+      ;; to first position and persisted in :models.
+      (expect (= [:foo :other] (mapv :id (:providers result))))
+      (expect (= ["bar-fresh-1" "bar-pinned"]
+                (mapv :name (:models (first (:providers result)))))))))
+
+(defdescribe find-model-entry-strips-live-tag-test
+  (it "matches the human label whether or not '(live)' suffix is present"
+    (let [find-model-entry (private-var 'find-model-entry)
+          entries          [{:provider-id :foo :model "bar-1"}
+                            {:provider-id :foo :model "bar-2" :live-only? true}]]
+      (expect (= (second entries) (find-model-entry entries "foo/bar-2")))
+      (expect (= (second entries) (find-model-entry entries "foo/bar-2 (live)")))
+      (expect (= (first entries)  (find-model-entry entries "bar-1")))
+      (expect (nil? (find-model-entry entries "unknown"))))))
+

@@ -6,8 +6,7 @@
    `vis-provider-github-copilot` jar on its classpath; the device-flow
    fns are required directly. (The previous `dynaload` indirection has
    been removed: explicit beats clever.)"
-  (:require [babashka.http-client :as http]
-            [clojure.string :as str]
+  (:require [clojure.string :as str]
             [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
@@ -33,21 +32,43 @@
   (not (re-find non-chat-pattern id)))
 
 (defn- fetch-models
-  "GET /models from the provider's API. Returns vec of chat model id strings or nil on failure.
-    Filters out TTS, embedding, speech, image, and provider-excluded models automatically."
-  [provider-id base-url api-key]
+  "List models for a vis provider via `svar/models!`.
+
+   Returns vec of chat model id strings, or nil on failure. Filters
+   out TTS / embedding / speech / image and provider-excluded models.
+
+   Routing through svar means the call automatically picks up
+   provider-specific OAuth headers (`anthropic-version`,
+   `anthropic-beta` for the Anthropic Claude subscription;
+   `chatgpt-account-id` for OpenAI Codex; bare Bearer for everyone
+   else). The previous raw `http/get` here only sent
+   `Authorization: Bearer ...`, which silently 400'd against Anthropic
+   OAuth and never showed the live model catalog (Opus 4.7,
+   Sonnet 4.6, etc.).
+
+   `provider` is a vis-shaped provider map. We coerce to svar shape
+   (resolving OAuth tokens via the provider's `:provider/get-token-fn`
+   when `:api-key` is absent) and ask svar."
+  [provider]
   (try
-    (let [url     (str base-url "/models")
-          resp    (http/get url
-                    (cond-> {:timeout 15000 :throw false}
-                      api-key (assoc-in [:headers "Authorization"] (str "Bearer " api-key))))
-          parsed  (try (svar/str->data (:body resp)) (catch Throwable _ nil))
-          body    (or (:value parsed) parsed)
-          models  (or (:data body) [])]
-      (->> models
-        (map (fn [m] (or (:id m) (str m))))
+    (let [provider-id  (:id provider)
+          ;; vis/->svar-provider needs at least one model on the
+          ;; provider for `normalize-provider` not to throw. The
+          ;; concrete model doesn't matter for `/models`; use
+          ;; whatever the provider already has, falling back to a
+          ;; placeholder.
+          probe        (cond-> provider
+                         (empty? (:models provider))
+                         (assoc :models [{:name "probe"}]))
+          svar-provider (vis/->svar-provider probe)
+          router        (svar/make-router [svar-provider])
+          raw           (svar/models! router)]
+      (->> raw
+        (map (fn [m] (or (:id m) (:name m) (str m))))
+        (filter string?)
         (filter chat-model?)
         (filter #(vis/provider-model-visible? provider-id %))
+        distinct
         sort
         vec))
     (catch Exception _ nil)))
@@ -72,8 +93,9 @@
   "Build the model selection list. Fetched + defaults, deduped, sorted.
     When `show-all?` is false, hides dated variants (e.g. gpt-4o-2024-08-06).
     Appends 'Show all models...' toggle when variants were hidden."
-  [provider-id base-url api-key default-models show-all?]
-  (let [fetched  (or (fetch-models provider-id base-url api-key) [])
+  [provider default-models show-all?]
+  (let [provider-id (:id provider)
+        fetched  (or (fetch-models provider) [])
         defaults (filterv #(vis/provider-model-visible? provider-id %) (or default-models []))
         all-ids  (->> (concat fetched defaults) distinct sort vec)
         pinned   (pin-default all-ids)
@@ -92,9 +114,9 @@
 (defn- select-model!
   "Show model selection dialog. Hides dated variants by default, with toggle to show all.
     Returns model id string or nil on cancel."
-  [^TerminalScreen screen provider-id base-url api-key default-models]
+  [^TerminalScreen screen provider default-models]
   (loop [show-all? false]
-    (let [models (build-model-list provider-id base-url api-key default-models show-all?)]
+    (let [models (build-model-list provider default-models show-all?)]
       (when-let [choice (dlg/select-dialog! screen "Select Model" models)]
         (if (= (:id choice) :show-all)
           (recur true)
@@ -108,7 +130,7 @@
                    (remove nil?)
                    distinct
                    vec)]
-    (select-model! screen (:id provider) (vis/provider-base-url provider) (:api-key provider) defaults)))
+    (select-model! screen provider defaults)))
 
 (defn- default-model-configs
   [preset]
@@ -628,16 +650,14 @@
 
 (defn- show-model-manager!
   [^TerminalScreen screen provider]
-  (let [base-url (vis/provider-base-url provider)
-        api-key  (:api-key provider)
-        models   (atom (->> (:models provider)
+  (let [models   (atom (->> (:models provider)
                          (keep vis/->svar-model)
                          vec))
         selected (atom 0)
         scroll   (atom 0)]
     ;; If still empty after init, prompt for a model
     (when (empty? @models)
-      (if-let [model-name (select-model! screen (:id provider) base-url api-key
+      (if-let [model-name (select-model! screen provider
                             (:default-models (vis/provider-template (:id provider))))]
         (swap! models conj {:name model-name})
         ;; User cancelled - return nil (no changes)
@@ -754,9 +774,7 @@
                         (= c \a)
                         (do
                           (when-let [model-name (select-model! screen
-                                                  (:id provider)
-                                                  (vis/provider-base-url provider)
-                                                  (:api-key provider)
+                                                  provider
                                                   (->> (concat (map vis/model-name @models)
                                                          (:default-models (vis/provider-template (:id provider)))
                                                          (:default-models provider))

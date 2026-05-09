@@ -154,6 +154,7 @@
 (def em italic)
 (defn bold-italic ^String [& parts] (str "***"    (compose-text parts) "***"))
 (defn strike      ^String [& parts] (str "~~"     (compose-text parts) "~~"))
+(defn underline   ^String [& parts] (str "<u>"    (compose-text parts) "</u>"))
 (defn code        ^String [& parts] (str "`"      (compose-text parts) "`"))
 (defn kbd         ^String [& parts] (str "<kbd>"  (compose-text parts) "</kbd>"))
 

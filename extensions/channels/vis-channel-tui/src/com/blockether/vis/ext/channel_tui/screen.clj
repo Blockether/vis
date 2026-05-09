@@ -383,6 +383,38 @@
           {:row row :col bubble-left :width bubble-w
            :height clipped-height :text text})))))
 
+(defn- disclosure-copy-regions
+  "Per-disclosure copy targets. Each visible row of an EXPANDED disclosure
+   body carries `:meta {:kind :copy-block-body :node-id ... :text ...}`
+   from the renderer (see `tag-copy-block-body`). On a plain (no-drag)
+   click the screen handler picks these BEFORE the whole-bubble copy
+   region, so a click under a `▾ RESULT` summary copies just that
+   block's body, not the entire assistant message. Drag selection is
+   unaffected - it operates on screen cells via `selectable-ranges`."
+  [layout text-top inner-h cols]
+  (let [bubble-left  (long render/MESSAGE_MARGIN_LEFT)
+        bubble-w     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
+        top-limit    (long text-top)
+        bottom-limit (+ top-limit (long (max 0 inner-h)))]
+    (if (or (not (pos? bubble-w)) (<= bottom-limit top-limit))
+      []
+      (vec
+        (for [{:keys [top projected]} (:visible layout)
+              :let [line-meta  (:line-meta projected)
+                    sep-pad    (if (:turn-separator? projected) 2 0)
+                    bubble-top (+ top-limit (long top) sep-pad)]
+              :when (sequential? line-meta)
+              i     (range (count line-meta))
+              :let [m       (nth line-meta i nil)
+                    abs-row (+ bubble-top (long i))]
+              :when (and (map? m)
+                      (= :copy-block-body (:kind m))
+                      (not (str/blank? (str (:text m))))
+                      (>= abs-row top-limit)
+                      (< abs-row bottom-limit))]
+          {:row abs-row :col bubble-left :width bubble-w :height 1
+           :text (:text m) :node-id (:node-id m)})))))
+
 (defn- bubble-copy-hit
   [point regions]
   (let [col (long (:col point))
@@ -557,6 +589,7 @@
         text-top     (+ messages-top render/MESSAGE_MARGIN_TOP)
         transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)
         transcript-bubble-copy-regions (bubble-copy-regions layout messages text-top inner-h cols)
+        transcript-disclosure-copy-regions (disclosure-copy-regions layout text-top inner-h cols)
         input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
         selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)
         slash-suggestions (slash-suggestions-for-input screen input slash-command-index)]
@@ -601,6 +634,7 @@
        :selectable-ranges selectable-ranges
        :transcript-selectable-ranges transcript-selectable-ranges
        :transcript-bubble-copy-regions transcript-bubble-copy-regions
+       :transcript-disclosure-copy-regions transcript-disclosure-copy-regions
        :input-selectable-ranges input-selectable-ranges})))
 
 (defn- live-progress-only-change?
@@ -632,15 +666,30 @@
         (p/set-char! g bar-col (+ text-top thumb-top-rel r) \u2588)))))
 
 (defn- render-live-bubble-frame!
-  "Fast path for 80ms live ticks. Recompute virtual layout, but repaint only
-   the live assistant bubble when it intersects the terminal viewport. This is
-   the terminal equivalent of React/virtual-list dirty-row painting: the tick is
-   frequent, but stable visible bubbles/input/footer/header are left alone."
+  "Fast path for 80ms live ticks. Recompute virtual layout, but only
+   repaint the live assistant bubble + the chrome bands that the user
+   can actually interact with mid-turn (header, footer, input,
+   scrollbar). Stable transcript bubbles above the live one are left
+   alone - that's the optimization that keeps long traces from
+   re-rendering every 80ms.
+
+   Why repaint chrome here even though it's nominally stable:
+   `(vis/notify! ...)` from a header click pushes a banner into the
+   LEFT slot of the header. The notifications watcher bumps
+   `:render-version` but leaves app-db otherwise untouched, so the
+   render loop classifies the next frame as `partial-live?`. If we
+   skipped header paint there, every header copy / footer status /
+   cursor blink during a turn would feel frozen until the next full
+   render. Header + footer + input boxes are cheap text ops; do
+   them every tick. Click regions stay valid because the prior full
+   frame's `cr/commit-frame!` is still authoritative - we don't
+   begin/commit a new region pass here, so transcript chrome stays
+   clickable too."
   [^TerminalScreen screen cols rows
-   {:keys [messages messages-scroll progress loading? cancelling? turn-start-ms settings] :as db}
+   {:keys [messages messages-scroll input progress loading? cancelling? turn-start-ms settings] :as db}
    now-ms previous-layout]
   (let [g              (.newTextGraphics screen)
-        text-rows      (input-text-rows (:input db) cols)
+        text-rows      (input-text-rows input cols)
         input-box-h    (+ text-rows 2 (* 2 render/input-pad-y))
         input-top      (- rows input-box-h 2)
         messages-top   (header/header-rows db)
@@ -648,6 +697,8 @@
         bubble-w       (max 1 (- cols render/MESSAGE_SIDE_PAD))
         inner-h        (max 0 (- messages-bottom messages-top 2))
         text-top       (+ messages-top render/MESSAGE_MARGIN_TOP)
+        header-top     0
+        footer-row     (dec rows)
         progress-extra {:now-ms        now-ms
                         :turn-start-ms turn-start-ms
                         :cancelling?   (boolean cancelling?)
@@ -677,9 +728,21 @@
           (p/fill-rect! clip 0 y0 cols (- y1 y0)))
         (render/draw-chat-bubble! clip (:projected live-entry) (:top live-entry)
           render/MESSAGE_MARGIN_LEFT bubble-w
-          {:viewport-top text-top :viewport-h inner-h})
-        (render-scrollbar! g cols text-top inner-h (:total-h layout) (:eff-scroll layout))
-        (.refresh screen Screen$RefreshType/DELTA)))
+          {:viewport-top text-top :viewport-h inner-h})))
+    ;; Chrome refresh - cheap text writes, kept inside the partial
+    ;; path so notification banners and footer status update on
+    ;; every spinner tick instead of waiting for the next full
+    ;; frame. Click regions are NOT re-committed (no begin/commit
+    ;; pair here), so the prior full frame's `regions-atom` keeps
+    ;; serving lookups; header click rectangles registered there
+    ;; remain valid the whole turn.
+    (header/draw-header! g db header-top cols)
+    (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
+                    (current-hint db))]
+      (footer/draw-footer! g db footer-row cols now-ms)
+      (.setCursorPosition screen (TerminalPosition. cx cy)))
+    (render-scrollbar! g cols text-top inner-h (:total-h layout) (:eff-scroll layout))
+    (.refresh screen Screen$RefreshType/DELTA)
     (merge previous-layout
       {:cols cols :rows rows :total-h (long (:total-h layout)) :inner-h inner-h
        :messages-top messages-top
@@ -1450,6 +1513,7 @@
                        selection-copy? (true? (get-in db [:settings :mouse-selection-copy]))
                        transcript-selectable-ranges (get-in db [:layout :transcript-selectable-ranges])
                        transcript-bubble-copy-regions (get-in db [:layout :transcript-bubble-copy-regions])
+                       transcript-disclosure-copy-regions (get-in db [:layout :transcript-disclosure-copy-regions])
                        input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
                        selection-viewport {:viewport-top bar-top
                                            :eff-scroll   (get-in db [:layout :eff-scroll])}
@@ -1585,8 +1649,14 @@
                                               :source source}
                                simple-click? (= anchor (:focus sel))
                                screen-point  (selection/point mx my)
+                               disclosure-hit (when (and simple-click?
+                                                      (not= source :input))
+                                                (bubble-copy-hit
+                                                  screen-point
+                                                  transcript-disclosure-copy-regions))
                                bubble-hit    (when (and simple-click?
-                                                     (not= source :input))
+                                                     (not= source :input)
+                                                     (not disclosure-hit))
                                                (bubble-copy-hit
                                                  screen-point
                                                  transcript-bubble-copy-regions))
@@ -1599,6 +1669,9 @@
                                                  source transcript-selectable-ranges input-selectable-ranges))]
                            (state/dispatch [:clear-mouse-selection])
                            (cond
+                             disclosure-hit
+                             (copy-bubble! (:text disclosure-hit))
+
                              bubble-hit
                              (copy-bubble! (:text bubble-hit))
 
@@ -1630,10 +1703,19 @@
                                (open-resources-popup! screen (:refs hit))
 
                                (open-click-target! screen hit))
-                             (when-let [bubble-hit (bubble-copy-hit
-                                                     (selection/point mx my)
-                                                     transcript-bubble-copy-regions)]
-                               (copy-bubble! (:text bubble-hit))))))
+                             (let [point (selection/point mx my)
+                                   disclosure-hit (bubble-copy-hit
+                                                    point
+                                                    transcript-disclosure-copy-regions)]
+                               (cond
+                                 disclosure-hit
+                                 (copy-bubble! (:text disclosure-hit))
+
+                                 :else
+                                 (when-let [bubble-hit (bubble-copy-hit
+                                                         point
+                                                         transcript-bubble-copy-regions)]
+                                   (copy-bubble! (:text bubble-hit))))))))
                        (recur))
 
                      ;; MOVE - hover. We want the chat link-chrome

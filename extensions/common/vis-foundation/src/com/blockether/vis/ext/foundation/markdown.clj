@@ -45,10 +45,14 @@
        :arglists '([& parts])} italic md/italic)
 (def ^{:doc "Italic span: `*text*` (HTML-semantic alias for `v/italic`). Variadic - see v/bold."
        :arglists '([& parts])} em md/em)
+(def ^{:doc "Italic span: `*text*` (shorter alias for `v/italic`). Variadic - see v/bold."
+       :arglists '([& parts])} i md/italic)
 (def ^{:doc "Bold-italic span: `***text***`. Variadic - see v/bold."
        :arglists '([& parts])} bold-italic md/bold-italic)
 (def ^{:doc "Strikethrough span: `~~text~~`. Variadic - see v/bold."
        :arglists '([& parts])} strike md/strike)
+(def ^{:doc "Underline span: `<u>text</u>`. Variadic - see v/bold."
+       :arglists '([& parts])} underline md/underline)
 (def ^{:doc "Inline code span: `` `text` ``. Variadic - parts concatenated."
        :arglists '([& parts])} code md/code)
 (def ^{:doc "`<summary>...</summary>` for `v/details`."
@@ -101,7 +105,7 @@
 
 (def ^:private prose-helper-names
   '#{h h1 h2 h3 h4 h5 h6
-     p bold strong italic em bold-italic strike
+     p bold strong italic em i bold-italic strike underline
      code summary kbd link image file-link anchor
      code-block blockquote quote details li ul ol checklist table join
      needs-input lines section escape})
@@ -195,8 +199,10 @@
    (vmd-symbol #'strong   {})
    (vmd-symbol #'italic   {})
    (vmd-symbol #'em       {})
+   (vmd-symbol #'i        {})
    (vmd-symbol #'bold-italic {})
    (vmd-symbol #'strike   {})
+   (vmd-symbol #'underline {})
    (vmd-symbol #'code
      {})
    (vmd-symbol #'summary
@@ -249,5 +255,5 @@
   "Prompt fragment listing the `v/` surface for the iteration prompt."
   (str
     "`v/` answer Markdown: headings (v/h1 ...) (v/h2 ...) (v/h3 ...) (v/h n ...); blocks (v/p ...) (v/code-block lang? code) (v/blockquote ...) v/hr v/br (v/details ...); lists (v/ul xs) (v/ol xs) (v/checklist xs); table (v/table headers rows opts?).\n"
-    "Inline/link helpers: (v/bold ...) (v/italic ...) (v/code ...) (v/kbd ...) (v/strike ...), (v/link text url), (v/image alt url), (v/file-link path line?), (v/anchor text slug?).\n"
+    "Inline/link helpers: (v/bold ...) (v/italic ...) (v/i ...) (v/code ...) (v/kbd ...) (v/strike ...) (v/underline ...), (v/link text url), (v/image alt url), (v/file-link path line?), (v/anchor text slug?).\n"
     "Compose answers with (v/join ...blocks), (v/lines ...lines), (v/section title body), (v/escape s). Cite files with v/file-link. Missing required user material: (answer (v/needs-input ask-or-{:missing :ask}))."))

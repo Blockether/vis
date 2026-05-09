@@ -91,12 +91,12 @@
                                              answer-here? (and produced-answer?
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))
-                                             elide-idxs  (cond-> (into #{}
-                                                                   (keep-indexed
-                                                                     (fn [idx {:keys [result rendering-kind]}]
-                                                                       (when (or (= :vis/silent rendering-kind)
-                                                                               (= :vis/silent result)) idx)))
-                                                                   all-exprs)
+                                             ;; Only the (answer "...") form is elided when
+                                             ;; resuming. Earlier versions also dropped any
+                                             ;; block tagged `:vis/silent`, but that whole
+                                             ;; mechanism has been removed - every executed
+                                             ;; block now shows up in the resumed trace.
+                                             elide-idxs  (cond-> #{}
                                                            answer-here? (conj (dec (count all-exprs))))
                                              exprs       (into []
                                                            (keep-indexed
