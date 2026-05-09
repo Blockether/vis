@@ -501,17 +501,22 @@
                          (str/join " / "))
         ;; Layout line 1:  "① Label" ... "host  ●"
         left-part     (str pri " " (or label "?"))
-        right-part    (str host "  ●")
-        ;; Fill both rows with bg
-        bg            (if selected? t/dialog-title-bg t/dialog-bg)]
-    (p/set-bg! g bg)
+        right-part    (str host "  ●")]
+    ;; Selection visual: the cursor is a `> ` glyph painted in the
+    ;; dialog padding column (between the dialog frame and the card
+    ;; body). The card itself keeps the normal `dialog-bg` palette so
+    ;; URL hint, status dot color and dim subtitle survive selection
+    ;; — previously the inverse-on-`dialog-title-bg` path collapsed
+    ;; all four colors onto `dialog-title-fg`.
+    (p/set-bg! g t/dialog-bg)
     (doseq [r (range card-rows)]
       (p/fill-rect! g (inc left) (+ row r) inner-w 1))
+    ;; `> ` glyph in the dialog padding column, anchored to line 1.
+    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+    (p/draw-selection-marker! g (inc left) row selected?)
 
     ;; Line 1 left - priority + label (bold)
-    (if selected?
-      (p/set-fg! g t/dialog-title-fg)
-      (p/set-fg! g t/dialog-fg))
+    (p/set-fg! g t/dialog-fg)
     (p/styled g [p/BOLD]
       (p/put-str! g text-x row (dlg/ellipsize left-part (- text-w (count right-part) 1))))
 
@@ -519,9 +524,7 @@
     (let [dot-col  (+ text-x text-w -1)
           host-col (- dot-col 2 (count host))]
       ;; Host
-      (if selected?
-        (p/set-fg! g t/dialog-title-fg)
-        (p/set-fg! g t/dialog-hint))
+      (p/set-fg! g t/dialog-hint)
       (p/styled g [p/ITALIC]
         (p/put-str! g (max (+ text-x (count left-part) 1) host-col) row host))
       ;; Status dot - green/red after probe, dim while background checks run.
@@ -532,9 +535,7 @@
       (p/put-str! g dot-col row "●"))
 
     ;; Line 2 - model + static limits summary
-    (if selected?
-      (p/set-fg! g t/dialog-title-fg)
-      (p/set-fg! g t/dialog-fg))
+    (p/set-fg! g t/dialog-fg)
     (p/put-str! g text-x (inc row)
       (dlg/ellipsize (str "   ★ " root-name "  " suffix
                        (when (seq limit-summary)
@@ -559,7 +560,6 @@
         pri        (priority-label idx)
         left-part  (str pri " " model-name)
         tag        (when is-root? "★ Primary")
-        bg         (if selected? t/dialog-title-bg t/dialog-bg)
         ;; Build the chain breadcrumb. Use Unicode arrows so the flow
         ;; reads left-to-right at a glance: "after X -> then Y".
         subtitle   (cond
@@ -574,29 +574,31 @@
 
                      :else
                      (str "   after " previous-name " -> then " next-name))]
-    ;; Background fill across both lines
-    (p/set-bg! g bg)
+    ;; See `draw-provider-card!` for the rationale: keep the body in
+    ;; the normal palette and paint a `> ` cursor glyph in the dialog
+    ;; padding column instead of inverting the entire card.
+    (p/set-bg! g t/dialog-bg)
     (doseq [r (range card-rows)]
       (p/fill-rect! g (inc left) (+ row r) inner-w 1))
+    (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+    (p/draw-selection-marker! g (inc left) row selected?)
 
     ;; Line 1 left - priority + model name (bold), trimmed to leave room
     ;; for the right-aligned tag.
     (let [reserved (if tag (+ (count tag) 1) 0)]
-      (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-fg))
+      (p/set-fg! g t/dialog-fg)
       (p/styled g [p/BOLD]
         (p/put-str! g text-x row (dlg/ellipsize left-part (max 0 (- text-w reserved))))))
 
-    ;; Line 1 right - ★ Primary tag, right-aligned. Green when not
-    ;; selected, follows title-fg when the row is selected so it stays
-    ;; readable on the highlight stripe.
+    ;; Line 1 right - ★ Primary tag, right-aligned in status-ok green.
     (when tag
       (let [tag-col (+ text-x (- text-w (count tag)))]
-        (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/status-ok))
+        (p/set-fg! g t/status-ok)
         (p/styled g [p/BOLD]
           (p/put-str! g tag-col row tag))))
 
     ;; Line 2 - dimmed italic chain breadcrumb.
-    (if selected? (p/set-fg! g t/dialog-title-fg) (p/set-fg! g t/dialog-hint))
+    (p/set-fg! g t/dialog-hint)
     (p/styled g [p/ITALIC]
       (p/put-str! g text-x (inc row) (dlg/ellipsize subtitle text-w)))))
 

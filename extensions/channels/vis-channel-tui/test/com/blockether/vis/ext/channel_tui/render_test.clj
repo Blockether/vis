@@ -3111,11 +3111,28 @@ body
 
       ;; Suggestion rows are inset to the same column span as the
       ;; title accent stripe (margin-left = margin-right = pad).
+      ;; The body fill on every row uses the normal `dialog-bg`
+      ;; palette — selection is signalled by the `>` glyph in the
+      ;; left margin, NOT by a full-row accent stripe.
       (expect (some #(and (= first-sug (:row %))
                        (= pad (:col %))
                        (= inner-w (:w %))
-                       (= t/dialog-title-bg (:bg %))) ; selected highlight
+                       (= t/dialog-bg (:bg %)))
                 @fills))
+
+      ;; The selected row carries a BOLD `> ` cursor glyph in the
+      ;; left margin (col 0), painted in `dialog-hint-key`. The
+      ;; non-selected row gets nothing painted in that column.
+      (expect (some #(and (= first-sug (:row %))
+                       (= 0 (:col %))
+                       (= "> " (:text %))
+                       (= t/dialog-hint-key (:fg %))
+                       (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
+                @puts))
+      (expect (not-any? #(and (= (inc first-sug) (:row %))
+                           (= 0 (:col %))
+                           (= "> " (:text %)))
+                @puts))
 
       ;; Each suggestion row paints a markdown-style chip:
       ;;   <code-bg fill> /cmd <code-bg fill end> ` - ` <italic desc>
