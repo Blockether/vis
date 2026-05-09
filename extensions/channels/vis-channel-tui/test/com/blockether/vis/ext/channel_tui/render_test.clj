@@ -3020,6 +3020,8 @@ body
                   (java.util.EnumSet/copyOf ^java.util.Collection @active)))
               (setForegroundColor [c] (reset! fg c) this)
               (setBackgroundColor [c] (reset! bg c) this)
+              (getForegroundColor [] @fg)
+              (getBackgroundColor [] @bg)
               (putString [col row text]
                 (swap! puts conj {:col col :row row :text text
                                   :fg @fg :bg @bg :sgr @active})
@@ -3107,7 +3109,24 @@ body
                        (= pad (:col %))
                        (= inner-w (:w %))
                        (= t/dialog-title-bg (:bg %))) ; selected highlight
-                @fills))))
+                @fills))
+
+      ;; Each suggestion row paints USAGE then ITALIC description
+      ;; right after it (no big padded gutter between them).
+      (let [sug-rows (filter #(<= first-sug (:row %)) @puts)
+            usages   (filter #(str/starts-with? (:text %) "/") sug-rows)
+            descs    (filter #(contains? (:sgr %) com.googlecode.lanterna.SGR/ITALIC) sug-rows)]
+        ;; One usage put per suggestion, one italic description put per suggestion.
+        (expect (= n (count usages)))
+        (expect (= n (count descs)))
+        ;; Description sits immediately after the usage on the same row
+        ;; (gap of exactly 1 col between end of usage and start of desc).
+        (doseq [[u d] (map vector
+                        (sort-by :row usages)
+                        (sort-by :row descs))]
+          (expect (= (:row u) (:row d)))
+          (expect (= (:col d)
+                    (+ (:col u) (count (:text u)) 1)))))))
 
   (it "drops the border row when there is not enough vertical space"
     (let [puts   (atom [])
@@ -3124,6 +3143,8 @@ body
                   (java.util.EnumSet/copyOf ^java.util.Collection @active)))
               (setForegroundColor [_] this)
               (setBackgroundColor [_] this)
+              (getForegroundColor [] nil)
+              (getBackgroundColor [] nil)
               (putString [col row text]
                 (swap! puts conj {:col col :row row :text text}) this)
               (fillRectangle [_ _ _] this)
