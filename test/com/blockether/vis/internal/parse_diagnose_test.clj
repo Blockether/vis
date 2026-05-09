@@ -399,8 +399,9 @@
           orig-lines  (str/split-lines bare-prose-symbol-iter0)
           fixed-lines (str/split-lines parsable)]
       (expect (= (count orig-lines) (count fixed-lines)))
-      ;; Lines 1-10 (1-based) are headers/preamble; line 11 is the
-      ;; broken element. Everything except line 11 stays verbatim.
+      ;; Line 10 (1-based, idx 9) is the broken element. Everything
+      ;; except that line stays byte-identical so the audit diff is
+      ;; surgical.
       (doseq [i (range (count orig-lines))]
-        (when (not= 10 i) ;; line 11 (1-based) is at idx 10
+        (when (not= 9 i)
           (expect (= (nth orig-lines i) (nth fixed-lines i))))))))

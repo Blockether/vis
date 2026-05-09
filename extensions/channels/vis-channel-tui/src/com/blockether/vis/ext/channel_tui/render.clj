@@ -4330,10 +4330,32 @@
                             :section section
                             :kind detail-kind}
               node-id      (detail-node-id detail-ctx)
+              ;; `<details>` autocollapses by default IF the surface
+              ;; can actually toggle: a non-nil `:conversation-id`
+              ;; means the bubble lives inside a real chat where the
+              ;; click-regions registry is being painted, so the user
+              ;; can re-open the disclosure with one click. Without
+              ;; a conversation-id (Markdown snapshot exports,
+              ;; standalone unit-test rendering, ...) we have no
+              ;; click-region painter to feed and the disclosure
+              ;; would be a one-way trap door - render expanded in
+              ;; that case so the body is never silently lost.
+              ;;
+              ;; Pre-fix this defaulted to expanded EVEN inside the
+              ;; chat surface, which produced two visible bugs:
+              ;;   (a) heavy answers blew out the bubble even when
+              ;;       the author wrapped the payload in `<details>`
+              ;;       to keep the surface compact;
+              ;;   (b) clicks did nothing visible - the toggle
+              ;;       handler stored `true` then read-back default
+              ;;       `true`, so absent-key (collapsed by toggle
+              ;;       handler convention) and present-key-true
+              ;;       (just-clicked) both resolved to expanded. The
+              ;;       two layers disagreed on "absent" semantics.
               expanded?    (detail-expanded? (:detail-expansions opts)
                              conversation-id
                              node-id
-                             true)
+                             (nil? conversation-id))
               body-entries (vec (render-detail-segments segments max-w mode opts))]
           (vec (concat
                  (when margin-top? [{:line "" :meta nil}])

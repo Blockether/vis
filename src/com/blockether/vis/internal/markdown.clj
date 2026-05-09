@@ -107,26 +107,46 @@
 (defn h5 ^String [& parts] (str "##### "  (compose-text parts)))
 (defn h6 ^String [& parts] (str "###### " (compose-text parts)))
 
-(defn- normalize-inline-spacing
+(defn- normalize-inline-spacing-text
+  "Tighten English-prose whitespace. Applied only to text *outside* inline
+   code spans by `normalize-inline-spacing` - never to anything inside
+   `` `...` `` because Clojure forms like `(fn :keyword arg)` and string
+   literals legitimately carry whitespace before `:`, `;`, `.`, etc., and
+   indentation runs of spaces."
   ^String [s]
   (-> s
+    (str/replace #"  +" " ")
     (str/replace #"\(\s+" "(")
     (str/replace #"\[\s+" "[")
     (str/replace #"\{\s+" "{")
     (str/replace #"\s+([\)\]\}\.,;:!?])" "$1")))
 
+(defn- normalize-inline-spacing
+  "Tokenise `s` into balanced inline-code spans (`` `...` ``) and surrounding
+   prose, normalize only the prose. Preserves whitespace inside code spans so
+   `(extension/render-tool-result :journal v)` keeps the space before
+   `:journal` instead of collapsing to `render-tool-result:journal`."
+  ^String [s]
+  (let [tokens (re-seq #"`[^`\n]+`|[^`]+|`" s)]
+    (->> tokens
+      (map (fn [tok]
+             (if (and (> (count tok) 1)
+                   (str/starts-with? tok "`")
+                   (str/ends-with? tok "`"))
+               tok
+               (normalize-inline-spacing-text tok))))
+      (apply str))))
+
 (defn p
   "Paragraph. Joins parts with single spaces. nil dropped, seqs spliced one
    level deep. Spaces next to punctuation are tightened so generated prose
-   renders as `(`x`)`, not `( `x` )`."
+   renders as `(`x`)`, not `( `x` )`. Whitespace inside `` `...` `` inline
+   code spans is preserved verbatim - `normalize-inline-spacing` tokenises
+   on backticks before applying any tightening."
   ^String [& parts]
   (let [joined (str/join " " (keep (fn [p] (when-not (str/blank? p) (str/trim p)))
                                (mapv ->str (expand-parts parts))))]
-    (loop [s joined]
-      (let [next (normalize-inline-spacing (str/replace s "  " " "))]
-        (if (str/includes? next "  ")
-          (recur next)
-          next)))))
+    (normalize-inline-spacing joined)))
 
 (defn bold        ^String [& parts] (str "**"     (compose-text parts) "**"))
 (def strong bold)
@@ -286,11 +306,19 @@
     (and (< 1 (count lines))
       (every? list-marker? lines))))
 
-(defn- continuation-prefix? [s]
-  (boolean (re-matches #"^(?:\s+|[,;:.)\]}]|[---]).*" s)))
+(defn- continuation-prefix?
+  "True when `s` opens with a connector that should glue it to the previous
+   list-item fragment. Includes whitespace, sentence punctuation, and the
+   bare connectors `/`, `+`, `&`, `=` which the LLM tends to emit between
+   inline-code spans (e.g. `:all` `/` `:paths` `/` `:include`)."
+  [s]
+  (boolean (re-matches #"^(?:\s+|[,;:.)\]}\-/+&=]).*" s)))
 
-(defn- dangling-suffix? [s]
-  (boolean (re-find #"(?:\s|[({\[:;,---])$" s)))
+(defn- dangling-suffix?
+  "True when `s` ends with a token that signals an inline fragment is still
+   in progress. Mirror of `continuation-prefix?`."
+  [s]
+  (boolean (re-find #"(?:\s|[({\[:;,\-/+&=])$" s)))
 
 (defn- fragmentable-list-item? [x]
   (and (string? x)
@@ -388,21 +416,43 @@
     :left   " :--- "
     " --- "))
 
+(defn- table-cell-text
+  "Coerce one table cell to a string. Sequential cells get `compose-text`'d so
+   callers can write `[\"prefix \" (code \"x\") \" suffix\"]` for one composite
+   cell. Strings/scalars pass through `->str` unchanged."
+  ^String [v]
+  (cond
+    (sequential? v) (compose-text v)
+    :else           (->str v)))
+
+(defn- fold-row-to-cols
+  "Pad short rows with nils, fold overflow into the last cell. Overflow fold
+   means `[\"a\" \"b\" \"via \" `code` \" suffix\"]` in a 3-column table renders as
+   `| a | b | via `code` suffix |` instead of silently dropping cells 4+."
+  [n r]
+  (let [v (vec r)
+        c (count v)]
+    (cond
+      (= c n) v
+      (< c n) (vec (concat v (repeat (- n c) nil)))
+      :else   (conj (subvec v 0 (dec n))
+                (compose-text (subvec v (dec n)))))))
+
 (defn table
   (^String [headers rows] (table headers rows nil))
   (^String [headers rows {:keys [align]}]
    (let [headers (require-present "table" "headers" headers)
          n       (count headers)
-         pad-row (fn [r]
-                   (let [v (vec r)]
-                     (vec (for [i (range n)] (nth v i nil)))))
          hdr     (str "| " (str/join " | " (map pipe-escape headers)) " |")
          sep     (str "|"
                    (str/join "|" (for [i (range n)] (align-spec (nth (or align []) i :default))))
                    "|")
          body    (->> (or rows [])
                    (map (fn [r]
-                          (str "| " (str/join " | " (map pipe-escape (pad-row r))) " |")))
+                          (str "| " (str/join " | "
+                                      (map (comp pipe-escape table-cell-text)
+                                        (fold-row-to-cols n r)))
+                            " |")))
                    (str/join "\n"))]
      (if (str/blank? body)
        (str hdr "\n" sep)
