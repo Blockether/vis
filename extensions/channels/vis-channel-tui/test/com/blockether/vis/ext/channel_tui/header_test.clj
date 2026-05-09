@@ -202,8 +202,7 @@
 ;; =============================================================================
 
 (require '[com.blockether.vis.core :as vis]
-  '[com.blockether.vis.ext.goal.core :as goal-ext]
-  '[com.blockether.vis.ext.persistance-sqlite.test-helpers :as h])
+  '[com.blockether.vis.ext.goal.core :as goal-ext])
 
 (defn- with-temp-db
   "Bind `vis/db-info` to an in-memory store for one test body, then

@@ -42,41 +42,31 @@
         (expect (= ["3"] (:results trace-entry)))
         (expect (= [true] (:successes trace-entry))))))
 
-  (it "renders persisted preview tool results and carries raw details"
-    (let [preview-result {:success? true
-                          :result {:result {:lines ["alpha" "beta"]}}
-                          :preview-eql {:result [[:lines {:from 0 :to 2}]]}
-                          :preview {:rendering-kind :source}
-                          :presentation {:kind :source :path "src/demo.clj"}
-                          :info {:op :v/preview}}]
+  (it "renders persisted tool results through the new channel-render dispatcher"
+    (let [tool-result {:success? true
+                       :result {:lines ["alpha" "beta"]}
+                       :info {:op :v/cat}}]
       (with-redefs [vis/db-info (fn [] :db)
-                    extension/tool-result? (fn [x]
-                                             (= :v/preview (get-in x [:info :op])))
-                    extension/render-tool-result (fn [surface result & _]
-                                                   (expect (= :tui surface))
-                                                   (expect (= preview-result result))
-                                                   "1: alpha\n2: beta")
+                    extension/tool-result? (fn [x] (= :v/cat (get-in x [:info :op])))
+                    extension/channel-render-tool-result (fn [result chan-id]
+                                                           (expect (= :channel-tui chan-id))
+                                                           (expect (= tool-result result))
+                                                           "1: alpha\n2: beta")
                     vis/db-list-conversation-turns
                     (fn [_db _conversation-id]
-                      [{:id :turn-1
-                        :user-request "preview"
-                        :answer ""}])
+                      [{:id :turn-1 :user-request "cat" :answer ""}])
                     vis/db-list-conversation-turn-iterations
-                    (fn [_db _turn-id]
-                      [{:id :iter-1 :thinking nil}])
+                    (fn [_db _turn-id] [{:id :iter-1 :thinking nil}])
                     vis/db-list-iteration-blocks
                     (fn [_db _iter-id]
-                      [{:code "(v/preview file {:result [[:lines {:from 0 :to 2}]]})"
-                        :result preview-result
+                      [{:code "(v/cat \"src/demo.clj\")"
+                        :result tool-result
                         :stdout ""
                         :duration-ms 1}])]
         (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
               trace-entry (-> history second :trace first)]
-          (expect (= [:preview] (:result-kinds trace-entry)))
-          (expect (= ["1: alpha\n2: beta"] (:results trace-entry)))
-          (expect (nil? (:shape (first (:result-details trace-entry)))))
-          (expect (= "{:result {:lines [\"alpha\" \"beta\"]}}"
-                    (:raw (first (:result-details trace-entry)))))))))
+          (expect (= [:tool] (:result-kinds trace-entry)))
+          (expect (= ["1: alpha\n2: beta"] (:results trace-entry)))))))
 
   (it "projects persisted turn cost into resumed assistant messages"
     (with-redefs [vis/db-info (fn [] :db)

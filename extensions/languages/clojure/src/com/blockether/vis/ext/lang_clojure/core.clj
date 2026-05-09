@@ -125,10 +125,14 @@
       ;; rewrite-clj.zip vars: feed straight in. The new `vis/symbol` API
       ;; reads `:doc`/`:arglists` from var meta and uses `:sym` to override
       ;; the SCI-visible name. We re-meta the var first because some lib
-      ;; vars ship without `:doc` or `:arglists`.
-      (let [{:keys [doc arglists]} (ensure-var-doc-meta sym v)
-            patched (alter-meta! v assoc :doc doc :arglists arglists)]
-        (vis/symbol v {:sym sym}))
+      ;; vars ship without `:doc` or `:arglists`. Renderers default to the
+      ;; pr-str pair: rewrite-clj returns zippers/data, never strings.
+      (let [{:keys [doc arglists]} (ensure-var-doc-meta sym v)]
+        (alter-meta! v assoc :doc doc :arglists arglists)
+        (vis/symbol v
+          {:sym sym
+           :journal-render-fn vis/render-pr-str-journal
+           :channel-render-fn vis/render-pr-str-channel}))
 
       :else
       (let [{:keys [doc]} (ensure-var-doc-meta sym v)]
@@ -136,11 +140,12 @@
         (vis/value v {:sym sym})))))
 
 (def ^:private rewrite-clj-zip-symbols
-  (do (require 'rewrite-clj.zip)
-    (->> (ns-publics 'rewrite-clj.zip)
-      (sort-by key)
-      (keep (fn [[sym v]] (var->symbol-entry sym v)))
-      vec)))
+  ;; Top-level :require already loaded rewrite-clj.zip. Walk its publics
+  ;; and convert each one into a v/symbol or v/value entry.
+  (->> (ns-publics 'rewrite-clj.zip)
+    (sort-by key)
+    (keep (fn [[sym v]] (var->symbol-entry sym v)))
+    vec))
 
 (defn- clojure-environment-info
   [_environment]
@@ -178,13 +183,19 @@
 (def ^:private lsp-symbols
   [(vis/symbol #'diagnostics-lazy
      {:sym 'diagnostics
-      })
+
+      :journal-render-fn vis/render-pr-str-journal
+      :channel-render-fn vis/render-pr-str-channel})
    (vis/symbol #'rename-plan-lazy
      {:sym 'rename-plan
-      })
+
+      :journal-render-fn vis/render-pr-str-journal
+      :channel-render-fn vis/render-pr-str-channel})
    (vis/symbol #'clean-ns-plan-lazy
      {:sym 'clean-ns-plan
-      })])
+
+      :journal-render-fn vis/render-pr-str-journal
+      :channel-render-fn vis/render-pr-str-channel})])
 
 (def clojure-extension
   (vis/extension
@@ -198,7 +209,6 @@
      :ext/kind      "languages"
      :ext/activation-fn (fn [_] (clojure-project?))
      :ext/environment-info-fn clojure-environment-info
-     :ext/rendering-kinds patch/rendering-kind-fns
      :ext/prompt    patch/z-prompt
      :ext/symbols   (into [patch/patch-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol]
                       (concat repair/symbols xref/symbols lsp-symbols rewrite-clj-zip-symbols))}))

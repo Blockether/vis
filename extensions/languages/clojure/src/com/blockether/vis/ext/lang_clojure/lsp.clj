@@ -176,36 +176,30 @@
                :edit-count (count edits)
                :lsp-output output}}))))
 
-(defn- render-tool-result
-  [{:keys [tool-result]}]
-  (if-not (:success? tool-result)
-    (md/p "Tool" (md/code (get-in tool-result [:info :op])) "failed:" (get-in tool-result [:error :message]))
-    (md/join
-      (md/p (md/code (get-in tool-result [:info :op])) "returned" (if (sequential? (:result tool-result))
-                                                                    (count (:result tool-result))
-                                                                    "a") "result(s).")
-      (md/code-block "clojure" (pr-str (:result tool-result))))))
+(defn- journal-render-lsp
+  [result]
+  (str (if (sequential? result) (count result) 1) " result(s)— "
+    (let [s (pr-str result)
+          n (count s)]
+      (if (<= n 800) s (str (subs s 0 800) "…<+" (- n 800) " chars>")))))
+
+(defn- channel-render-lsp
+  [result _chan-id]
+  (md/join
+    (md/p (if (sequential? result) (count result) 1) "result(s).")
+    (md/code-block "clojure" (pr-str result))))
 
 (defn- lsp-symbol
-  [v examples]
+  [v]
   (vis/symbol v
-    {
-     :result-spec ::extension/tool-result
-     :render-fn render-tool-result
+    {:result-spec ::extension/tool-result
+     :journal-render-fn journal-render-lsp
+     :channel-render-fn channel-render-lsp
      :on-error-fn (tool-failure-on-error (keyword "z" (name (:name (meta v)))))}))
 
-(def diagnostics-symbol
-  (lsp-symbol #'diagnostics
-    ["(z/diagnostics)"
-     "(z/diagnostics {:filenames [\"src/foo.clj\"]})"]))
-
-(def rename-plan-symbol
-  (lsp-symbol #'rename-plan
-    ["(z/rename-plan 'old.ns/foo 'old.ns/bar)"]))
-
-(def clean-ns-plan-symbol
-  (lsp-symbol #'clean-ns-plan
-    ["(z/clean-ns-plan {:filenames [\"src/foo.clj\"]})"]))
+(def diagnostics-symbol  (lsp-symbol #'diagnostics))
+(def rename-plan-symbol  (lsp-symbol #'rename-plan))
+(def clean-ns-plan-symbol (lsp-symbol #'clean-ns-plan))
 
 (def symbols
   [diagnostics-symbol rename-plan-symbol clean-ns-plan-symbol])

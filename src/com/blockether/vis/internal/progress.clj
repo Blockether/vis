@@ -94,22 +94,10 @@
     (into v (repeat (- target-count (count v)) nil))
     v))
 
-(defn- preview-result?
-  [result]
-  (and (extension/tool-result? result)
-    (= :v/preview (get-in result [:info :op]))))
-
-(defn- preview-results
-  [chunk]
-  (or (seq (:previews chunk))
-    (when (preview-result? (:result chunk))
-      [(:result chunk)])))
-
 (defn- form-result-kind
   [chunk]
   (cond
     (:error chunk) :error
-    (preview-results chunk) :preview
     (extension/tool-result? (:result chunk)) :tool
     :else :value))
 
@@ -117,32 +105,17 @@
   [tool-result]
   (when (extension/tool-result? tool-result)
     (let [prov (:info tool-result)]
-      (cond-> (select-keys prov [:op :op-class :presentation-kind :color-role
+      (cond-> (select-keys prov [:op :op-class :color-role
                                  :spec :paths :hit-count :truncated-by
                                  :command :cwd :target])
         (get-in tool-result [:result :stdout])
         (assoc :stdout (get-in tool-result [:result :stdout]))
         (get-in tool-result [:result :stderr])
-        (assoc :stderr (get-in tool-result [:result :stderr]))
-        (= :v/preview (:op prov))
-        (assoc :raw (prompt/safe-pr-str (:result tool-result)))))))
-
-(defn- preview-results-detail
-  [previews]
-  (let [details (mapv tool-result-detail previews)
-        raw     (str/join "\n" (map #(prompt/safe-pr-str (:result %)) previews))]
-    (if (= 1 (count details))
-      (assoc (or (first details) {}) :raw raw)
-      {:op :v/preview
-       :op-class :op/preview
-       :previews details
-       :raw raw})))
+        (assoc :stderr (get-in tool-result [:result :stderr]))))))
 
 (defn- form-result-detail
   [chunk]
-  (if-let [previews (preview-results chunk)]
-    (preview-results-detail previews)
-    (tool-result-detail (:result chunk))))
+  (tool-result-detail (:result chunk)))
 
 (defn- format-form-result
   "Pre-format a per-form chunk's result for renderer consumption.
@@ -154,12 +127,10 @@
   [chunk]
   (if (:error chunk)
     (error/format-error (:error chunk))
-    (if-let [previews (preview-results chunk)]
-      (str/join "\n" (map #(extension/render-tool-result :tui % {:chunk chunk}) previews))
-      (let [result (:result chunk)]
-        (if (extension/tool-result? result)
-          (extension/render-tool-result :tui result {:chunk chunk})
-          (prompt/safe-pr-str result))))))
+    (let [result (:result chunk)]
+      (if (extension/tool-result? result)
+        (extension/channel-render-tool-result result :channel-tui)
+        (prompt/safe-pr-str result)))))
 
 (def ^:private thinking-event-target-chars
   "Target max chars per live thinking event.

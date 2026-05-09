@@ -730,13 +730,15 @@
 
 (def conversation-state-symbol
   (vis/symbol #'conversation-state
-    {
-     :before-fn inject-environment}))
+    {:before-fn inject-environment
+     :journal-render-fn vis/render-pr-str-journal
+     :channel-render-fn vis/render-pr-str-channel}))
 
 (def conversation-report-symbol
   (vis/symbol #'conversation-report
-    {
-     :before-fn inject-environment}))
+    {:before-fn inject-environment
+     :journal-render-fn vis/render-string-journal
+     :channel-render-fn vis/render-string-channel}))
 
 (def all-symbols
   [conversation-state-symbol

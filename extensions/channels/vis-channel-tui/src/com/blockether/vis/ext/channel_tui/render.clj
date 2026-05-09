@@ -2349,17 +2349,12 @@
       :else "empty")))
 
 (defn- detail-id-suffix
-  ;; Use the 1-based `turn-position` integer the DB stores in
-  ;; `conversation_turn_soul.position`. UUID fragments are NEVER
-  ;; user-visible here - if a code path forgets to thread
-  ;; `:turn-position`, the suffix simply omits the `Turn: N` part
-  ;; instead of leaking hex.
-  ^String [{:keys [turn-position iteration-number block-number details-path]}]
+  ^String [{:keys [conversation-turn-id iteration-number block-number details-path]}]
   (let [parts (cond-> []
-                (some? turn-position) (conj (str "Turn: " turn-position))
-                iteration-number      (conj (str "Iteration: " iteration-number))
-                block-number          (conj (str "Block: " block-number))
-                (seq details-path)    (conj (str "Details: " (str/join "." details-path))))]
+                (some? conversation-turn-id) (conj (str "Turn: " (short-id-fragment conversation-turn-id)))
+                iteration-number (conj (str "Iteration: " iteration-number))
+                block-number (conj (str "Block: " block-number))
+                (seq details-path) (conj (str "Details: " (str/join "." details-path))))]
     (if (seq parts)
       (str "[" (str/join ", " parts) "]")
       "[Details]")))
@@ -2615,7 +2610,7 @@
   (mapv indent-output-entry entries))
 
 (defn- maybe-collapse-block
-  [{:keys [conversation-id detail-expansions conversation-turn-id turn-position iteration-number
+  [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
            block-number kind summary summary-marker body-marker lines max-w color-role
            render-as raw-text]}]
   (let [md-entries (when (= :markdown render-as)
@@ -2629,7 +2624,6 @@
       entries
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
-                        :turn-position turn-position
                         :iteration-number iteration-number
                         :block-number block-number
                         :details-path nil
@@ -2652,7 +2646,7 @@
   "Collapse long reasoning to first/last preview rows with a clickable
    disclosure row in the middle. Expanded state uses the same
    detail-expansions map as result/stdout/details popouts."
-  [{:keys [entries conversation-id detail-expansions conversation-turn-id turn-position iteration-number max-w]}]
+  [{:keys [entries conversation-id detail-expansions conversation-turn-id iteration-number max-w]}]
   (let [entries (vec entries)
         n       (count entries)
         edge    thinking-preview-edge-lines]
@@ -2661,7 +2655,6 @@
       entries
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
-                        :turn-position turn-position
                         :iteration-number iteration-number
                         :details-path nil
                         :section :thinking
@@ -2692,14 +2685,13 @@
    bodies first. `wrap-text` is intentionally display-width-aware and
    expensive on long single-line data dumps; when the detail row is
    collapsed by default, the first frame only needs the summary hint."
-  [{:keys [conversation-id detail-expansions conversation-turn-id turn-position iteration-number
+  [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
            block-number kind summary summary-marker raw-text max-w color-role]
     :as opts}]
   (let [raw-text (str/trim (str raw-text))]
     (when-not (str/blank? raw-text)
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
-                        :turn-position turn-position
                         :iteration-number iteration-number
                         :block-number block-number
                         :details-path nil
@@ -3042,7 +3034,7 @@
 (defn- format-iteration-entry-entries
   [{:keys [thinking events code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms error repeat-count]}
    code-width iteration-number
-   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id turn-position now-ms preview-default-lines live-preview?]
+   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines live-preview?]
        :or   {show-header? true preview-default-lines 4 live-preview? false}}]]
   (let [fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
@@ -3067,7 +3059,6 @@
                                 (or (seq (markdown->entries thinking-text fill-w :thinking
                                            {:conversation-id      conversation-id
                                             :conversation-turn-id conversation-turn-id
-                                            :turn-position        turn-position
                                             :detail-expansions   detail-expansions
                                             :iteration-number    iteration-number
                                             :section             :thinking}))
@@ -3080,7 +3071,6 @@
                                        :conversation-id      conversation-id
                                        :detail-expansions   detail-expansions
                                        :conversation-turn-id conversation-turn-id
-                                       :turn-position        turn-position
                                        :iteration-number    iteration-number
                                        :max-w               fill-w})]
                 (vec (concat [(line-entry (str thinking-marker ""))]
@@ -3213,7 +3203,6 @@
                                                                 :toggle? collapsible?
                                                                 :summary-suffix (when collapsible?
                                                                                   (detail-id-suffix {:conversation-turn-id conversation-turn-id
-                                                                                                     :turn-position turn-position
                                                                                                      :iteration-number iteration-number
                                                                                                      :block-number block-number
                                                                                                      :section :iteration
@@ -3227,7 +3216,6 @@
                                                          {:conversation-id      conversation-id
                                                           :detail-expansions   detail-expansions
                                                           :conversation-turn-id conversation-turn-id
-                                                          :turn-position       turn-position
                                                           :iteration-number    iteration-number
                                                           :block-number        block-number
                                                           :kind                :result
@@ -3287,7 +3275,6 @@
                                         {:conversation-id      conversation-id
                                          :detail-expansions   detail-expansions
                                          :conversation-turn-id conversation-turn-id
-                                         :turn-position       turn-position
                                          :iteration-number    iteration-number
                                          :block-number        block-number
                                          :kind                :stdout
@@ -3316,7 +3303,6 @@
                                                           {:conversation-id      conversation-id
                                                            :detail-expansions   detail-expansions
                                                            :conversation-turn-id conversation-turn-id
-                                                           :turn-position       turn-position
                                                            :iteration-number    iteration-number
                                                            :block-number        block-number
                                                            :kind                :stderr
@@ -3492,7 +3478,7 @@
          static-limit     (max 1 (long (get settings :progress/live-iteration-limit 24)))
          preview-default-lines (get settings :preview/default-lines 4)
          {:keys [now-ms turn-start-ms cancelling? conversation-id
-                 conversation-turn-id turn-position detail-expansions viewport-rows]} extra
+                 conversation-turn-id detail-expansions viewport-rows]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
          ;; Patch 2: viewport-aware live truncation. The OUTER virtualizer
          ;; only knows "the live bubble is visible", not "only the bottom
@@ -3534,7 +3520,6 @@
          line-entry       (fn [line] {:line line :meta nil})
          history-ctx      {:conversation-id conversation-id
                            :conversation-turn-id conversation-turn-id
-                           :turn-position turn-position
                            :details-path nil
                            :section :progress
                            :kind :history}
@@ -3605,7 +3590,6 @@
                                               :now-ms               (when running? now-ms)
                                               :conversation-id      conversation-id
                                               :conversation-turn-id conversation-turn-id
-                                              :turn-position        turn-position
                                               :detail-expansions   detail-expansions
                                               :preview-default-lines preview-default-lines
                                               :live-preview?        true}]
@@ -4479,7 +4463,6 @@
               iteration-number (:iteration-number opts)
               detail-ctx   {:conversation-id conversation-id
                             :conversation-turn-id turn-id
-                            :turn-position (:turn-position opts)
                             :iteration-number iteration-number
                             :block-number (:block-number opts)
                             :details-path path
@@ -4586,7 +4569,6 @@
                                                  :conversation-id      (:conversation-id opts)
                                                  :detail-expansions   (:detail-expansions opts)
                                                  :conversation-turn-id (:conversation-turn-id opts)
-                                                 :turn-position        (:turn-position opts)
                                                  :preview-default-lines (get settings :preview/default-lines 4)})))
                                     (collapse-repeated-error-runs trace)))
         answer-str              (or answer "")
@@ -4599,7 +4581,6 @@
         md-entries              (markdown->entries answer-str (max 1 (- fill-w 2)) :answer
                                   {:conversation-id      (:conversation-id opts)
                                    :conversation-turn-id (:conversation-turn-id opts)
-                                   :turn-position        (:turn-position opts)
                                    :detail-expansions   (:detail-expansions opts)
                                    :section             :answer})
         ans-entries             (if (seq md-entries)
