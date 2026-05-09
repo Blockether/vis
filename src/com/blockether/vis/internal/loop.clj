@@ -515,12 +515,12 @@
 
       :else nil)))
 
-(defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn]}]
+(defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [stdout-writer (java.io.StringWriter.)
         stderr-writer (java.io.StringWriter.)
         err-pw       (java.io.PrintWriter. stderr-writer true)
-        preview-sink (atom [])
         tool-events  (atom [])
+        thrown       (atom nil)
         tool-counts  (atom {})
         record-tool-event (fn [event]
                             (let [op (:op event)
@@ -532,34 +532,49 @@
         exec-future (cancellation/worker-future "vis-sci-eval"
                       (fn []
                         (try
-                          (let [result (binding [extension/*preview-sink* preview-sink
-                                                 extension/*tool-event-sink* record-tool-event]
+                          (let [result (binding [extension/*tool-event-sink* record-tool-event]
                                          (sci/binding [sci/out stdout-writer
                                                        sci/err err-pw]
                                            (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
                                              (:val (sci/eval-string+ sci-ctx code
                                                      (when ns {:ns ns}))))))]
-                            {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink :tool-events @tool-events :error nil})
+                            {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :tool-events @tool-events :error nil})
                           (catch Throwable e
-                            {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer) :previews @preview-sink :tool-events @tool-events
+                            (reset! thrown e)
+                            {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer) :tool-events @tool-events
                              :error (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))}))))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
-                             {:result nil :stdout "" :stderr "" :previews @preview-sink :tool-events @tool-events :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
+                             (reset! thrown e)
+                             {:result nil :stdout "" :stderr "" :tool-events @tool-events :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
     (.close stdout-writer)
     (.close stderr-writer)
+    ;; Park `*1`/`*2`/`*3`/`*e` after each top-level form. Push only when
+    ;; the eval succeeded; on exception/timeout, set `*e` without
+    ;; advancing the value stack (the form produced no value).
+    (when env
+      (cond
+        (nil? execution-result)
+        (env/push-eval-error! env (or @thrown (ex-info "Eval timeout" {})))
+
+        (nil? (:error execution-result))
+        (env/push-eval-result! env (:result execution-result))
+
+        :else
+        (env/push-eval-error! env (or @thrown
+                                    (ex-info (or (:error execution-result) "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
-        {:result nil :stdout "" :stderr "" :previews @preview-sink :tool-events @tool-events :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
+        {:result nil :stdout "" :stderr "" :tool-events @tool-events :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
       execution-result)))
 
-(defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn]
+(defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn env]
   (let [execution-result (if timeout-ms
                            (binding [*eval-timeout-ms* (clamp-eval-timeout-ms timeout-ms)]
-                             (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn))
-                           (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn))
+                             (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn :env env))
+                           (run-sci-code sci-ctx code :sandbox-ns sandbox-ns :tool-event-fn tool-event-fn :env env))
         finished-time    (System/currentTimeMillis)
         execution-time   (- finished-time start-time)]
     (cond-> execution-result
@@ -677,7 +692,7 @@
         (let [parse-error (parse-clojure-syntax code)]
           (if parse-error
             (if-let [rescued (try-extension-parse-rescue environment code parse-error)]
-              (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time tool-event-fn)
+              (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time tool-event-fn environment)
                     eval-ok? (nil? (:error exec))]
                 (when eval-ok?
                   (attach-doc-meta! environment rescued doc))
@@ -695,7 +710,7 @@
                :execution-time-ms 0 :timeout? false})
             (let [rewritten-code (try-extension-source-rewrite environment code)
                   eval-code      (or rewritten-code code)
-                  initial-exec   (run-with-timing sci-ctx eval-code sandbox-ns timeout-ms start-time tool-event-fn)
+                  initial-exec   (run-with-timing sci-ctx eval-code sandbox-ns timeout-ms start-time tool-event-fn environment)
                   initial-ok?    (nil? (:error initial-exec))
                   ;; Eval-time auto-repair scoped to `(answer ...)`
                   ;; forms. SCI surfaces `Unable to resolve symbol:
@@ -715,7 +730,7 @@
                                                              eval-code sym)]
                                        (some (fn [candidate]
                                                (let [retry (run-with-timing sci-ctx candidate sandbox-ns
-                                                             timeout-ms start-time tool-event-fn)]
+                                                             timeout-ms start-time tool-event-fn environment)]
                                                  (when (nil? (:error retry))
                                                    {:retry retry :candidate candidate})))
                                          candidates))))
@@ -1305,90 +1320,143 @@
     (not= false (:reasoning-effort? resolved-model))
     (not= :zai-thinking (:reasoning-style resolved-model))))
 
-(def ^:private preserved-thinking-replay-window
-  "Number of most-recent prior iterations whose canonical
-   `:assistant-message` is echoed back to the provider on the next
-   iteration.
+(def ^:private preserved-thinking-replay-token-budget
+  "Approximate max tokens of preserved `reasoning_content` carried
+   across iter assistant replays.
 
-   1 is the API minimum (Anthropic's docs require the most recent
-   assistant turn's thinking blocks unchanged; z.ai and OpenAI
-   Responses are also recency-based). 3 gives the model a tiny
-   short-term context window of its own recent reasoning across
-   loop-style multi-step tasks (probe → verify → patch) without
-   re-introducing unbounded growth: each iteration adds exactly
-   `min(N, window)` assistant messages, never more.
+   Z.ai's preserved-thinking contract requires CONSECUTIVE
+   `reasoning_content` blocks (newest run, contiguous, verbatim).
+   We always keep the most recent prior iter — even if its reasoning
+   alone exceeds the budget — and walk newest→oldest until adding
+   the next iter's reasoning would push total over the budget; we
+   stop there (do NOT skip-and-continue, that would create a gap
+   and break the contiguity rule).
 
-   Historical observations beyond this window flow through the
-   `<journal>` user trailer, which the renderer still token-budget-
-   trims, so vis's bounded-context contract holds."
-  3)
+   Char-count proxy: `chars / 4 ≈ tokens`. Conservative upper bound;
+   real GLM tokens are slightly denser, so the actual carried budget
+   sits somewhat under this number."
+  30000)
+
+(defn- ^:private replay-reasoning-chars
+  "Total `:thinking-signature` (or `:thinking` fallback) char count for
+   the canonical thinking blocks on `assistant-message`. 0 when nil.
+   The signature field is what svar's wire serializer hoists into
+   `reasoning_content` — that is what counts against the budget."
+  [assistant-message]
+  (->> (get assistant-message :content)
+    (filter (fn [b] (= "thinking" (:type b))))
+    (map (fn [b] (count (or (:thinking-signature b) (:thinking b) ""))))
+    (reduce + 0)))
 
 (defn- preserved-thinking-replay-messages
   "Provider-agnostic preserved-thinking replay. Returns the canonical
-   `:assistant-message` of the last
-   `preserved-thinking-replay-window` prior iterations, in chronological
-   order (oldest first); empty vec when none.
+   `:assistant-message` of the most-recent prior iterations whose
+   cumulative reasoning_content fits inside
+   `preserved-thinking-replay-token-budget`, in chronological order
+   (oldest kept → newest); empty vec when none.
 
-   Why a small fixed window instead of all prior iterations: vis's
-   per-iteration contract keeps context bounded. Anthropic / z.ai /
-   OpenAI Responses each only require the MOST RECENT assistant turn's
-   thinking signature to keep the session alive; we send a few extra
-   so the model has its own short-term reasoning context (helpful for
-   probe → verify → patch chains) without growing unboundedly. Older
-   thinking text still reaches the model via the `<journal>` user
-   trailer (budget-trimmed), so nothing is lost — just bounded.
+   Z.ai requires the kept block run to be CONTIGUOUS from the latest
+   iter back; if iter K-2's reasoning would push total over budget,
+   we stop and DO NOT skip past it to grab K-3 (that would create a
+   gap → contract violation, model loops). The most recent iter is
+   always kept, even when it alone exceeds budget, because dropping
+   it breaks single-step continuity which all preserving providers
+   need.
 
    The wire serializer for the active model translates each canonical
    message to its native shape; iteration-loop never branches on
-   provider."
+   provider. Anthropic / OpenAI Responses don't carry `reasoning_content`
+   at all in their canonical shape, so the budget walk just trims by
+   thinking-block size and the per-provider serializer ignores anything
+   it can't carry."
   [journal-iters]
-  (let [iters (vec journal-iters)
-        n     (count iters)
-        from  (max 0 (- n preserved-thinking-replay-window))]
-    (->> (subvec iters from)
-      (keep (fn [[_ {:keys [assistant-message]}]] assistant-message))
-      vec)))
+  (let [iters      (vec journal-iters)
+        budget-chr (* 4 preserved-thinking-replay-token-budget)]
+    (loop [i        (dec (count iters))
+           kept-rev ()
+           used-chr 0]
+      (if (neg? i)
+        (vec kept-rev)
+        (let [msg (some-> iters (get i) second :assistant-message)]
+          (if-not msg
+            (recur (dec i) kept-rev used-chr)
+            (let [size  (long (replay-reasoning-chars msg))
+                  used' (+ used-chr size)]
+              (cond
+                ;; First (newest) kept iter: always keep, even when it
+                ;; alone exceeds the budget. Continuity > budget on the
+                ;; latest turn; preserved-thinking breaks otherwise.
+                (empty? kept-rev)
+                (recur (dec i) (cons msg kept-rev) used')
 
-(defn- last-user-message-index
-  [messages]
-  (->> (map-indexed vector messages)
-    reverse
-    (some (fn [[idx {:keys [role]}]]
-            (when (contains? #{"user" :user} role)
-              idx)))))
+                (<= used' budget-chr)
+                (recur (dec i) (cons msg kept-rev) used')
 
-(defn- insert-before-last-user-message
-  "Insert `insertions` before the current turn's final user message.
-
-   Provider recency matters: the last user-role message must remain the
-   current goal, not a synthetic context/journal block or preserved-thinking
-   replay. Conversation 9a55ca1a reproduced the failure mode: OpenAI Codex
-   saw a 355k-char `<journal>` as the final user message and drifted back to
-   the old PROOF topic instead of the latest ask."
-  [messages insertions]
-  (let [messages*   (vec (or messages []))
-        insertions* (vec (remove nil? insertions))]
-    (if (seq insertions*)
-      (if-let [idx (last-user-message-index messages*)]
-        (vec (concat (subvec messages* 0 idx)
-               insertions*
-               (subvec messages* idx)))
-        (into messages* insertions*))
-      messages*)))
+                ;; Adding this older iter would push us over budget.
+                ;; STOP — do not skip-and-continue (that creates a gap
+                ;; in the consecutive run that z.ai's contract forbids).
+                :else
+                (vec kept-rev)))))))))
 
 (defn- append-preserved-thinking-replay
-  "Inserts svar's canonical assistant-replay messages from prior
-   iterations into the outbound `messages` vec right before the
-   current user turn. Replaces the earlier z.ai-only helper: every
-   provider that surfaces preserved-thinking state on `ask-code!`
-   (Anthropic extended thinking, z.ai GLM, OpenAI Responses) flows
-   through the same canonical shape, and providers that don't surface
-   any replay state contribute zero replay messages. The wire
-   serializer in svar handles the per-provider translation."
+  "Appends svar's canonical assistant-replay messages from prior
+   iterations to the END of `messages` (R3 hybrid shape).
+
+   Pre-R3 path inserted replays BEFORE the last user message,
+   producing `[system, asst_iter1, asst_iter2, …, user_journal,
+   user_initial]` — two adjacent assistants and two adjacent users
+   at the tail. That fights z.ai's canonical preserved-thinking
+   shape (`user → asst → user → asst → user`) and made GLM-5.1
+   restart its plan every iter (conversation 1db62d10).
+
+   R3 keeps the original user request once at the start of the
+   conversation, then alternates `asst_n` (preserved replay) with
+   `user_journal_n` (per-iter observation/nudge — appended by the
+   call site). The 9a55ca1a OpenAI-Codex regression (huge journal
+   as the last user message drifting topic) stays guarded by the
+   journal renderer's existing token budget, not by message
+   ordering.
+
+   Every provider that surfaces preserved-thinking state on
+   `ask-code!` (Anthropic extended thinking, z.ai GLM Coding Plan,
+   OpenAI Responses) flows through the same canonical shape; the
+   wire serializer in svar handles per-provider translation."
   [messages journal-iters]
   (let [messages* (vec (or messages []))
         replays   (preserved-thinking-replay-messages journal-iters)]
-    (insert-before-last-user-message messages* replays)))
+    (cond-> messages*
+      (seq replays) (into replays))))
+
+(def ^:private MAX_TURN_ITERATIONS
+  "Hard cap on iterations per turn. Vis used to have NO cap (\"if a
+   buggy model never finalizes, the user cancels\"). In practice that
+   reads as an infinite loop to the user — see conversation 1db62d10
+   where GLM-5.1 ran 3 research iterations without committing and the
+   user pressed Esc. The cap fires the same `:cancelled` lifecycle
+   path as Esc so persistence/UI are uniform."
+  20)
+
+(def ^:private CONVERGENCE_NUDGE_AT
+  "Iteration index (0-based, so iteration `8` means the 9th run) at
+   which we start prepending a convergence reminder to every
+   subsequent iteration's `<journal>` trailer. Nudge does NOT escalate;
+   the hard cap at `MAX_TURN_ITERATIONS` is what eventually stops the
+   turn."
+  8)
+
+(defn- convergence-nudge-line
+  "Caveman-style reminder to commit. Inlined as the LAST user message
+   on iter ≥ `CONVERGENCE_NUDGE_AT`, after any iteration-context body.
+   Reads naturally to the model and is cheap (~50 tokens)."
+  [iteration max-iterations]
+  (str "<vis_convergence_reminder>\n"
+    "You have run " iteration " iterations of research/exploration without "
+    "calling `(answer ...)`. Hard cap is " max-iterations " iterations — after "
+    "that the turn auto-cancels with no answer recorded. Either call "
+    "`(answer \"...\")` NOW with what you already know, or take the SMALLEST "
+    "possible next step (one tool call, one read) and then commit. Do not "
+    "start a new research thread.\n"
+    "</vis_convergence_reminder>"))
 
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
@@ -1569,7 +1637,6 @@
                                           :code              expr
                                           :comment           form-comment
                                           :result            (:result result*)
-                                          :previews          (:previews result*)
                                           :tool-events       (:tool-events result*)
                                           :error             (:error result*)
                                           :stdout            (:stdout result*)
@@ -1589,7 +1656,6 @@
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
-                                    :previews (:previews result)
                                     :tool-events (:tool-events result)
                                     :stdout (:stdout result)
                                     :stderr (:stderr result)
@@ -2199,7 +2265,7 @@
   "Archive eligible live user symbols after a final successful answer.
    Archive means removing bindings from the live SCI sandbox only; DB
    history remains the source of truth for `var-history`."
-  [{:keys [db-info conversation-id sci-ctx initial-ns-keys var-index-atom]}]
+  [{:keys [db-info conversation-id sci-ctx initial-ns-keys bindings-atom]}]
   (when (and db-info conversation-id sci-ctx)
     (try
       (let [var-registry (persistance/db-latest-var-registry db-info conversation-id)
@@ -2214,8 +2280,8 @@
                      :msg (str "Auto-archive: evicting " (count candidates)
                             " hot symbols after final answer")})
           (archive-vars! sci-ctx candidates)
-          (when var-index-atom
-            (swap! var-index-atom update :current-revision inc))))
+          (when bindings-atom
+            (swap! bindings-atom update :current-revision inc))))
       (catch Exception e
         (tel/log! {:level :warn :id ::auto-archive-failed
                    :data {:error (ex-message e)}
@@ -2415,8 +2481,8 @@
                                     :reasoning reasoning-tokens :cached cached-tokens
                                     :total total-tokens}
                            :cost cost}))
-        var-index-atom (or (:var-index-atom environment)
-                         (atom {:index nil :revision -1 :current-revision 0}))
+        bindings-atom (or (:bindings-atom environment)
+                        (atom {:index nil :revision -1 :current-revision 0}))
         ;; `:on-chunk` is a streaming-token hook (per-reasoning-chunk
         ;; from svar's stream callback); it lives outside the
         ;; lifecycle bus on purpose - it fires dozens of times per
@@ -2491,7 +2557,7 @@
       (env/bind-and-bump! environment 'CONVERSATION_SOUL_ID (:conversation-id environment))
       (env/bind-and-bump! environment 'CONVERSATION_STATE_ID conversation-state-id))
     ;; The full assembled system prompt that drives THIS turn. SYSTEM
-    ;; vars are excluded from `<var_index>` (see `env/build-var-index`)
+    ;; vars are excluded from `<bindings>` (see `env/build-bindings`)
     ;; so binding a multi-KB string here does NOT enter per-iteration
     ;; prompt context - it is only paid for if the model evaluates the
     ;; symbol explicitly (e.g. to verify what rules it is bound by).
@@ -2499,7 +2565,7 @@
     ;; TURN_ACTIVE_EXTENSIONS = frozen, fully-realized vec describing
     ;; every extension that activated for THIS turn. Built off the same
     ;; `active-exts` we hand to the prompt assembler / nudge collector,
-    ;; so the agent's <var_index> picture matches the actually-loaded
+    ;; so the agent's <bindings> picture matches the actually-loaded
     ;; surface.
     (env/bind-and-bump! environment 'TURN_ACTIVE_EXTENSIONS
       (prompt/extensions-snapshot active-exts))
@@ -2518,6 +2584,10 @@
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
+    ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
+    ;; follow-up turn opens with all four nil so leftover values from
+    ;; the previous turn never bleed into the new OODA loop.
+    (env/reset-eval-bindings! environment)
     ;; Hot symbol compaction is archive-based and runs only after a
     ;; final successful answer. Failed/cancelled turns keep their live
     ;; scratch symbols for recovery.
@@ -2583,6 +2653,40 @@
                        :tokens          (:tokens  result)
                        :cost-usd        (:cost    result)
                        :answer          nil
+                       :error           nil}))
+                  result))
+
+              ;; Hard iteration cap. Soft nudge (CONVERGENCE_NUDGE_AT)
+              ;; reminds the model to commit; if it still hasn't called
+              ;; `(answer ...)` by MAX_TURN_ITERATIONS we stop the turn
+              ;; the same way Esc would. Status :cancelled keeps
+              ;; persistence + lifecycle uniform with user-cancel.
+              (>= (long iteration) (long MAX_TURN_ITERATIONS))
+              (do (log-stage! :error iteration {:reason :iteration-cap-exceeded
+                                                :max-iterations MAX_TURN_ITERATIONS})
+                (tel/log! {:level :warn :id ::iteration-cap-exceeded
+                           :data  {:iteration iteration
+                                   :max-iterations MAX_TURN_ITERATIONS
+                                   :conversation-turn-id conversation-turn-id}
+                           :msg   "Iteration cap reached; auto-cancelling turn"})
+                (let [reason (str "Stopped after " iteration
+                               " iterations without `(answer ...)`. Hard cap is "
+                               MAX_TURN_ITERATIONS ". Re-prompt with a tighter "
+                               "goal or partial-progress acknowledgement.")
+                      result (merge {:answer reason
+                                     :status :cancelled
+                                     :status-id (status->id :cancelled)
+                                     :trace trace
+                                     :iteration-count iteration}
+                               (finalize-cost))]
+                  (lifecycle/emit! lifecycle-listeners :turn-end
+                    (merge turn-base-payload
+                      {:status          :cancelled
+                       :iteration       iteration
+                       :iteration-count iteration
+                       :tokens          (:tokens result)
+                       :cost-usd        (:cost   result)
+                       :answer          reason
                        :error           nil}))
                   result))
 
@@ -2658,12 +2762,42 @@
                       ;; svar's per-provider wire serializer turns the
                       ;; canonical assistant messages into native
                       ;; Anthropic / z.ai / Responses shapes.
+                      ;;
+                      ;; R3 hybrid message shape (per ADR/conversation
+                      ;; 1db62d10): preserved-thinking replays + the
+                      ;; iteration-context journal trailer both APPEND to
+                      ;; the end. The original user_initial stays as the
+                      ;; ONE user-role anchor near the start (placed there
+                      ;; by `assemble-initial-messages`); we never repeat
+                      ;; it. Final wire shape:
+                      ;;
+                      ;;   [system, user_initial,
+                      ;;    asst_iter1, user_journal_after_iter1,
+                      ;;    asst_iter2, user_journal_after_iter2,
+                      ;;    ...
+                      ;;    asst_iter(n-1), user_journal_after_iter(n-1)]
+                      ;;
+                      ;; This matches z.ai's canonical preserved-thinking
+                      ;; example (user → asst → user → asst → user) and
+                      ;; stops GLM-5.1 from re-reading the same initial
+                      ;; goal every iter and restarting its plan.
                       provider-messages (append-preserved-thinking-replay
                                           messages journal-iters)
-                      effective-messages (insert-before-last-user-message
-                                           provider-messages
-                                           (when-not (str/blank? iteration-context)
-                                             [{:role "user" :content iteration-context}]))
+                      ;; Soft convergence nudge after CONVERGENCE_NUDGE_AT
+                      ;; — appended INSIDE the iteration-context user
+                      ;; trailer so we don't add an extra wire message.
+                      ;; Compatible with the existing journal-renderer
+                      ;; budget (still one trailer, just slightly longer).
+                      nudge-text (when (>= (long iteration) (long CONVERGENCE_NUDGE_AT))
+                                   (convergence-nudge-line (long iteration)
+                                     MAX_TURN_ITERATIONS))
+                      trailer-text (let [body (or iteration-context "")]
+                                     (cond-> body
+                                       (and nudge-text (not (str/blank? body))) (str "\n\n")
+                                       nudge-text                                (str nudge-text)))
+                      effective-messages (cond-> provider-messages
+                                           (not (str/blank? trailer-text))
+                                           (conj {:role "user" :content trailer-text}))
                       resolved-model pre-resolved-model
                       effective-routing (or routing {})
                       iteration-result
@@ -2954,7 +3088,7 @@
                                          :done?            false}))
                             (let [had-success? (some #(nil? (:error %)) blocks)
                                   next-errors (if had-success? 0 (inc consecutive-errors))
-                                  _ (when had-success? (swap! var-index-atom update :current-revision inc))
+                                  _ (when had-success? (swap! bindings-atom update :current-revision inc))
                                 ;; Carry forward all observed iterations
                                 ;; as `[pos {:thinking :blocks}]` for the
                                 ;; next iteration's `<journal>`. The
@@ -3069,7 +3203,7 @@
           ;; Locate the LAST user message once. It is the only human text
           ;; sent into this turn. Prior dialog transcript is intentionally
           ;; NOT replayed to the model; durable context flows through
-          ;; <journal>, <var_index>, SYSTEM vars, and DB-backed tools.
+          ;; <journal>, <bindings>, SYSTEM vars, and DB-backed tools.
           last-user-idx          (->> (map-indexed vector messages)
                                    reverse
                                    (some (fn [[i m]]
@@ -3089,11 +3223,11 @@
           custom-bindings        (custom-bindings env)
           current-iteration-atom (:current-iteration-atom env)
           sci-ctx                (:sci-ctx env)
-          _                      (env/bump-var-index! env)
+          _                      (env/bump-bindings! env)
           _                      (doseq [[sym val] (or custom-bindings {})]
                                    (when val
                                      (env/sci-update-binding! sci-ctx sym val)))
-          _                      (env/bump-var-index! env)
+          _                      (env/bump-bindings! env)
           current-iteration-id-atom (:current-iteration-id-atom env)
           current-conversation-turn-id-atom (:current-conversation-turn-id-atom env)
           workspace              (select-keys opts [:workspace/root :workspace/id
@@ -3755,7 +3889,7 @@
    querying.
 
    The environment holds:
-     - SCI sandbox context with custom bindings + var-index cache
+     - SCI sandbox context with custom bindings + bindings cache
      - DB connection (or shared-mem datasource)
      - Router (LLM provider config)
      - Extension registry atom
@@ -3778,7 +3912,7 @@
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom               (atom 0)
         db-info                  (persistance/db-create-connection! db)
-        var-index-atom           (atom {:index nil :revision -1 :current-revision 0})
+        bindings-atom           (atom {:index nil :revision -1 :current-revision 0})
         active-skills-atom       (atom {})
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
@@ -3832,7 +3966,7 @@
         ;; Bind sandbox helpers that need env identity (db-info +
         ;; conversation-id). They go through `custom-bindings` so they
         ;; land in `initial-ns-keys` and therefore stay out of
-        ;; `<var_index>` (matches the treatment of every other system
+        ;; `<bindings>` (matches the treatment of every other system
         ;; binding shipped via EXTRA_BINDINGS).
         var-history-fn           (fn var-history
                                    ([]
@@ -3898,7 +4032,7 @@
              :channel         (or channel :tui)
              :depth-atom      depth-atom
              :db-info         db-info
-             :var-index-atom  var-index-atom
+             :bindings-atom  bindings-atom
              :active-skills-atom active-skills-atom
              :state-atom      state-atom
              :sci-ctx         sci-ctx
@@ -3919,7 +4053,7 @@
     (when resolved-conversation-id
       (try
         (env/restore-sandbox! sci-ctx db-info conversation-id)
-        (env/bump-var-index! env)
+        (env/bump-bindings! env)
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-sandbox-failed
                      :data {:error (ex-message t)
