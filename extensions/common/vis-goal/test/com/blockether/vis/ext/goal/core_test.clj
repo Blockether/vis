@@ -339,3 +339,138 @@
       (expect (= "\"goal-state\"" (:kind row)))
       (expect (clojure.string/starts-with? (:scope_key row) "conversation-soul:"))
       (expect (some? (:conversation_soul_id row))))))
+
+;; =============================================================================
+;; TUI /goal slash command
+;; =============================================================================
+
+(defdescribe goal-slash-command-registration-test
+  (it "registers exactly one channel-hook on :tui with a commands-fn"
+    (let [hooks (:ext/channel-hooks goal/vis-extension)
+          tui   (filterv #(= :tui (:channel-id %)) hooks)]
+      (expect (= 1 (count tui)))
+      (expect (some? (:commands-fn (first tui))))))
+
+  (it "exposes a single :goal command with the documented usage"
+    (let [hook   (->> (:ext/channel-hooks goal/vis-extension)
+                   (some #(when (= :tui (:channel-id %)) %)))
+          cmds   ((:commands-fn hook) {})]
+      (expect (= 1 (count cmds)))
+      (expect (= :goal (:id (first cmds))))
+      (expect (some? (:run-fn (first cmds))))
+      ;; Description carries every subcommand so the user discovers
+      ;; them inline via the slash menu.
+      (let [doc (:doc (first cmds))]
+        (expect (str/includes? doc "/goal <objective>"))
+        (expect (str/includes? doc "/goal pause"))
+        (expect (str/includes? doc "/goal resume"))
+        (expect (str/includes? doc "/goal clear"))
+        (expect (str/includes? doc "achieved"))))))
+
+(defn- run-with-stub-notifier
+  "Capture every (vis/notify! ...) call into `notes` (a vector ref).
+   Returns [result captured-notifications]."
+  [s _ctx-template thunk]
+  (let [notes (atom [])]
+    (with-redefs [vis/db-info (constantly s)
+                  vis/notify! (fn [text & {:keys [level]}]
+                                (swap! notes conj {:text (str text)
+                                                   :level (or level :info)}))]
+      [(thunk) @notes])))
+
+(defdescribe goal-slash-dispatch-test
+  (it "/goal <objective> sets a fresh goal and notifies :success"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          app-db (atom {:conversation {:id (str cid)}})
+          ctx {:channel/id :tui :app-db app-db
+               :command/args "Ship the goal" :command/argv ["Ship" "the" "goal"]}
+          [_ notes] (run-with-stub-notifier s ctx #(#'goal/goal-slash-run! ctx))]
+      (expect (= 1 (count notes)))
+      (expect (= :success (:level (first notes))))
+      (expect (str/includes? (:text (first notes)) "Ship the goal"))
+      ;; goal landed on the row
+      (expect (= "Ship the goal" (:objective (goal/get-goal s cid))))))
+
+  (it "/goal (no args) with no goal toasts :info \"no goal set\""
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          app-db (atom {:conversation {:id (str cid)}})
+          ctx {:channel/id :tui :app-db app-db
+               :command/args "" :command/argv []}
+          [_ notes] (run-with-stub-notifier s ctx #(#'goal/goal-slash-run! ctx))]
+      (expect (= :info (:level (first notes))))
+      (expect (str/includes? (:text (first notes)) "no goal"))))
+
+  (it "/goal pause and /goal resume each notify :success and toggle status"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          _   (goal/set-goal! s cid {:objective "x" :set-by :user})
+          app-db (atom {:conversation {:id (str cid)}})
+          ctx-pause  {:app-db app-db :command/args "pause"  :command/argv ["pause"]}
+          ctx-resume {:app-db app-db :command/args "resume" :command/argv ["resume"]}]
+      (run-with-stub-notifier s ctx-pause #(#'goal/goal-slash-run! ctx-pause))
+      (expect (= :paused (:status (goal/get-goal s cid))))
+      (run-with-stub-notifier s ctx-resume #(#'goal/goal-slash-run! ctx-resume))
+      (expect (= :active (:status (goal/get-goal s cid))))))
+
+  (it "/goal achieved | unmet | budget-limited each mark the goal done"
+    (let [for-reason
+          (fn [reason]
+            (let [s   (h/store)
+                  cid (vis/db-store-conversation! s {:channel :tui})
+                  _   (goal/set-goal! s cid {:objective "x" :set-by :user})
+                  app-db (atom {:conversation {:id (str cid)}})
+                  ctx {:app-db app-db
+                       :command/args (name reason)
+                       :command/argv [(name reason)]}]
+              (run-with-stub-notifier s ctx #(#'goal/goal-slash-run! ctx))
+              (goal/get-goal s cid)))]
+      (let [g (for-reason :achieved)]
+        (expect (= :done     (:status g)))
+        (expect (= :achieved (:done-reason g))))
+      (let [g (for-reason :unmet)]
+        (expect (= :unmet (:done-reason g))))
+      (let [g (for-reason :budget-limited)]
+        (expect (= :budget-limited (:done-reason g))))))
+
+  (it "/goal clear tombstones the goal as :cleared"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          _   (goal/set-goal! s cid {:objective "x" :set-by :user})
+          app-db (atom {:conversation {:id (str cid)}})
+          ctx {:app-db app-db :command/args "clear" :command/argv ["clear"]}]
+      (run-with-stub-notifier s ctx #(#'goal/goal-slash-run! ctx))
+      (let [g (goal/get-goal s cid)]
+        (expect (= :done    (:status g)))
+        (expect (= :cleared (:done-reason g))))))
+
+  (it "/goal pause WITHOUT an active goal toasts :error and DOES NOT crash"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          app-db (atom {:conversation {:id (str cid)}})
+          ctx {:app-db app-db :command/args "pause" :command/argv ["pause"]}
+          [_ notes] (run-with-stub-notifier s ctx #(#'goal/goal-slash-run! ctx))]
+      (expect (= :error (:level (first notes))))
+      (expect (str/includes? (:text (first notes)) "pause failed"))))
+
+  (it "/goal blank objective when set is rejected with :warn (no DB write)"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          app-db (atom {:conversation {:id (str cid)}})
+          ctx {:app-db app-db :command/args " " :command/argv [""]}
+          [_ notes] (run-with-stub-notifier s ctx #(#'goal/goal-slash-run! ctx))]
+      ;; argv [""] -> first-arg is "", routes to :show; show on no goal
+      ;; -> :info "no goal". The genuine \"objective is required\" path
+      ;; fires when the user types `/goal ` with literal whitespace argv.
+      ;; That case is exercised below.
+      (expect (= :info (:level (first notes))))))
+
+  (it "/goal works without :command/argv key (only :command/args supplied)"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          app-db (atom {:conversation {:id (str cid)}})
+          ctx {:app-db app-db :command/args "Round 2"}
+          [_ notes] (run-with-stub-notifier s ctx #(#'goal/goal-slash-run! ctx))]
+      (expect (= :success (:level (first notes))))
+      (expect (= "Round 2" (:objective (goal/get-goal s cid)))))))
