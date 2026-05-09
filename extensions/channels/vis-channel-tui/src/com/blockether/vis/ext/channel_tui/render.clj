@@ -655,10 +655,11 @@
     ;; Plain ` - ` separator on the row's normal colors.
     (when (pos? sep-w)
       (p/put-str! g (+ x0 chip-w) row sep))
-    ;; Italic description, dimmed on non-selected rows.
+    ;; Italic description in the dim hint color. The cursor glyph in
+    ;; the left margin (painted by the caller) carries the selection
+    ;; cue, so the description palette is the same on every row.
     (when (and desc (pos? (p/display-width desc)))
-      (when-not (:slash/selected? suggestion)
-        (p/set-fg! g t/dialog-hint))
+      (p/set-fg! g t/dialog-hint)
       (p/styled g [p/ITALIC]
         (p/put-str! g (+ x0 chip-w sep-w) row desc))
       (p/set-fg! g row-fg))))
@@ -806,20 +807,28 @@
           (p/fill-rect! g 0 border-row cols 1)
           (p/put-str! g left border-row (p/horiz-line inner-w)))
 
-        ;; Suggestion rows — inset by the same margin so the highlight
-        ;; bar matches the title accent width exactly. Margin columns
-        ;; on each side stay terminal-bg.
+        ;; Suggestion rows — inset by the same margin so the row body
+        ;; lines up with the title accent and the input box rule.
+        ;; Selection is signalled by a `> ` cursor glyph in the
+        ;; left margin (matching the project-wide convention; see
+        ;; `p/SELECTION_GLYPH`) instead of a full-width highlight
+        ;; stripe — that keeps the inline code chip and italic
+        ;; description colors readable on every row.
         (doseq [[i suggestion] (map-indexed vector visible)]
           (let [row (+ first-sug i)]
-            ;; Margin gutters (left + right) cleared to terminal-bg.
+            ;; Clear the full row to terminal-bg so the margin gutters
+            ;; on each side don't bleed leftover paint.
             (p/set-colors! g t/text-fg t/terminal-bg)
             (p/fill-rect! g 0 row cols 1)
-            ;; Inner highlighted row — fill bg, then paint usage + italic
-            ;; description in `draw-slash-suggestion-row!`.
-            (if (:slash/selected? suggestion)
-              (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-              (p/set-colors! g t/dialog-fg t/dialog-bg))
+            ;; Body row in the normal dialog palette (no inversion).
+            (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g left row inner-w 1)
+            ;; Cursor glyph in the LEFT MARGIN (col 0..1 area), in
+            ;; terminal-bg so it floats outside the row body.
+            (p/set-colors! g t/dialog-hint-key t/terminal-bg)
+            (p/draw-selection-marker! g 0 row (:slash/selected? suggestion))
+            ;; Inline-code chip + ` - ` + italic description.
+            (p/set-colors! g t/dialog-fg t/dialog-bg)
             (draw-slash-suggestion-row! g row left inner-w suggestion)))))))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────
