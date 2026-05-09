@@ -242,7 +242,6 @@
       (and (= :tokens kind) (= 3 unit) (= 5 number)) "Z.ai Coding 5h token quota"
       (and (= :tokens kind) (= 6 unit) (= 7 number)) "Z.ai Coding 7d token quota"
       (= :tokens kind)                         "Z.ai Coding token quota"
-      (and (= :requests kind) (= 5 unit))      "Z.ai Coding web/search quota"
       (= :requests kind)                       "Z.ai Coding request quota"
       :else                                    "Z.ai Coding quota")))
 
@@ -254,7 +253,6 @@
     (cond
       (and (= :tokens kind) (= 3 unit) (= 5 number)) :zai-coding-5h
       (and (= :tokens kind) (= 6 unit) (= 7 number)) :zai-coding-7d
-      (and (= :requests kind) (= 5 unit))            :zai-coding-web-searches
       :else                                          (keyword (str "zai-coding-limit-" idx)))))
 
 (defn- limit-window

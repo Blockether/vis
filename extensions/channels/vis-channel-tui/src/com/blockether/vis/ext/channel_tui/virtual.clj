@@ -222,6 +222,24 @@
 
 ;;; ── Per-message projection ─────────────────────────────────────────────────
 
+(defn- turn-identity
+  "Stable per-turn key for detail-disclosure node ids. The progress
+   bubble live-streams while `:conversation-turn-id` is still nil
+   (the server only assigns it once the turn lands), so we MUST
+   prefer `:client-turn-id` - that one exists from the moment the
+   user submits, and gets carried through into the persisted
+   assistant message. Picking conversation-turn-id here would
+   change the disclosure node id at the live -> done flip; every
+   open <details> / REASONING toggle the user expanded during
+   streaming would silently snap back to its default state.
+
+   Old conversations loaded from disk lack `:client-turn-id`
+   entirely, so we fall back to `:conversation-turn-id` for them.
+   Both still scope the click region by turn so a click on one
+   answer can't toggle a disclosure in another."
+  [message]
+  (or (:client-turn-id message) (:conversation-turn-id message)))
+
 (defn project-message
   "Apply the same `:text` projection `screen/apply-settings` used to
    apply, but for ONE message at a time so the virtual layer can call
@@ -238,7 +256,7 @@
                (:confidence message)
                (= :cancelled (:status message))
                {:conversation-id      conversation-id
-                :conversation-turn-id (:conversation-turn-id message)
+                :conversation-turn-id (turn-identity message)
                 :detail-expansions   detail-expansions})]
          (-> message
            (assoc :text text :prewrapped-lines lines :line-meta line-meta)
@@ -249,7 +267,7 @@
              (render/format-answer-markdown-data
                (:text message) bubble-w
                {:conversation-id      conversation-id
-                :conversation-turn-id (:conversation-turn-id message)
+                :conversation-turn-id (turn-identity message)
                 :detail-expansions   detail-expansions})]
          (-> message
            (assoc :text text :prewrapped-lines lines :line-meta line-meta)
@@ -362,6 +380,15 @@
                              (render/progress->lines-data progress bubble-w settings
                                (assoc progress-extra
                                  :conversation-id conversation-id
+                                 ;; Live progress bubble must use the
+                                 ;; same turn key the completed answer
+                                 ;; will use a moment later; otherwise
+                                 ;; the REASONING / <details> toggle
+                                 ;; node-ids change at the live -> done
+                                 ;; flip and the user's expansion state
+                                 ;; resets to its default. See
+                                 ;; `turn-identity` for the precedence.
+                                 :conversation-turn-id (turn-identity m)
                                  :detail-expansions detail-expansions))]
                          (assoc m
                            :text text

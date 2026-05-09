@@ -21,6 +21,7 @@
 
 (def ^:private estimated-height @#'virtual/estimated-height)
 (def ^:private project-message  @#'virtual/project-message)
+(def ^:private turn-identity    @#'virtual/turn-identity)
 
 ;; ─── Fixtures ───────────────────────────────────────────────────────────────
 
@@ -458,3 +459,25 @@
       (let [pm (project-message (trace-assistant-msg 2 1 "Done.") bubble-w settings)]
         (expect (string? (:text pm)))
         (expect (pos? (count (:text pm))))))))
+
+(defdescribe turn-identity-test
+  ;; Regression: during live streaming, the assistant bubble has
+  ;; only `:client-turn-id` (the server hasn't assigned
+  ;; `:conversation-turn-id` yet). When the turn lands, the
+  ;; completed message has BOTH ids - and they're different
+  ;; values. Picking `:conversation-turn-id` for the disclosure
+  ;; node-id (REASONING toggle, <details>, ...) would change the
+  ;; node-id at the live -> done flip and silently reset every
+  ;; expansion the user opened mid-stream. The contract: prefer
+  ;; the client id so the same key drives both phases; fall back
+  ;; to the server id only for legacy persisted messages that
+  ;; never had a client id.
+  (describe "turn-identity"
+    (it "prefers :client-turn-id when present (live and done)"
+      (expect (= "abc12345" (turn-identity {:client-turn-id "abc12345"})))
+      (expect (= "abc12345" (turn-identity {:client-turn-id "abc12345"
+                                            :conversation-turn-id "server-xyz"}))))
+    (it "falls back to :conversation-turn-id for legacy DB messages"
+      (expect (= "server-only" (turn-identity {:conversation-turn-id "server-only"}))))
+    (it "returns nil when neither id is present"
+      (expect (nil? (turn-identity {}))))))

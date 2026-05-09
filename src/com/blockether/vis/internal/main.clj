@@ -387,6 +387,21 @@
   (when-let [template (config/provider-template provider-id)]
     (select-keys template [:id :base-url :api-style :llm-headers :responses-path])))
 
+(defn- config-with-provider-override
+  "Return config with `provider-id` promoted to the active (first) position.
+   Resolves from configured providers first, falling back to provider templates.
+   Throws if the provider is unknown."
+  [config provider-id]
+  (let [providers (vec (:providers config))
+        provider  (or (some #(when (= provider-id (:id %)) %) providers)
+                    (provider-from-template provider-id))]
+    (if-not provider
+      (throw (ex-info (str "Unknown provider: " (name provider-id))
+               {:type :vis.cli/unknown-provider
+                :provider provider-id}))
+      (assoc config :providers
+        (vec (cons provider (remove #(= provider-id (:id %)) providers)))))))
+
 (defn- config-with-model-override
   "Return config with `model` selected first.
 
@@ -439,6 +454,7 @@
 
    Options:
    - :spec        - Output spec for structured responses
+   - :provider    - Override provider (keyword or string, e.g. :openai)
    - :model       - Override model
    - :on-chunk    - Streaming callback fn
    - :debug?      - Enable debug logging (default false)
@@ -456,12 +472,15 @@
    Persistent calls (`:persist? true`) create a fresh conversation in
    the `:cli` channel. Past runs are browsable via
    `(conversations/by-channel :cli)`."
-  [agent-def prompt & [{:keys [spec model on-chunk
+  [agent-def prompt & [{:keys [spec model provider on-chunk
                                debug? config db persist? no-persist?]
                         :as _opts}]]
   (let [mdl       (or model (:model agent-def))
-        cfg       (config-with-model-override (config/resolve-config config) mdl)
-        local-router? (boolean (or config mdl))
+        cfg-base  (config/resolve-config config)
+        cfg       (cond-> cfg-base
+                    provider (config-with-provider-override (keyword provider))
+                    mdl      (config-with-model-override mdl))
+        local-router? (boolean (or config mdl provider))
         prompt-s  (if (string? prompt) prompt (pr-str prompt))
         title     (let [t (str/trim prompt-s)]
                     (if (> (count t) 100) (str (subs t 0 97) "...") t))
@@ -758,6 +777,7 @@
           "--trace"          (recur more (assoc opts :trace? true) prompt-parts)
           ("--help" "-h")    (assoc opts :help? true :prompt "")
           "--debug"          (recur more (assoc opts :debug? true) prompt-parts)
+          "--provider"       (recur (next more) (assoc opts :provider (first more)) prompt-parts)
           "--model"          (recur (next more) (assoc opts :model (first more)) prompt-parts)
           "--name"           (recur (next more) (assoc opts :agent-name (first more)) prompt-parts)
           "--db"             (recur (next more) (assoc opts :db (first more)) prompt-parts)
@@ -772,17 +792,19 @@
   (stdout! "  --edn             Print result as EDN.")
   (stdout! "  --trace           Log the full iteration trace via Telemere.")
   (stdout! "  --debug           Enable verbose debug logging.")
-  (stdout! "  --model NAME      Override the configured model.")
-  (stdout! "  --name NAME       Set the agent name (default: cli).")
-  (stdout! "  --db PATH|:memory Override the SQLite path (or :memory).")
-  (stdout! "  --persist         Write this run to ~/.vis/vis.mdb as a")
-  (stdout! "                    `:cli` conversation. Default is ephemeral:")
-  (stdout! "                    no resume, no conversation row on disk.")
+  (stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
+  (stdout! "  --model MODEL        Override the configured model. Also accepts")
+  (stdout! "                       provider/name (e.g. openai/gpt-4o).")
+  (stdout! "  --name NAME          Set the agent name (default: cli).")
+  (stdout! "  --db PATH|:memory    Override the SQLite path (or :memory).")
+  (stdout! "  --persist            Write this run to ~/.vis/vis.mdb as a")
+  (stdout! "                       `:cli` conversation. Default is ephemeral:")
+  (stdout! "                       no resume, no conversation row on disk.")
   (stdout! "")
   (stdout! "Examples:")
   (stdout! "  vis run \"Throwaway one-shot probe\"")
   (stdout! "  vis run --json --model gpt-4o \"Explain auth flow\"")
-  (stdout! "  vis run --persist \"Keep this conversation\""))
+  (stdout! "  vis run --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this\""))
 
 (defn- cli-run!
   "`vis run` handler. `_parsed` is unused - we re-parse the residual
@@ -1452,13 +1474,14 @@
                       {:name "edn"        :kind :flag :type :boolean :doc "Output result as EDN."}
                       {:name "trace"      :kind :flag :type :boolean :doc "Show full execution trace."}
                       {:name "debug"      :kind :flag :type :boolean :doc "Enable svar debug logging."}
-                      {:name "model"      :kind :flag :type :string  :doc "Override the LLM model."}
+                      {:name "model"      :kind :flag :type :string  :doc "Override the LLM model (accepts provider/name syntax)."}
+                      {:name "provider"   :kind :flag :type :string  :doc "Override the LLM provider (e.g. openai, anthropic)."}
                       {:name "name"       :kind :flag :type :string  :doc "Agent name."}
                       {:name "db"         :kind :flag :type :string  :doc "DB target: PATH or :memory."}
                       {:name "persist"    :kind :flag :type :boolean :doc "Persist this run to ~/.vis/vis.mdb as a :cli conversation."}]
           :cmd/examples ["vis run \"Throwaway one-shot probe\""
                          "vis run --json --model gpt-4o \"Explain the auth flow\""
-                         "vis run --persist \"Keep this conversation\""]
+                         "vis run --persist --provider anthropic --model claude-sonnet-4-20250514 \"Keep this conversation\""]
           :cmd/run-fn cli-run!}
 
          {:cmd/name  "providers"
