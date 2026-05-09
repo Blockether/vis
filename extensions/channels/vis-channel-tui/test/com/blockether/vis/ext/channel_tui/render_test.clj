@@ -3024,8 +3024,9 @@ body
                 (swap! puts conj {:col col :row row :text text
                                   :fg @fg :bg @bg :sgr @active})
                 this)
-              (fillRectangle [pos _size _ch]
+              (fillRectangle [pos size _ch]
                 (swap! fills conj {:row (.getRow pos) :col (.getColumn pos)
+                                   :w (.getColumns size) :h (.getRows size)
                                    :fg @fg :bg @bg})
                 this)
               (setCharacter [_ _ _] this))
@@ -3034,20 +3035,40 @@ body
           input-top   10
           cols        80
           n           (count suggestions)
-          title-row   (- input-top n 1)
-          border-row  (dec title-row)]
+          ;; Layout (from top to bottom):
+          ;;   margin-row -> title-row -> border-row -> sug rows ...
+          first-sug   (- input-top n)
+          border-row  (dec first-sug)
+          title-row   (dec border-row)
+          margin-row  (dec title-row)
+          ;; Horizontal margin matches input box rule pad (2 cols).
+          pad         2
+          inner-w     (- cols (* 2 pad))]
       (render/draw-slash-command-suggestions! g suggestions input-top cols)
 
-      ;; Border row: a horizontal rule rendered at border-row.
+      ;; Title row sits ABOVE the border row (border under title).
+      (expect (< title-row border-row))
+
+      ;; Title row: accent stripe (fillRectangle) on title-bg, inset
+      ;; by `pad` cols on each side so it lines up with the input box.
+      (expect (some #(and (= title-row (:row %))
+                       (= t/dialog-title-bg (:bg %))
+                       (= pad (:col %)))
+                @fills))
+
+      ;; Border row UNDER the title: horizontal rule, inset by `pad`,
+      ;; same column span as the title accent stripe.
       (expect (some #(and (= border-row (:row %))
                        (str/starts-with? (:text %) "─")
+                       (= pad (:col %))
                        (= t/dialog-border (:fg %))
                        (= t/terminal-bg (:bg %)))
                 @puts))
 
-      ;; Title row: full-width accent stripe (fillRectangle) on title-bg.
-      (expect (some #(and (= title-row (:row %))
-                       (= t/dialog-title-bg (:bg %)))
+      ;; Top margin row: a full-width terminal-bg gap above the title.
+      (expect (some #(and (= margin-row (:row %))
+                       (= 0 (:col %))
+                       (= t/terminal-bg (:bg %)))
                 @fills))
 
       ;; Title row: BOLD label "Slash commands" on the accent stripe.
@@ -3072,13 +3093,21 @@ body
                          (not (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)))
                   @puts)))
 
-      ;; Items spread across the row (space-between): the leftmost
-      ;; title token sits at col 1 and the rightmost hint key sits in
-      ;; the right half of the screen.
+      ;; Title items spread across the inner width (space-between):
+      ;; first item sits inside the left margin, last item in the
+      ;; right half of the inner span.
       (let [title-puts (filter #(= title-row (:row %)) @puts)
             cols-used  (mapv :col title-puts)]
-        (expect (some #(<= % 2) cols-used))
-        (expect (some #(>= % (quot cols 2)) cols-used)))))
+        (expect (some #(<= pad % (+ pad 2)) cols-used))
+        (expect (some #(>= % (+ pad (quot inner-w 2))) cols-used)))
+
+      ;; Suggestion rows are inset to the same column span as the
+      ;; title accent stripe (margin-left = margin-right = pad).
+      (expect (some #(and (= first-sug (:row %))
+                       (= pad (:col %))
+                       (= inner-w (:w %))
+                       (= t/dialog-title-bg (:bg %))) ; selected highlight
+                @fills))))
 
   (it "drops the border row when there is not enough vertical space"
     (let [puts   (atom [])
@@ -3099,12 +3128,12 @@ body
                 (swap! puts conj {:col col :row row :text text}) this)
               (fillRectangle [_ _ _] this)
               (setCharacter [_ _ _] this))
-          ;; input-top = n + 1 leaves room for title only, no border.
+          ;; input-top = 2: only enough room for title (1 row) + 1
+          ;; suggestion. Border + margin must drop.
           suggestions [{:label "a" :slash/usage "/a" :slash/selected? true}]
           input-top   2]
       (render/draw-slash-command-suggestions! g suggestions input-top 40)
-      ;; Title row exists at row 0; no horizontal-rule border was drawn.
+      ;; Title row sits at row 0 (above the single suggestion at row 1).
+      ;; No horizontal-rule border was drawn (no ─ in any putString).
       (expect (some #(= 0 (:row %)) @puts))
-      (expect (not-any? #(and (neg? (:row %))
-                           (str/starts-with? (:text %) "─"))
-                @puts)))))
+      (expect (not-any? #(str/starts-with? (:text %) "─") @puts)))))

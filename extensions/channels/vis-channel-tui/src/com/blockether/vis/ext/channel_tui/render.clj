@@ -603,10 +603,14 @@
      (+ text-top (- cursor-vrow v-scroll))]))
 
 (defn- slash-suggestion-line
-  [suggestion cols]
-  (let [usage-w (max 18 (min 42 (quot (* cols 2) 5)))
+  "Format one suggestion row body. `inner-w` is the width AFTER the
+   horizontal margin has been removed (i.e., the same column span as
+   the title bar accent stripe), so the usage column lines up with the
+   title text and never spills under the margin."
+  [suggestion inner-w]
+  (let [usage-w (max 18 (min 42 (quot (* inner-w 2) 5)))
         usage   (p/truncate-cols (:slash/usage suggestion) usage-w)
-        label-w (max 0 (- cols usage-w 5))
+        label-w (max 0 (- inner-w usage-w 5))
         label   (p/truncate-cols (or (:label suggestion) "") label-w)]
     (str " " usage (repeat-str \space (max 1 (- usage-w (p/display-width usage)))) " " label)))
 
@@ -624,17 +628,27 @@
 (defn- draw-slash-title-bar!
   "Render the slash-command overlay title row.
 
-   Layout: a full-width accent stripe (`dialog-title-bg`) carrying a
-   BOLD label on the left and `[key action]` hint pairs distributed
-   space-between across the rest of the row, mirroring the
-   `draw-hint-bar!` flex idiom but on the title-bar accent so the
-   header reads as something IMPORTANT, not as another hint line."
-  [^TextGraphics g title-row width]
-  ;; Accent stripe under the whole row
+   Layout: an accent stripe (`dialog-title-bg`) spanning
+   [`left`, `left + inner-w`) carrying a BOLD label on the left and
+   `[key action]` hint pairs distributed space-between across the rest
+   of the row, mirroring the `draw-hint-bar!` flex idiom but on the
+   title-bar accent so the header reads as something IMPORTANT, not as
+   another hint line.
+
+   `left` and `inner-w` come from the same horizontal-padding rule the
+   input box uses (`INPUT_BORDER_HORIZONTAL_PAD`), so the overlay
+   visually anchors to the same column span as the typing zone."
+  [^TextGraphics g title-row left inner-w]
+  ;; Accent stripe over the inner span only — the margin columns on
+  ;; each side stay terminal-bg to read as breathing room.
   (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
-  (p/fill-rect! g 0 title-row width 1)
-  (let [pad     1
-        text-w  (max 0 (- width (* 2 pad)))
+  (p/fill-rect! g left title-row inner-w 1)
+  (let [;; Inner content sits one col inside the accent stripe so the
+        ;; BOLD label doesn't kiss the stripe edge.
+        content-pad 1
+        text-w  (max 0 (- inner-w (* 2 content-pad)))
+        text-x0 (+ left content-pad)
+        text-x1 (+ text-x0 text-w)
         ;; Items: label first, then each [key action] pair joined as
         ;; one display token so space-between distributes them evenly.
         labels  (into [slash-title-label]
@@ -646,8 +660,8 @@
         gaps    (max 1 (dec n))
         base    (max 1 (quot slack gaps))
         extra   (max 0 (- slack (* base gaps)))]
-    (loop [i 0 col pad]
-      (when (and (< i n) (< col (+ pad text-w)))
+    (loop [i 0 col text-x0]
+      (when (and (< i n) (< col text-x1))
         (let [size (nth sizes i)
               gap  (if (< i (dec n))
                      (+ base (if (< i extra) 1 0))
@@ -657,65 +671,103 @@
             (p/styled g [p/BOLD]
               (p/put-str! g col title-row
                 (p/truncate-cols slash-title-label
-                  (max 0 (- (+ pad text-w) col)))))
+                  (max 0 (- text-x1 col)))))
             ;; [key action] pair: BOLD key, plain action.
             (let [[k a] (nth slash-title-hints (dec i))
                   k-w   (p/display-width k)]
               (p/styled g [p/BOLD]
                 (p/put-str! g col title-row
                   (p/truncate-cols k
-                    (max 0 (- (+ pad text-w) col)))))
+                    (max 0 (- text-x1 col)))))
               (p/put-str! g (+ col k-w) title-row
                 (p/truncate-cols (str " " a)
-                  (max 0 (- (+ pad text-w) (+ col k-w)))))))
+                  (max 0 (- text-x1 (+ col k-w)))))))
           (recur (inc i) (+ col size gap)))))))
 
 (defn draw-slash-command-suggestions!
   "Overlay fuzzy slash-command suggestions immediately above the input box.
 
    Visual stack from top to bottom:
-     ── horizontal rule ──        ; border (dialog-border on terminal-bg)
-     [Slash commands  …  Enter run] ; title bar (dialog-title-bg accent)
+     (top margin row — terminal-bg gap)
+     [Slash commands  …  Enter run]   ; title bar (dialog-title-bg accent)
+     ─────────────────────────────────────────   ; border under title (dialog-border)
      suggestion rows…
 
-   The border + accent title row signal `this is a menu`, matching the
+   The accent title + under-rule signal `this is a menu`, matching the
    `draw-dialog-chrome!` chrome idiom but in overlay form (no side
-   rails, since the input box below has no side rails either)."
+   rails, since the input box below has no side rails either).
+
+   The whole overlay is inset by `INPUT_BORDER_HORIZONTAL_PAD` cols on
+   each side so the accent stripe and rule line up exactly with the
+   input box's top/bottom rules below."
   [^TextGraphics g suggestions input-top cols]
   (when (seq suggestions)
-    (let [width        (max 1 cols)
-          ;; Each overlay row eats one row above the input box. We need
-          ;; rows for: optional border (1) + title (1) + suggestions (n).
-          ;; The title row is non-negotiable; the border drops first
-          ;; when vertical space is tight, so we size the visible list
-          ;; against `(dec input-top)` (title + list) and check border
-          ;; fitness afterwards.
-          max-list     (max 0 (dec input-top))
+    (let [pad          INPUT_BORDER_HORIZONTAL_PAD
+          left         pad
+          inner-w      (max 1 (- cols (* 2 pad)))
+          ;; Layout above the input box (rows decrease as we go up):
+          ;;   margin-row    -> terminal-bg gap (optional, drops first)
+          ;;   title-row     -> accent stripe (non-negotiable)
+          ;;   border-row    -> ─ rule under title (drops second)
+          ;;   suggestion rows...
+          ;;
+          ;; Sizing priority: title + at least 1 suggestion > border >
+          ;; top margin. Border and margin drop when input-top is tight
+          ;; (small terminal, lots of suggestions); only the title row
+          ;; is reserved up-front.
+          max-list     (max 0 (dec input-top))   ; reserve title only
           visible      (take (max 0 (min 6 max-list)) suggestions)
           n            (count visible)
           have-border? (>= input-top (+ n 2))
-          title-row    (max 0 (- input-top n 1))
-          border-row   (dec title-row)]
+          have-margin? (>= input-top (+ n 3))
+          ;; Suggestions occupy rows: input-top - n .. input-top - 1.
+          ;; Border (if present) sits one row above the first suggestion,
+          ;; title sits one row above the border (or above the first
+          ;; suggestion if border dropped).
+          first-sug    (- input-top n)
+          border-row   (when have-border? (dec first-sug))
+          title-row    (cond
+                         have-border? (dec border-row)
+                         (pos? first-sug) (dec first-sug)
+                         :else 0)
+          margin-row   (when have-margin? (dec title-row))]
       (when (pos? n)
-        ;; Top border — single horizontal rule for visible separation
-        ;; from whatever sits above (chat scrollback, footer of dialog,
-        ;; etc.). Uses `dialog-border` over `terminal-bg` because the
-        ;; rule lives outside the accent stripe.
-        (when (and have-border? (>= border-row 0))
-          (p/set-colors! g t/dialog-border t/terminal-bg)
-          (p/put-str! g 0 border-row (p/horiz-line width)))
+        ;; Top margin — paint the gap row in terminal-bg so any chat
+        ;; content peeking through gets cleared. This is the breathing
+        ;; room above the title bar.
+        (when (and margin-row (>= margin-row 0))
+          (p/set-colors! g t/text-fg t/terminal-bg)
+          (p/fill-rect! g 0 margin-row cols 1))
 
         ;; Title bar (accent + flex hints).
-        (draw-slash-title-bar! g title-row width)
+        (draw-slash-title-bar! g title-row left inner-w)
 
-        ;; Suggestion rows.
+        ;; Border under the title — single horizontal rule that
+        ;; visually delimits the title from the suggestion list, on
+        ;; `terminal-bg` (outside the accent) using the same width as
+        ;; the input box's top/bottom rules.
+        (when (and border-row (>= border-row 0))
+          (p/set-colors! g t/dialog-border t/terminal-bg)
+          ;; Clear margin columns to terminal-bg first so the rule
+          ;; sits flush within the same column span as the title.
+          (p/fill-rect! g 0 border-row cols 1)
+          (p/put-str! g left border-row (p/horiz-line inner-w)))
+
+        ;; Suggestion rows — inset by the same margin so the highlight
+        ;; bar matches the title accent width exactly. Margin columns
+        ;; on each side stay terminal-bg.
         (doseq [[i suggestion] (map-indexed vector visible)]
-          (if (:slash/selected? suggestion)
-            (p/set-colors! g t/dialog-bg t/dialog-title-bg)
-            (p/set-colors! g t/dialog-fg t/dialog-bg))
-          (p/fill-rect! g 0 (+ title-row i 1) width 1)
-          (p/put-str! g 0 (+ title-row i 1)
-            (p/truncate-cols (slash-suggestion-line suggestion width) width)))))))
+          (let [row (+ first-sug i)]
+            ;; Margin gutters (left + right) cleared to terminal-bg.
+            (p/set-colors! g t/text-fg t/terminal-bg)
+            (p/fill-rect! g 0 row cols 1)
+            ;; Inner highlighted row.
+            (if (:slash/selected? suggestion)
+              (p/set-colors! g t/dialog-bg t/dialog-title-bg)
+              (p/set-colors! g t/dialog-fg t/dialog-bg))
+            (p/fill-rect! g left row inner-w 1)
+            (p/put-str! g left row
+              (p/truncate-cols (slash-suggestion-line suggestion inner-w) inner-w))))))))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────
 
@@ -2297,12 +2349,17 @@
       :else "empty")))
 
 (defn- detail-id-suffix
-  ^String [{:keys [conversation-turn-id iteration-number block-number details-path]}]
+  ;; Use the 1-based `turn-position` integer the DB stores in
+  ;; `conversation_turn_soul.position`. UUID fragments are NEVER
+  ;; user-visible here - if a code path forgets to thread
+  ;; `:turn-position`, the suffix simply omits the `Turn: N` part
+  ;; instead of leaking hex.
+  ^String [{:keys [turn-position iteration-number block-number details-path]}]
   (let [parts (cond-> []
-                (some? conversation-turn-id) (conj (str "Turn: " (short-id-fragment conversation-turn-id)))
-                iteration-number (conj (str "Iteration: " iteration-number))
-                block-number (conj (str "Block: " block-number))
-                (seq details-path) (conj (str "Details: " (str/join "." details-path))))]
+                (some? turn-position) (conj (str "Turn: " turn-position))
+                iteration-number      (conj (str "Iteration: " iteration-number))
+                block-number          (conj (str "Block: " block-number))
+                (seq details-path)    (conj (str "Details: " (str/join "." details-path))))]
     (if (seq parts)
       (str "[" (str/join ", " parts) "]")
       "[Details]")))
@@ -2558,7 +2615,7 @@
   (mapv indent-output-entry entries))
 
 (defn- maybe-collapse-block
-  [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
+  [{:keys [conversation-id detail-expansions conversation-turn-id turn-position iteration-number
            block-number kind summary summary-marker body-marker lines max-w color-role
            render-as raw-text]}]
   (let [md-entries (when (= :markdown render-as)
@@ -2572,6 +2629,7 @@
       entries
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
+                        :turn-position turn-position
                         :iteration-number iteration-number
                         :block-number block-number
                         :details-path nil
@@ -2594,7 +2652,7 @@
   "Collapse long reasoning to first/last preview rows with a clickable
    disclosure row in the middle. Expanded state uses the same
    detail-expansions map as result/stdout/details popouts."
-  [{:keys [entries conversation-id detail-expansions conversation-turn-id iteration-number max-w]}]
+  [{:keys [entries conversation-id detail-expansions conversation-turn-id turn-position iteration-number max-w]}]
   (let [entries (vec entries)
         n       (count entries)
         edge    thinking-preview-edge-lines]
@@ -2603,6 +2661,7 @@
       entries
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
+                        :turn-position turn-position
                         :iteration-number iteration-number
                         :details-path nil
                         :section :thinking
@@ -2633,13 +2692,14 @@
    bodies first. `wrap-text` is intentionally display-width-aware and
    expensive on long single-line data dumps; when the detail row is
    collapsed by default, the first frame only needs the summary hint."
-  [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
+  [{:keys [conversation-id detail-expansions conversation-turn-id turn-position iteration-number
            block-number kind summary summary-marker raw-text max-w color-role]
     :as opts}]
   (let [raw-text (str/trim (str raw-text))]
     (when-not (str/blank? raw-text)
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
+                        :turn-position turn-position
                         :iteration-number iteration-number
                         :block-number block-number
                         :details-path nil
@@ -2982,7 +3042,7 @@
 (defn- format-iteration-entry-entries
   [{:keys [thinking events code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms error repeat-count]}
    code-width iteration-number
-   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines live-preview?]
+   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id turn-position now-ms preview-default-lines live-preview?]
        :or   {show-header? true preview-default-lines 4 live-preview? false}}]]
   (let [fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
@@ -3007,6 +3067,7 @@
                                 (or (seq (markdown->entries thinking-text fill-w :thinking
                                            {:conversation-id      conversation-id
                                             :conversation-turn-id conversation-turn-id
+                                            :turn-position        turn-position
                                             :detail-expansions   detail-expansions
                                             :iteration-number    iteration-number
                                             :section             :thinking}))
@@ -3019,6 +3080,7 @@
                                        :conversation-id      conversation-id
                                        :detail-expansions   detail-expansions
                                        :conversation-turn-id conversation-turn-id
+                                       :turn-position        turn-position
                                        :iteration-number    iteration-number
                                        :max-w               fill-w})]
                 (vec (concat [(line-entry (str thinking-marker ""))]
@@ -3151,6 +3213,7 @@
                                                                 :toggle? collapsible?
                                                                 :summary-suffix (when collapsible?
                                                                                   (detail-id-suffix {:conversation-turn-id conversation-turn-id
+                                                                                                     :turn-position turn-position
                                                                                                      :iteration-number iteration-number
                                                                                                      :block-number block-number
                                                                                                      :section :iteration
@@ -3164,6 +3227,7 @@
                                                          {:conversation-id      conversation-id
                                                           :detail-expansions   detail-expansions
                                                           :conversation-turn-id conversation-turn-id
+                                                          :turn-position       turn-position
                                                           :iteration-number    iteration-number
                                                           :block-number        block-number
                                                           :kind                :result
@@ -3223,6 +3287,7 @@
                                         {:conversation-id      conversation-id
                                          :detail-expansions   detail-expansions
                                          :conversation-turn-id conversation-turn-id
+                                         :turn-position       turn-position
                                          :iteration-number    iteration-number
                                          :block-number        block-number
                                          :kind                :stdout
@@ -3251,6 +3316,7 @@
                                                           {:conversation-id      conversation-id
                                                            :detail-expansions   detail-expansions
                                                            :conversation-turn-id conversation-turn-id
+                                                           :turn-position       turn-position
                                                            :iteration-number    iteration-number
                                                            :block-number        block-number
                                                            :kind                :stderr
@@ -3426,7 +3492,7 @@
          static-limit     (max 1 (long (get settings :progress/live-iteration-limit 24)))
          preview-default-lines (get settings :preview/default-lines 4)
          {:keys [now-ms turn-start-ms cancelling? conversation-id
-                 conversation-turn-id detail-expansions viewport-rows]} extra
+                 conversation-turn-id turn-position detail-expansions viewport-rows]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
          ;; Patch 2: viewport-aware live truncation. The OUTER virtualizer
          ;; only knows "the live bubble is visible", not "only the bottom
@@ -3468,6 +3534,7 @@
          line-entry       (fn [line] {:line line :meta nil})
          history-ctx      {:conversation-id conversation-id
                            :conversation-turn-id conversation-turn-id
+                           :turn-position turn-position
                            :details-path nil
                            :section :progress
                            :kind :history}
@@ -3538,6 +3605,7 @@
                                               :now-ms               (when running? now-ms)
                                               :conversation-id      conversation-id
                                               :conversation-turn-id conversation-turn-id
+                                              :turn-position        turn-position
                                               :detail-expansions   detail-expansions
                                               :preview-default-lines preview-default-lines
                                               :live-preview?        true}]
@@ -4411,6 +4479,7 @@
               iteration-number (:iteration-number opts)
               detail-ctx   {:conversation-id conversation-id
                             :conversation-turn-id turn-id
+                            :turn-position (:turn-position opts)
                             :iteration-number iteration-number
                             :block-number (:block-number opts)
                             :details-path path
@@ -4517,6 +4586,7 @@
                                                  :conversation-id      (:conversation-id opts)
                                                  :detail-expansions   (:detail-expansions opts)
                                                  :conversation-turn-id (:conversation-turn-id opts)
+                                                 :turn-position        (:turn-position opts)
                                                  :preview-default-lines (get settings :preview/default-lines 4)})))
                                     (collapse-repeated-error-runs trace)))
         answer-str              (or answer "")
@@ -4529,6 +4599,7 @@
         md-entries              (markdown->entries answer-str (max 1 (- fill-w 2)) :answer
                                   {:conversation-id      (:conversation-id opts)
                                    :conversation-turn-id (:conversation-turn-id opts)
+                                   :turn-position        (:turn-position opts)
                                    :detail-expansions   (:detail-expansions opts)
                                    :section             :answer})
         ans-entries             (if (seq md-entries)
