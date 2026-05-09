@@ -612,21 +612,26 @@
   "Paint one suggestion row inside the inset span [`left`, `left+inner-w`).
 
    Layout (mirrors the markdown line `\\`/cmd\\` - description`):
-     <pad> <⎹ /cmd ⎺> <\" - \"> <italic description>
+     <selection gutter> <⎹ /cmd ⎺> <\" - \"> <italic description>
 
+   - The first `p/SELECTION_WIDTH` cols of the row are the selection
+     gutter: a `>` cursor on selected rows, blank otherwise. The
+     marker itself is painted at `left` by the caller; this function
+     only reserves the cols by shifting the chip start.
    - The usage is rendered as an INLINE CODE chip: the cells under
      the chip get `code-block-bg`/`code-block-fg`, padded by one
      space inside the chip on each side, so it reads as a markdown
      code span the way the rest of the chat renders backtick spans.
    - A plain ` - ` separator follows on the row's normal fg/bg.
-   - The description is ITALIC, dimmed (`dialog-hint`) on non-selected
-     rows. On the selected row the italic alone carries the
-     secondary-text signal; we keep the row fg so contrast against
-     the accent stripe stays readable.
+   - The description is ITALIC, dimmed (`dialog-hint`) on every row
+     — selection is signalled by the `>` glyph, not by re-coloring
+     the description.
    - Truncation drops the description first; the chip always renders
      fully if at all possible."
   [^TextGraphics g row left inner-w suggestion]
-  (let [pad        1
+  (let [;; Skip the selection gutter (`>` + 1 col margin) at the start
+        ;; of the row so the chip never overlaps with the cursor.
+        pad        p/SELECTION_WIDTH
         avail      (max 0 (- inner-w (* 2 pad)))
         usage-raw  (or (:slash/usage suggestion) "")
         usage      (p/truncate-cols usage-raw avail)
@@ -809,11 +814,11 @@
 
         ;; Suggestion rows — inset by the same margin so the row body
         ;; lines up with the title accent and the input box rule.
-        ;; Selection is signalled by a `> ` cursor glyph in the
-        ;; left margin (matching the project-wide convention; see
-        ;; `p/SELECTION_GLYPH`) instead of a full-width highlight
-        ;; stripe — that keeps the inline code chip and italic
-        ;; description colors readable on every row.
+        ;; Selection is signalled by a `>` cursor glyph in the FIRST
+        ;; col of the inset row (matching the project-wide convention;
+        ;; see `p/SELECTION_GLYPH`). The marker sits INSIDE the inset
+        ;; body, not in the terminal-bg margin outside of it, so it
+        ;; reads as part of the menu rather than floating loose.
         (doseq [[i suggestion] (map-indexed vector visible)]
           (let [row (+ first-sug i)]
             ;; Clear the full row to terminal-bg so the margin gutters
@@ -823,10 +828,10 @@
             ;; Body row in the normal dialog palette (no inversion).
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (p/fill-rect! g left row inner-w 1)
-            ;; Cursor glyph in the LEFT MARGIN (col 0..1 area), in
-            ;; terminal-bg so it floats outside the row body.
-            (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-            (p/draw-selection-marker! g 0 row (:slash/selected? suggestion))
+            ;; Cursor glyph at the FIRST col of the inset body, in
+            ;; the dialog palette so it visually belongs to the row.
+            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+            (p/draw-selection-marker! g left row (:slash/selected? suggestion))
             ;; Inline-code chip + ` - ` + italic description.
             (p/set-colors! g t/dialog-fg t/dialog-bg)
             (draw-slash-suggestion-row! g row left inner-w suggestion)))))))
@@ -2671,6 +2676,63 @@
   [entries]
   (mapv indent-output-entry entries))
 
+(defn- tag-copy-block-body
+  "Stamp every body row of an expanded disclosure with copy metadata so a
+   single click on the body lines copies the WHOLE disclosure body, not
+   the entire enclosing assistant message. Rows that already carry meta
+   (preview-switcher chrome, nested toggle-details, ...) keep theirs -
+   those have their own click handling and must not be hijacked."
+  [entries node-id text]
+  (if (or (nil? node-id) (str/blank? (str text)))
+    entries
+    (let [body-meta {:kind :copy-block-body
+                     :node-id (str node-id)
+                     :text    (str text)}]
+      (mapv (fn [{:keys [meta] :as e}]
+              (if meta e (assoc e :meta body-meta)))
+        entries))))
+
+(defn- marker-prefix?
+  "True when the first char of `line` is a paint-zone marker the
+   renderer prepends (zero-width / format codepoints from
+   `primitives` like `MARKER_STDOUT`, `MARKER_RESULT`, ...). Plain
+   answer-markdown lines never start with one, so the test lets us
+   strip markers without nibbling the first letter of regular prose."
+  ^Boolean [^String line]
+  (and (string? line)
+    (pos? (count line))
+    (= (int Character/FORMAT)
+      (int (Character/getType (.charAt line 0))))))
+
+(def ^:private chrome-meta-kinds
+  ;; Row kinds that paint display-only chrome (`▾ SUMMARY [Turn: ...]`,
+  ;; preview-mode switcher chips). Skipped when reconstructing the
+  ;; user-facing body text so nested disclosure copy doesn't drag the
+  ;; visual summary glyph + `[Turn:..., Details:...]` suffix into the
+  ;; clipboard.
+  #{:toggle-details :preview-switcher})
+
+(defn- entries->body-text
+  "Reconstruct the user-readable body text from a vec of `{:line :meta}`
+   entries. Strips the leading paint marker (one zero-width / format
+   codepoint) ONLY when present; plain answer-markdown rows have no
+   prefix and stay intact. Skips chrome rows (disclosure summaries,
+   preview switcher chips) so a nested-details copy carries body text
+   only - not the toggle glyph. Used as the copy payload for
+   disclosure body rows."
+  [entries]
+  (->> entries
+    (remove (fn [{:keys [meta]}]
+              (contains? chrome-meta-kinds (:kind meta))))
+    (map (fn [{:keys [line]}]
+           (cond
+             (not (string? line))   ""
+             (zero? (count line))   ""
+             (marker-prefix? line)  (subs line 1)
+             :else                  line)))
+    (str/join "\n")
+    str/trim))
+
 (defn- maybe-collapse-block
   [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
            block-number kind summary summary-marker body-marker lines max-w color-role
@@ -2702,7 +2764,9 @@
                                          :hidden-entries entries
                                          :collapsed? collapsed?
                                          :node-id node-id))
-               (when-not collapsed? entries)))))))
+               (when-not collapsed?
+                 (tag-copy-block-body entries node-id
+                   (or raw-text (str/join "\n" lines))))))))))
 
 (defn- maybe-preview-thinking-entries
   "Collapse long reasoning to first/last preview rows with a clickable
@@ -2739,7 +2803,9 @@
         (vec (concat
                head
                summary
-               (when expanded? hidden)
+               (when expanded?
+                 (tag-copy-block-body hidden node-id
+                   (entries->body-text (vec (concat head hidden tail)))))
                tail))))))
 
 (defn- maybe-collapse-raw-text-block
@@ -4567,7 +4633,9 @@
                                            :hidden-entries body-entries
                                            :collapsed? (not expanded?)
                                            :node-id node-id))
-                 (when expanded? body-entries))))))
+                 (when expanded?
+                   (tag-copy-block-body body-entries node-id
+                     (entries->body-text body-entries))))))))
     segments))
 
 (defn- markdown-entries-cache-key

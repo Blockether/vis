@@ -475,8 +475,13 @@
     Line 1: ① Label  url.host  ●
     Line 2:    ★ root-model  (+N models) / RPM/TMP summary"
   [g left row inner-w idx selected? provider status limits]
-  (let [text-w         (max 0 (- inner-w 2))
-        text-x         (+ left 2)
+  ;; Reserve `p/SELECTION_WIDTH` cols at the start of the card row
+  ;; for the selection gutter (`>` glyph at `(inc left)` + 1 margin
+  ;; col). Card body text shifts right by the gutter so the marker
+  ;; sits inside the dialog's inner edge with breathing room before
+  ;; the priority label.
+  (let [text-w         (max 0 (- inner-w 2 p/SELECTION_WIDTH))
+        text-x         (+ left 2 p/SELECTION_WIDTH)
         pri            (priority-label idx)
         host           (url-host (or (vis/provider-base-url provider) ""))
         loading-status? (:loading? status)
@@ -554,9 +559,10 @@
    `previous-name` and `next-name` are the names of the model just before /
    after this one in the chain (nil at the ends)."
   [g left row inner-w idx selected? is-root? _provider-id model previous-name next-name]
+  ;; Same selection-gutter convention as `draw-provider-card!`.
   (let [model-name (or (:name model) (str "model-" (inc idx)))
-        text-w     (max 0 (- inner-w 2))
-        text-x     (+ left 2)
+        text-w     (max 0 (- inner-w 2 p/SELECTION_WIDTH))
+        text-x     (+ left 2 p/SELECTION_WIDTH)
         pri        (priority-label idx)
         left-part  (str pri " " model-name)
         tag        (when is-root? "★ Primary")
