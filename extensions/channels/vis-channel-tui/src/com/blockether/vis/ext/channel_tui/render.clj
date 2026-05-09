@@ -602,61 +602,81 @@
     [(+ input-pad-x cursor-vcol)
      (+ text-top (- cursor-vrow v-scroll))]))
 
+(def ^:private slash-desc-separator
+  "Visual separator between the inline-code usage chip and the italic
+   description. Mirrors the markdown convention `\\`/cmd\\` - description`
+   so the row reads like one rendered list bullet."
+  " - ")
+
 (defn- draw-slash-suggestion-row!
   "Paint one suggestion row inside the inset span [`left`, `left+inner-w`).
 
-   Layout: ╶╶ USAGE  description
-   - 1 col left padding inside the highlight
-   - usage (slash command + arg sketch), plain weight, normal fg
-   - 1 col gap
-   - description (`:label`), ITALIC, dimmed fg so the eye reads the
-     command first and the prose as supporting context
+   Layout (mirrors the markdown line `\\`/cmd\\` - description`):
+     <pad> <⎹ /cmd ⎺> <\" - \"> <italic description>
 
-   The two-column padded layout was removed on user request: the
-   description now sits IMMEDIATELY after the usage so the eye doesn't
-   have to jump across an empty gutter. Truncation drops the
-   description first when it doesn't fit."
+   - The usage is rendered as an INLINE CODE chip: the cells under
+     the chip get `code-block-bg`/`code-block-fg`, padded by one
+     space inside the chip on each side, so it reads as a markdown
+     code span the way the rest of the chat renders backtick spans.
+   - A plain ` - ` separator follows on the row's normal fg/bg.
+   - The description is ITALIC, dimmed (`dialog-hint`) on non-selected
+     rows. On the selected row the italic alone carries the
+     secondary-text signal; we keep the row fg so contrast against
+     the accent stripe stays readable.
+   - Truncation drops the description first; the chip always renders
+     fully if at all possible."
   [^TextGraphics g row left inner-w suggestion]
-  (let [;; Highlight bg/fg already set by the caller. We layer the
-        ;; description on top with a different fg+ITALIC.
-        pad        1
+  (let [pad        1
         avail      (max 0 (- inner-w (* 2 pad)))
         usage-raw  (or (:slash/usage suggestion) "")
-        ;; Always show the full usage if possible; only the description
-        ;; gets clipped on tight rows.
         usage      (p/truncate-cols usage-raw avail)
         usage-w    (p/display-width usage)
-        gap        (if (and (pos? usage-w) (< usage-w avail)) 1 0)
-        desc-w     (max 0 (- avail usage-w gap))
+        ;; Inline code chip = usage padded by 1 space on each side.
+        chip-w     (if (pos? usage-w) (+ usage-w 2) 0)
+        sep        slash-desc-separator
+        sep-w      (if (and (pos? chip-w)
+                         (< (+ chip-w (count sep)) avail))
+                     (count sep)
+                     0)
+        desc-w     (max 0 (- avail chip-w sep-w))
         desc-raw   (or (:label suggestion) "")
         desc       (when (pos? desc-w)
                      (p/truncate-cols desc-raw desc-w))
-        x0         (+ left pad)]
-    ;; Usage — plain weight, current fg.
-    (when (pos? usage-w)
-      (p/put-str! g x0 row usage))
-    ;; Description — italic, dimmed. Use `dialog-hint` against the
-    ;; current bg so it reads as secondary even on the selected row
-    ;; (where bg switches to the accent).
+        x0         (+ left pad)
+        ;; Save row colors so we can restore between segments.
+        row-fg     (.getForegroundColor g)
+        row-bg     (.getBackgroundColor g)]
+    ;; Inline code chip for the usage — markdown `\\`/cmd\\`` look.
+    (when (pos? chip-w)
+      (p/set-colors! g t/code-block-fg t/code-block-bg)
+      (p/fill-rect! g x0 row chip-w 1)
+      (p/put-str! g (inc x0) row usage)
+      (p/set-colors! g row-fg row-bg))
+    ;; Plain ` - ` separator on the row's normal colors.
+    (when (pos? sep-w)
+      (p/put-str! g (+ x0 chip-w) row sep))
+    ;; Italic description, dimmed on non-selected rows.
     (when (and desc (pos? (p/display-width desc)))
-      (let [prev-fg (.getForegroundColor g)]
-        (p/set-fg! g (if (:slash/selected? suggestion)
-                       t/dialog-bg          ; on accent: keep contrast
-                       t/dialog-hint))      ; off accent: dimmed
-        (p/styled g [p/ITALIC]
-          (p/put-str! g (+ x0 usage-w gap) row desc))
-        (p/set-fg! g prev-fg)))))
+      (when-not (:slash/selected? suggestion)
+        (p/set-fg! g t/dialog-hint))
+      (p/styled g [p/ITALIC]
+        (p/put-str! g (+ x0 chip-w sep-w) row desc))
+      (p/set-fg! g row-fg))))
 
 (def ^:private slash-title-label "Slash commands")
 (def ^:private slash-title-hints
   ;; Flex items rendered space-between in the title bar. Keys are
   ;; rendered BOLD to match the dialog `draw-hint-bar!` idiom; the
   ;; whole row sits on the `dialog-title-bg` accent stripe to match
-  ;; the `draw-dialog-chrome!` title bar style. Keep this in sync with
-  ;; the actual key bindings in screen.clj (Tab complete / Enter run).
+  ;; the `draw-dialog-chrome!` title bar style.
+  ;;
+  ;; Tab is the ONLY way to act on a suggestion (insert it into the
+  ;; input). Enter does nothing special while the menu is open — it
+  ;; falls through to the normal send path. Do not put `Enter run`
+  ;; back here without also restoring the matching dispatch in
+  ;; screen.clj `:send` branch.
   [["↑↓/wheel" "select"]
-   ["Tab" "complete"]
-   ["Enter" "run"]])
+   ["Tab" "complete"]])
 
 (defn- draw-slash-title-bar!
   "Render the slash-command overlay title row.

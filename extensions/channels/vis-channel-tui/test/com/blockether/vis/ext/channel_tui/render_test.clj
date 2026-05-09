@@ -3082,14 +3082,20 @@ body
                 @puts))
 
       ;; Title row: BOLD keys for each [key action] hint pair.
-      (doseq [k ["↑↓/wheel" "Tab" "Enter"]]
+      ;; Tab is the only completion key — Enter is intentionally NOT
+      ;; advertised here (Enter falls through to the normal send path;
+      ;; only Tab acts on the highlighted suggestion).
+      (doseq [k ["↑↓/wheel" "Tab"]]
         (expect (some #(and (= title-row (:row %))
                          (= k (:text %))
                          (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                   @puts)))
+      (expect (not-any? #(and (= title-row (:row %))
+                           (= "Enter" (:text %)))
+                @puts))
 
       ;; Title row: action words rendered NON-BOLD next to their keys.
-      (doseq [a [" select" " complete" " run"]]
+      (doseq [a [" select" " complete"]]
         (expect (some #(and (= title-row (:row %))
                          (= a (:text %))
                          (not (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD)))
@@ -3111,22 +3117,39 @@ body
                        (= t/dialog-title-bg (:bg %))) ; selected highlight
                 @fills))
 
-      ;; Each suggestion row paints USAGE then ITALIC description
-      ;; right after it (no big padded gutter between them).
-      (let [sug-rows (filter #(<= first-sug (:row %)) @puts)
-            usages   (filter #(str/starts-with? (:text %) "/") sug-rows)
-            descs    (filter #(contains? (:sgr %) com.googlecode.lanterna.SGR/ITALIC) sug-rows)]
-        ;; One usage put per suggestion, one italic description put per suggestion.
+      ;; Each suggestion row paints a markdown-style chip:
+      ;;   <code-bg fill> /cmd <code-bg fill end> ` - ` <italic desc>
+      (let [sug-rows  (filter #(<= first-sug (:row %)) @puts)
+            usages    (filter #(str/starts-with? (:text %) "/") sug-rows)
+            seps      (filter #(= " - " (:text %)) sug-rows)
+            descs     (filter #(contains? (:sgr %) com.googlecode.lanterna.SGR/ITALIC) sug-rows)
+            chip-fills (filter #(and (<= first-sug (:row %))
+                                  (= t/code-block-bg (:bg %))) @fills)]
+        ;; One chip fill, usage, separator and description per suggestion.
+        (expect (= n (count chip-fills)))
         (expect (= n (count usages)))
+        (expect (= n (count seps)))
         (expect (= n (count descs)))
-        ;; Description sits immediately after the usage on the same row
-        ;; (gap of exactly 1 col between end of usage and start of desc).
-        (doseq [[u d] (map vector
-                        (sort-by :row usages)
-                        (sort-by :row descs))]
+        ;; Layout invariants per row: chip wraps the usage with 1 col
+        ;; padding on each side, ` - ` follows the chip, italic desc
+        ;; follows the separator.
+        (doseq [[chip u s d] (map vector
+                               (sort-by :row chip-fills)
+                               (sort-by :row usages)
+                               (sort-by :row seps)
+                               (sort-by :row descs))]
+          ;; Chip starts one col before the usage and is exactly
+          ;; (usage-width + 2) wide.
+          (expect (= (:col u) (inc (:col chip))))
+          (expect (= (:w chip) (+ (count (:text u)) 2)))
+          ;; Usage paints in code-block colors.
+          (expect (= t/code-block-fg (:fg u)))
+          (expect (= t/code-block-bg (:bg u)))
+          ;; ` - ` separator sits immediately after the chip.
+          (expect (= (:col s) (+ (:col chip) (:w chip))))
+          ;; Italic description follows the separator on the same row.
           (expect (= (:row u) (:row d)))
-          (expect (= (:col d)
-                    (+ (:col u) (count (:text u)) 1)))))))
+          (expect (= (:col d) (+ (:col s) (count (:text s)))))))))
 
   (it "drops the border row when there is not enough vertical space"
     (let [puts   (atom [])
