@@ -316,3 +316,50 @@
                               {:text "reasoning: deep"}
                               {:text "(Ctrl+R)" :join-left? true}]
                   " / "))))))
+
+(defdescribe generic-limits-footer-text-test
+  (it "shows a loading placeholder before the polling thread populates :provider-limits"
+    (let [generic-limits-footer-text @#'footer/generic-limits-footer-text]
+      (expect (= "limits: loading…"
+                (generic-limits-footer-text {} :openai-codex 0)))))
+
+  (it "shows a loading placeholder when the polled report is for a different provider"
+    (let [generic-limits-footer-text @#'footer/generic-limits-footer-text]
+      (expect (= "limits: loading…"
+                (generic-limits-footer-text
+                  {:provider-limits
+                   {:provider-id :anthropic
+                    :report {:provider-id :anthropic :status :ok
+                             :dynamic {:limits []}}}}
+                  :openai-codex 0)))))
+
+  (it "surfaces the provider error message when the limits-fn failed"
+    (let [generic-limits-footer-text @#'footer/generic-limits-footer-text]
+      (expect (= "limits: error (boom)"
+                (generic-limits-footer-text
+                  {:provider-limits
+                   {:provider-id :openai-codex
+                    :report {:provider-id :openai-codex :status :error
+                             :error {:type :provider/limits-error
+                                     :message "boom"}
+                             :dynamic {:limits []}}}}
+                  :openai-codex 0)))))
+
+  (it "asks for sign-in when the provider report is :unauthenticated"
+    (let [generic-limits-footer-text @#'footer/generic-limits-footer-text]
+      (expect (= "limits: sign in required"
+                (generic-limits-footer-text
+                  {:provider-limits
+                   {:provider-id :openai-codex
+                    :report {:provider-id :openai-codex :status :unauthenticated
+                             :dynamic {:limits []}}}}
+                  :openai-codex 0)))))
+
+  (it "stays silent for providers that legitimately don't expose limits"
+    (let [generic-limits-footer-text @#'footer/generic-limits-footer-text]
+      (expect (nil? (generic-limits-footer-text
+                      {:provider-limits
+                       {:provider-id :openai-codex
+                        :report {:provider-id :openai-codex :status :unsupported
+                                 :dynamic {:limits []}}}}
+                      :openai-codex 0))))))

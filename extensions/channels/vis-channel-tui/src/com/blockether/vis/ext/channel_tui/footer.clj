@@ -229,12 +229,46 @@
       :else                  "↺--")))
 
 (defn- report-for-current-provider
+  "Report belonging to `provider`, or nil when the polled report is for
+   a different provider (stale after a provider switch). Callers can
+   treat nil as \"loading\" — the polling thread populates it on its
+   next tick."
   [db provider]
   (let [provider-limits (:provider-limits db)
         report          (:report provider-limits)
         report-provider (or (:provider-id provider-limits) (:provider-id report))]
     (when (and report (= provider report-provider))
       report)))
+
+(defn- limits-status-text
+  "Render an explicit placeholder when the report is missing or the
+   provider's `:provider/limits-fn` reported a non-ok status. The host
+   wrapper (`com.blockether.vis.internal.provider-limits`) is the
+   single source of these statuses: providers signal success/failure by
+   returning a `::report` with `:status :ok` / `:error` /
+   `:unauthenticated` / `:unsupported` / `:unknown-provider`, so the
+   footer doesn't need a separate `notify-error!` / `notify-success!`
+   side channel — it just reads the envelope."
+  [db provider]
+  (let [provider-limits (:provider-limits db)
+        report          (report-for-current-provider db provider)
+        status          (:status report)]
+    (cond
+      ;; No envelope at all (first paint after launch / provider switch),
+      ;; or polled report is for a different provider — show \"loading\".
+      (or (nil? provider-limits) (nil? report))
+      "limits: loading…"
+
+      (= :error status)
+      (let [msg (or (get-in report [:error :message]) "unavailable")]
+        (str "limits: error (" msg ")"))
+
+      (= :unauthenticated status) "limits: sign in required"
+
+      ;; :unsupported / :unknown-provider / :ok with empty rows fall
+      ;; through to nil so the row stays clean for providers that
+      ;; legitimately have no quota story.
+      :else nil)))
 
 (defn- format-limit-number
   [n]
@@ -312,16 +346,23 @@
    (or (:label row) (name (:id row)))])
 
 (defn- generic-limits-footer-text
+  "Footer-left text for the limits row. Returns either:
+     - the formatted limit rows (`:status :ok` with at least one row), or
+     - a placeholder produced by `limits-status-text` (loading / error /
+       unauthenticated), or
+     - nil when the provider legitimately has no quota story
+       (`:unsupported` / `:unknown-provider` / `:ok` with empty rows)."
   [db provider now-ms]
   (let [report    (report-for-current-provider db provider)
         raw-rows  (get-in report [:dynamic :limits])
         rows      (->> (or (seq (filter generic-limit-has-signal? raw-rows))
                          raw-rows)
                     (sort-by generic-limit-sort-key))]
-    (when (seq rows)
+    (if (seq rows)
       (str/join "  "
         (map #(format-generic-limit-row now-ms %)
-          (take 2 rows))))))
+          (take 2 rows)))
+      (limits-status-text db provider))))
 
 ;;; ── Segment list ───────────────────────────────────────────────────────────
 
