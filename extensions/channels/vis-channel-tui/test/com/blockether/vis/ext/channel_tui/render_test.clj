@@ -1862,6 +1862,76 @@ body
         (expect (= in out))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
+;; e4167d48: bullet continuation must NOT strip whitespace inside
+;; inline-code spans
+;;
+;; Repro: model used `(v/join "prefix " (v/code "{:k :v :w x}")
+;; " suffix")` to build a bullet body. `v/join` separates parts with
+;; `\n\n`, so the resulting markdown has the inline-code span on its
+;; own paragraph. `coalesce-loose-list-items` re-folds those
+;; paragraphs into one bullet line and used to apply the punctuation
+;; tightening regex `#" +([,;:.\)])"` to the WHOLE joined text. That
+;; regex eats spaces before `:` — which is correct for prose
+;; (`step :` -> `step:`) but wrong inside `` `{:k :v :w x}` `` where
+;; the colons are EDN-keyword markers and the spaces are
+;; semantically meaningful. User-visible damage:
+;;
+;;   `{:rendering-kind :vis/silent :result title}`
+;;     -> `{:rendering-kind:vis/silent:result title}`
+;;
+;; Fix: tokenise on backticks first, only tighten prose tokens.
+;; Mirror of `markdown/normalize-inline-spacing`'s tokenisation.
+;; ─────────────────────────────────────────────────────────────────────────
+
+(defdescribe coalesce-preserves-code-span-whitespace-test
+  (it "keeps `{:k :v :w x}` whitespace intact when an inline-code span lands on its own paragraph inside a bullet (e4167d48 repro)"
+    (let [src    (str "1. Zwracać\n"
+                   "   \n"
+                   "   `{:rendering-kind :vis/silent :result title}`\n"
+                   "   \n"
+                   "    zamiast gołego stringa.")
+          merged (first (coalesce-loose-list-items (str/split-lines src)))]
+      (expect (str/includes? merged "Zwracać"))
+      (expect (str/includes? merged "zamiast gołego stringa."))
+      ;; Critical: spaces between EDN keywords inside the inline-code
+      ;; span must survive the punctuation tightening.
+      (expect (str/includes? merged ":rendering-kind :vis/silent"))
+      (expect (str/includes? merged ":vis/silent :result"))
+      (expect (not (str/includes? merged ":rendering-kind:vis/silent")))
+      (expect (not (str/includes? merged ":vis/silent:result")))))
+
+  (it "still tightens punctuation OUTSIDE inline-code spans (regression of original behaviour)"
+    ;; The reflow exists for a real reason: `( foo , bar )` shaped
+    ;; output from `v/join` should still collapse to `(foo, bar)`.
+    ;; Pin both directions so a future refactor can't widen the
+    ;; carve-out by accident.
+    (let [src    (str "1. start\n"
+                   "   \n"
+                   "   ( foo\n"
+                   "   \n"
+                   "   , bar\n"
+                   "   \n"
+                   "   ) end")
+          merged (first (coalesce-loose-list-items (str/split-lines src)))]
+      (expect (str/includes? merged "(foo"))
+      (expect (str/includes? merged "foo, bar"))
+      (expect (str/includes? merged "bar) end"))))
+
+  (it "end-to-end: rendered bullet keeps `{:k :v}` spaces intact in the TUI output"
+    (let [src     (str "1. Zwracać\n"
+                    "   \n"
+                    "   `{:rendering-kind :vis/silent :result title}`\n"
+                    "   \n"
+                    "    zamiast gołego stringa.")
+          bodies  (->> (md->lines src 200 :answer)
+                    (filter #(= p/MARKER_MD_BULLET (marker-of %)))
+                    (mapv #(strip-sentinels (body-of %)))
+                    (str/join " "))]
+      (expect (str/includes? bodies ":rendering-kind :vis/silent"))
+      (expect (str/includes? bodies ":vis/silent :result"))
+      (expect (not (str/includes? bodies ":rendering-kind:vis/silent"))))))
+
+;; ─────────────────────────────────────────────────────────────────────────
 ;; md/join inline-bold inside a bullet - the `Let / me / dig / deeper`
 ;; regression
 ;;

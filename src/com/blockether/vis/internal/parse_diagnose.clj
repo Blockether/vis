@@ -408,8 +408,19 @@
                                   (do (.append sb c) (recur (inc i)))))))
                           (.append sb suffix)
                           (.toString sb)))]
+      ;; Strategy C: prepend `"` AND insert a closing `"` right
+      ;; before the enclosing `)` / `]`. Used when there is no
+      ;; existing unescaped `"` between the bare ident and the
+      ;; close — strategies A and B both rely on an existing inner
+      ;; quote to land the close, so without one they generate
+      ;; unparseable candidates. Conv a1ccbb8c shape
+      ;; `(answer Hi there)` is the canonical repro.
       (cond-> [strategy-a]
-        strategy-b (conj strategy-b)))))
+        strategy-b (conj strategy-b)
+        ;; Strategy C only when there's no inner unescaped `"` to
+        ;; reuse as the closer (otherwise A or B already covers it).
+        (empty? q-positions)
+        (conj (str prefix "\"" span-text "\"" suffix))))))
 
 (defn- bare-symbol-leads-answer?
   "True when `source` opens with `(answer SYM` where the first
