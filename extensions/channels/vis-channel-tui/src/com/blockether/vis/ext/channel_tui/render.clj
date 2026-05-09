@@ -610,24 +610,111 @@
         label   (p/truncate-cols (or (:label suggestion) "") label-w)]
     (str " " usage (repeat-str \space (max 1 (- usage-w (p/display-width usage)))) " " label)))
 
+(def ^:private slash-title-label "Slash commands")
+(def ^:private slash-title-hints
+  ;; Flex items rendered space-between in the title bar. Keys are
+  ;; rendered BOLD to match the dialog `draw-hint-bar!` idiom; the
+  ;; whole row sits on the `dialog-title-bg` accent stripe to match
+  ;; the `draw-dialog-chrome!` title bar style. Keep this in sync with
+  ;; the actual key bindings in screen.clj (Tab complete / Enter run).
+  [["↑↓/wheel" "select"]
+   ["Tab" "complete"]
+   ["Enter" "run"]])
+
+(defn- draw-slash-title-bar!
+  "Render the slash-command overlay title row.
+
+   Layout: a full-width accent stripe (`dialog-title-bg`) carrying a
+   BOLD label on the left and `[key action]` hint pairs distributed
+   space-between across the rest of the row, mirroring the
+   `draw-hint-bar!` flex idiom but on the title-bar accent so the
+   header reads as something IMPORTANT, not as another hint line."
+  [^TextGraphics g title-row width]
+  ;; Accent stripe under the whole row
+  (p/set-colors! g t/dialog-title-fg t/dialog-title-bg)
+  (p/fill-rect! g 0 title-row width 1)
+  (let [pad     1
+        text-w  (max 0 (- width (* 2 pad)))
+        ;; Items: label first, then each [key action] pair joined as
+        ;; one display token so space-between distributes them evenly.
+        labels  (into [slash-title-label]
+                  (mapv (fn [[k a]] (str k " " a)) slash-title-hints))
+        n       (count labels)
+        sizes   (mapv p/display-width labels)
+        total   (reduce + sizes)
+        slack   (max 0 (- text-w total))
+        gaps    (max 1 (dec n))
+        base    (max 1 (quot slack gaps))
+        extra   (max 0 (- slack (* base gaps)))]
+    (loop [i 0 col pad]
+      (when (and (< i n) (< col (+ pad text-w)))
+        (let [size (nth sizes i)
+              gap  (if (< i (dec n))
+                     (+ base (if (< i extra) 1 0))
+                     0)]
+          (if (zero? i)
+            ;; Bold left-anchored label.
+            (p/styled g [p/BOLD]
+              (p/put-str! g col title-row
+                (p/truncate-cols slash-title-label
+                  (max 0 (- (+ pad text-w) col)))))
+            ;; [key action] pair: BOLD key, plain action.
+            (let [[k a] (nth slash-title-hints (dec i))
+                  k-w   (p/display-width k)]
+              (p/styled g [p/BOLD]
+                (p/put-str! g col title-row
+                  (p/truncate-cols k
+                    (max 0 (- (+ pad text-w) col)))))
+              (p/put-str! g (+ col k-w) title-row
+                (p/truncate-cols (str " " a)
+                  (max 0 (- (+ pad text-w) (+ col k-w)))))))
+          (recur (inc i) (+ col size gap)))))))
+
 (defn draw-slash-command-suggestions!
-  "Overlay fuzzy slash-command suggestions immediately above the input box."
+  "Overlay fuzzy slash-command suggestions immediately above the input box.
+
+   Visual stack from top to bottom:
+     ── horizontal rule ──        ; border (dialog-border on terminal-bg)
+     [Slash commands  …  Enter run] ; title bar (dialog-title-bg accent)
+     suggestion rows…
+
+   The border + accent title row signal `this is a menu`, matching the
+   `draw-dialog-chrome!` chrome idiom but in overlay form (no side
+   rails, since the input box below has no side rails either)."
   [^TextGraphics g suggestions input-top cols]
   (when (seq suggestions)
-    (let [visible (take (max 0 (min 6 (dec input-top))) suggestions)
-          n       (count visible)
-          top     (max 0 (- input-top n 1))
-          width   (max 1 cols)]
+    (let [width        (max 1 cols)
+          ;; Each overlay row eats one row above the input box. We need
+          ;; rows for: optional border (1) + title (1) + suggestions (n).
+          ;; The title row is non-negotiable; the border drops first
+          ;; when vertical space is tight, so we size the visible list
+          ;; against `(dec input-top)` (title + list) and check border
+          ;; fitness afterwards.
+          max-list     (max 0 (dec input-top))
+          visible      (take (max 0 (min 6 max-list)) suggestions)
+          n            (count visible)
+          have-border? (>= input-top (+ n 2))
+          title-row    (max 0 (- input-top n 1))
+          border-row   (dec title-row)]
       (when (pos? n)
-        (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-        (p/put-str! g 0 top
-          (p/truncate-cols " Slash commands / ↑↓/wheel select / Tab complete / Enter run " width))
+        ;; Top border — single horizontal rule for visible separation
+        ;; from whatever sits above (chat scrollback, footer of dialog,
+        ;; etc.). Uses `dialog-border` over `terminal-bg` because the
+        ;; rule lives outside the accent stripe.
+        (when (and have-border? (>= border-row 0))
+          (p/set-colors! g t/dialog-border t/terminal-bg)
+          (p/put-str! g 0 border-row (p/horiz-line width)))
+
+        ;; Title bar (accent + flex hints).
+        (draw-slash-title-bar! g title-row width)
+
+        ;; Suggestion rows.
         (doseq [[i suggestion] (map-indexed vector visible)]
           (if (:slash/selected? suggestion)
             (p/set-colors! g t/dialog-bg t/dialog-title-bg)
             (p/set-colors! g t/dialog-fg t/dialog-bg))
-          (p/fill-rect! g 0 (+ top i 1) width 1)
-          (p/put-str! g 0 (+ top i 1)
+          (p/fill-rect! g 0 (+ title-row i 1) width 1)
+          (p/put-str! g 0 (+ title-row i 1)
             (p/truncate-cols (slash-suggestion-line suggestion width) width)))))))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────
@@ -3086,9 +3173,9 @@
                                                           :body-marker         r-marker
                                                           :raw-text            result-str
                                                           :max-w               fill-w
-                                                          ;; Tool render-fns return Markdown by
+                                                          ;; Tool channel-render-fns return Markdown by
                                                           ;; the extension contract (see
-                                                          ;; `internal/extension.clj` `render-tool-result`).
+                                                          ;; `internal/extension.clj` `channel-render-tool-result`).
                                                           ;; Render the body via the markdown
                                                           ;; pipeline so headings/bullets/code
                                                           ;; fences inside details paint as
