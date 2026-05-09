@@ -883,7 +883,15 @@
         fatal? (infrastructure-error? ex-data-map)
         iteration-error-data (exception->iteration-error-data e ctx)]
     (tel/log! {:level (if fatal? :error :warn)
-               :data  (assoc (format-exception-short e) :iteration iteration)}
+               :data  (let [base (assoc (format-exception-short e) :iteration iteration)
+                            ed   (ex-data e)
+                            body (some-> (:body ed) str)]
+                        (cond-> base
+                          (:status ed)            (assoc :status (:status ed))
+                          (:request-id ed)        (assoc :request-id (:request-id ed))
+                          (:request_id ed)        (assoc :request-id (:request_id ed))
+                          (and body (not (str/blank? body)))
+                          (assoc :body-snippet (truncate body 1000))))}
       (if fatal?
         "Provider infrastructure error - failing turn without RLM restarts"
         "RLM iteration failed, feeding error to LLM"))
@@ -1065,6 +1073,100 @@
       "Move any required sibling work before the answer, or omit `(answer ...)` "
       "so the host loops. Intent resolution may be inside the final wrapper "
       "only when all cited refs are already observed.")))
+
+(defn- call-symbol->op-keyword
+  "Convert a head symbol like `v/patch` or `spit` to the canonical
+   op-keyword the engine knows about: `:v/patch` or `:spit`. Returns
+   nil for non-symbols."
+  [head]
+  (when (symbol? head)
+    (let [ns* (namespace head)
+          nm  (name head)]
+      (if ns*
+        (keyword ns* nm)
+        (keyword nm)))))
+
+(defn- mutating-call-form?
+  "True when `form` is a call whose head symbol classifies as a
+   side-effecting op via the engine contract
+   (`extension/side-effect-op?`). Source of truth lives in
+   `src/com/blockether/vis/internal/extension.clj`; tools register or
+   override their op-class via `extension/register-op-class!`.
+
+   Reproduced from convo `73f3d325` turn 5: `(z/patch ...) ... (answer
+   \"Now fixed\")` in one iteration; z/patch failed `matched 4 time(s)`
+   but the answer claimed success because the model never saw the
+   failure result before the answer was composed. Read-only tools
+   (v/cat, v/rg, z/locators, z/patch-check, v/patch-check, ...) classify
+   as `:op/read` / `:op/search` / `:op/meta` and stay legal alongside
+   the answer."
+  [form]
+  (and (seq? form)
+    (when-let [op-kw (call-symbol->op-keyword (first form))]
+      (extension/side-effect-op? op-kw))))
+
+(defn- form-contains-mutating-call?
+  [expr]
+  (try
+    (let [form (edamame/parse-string (str expr) edamame-opts)]
+      (boolean (some mutating-call-form? (tree-seq coll? seq form))))
+    (catch Throwable _
+      false)))
+
+(defn- answer-with-mutation-preflight-mismatch
+  "When an iteration contains BOTH a top-level form that holds an
+   `(answer ...)` call AND a top-level form that holds a mutating tool
+   call (anywhere in its tree), return a map describing the violation
+   so the engine can reject the iteration before any evaluation runs.
+   Returns nil when the iteration is fine.
+
+   The two forms may be the same form (e.g. `(do (z/patch ...) (answer
+   ...))`) or different forms in the same iteration. Either way the
+   model has no chance to observe the mutation result before the answer
+   is composed."
+  [code-entries]
+  (let [exprs        (mapv :expr code-entries)
+        answer-idx   (first (keep-indexed (fn [idx e]
+                                            (when (form-contains-answer-call? e) idx))
+                              exprs))
+        mutating-idx (first (keep-indexed (fn [idx e]
+                                            (when (form-contains-mutating-call? e) idx))
+                              exprs))]
+    (when (and (some? answer-idx) (some? mutating-idx))
+      {:answer-idx   answer-idx
+       :mutating-idx mutating-idx
+       :total-forms  (count code-entries)})))
+
+(defn- block-result-error-summary
+  "Return a short string describing the error in a per-form result map
+   for the answer-after-error gate. Picks the block-level `:error`
+   first; falls back to the first `:journal` sink-entry whose
+   `:success?` is false (lifted tool-failure). Returns nil when the
+   form ran cleanly."
+  [result]
+  (or (:error result)
+    (some (fn [j]
+            (when (false? (:success? j))
+              (or (some-> (:error j) :message)
+                (str "tool failure in " (pr-str (:form j))))))
+      (:journal result))))
+
+(defn- answer-with-mutation-preflight-error-message
+  [{:keys [answer-idx mutating-idx total-forms]}]
+  (str "Answer/mutation preflight rejected this iteration before evaluation: "
+    "(answer ...) at top-level form " (inc (or answer-idx 0))
+    " and a mutating tool call (e.g. v/patch, z/patch, v/copy, v/move, "
+    "v/delete, v/delete-if-exists, v/create-dirs, z/repair-*) at top-level form "
+    (inc (or mutating-idx 0))
+    " appeared together in the same " total-forms "-form iteration. "
+    "This is structurally unobservable: the SCI loop is write-then-read, "
+    "so you cannot see the mutation's success/failure tool result before "
+    "the answer is composed. Recovery: keep the mutating call in THIS "
+    "iteration, drop the (answer ...). The host will loop; the next "
+    "iteration's <journal> will carry the mutation's :success?/:error "
+    "sink entry. Inspect it (and the file bytes via v/cat / z/locators) "
+    "before claiming success. Use (z/patch-check edits) or (v/patch-check "
+    "edits) to dry-run when locators may be stale."))
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
@@ -1338,7 +1440,16 @@
          answer-preflight-error (when (some? answer-preflight-form-idx)
                                   (answer-position-preflight-error-message
                                     answer-preflight-form-idx
-                                    parsed-total-blocks))]
+                                    parsed-total-blocks))
+         answer-with-mutation-mismatch (when (and (not raw-fence-error)
+                                               (not plain-prose-error)
+                                               (not answer-preflight-error)
+                                               (pos? parsed-total-blocks))
+                                         (answer-with-mutation-preflight-mismatch
+                                           parsed-code-entries))
+         answer-with-mutation-error (when answer-with-mutation-mismatch
+                                      (answer-with-mutation-preflight-error-message
+                                        answer-with-mutation-mismatch))]
      {:code-entries (cond
                       plain-prose-error
                       [{:expr "(vis/preflight-error :plain-prose-code)"
@@ -1350,9 +1461,15 @@
                               (assoc entry :preflight-error answer-preflight-error))
                         parsed-code-entries)
 
+                      answer-with-mutation-error
+                      (mapv (fn [entry]
+                              (assoc entry :preflight-error answer-with-mutation-error))
+                        parsed-code-entries)
+
                       :else
                       parsed-code-entries)
       :answer-preflight-error answer-preflight-error
+      :answer-with-mutation-preflight-error answer-with-mutation-error
       :plain-prose-preflight-error plain-prose-error
       :raw-fence-preflight-error raw-fence-error
       :duplicate-blocks-normalized? duplicate-blocks-normalized?
@@ -1739,6 +1856,14 @@
           suppress-form-start? (or answer-preflight-error
                                  final-answer-preflight-error)
           total-blocks (count code-entries)
+          ;; Engine-level answer-after-error gate (ANALYSIS.md §4.2):
+          ;; an atom that flips true the moment a non-answer form errors.
+          ;; Any subsequent form containing an `(answer ...)` call is
+          ;; rejected before SCI re-evals it, so a model that emits
+          ;; `(z/patch ...)`-fails-then-(answer "shipped") gets a
+          ;; structured preflight error in place of the answer instead
+          ;; of a fabricated success-claim.
+          prior-error-atom (atom nil)
           executed (mapv (fn [idx {:keys [expr preflight-error parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
@@ -1770,6 +1895,27 @@
                                               {:result nil :error (str "Parse error: " parse-error)
                                                :stdout "" :stderr "" :execution-time-ms 0
                                                :op :edamame/parse}
+                                              ;; Answer-after-error gate: any prior form
+                                              ;; in this iteration errored, and this form
+                                              ;; carries an `(answer ...)` call. Reject
+                                              ;; before eval so the answer can't claim
+                                              ;; success on top of an unobserved failure.
+                                              (and @prior-error-atom
+                                                (form-contains-answer-call?
+                                                  (try (edamame/parse-string (str expr) edamame-opts)
+                                                    (catch Throwable _ nil))))
+                                              {:result nil
+                                               :error  (str "Answer-after-error gate: form "
+                                                         (inc idx) " of " total-blocks
+                                                         " contains an `(answer ...)` call, but "
+                                                         "a prior form in this iteration errored: "
+                                                         (truncate (str @prior-error-atom) 280)
+                                                         ". Recovery: drop the (answer ...) so the host loops; "
+                                                         "the next iteration's <journal> carries the error "
+                                                         "and you can observe + repair before answering.")
+                                               :stdout "" :stderr "" :execution-time-ms 0
+                                               :op :vis/guard}
+
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0
@@ -1800,6 +1946,13 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true))
+                                 _ (when-let [err (and (nil? @prior-error-atom)
+                                                    (block-result-error-summary result))]
+                                     ;; Capture the first error so subsequent
+                                     ;; answer-bearing forms get rejected. Lifted
+                                     ;; sink failures (`:success? false` in :journal)
+                                     ;; count too — same root cause as a thrown error.
+                                     (reset! prior-error-atom err))
                                  display-result (def-display-result environment expr result)
                                  ;; def-display-result is now a pass-through; kept on the
                                  ;; call path so future display-tweaks have a single seam.
@@ -2024,27 +2177,57 @@
       "<error>LLM call failed: " (:message iteration-error-data) "</error>\n"
       "Adjust your approach or emit :final with what you have.")))
 
+(def ^:private CHAT_ERROR_BODY_RENDER_CHARS
+  "Cap on raw upstream HTTP body chars surfaced inside the chat error
+   bubble. Long enough that Anthropic / OpenAI / z.ai full JSON error
+   envelopes (`{\"type\":\"error\",\"error\":{...},\"request_id\":...}`)
+   round-trip whole — their structured `error.message` is what the
+   model and the user actually need to act on. Short enough that a
+   pathological provider 5xx HTML page or full streamed partial body
+   doesn't take over the chat transcript. svar already caps at
+   `MAX_HTTP_ERROR_BODY_CHARS` (8 KiB) on the way in; this is the
+   render-side ceiling and stays well under the TUI bubble “collapse
+   long body” threshold."
+  4000)
+
 (defn- format-iteration-error
   "Render one trace `:error` map as a Markdown bullet for the user.
-   Always includes the wrapper message; appends the raw provider
-   response when the spec layer captured one (`svar.spec/schema-rejected`
-   stashes the literal model output under `:data :raw-data`). Without
-   this, errors like \"Your organization does not have access to Claude\"
-   were stored in the DB but the user only saw the schema-rejection
-   wrapper text. The raw response is the actually-useful part."
+   Always includes the wrapper message and, when the underlying
+   `ex-data` carries provider context, surfaces it inline so users
+   stop seeing opaque rows like `Exceptional status code: 400` with
+   no follow-up.
+
+   Sources of provider context:
+   - `:raw-data` — spec-rejection (`svar.spec/schema-rejected`) stashes
+     the literal model output here.
+   - `:body` — svar's `:svar.core/http-error` carries the raw upstream
+     response body (truncated to `MAX_HTTP_ERROR_BODY_CHARS`). This is
+     where Anthropic's structured `error.message` lives, e.g.
+     `messages.1.content.1: Invalid signature in thinking block`.
+   - `:status` / `:request_id` — included when present so users can
+     paste the request id straight into provider support."
   [err]
-  (let [message (or (:message err) (str err))
-        data    (:data err)
-        raw     (some-> (:raw-data data) str)
-        recv    (:received-type data)
-        body    (when (and raw (not (str/blank? raw)))
-                  (truncate raw 400))
+  (let [message    (or (:message err) (str err))
+        data       (:data err)
+        raw        (some-> (:raw-data data) str)
+        recv       (:received-type data)
+        body-raw   (some-> (:body data) str)
+        status     (:status data)
+        request-id (or (:request-id data) (:request_id data))
+        provider-payload (when (and raw (not (str/blank? raw)))
+                           (truncate raw 400))
+        provider-body    (when (and body-raw (not (str/blank? body-raw)))
+                           (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))
         overflow? (stream-output-overflow? err)]
     (cond-> (str "- " message)
-      overflow? (str " Reason: max_output_tokens. Vis will retry with compact working memory and an explicit compact-recovery instruction.")
-      body (str "\n  provider returned"
-             (when recv (str " (" recv ")"))
-             ": " body))))
+      overflow?        (str " Reason: max_output_tokens. Vis will retry with compact working memory and an explicit compact-recovery instruction.")
+      provider-payload (str "\n  provider returned"
+                         (when recv (str " (" recv ")"))
+                         ": " provider-payload)
+      provider-body    (str "\n  provider response"
+                         (when status (str " (HTTP " status ")"))
+                         (when request-id (str " [" request-id "]"))
+                         ":\n  ```\n  " (str/replace provider-body #"\n" "\n  ") "\n  ```"))))
 
 (defn- format-block-error
   "Render one failed code block from an iteration trace. These are not

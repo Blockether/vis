@@ -411,32 +411,88 @@
       (cond-> [strategy-a]
         strategy-b (conj strategy-b)))))
 
+(defn- bare-symbol-leads-answer?
+  "True when `source` opens with `(answer SYM` where the first
+   non-whitespace token after `(answer ` is a bare Clojure
+   identifier (not a string literal, not an opening paren, not a
+   keyword, not a number).
+
+   This is the strongest possible signal that the model forgot the
+   opening `\"` on the answer body — the answer-form arity contract
+   is `(answer <markdown-string-or-renderable>)` and a bare symbol
+   in the first slot has no legitimate use case (no plain symbol is
+   `:vis/answer`-shaped). When this fires we can restitch even when
+   the symbol fails the broader `looks-like-prose?` heuristic
+   (e.g. short Polish/English words like `Co`, `Hi`, `Ok` — those
+   would otherwise slip past the prose detector and burn a whole
+   iteration on `Unable to resolve symbol: Co`,
+   conversation a1ccbb8c-a1a3-434c-86ad-b0f79cd2dee8).
+
+   Pure regex check. Returns the byte offset of the bare symbol's
+   first char (so callers can hand it straight to
+   `restitch-candidates`) or nil when the pattern doesn't match."
+  ^Long [^String source ^String sym]
+  (when (and source sym)
+    (let [;; `(answer` followed by required whitespace, then a
+          ;; capture group around the bare-ident shape we want to
+          ;; promote to a string. We anchor on `\b` so partial
+          ;; matches inside identifiers don't fire. The ident must
+          ;; START with a letter — numbers / keywords / strings are
+          ;; out of scope and either parse fine or have their own
+          ;; restitch path.
+          quoted-sym (java.util.regex.Pattern/quote sym)
+          pat        (re-pattern (str "\\(answer\\s+(" quoted-sym ")\\b"))
+          m          (re-matcher pat source)]
+      (when (.find m)
+        (long (.start m 1))))))
+
 (defn try-answer-string-restitch
   "Repair-candidate generator for the eval-time error class
-   `Unable to resolve symbol: X` when X is a bare prose word that
-   was supposed to be a string literal inside an `(answer ...)`
-   form.
+   `Unable to resolve symbol: X` when X is a bare word that was
+   supposed to be a string literal inside an `(answer ...)` form.
+
+   Two trigger paths:
+
+   1. **Prose-shape inside a string-vector** (the classic
+      conv ec64266c-... case) — X looks like prose
+      (`looks-like-prose?`) and sits in a missing-quote-shaped
+      context (`likely-missing-quote-context?`). Catches multi-word
+      Polish/German/etc. fragments inside `(v/ul [\"a\" \"b\" Niektore
+      ...])`-shaped vectors.
+
+   2. **Bare leading symbol in `(answer SYM ...)`** (conv
+      a1ccbb8c-a1a3-434c-86ad-b0f79cd2dee8) — X is the very first
+      token after `(answer `. The arity contract guarantees there's
+      no legitimate symbol there, so we restitch unconditionally,
+      bypassing the prose-shape filter. Catches short fragments
+      (`Co`, `Hi`, `Ok`) that the prose detector — intentionally
+      conservative for the vector-of-strings case — would skip.
 
    Returns a vector of source candidates in priority order, or nil
-   when:
-     - `source` doesn't contain `(answer` (out of scope),
-     - `sym` doesn't look like prose (legitimate Clojure ident
-       could be a real binding - never silently rewrite),
-     - `sym` doesn't sit in a missing-quote-shaped context,
-     - the enclosing `]`/`)` cannot be located.
+   when neither trigger fires or the enclosing `]`/`)` cannot be
+   located.
 
    Pure. The caller is responsible for re-evaluating each candidate
    through SCI and picking the first that succeeds. A candidate
-   that re-throws is harmless - it's just discarded."
+   that re-throws is harmless — it's just discarded."
   [^String source ^String sym]
   (when (and (string? source)
           (string? sym)
-          (str/includes? source "(answer")
-          (looks-like-prose? sym))
-    (when-let [idx (str/index-of source sym)]
-      (when (likely-missing-quote-context? source (long idx))
-        (let [cands (restitch-candidates source (long idx))]
-          (when (seq cands) cands))))))
+          (str/includes? source "(answer"))
+    (let [;; Path 2 first: it's strictly more specific (the symbol
+          ;; must literally lead an answer form). When it matches,
+          ;; we know the offset already, no fuzzy index-of needed.
+          leading-idx (bare-symbol-leads-answer? source sym)]
+      (cond
+        leading-idx
+        (let [cands (restitch-candidates source leading-idx)]
+          (when (seq cands) cands))
+
+        (looks-like-prose? sym)
+        (when-let [idx (str/index-of source sym)]
+          (when (likely-missing-quote-context? source (long idx))
+            (let [cands (restitch-candidates source (long idx))]
+              (when (seq cands) cands))))))))
 
 (defn try-quote-rebalance
   "Parinfer-equivalent for unbalanced double-quotes.

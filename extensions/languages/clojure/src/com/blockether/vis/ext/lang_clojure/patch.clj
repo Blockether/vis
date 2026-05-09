@@ -43,6 +43,38 @@
                {:type :ext.lang-clojure/path-escape :path (str p)})))
     (.toFile normalized)))
 
+(def ^:private clojure-file-extensions
+  "File extensions whose contents `z/` zipper tools can safely parse via
+   rewrite-clj. Anything else (Markdown, SQL, YAML, JSON, shell) breaks
+   the zipper parser at runtime on perfectly-valid non-Clojure bytes
+   (regression: ANALYSIS.md §1 — z/patch on AGENTS.md crashed on Unicode
+   math symbols inside a fenced code block)."
+  #{"clj" "cljc" "cljs" "edn"})
+
+(defn- file-extension
+  "Lowercased extension of the path's basename, without the dot. Empty
+   string when the basename has no `.`."
+  [path]
+  (let [s    (str path)
+        base (.getName (java.io.File. s))
+        idx  (.lastIndexOf base ".")]
+    (if (pos? idx)
+      (str/lower-case (subs base (inc idx)))
+      "")))
+
+(defn- ensure-clojure-file-ext! [path]
+  (let [ext (file-extension path)]
+    (when-not (contains? clojure-file-extensions ext)
+      (throw (ex-info
+               (str "z/ tools only operate on Clojure/EDN files ("
+                 (str/join ", " (sort (map #(str "." %) clojure-file-extensions)))
+                 "). Got '" path "' (extension " (pr-str ext)
+                 "). Use v/patch / v/write for plain-text files.")
+               {:type      :ext.lang-clojure/non-clojure-file
+                :path      (str path)
+                :extension ext
+                :allowed   clojure-file-extensions})))))
+
 (defn- ensure-existing-file! [^File f]
   (when-not (.exists f)
     (throw (ex-info (str "File not found: " (.getPath f))
@@ -160,7 +192,9 @@
                          {:type :ext.lang-clojure/invalid-patch-edit
                           :missing (vec missing)
                           :edit edit})))
-              (update edit :path str)))
+              (let [edit (update edit :path str)]
+                (ensure-clojure-file-ext! (:path edit))
+                edit)))
       edits)))
 
 (defn- parse-locator-source
@@ -485,6 +519,7 @@
   "List Clojure/EDN zipper locators in a file. Defaults to 10 rows; pass opts like {:symbol 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
   ([path] (locators-file path nil))
   ([path opts]
+   (ensure-clojure-file-ext! path)
    (let [f     (ensure-existing-file! (safe-path path))
          path  (rel-path f)
          all   (with-locator-row-context path (source-locators (slurp f)))
@@ -504,6 +539,7 @@
   "List symbol zipper locators in a Clojure/EDN file. Defaults to 10 rows; pass opts like {:name 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
   ([path] (symbols-file path nil))
   ([path opts]
+   (ensure-clojure-file-ext! path)
    (let [f     (ensure-existing-file! (safe-path path))
          path  (rel-path f)
          all   (->> (with-locator-row-context path (source-locators (slurp f)))

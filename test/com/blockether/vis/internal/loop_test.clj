@@ -293,3 +293,148 @@
                    "(let [x 1] (when x (\"oops\" :extra)))")))
     (expect (nil? (#'loop/detect-common-mistakes
                    "(def y (\"nope\" 1))\n(println y)")))))
+
+;;; -----------------------------------------------------------------------
+;;; format-iteration-error: surface upstream HTTP body in chat
+;;; -----------------------------------------------------------------------
+
+;; Regression: conversation 6f5f7dbb-1e74-4f64-9223-6c3e28ee9dd0.
+;; Anthropic returned a structured 400 with `error.message =
+;; "messages.1.content.1: Invalid signature in thinking block"`. svar
+;; correctly attached the body to `:svar.core/http-error` ex-data, but
+;; Vis's chat error renderer only surfaced the wrapper line
+;; `Exceptional status code: 400`. The user couldn't tell what was
+;; actually wrong without grepping `~/.vis/vis.log`. Pin the contract:
+;; when an iteration error carries `[:data :body]` (svar's http-error
+;; shape), `format-iteration-error` must echo the body verbatim into
+;; the bullet so the chat bubble is self-contained, including HTTP
+;; status and request id when present.
+(defdescribe format-iteration-error-http-body-test
+  (it "surfaces svar.core/http-error body verbatim with status + request id"
+    (let [body (str "{\"type\":\"error\","
+                 "\"error\":{\"type\":\"invalid_request_error\","
+                 "\"message\":\"messages.1.content.1: Invalid `signature` in `thinking` block\"},"
+                 "\"request_id\":\"req_011CarodswSWgEdPfFaJakLs\"}")
+          out (#'loop/format-iteration-error
+               {:message "Exceptional status code: 400"
+                :data    {:type       :svar.core/http-error
+                          :status     400
+                          :request-id "req_011CarodswSWgEdPfFaJakLs"
+                          :body       body}})]
+      ;; Wrapper line still present so existing transcripts don't change.
+      (expect (str/includes? out "Exceptional status code: 400"))
+      ;; HTTP status surfaced separately for at-a-glance triage.
+      (expect (str/includes? out "HTTP 400"))
+      ;; Request id round-tripped so users can paste into provider support.
+      (expect (str/includes? out "req_011CarodswSWgEdPfFaJakLs"))
+      ;; Actual provider error message shows up where the user can read it.
+      (expect (str/includes? out "Invalid `signature` in `thinking` block"))))
+
+  (it "survives missing status / request-id (only :body attached)"
+    (let [out (#'loop/format-iteration-error
+               {:message "Exceptional status code: 500"
+                :data    {:type :svar.core/http-error
+                          :body "{\"error\":\"upstream timeout\"}"}})]
+      (expect (str/includes? out "Exceptional status code: 500"))
+      (expect (str/includes? out "upstream timeout"))
+      ;; No `(HTTP ...)` annotation when status missing.
+      (expect (not (str/includes? out "HTTP ")))))
+
+  (it "falls back to wrapper-only when no body or raw-data is present"
+    (let [out (#'loop/format-iteration-error
+               {:message "Some unrelated failure"
+                :data    {:type :other}})]
+      (expect (= "- Some unrelated failure" out))))
+
+  (it "keeps spec-rejection :raw-data path working alongside the new :body path"
+    ;; spec-layer errors used a different shape (`:raw-data`); the
+    ;; renderer must still surface that one too — we just added a new
+    ;; branch, didn't replace the old one.
+    (let [out (#'loop/format-iteration-error
+               {:message "schema rejected"
+                :data    {:raw-data       "<not-json>"
+                          :received-type  "text"}})]
+      (expect (str/includes? out "<not-json>"))
+      (expect (str/includes? out "(text)")))))
+
+(defn- entries-of [code]
+  (or (first (loop/split-top-level-forms code)) []))
+
+(defdescribe block-result-error-summary-test
+  ;; Helper that drives the runtime answer-after-error gate. The gate
+  ;; itself runs inside the per-form mapv inside `execute-iteration!`;
+  ;; this test exercises the predicate so we can prove the gate fires
+  ;; on both thrown errors and lifted tool-failure sink entries
+  ;; (regression: ANALYSIS.md §4.2).
+  (it "surfaces a thrown :error verbatim"
+    (expect (= "boom" (#'loop/block-result-error-summary {:error "boom"}))))
+
+  (it "surfaces a lifted tool-failure sink-entry's :error.message when block :error is nil"
+    (let [result {:error nil
+                  :journal [{:position 0 :form "(z/patch ...)"
+                             :success? false
+                             :result   nil
+                             :error    {:type "clojure.lang.ExceptionInfo"
+                                        :message "z/patch :search locator must match exactly once; matched 4 time(s)"
+                                        :trace []}}]}]
+      (expect (= "z/patch :search locator must match exactly once; matched 4 time(s)"
+                (#'loop/block-result-error-summary result)))))
+
+  (it "is nil when the form ran cleanly (no :error, all sinks :success? true)"
+    (expect (nil? (#'loop/block-result-error-summary
+                   {:error nil
+                    :journal [{:position 0 :form "(v/cat \"a\")" :success? true :result "ok" :error nil}]})))
+    (expect (nil? (#'loop/block-result-error-summary {:error nil :journal []})))
+    (expect (nil? (#'loop/block-result-error-summary {})))))
+
+(defdescribe answer-with-mutation-preflight-test
+  (it "rejects (z/patch ...) + (answer ...) in the same iteration (regression: convo 73f3d325 turn 5)"
+    ;; Reduced repro: the model wrote z/patch (which failed with
+    ;; `matched 4 time(s)`) and (answer "Now fixed") in one iteration.
+    ;; The write-then-read SCI loop made it impossible to observe the
+    ;; failure before composing the answer. Preflight must reject
+    ;; before any eval.
+    (let [code     "(z/patch [{:path \"a.clj\" :search \"x\" :replace \"y\"}])\n(answer \"Now fixed\")"
+          entries  (entries-of code)
+          mismatch (#'loop/answer-with-mutation-preflight-mismatch entries)
+          msg      (when mismatch
+                     (#'loop/answer-with-mutation-preflight-error-message mismatch))]
+      (expect (some? mismatch))
+      (expect (= 0 (:mutating-idx mismatch)))
+      (expect (= 1 (:answer-idx mismatch)))
+      (expect (string? msg))
+      (expect (str/includes? msg "structurally unobservable"))
+      (expect (str/includes? msg "z/patch-check"))))
+
+  (it "rejects v/patch + answer just like z/patch + answer"
+    (let [code     "(v/patch [{:path \"a.clj\" :search \"x\" :replace \"y\"}])\n(answer \"shipped\")"
+          mismatch (#'loop/answer-with-mutation-preflight-mismatch (entries-of code))]
+      (expect (some? mismatch))))
+
+  (it "rejects mutation nested inside the same form as the answer (do/let wrappers)"
+    ;; Same iteration, ONE top-level form: (do (z/patch ...) (answer ...))
+    ;; Still unobservable because there is no journal step between the
+    ;; mutation and the answer composition.
+    (let [code     "(do (z/patch [{:path \"a.clj\" :search \"x\" :replace \"y\"}]) (answer \"ok\"))"
+          mismatch (#'loop/answer-with-mutation-preflight-mismatch (entries-of code))]
+      (expect (some? mismatch))
+      (expect (= 0 (:answer-idx mismatch)))
+      (expect (= 0 (:mutating-idx mismatch)))))
+
+  (it "leaves read-only tools + (answer ...) alone -- v/cat/v/rg/z/locators are NOT mutating"
+    ;; Read-only tools are observable through the eval pipeline; the
+    ;; answer can legitimately reference their values in the same iter.
+    (doseq [code ["(v/cat \"a.clj\")\n(answer \"ok\")"
+                  "(v/rg {:all [\"foo\"]})\n(answer \"ok\")"
+                  "(z/locators \"a.clj\")\n(answer \"ok\")"
+                  "(z/patch-check [{:path \"a.clj\" :search \"x\" :replace \"y\"}])\n(answer \"ok\")"
+                  "(v/patch-check [{:path \"a.clj\" :search \"x\" :replace \"y\"}])\n(answer \"ok\")"]]
+      (expect (nil? (#'loop/answer-with-mutation-preflight-mismatch (entries-of code))))))
+
+  (it "leaves a pure-answer iteration alone"
+    (expect (nil? (#'loop/answer-with-mutation-preflight-mismatch
+                   (entries-of "(answer (v/p \"hi\"))")))))
+
+  (it "leaves a mutate-only iteration alone (no answer present)"
+    (expect (nil? (#'loop/answer-with-mutation-preflight-mismatch
+                   (entries-of "(z/patch [{:path \"a.clj\" :search \"x\" :replace \"y\"}])"))))))
