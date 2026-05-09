@@ -240,8 +240,7 @@
     (let [out (extension/default-channel-error-text
                 {:success? false :info {:op :v/cat}
                  :error {:type "java.io.FileNotFoundException"
-                         :message "src/missing.clj (No such file)"}}
-                :channel-tui)]
+                         :message "src/missing.clj (No such file)"}})]
       (expect (string/includes? out "**ERROR**"))
       (expect (string/includes? out "v/cat"))
       (expect (string/includes? out "FileNotFoundException")))))

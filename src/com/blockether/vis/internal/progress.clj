@@ -129,7 +129,7 @@
     (error/format-error (:error chunk))
     (let [result (:result chunk)]
       (if (extension/tool-result? result)
-        (extension/channel-render-tool-result result :channel-tui)
+        (extension/channel-render-tool-result result)
         (prompt/safe-pr-str result)))))
 
 (def ^:private thinking-event-target-chars

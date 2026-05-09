@@ -1106,7 +1106,7 @@
       "\n" (read-more-hint "<your binding>"))))
 
 (defn- channel-render-cat
-  [result _chan-id]
+  [result]
   (let [{:keys [path lines]} result
         body (numbered-line-block (inc (:offset result)) (vec lines))]
     (md/join
@@ -1120,7 +1120,7 @@
     (bounded-render-text (str/join "\n" (tree-lines result)))))
 
 (defn- channel-render-ls
-  [result _chan-id]
+  [result]
   (md/p "Directory tree of" (md/code (:path result)) "-"
     (count (:children result)) "top-level entries."))
 
@@ -1140,7 +1140,7 @@
         (str "\n… (" (- n (count shown)) " more; bind hits and slice)")))))
 
 (defn- channel-render-rg
-  [result _chan-id]
+  [result]
   (let [hits (or (:hits result) [])]
     (md/join
       (md/p "Searched —" (count hits) "hit(s), truncated-by"
@@ -1160,7 +1160,7 @@
   "v/patch — wrote edit(s) (full diff visible in channel render)")
 
 (defn- channel-render-patch
-  [result _chan-id]
+  [result]
   ;; `result` here is the [{:path ...}] vec, but the rich diff data lives on
   ;; the tool-result `:info` map which the contract does not expose to
   ;; renderers. Show the per-file paths; full diff is recoverable via
@@ -1175,7 +1175,7 @@
   (str "v/patch-check — " (pr-str result)))
 
 (defn- channel-render-patch-check
-  [result _chan-id]
+  [result]
   (render-edn-block :channel result))
 
 (defn- journal-render-create-dirs
@@ -1183,7 +1183,7 @@
   (str "v/create-dirs — ensured " result))
 
 (defn- channel-render-create-dirs
-  [result _chan-id]
+  [result]
   (md/p "Ensured dir" (md/code result) "."))
 
 (defn- journal-render-glob
@@ -1197,7 +1197,7 @@
         (str "\n… (" (- n (count shown)) " more; bind result and slice)")))))
 
 (defn- channel-render-glob
-  [result _chan-id]
+  [result]
   (let [matches (vec (or result []))]
     (md/join
       (md/p "Glob —" (count matches) "match(es).")
@@ -1209,7 +1209,7 @@
   (str "v/copy — wrote " result))
 
 (defn- channel-render-copy
-  [result _chan-id]
+  [result]
   (md/p "Copied to" (md/code result) "."))
 
 (defn- journal-render-move
@@ -1217,7 +1217,7 @@
   (str "v/move — wrote " result))
 
 (defn- channel-render-move
-  [result _chan-id]
+  [result]
   (md/p "Moved to" (md/code result) "."))
 
 (defn- journal-render-delete
@@ -1225,7 +1225,7 @@
   (str "v/delete — " (pr-str result)))
 
 (defn- channel-render-delete
-  [result _chan-id]
+  [result]
   (md/p "Deleted." (md/code (pr-str result))))
 
 (defn- journal-render-delete-if-exists
@@ -1234,7 +1234,7 @@
     (if result "deleted" "already absent")))
 
 (defn- channel-render-delete-if-exists
-  [result _chan-id]
+  [result]
   (if result
     (md/p "Deleted.")
     (md/p "Already absent.")))
@@ -1244,7 +1244,7 @@
   (str "v/exists? — " (pr-str result)))
 
 (defn- channel-render-exists?
-  [result _chan-id]
+  [result]
   (md/p "Exists?" (md/code (pr-str result))))
 
 (defn- journal-render-bash
@@ -1263,7 +1263,7 @@
         (str "\nstderr: " (head stderr 600))))))
 
 (defn- channel-render-bash
-  [result _chan-id]
+  [result]
   (let [{:keys [command cwd exit timed-out? timeout-ms duration-ms stdout stderr
                 stdout-truncated? stderr-truncated? warnings]} result
         warning-text (when (seq warnings)

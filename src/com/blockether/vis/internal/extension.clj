@@ -387,8 +387,10 @@
 (s/def :ext.symbol/journal-render-fn fn?)
 
 ;; Renderer for this symbol's result inside a runtime channel (TUI,
-;; telegram, ...). Receives `(:result tool-result)` and the active
-;; `:channel/id` keyword. Returns markdown. MANDATORY on every fn-symbol.
+;; telegram, ...). Receives `(:result tool-result)` only. Returns
+;; markdown - UNIFORM across every channel; channel adapters apply
+;; their own flavor tweaks (escaping, line-wrap) at consume time.
+;; MANDATORY on every fn-symbol.
 (s/def :ext.symbol/channel-render-fn fn?)
 
 ;; Optional override for journal failure rendering. Receives the tool
@@ -396,9 +398,9 @@
 ;; `default-journal-error-text`.
 (s/def :ext.symbol/journal-render-error-fn fn?)
 
-;; Optional override for channel failure rendering. Receives the tool
-;; result's `:error` map and the active `:channel/id`. When absent, the
-;; engine uses `default-channel-error-text`.
+;; Optional override for channel failure rendering. Receives the
+;; tool-result envelope only. When absent, the engine uses
+;; `default-channel-error-text`.
 (s/def :ext.symbol/channel-render-error-fn fn?)
 
 ;; Extension-owned renderers for Markdown fenced code blocks. Channels call
@@ -744,10 +746,9 @@
     (if (<= n 1500) s (str (subs s 0 1500) "…<+" (- n 1500) " chars>"))))
 
 (defn render-pr-str-channel
-  "Default-shaped channel renderer that pr-strs the result. Ignores
-   `channel-id` (same output everywhere). Authors opt in explicitly via
-   `:channel-render-fn extension/render-pr-str-channel`."
-  [result _channel-id]
+  "Default-shaped channel renderer that pr-strs the result. Authors opt
+   in explicitly via `:channel-render-fn extension/render-pr-str-channel`."
+  [result]
   (pr-str result))
 
 (defn render-string-journal
@@ -759,9 +760,8 @@
     (if (<= n 1500) s (str (subs s 0 1500) "…<+" (- n 1500) " chars>"))))
 
 (defn render-string-channel
-  "Pass-through channel renderer for string-shaped `:result`. Ignores
-   `channel-id`."
-  [result _channel-id]
+  "Pass-through channel renderer for string-shaped `:result`."
+  [result]
   (str result))
 
 (defn- validate-symbol-entry!
@@ -824,7 +824,7 @@
     (when-not (clojure.core/fn? channel-render-fn)
       (anomaly/incorrect!
         (str "Symbol '" sym "' is missing :channel-render-fn. Every fn-symbol must "
-          "declare a channel renderer (fn [result channel-id] -> string).")
+          "declare a channel renderer (fn [result] -> string).")
         {:type :extension/missing-channel-render-fn :sym sym}))
     (validate-symbol-entry!
       (cond-> #:ext.symbol{:sym               sym
@@ -858,17 +858,18 @@
      :journal-render-fn   - (fn [result] string). Renders the unwrapped
                             `:result` value into the model-facing
                             <journal>. Plaintext, terse, ≤~1500 chars.
-     :channel-render-fn   - (fn [result channel-id] string). Renders the
-                            unwrapped `:result` for a runtime channel
-                            (`:channel-tui`, `:channel-telegram`, ...).
-                            Markdown OK.
+     :channel-render-fn   - (fn [result] string). Renders the unwrapped
+                            `:result` as markdown. UNIFORM across every
+                            channel (TUI, telegram, ...) - channel
+                            adapters apply their own flavor tweaks if
+                            needed.
 
    Optional opts:
      :sym                       - override the SCI sandbox name (default: var name).
      :journal-render-error-fn   - (fn [error] string). Override journal
                                   failure render.
-     :channel-render-error-fn   - (fn [error channel-id] string). Override
-                                  channel failure render.
+     :channel-render-error-fn   - (fn [error] string). Override channel
+                                  failure render. Uniform across channels.
      :before-fn :after-fn :on-error-fn :on-parse-error-fn :source-rewrite-fn
      :result-spec
 
@@ -2032,14 +2033,15 @@
 
 (defn default-channel-error-text
   "Engine fallback used by `channel-render-tool-result` when a symbol does
-   NOT declare `:ext.symbol/channel-render-error-fn`. Markdown one-liner."
-  ([tool-result _channel-id]
-   (let [op   (get-in tool-result [:info :op])
-         {:keys [type message]} (format-error-fields (:error tool-result))]
-     (str "**ERROR**"
-       (when op (str " `" op "`"))
-       " — " type
-       (when (seq message) (str ": " message))))))
+   NOT declare `:ext.symbol/channel-render-error-fn`. Markdown one-liner;
+   uniform across every channel."
+  [tool-result]
+  (let [op   (get-in tool-result [:info :op])
+        {:keys [type message]} (format-error-fields (:error tool-result))]
+    (str "**ERROR**"
+      (when op (str " `" op "`"))
+      " — " type
+      (when (seq message) (str ": " message)))))
 
 (defn- assert-string!
   [v label sym-entry]
@@ -2079,30 +2081,30 @@
           ":journal-render-fn" sym-entry)))))
 
 (defn channel-render-tool-result
-  "Render a tool-result for a runtime channel (TUI, telegram, ...).
-
-   `channel-id` is the active `:channel/id` keyword (e.g. `:channel-tui`).
+  "Render a tool-result for runtime channels (TUI, telegram, ...). All
+   channels render the SAME markdown - channel-specific quirks are the
+   channel adapter's responsibility, not the symbol renderer's.
 
    Dispatch:
      - On (:success? false): call the symbol's `:channel-render-error-fn`
        if present, otherwise `default-channel-error-text`.
      - On success: unwrap `(:result tool-result)` and call the symbol's
-       MANDATORY `:channel-render-fn` with `(result channel-id)`.
+       MANDATORY `:channel-render-fn` with the unwrapped result.
 
    Renderers must return strings; non-string returns throw."
-  [tool-result channel-id]
+  [tool-result]
   (let [sym-entry (tool-result-symbol-entry tool-result)]
     (if-not (:success? tool-result)
       (let [error-fn (or (:ext.symbol/channel-render-error-fn sym-entry)
                        default-channel-error-text)
-            rendered (error-fn tool-result channel-id)]
+            rendered (error-fn tool-result)]
         (if (string? rendered) rendered (pr-str rendered)))
       (let [render-fn (some-> sym-entry :ext.symbol/channel-render-fn)]
         (when-not render-fn
           (throw (AssertionError.
                    (str "No :channel-render-fn for tool result with op "
                      (pr-str (get-in tool-result [:info :op]))))))
-        (assert-string! (render-fn (:result tool-result) channel-id)
+        (assert-string! (render-fn (:result tool-result))
           ":channel-render-fn" sym-entry)))))
 
 (defn- topo-sort-extensions

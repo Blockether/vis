@@ -277,6 +277,106 @@
         by-path    (group-by :path edits)]
     (mapv #(plan-path-edits % (get by-path %)) path-order)))
 
+(defn- search-preview-for-check
+  [search]
+  (let [s (str search)]
+    (if (<= (count s) 180)
+      s
+      (str (subs s 0 180) "...<+" (- (count s) 180) " chars>"))))
+
+(defn- check-single-edit
+  "Dry-run one zipper edit against `current` source. Returns a tuple
+   [next-source check-map failure-map-or-nil]. `next-source` is the
+   original `current` if the edit fails so subsequent checks in the
+   same file see the same baseline as the failing edit."
+  [path current edit-index {:keys [search replace]}]
+  (let [zloc      (z/of-string current {:track-position? true})
+        [target target-err]
+        (try [(locator-target search) nil]
+          (catch Throwable e [nil e]))
+        matches   (cond target-err 0
+                    :else      (count-matches zloc target))
+        check     {:edit-index     edit-index
+                   :path           path
+                   :matches        matches
+                   :search-preview (search-preview-for-check search)
+                   :locator-error  (some-> target-err ex-message)}
+        valid?    (and (not target-err) (= 1 matches))]
+    (if valid?
+      [(z/root-string
+         (replace-one zloc target (replacement-value replace)))
+       check
+       nil]
+      [current check check])))
+
+(defn- patch-analysis
+  [edits]
+  (let [edits      (coerce-patch-edits edits)
+        path-order (distinct (map :path edits))
+        by-path    (group-by :path edits)
+        indexed    (into {} (map-indexed (fn [i e] [(System/identityHashCode e) i]) edits))]
+    (loop [paths    path-order
+           checks   []
+           failures []]
+      (if-let [path (first paths)]
+        (let [file    (ensure-existing-file! (safe-path path))
+              rel     (rel-path file)
+              before  (slurp file)
+              ordered (locator-row-edit-order (get by-path path))
+              [_ pcs pfs]
+              (reduce
+                (fn [[current cs fs] edit]
+                  (let [idx (get indexed (System/identityHashCode edit))
+                        [next-src ck fl] (check-single-edit rel current idx edit)]
+                    [next-src (conj cs ck) (cond-> fs fl (conj fl))]))
+                [before [] []]
+                ordered)]
+          (recur (next paths)
+            (into checks pcs)
+            (into failures pfs)))
+        {:checks   checks
+         :failures failures
+         :valid?   (empty? failures)}))))
+
+(defn patch-check
+  "Dry-run zipper patch edits without writing. Returns
+   {:valid? :checks :failures} mirroring v/patch-check semantics."
+  [edits]
+  (let [{:keys [checks failures valid?]} (patch-analysis edits)]
+    {:valid?   valid?
+     :checks   checks
+     :failures failures}))
+
+(defn- patch-check-tool
+  "Preflight zipper patches without writing. Use before z/patch when locators may be stale or multi-edit risk is high; mirrors v/patch-check."
+  [edits]
+  (let [out (patch-check edits)]
+    (tool-success
+      {:op     :z/patch-check
+       :path   (or (:path (first (:checks out))) ".")
+       :kind   :file
+       :result out
+       :info   {:valid?        (:valid? out)
+                :edit-count    (count (:checks out))
+                :failure-count (count (:failures out))}})))
+
+(defn- journal-render-patch-check
+  [result]
+  (str "z/patch-check — " (pr-str result)))
+
+(defn- channel-render-patch-check
+  [result]
+  (let [{:keys [valid? checks failures]} (or result {})]
+    (md/join
+      (md/p (if valid? "All zipper edits valid." (str (count failures) " zipper edit(s) failed.")))
+      (when (seq checks)
+        (md/code-block "text"
+          (str/join "\n"
+            (map (fn [{:keys [edit-index path matches locator-error]}]
+                   (str "#" edit-index " " path " matches=" matches
+                     (when locator-error (str " locator-error=" locator-error))))
+              checks)))))))
+
 (defn- write-plans!
   [plans]
   (doseq [{:keys [file after]} plans]
@@ -326,7 +426,7 @@
   "z/patch — wrote zipper edit(s) (full diff visible in channel render)")
 
 (defn- channel-render-patch-result
-  [result _chan-id]
+  [result]
   (let [files (if (sequential? result) result [result])]
     (md/join
       (md/p "Patched" (count files) "Clojure file(s).")
@@ -444,7 +544,7 @@
         (str "\n… (" (- (count rows) 8) " more; bind result and slice)")))))
 
 (defn- channel-render-locators
-  [result _chan-id]
+  [result]
   (let [rows (vec (or result []))]
     (md/join
       (md/p "Found" (count rows) "zipper locator(s).")
@@ -460,6 +560,15 @@
 ;; =============================================================================
 ;; Symbol declarations
 ;; =============================================================================
+
+(def patch-check-symbol
+  (vis/symbol #'patch-check-tool
+    {:sym 'patch-check
+
+     :result-spec ::extension/tool-result
+     :journal-render-fn journal-render-patch-check
+     :channel-render-fn channel-render-patch-check
+     :on-error-fn (tool-failure-on-error :z/patch-check)}))
 
 (def patch-symbol
   (vis/symbol #'patch-file
@@ -500,6 +609,7 @@
 (def z-prompt
   "`z/` Clojure/EDN zipper patching:
   Use (z/patch {:path p :search locator :replace replacement}) or vector of same maps. Same map shape as v/patch. :search is parsed Clojure/EDN and must match once.
+  Dry-run with (z/patch-check edits) when locators may be stale or multi-edit risk is high; returns {:valid? :checks :failures} mirroring v/patch-check.
   Find targets with (z/locator-for-symbol path 'foo), (z/locators path {:symbol 'foo}), (z/locators path {:source-contains <text> :limit 20}), or (z/symbols path {:name 'foo}). Rows include :path/:index/:span and become edits by adding :replace. If a row identifies the target, patch immediately: (z/patch (assoc row :replace \"<new source>\")); do not re-preview unless patch fails. Repair with z/repair-range, z/repair-locator, or z/repair-file. Full rewrite-clj.zip API is under z/, including z/subedit->.
 Examples: (z/patch [{:path \"src/foo.clj\" :search \"old-sym\" :replace \"new-sym\"}])
           (z/patch [{:path \"src/foo.clj\" :search \"(def x 1)\" :replace \"(def x 2)\"}])")

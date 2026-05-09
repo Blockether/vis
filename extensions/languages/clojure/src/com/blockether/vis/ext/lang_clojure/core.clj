@@ -210,7 +210,7 @@
      :ext/activation-fn (fn [_] (clojure-project?))
      :ext/environment-info-fn clojure-environment-info
      :ext/prompt    patch/z-prompt
-     :ext/symbols   (into [patch/patch-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol]
+     :ext/symbols   (into [patch/patch-symbol patch/patch-check-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol]
                       (concat repair/symbols xref/symbols lsp-symbols rewrite-clj-zip-symbols))}))
 
 (vis/register-extension! clojure-extension)

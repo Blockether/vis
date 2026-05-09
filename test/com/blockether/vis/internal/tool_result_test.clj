@@ -58,8 +58,7 @@
                 {:doc "exists"
                  :arglists '([path])
                  :journal-render-fn (fn [result] (str "journal:" result))
-                 :channel-render-fn (fn [result chan-id]
-                                      (str (name chan-id) ":" result))})
+                 :channel-render-fn (fn [result] (str "channel:" result))})
           ext (tr/extension {:ext/namespace 'com.acme.ext.fs
                              :ext/doc "fs"
                              :ext/kind "filesystem"
@@ -73,7 +72,7 @@
                      :extension {:namespace 'com.acme.ext.fs}
                      :source {:paths [] :mtime-max -1 :hash-sha256 nil}})]
           (expect (= "journal:true" (tr/journal-render-tool-result out)))
-          (expect (= "channel-tui:true" (tr/channel-render-tool-result out :channel-tui))))
+          (expect (= "channel:true" (tr/channel-render-tool-result out))))
         (finally
           (tr/deregister-extension! 'com.acme.ext.fs)))))
 
@@ -82,7 +81,7 @@
                 {:doc "noisy"
                  :arglists '([])
                  :journal-render-fn (fn [_] "never called on failure")
-                 :channel-render-fn (fn [_ _] "never called on failure")})
+                 :channel-render-fn (fn [_] "never called on failure")})
           ext (tr/extension {:ext/namespace 'com.acme.ext.noisy
                              :ext/doc "noisy"
                              :ext/kind "filesystem"
@@ -98,7 +97,7 @@
                      :source {:paths [] :mtime-max -1 :hash-sha256 nil}})]
           (expect (str/includes? (tr/journal-render-tool-result out) "ERROR"))
           (expect (str/includes? (tr/journal-render-tool-result out) ":n/noisy"))
-          (expect (str/includes? (tr/channel-render-tool-result out :channel-tui) "**ERROR**")))
+          (expect (str/includes? (tr/channel-render-tool-result out) "**ERROR**")))
         (finally
           (tr/deregister-extension! 'com.acme.ext.noisy))))))
 
