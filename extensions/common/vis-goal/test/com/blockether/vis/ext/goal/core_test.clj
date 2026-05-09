@@ -8,6 +8,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.goal.core :as goal]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h]
+   [com.blockether.vis.internal.extension :as ext]
    [com.blockether.vis.internal.prompt :as prompt]
    [lazytest.core :refer [defdescribe expect it throws? throws-with-msg?]]))
 
@@ -267,6 +268,52 @@
                 {:active-extensions [goal/vis-extension]
                  :system-prompt nil})]
       (expect (false? (str/includes? out "<conversation_goal"))))))
+
+;; =============================================================================
+;; Sandbox surface — model-facing `goal/` symbols
+;; =============================================================================
+
+(defdescribe goal-sandbox-symbols-test
+  (it "exposes 6 symbols (status / set / pause / resume / clear / mark) under goal/"
+    (let [syms (:ext/symbols goal/vis-extension)]
+      (expect (= #{'status 'set 'pause 'resume 'clear 'mark}
+                (set (map :ext.symbol/sym syms))))))
+
+  (it "declares a `goal/` ns-alias"
+    (expect (= 'goal (-> goal/vis-extension :ext/ns-alias :alias))))
+
+  (it "strips `env` from the model-facing arglists (so the rendered
+      prompt shows `(goal/set objective)` not `(goal/set env objective)`)"
+    (let [out (ext/render-prompt {:heading "Goal"
+                                  :ext/ns-alias (:ext/ns-alias goal/vis-extension)
+                                  :ext/symbols  (:ext/symbols goal/vis-extension)})]
+      (expect (str/includes? out "(goal/status)"))
+      (expect (str/includes? out "(goal/set objective)"))
+      (expect (str/includes? out "(goal/pause)"))
+      (expect (str/includes? out "(goal/resume)"))
+      (expect (str/includes? out "(goal/clear)"))
+      (expect (str/includes? out "(goal/mark reason)"))
+      ;; Defensive: no `env` should leak into any rendered call form.
+      (expect (false? (str/includes? out "(goal/status env)")))
+      (expect (false? (str/includes? out "(goal/set env")))))
+
+  (it "impl fns return the same shape get-goal returns when called
+      with a synthetic env (defends against future drift between the
+      sandbox path and the underlying public Clojure API)"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          env {:db-info s :conversation-id cid}]
+      (expect (nil? (#'goal/status-impl env)))
+      (let [set-out (#'goal/set-impl env "x")]
+        (expect (= :active (:status set-out)))
+        (expect (= :model  (:set-by set-out))))
+      (let [pause-out (#'goal/pause-impl env)]
+        (expect (= :paused (:status pause-out))))
+      (let [resume-out (#'goal/resume-impl env)]
+        (expect (= :active (:status resume-out))))
+      (let [mark-out (#'goal/mark-impl env :achieved)]
+        (expect (= :done     (:status mark-out)))
+        (expect (= :achieved (:done-reason mark-out)))))))
 
 (defdescribe goal-row-shape-test
   (it "writes exactly one extension_aggregate row per soul"
