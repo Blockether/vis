@@ -44,7 +44,7 @@
     (let [sym-entry (ext/symbol 'root (fn [] workspace-context/*workspace-root*)
                       {:doc "Return bound workspace root."
                        :arglists '([])
-                       :examples ["(t/root)"]
+
                        :render-fn (fn [_] "")})
           extension (ext/extension {:ext/namespace 'test.workspace-root
                                     :ext/doc "Workspace root fixture."

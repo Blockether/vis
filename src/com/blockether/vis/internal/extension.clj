@@ -268,12 +268,9 @@
 (s/def :ext.symbol/doc non-blank-string?)
 
 ;; Argument signatures, e.g. '([term] [term opts]).
-;; Shown in var meta :arglists and used to derive :examples when missing.
+;; Shown in var meta :arglists and used by `render-symbol-line` to
+;; build the model-facing call form (e.g. `(v/cat path)`).
 (s/def :ext.symbol/arglists (s/and vector? seq))
-
-;; Usage examples injected into the system prompt so the LLM sees
-;; concrete call patterns, e.g. ["(search-documents \"neural\")"]
-(s/def :ext.symbol/examples (s/and vector? seq #(every? non-blank-string? %)))
 
 ;; Entry decorator: (fn [env f args] -> map). Wraps :fn on the way in.
 (s/def :ext.symbol/before-fn fn?)
@@ -328,7 +325,7 @@
 
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/sym :ext.symbol/fn :ext.symbol/doc
-                :ext.symbol/arglists :ext.symbol/examples
+                :ext.symbol/arglists
                 :ext.symbol/render-fn]
     :opt [:ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn
@@ -663,12 +660,6 @@
               :explain (s/explain-data ::symbol-entry entry)})))
   entry)
 
-(defn- derive-examples [sym arglists]
-  (if-let [al (first (seq arglists))]
-    (let [args (->> al (remove #{'&}) (map str) (str/join " "))]
-      [(str "(" sym (when (seq args) (str " " args)) ")")])
-    [(str "(" sym ")")]))
-
 (defn- var-meta
   "Read `:doc` / `:arglists` / `:name` from a var's metadata. Throws when the
    var lacks a non-blank docstring or non-empty arglists - extension symbols
@@ -715,12 +706,10 @@
                             Use when the local var is named `xxx-tool` but
                             the model-facing surface should be `xxx`, or to
                             dodge a `clojure.core` collision.
-     :examples            - extra usage strings; default: derived from arglists.
      :before-fn :after-fn :on-error-fn :on-parse-error-fn :source-rewrite-fn
      :result-spec :render-fn
 
    Defaults:
-     :examples  - derived from :arglists when not provided
      :render-fn - `render-value` when not provided
 
    See `docs/src/extensions/hooks.md` for hook semantics."
@@ -728,8 +717,7 @@
   ([v opts]
    (let [{:keys [sym doc arglists]} (var-meta v true)
          sym      (or (:sym opts) sym)
-         f        @v
-         examples (or (:examples opts) (derive-examples sym arglists))]
+         f        @v]
      (when-not (fn? f)
        (anomaly/incorrect!
          (str "Var " v " does not hold a function; use vis/value for plain values.")
@@ -739,7 +727,6 @@
                             :fn        f
                             :doc       doc
                             :arglists  arglists
-                            :examples  (vec examples)
                             :render-fn (or (:render-fn opts) render-value)}
          (:before-fn opts)         (assoc :ext.symbol/before-fn (:before-fn opts))
          (:after-fn opts)          (assoc :ext.symbol/after-fn (:after-fn opts))

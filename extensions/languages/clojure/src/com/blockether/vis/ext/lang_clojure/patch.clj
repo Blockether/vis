@@ -563,8 +563,7 @@
 (def patch-symbol
   (vis/symbol #'patch-file
     {:sym 'patch
-     :examples ["(z/patch [{:path \"src/x.clj\" :search \"old\" :replace \"new\"}])"
-                "(z/patch {:path \"deps.edn\" :search \":old\" :replace \":new\"})"]
+
      :result-spec ::extension/tool-result
      :render-fn render-patch-result
      :on-error-fn (tool-failure-on-error :z/patch)}))
@@ -572,8 +571,7 @@
 (def locators-symbol
   (vis/symbol #'locators-file
     {:sym 'locators
-     :examples ["(z/locators \"src/foo.clj\")"
-                "(z/locators \"src/foo.clj\" {:symbol 'foo :limit 20})"]
+
      :result-spec ::extension/tool-result
      :render-fn render-locators-result
      :on-error-fn (tool-failure-on-error :z/locators)}))
@@ -581,8 +579,7 @@
 (def symbols-symbol
   (vis/symbol #'symbols-file
     {:sym 'symbols
-     :examples ["(z/symbols \"src/foo.clj\")"
-                "(z/symbols \"src/foo.clj\" {:name 'foo :limit 20})"]
+
      :result-spec ::extension/tool-result
      :render-fn render-locators-result
      :on-error-fn (tool-failure-on-error :z/symbols)}))
@@ -590,7 +587,7 @@
 (def locator-for-symbol-symbol
   (vis/symbol #'locator-for-symbol-file
     {:sym 'locator-for-symbol
-     :examples ["(z/locator-for-symbol \"src/foo.clj\" 'foo)"]
+
      :result-spec ::extension/tool-result
      :render-fn render-locators-result
      :on-error-fn (tool-failure-on-error :z/locator-for-symbol)}))

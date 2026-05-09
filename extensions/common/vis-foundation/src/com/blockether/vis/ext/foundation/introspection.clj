@@ -730,14 +730,12 @@
 
 (def conversation-state-symbol
   (vis/symbol #'conversation-state
-    {:examples ["(v/conversation-state)"
-                "(v/conversation-state \"eeaf9651\")"]
+    {
      :before-fn inject-environment}))
 
 (def conversation-report-symbol
   (vis/symbol #'conversation-report
-    {:examples ["(v/conversation-report)"
-                "(v/conversation-report \"eeaf9651\")"]
+    {
      :before-fn inject-environment}))
 
 (def all-symbols
