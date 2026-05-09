@@ -602,17 +602,50 @@
     [(+ input-pad-x cursor-vcol)
      (+ text-top (- cursor-vrow v-scroll))]))
 
-(defn- slash-suggestion-line
-  "Format one suggestion row body. `inner-w` is the width AFTER the
-   horizontal margin has been removed (i.e., the same column span as
-   the title bar accent stripe), so the usage column lines up with the
-   title text and never spills under the margin."
-  [suggestion inner-w]
-  (let [usage-w (max 18 (min 42 (quot (* inner-w 2) 5)))
-        usage   (p/truncate-cols (:slash/usage suggestion) usage-w)
-        label-w (max 0 (- inner-w usage-w 5))
-        label   (p/truncate-cols (or (:label suggestion) "") label-w)]
-    (str " " usage (repeat-str \space (max 1 (- usage-w (p/display-width usage)))) " " label)))
+(defn- draw-slash-suggestion-row!
+  "Paint one suggestion row inside the inset span [`left`, `left+inner-w`).
+
+   Layout: ╶╶ USAGE  description
+   - 1 col left padding inside the highlight
+   - usage (slash command + arg sketch), plain weight, normal fg
+   - 1 col gap
+   - description (`:label`), ITALIC, dimmed fg so the eye reads the
+     command first and the prose as supporting context
+
+   The two-column padded layout was removed on user request: the
+   description now sits IMMEDIATELY after the usage so the eye doesn't
+   have to jump across an empty gutter. Truncation drops the
+   description first when it doesn't fit."
+  [^TextGraphics g row left inner-w suggestion]
+  (let [;; Highlight bg/fg already set by the caller. We layer the
+        ;; description on top with a different fg+ITALIC.
+        pad        1
+        avail      (max 0 (- inner-w (* 2 pad)))
+        usage-raw  (or (:slash/usage suggestion) "")
+        ;; Always show the full usage if possible; only the description
+        ;; gets clipped on tight rows.
+        usage      (p/truncate-cols usage-raw avail)
+        usage-w    (p/display-width usage)
+        gap        (if (and (pos? usage-w) (< usage-w avail)) 1 0)
+        desc-w     (max 0 (- avail usage-w gap))
+        desc-raw   (or (:label suggestion) "")
+        desc       (when (pos? desc-w)
+                     (p/truncate-cols desc-raw desc-w))
+        x0         (+ left pad)]
+    ;; Usage — plain weight, current fg.
+    (when (pos? usage-w)
+      (p/put-str! g x0 row usage))
+    ;; Description — italic, dimmed. Use `dialog-hint` against the
+    ;; current bg so it reads as secondary even on the selected row
+    ;; (where bg switches to the accent).
+    (when (and desc (pos? (p/display-width desc)))
+      (let [prev-fg (.getForegroundColor g)]
+        (p/set-fg! g (if (:slash/selected? suggestion)
+                       t/dialog-bg          ; on accent: keep contrast
+                       t/dialog-hint))      ; off accent: dimmed
+        (p/styled g [p/ITALIC]
+          (p/put-str! g (+ x0 usage-w gap) row desc))
+        (p/set-fg! g prev-fg)))))
 
 (def ^:private slash-title-label "Slash commands")
 (def ^:private slash-title-hints
@@ -761,13 +794,13 @@
             ;; Margin gutters (left + right) cleared to terminal-bg.
             (p/set-colors! g t/text-fg t/terminal-bg)
             (p/fill-rect! g 0 row cols 1)
-            ;; Inner highlighted row.
+            ;; Inner highlighted row — fill bg, then paint usage + italic
+            ;; description in `draw-slash-suggestion-row!`.
             (if (:slash/selected? suggestion)
               (p/set-colors! g t/dialog-bg t/dialog-title-bg)
               (p/set-colors! g t/dialog-fg t/dialog-bg))
             (p/fill-rect! g left row inner-w 1)
-            (p/put-str! g left row
-              (p/truncate-cols (slash-suggestion-line suggestion inner-w) inner-w))))))))
+            (draw-slash-suggestion-row! g row left inner-w suggestion)))))))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────
 
