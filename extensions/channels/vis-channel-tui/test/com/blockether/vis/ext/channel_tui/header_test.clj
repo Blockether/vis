@@ -190,3 +190,95 @@
                   (:bounds tab-hit)))
         (expect (= :feature (:workspace-id tab-hit)))
         (expect (= tab-hit (cr/lookup (:left expected) 0)))))))
+
+;; =============================================================================
+;; Goal subtitle row (vis-goal extension hook in the header)
+;;
+;; Goal data lives in the extension_aggregate table; the header reads it
+;; via `requiring-resolve` so vis still boots without vis-goal on the
+;; classpath. Tests wire a temp in-memory store and the goal extension
+;; directly to exercise the full path. Lifted into its own defdescribe so
+;; the existing layout tests above stay independent of goal state.
+;; =============================================================================
+
+(require '[com.blockether.vis.core :as vis]
+  '[com.blockether.vis.ext.goal.core :as goal-ext]
+  '[com.blockether.vis.ext.persistance-sqlite.test-helpers :as h])
+
+(defn- with-temp-db
+  "Bind `vis/db-info` to an in-memory store for one test body, then
+   dispose. Header reads goals via `(vis/db-info)` so the binding
+   threads through `current-goal`."
+  [f]
+  (let [store (vis/db-create-connection! :memory)]
+    (try
+      (with-redefs [vis/db-info (constantly store)]
+        (f store))
+      (finally
+        (vis/db-dispose-connection! store)))))
+
+(defdescribe draw-header-goal-subtitle-test
+  (it "header is exactly HEADER_ROWS tall when no goal is set"
+    (with-temp-db
+      (fn [s]
+        (let [cid (vis/db-store-conversation! s {:channel :tui})
+              db  {:title "Chat" :conversation {:id (str cid)}}]
+          (expect (= header/HEADER_ROWS (header/header-rows db)))))))
+
+  (it "header grows by 1 row when an :active goal exists"
+    (with-temp-db
+      (fn [s]
+        (let [cid (vis/db-store-conversation! s {:channel :tui})
+              _   (goal-ext/set-goal! s cid {:objective "Ship the goal" :set-by :user})
+              db  {:title "Chat" :conversation {:id (str cid)}}]
+          (expect (= (inc header/HEADER_ROWS) (header/header-rows db)))))))
+
+  (it "draws a centered subtitle on the goal row when goal is :active"
+    (with-temp-db
+      (fn [s]
+        (let [cid (vis/db-store-conversation! s {:channel :tui})
+              _   (goal-ext/set-goal! s cid {:objective "Ship the goal feature" :set-by :user})
+              db  {:title "Chat" :conversation {:id (str cid)}}
+              writes (atom [])
+              cols   80]
+          (cr/reset!)
+          (cr/begin-frame!)
+          (header/draw-header! (dummy-text-graphics writes) db 0 cols)
+          (cr/commit-frame!)
+          ;; Subtitle row sits between content (row 1) and bottom rule (row 3)
+          (let [goal-row-writes (filter #(and (= 2 (:row %))
+                                           (some? (:text %))
+                                           (str/includes? (str (:text %)) "goal"))
+                                  @writes)]
+            (expect (seq goal-row-writes))
+            (expect (some #(str/includes? (str (:text %)) "Ship the goal feature")
+                      goal-row-writes))
+            (expect (some #(str/includes? (str (:text %)) "active")
+                      goal-row-writes)))))))
+
+  (it "switches the subtitle color to the warn-fg palette when paused"
+    (with-temp-db
+      (fn [s]
+        (let [cid (vis/db-store-conversation! s {:channel :tui})
+              _   (goal-ext/set-goal!  s cid {:objective "x" :set-by :user})
+              _   (goal-ext/pause-goal! s cid)
+              db  {:title "Chat" :conversation {:id (str cid)}}
+              writes (atom [])]
+          (cr/reset!)
+          (cr/begin-frame!)
+          (header/draw-header! (dummy-text-graphics writes) db 0 80)
+          (cr/commit-frame!)
+          (let [goal-row-writes (filter #(and (= 2 (:row %)) (str/includes? (str (:text %)) "goal"))
+                                  @writes)]
+            (expect (some #(= t/footer-warning-fg (:fg %)) goal-row-writes)))))))
+
+  (it "keeps the subtitle visible AFTER mark-done so the user reads the outcome"
+    (with-temp-db
+      (fn [s]
+        (let [cid (vis/db-store-conversation! s {:channel :tui})
+              _   (goal-ext/set-goal!         s cid {:objective "x" :set-by :user})
+              _   (goal-ext/mark-goal-done!  s cid :achieved)
+              db  {:title "Chat" :conversation {:id (str cid)}}]
+          ;; A done goal still claims a header row (linger = forever
+          ;; until the next set-goal or clear).
+          (expect (= (inc header/HEADER_ROWS) (header/header-rows db))))))))
