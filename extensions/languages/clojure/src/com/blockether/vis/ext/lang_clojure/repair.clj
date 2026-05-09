@@ -335,23 +335,21 @@
 
 (def repair-range-symbol
   (vis/symbol #'repair-range
-    {:examples ["(z/repair-range {:path \"src/foo.clj\" :range [[10 1] [14 2]]})"
-                "(z/repair-range (assoc locator-row :dry-run? true))"]
+    {
      :result-spec ::extension/tool-result
      :render-fn render-repair-result
      :on-error-fn (tool-failure-on-error :z/repair-range)}))
 
 (def repair-locator-symbol
   (vis/symbol #'repair-locator
-    {:examples ["(z/repair-locator locator-row {:dry-run? true})"
-                "(z/repair-locator (:result (z/locator-for-ref ref-row)))"]
+    {
      :result-spec ::extension/tool-result
      :render-fn render-repair-result
      :on-error-fn (tool-failure-on-error :z/repair-locator)}))
 
 (def repair-file-symbol
   (vis/symbol #'repair-file
-    {:examples ["(z/repair-file \"src/foo.clj\" {:dry-run? true})"]
+    {
      :result-spec ::extension/tool-result
      :render-fn render-repair-result
      :on-error-fn (tool-failure-on-error :z/repair-file)}))

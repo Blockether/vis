@@ -1734,9 +1734,7 @@
 (def cat-symbol
   (vis/symbol #'cat-tool
     {:sym 'cat
-     :examples ["(:result (v/cat \"src/main.clj\"))"
-                "(get-in (v/cat \"src/main.clj\") [:result :lines])"
-                "(v/preview (v/cat \"src/main.clj\") {:result [[:lines {:from 40 :to 120}]]})"]
+
      :result-spec tool-result-spec
      :render-fn render-cat
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
@@ -1744,17 +1742,14 @@
 (def preview-symbol
   (vis/symbol #'preview-tool
     {:sym 'preview
-     :examples ["(v/preview file {:result [[:lines {:from 40 :to 120}]]})"
-                "(v/preview hits {:result [[:hits {:from 0 :to 12} [:path :line :text]]]})"
-                "(v/preview state)"]
+
      :result-spec tool-result-spec
      :render-fn render-preview}))
 
 (def ls-symbol
   (vis/symbol #'ls-tool
     {:sym 'ls
-     :examples ["(:result (v/ls \".\"))"
-                "(v/ls \"src\" {:depth 3})"]
+
      :result-spec tool-result-spec
      :render-fn render-ls
      :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
@@ -1762,9 +1757,7 @@
 (def rg-symbol
   (vis/symbol #'rg-tool
     {:sym 'rg
-     :examples ["(:result (v/rg {:all [\"defn render\"]}))"
-                "(v/rg {:all [\"defn\" \"render\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]})"
-                "(v/rg {:any [\"border-top\" \"draw-border\"] :paths [\"src\" \"extensions\"]})"]
+
      :result-spec tool-result-spec
      :render-fn render-rg
      :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
@@ -1772,8 +1765,7 @@
 (def patch-symbol
   (vis/symbol #'patch-tool
     {:sym 'patch
-     :examples ["(v/patch [{:path \"src/main.clj\" :search \"old\" :replace \"new\"}])"
-                "(v/patch {:path \"README.md\" :search \"alpha\" :replace \"beta\"})"]
+
      :result-spec tool-result-spec
      :render-fn render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
@@ -1781,7 +1773,7 @@
 (def patch-check-symbol
   (vis/symbol #'patch-check-tool
     {:sym 'patch-check
-     :examples ["(v/patch-check [{:path \"src/main.clj\" :search \"old\" :replace \"new\"}])"]
+
      :result-spec tool-result-spec
      :render-fn render-patch-check
      :on-error-fn (tool-failure-on-error :v/patch-check :file nil)}))
@@ -1789,7 +1781,7 @@
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
     {:sym 'create-dirs
-     :examples ["(v/create-dirs \"target/tmp/cache\")"]
+
      :result-spec tool-result-spec
      :render-fn render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
@@ -1797,9 +1789,7 @@
 (def glob-symbol
   (vis/symbol #'glob-tool
     {:sym 'glob
-     :examples ["(:result (v/glob \"src\" \"*.clj\"))"
-                "(:result (v/glob \"src\" \"**/*.clj\"))"
-                "(v/glob \"resources\" \"*.edn\" {:scope :children :hidden? true})"]
+
      :result-spec tool-result-spec
      :render-fn render-glob
      :on-error-fn (tool-failure-on-error :v/glob :dir nil)}))
@@ -1807,7 +1797,7 @@
 (def copy-symbol
   (vis/symbol #'copy-tool
     {:sym 'copy
-     :examples ["(v/copy \"a.txt\" \"backup/a.txt\")"]
+
      :result-spec tool-result-spec
      :render-fn render-copy
      :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
@@ -1815,7 +1805,7 @@
 (def move-symbol
   (vis/symbol #'move-tool
     {:sym 'move
-     :examples ["(v/move \"tmp.txt\" \"archive/tmp.txt\")"]
+
      :result-spec tool-result-spec
      :render-fn render-move
      :on-error-fn (tool-failure-on-error :v/move :path nil)}))
@@ -1823,7 +1813,7 @@
 (def delete-symbol
   (vis/symbol #'delete-tool
     {:sym 'delete
-     :examples ["(v/delete \"tmp.txt\")"]
+
      :result-spec tool-result-spec
      :render-fn render-delete
      :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
@@ -1831,7 +1821,7 @@
 (def delete-if-exists-symbol
   (vis/symbol #'delete-if-exists-tool
     {:sym 'delete-if-exists
-     :examples ["(v/delete-if-exists \"tmp.txt\")"]
+
      :result-spec tool-result-spec
      :render-fn render-delete-if-exists
      :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
@@ -1839,7 +1829,7 @@
 (def exists?-symbol
   (vis/symbol #'exists-tool
     {:sym 'exists?
-     :examples ["(:result (v/exists? \"src/main.clj\"))"]
+
      :result-spec tool-result-spec
      :render-fn render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
@@ -1847,15 +1837,10 @@
 (def bash-symbol
   (vis/symbol #'bash-tool
     {:sym 'bash
-     :examples ["(def run (v/bash \"./verify.sh --quick\"))"
-                "(get-in run [:result :stdout])"
-                "(get-in run [:result :exit])"
-                "(v/bash \"git status --short\" {:timeout-ms 10000 :max-output-chars 8000})"]
+
      :result-spec tool-result-spec
      :render-fn render-bash
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
-
-
 
 (defn available-editing-symbols
   []
