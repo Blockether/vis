@@ -221,11 +221,6 @@
    (slash/suggestions (input/input->text input-state) (menu-commands screen)
      {:selected-index selected-index})))
 
-(defn- active-slash-suggestions
-  [screen {:keys [input slash-command-index slash-command-hidden?]}]
-  (when-not slash-command-hidden?
-    (slash-suggestions-for-input screen input slash-command-index)))
-
 (defn- command-argv
   [args]
   (if (str/blank? args)
