@@ -36,7 +36,13 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.theme :as t]))
+            [com.blockether.vis.ext.channel-tui.theme :as t]
+            ;; Pure goal helpers for paused-aware elapsed math + the
+            ;; one-line summary formatter. The READ side of the goal
+            ;; (db lookup) is resolved lazily via `requiring-resolve`
+            ;; below so vis still boots when vis-goal isn't on the
+            ;; classpath.
+            [com.blockether.vis.internal.goal :as goal]))
 
 (def ^:private id-display-chars
   "How many leading characters of the conversation UUID to show in
@@ -48,8 +54,16 @@
 (def ^:const HEADER_ROWS
   "Minimum rows reserved by the header band: top rule + content + bottom
    rule. Use `header-rows` for a concrete app-db, because workspace tabs add
-   one row only when there is more than one tab."
+   one row only when there is more than one tab and an active /goal adds
+   one subtitle row."
   3)
+
+(def ^:private goal-subtitle-objective-max
+  "How wide the goal objective gets in the subtitle row before we
+   ellipsis-truncate. The full objective is up to 4000 chars but we
+   never paint more than this on a single header row — the model can
+   still see it in full via the system-prompt block."
+  80)
 
 (def ^:private placeholder-title
   "Shown center when the conversation has no title yet (fresh run,
@@ -89,11 +103,40 @@
     (:id (some #(when (:active? %) %) tabs))
     (:id (first tabs))))
 
-(defn header-rows
-  "Rows needed by the header for this app-db. Workspace tabs are persistent in
-   the header only when more than one workspace tab exists."
+(defn- current-goal
+  "Read the goal for the active conversation, or nil. Resolves the
+   goal extension lazily so vis still boots when vis-goal isn't on
+   the classpath. Tolerates missing db / conversation-id and any
+   downstream throw — the header must never crash on a goal lookup.
+
+   Called every render frame; cost is one DB query against an
+   indexed extension_aggregate row. SQLite WAL + connection pool
+   makes this measurably cheap (microseconds)."
   [db]
-  (+ HEADER_ROWS (if (seq (workspace-tabs db)) 1 0)))
+  (when-let [conv-id (some-> db :conversation :id)]
+    (when-let [getter (try (requiring-resolve
+                             'com.blockether.vis.ext.goal.core/get-goal)
+                        (catch Throwable _ nil))]
+      (try (getter (vis/db-info) conv-id)
+        (catch Throwable _ nil)))))
+
+(defn- goal-subtitle-visible?
+  "True when the goal should occupy a subtitle row. Active and paused
+   goals always show; done(:cleared|:achieved|:unmet|:budget-limited)
+   keep their last subtitle so the user can read the outcome — they
+   only disappear when the user / model fires a fresh `(goal/set ...)`
+   or `/goal X` (which replaces the row in place)."
+  [goal]
+  (and goal (some? (:status goal))))
+
+(defn header-rows
+  "Rows needed by the header for this app-db. Workspace tabs add one
+   row when more than one tab exists; an active or terminated /goal
+   adds another row for the subtitle."
+  [db]
+  (+ HEADER_ROWS
+    (if (seq (workspace-tabs db)) 1 0)
+    (if (goal-subtitle-visible? (current-goal db)) 1 0)))
 
 (defn- short-id [conversation]
   (when-let [id (some-> conversation :id str)]
@@ -201,6 +244,14 @@
         tabs-row     (when (seq tabs) header-top)
         separator-row (if (seq tabs) (inc header-top) header-top)
         content-row  (+ header-top (if (seq tabs) 2 1))
+        ;; Goal subtitle row sits BETWEEN the title content row and
+        ;; the bottom rule. Only allocated when a goal exists; nil
+        ;; means "no subtitle row, draw the bottom rule one row
+        ;; higher". Centered like the title; never bleeds into LEFT
+        ;; banner / RIGHT id columns.
+        goal*        (current-goal db)
+        goal-row     (when (goal-subtitle-visible? goal*)
+                       (inc content-row))
         bottom-row   (dec (+ header-top (header-rows db)))
         edge-pad     1
         id-short     (short-id (:conversation db))
@@ -365,6 +416,34 @@
                :kind     :copy-as-markdown
                :text     full-uuid
                :enabled? true})))))
+
+    ;; Goal subtitle row (only when a goal exists). Painted between
+    ;; the title row and the bottom rule. Wipes the row first so
+    ;; previous-frame characters can't bleed through, then center-
+    ;; renders the one-line summary in the muted footer color so it
+    ;; reads as a hint, not a competing primary.
+    (when goal-row
+      (let [now-ms  (System/currentTimeMillis)
+            summary (goal/format-goal-summary goal* now-ms)]
+        (p/clear-styles! g)
+        (p/set-colors! g t/footer-fg t/terminal-bg)
+        (p/fill-rect! g 0 goal-row cols 1)
+        (when (and (string? summary) (not (str/blank? summary)))
+          (let [;; Goal-status badge color: paused = warn-yellow,
+                ;; done = muted, active = same as title-fg-muted.
+                fg (case (:status goal*)
+                     :paused t/footer-warning-fg
+                     :done   t/footer-fg-muted
+                     t/footer-fg)
+                trimmed (let [max-w (max 0 (- cols (* 2 edge-pad)))]
+                          (ellipsize summary max-w))
+                w  (p/display-width trimmed)
+                col (max edge-pad (quot (- cols w) 2))]
+            (p/clear-styles! g)
+            (p/set-colors! g fg t/terminal-bg)
+            (p/enable! g p/ITALIC)
+            (p/put-str! g col goal-row trimmed)
+            (p/clear-styles! g)))))
 
     (draw-rule! g bottom-row cols)
 
