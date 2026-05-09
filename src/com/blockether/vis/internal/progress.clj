@@ -261,10 +261,8 @@
 (defn- elide-form-slots
   "Remove form slots at the given indices from every parallel vector
    in `entry`. Indices shift down, which is fine - the channel
-   re-numbers in display order. Used to elide both the `(answer ...)`
-   form and any form that returned `:vis/silent` (side-effect
-   primitives like `conversation-title` that shouldn't appear in
-   the code trace)."
+   re-numbers in display order. Used to elide the `(answer ...)`
+   form so its prose doesn't double-render below the answer text."
   [entry idx-set]
   (reduce
     (fn [e idx]
@@ -299,10 +297,7 @@
     (write-form-start-slot entry chunk)
 
     :form-result
-    (if (or (= :vis/silent (:result chunk))
-          (= :vis/silent (:rendering-kind chunk)))
-      (elide-form-slots entry #{(:form-idx chunk)})
-      (write-form-slot entry chunk))
+    (write-form-slot entry chunk)
 
     :iteration-final
     (let [duplicate-final? (and (:done? entry) (:final entry) (:final chunk))
@@ -311,17 +306,15 @@
                              (normalize-thinking-text (:thinking entry)))
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
-          ;; Collect all form indices to elide: the answer-bearing
-          ;; form (if present) and any forms that returned :vis/silent.
-          ;; Duplicate final chunks must not elide again after indices
-          ;; have shifted; keep the already-elided entry stable.
+          ;; Elide only the answer-bearing form (if present) so its
+          ;; `(answer "...")` source doesn't double-render above the
+          ;; answer text. Duplicate final chunks must not elide again
+          ;; after indices have shifted; keep the already-elided entry
+          ;; stable.
           answer-idx   (when-not duplicate-final?
-                         (when (:final chunk) (:answer-form-idx chunk)))
-          silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
-          elide-idxs   (cond-> silent-idxs
-                         (some? answer-idx) (conj answer-idx))]
-      (if (seq elide-idxs)
-        (elide-form-slots base elide-idxs)
+                         (when (:final chunk) (:answer-form-idx chunk)))]
+      (if (some? answer-idx)
+        (elide-form-slots base #{answer-idx})
         base))
 
     :iteration-error

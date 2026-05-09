@@ -32,6 +32,7 @@
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.core :as svar]
+   [com.blockether.svar.internal.codes :as svar-codes]
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.util :as util]
@@ -459,22 +460,6 @@
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
-(def ^:private silent-host-form-heads
-  '#{conversation-title v/silent!})
-
-(defn- silent-host-form?
-  "True for host side-effect forms that intentionally return
-   `:vis/silent` and should never be shown as running code in live
-   progress. The result still emits a :form-result chunk so persisted
-   diagnostics and index elision stay consistent."
-  [expr]
-  (try
-    (let [form (edamame/parse-string (str expr) edamame-opts)]
-      (and (seq? form)
-        (contains? silent-host-form-heads (first form))))
-    (catch Throwable _
-      false)))
-
 (defn- bare-string-code-block? [expr]
   (boolean (re-matches BARE_STRING_RE (str expr))))
 
@@ -519,36 +504,56 @@
   (let [stdout-writer (java.io.StringWriter.)
         stderr-writer (java.io.StringWriter.)
         err-pw       (java.io.PrintWriter. stderr-writer true)
-        tool-events  (atom [])
         thrown       (atom nil)
         tool-counts  (atom {})
+        ;; Per-top-level-form sinks. `invoke-symbol-wrapper` writes ONE entry
+        ;; to each per tool-symbol call; `*sink-position*` is shared so the
+        ;; same call gets matching `:position` in both vectors. All three
+        ;; rebind cleanly when the form returns - late-arriving thread
+        ;; writes silently drop (the dynamic var binding has unwound).
+        journal-sink (atom [])
+        channel-sink (atom [])
+        sink-pos     (atom -1)
+        ;; Live tool-event callback only - no longer accumulated into a vec.
+        ;; Storage role retired (was dead persistence). The TUI/progress UI
+        ;; consumes via `tool-event-fn` synchronously during eval.
         record-tool-event (fn [event]
                             (let [op (:op event)
                                   n  (get (swap! tool-counts update op (fnil inc 0)) op)
                                   event* (cond-> event
                                            (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
-                              (swap! tool-events conj event*)
                               (when tool-event-fn (tool-event-fn event*))))
         exec-future (cancellation/worker-future "vis-sci-eval"
                       (fn []
                         (try
-                          (let [result (binding [extension/*tool-event-sink* record-tool-event]
+                          (let [result (binding [extension/*tool-event-sink* record-tool-event
+                                                 extension/*journal-render-sink* journal-sink
+                                                 extension/*channel-render-sink* channel-sink
+                                                 extension/*sink-position*       sink-pos]
                                          (sci/binding [sci/out stdout-writer
                                                        sci/err err-pw]
                                            (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
                                              (:val (sci/eval-string+ sci-ctx code
                                                      (when ns {:ns ns}))))))]
-                            {:result result :stdout (str stdout-writer) :stderr (str stderr-writer) :tool-events @tool-events :error nil})
+                            {:result result :stdout (str stdout-writer) :stderr (str stderr-writer)
+                             :journal     @journal-sink
+                             :channel     @channel-sink
+                             :error nil})
                           (catch Throwable e
                             (reset! thrown e)
-                            {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer) :tool-events @tool-events
+                            {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
+                             :journal     @journal-sink
+                             :channel     @channel-sink
                              :error (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))}))))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
                              (reset! thrown e)
-                             {:result nil :stdout "" :stderr "" :tool-events @tool-events :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
+                             {:result nil :stdout "" :stderr ""
+                              :journal     @journal-sink
+                              :channel     @channel-sink
+                              :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
     (.close stdout-writer)
     (.close stderr-writer)
     ;; Park `*1`/`*2`/`*3`/`*e` after each top-level form. Push only when
@@ -567,7 +572,10 @@
                                     (ex-info (or (:error execution-result) "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
-        {:result nil :stdout "" :stderr "" :tool-events @tool-events :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
+        {:result nil :stdout "" :stderr ""
+         :journal     @journal-sink
+         :channel     @channel-sink
+         :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
       execution-result)))
 
 (defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn env]
@@ -848,36 +856,15 @@
                  :msg "Failed to read sandbox locals, returning empty map"})
       {})))
 
-(defn- top-level-value-def-symbols
-  [code]
-  (try
-    (->> (edamame/parse-string-all (or code "") {:all true})
-      (keep (fn [form]
-              (when (seq? form)
-                (let [[op name & _] form]
-                  (when (and (contains? '#{def defonce} op)
-                          (symbol? name))
-                    name)))))
-      distinct
-      vec)
-    (catch Throwable _
-      [])))
-
 (defn- def-display-result
-  "Single top-level `def` / `defonce` forms are acquisition, not observation.
-
-   SCI returns a Var from `(def ...)`; older Vis dereferenced that Var and
-   surfaced the bound value in the journal/TUI, so a bare `(def x ...)` looked
-   like an implicit read of `x`. Keep the sandbox/DB value durable through the
-   normal var-snapshot path, but mark the form silent for display; explicit
-   observation belongs in a later bare symbol or `v/preview` call."
-  [_environment code result]
-  (if (or (:error result) (:timeout? result))
-    result
-    (let [defs (top-level-value-def-symbols code)]
-      (if (= 1 (count defs))
-        (assoc result :rendering-kind :vis/silent)
-        result))))
+  "Pass-through. Historical note: previous versions tagged single top-level
+   `(def x ...)` / `(defonce x ...)` blocks (and a handful of host-form
+   primitives like `conversation-title`) as silent so the TUI hid them.
+   That obscured where bindings came from in resumed traces. The whole
+   `:vis/silent` mechanism has been removed - every block renders. The fn
+   is kept as a single seam in case future display tweaks need it."
+  [_environment _code result]
+  result)
 
 ;; ---------------------------------------------------------------------------
 ;; Noop expression filter
@@ -1122,6 +1109,140 @@
       (str/join "\n\n" (distinct sources))
       raw-code)))
 
+;; ---------------------------------------------------------------------------
+;; Vis-engine XML echo stripper (hallucinated <journal>/<bindings>/...).
+;;
+;; The model occasionally fabricates Vis-only XML envelopes in its OWN reply -
+;; most often <journal> sections - and closes them with a stray ``` instead of
+;; </journal>. That stray ``` then opens an untagged fenced block in the
+;; raw response, swallowing the real ```clojure opener that follows. The
+;; resulting blocks come out tagged :lang nil with literal ```clojure markers
+;; embedded in their source, which the fence-leak preflight then rejects -
+;; burning an entire iteration on a parser-recoverable error.
+;;
+;; Repair pass: at the line level, drop every <journal>/<bindings>/<active_skills>
+;; /<system_nudge[s]> opener through its closer. Closer matches `</tag>` (proper),
+;; a bare ``` line (LLM fumble), or another opener (implicit close), or EOF.
+;; A ```lang line implicitly closes the envelope without itself being dropped
+;; so a real fence directly after a fabricated envelope still parses cleanly.
+;; ---------------------------------------------------------------------------
+
+(def ^:private vis-engine-xml-echo-tags
+  ;; Vis -> LLM ONLY. The model must never emit these. See
+  ;; `com.blockether.vis.internal.prompt` for the renderers that own them.
+  #{"journal" "bindings" "active_skills" "system_nudges" "system_nudge"})
+
+(defn- vis-engine-xml-open-tag
+  "Return the matched tag name (string) when `line` is a Vis-engine XML
+   opener at the start of the trimmed line, else nil. Accepts both
+   `<tag>` and `<tag attr=\"x\">` shapes."
+  [line]
+  (when (string? line)
+    (let [t (str/triml line)]
+      (some (fn [tag]
+              (when (or (str/starts-with? t (str "<" tag ">"))
+                      (str/starts-with? t (str "<" tag " ")))
+                tag))
+        vis-engine-xml-echo-tags))))
+
+(defn- vis-engine-xml-close-line?
+  [tag line]
+  (when (and tag (string? line))
+    (= (str "</" tag ">") (str/trim line))))
+
+(defn- bare-fence-line?
+  "True for a markdown fence line with NO language tag (just backticks).
+   These are the LLM's most common closer fumble inside a fabricated
+   <journal>: it ended the section with ``` instead of </journal>."
+  [line]
+  (when (string? line)
+    (boolean (re-matches #"^[ \t]*`{3,}[ \t]*$" line))))
+
+(defn- tagged-fence-opener-line?
+  "True for a markdown fence opener WITH a language tag (e.g. ```clojure).
+   When we hit one of these inside a fabricated envelope we treat the
+   envelope as implicitly closed and KEEP the line so the downstream
+   fence-block extractor still sees a valid opener."
+  [line]
+  (when (string? line)
+    (boolean (re-matches #"^[ \t]*`{3,}[A-Za-z0-9_+\-]+[ \t]*$" line))))
+
+(defn- contains-vis-engine-xml-echo?
+  [^String raw]
+  (and (string? raw)
+    (boolean (some #(or (str/includes? raw (str "<" % ">"))
+                      (str/includes? raw (str "<" % " ")))
+               vis-engine-xml-echo-tags))))
+
+(defn- strip-vis-engine-xml-echo
+  "Remove hallucinated <journal>...</journal> (and similar Vis-only XML
+   envelopes) from raw LLM text BEFORE fenced-block extraction. The model
+   must never emit these tags - they are read-only surfaces the engine
+   writes. When a model echoes them, the closer is often a stray ``` instead
+   of </tag>; that ``` then poisons fence-block parsing.
+
+   Returns `raw` unchanged when no opener appears."
+  [raw]
+  (if-not (contains-vis-engine-xml-echo? raw)
+    raw
+    (let [lines (str/split-lines raw)]
+      (loop [remaining (seq lines)
+             current-tag nil
+             out (transient [])]
+        (if-not remaining
+          (str/join "\n" (persistent! out))
+          (let [line (first remaining)
+                rst  (next remaining)]
+            (cond
+              ;; Outside any envelope.
+              (nil? current-tag)
+              (if-let [opener (vis-engine-xml-open-tag line)]
+                (recur rst opener out)
+                (recur rst nil (conj! out line)))
+
+              ;; Inside an envelope - matching </tag> closer (proper form).
+              (vis-engine-xml-close-line? current-tag line)
+              (recur rst nil out)
+
+              ;; Inside an envelope - LLM fumbled the closer with bare ```.
+              (bare-fence-line? line)
+              (recur rst nil out)
+
+              ;; Inside an envelope - real fence opener (```lang). Treat as
+              ;; implicit close and KEEP the line so the extractor sees it.
+              (tagged-fence-opener-line? line)
+              (recur rst nil (conj! out line))
+
+              ;; Inside an envelope - new envelope opener swaps current tag.
+              :else
+              (if-let [opener (vis-engine-xml-open-tag line)]
+                (recur rst opener out)
+                (recur rst current-tag out)))))))))
+
+(defn- normalize-ask-result-vis-engine-xml-echo
+  "When the LLM raw response contains hallucinated Vis-engine XML envelopes
+   (`<journal>`, `<bindings>`, ...), strip them and re-extract fenced clojure
+   blocks. Replaces `:result` and `:blocks` on the ask-result; leaves `:raw`
+   ORIGINAL so forensic logs / DB rows show what the model actually emitted.
+
+   Pass-through when no envelope appears or stripping yields nothing usable."
+  [ask-result]
+  (let [raw (or (:raw ask-result) "")]
+    (if-not (contains-vis-engine-xml-echo? raw)
+      ask-result
+      (let [cleaned (strip-vis-engine-xml-echo raw)]
+        (if (or (str/blank? cleaned) (= cleaned raw))
+          ask-result
+          (let [blocks   (svar-codes/extract-code-blocks cleaned)
+                selected (svar-codes/select-blocks blocks "clojure")
+                result   (svar-codes/concat-sources selected)]
+            (if (str/blank? result)
+              ask-result
+              (assoc ask-result
+                :result result
+                :blocks selected
+                :vis/normalized-from-raw? true))))))))
+
 (defn- code-entries-preflight
   ([iteration-position raw-code]
    (code-entries-preflight iteration-position raw-code nil))
@@ -1206,14 +1327,11 @@
   [result]
   (cond
     (:error result) :vis/error
-    (= :vis/silent (:rendering-kind result)) :vis/silent
-    (= true (:vis/silent result)) :vis/silent
     (= :vis/system (:rendering-kind result)) :vis/system
     (= :vis/tool (:rendering-kind result)) :vis/tool
     (= :vis/answer (:rendering-kind result)) :vis/answer
     (= :vis/diagnostic (:rendering-kind result)) :vis/diagnostic
     (keyword? (:rendering-kind result)) (:rendering-kind result)
-    (= :vis/silent (:result result)) :vis/silent
     (= :vis/answer (:result result)) :vis/answer
     :else :vis/sci))
 
@@ -1322,7 +1440,9 @@
 
 (def ^:private preserved-thinking-replay-token-budget
   "Approximate max tokens of preserved `reasoning_content` carried
-   across iter assistant replays.
+   across iter assistant replays. Resolves to
+   `(long (* PRESERVED_THINKING_REPLAY_FRACTION MAX_ITERATION_CONTEXT_TOKENS))`
+   = 30000 today (0.15 × 200000), and auto-tracks the cap if it changes.
 
    Z.ai's preserved-thinking contract requires CONSECUTIVE
    `reasoning_content` blocks (newest run, contiguous, verbatim).
@@ -1335,7 +1455,8 @@
    Char-count proxy: `chars / 4 ≈ tokens`. Conservative upper bound;
    real GLM tokens are slightly denser, so the actual carried budget
    sits somewhat under this number."
-  30000)
+  (long (* prompt/PRESERVED_THINKING_REPLAY_FRACTION
+          prompt/MAX_ITERATION_CONTEXT_TOKENS)))
 
 (defn- ^:private replay-reasoning-chars
   "Total `:thinking-signature` (or `:thinking` fallback) char count for
@@ -1370,33 +1491,36 @@
    thinking-block size and the per-provider serializer ignores anything
    it can't carry."
   [journal-iters]
-  (let [iters      (vec journal-iters)
-        budget-chr (* 4 preserved-thinking-replay-token-budget)]
-    (loop [i        (dec (count iters))
-           kept-rev ()
-           used-chr 0]
-      (if (neg? i)
-        (vec kept-rev)
-        (let [msg (some-> iters (get i) second :assistant-message)]
-          (if-not msg
-            (recur (dec i) kept-rev used-chr)
-            (let [size  (long (replay-reasoning-chars msg))
-                  used' (+ used-chr size)]
-              (cond
-                ;; First (newest) kept iter: always keep, even when it
-                ;; alone exceeds the budget. Continuity > budget on the
-                ;; latest turn; preserved-thinking breaks otherwise.
-                (empty? kept-rev)
-                (recur (dec i) (cons msg kept-rev) used')
-
-                (<= used' budget-chr)
-                (recur (dec i) (cons msg kept-rev) used')
-
-                ;; Adding this older iter would push us over budget.
-                ;; STOP — do not skip-and-continue (that creates a gap
-                ;; in the consecutive run that z.ai's contract forbids).
-                :else
-                (vec kept-rev)))))))))
+  ;; Walks newest→oldest via `reverse`, sizes each non-nil assistant-message,
+  ;; then folds with `reduced` to short-circuit at the first over-budget
+  ;; older iter. The `kept` list is built front-prepended in newest-first
+  ;; order during the fold; the newest message lands at the FRONT of the
+  ;; list, the oldest kept message at the BACK — so when we `cons` in
+  ;; reverse-time order during the fold, the final `:kept` already reads
+  ;; oldest→newest (chronological), matching the contract.
+  (let [budget-chr (* 4 preserved-thinking-replay-token-budget)
+        sized      (->> journal-iters
+                     reverse
+                     (keep #(some-> % second :assistant-message))
+                     (map (juxt identity #(long (replay-reasoning-chars %)))))
+        {:keys [kept]}
+        (reduce (fn [{:keys [used kept] :as acc} [msg size]]
+                  (let [used' (+ (long used) (long size))]
+                    (cond
+                      ;; First (newest) kept iter: always keep, even when
+                      ;; it alone exceeds the budget. Continuity > budget
+                      ;; on the latest turn; preserved-thinking breaks
+                      ;; otherwise.
+                      (empty? kept)            {:used used' :kept (cons msg kept)}
+                      (<= used' budget-chr)    {:used used' :kept (cons msg kept)}
+                      ;; Adding this older iter would push us over budget.
+                      ;; STOP — do not skip-and-continue (that creates a
+                      ;; gap in the consecutive run that z.ai's contract
+                      ;; forbids).
+                      :else                    (reduced acc))))
+          {:used 0 :kept ()}
+          sized)]
+    (vec kept)))
 
 (defn- append-preserved-thinking-replay
   "Appends svar's canonical assistant-replay messages from prior
@@ -1507,19 +1631,23 @@
           _ (install-copilot-header-patch!)
           copilot-initiator (or (:copilot-initiator extra-body)
                               (copilot-initiator-for-iteration iteration))
-          ask-result (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
-                                                        :conversation-turn-id (:environment-id environment)
-                                                        :iteration iteration-position
-                                                        :copilot-initiator copilot-initiator)]
-                       (svar/ask-code! (:router environment)
-                         (cond-> {:lang     "clojure"
-                                  :messages messages
-                                  :routing  (or routing {})
-                                  :check-context? true
-                                  :preserved-thinking? true}
-                           effective-reasoning (assoc :reasoning effective-reasoning)
-                           streaming-fn        (assoc :on-chunk streaming-fn)
-                           extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
+          ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
+                                                            :conversation-turn-id (:environment-id environment)
+                                                            :iteration iteration-position
+                                                            :copilot-initiator copilot-initiator)]
+                           (svar/ask-code! (:router environment)
+                             (cond-> {:lang     "clojure"
+                                      :messages messages
+                                      :routing  (or routing {})
+                                      :check-context? true
+                                      :preserved-thinking? true}
+                               effective-reasoning (assoc :reasoning effective-reasoning)
+                               streaming-fn        (assoc :on-chunk streaming-fn)
+                               extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
+          ;; Repair pass: strip hallucinated <journal>/<bindings>/...
+          ;; envelopes from raw LLM text before downstream fence-block
+          ;; consumers see them. See `strip-vis-engine-xml-echo`.
+          ask-result (normalize-ask-result-vis-engine-xml-echo ask-result-raw)
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
           _ (log-stage! :llm-response iteration
@@ -1528,7 +1656,8 @@
                :block-count   (count (or (:blocks ask-result) []))
                :duration-ms   (:duration-ms ask-result)
                :tokens        (:tokens ask-result)
-               :thinking      thinking})
+               :thinking      thinking
+               :vis-engine-xml-echo-stripped? (boolean (:vis/normalized-from-raw? ask-result))})
           api-usage (ask-result->api-usage ask-result)
           ;; svar/ask-code! returns the concatenated source string in :result.
           ;; Parse it into top-level forms; each form becomes one
@@ -1556,7 +1685,7 @@
           executed (mapv (fn [idx {:keys [expr preflight-error parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
-                           (when (and on-chunk (not suppress-form-start?) (not (silent-host-form? expr)))
+                           (when (and on-chunk (not suppress-form-start?))
                              (on-chunk {:phase         :form-start
                                         :iteration     iteration-position
                                         :form-idx      idx
@@ -1588,7 +1717,7 @@
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0
                                                  :op :vis/guard}
-                                                (let [tool-event-fn (when (and on-chunk (not suppress-form-start?) (not (silent-host-form? expr)))
+                                                (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
                                                                       (fn [tool-event]
                                                                         (on-chunk {:phase :tool-start
                                                                                    :iteration iteration-position
@@ -1615,6 +1744,9 @@
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true))
                                  display-result (def-display-result environment expr result)
+                                 ;; def-display-result is now a pass-through; kept on the
+                                 ;; call path so future display-tweaks have a single seam.
+
                                  rendering-kind (eval-rendering-kind display-result)
                                  info (eval-info turn-prefix iteration-position idx total-blocks display-result rendering-kind)
                                  result* (assoc display-result
@@ -1637,7 +1769,8 @@
                                           :code              expr
                                           :comment           form-comment
                                           :result            (:result result*)
-                                          :tool-events       (:tool-events result*)
+                                          :journal           (:journal result*)
+                                          :channel           (:channel result*)
                                           :error             (:error result*)
                                           :stdout            (:stdout result*)
                                           :stderr            (:stderr result*)
@@ -1656,7 +1789,8 @@
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
-                                    :tool-events (:tool-events result)
+                                    :journal (:journal result)
+                                    :channel (:channel result)
                                     :stdout (:stdout result)
                                     :stderr (:stderr result)
                                     :error (:error result)
@@ -1666,11 +1800,7 @@
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)}
                              form-comment (assoc :comment form-comment)))
-                     (range) code-blocks block-results block-comments))
-          silent-form-idxs (into #{}
-                             (keep-indexed (fn [idx block]
-                                             (when (= :vis/silent (:rendering-kind block)) idx)))
-                             blocks)]
+                     (range) code-blocks block-results block-comments))]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. Two
@@ -1753,7 +1883,6 @@
                          :error validation-error}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
-             :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-raw-response (:raw ask-result)
              :llm-executable-code (:result ask-result)
@@ -1774,7 +1903,6 @@
                               :answer-form-idx  form-idx}
                :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)
-               :silent-form-idxs silent-form-idxs
                :llm-messages messages :llm-provider provider :llm-model model-name
                :llm-raw-response (:raw ask-result)
                :llm-executable-code (:result ask-result)
@@ -1787,7 +1915,6 @@
          :duration-ms (or (:duration-ms ask-result) 0)
          :llm-messages messages
          :llm-provider (:provider resolved-model)
-         :silent-form-idxs silent-form-idxs
          :llm-model    (some-> (:name resolved-model) str)
          :llm-raw-response (:raw ask-result)
          :llm-executable-code (:result ask-result)
@@ -2932,7 +3059,7 @@
                                    :consecutive-errors (inc consecutive-errors) :restarts restarts)))))
 
                     (let [_ (accumulate-usage! (:api-usage iteration-result))
-                          {:keys [thinking blocks final-result silent-form-idxs]} iteration-result
+                          {:keys [thinking blocks final-result]} iteration-result
                           final-answer (when final-result (:answer final-result))
                           _ (update-system-vars! environment
                               {:thinking thinking :final-result final-result :final-answer final-answer})
@@ -3046,7 +3173,6 @@
                                                           :iteration-count (inc iteration)
                                                           :status          :success}
                                        :answer-form-idx  (:answer-form-idx final-result)
-                                       :silent-form-idxs silent-form-idxs
                                        :done?            true}))
                           (let [result (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                                :iteration-count (inc iteration)}
@@ -3084,7 +3210,6 @@
                                          :iteration        (inc (long iteration))
                                          :thinking         thinking
                                          :final            nil
-                                         :silent-form-idxs silent-form-idxs
                                          :done?            false}))
                             (let [had-success? (some #(nil? (:error %)) blocks)
                                   next-errors (if had-success? 0 (inc consecutive-errors))
@@ -4008,12 +4133,16 @@
         ;; call would invite the model to round-trip what it can
         ;; read for free. Calling with the wrong arity raises an
         ;; `ArityException` from SCI like any other Clojure fn.
+        ;; Returns the title string itself so the trace shows what was set.
+        ;; Previous versions returned `:vis/silent` to make the TUI hide the
+        ;; whole form; the silent-elision mechanism has been removed, so the
+        ;; natural value (the new title) is the right thing to surface.
         conversation-title-fn    (fn conversation-title [s]
                                    (let [s (str s)]
                                      (set-title-with-broadcast!
                                        db-info conversation-id
                                        conversation-title-atom s)
-                                     :vis/silent))
+                                     s))
         ;; The retired `TURN_USER_REQUEST` SYSTEM var has no replacement
         ;; binding by design - the same data already flows through
         ;; `(v/conversation-state)` -> :current-turn :user-request (and through

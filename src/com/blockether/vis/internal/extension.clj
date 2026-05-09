@@ -113,6 +113,39 @@
         (nil? error)
         (some? error)))))
 
+;; ---------------------------------------------------------------------------
+;; Sink-entry shape (one entry per tool-symbol call inside a top-level form)
+;; ---------------------------------------------------------------------------
+
+(s/def :ext.sink/position  (s/and integer? (complement neg?)))
+(s/def :ext.sink/form      non-blank-string?)
+(s/def :ext.sink/success?  boolean?)
+(s/def :ext.sink/result    (s/nilable string?))
+(s/def :ext.sink/error     (s/nilable ::error-map))
+
+(s/def ::sink-entry
+  (s/and
+    (s/keys :req-un [:ext.sink/position :ext.sink/form
+                     :ext.sink/success? :ext.sink/result :ext.sink/error])
+    (fn [{:keys [success? result error]}]
+      (if success?
+        (and (string? result) (nil? error))    ; success -> rendered text, no error
+        (and (nil? result) (some? error))))))  ; failure -> raw error map, no text
+
+(s/def :ext.sink/journal (s/coll-of ::sink-entry :kind vector?))
+(s/def :ext.sink/channel (s/coll-of ::sink-entry :kind vector?))
+
+(defn assert-sink-entry!
+  "Throw on shape drift before a sink write. Cheap; runs inside
+   `record-{journal,channel}-entry!` per call."
+  [entry]
+  (when-not (s/valid? ::sink-entry entry)
+    (throw (ex-info "Invalid sink entry"
+             {:type    :vis/invalid-sink-entry
+              :entry   entry
+              :explain (s/explain-data ::sink-entry entry)})))
+  entry)
+
 (def ^:dynamic *tool-event-sink*
   "Optional per-eval sink for observable tool lifecycle events. Bound by
    tests and UI/progress adapters that need to know a tool started before
@@ -124,6 +157,74 @@
   (when *tool-event-sink*
     (*tool-event-sink* event))
   event)
+
+;; ============================================================================
+;; Per-top-level-form render sinks
+;;
+;; `run-sci-code` (`internal/loop.clj`) binds these dynamic vars before
+;; evaluating each top-level form. `invoke-symbol-wrapper` writes ONE entry
+;; to BOTH sinks per tool-symbol call, regardless of nesting depth
+;; (`(do ...)`, `(let ...)`, deeply nested) and regardless of whether the
+;; tool-result bubbles up as the form's return value.
+;;
+;; The position counter is shared between journal and channel sinks: a
+;; given call gets the same `:position` integer in both vectors. Counter
+;; resets per top-level form.
+;;
+;; Late writes from threads spawned by tools that survive past the form's
+;; return are silently dropped - the dynamic var has unwound, the `when`
+;; guard turns the write into a no-op. Tools that need observation must
+;; complete inline.
+;; ============================================================================
+
+(def ^:dynamic *journal-render-sink*
+  "Per-top-level-form atom holding a vec of `::sink-entry`s, one per
+   tool-symbol call. Bound fresh by `run-sci-code` before each form's
+   eval; deref'd into the block result map under `:journal` after."
+  nil)
+
+(def ^:dynamic *channel-render-sink*
+  "Per-top-level-form atom holding a vec of `::sink-entry`s, one per
+   tool-symbol call. Mirrors `*journal-render-sink*` shape; entries are
+   markdown-rendered (uniform across channels). Bound fresh by
+   `run-sci-code` before each form's eval; deref'd into the block result
+   map under `:channel` after."
+  nil)
+
+(def ^:dynamic *sink-position*
+  "Per-top-level-form atom holding a monotonic long counter. Both sinks
+   read from it via `swap!` before each entry, so a given tool call gets
+   the SAME `:position` index in both `:journal` and `:channel` vecs."
+  nil)
+
+(declare assert-sink-entry!)
+
+(defn- next-sink-position!
+  "Atomically claim the next position in the per-form counter. Returns the
+   incremented integer (post-increment so the first call returns 0)."
+  []
+  (when *sink-position*
+    (let [v (swap! *sink-position* (fnil inc -1))]
+      (long v))))
+
+(defn record-journal-entry!
+  "Validate `entry` against `::sink-entry` and conj into the active
+   journal sink atom. No-op when `*journal-render-sink*` is unbound
+   (e.g. ad-hoc REPL eval, or a thread spawned past the form's eval)."
+  [entry]
+  (when *journal-render-sink*
+    (assert-sink-entry! entry)
+    (swap! *journal-render-sink* conj entry))
+  entry)
+
+(defn record-channel-entry!
+  "Validate `entry` against `::sink-entry` and conj into the active
+   channel sink atom. No-op when `*channel-render-sink*` is unbound."
+  [entry]
+  (when *channel-render-sink*
+    (assert-sink-entry! entry)
+    (swap! *channel-render-sink* conj entry))
+  entry)
 
 (defn tool-result?
   [x]
@@ -1065,6 +1166,66 @@
                      :hash-sha256 (:source-hash-sha256 ext-prov)}}))
     result))
 
+(defn- sink-form-string
+  "Reconstruct the call form for `:form` in sink entries: `(alias/sym args...)`
+   pr-str'd. Args are the EVALUATED args (SCI passes evaluated values into
+   the wrapper); the form reflects the actual call made, not the lexical
+   source. Returns a non-blank string suitable for the spec."
+  [ext sym-entry args]
+  (let [alias-sym (get-in ext [:ext/ns-alias :alias])
+        sym-name  (:ext.symbol/sym sym-entry)
+        head      (if alias-sym
+                    (clojure.core/symbol (str alias-sym) (str sym-name))
+                    sym-name)]
+    (pr-str (cons head (vec args)))))
+
+(defn- safely-render
+  "Call a render-fn against an unwrapped tool-result value, defending
+   against non-string returns and renderer exceptions. Errors collapse to
+   a `<...>` placeholder string so the sink invariant (`:result` is a
+   non-blank string on success) survives misbehaving renderers."
+  [render-fn sym-name label value]
+  (try
+    (let [s (render-fn value)]
+      (cond
+        (and (string? s) (not (str/blank? s))) s
+        (string? s)                            (str "<" label " returned blank string>")
+        :else                                  (str "<" label " returned non-string: "
+                                                 (pr-str (type s)) ">")))
+    (catch Throwable t
+      (str "<" label " for " sym-name " threw: " (ex-message t) ">"))))
+
+(defn- write-sink-entries!
+  "After a tool symbol's `invoke-symbol-wrapper` produces a final
+   tool-result, write ONE entry to each of the active per-form sinks
+   (`*journal-render-sink*` and `*channel-render-sink*`). Both sinks share
+   the same `*sink-position*` counter so a given call gets the same
+   `:position` in both vecs.
+
+   No-op when:
+     - `result` is not a tool-result (defensive; fn-symbols always
+       return one, but ad-hoc consumers might bypass).
+     - Both sinks are unbound (no observer; skip all rendering work)."
+  [ext sym-entry args result]
+  (when (and (tool-result? result)
+          (or *journal-render-sink* *channel-render-sink*))
+    (let [position (next-sink-position!)
+          form-str (sink-form-string ext sym-entry args)
+          sym-name (:ext.symbol/sym sym-entry)
+          base     {:position position :form form-str}]
+      (if (:success? result)
+        (let [unwrapped (:result result)
+              j-text   (safely-render (:ext.symbol/journal-render-fn sym-entry)
+                         sym-name ":journal-render-fn" unwrapped)
+              c-text   (safely-render (:ext.symbol/channel-render-fn sym-entry)
+                         sym-name ":channel-render-fn" unwrapped)]
+          (record-journal-entry! (assoc base :success? true :result j-text :error nil))
+          (record-channel-entry! (assoc base :success? true :result c-text :error nil)))
+        (let [err (:error result)]
+          (record-journal-entry! (assoc base :success? false :result nil :error err))
+          (record-channel-entry! (assoc base :success? false :result nil :error err))))))
+  result)
+
 (def ^:dynamic *current-extension*
   "Extension map currently executing on an extension callback thread.
    Bound by symbol wrappers so extension-owned helper APIs can fill the
@@ -1107,6 +1268,7 @@
               result (->> (:result before-out)
                        (enrich-tool-result-info ext sym-entry)
                        (validate-symbol-result! sym spec-ref))]
+          (write-sink-entries! ext sym-entry args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
           result)
         (let [{env  :env
@@ -1125,18 +1287,31 @@
                   (catch Throwable e
                     (let [ms (elapsed-ms ct0)]
                       (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
-                      (let [recovery (run-on-error ext-ns sym-entry e env f args)]
-                        (cond
-                          (contains? recovery :result) recovery
-                          (contains? recovery :error)  (throw (:error recovery))
-                          :else {:result (apply (get recovery :fn f)
-                                           (vec (get recovery :args args)))}))))))
+                      (try
+                        (let [recovery (run-on-error ext-ns sym-entry e env f args)]
+                          (cond
+                            (contains? recovery :result) recovery
+                            (contains? recovery :error)  (throw (:error recovery))
+                            :else {:result (apply (get recovery :fn f)
+                                             (vec (get recovery :args args)))}))
+                        (catch Throwable e2
+                          ;; Unrecoverable: no on-error-fn or it surfaced the
+                          ;; error. Write a failure sink entry derived from
+                          ;; the original throwable BEFORE the throw escapes,
+                          ;; so consumers see exactly which call broke even
+                          ;; when the form bubbles up the exception.
+                          (write-sink-entries! ext sym-entry args
+                            (failure {:result    nil
+                                      :info      {:op (keyword (tool-call-name ext sym))}
+                                      :throwable e2}))
+                          (throw e2)))))))
 
               {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
               result (->> result
                        (enrich-tool-result-info ext sym-entry)
                        (validate-symbol-result! sym spec-ref))
               ms (elapsed-ms t0)]
+          (write-sink-entries! ext sym-entry args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
           result)))))
 

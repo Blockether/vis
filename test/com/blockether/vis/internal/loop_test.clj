@@ -1,11 +1,19 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
+   [com.blockether.svar.internal.codes :as svar-codes]
    [com.blockether.vis.internal.loop :as loop]
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe def-display-result-test
-  (it "does not deref def forms into implicit observations"
+  (it "does not silence single-def blocks (always-show)"
+    ;; Regression: previously a single top-level `(def x ...)` got
+    ;; `:rendering-kind :vis/silent` and the TUI hid it, leaving
+    ;; downstream blocks referring to bindings whose definition was
+    ;; invisible (conversation f1752e0a). The whole `:vis/silent`
+    ;; mechanism has been removed and this fn is now a pass-through
+    ;; so the def block renders like any other form.
     (let [result (#'loop/def-display-result
                   {:sci-ctx :present}
                   "(def xd \"XDDD\")"
@@ -14,7 +22,15 @@
                    :stderr ""
                    :error nil})]
       (expect (= :raw-var (:result result)))
-      (expect (= :vis/silent (:rendering-kind result))))))
+      (expect (nil? (:rendering-kind result)))))
+
+  (it "is a pure pass-through: errors and timeouts are not modified"
+    (let [err  {:result nil :error {:msg "boom"} :stdout "" :stderr ""}
+          tmo  {:result nil :timeout? true :stdout "" :stderr ""}
+          plain {:result 42 :stdout "" :stderr "" :error nil}]
+      (expect (= err   (#'loop/def-display-result {} "(def x 1)" err)))
+      (expect (= tmo   (#'loop/def-display-result {} "(def x 1)" tmo)))
+      (expect (= plain (#'loop/def-display-result {} "(+ 1 41)" plain))))))
 
 (defdescribe answer-cleanup-test
   (it "does not append removed runtime sections"
@@ -142,3 +158,101 @@
 
   (it "replay token budget is the documented 30k tokens"
     (expect (= 30000 @#'loop/preserved-thinking-replay-token-budget))))
+
+;; ---------------------------------------------------------------------------
+;; Hallucinated <journal>/<bindings>/... echo stripping.
+;;
+;; Conversation 185fbc4f (glm-5.1 zai-coding) reproduced this: the model
+;; emitted real ```clojure blocks interleaved with fabricated <journal>
+;; sections that it closed with a stray ``` instead of </journal>. That
+;; ``` opened a fresh untagged fence which swallowed the next real
+;; ```clojure opener, producing :lang nil blocks whose source contained
+;; literal ```clojure markers. The fence-leak preflight then aborted iter 1.
+;; ---------------------------------------------------------------------------
+
+(defdescribe strip-vis-engine-xml-echo-test
+  (it "is a no-op when no Vis-engine XML opener appears"
+    (let [raw "```clojure\n(println :ok)\n```\n"]
+      (expect (= raw (#'loop/strip-vis-engine-xml-echo raw)))))
+
+  (it "strips <journal>...</journal> with a proper XML closer"
+    (let [raw (str "```clojure\n(+ 1 2)\n```\n\n"
+                "<journal>\n"
+                "i1.1 (+ 1 2) -> 3\n"
+                "</journal>\n\n"
+                "```clojure\n(+ 3 4)\n```\n")
+          out (#'loop/strip-vis-engine-xml-echo raw)]
+      (expect (not (str/includes? out "<journal>")))
+      (expect (not (str/includes? out "i1.1")))
+      (expect (str/includes? out "(+ 1 2)"))
+      (expect (str/includes? out "(+ 3 4)"))))
+
+  (it "strips <journal>...``` with a stray-fence closer (the GLM bug)"
+    (let [raw (str "```clojure\n(+ 1 2)\n```\n\n"
+                "<journal>\n"
+                "i1.1 (+ 1 2) -> 3\n"
+                "```\n\n"
+                "```clojure\n(+ 3 4)\n```\n")
+          out (#'loop/strip-vis-engine-xml-echo raw)]
+      (expect (not (str/includes? out "<journal>")))
+      (expect (not (str/includes? out "i1.1")))
+      (expect (str/includes? out "(+ 3 4)"))
+      ;; The stray ``` closer must NOT survive into the cleaned text.
+      (let [blocks (svar-codes/extract-code-blocks out)]
+        (expect (= ["clojure" "clojure"] (mapv :lang blocks)))
+        (expect (every? #(not (str/includes? (:source %) "```")) blocks)))))
+
+  (it "keeps a real ```clojure opener that immediately follows a fabricated envelope"
+    (let [raw "<journal>i1.1 -> 3\n```clojure\n(+ 3 4)\n```\n"
+          out (#'loop/strip-vis-engine-xml-echo raw)]
+      (expect (str/includes? out "```clojure"))
+      (expect (str/includes? out "(+ 3 4)"))
+      (expect (not (str/includes? out "i1.1")))))
+
+  (it "strips <bindings>, <active_skills>, <system_nudge[s]> echoes too"
+    (doseq [tag ["bindings" "active_skills" "system_nudges" "system_nudge"]]
+      (let [raw (str "<" tag ">junk</" tag ">\n```clojure\n(+ 1 2)\n```\n")
+            out (#'loop/strip-vis-engine-xml-echo raw)]
+        (expect (not (str/includes? out (str "<" tag ">"))))
+        (expect (str/includes? out "(+ 1 2)")))))
+
+  (it "accepts <tag attr=\"x\"> shape (e.g. <system_nudge importance=\"high\">)"
+    (let [raw "<system_nudge importance=\"high\">commit now</system_nudge>\n```clojure\n(+ 1 1)\n```\n"
+          out (#'loop/strip-vis-engine-xml-echo raw)]
+      (expect (not (str/includes? out "<system_nudge")))
+      (expect (str/includes? out "(+ 1 1)")))))
+
+(defdescribe normalize-ask-result-vis-engine-xml-echo-test
+  (it "is a pass-through when raw has no Vis-engine XML envelope"
+    (let [in {:raw "```clojure\n(+ 1 2)\n```\n"
+              :result "(+ 1 2)"
+              :blocks [{:lang "clojure" :source "(+ 1 2)"}]}
+          out (#'loop/normalize-ask-result-vis-engine-xml-echo in)]
+      (expect (= in out))
+      (expect (nil? (:vis/normalized-from-raw? out)))))
+
+  (it "recovers iter 1 from conversation 185fbc4f end-to-end"
+    ;; Real raw response (8897 chars) captured from the GLM-5.1 hallucination.
+    ;; Without the repair: 5 :lang clojure + 5 :lang nil blocks; the nil
+    ;; blocks contain literal ```clojure markers which trip
+    ;; raw-markdown-fence-leak-error and waste the iteration.
+    ;; With the repair: 10 :lang clojure blocks, no fence leak, the
+    ;; final (answer ...) block survives.
+    (let [raw (slurp (io/resource "fixtures/hallucinated-journal-iter1.txt"))
+          orig-blocks   (svar-codes/extract-code-blocks raw)
+          orig-selected (svar-codes/select-blocks orig-blocks "clojure")
+          orig-result   (svar-codes/concat-sources orig-selected)
+          ask-in  {:raw raw :blocks orig-selected :result orig-result}
+          ask-out (#'loop/normalize-ask-result-vis-engine-xml-echo ask-in)]
+      ;; Sanity: the unrepaired :result really does carry the fence leak.
+      (expect (str/includes? (:result ask-in) "```"))
+      (expect (some? (#'loop/raw-markdown-fence-leak-error (:result ask-in))))
+      ;; Repaired :result is fence-clean and parses to ten clojure blocks.
+      (expect (true? (:vis/normalized-from-raw? ask-out)))
+      (expect (not (str/includes? (:result ask-out) "```")))
+      (expect (nil? (#'loop/raw-markdown-fence-leak-error (:result ask-out))))
+      (expect (= 10 (count (:blocks ask-out))))
+      (expect (every? #(= "clojure" (:lang %)) (:blocks ask-out)))
+      (expect (str/includes? (:result ask-out) "(answer"))
+      ;; :raw is preserved verbatim for forensic / DB rows.
+      (expect (= raw (:raw ask-out))))))

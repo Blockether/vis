@@ -55,7 +55,11 @@
       (let [entry (first ((:get-timeline tracker)))]
         (is (= ["(+ 1 2)"] (:code entry)))
         (is (= ["\"3\""] (:results entry))))))
-  (testing ":form_result elides forms marked with silent rendering-kind"
+  (testing ":form_result no longer elides forms tagged silent (always-show)"
+    ;; Regression: previously a `:rendering-kind :vis/silent` chunk was
+    ;; dropped from the live progress entry. The whole silent
+    ;; mechanism has been removed - every form streamed through
+    ;; on-chunk now shows up in the live progress timeline.
     (let [tracker (progress/make-progress-tracker)]
       ((:on-chunk tracker) {:phase :form-result :iteration 1 :form-idx 0
                             :code "(def hits (v/glob \"src\" \"**/*.clj\"))"
@@ -63,8 +67,8 @@
                             :rendering-kind :vis/silent
                             :stdout "" :stderr "" :execution-time-ms 5})
       (let [entry (first ((:get-timeline tracker)))]
-        (is (= [] (:code entry)))
-        (is (= [] (:results entry)))))))
+        (is (= ["(def hits (v/glob \"src\" \"**/*.clj\"))"] (:code entry)))
+        (is (= 1 (count (:results entry))))))))
 
 (deftest on-chunk-tool-result-render-test
   (testing ":form-result renders tool envelopes through extension renderer"

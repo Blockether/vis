@@ -5,7 +5,12 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe rebuild-history-test
-  (it "elides persisted :vis/silent blocks when resuming a conversation"
+  (it "renders every persisted block when resuming (no silent elision)"
+    ;; Regression: previously blocks whose stored `:result` was
+    ;; `:vis/silent` were filtered out of the resumed trace, so the
+    ;; reader landed on bindings whose definition was invisible. The
+    ;; whole silent mechanism has been removed - every executed block
+    ;; survives reload. Only the answer-bearing block is elided.
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-conversation-turns
                   (fn [db conversation-id]
@@ -24,7 +29,7 @@
                     (expect (= :db db))
                     (expect (= :iter-1 iter-id))
                     [{:code "(conversation-title \"Demo\")"
-                      :result :vis/silent
+                      :result "Demo"
                       :stdout ""
                       :duration-ms 1}
                      {:code "(+ 1 2)"
@@ -38,9 +43,12 @@
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             assistant (second history)
             trace-entry (first (:trace assistant))]
-        (expect (= ["(+ 1 2)"] (:code trace-entry)))
-        (expect (= ["3"] (:results trace-entry)))
-        (expect (= [true] (:successes trace-entry))))))
+        ;; The (answer ...) form is still elided so the assistant
+        ;; doesn't double-render its own answer prose. Everything
+        ;; else - including the conversation-title call - shows up.
+        (expect (= ["(conversation-title \"Demo\")" "(+ 1 2)"] (:code trace-entry)))
+        (expect (= 2 (count (:results trace-entry))))
+        (expect (= [true true] (:successes trace-entry))))))
 
   (it "renders persisted tool results through the new channel-render dispatcher"
     (let [tool-result {:success? true

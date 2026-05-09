@@ -9,6 +9,7 @@
   (:require [babashka.process :as process]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [com.blockether.svar.core :as svar]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-telegram.api :as tg]
             [taoensso.telemere :as tel])
@@ -389,18 +390,88 @@
       {:provider-id (:id provider)
        :model       model-name})))
 
-(defn- model-cycle-entries [config]
+(def ^:private model-catalog-cache
+  ;; Cache of `{provider-id [model-id ...]}` from `svar/models!`. The
+  ;; live `/models` endpoint is rate-limited and adds latency to every
+  ;; `/models` Telegram command, so we hold the response for a short
+  ;; window. Cleared automatically on `apply-config!` to pick up new
+  ;; releases without a process restart.
+  (atom {:fetched-at-ms 0 :ttl-ms 60000 :by-provider {}}))
+
+(defn- fetch-live-models
+  "Return a vec of model id strings for `provider` via `svar/models!`,
+   or nil on failure / unknown provider.
+
+   Routes through svar so OAuth headers (`anthropic-version`,
+   `chatgpt-account-id`, ...) and per-provider model endpoints
+   (`/codex/models?client_version=1.0.0`, etc.) come from the
+   platform-agnostic `KNOWN_PROVIDERS` registry, not from telegram."
+  [provider]
+  (try
+    (let [probe (cond-> provider
+                  (empty? (:models provider))
+                  (assoc :models [{:name "probe"}]))
+          svar-provider (vis/->svar-provider probe)
+          router        (svar/make-router [svar-provider])
+          raw           (svar/models! router)]
+      (->> raw
+        (map (fn [m] (or (:id m) (:name m) (:slug m))))
+        (filter string?)
+        (filter #(vis/provider-model-visible? (:id provider) %))
+        distinct
+        vec))
+    (catch Throwable _ nil)))
+
+(defn- live-models-for [provider]
+  (let [{:keys [fetched-at-ms ttl-ms by-provider]} @model-catalog-cache
+        now (System/currentTimeMillis)]
+    (if (and (< (- now fetched-at-ms) (long ttl-ms))
+          (contains? by-provider (:id provider)))
+      (get by-provider (:id provider))
+      (let [fresh (or (fetch-live-models provider) [])]
+        (swap! model-catalog-cache
+          (fn [state]
+            (cond-> state
+              (>= (- now (:fetched-at-ms state)) (:ttl-ms state))
+              (assoc :fetched-at-ms now :by-provider {})
+              :always
+              (assoc-in [:by-provider (:id provider)] fresh))))
+        fresh))))
+
+(defn- invalidate-model-catalog! []
+  (swap! model-catalog-cache assoc :fetched-at-ms 0 :by-provider {}))
+
+(defn- model-cycle-entries
+  "Build the model-cycle list shown by `/models`.
+
+   Configured models (in `config.edn`) come first, in their persisted
+   order, so the user's pinned defaults stay stable. Live models from
+   `svar/models!` follow, deduped against the configured set, so newly
+   released models (Claude Opus 4.7, GPT-5.5, ...) auto-appear in the
+   menu without anyone editing config. Live-only entries are flagged
+   with `:live-only? true` and get persisted into the provider on
+   selection (see `select-model-entry`)."
+  [config]
   (->> (:providers config)
     (mapcat (fn [provider]
-              (keep #(model-entry provider %) (:models provider))))
+              (let [configured     (->> (:models provider)
+                                     (keep #(model-entry provider %))
+                                     vec)
+                    configured-ids (into #{} (map :model) configured)
+                    live-only      (->> (live-models-for provider)
+                                     (remove configured-ids)
+                                     (mapv (fn [model-id]
+                                             (-> (model-entry provider {:name model-id})
+                                               (assoc :live-only? true)))))]
+                (concat configured live-only))))
     vec))
 
 (defn- active-model-entry [config]
   (when-let [provider (first (:providers config))]
     (model-entry provider (first (:models provider)))))
 
-(defn- model-entry-label [{:keys [provider-id model]}]
-  (str (some-> provider-id name) "/" model))
+(defn- model-entry-label [{:keys [provider-id model live-only?]}]
+  (str (some-> provider-id name) "/" model (when live-only? " (live)")))
 
 (defn- current-model-label []
   (if-let [entry (active-model-entry (or (vis/load-config) {:providers []}))]
@@ -423,10 +494,17 @@
     (fn [providers]
       (mapv (fn [provider]
               (if (= provider-id (:id provider))
-                (update provider :models
-                  #(move-to-front (fn [candidate]
-                                    (= model (vis/model-name candidate)))
-                     %))
+                (let [models (or (:models provider) [])
+                      has?   (some #(= model (vis/model-name %)) models)
+                      ;; Append a live-only model the user just
+                      ;; picked so it persists; `move-to-front`
+                      ;; below promotes it to active.
+                      models (cond-> models
+                               (not has?) (-> vec (conj {:name model})))]
+                  (assoc provider :models
+                    (move-to-front (fn [candidate]
+                                     (= model (vis/model-name candidate)))
+                      models)))
                 provider))
         (move-to-front #(= provider-id (:id %)) providers)))))
 
@@ -437,6 +515,10 @@
     (let [resolved (or (vis/reload-config!) persistent)
           router   (vis/rebuild-router! resolved)]
       (vis/refresh-cached-routers! router))
+    ;; Catalog is provider-keyed; provider rotation may change which
+    ;; provider is active. Drop the cache so the next `/models` call
+    ;; reflects the freshly-applied router state.
+    (invalidate-model-catalog!)
     persistent))
 
 (defn- find-model-entry [entries selection]
@@ -446,9 +528,14 @@
       (let [needle (str/lower-case selection)]
         (first
           (filter (fn [entry]
-                    (let [label (str/lower-case (model-entry-label entry))
-                          model (str/lower-case (:model entry))]
-                      (or (= needle label) (= needle model))))
+                    (let [;; Strip optional " (live)" tag so users
+                          ;; can paste either form.
+                          label-with-tag (str/lower-case (model-entry-label entry))
+                          label-bare     (str/replace label-with-tag #"\s*\(live\)$" "")
+                          model          (str/lower-case (:model entry))]
+                      (or (= needle label-with-tag)
+                        (= needle label-bare)
+                        (= needle model))))
             entries))))))
 
 (defn- select-model! [selection]
