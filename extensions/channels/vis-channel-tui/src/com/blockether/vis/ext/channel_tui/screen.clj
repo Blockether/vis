@@ -1935,10 +1935,16 @@
                          (recur))
 
                        :send
-                       (do (if-let [cmd (or (slash/selected-suggestion
-                                              (active-slash-suggestions screen
-                                                (assoc @state/app-db :input state)))
-                                          (slash-command-for-input screen state))]
+                       ;; Enter does NOT pick the highlighted slash
+                       ;; suggestion any more — Tab is the only key that
+                       ;; acts on the menu. Enter still runs an EXACT
+                       ;; slash command (the user typed `/clear` in
+                       ;; full and hit Enter), or otherwise submits the
+                       ;; input as a normal message. Keep this in sync
+                       ;; with the slash overlay title bar in render.clj
+                       ;; (`slash-title-hints`) which advertises only
+                       ;; `↑↓/wheel select` and `Tab complete`.
+                       (do (if-let [cmd (slash-command-for-input screen state)]
                              (do (run-command! cmd (:slash/args cmd))
                                (state/dispatch [:reset-input]))
                              (submit-input! @state/app-db state))
