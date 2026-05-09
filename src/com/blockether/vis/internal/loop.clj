@@ -3137,6 +3137,12 @@
                                 :user-request user-request
                                 :messages nil
                                 :status :running})
+        ;; 1-based ordinal of THIS turn within the conversation. The DB
+        ;; soul row already has it (computed in the same insert
+        ;; transaction); reading it back here lets the channel surface
+        ;; render `Turn: 4` instead of `Turn: 39a2d97d`.
+        turn-position        (persistance/db-conversation-turn-position
+                               (:db-info env) conversation-turn-id)
         result (iteration-loop env user-request (assoc loop-opts :conversation-turn-id conversation-turn-id))
         prior-outcome (->prior-outcome result)
         _ (persistance/db-update-conversation-turn! (:db-info env) conversation-turn-id
@@ -3147,7 +3153,9 @@
              :tokens          (:tokens result)
              :cost            (:cost result)
              :prior-outcome   prior-outcome})]
-    (assoc result :conversation-turn-id conversation-turn-id :prior-outcome prior-outcome)))
+    (cond-> (assoc result :conversation-turn-id conversation-turn-id
+              :prior-outcome prior-outcome)
+      turn-position (assoc :turn-position turn-position))))
 
 (defn custom-bindings
   "Current custom SCI bindings {sym -> value}."
@@ -3468,7 +3476,11 @@
 
    `:provider` and `:model` are both attached to the persisted cost
    map so the web footer / meta layer can render `provider/model / N
-   iteration / duration / tokens / $total` after a restart."
+   iteration / duration / tokens / $total` after a restart.
+
+   `:conversation-turn-id` and `:turn-position` are surfaced on the
+   returned map so channels (TUI, Telegram) can render `Turn: 4`
+   labels on live answers without round-tripping back to the DB."
   [{:keys [db-info root-model root-provider]}
    {:keys [conversation-turn-id start-time iteration-count status status-id trace locals
            answer confidence reasoning total-tokens-atom total-cost-atom]}]
@@ -3477,7 +3489,11 @@
                           (and root-model (not (:model @total-cost-atom)))
                           (assoc :model (str root-model))
                           (and root-provider (not (:provider @total-cost-atom)))
-                          (assoc :provider root-provider))]
+                          (assoc :provider root-provider))
+        ;; Resolve the 1-based turn ordinal once so both branches
+        ;; (failure + success) can attach it without a duplicate read.
+        turn-position (persistance/db-conversation-turn-position
+                        db-info conversation-turn-id)]
     (if status
       ;; failure path - surface the fallback answer (built by the loop for
       ;; :error) to the caller. Leaving
@@ -3506,7 +3522,9 @@
                    :duration-ms     duration-ms
                    :tokens          @total-tokens-atom
                    :cost            cost-with-model}
-            (some? locals) (assoc :locals locals))))
+            (some? conversation-turn-id) (assoc :conversation-turn-id conversation-turn-id)
+            (some? turn-position)        (assoc :turn-position turn-position)
+            (some? locals)               (assoc :locals locals))))
       ;; success path
       (do
         (log-stage! :turn-end 0
@@ -3529,8 +3547,10 @@
                  :duration-ms     duration-ms
                  :tokens          @total-tokens-atom
                  :cost            cost-with-model}
-          (some? confidence) (assoc :confidence confidence)
-          (some? reasoning)  (assoc :reasoning reasoning))))))
+          (some? conversation-turn-id) (assoc :conversation-turn-id conversation-turn-id)
+          (some? turn-position)        (assoc :turn-position turn-position)
+          (some? confidence)           (assoc :confidence confidence)
+          (some? reasoning)            (assoc :reasoning reasoning))))))
 
 ;; -----------------------------------------------------------------------------
 ;; Public entry point

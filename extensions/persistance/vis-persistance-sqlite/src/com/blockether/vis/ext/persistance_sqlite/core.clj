@@ -845,6 +845,18 @@
                        :created_at    now}]})
           soul-id)))))
 
+(defn db-conversation-turn-position
+  "Return the 1-based `position` integer of `conversation-turn-id`
+   from `conversation_turn_soul`, or `nil` when the row is absent.
+   Lightweight - one indexed lookup on the soul table."
+  [db-info conversation-turn-id]
+  (when (and (ds db-info) conversation-turn-id)
+    (:position
+     (query-one! db-info
+       {:select [:position]
+        :from   :conversation_turn_soul
+        :where  [:= :id (->ref conversation-turn-id)]}))))
+
 (defn- latest-conversation-turn-state [db-info conversation-turn-soul-id-s]
   (query-one! db-info
     {:select [:*]
@@ -1362,7 +1374,7 @@
     (:iteration_id r)             (assoc :iteration-id (->uuid (:iteration_id r)))
     (:iteration_position r)       (assoc :iteration-position (:iteration_position r))))
 
-(defn- row->var-index-entry
+(defn- row->bindings-entry
   [r]
   (let [value (<-blob (:result r))]
     (cond-> {:name        (symbol (:name r))
@@ -1385,7 +1397,7 @@
    (if (and (ds db-info) conversation-id)
      (let [state-id-s (latest-state-id db-info conversation-id)]
        (if state-id-s
-         (mapv row->var-index-entry
+         (mapv row->bindings-entry
            (query! db-info
              (cond-> {:select [:es.name :es.conversation_state_id
                                :est.version :est.result :est.expr :est.created_at
