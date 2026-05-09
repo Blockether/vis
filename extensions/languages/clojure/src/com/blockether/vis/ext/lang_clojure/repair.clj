@@ -319,7 +319,7 @@
     (if (<= n 800) s (str (subs s 0 800) "…<+" (- n 800) " chars>"))))
 
 (defn- channel-render-repair
-  [result _chan-id]
+  [result]
   ;; `result` is the inner repair payload only (no :info access from
   ;; the new contract). Show the canonical pr-str inside a clojure block.
   (md/code-block "clojure" (pr-str result)))

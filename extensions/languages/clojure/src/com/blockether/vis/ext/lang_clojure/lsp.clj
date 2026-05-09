@@ -184,7 +184,7 @@
       (if (<= n 800) s (str (subs s 0 800) "…<+" (- n 800) " chars>")))))
 
 (defn- channel-render-lsp
-  [result _chan-id]
+  [result]
   (md/join
     (md/p (if (sequential? result) (count result) 1) "result(s).")
     (md/code-block "clojure" (pr-str result))))

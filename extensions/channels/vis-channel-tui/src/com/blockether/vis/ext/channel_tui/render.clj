@@ -3194,13 +3194,23 @@
                                     (wrap-text thinking-text fill-w))))))
                           texts)]
             (when (seq entries)
-              (let [preview-entries (maybe-preview-thinking-entries
-                                      {:entries              entries
-                                       :conversation-id      conversation-id
-                                       :detail-expansions   detail-expansions
-                                       :conversation-turn-id conversation-turn-id
-                                       :iteration-number    iteration-number
-                                       :max-w               fill-w})]
+              ;; When live-preview? is true, `live-preview-thinking-text`
+              ;; above already injected an inline `▸ REASONING / N chars
+              ;; hidden while live` marker into the streaming text, so
+              ;; running `maybe-preview-thinking-entries` on top of it
+              ;; would stack a second `▾ REASONING / N lines hidden`
+              ;; summary on the same content. Skip the post-stream
+              ;; collapse during live preview - the inline trim is the
+              ;; only summary the user should see while streaming.
+              (let [preview-entries (if live-preview?
+                                      entries
+                                      (maybe-preview-thinking-entries
+                                        {:entries              entries
+                                         :conversation-id      conversation-id
+                                         :detail-expansions   detail-expansions
+                                         :conversation-turn-id conversation-turn-id
+                                         :iteration-number    iteration-number
+                                         :max-w               fill-w}))]
                 (vec (concat [(line-entry (str thinking-marker ""))]
                        preview-entries
                        [(line-entry (str thinking-marker ""))]))))))
@@ -3278,7 +3288,16 @@
                 code-text     (str/trim (or form ""))
                 formatted     (format-clojure-ansi code-text fill-w)
                 code-lines    (str/split-lines formatted)
-                c-lines       (mapv #(line-entry (str c-marker %)) code-lines)
+                code-node-id  (when conversation-id
+                                (detail-node-id {:conversation-turn-id conversation-turn-id
+                                                 :iteration-number    iteration-number
+                                                 :block-number        block-number
+                                                 :section             :iteration
+                                                 :kind                :code}))
+                c-lines       (tag-copy-block-body
+                                (mapv #(line-entry (str c-marker %)) code-lines)
+                                code-node-id
+                                code-text)
                 result-str    (when results (get results idx))
                 result-kind   (when result-kinds (get result-kinds idx))
                 result-detail (when result-details (get result-details idx))

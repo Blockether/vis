@@ -446,7 +446,7 @@
       "\n" head)))
 
 (defn- channel-render-exa
-  [result _chan-id]
+  [result]
   (let [{:keys [tool query content truncated? temp-file]} result]
     (md/join
       (md/p "Exa" (md/code tool) ":" (md/code query))

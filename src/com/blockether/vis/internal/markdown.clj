@@ -629,6 +629,51 @@
     (and (string? line)
       (str/starts-with? (str/trim line) "```"))))
 
+(defn- collapse-blanks-around-fences
+  "Normalize prose↔fenced-code transitions to use exactly one newline.
+
+   LLM answers often emit a blank line between prose and an opening
+   fenced code block (and another after the closing fence). The chat
+   bubble renderer treats that blank line as a paragraph break and
+   leaves a visible gap before/after the code block. Collapse it so
+   prose and fence sit on adjacent lines:
+
+     `Intro:\n\n```text`     -> `Intro:\n```text`
+     ` ```\n\nDone.`         -> ` ```\nDone.`
+
+   Inside fenced code is preserved verbatim — only blank lines on the
+   prose side of the fence boundary are removed."
+  [text]
+  (if-not (and (string? text) (str/includes? text "```"))
+    text
+    (let [lines (vec (str/split-lines text))
+          n     (count lines)]
+      (loop [idx      0
+             in-code? false
+             acc      []]
+        (if (>= idx n)
+          (str/join "\n" acc)
+          (let [line     (nth lines idx)
+                fence?   (fence-line? line)
+                opening? (and fence? (not in-code?))
+                closing? (and fence? in-code?)
+                acc'     (if opening?
+                           (loop [a acc]
+                             (if (and (seq a) (str/blank? (peek a)))
+                               (recur (pop a))
+                               a))
+                           acc)
+                acc''    (conj acc' line)
+                next-idx (if closing?
+                           (loop [j (inc idx)]
+                             (if (and (< j n) (str/blank? (nth lines j)))
+                               (recur (inc j))
+                               j))
+                           (inc idx))]
+            (recur next-idx
+              (if fence? (not in-code?) in-code?)
+              acc'')))))))
+
 (defn- normalize-summary-section-bullets
   "Repair malformed final-answer summaries where a section bullet is
    followed by sibling evidence bullets:
@@ -963,6 +1008,7 @@
     text
     (-> text
       normalize-glued-fences
+      collapse-blanks-around-fences
       normalize-summary-section-bullets
       normalize-heading-boundaries
       normalize-loose-inline-islands

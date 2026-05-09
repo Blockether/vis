@@ -297,6 +297,74 @@
     (catch Throwable e
       (ex-message e))))
 
+(defn- string-as-fn-call?
+  "True when `form` is a list whose head is a String literal -- a structural
+   shape that has no legitimate use in Clojure (strings are not IFns) and
+   produces a runtime ClassCastException at the call site. Conv 0d25a3e1
+   shipped `(v/bold (\"...\"))` from JS/Python paren leakage; the reader
+   accepts it but eval crashes."
+  [form]
+  (and (seq? form)
+    (string? (first form))))
+
+(defn- answer-form?
+  "True for `(answer ...)` calls, regardless of namespace. The lint pass
+   below only walks INSIDE these forms because (answer ...) is the
+   user-facing markdown DSL surface where shapes like `(v/bold (\"x\"))`
+   are unambiguously broken. Outside (answer ...), Clojure source can
+   legitimately call into anything, so we don't second-guess it."
+  [form]
+  (and (seq? form)
+    (symbol? (first form))
+    (= "answer" (name (first form)))
+    (nil? (namespace (first form)))))
+
+(defn- find-string-as-fn-in-answer
+  "Walk every `(answer ...)` subtree in `forms` and return the first list
+   whose head is a String literal, or nil. The walk is scoped to answer
+   bodies only -- regular Clojure code outside (answer ...) is left
+   alone."
+  [forms]
+  (some (fn [top]
+          (some (fn [node]
+                  (when (string-as-fn-call? node) node))
+            (when (coll? top) (tree-seq coll? seq top))))
+    (filter answer-form?
+      (mapcat #(tree-seq coll? seq %) forms))))
+
+(defn- string-as-fn-mistake-message
+  [forms]
+  (when-let [bad (find-string-as-fn-in-answer forms)]
+    (str "String-as-fn lint rejected this iteration before evaluation: "
+      "inside (answer ...) a Clojure list has a String literal as its head -- "
+      (pr-str bad)
+      " -- which would throw ClassCastException (String cannot be cast to IFn) at runtime. "
+      "Most often this is JS/Python call-paren syntax leaking in: write "
+      "`(v/bold \"text\")`, not `(v/bold(\"text\"))`. Recovery: drop the inner "
+      "parentheses around the string literal so the helper receives the "
+      "string directly.")))
+
+(defn- detect-common-mistakes
+  "Pre-eval lint pass scoped to `(answer ...)` bodies. Returns an error
+   string when an answer body contains a structural shape that has zero
+   legitimate use in Clojure and would crash at SCI eval time. Currently:
+
+     - String-as-fn calls, e.g. `(v/bold (\"x\"))` from JS/Python paren
+       leakage -- runtime would throw `String cannot be cast to IFn`.
+
+   Returns nil if nothing structural is wrong, or if the offending shape
+   lives outside an (answer ...) form. Reader / parser errors stay the
+   responsibility of `parse-clojure-syntax`; this lint only fires on
+   cleanly-parsed source."
+  [code]
+  (when (string? code)
+    (try
+      (let [forms (check-syntax code)]
+        (string-as-fn-mistake-message forms))
+      (catch Throwable _
+        ;; Reader failure -- defer to parse-clojure-syntax / extension rescue.
+        nil))))
+
 (defn- edamame-parses?
   "Predicate the repair search hands to `parse-diagnose/try-quote-rebalance`.
    Returns true when `src` survives `edamame/parse-string-all` with
@@ -488,17 +556,6 @@
 
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
-
-(defn- detect-common-mistakes [code]
-  (let [s (str/trim code)]
-    (cond
-      (re-find #"#\([^)]*#\(" s)
-      "Nested #() is illegal in Clojure. Rewrite inner #() as (fn [...] ...)"
-
-      (markdown-fence-block? s)
-      "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms inside the code block."
-
-      :else nil)))
 
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [stdout-writer (java.io.StringWriter.)
