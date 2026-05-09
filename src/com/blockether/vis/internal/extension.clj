@@ -197,8 +197,6 @@
    the SAME `:position` index in both `:journal` and `:channel` vecs."
   nil)
 
-(declare assert-sink-entry!)
-
 (defn- next-sink-position!
   "Atomically claim the next position in the per-form counter. Returns the
    incremented integer (post-increment so the first call returns 0)."
