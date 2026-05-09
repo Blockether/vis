@@ -71,11 +71,12 @@
     (expect (= "# " (md/h1)))))
 
 (defdescribe inline-test
-  (it "bold / italic / bold-italic / strike"
+  (it "bold / italic / bold-italic / strike / underline"
     (expect (= "**x**"   (md/bold "x")))
     (expect (= "*x*"     (md/italic "x")))
     (expect (= "***x***" (md/bold-italic "x")))
-    (expect (= "~~x~~"   (md/strike "x"))))
+    (expect (= "~~x~~"   (md/strike "x")))
+    (expect (= "<u>x</u>" (md/underline "x"))))
 
   (it "em / strong are HTML-semantic aliases for italic / bold (registered as SCI symbols)"
     ;; The aliases are sandbox-only (not Clojure-side defns), so we
@@ -83,6 +84,7 @@
     ;; directly from the test ns.
     (let [by-sym (into {} (map (juxt :ext.symbol/sym identity)) md/markdown-symbols)]
       (expect (= md/italic (get-in by-sym ['em :ext.symbol/fn])))
+      (expect (= md/italic (get-in by-sym ['i :ext.symbol/fn])))
       (expect (= md/bold   (get-in by-sym ['strong :ext.symbol/fn])))))
 
   (it "inline emphasis helpers are variadic: parts concatenated, nil dropped, seqs spliced"
@@ -97,6 +99,8 @@
               (md/code "v/" "cat")))
     (expect (= "~~old~~"
               (md/strike "o" nil "ld")))
+    (expect (= "<u>emphasised</u>"
+              (md/underline "emphasised")))
     (expect (= "<kbd>Ctrl+K</kbd>"
               (md/kbd "Ctrl+K"))))
 
@@ -633,7 +637,7 @@
   (it "exposes one symbol entry per public surface fn"
     (let [syms  (set (map :ext.symbol/sym md/markdown-symbols))
           names #{'h 'h1 'h2 'h3 'h4 'h5 'h6
-                  'p 'bold 'strong 'italic 'em 'bold-italic 'strike 'code 'kbd
+                  'p 'bold 'strong 'italic 'em 'i 'bold-italic 'strike 'underline 'code 'kbd
                   'link 'image 'file-link 'anchor
                   'code-block 'blockquote 'quote 'hr 'br 'details 'summary
                   'li 'ul 'ol 'checklist

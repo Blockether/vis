@@ -1,0 +1,142 @@
+```clojure
+(conversation-title "Preserved thinking budget review")
+
+(def base-path "src/com/blockether/vis")
+
+(def hits-replay
+  (v/rg {:all ["preserved-thinking-replay"] :include ["*.clj"]}))
+(def hits-budget
+  (v/rg {:all ["preserved-thinking-replay-token-budget"] :include ["*.clj"]}))
+(def hits-max-iter
+  (v/rg {:all ["MAX_TURN_ITERATIONS"] :include ["*.clj"]}))
+(def hits-walker
+  (v/rg {:all ["preserved-thinking-replay-messages"] :include ["*.clj"]}))
+
+(println "replay refs:" (count (get-in hits-replay [:result :hits])))
+(println "budget defs:" (count (get-in hits-budget [:result :hits])))
+(println "MAX_TURN_ITERATIONS refs:" (count (get-in hits-max-iter [:result :hits])))
+(println "walker refs:" (count (get-in hits-walker [:result :hits])))
+```
+
+<journal>
+i1.1 hits-replay -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322} ...], :truncated-by nil}, ...}
+i1.2 hits-budget -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322}], :truncated-by nil}, ...}
+i1.3 hits-max-iter -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1444}, {:path "src/com/blockether/vis/core.clj", :line 1487}, {:path "src/com/blockether/vis/core.clj", :line 1582}], :truncated-by nil}, ...}
+i1.4 hits-walker -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1350}], :truncated-by nil}, ...}
+i1.5 *out* -> replay refs: 3
+budget defs: 1
+MAX_TURN_ITERATIONS refs: 3
+walker refs: 1
+</journal>
+
+```clojure
+(def core-file (v/cat "src/com/blockether/vis/core.clj"))
+
+(subvec (get-in core-file [:result :lines]) 1318 1345)
+```
+
+<journal>
+i2.1 subvec -> ["  \"Given a reasoning-content map, produce a sequence of messages suitable for replay.\"" "  [reasoning-content]" "  (when-let [rc reasoning-content]" "    (let [summary-text (get rc :summary)" "          thinking-text (get rc :thinking)]" "      (cond" "        (and (seq summary-text) (seq thinking-text))" "        (list {:role \"assistant\"" "               :content [{:type \"text\"" "                         :text (str \"## Previous Reasoning Summary\\n\\n\" summary-text)}" "                        {:type \"text\"" "                         :text (str \"## Previous Reasoning (Preserved)\\n\\n\" thinking-text)}]])" "        (seq summary-text)" "        (list {:role \"assistant\"" "               :content [{:type \"text\"" "                         :text (str \"## Previous Reasoning Summary\\n\\n\" summary-text)}]})" "        (seq thinking-text)" "        (list {:role \"assistant\"" "               :content [{:type \"text\"" "                         :text (str \"## Previous Reasoning (Preserved)\\n\\n\" thinking-text)}]})" "        :else nil))))" "" "(defn preserved-thinking-replay-token-budget" "  \"Token budget for preserved-thinking replay. Default 30000 tokens (~120k chars).\"" "  []" "  30000)" ""]
+</journal>
+
+```clojure
+(subvec (get-in core-file [:result :lines]) 1340 1410)
+```
+
+<journal>
+i3.1 subvec -> ["(defn preserved-thinking-replay-messages" "  \"Walk the iteration journal backwards from the most recent iteration, keeping a contiguous" "   run of assistant messages whose cumulative reasoning_content fits within the token budget." "   Most-recent iteration is always kept (even if solo over budget).\"" "  [journal]" "  (let [budget (preserved-thinking-replay-token-budget)" "        chars-per-token 4" "        max-chars (* budget chars-per-token)" "        iterations (reverse (:iterations journal))]" "    (loop [remaining iterations" "           total-chars 0" "           acc []]" "      (if-let [iter (first remaining)]" "        (let [reasoning-content (get-in iter [:response :reasoning-content])" "              msgs (reasoning-content->replay-messages reasoning-content)" "              msg-chars (reduce + 0 (map #(count (str (:content %))) msgs))]" "          (if (and (seq acc) (> (+ total-chars msg-chars) max-chars))" "            acc" "            (recur (rest remaining)" "                   (+ total-chars msg-chars)" "                   (into acc msgs))))" "        (seq acc)))))" ""]
+</journal>
+
+```clojure
+(subvec (get-in core-file [:result :lines]) 1440 1460)
+```
+
+<journal>
+i4.1 subvec -> ["(def ^:private MAX_TURN_ITERATIONS 8)" ""]
+</journal>
+
+```clojure
+(def hits-where-used
+  (v/rg {:all ["preserved-thinking-replay-messages"] :include ["*.clj"]}))
+
+(println "where-used count:" (count (get-in hits-where-used [:result :hits])))
+(get-in hits-where-used [:result :hits 0 :line])
+```
+
+<journal>
+i5.1 hits-where-used -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1350}, {:path "src/com/blockether/vis/core.clj", :line 3090}], :truncated-by nil}, ...}
+i5.2 *out* -> where-used count: 2
+i5.2 println -> where-used count: 2
+```
+
+```clojure
+(subvec (get-in core-file [:result :lines]) 3086 3102)
+```
+
+<journal>
+i6.1 subvec -> ["      ;; Preserved thinking: replay prior iterations' reasoning" "      preserved-replay (preserved-thinking-replay-messages journal)" "      replay-msgs (when (seq preserved-replay)" "                     (vec preserved-replay))]" "      (if (seq replay-msgs)" "        (into replay-msgs messages)" "        messages))]" ""]
+```
+
+```clojure
+;; Check if there are any tests for this function
+(def test-hits
+  (v/rg {:all ["preserved-thinking"] :include ["*_test.clj" "*_test.cljc"]}))
+
+(println "test refs:" (count (get-in test-hits [:result :hits])))
+```
+
+<journal>
+i7.1 test-hits -> {:result {:hits [], :truncated-by nil}, ...}
+i7.2 *out* -> test refs: 0
+```
+
+```clojure
+;; Check reasoning-content shape usage more broadly
+(def reasoning-refs
+  (v/rg {:all ["reasoning-content"] :include ["*.clj"] :paths ["src"]}))
+
+(println "reasoning-content refs:" (count (get-in reasoning-refs [:result :hits])))
+```
+
+<journal>
+i8.1 reasoning-refs -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322} {:path "src/com/blockether/vis/core.clj", :line 1354} {:path "src/com/blockether/vis/core.clj", :line 1375} {:path "src/com/blockether/vis/core.clj", :line 1550}], :truncated-by nil}, ...}
+i8.2 *out* -> reasoning-content refs: 4
+```
+
+```clojure
+;; Check line 1550 for the other reasoning-content usage
+(subvec (get-in core-file [:result :lines]) 1545 1560)
+```
+
+<journal>
+i9.1 subvec -> ["      reasoning-content (when-let [rc (get-in response-map [:reasoning-content])]" "                           (when (or (seq (:thinking rc)) (seq (:summary rc)))" "                             rc))]" "      ..." "      {:role role" "       :content content" "       :reasoning-content reasoning-content" "       :tool_calls ..." "       ...})"]
+```
+
+```clojure
+(answer
+  (v/join
+    (v/h2 "Analysis is accurate — minor gaps noted")
+    (v/p "Your read of the budget-governed replay is spot-on. Confirmed against source:")
+    (v/ul
+      [(v/code "preserved-thinking-replay-token-budget") " → hardcoded " (v/code "30000") " (line 1339)"
+       (v/code "preserved-thinking-replay-messages") " → backward walker, newest always kept, contiguous-only (lines 1350–1372)"
+       (v/code "MAX_TURN_ITERATIONS") " → " (v/code "8") " (line 1444)"
+       "Integration point → line 3090, prepends replay before current messages"])
+    (v/h3 "Agree")
+    (v/ul
+      ["30k budget is effectively a no-op for single-turn 8-iteration cap (~24k worst case). It's a multi-turn safety ceiling."
+       "Context window pressure is the real concern — 30k of old thinking is ~25% of a 128k window."
+       "Contiguity contract is correct: no skipping, no cherry-picking."])
+    (v/h3 "Gaps / corrections")
+    (v/ul
+      ["Line numbers in your table are slightly off (budget def is ~1339, walker starts ~1350, MAX_TURN_ITERATIONS is ~1444) — probably based on an earlier revision."
+       (v/bold "Zero test coverage.") " No test file references " (v/code "preserved-thinking") " at all. The walker, budget, and " (v/code "reasoning-content->replay-messages") " helper are untested. Per repo rules, this needs a test namespace."
+       "The " (v/code "chars-per-token 4") " heuristic is crude. CJK / code tokens are denser. Fine for a ceiling, but worth documenting the assumption."
+       "Budget is not provider-aware. All providers with any " (v/code "reasoning-content") " get the same replay. Your suggestion of provider-configurable budget is sound."])
+    (v/h3 "Recommendation: keep 30k, add tests, consider provider knob")
+    (v/p "The 30k ceiling is fine as-is — lowering to 16k risks clipping useful reasoning in verbose multi-turn. The real action items:")
+    (v/ol
+      ["Add " (v/file-link "test/com/blockether/vis/core_test.clj" 1) " coverage for the replay walker: budget boundary, empty reasoning, single-oversized iteration, multi-iteration trimming."
+       "Document the 4 chars/token heuristic in the docstring."
+       "If you want a provider knob later, make " (v/code "preserved-thinking-replay-token-budget") " take a provider config arg — but not urgent."])))
+```

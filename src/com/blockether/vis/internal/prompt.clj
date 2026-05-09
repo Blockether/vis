@@ -99,14 +99,42 @@
    older entries with an explicit marker."
   0.15)
 
+(def ^:const PRESERVED_THINKING_REPLAY_FRACTION
+  "Fraction of `MAX_ITERATION_CONTEXT_TOKENS` reserved for preserved-thinking
+   replay across iterations within a single turn. Sized to fit ~10 newest
+   iterations of typical thinking (~3k tokens each) under the 200k cap, which
+   covers the soft convergence-nudge region (`CONVERGENCE_NUDGE_AT = 8`)
+   comfortably while still leaving room for journal + bindings + output.
+
+   Coupled to the cap: if `MAX_ITERATION_CONTEXT_TOKENS` is bumped, the
+   replay budget tracks it (instead of being a magic 30000 that drifts out
+   of policy). Sibling of `JOURNAL_CONTEXT_FRACTION` (0.50) and
+   `BINDINGS_CONTEXT_FRACTION` (0.15)."
+  0.15)
+
 (def ^:const MAX_ITERATION_CONTEXT_TOKENS
-  "Hard cap for Vis' model-facing working memory, independent of provider
-   advertised context size. Huge-window models can accept hundreds of thousands
-   of input tokens, but the RLM loop gets worse there: output budgets are
-   consumed by reasoning/tool planning and Responses streams can end as
-   `max_output_tokens`. Durable evidence stays in the DB; each iteration only
-   needs a compact working set."
-  64000)
+  "Hard cap for Vis' model-facing working memory. UNIFORM across every
+   provider: doesn't matter whether the model advertises 8k (Haiku),
+   200k (Claude Sonnet), or 1M (Gemini) context - Vis treats them all
+   as 200 000 tokens.
+
+   Why a flat ceiling, not provider-derived:
+
+   - The RLM loop degrades on huge windows: output budgets get consumed
+     by reasoning/tool planning, Responses streams end as
+     `max_output_tokens`, attention quality drops on long tails. The
+     decode-clause / inference cost per token is also non-trivial above
+     ~200k.
+   - Durable evidence stays in the DB; each iteration only needs a
+     compact working set, not the whole conversation.
+   - Uniform behavior across providers makes budget math (journal,
+     bindings, replay, headroom) one calculation, not a provider switch.
+     `effective-context-limit` clamps every model to this value so a
+     1M-token Gemini and a 200k-token Sonnet present the same working
+     memory to the loop.
+   - Smaller-window models still get their NATIVE size when it's below
+     this cap (8k Haiku stays 8k); the cap only trims windows above 200k."
+  200000)
 
 (def ^:const MAX_JOURNAL_TOKENS
   "Absolute token cap for rendered <journal>. This is layered on top of
@@ -241,10 +269,6 @@
       (or stdout-suffix "")
       (or stderr-suffix ""))))
 
-(defn- journal-observable-block?
-  [blk]
-  (not= :vis/silent (:rendering-kind blk)))
-
 (defn- format-journal-iteration-block
   "One iteration's full `<journal>` segment: per-block labels
    include the leading `:comment` (when present) right above
@@ -254,7 +278,7 @@
    not through the journal."
   [iteration-position iteration-data]
   (let [{:keys [blocks answer]} iteration-data
-        visible-blocks (filter journal-observable-block? (or blocks []))
+        visible-blocks (vec (or blocks []))
         block-lines (vec (mapcat (fn [[k blk]]
                                    (let [comment-text (some-> (:comment blk) str/trim)
                                          comment-line (when (and comment-text
@@ -733,6 +757,13 @@
   "You are Vis, a recursive language model (RLM) running in a sandboxed
 Small Clojure Interpreter (SCI).
 
+OUTPUT FORMAT — STRICT:
+
+  Your reply is ONE OR MORE fenced ```clojure blocks. NOTHING else.
+
+  - No prose outside the fences. Use ;; comments INSIDE the fence
+    for narration.
+
 GROUND RULE — how you operate every turn:
 
   1. You GENERATE one OR MORE fenced ```clojure blocks per
@@ -742,9 +773,9 @@ GROUND RULE — how you operate every turn:
   2. The ENGINE evaluates each top-level form, in order, across
      every fenced block in the iteration.
   3. The ENGINE AUTOMATICALLY populates results into <journal>,
-     one line per OBSERVABLE form (see SILENT FORMS below).
-     You never write results yourself. You never imagine them.
-     You never pre-fill values you have not yet evaluated.
+     one line per top-level form. You never write results
+     yourself. You never imagine them. You never pre-fill values
+     you have not yet evaluated.
   4. You OBSERVE the <journal> entries the engine produced for the
      forms YOU just emitted, plus the live shape of every binding
      in <bindings>.
@@ -758,41 +789,39 @@ Do not narrate hypothetical results. Do not echo a var to \"see\"
 it — bind it, then look at the journal/bindings entry the engine
 appended.
 
-SILENT FORMS — defs are acquisition, not observation:
+DEFS RENDER — every top-level form shows up in <journal>:
 
-  A lone top-level `(def x ...)` (or `defonce`) is SILENT in
-  <journal>. It will not produce an `iN.K` line. The bound name
-  appears in <bindings> as a compact shape summary (keys, type,
-  size — not the full value), and the live value stays in the SCI
-  sandbox reachable on every later iteration.
+  Every top-level form, including `(def x ...)` and `(defonce x ...)`,
+  produces an `iN.K` line in <journal>. SCI returns the Var from a
+  `def` so the line reads as `(def x ...) -> #'sandbox/x`; the bound
+  value also appears in <bindings> as a compact shape summary (keys,
+  type, size) and is reachable from the sandbox on every later
+  iteration.
 
-  Sprinkle defs freely. They keep <journal> focused on real
-  observations and do NOT bloat per-iteration context. To inspect
-  a bound value, evaluate the bare symbol or extract a slice
-  (`(get-in x [...])`, `(subvec x i j)`) — those ARE observation
-  forms and DO render in <journal>.
+  Sprinkle defs freely — they ARE observations. To inspect a bound
+  value in detail, evaluate the bare symbol or extract a slice
+  (`(get-in x [...])`, `(subvec x i j)`); those render the same way.
 
-  Block numbering is contiguous over OBSERVABLE forms only. Seven
-  silent defs followed by one observation render as a single
-  `iN.1` line, not `iN.8`.
+  Block numbering is contiguous over every executed form: three
+  defs followed by one bare-symbol read render as `iN.1`..`iN.4`.
 
 TOP-LEVEL DEFS — do NOT wrap plain defs in `(do ...)`:
 
   Always write `(def x ...)` at the TOP level of your block, never
-  nested inside `(do ...)`/`(let ...)`/etc. Top-level defs are silent
-  in <journal> and visible in <bindings> — wrapping them buys NOTHING
-  in journal compactness and LOSES forensic granularity (a throwing
-  def at top-level localizes to its own row; the same def inside
-  `(do ...)` kills the whole batch with one error).
+  nested inside `(do ...)`/`(let ...)`/etc. Top-level defs each get
+  their own <journal> row and their own <bindings> entry — wrapping
+  them in `(do ...)` LOSES forensic granularity (a throwing def at
+  top level localizes to its own row; the same def inside `(do ...)`
+  kills the whole batch with one error).
 
       ✗ (do (def file (v/cat \"x\"))            ; bad: defs hidden
             (def hits (v/rg ...))               ;      inside `do`,
             (subvec ...))                       ;      no granularity
 
       ✓ (def file (v/cat \"x\"))                 ; good: top-level
-        (def hits (v/rg ...))                   ;       silent defs,
-        (subvec ...)                            ;       last form is
-                                                ;       the observation
+        (def hits (v/rg ...))                   ;       defs render,
+        (subvec ...)                            ;       each on its
+                                                ;       own row
 
 BATCHING — `(do ...)` is for non-def side effects + final-value
 selection, NOT for grouping defs:

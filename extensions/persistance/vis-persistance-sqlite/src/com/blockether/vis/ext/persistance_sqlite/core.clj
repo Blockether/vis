@@ -969,8 +969,6 @@
   [exec]
   (cond
     (:error exec) :vis/error
-    (= :vis/silent (:rendering-kind exec)) :vis/silent
-    (= true (:vis/silent exec)) :vis/silent
     (= :vis/system (:rendering-kind exec)) :vis/system
     (= :vis/tool (:rendering-kind exec)) :vis/tool
     (= :vis/answer (:rendering-kind exec)) :vis/answer
@@ -990,8 +988,8 @@
                    :rendering-kind (normalize-rendering-kind exec)}
             (some? (:comment exec))            (assoc :comment (:comment exec))
             (some? (:result exec))             (assoc :result (freeze-safe (:result exec)))
-            (seq (:previews exec))             (assoc :previews (freeze-safe (:previews exec)))
-            (seq (:tool-events exec))          (assoc :tool-events (freeze-safe (:tool-events exec)))
+            (seq (:journal exec))              (assoc :journal (freeze-safe (:journal exec)))
+            (seq (:channel exec))              (assoc :channel (freeze-safe (:channel exec)))
             (some? (:error exec))              (assoc :error  (str (:error exec)))
             (not (blank? (:stdout exec)))      (assoc :stdout (:stdout exec))
             (not (blank? (:stderr exec)))      (assoc :stderr (:stderr exec))
