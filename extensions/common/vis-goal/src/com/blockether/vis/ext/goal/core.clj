@@ -328,18 +328,195 @@
                  (get-goal (:db-info env) (:conversation-id env)))]
     (goal-pure/goal-system-prompt-block g (now-ms))))
 
+;; =============================================================================
+;; SCI sandbox surface — model-side helpers under the `goal/` alias.
+;;
+;; Always on (no `[features] goals = true` flag): the prompt block tells
+;; the model the goal exists, and these helpers let it read / mark / pause
+;; without a TUI human. `:before-fn inject-environment` prepends `env` to
+;; every call so callers from the SCI sandbox don't need to thread it.
+;; =============================================================================
+
+(defn- inject-environment
+  "Mirror of foundation/introspection's :before-fn pattern. SCI calls
+   the symbol with no env arg; the engine's symbol-wrapper invokes this
+   :before-fn with `[env f args]` and we return the same map shape with
+   `env` prepended to args."
+  [env f args]
+  {:env env :fn f :args (into [env] args)})
+
+(defn- env->cid
+  "Resolve the conversation id from a sandbox env. Iteration loop binds
+   `:conversation-id` directly; doctor / REPL paths sometimes leave it
+   nil so callers must guard."
+  [env]
+  (:conversation-id env))
+
+(defn- require-cid! [env action]
+  (let [cid (env->cid env)]
+    (when-not cid
+      (throw (ex-info (str "Cannot " action " — no active conversation in this env")
+               {:type :vis/goal-no-active-conversation
+                :vis/user-error true
+                :action action})))
+    cid))
+
+(defn- safe-db [env]
+  (or (:db-info env)
+    (throw (ex-info "Cannot mutate goal — env has no :db-info handle"
+             {:type :vis/goal-no-db-info
+              :vis/user-error true}))))
+
+;; ----------------------------------------------------------------------------
+;; Sandbox-facing fns. Every public surface lives on a defn (so `:doc` /
+;; `:arglists` come straight off the var meta, the way `vis/symbol`
+;; expects). The fns take `env` as the first arg — the symbol-wrapper's
+;; `inject-environment` :before-fn injects it. From the model's POV the
+;; call sites read `(goal/status)`, `(goal/set "...")`, etc.
+;; ----------------------------------------------------------------------------
+
+;; ----------------------------------------------------------------------------
+;; Implementation fns are private and take `env` explicitly. The PUBLIC
+;; vars (used by `vis/symbol`) are bound below via `def` with the
+;; model-facing `:arglists` lie attached. Defn-via-`def` instead of
+;; `defn` because `defn` overwrites `:arglists` in var meta with the
+;; actual parameter list, defeating the lie.
+;; ----------------------------------------------------------------------------
+
+(defn- status-impl [env]
+  (let [cid (env->cid env)]
+    (when (and (:db-info env) cid)
+      (get-goal (:db-info env) cid))))
+
+(defn- set-impl [env objective]
+  (set-goal! (safe-db env) (require-cid! env :set-goal)
+    {:objective objective :set-by :model}))
+
+(defn- pause-impl [env]
+  (pause-goal! (safe-db env) (require-cid! env :pause-goal)))
+
+(defn- resume-impl [env]
+  (resume-goal! (safe-db env) (require-cid! env :resume-goal)))
+
+(defn- clear-impl [env]
+  (clear-goal! (safe-db env) (require-cid! env :clear-goal)))
+
+(defn- mark-impl [env reason]
+  (mark-goal-done! (safe-db env) (require-cid! env :mark-goal-done) reason))
+
+(def ^{:doc      "Read the current conversation's goal. Returns a map
+  {:objective :status :done-reason :started-at-ms :paused-at-ms
+   :total-paused-ms :set-by :elapsed-ms} or nil when no goal is set.
+  `:status` is one of #{:active :paused :done}; `:done-reason` is
+  #{:achieved :unmet :budget-limited :cleared} or nil; `:elapsed-ms`
+  is paused-aware (the live pause window is subtracted automatically)."
+       :arglists '([])}
+  goal-status status-impl)
+
+(def ^{:doc      "Set or REPLACE the conversation's goal with `objective`.
+  Resets the timer (started-at = now, total-paused-ms = 0). The new
+  goal is tagged :set-by :model. Returns the freshly-set goal map.
+  Throws on blank objective, > 4000 chars, or invalid set-by."
+       :arglists '([objective])}
+  goal-set set-impl)
+
+(def ^{:doc      "Pause the active goal. Freezes the elapsed-ms ticker;
+  the live pause window will be folded into total-paused-ms by the
+  next resume. No-op when already paused. Throws when no goal exists
+  or the goal is :done."
+       :arglists '([])}
+  goal-pause pause-impl)
+
+(def ^{:doc      "Resume the paused goal. Unfreezes the elapsed-ms ticker.
+  No-op when already active. Throws when no goal exists or the goal
+  is :done."
+       :arglists '([])}
+  goal-resume resume-impl)
+
+(def ^{:doc      "Tombstone the goal: status = :done, done-reason :cleared,
+  objective wiped. Idempotent. Use this when the user/model decides
+  the objective is no longer relevant; for finishing successfully,
+  call (goal/mark :achieved) instead."
+       :arglists '([])}
+  goal-clear clear-impl)
+
+(def ^{:doc      "Mark the goal :done with a reason in #{:achieved :unmet
+  :budget-limited}. (For :cleared, call (goal/clear).) Throws when
+  no goal exists or the goal is already :done. The TUI surfaces the
+  reason in the goal subtitle."
+       :arglists '([reason])}
+  goal-mark mark-impl)
+
+;; ----------------------------------------------------------------------------
+;; Symbol entries — each binds the public name (without the leading
+;; `goal-` prefix the local var carries; sandbox sees `goal/status`,
+;; `goal/set`, `goal/pause`, etc. via `:sym` override). The shared
+;; `:ext/ns-alias` below routes them all to the `goal/` alias.
+;; ----------------------------------------------------------------------------
+
+(def ^:private status-symbol
+  (vis/symbol #'goal-status
+    {:sym 'status
+     :before-fn inject-environment
+     :journal-render-fn vis/render-pr-str-journal
+     :channel-render-fn vis/render-pr-str-channel}))
+
+(def ^:private set-symbol
+  (vis/symbol #'goal-set
+    {:sym 'set
+     :before-fn inject-environment
+     :journal-render-fn vis/render-pr-str-journal
+     :channel-render-fn vis/render-pr-str-channel}))
+
+(def ^:private pause-symbol
+  (vis/symbol #'goal-pause
+    {:sym 'pause
+     :before-fn inject-environment
+     :journal-render-fn vis/render-pr-str-journal
+     :channel-render-fn vis/render-pr-str-channel}))
+
+(def ^:private resume-symbol
+  (vis/symbol #'goal-resume
+    {:sym 'resume
+     :before-fn inject-environment
+     :journal-render-fn vis/render-pr-str-journal
+     :channel-render-fn vis/render-pr-str-channel}))
+
+(def ^:private clear-symbol
+  (vis/symbol #'goal-clear
+    {:sym 'clear
+     :before-fn inject-environment
+     :journal-render-fn vis/render-pr-str-journal
+     :channel-render-fn vis/render-pr-str-channel}))
+
+(def ^:private mark-symbol
+  (vis/symbol #'goal-mark
+    {:sym 'mark
+     :before-fn inject-environment
+     :journal-render-fn vis/render-pr-str-journal
+     :channel-render-fn vis/render-pr-str-channel}))
+
+(def ^:private goal-symbols
+  [status-symbol set-symbol pause-symbol resume-symbol clear-symbol mark-symbol])
+
 (def vis-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.goal.core
      :ext/doc       (str "Per-conversation goal feature (Codex-style /goal). "
                       "Soul-level: one durable objective per conversation lifetime, "
-                      "with paused-aware elapsed-ms timer. Set via TUI `/goal X`; "
-                      "iteration loop injects the active goal as a system-prompt block.")
+                      "with paused-aware elapsed-ms timer. Set via TUI `/goal X` or "
+                      "model side `(goal/set \"...\")`; iteration loop injects the "
+                      "active goal as a system-prompt block.")
      :ext/version   "0.1.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
      :ext/kind      "conversation-state"
+     ;; Sandbox alias — model calls `(goal/status)`, `(goal/set "...")`,
+     ;; `(goal/pause)`, etc. Always on; per user fiat, NOT gated behind a
+     ;; `[features] goals = true` flag.
+     :ext/ns-alias  {:ns 'vis.ext.goal :alias 'goal}
+     :ext/symbols   goal-symbols
      ;; Static fragment injected via the canonical extensions surface.
      ;; No `requiring-resolve` from internal/prompt.clj — the goal
      ;; extension hooks itself in like every other extension.
