@@ -123,6 +123,26 @@
           b (r/->ast a)]
       (expect (= a b))))
 
+  (it "is identity-preserving on already-canonical input (cache friendliness)"
+    ;; Critical for `format-answer-with-thinking-data` whose cache
+    ;; keys on `System/identityHashCode answer`. Before identity
+    ;; preservation every render would allocate a fresh canonical
+    ;; vector and miss cache; now repeat passes return the SAME
+    ;; object so cached walker output stays hot.
+    (let [a (r/->ast [:ir [:p "foo " [:c "bar"] " baz"]
+                      [:ul [:li "x"] [:li "y"]]
+                      [:code {:lang "clj"} "(+ 1 1)"]])]
+      (expect (r/canonical? a))
+      (expect (identical? a (r/->ast a)))
+      (expect (identical? a (r/->ast (r/->ast a))))
+      (expect (= (System/identityHashCode a)
+                (System/identityHashCode (r/->ast a))))))
+
+  (it "`canonical?` rejects non-canonical inputs (bare strings, missing attrs, newline in :span)"
+    (expect (not (r/canonical? [:ir {} [:p {} "bare string"]])))
+    (expect (not (r/canonical? [:ir {} [:p [:span {} "x"]]])))
+    (expect (not (r/canonical? [:ir {} [:p {} [:span {} "a\nb"]]]))))
+
   (it "always inserts {} attrs on every vector node"
     (let [out (r/->ast [:ir [:p "x" [:strong "y"]]])]
       (expect (every? (fn [n] (or (not (vector? n)) (map? (second n))))
