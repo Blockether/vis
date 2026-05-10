@@ -43,11 +43,31 @@
   ([text timestamp]
    {:role :user :text text :timestamp timestamp}))
 
+(defn render-answer
+  "Render any answer-input (string | Hiccup | [:ir ...] | seq) to the
+   plain-markdown string the TUI bubble renderer expects.
+
+   The TUI channel registers `:channel/messages-renderer-fn` (see
+   `core/render-for-tui`); we look it up lazily to avoid a load-time
+   cycle with `core.clj`. If the channel isn't registered yet (e.g.
+   unit tests that load `chat.clj` in isolation) we fall back to the
+   shared `vis/render` markdown flavor. Either way, no `pr-str` of
+   IR vectors ever reaches the bubble."
+  [text]
+  (let [renderer (some-> (vis/channel-by-id :tui) :channel/messages-renderer-fn)]
+    (cond
+      (nil? text)    ""
+      renderer       (renderer text)
+      :else          (vis/render text :markdown))))
+
 (defn assistant-message
-  "Create a structured assistant (vis) message with timestamp."
+  "Create a structured assistant (vis) message with timestamp.
+   Non-string `text` is routed through the registered TUI renderer
+   (`:channel/messages-renderer-fn`) so IR / Hiccup answers render
+   as markdown instead of `pr-str`'d EDN."
   ([text] (assistant-message text (java.util.Date.)))
   ([text timestamp]
-   {:role :assistant :text (if (string? text) text (pr-str text)) :timestamp timestamp}))
+   {:role :assistant :text (render-answer text) :timestamp timestamp}))
 
 (defn- rebuild-history
   "Reconstruct message history from DB for a conversation.
@@ -113,7 +133,7 @@
                                              (fn [result]
                                                (when (extension/tool-result? result)
                                                  (let [prov (:info result)]
-                                                   (cond-> (select-keys prov [:op :op-class
+                                                   (cond-> (select-keys prov [:op :op/tag
                                                                               :spec :paths :hit-count :truncated-by
                                                                               :command :cwd :target])
                                                      (get-in result [:result :stdout])
@@ -260,7 +280,7 @@
            tokens (:tokens result)
            cost   (:cost result)
            confidence (:confidence result)]
-       (cond-> {:answer          (vis/render answer :markdown)
+       (cond-> {:answer          (render-answer answer)
                 :iteration-count (or (:iteration-count result) 1)
                 :duration-ms     (:duration-ms result)
                 :conversation-turn-id        (:conversation-turn-id result)}

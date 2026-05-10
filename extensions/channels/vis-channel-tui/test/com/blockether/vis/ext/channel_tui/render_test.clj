@@ -2272,7 +2272,7 @@ body
                   :results ["1 file changed"]
                   :result-kinds [:tool]
                   :result-details [{:op :v/patch
-                                    :op-class :op/edit
+                                    :op/tag :op.tag/action
                                     :presentation-kind :tool/edit
                                     :color-role :tool-color/edit}]
                   :stdouts [""]
@@ -2292,7 +2292,7 @@ body
                         :results [huge-result]
                         :result-kinds [:tool]
                         :result-details [{:op :v/patch
-                                          :op-class :op/edit
+                                          :op/tag :op.tag/action
                                           :presentation-kind :tool/edit
                                           :color-role :tool-color/edit}]
                         :stdouts [""]
@@ -2316,7 +2316,7 @@ body
                         :results [huge-result]
                         :result-kinds [:tool]
                         :result-details [{:op :v/bash
-                                          :op-class :op/shell
+                                          :op/tag :op.tag/action
                                           :presentation-kind :tool/shell
                                           :color-role :tool-color/shell}]
                         :stdouts [""]
@@ -2335,7 +2335,7 @@ body
                                          :results        ["Ran bash in `.` - exit `1`, 1 ms.\n\nstderr:\n\n```text\nExecution error\n```"]
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
-                                                           :op-class :op/shell
+                                                           :op/tag :op.tag/action
                                                            :presentation-kind :tool/shell
                                                            :color-role :tool-color/shell
                                                            :stderr "Execution error"}]
@@ -2355,7 +2355,7 @@ body
                                          :results        ["Ran bash in `.` - exit `0`, 1 ms.\n\nstdout:\n\n```text\nhello\nworld\n```"]
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
-                                                           :op-class :op/shell
+                                                           :op/tag :op.tag/action
                                                            :presentation-kind :tool/shell
                                                            :color-role :tool-color/shell
                                                            :stdout "hello\nworld"
@@ -2382,7 +2382,7 @@ body
                     :results ["Ran bash in `.` - exit `0`, 1 ms.\n\nstdout:\n\n```text\nstdout-line\n```"]
                     :result-kinds [:tool]
                     :result-details [{:op :v/bash
-                                      :op-class :op/shell
+                                      :op/tag :op.tag/action
                                       :presentation-kind :tool/shell
                                       :color-role :tool-color/shell
                                       :stdout "stdout-line"}]
@@ -2445,7 +2445,7 @@ body
                                          :results        [""]
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
-                                                           :op-class :op/shell
+                                                           :op/tag :op.tag/action
                                                            :presentation-kind :tool/shell
                                                            :color-role :tool-color/shell
                                                            :stdout ""
@@ -2466,7 +2466,7 @@ body
                     :results ["Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)."]
                     :result-kinds [:tool]
                     :result-details [{:op :any
-                                      :op-class :op/search
+                                      :op/tag :op.tag/observation
                                       :presentation-kind :tool/search
                                       :color-role :tool-color/search
                                       :spec {:any ["alpha" "beta"] :paths ["src"]}
@@ -2677,7 +2677,7 @@ body
             trace [{:code ["(v/bash \"echo hi\")"]
                     :results [big-body]
                     :result-kinds [:tool]
-                    :result-details [{:op :v/bash :op-class :op/shell
+                    :result-details [{:op :v/bash :op/tag :op.tag/action
                                       :presentation-kind :tool/shell
                                       :color-role :tool-color/shell}]
                     :stdouts [""] :durations [1] :successes [true]}]
@@ -2705,7 +2705,7 @@ body
             trace [{:code ["(v/bash \"echo hi\")"]
                     :results [big-body]
                     :result-kinds [:tool]
-                    :result-details [{:op :v/bash :op-class :op/shell
+                    :result-details [{:op :v/bash :op/tag :op.tag/action
                                       :presentation-kind :tool/shell
                                       :color-role :tool-color/shell}]
                     :stdouts [""] :durations [1] :successes [true]}]

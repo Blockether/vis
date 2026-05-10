@@ -102,7 +102,7 @@
     {}
 
     (= :global scope)
-    {:scope-key "global"}
+    {}
 
     (map? scope)
     (explicit-scope scope)
@@ -175,7 +175,7 @@
 
 (defn ext-put!
   "Upsert one singleton extension-owned aggregate row for key/kind/scope.
-   Returns the decoded row. Requires schema-level scope_key support."
+   Returns the decoded row."
   [env row]
   (persistance/db-put-extension-aggregate! (db-info! env) (normalize-row env row)))
 

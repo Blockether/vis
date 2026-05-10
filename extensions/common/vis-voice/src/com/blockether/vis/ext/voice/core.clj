@@ -201,16 +201,24 @@
   [text {:keys [out-file speaker-id speed]
          model-dir-option :model-dir
          :or {speaker-id 0 speed 1.0}}]
-  (let [dir (or model-dir-option (model-dir))]
+  (let [dir (or model-dir-option (model-dir))
+        ;; Vis answers travel as canonical `[:ir & nodes]` IR
+        ;; vectors. The TTS engine wants plain prose - no Hiccup tags,
+        ;; no markdown markers - so project to text via the public
+        ;; renderer. Strings flow through unchanged.
+        spoken (cond
+                 (nil? text)    ""
+                 (string? text) text
+                 :else          (str (vis/extract-text text)))]
     (ensure-model! dir)
-    (when (str/blank? (str text))
+    (when (str/blank? spoken)
       (throw (ex-info "TTS text is blank" {:type :voice/blank-tts-text})))
     (when (str/blank? (str out-file))
       (throw (ex-info "TTS output file is required" {:type :voice/missing-output-file})))
     (let [parent (.getParentFile (io/file out-file))]
       (when parent (.mkdirs parent)))
     (let [tts   (new-instance "com.k2fsa.sherpa.onnx.OfflineTts" (tts-config dir))
-          audio (call! tts "generate" (str text) (int speaker-id) (float speed))]
+          audio (call! tts "generate" spoken (int speaker-id) (float speed))]
       (call! audio "save" (str out-file))
       {:voice (piper-voice)
        :model-dir dir
@@ -262,9 +270,12 @@
       "</voice_response_mode>")))
 
 (defn speak-answer-async!
-  "Synthesize and play `answer` after the caller has persisted the text answer."
+  "Synthesize and play `answer` after the caller has persisted the text answer.
+   `answer` may be a plain string or canonical `[:ir & nodes]`; the
+   downstream `synthesize-file!` projects to plain text on its own."
   [answer]
-  (when-not (str/blank? (str answer))
+  (when-not (or (nil? answer)
+              (and (string? answer) (str/blank? answer)))
     (future
       (try
         (notify-progress! :synthesize "Synthesizing voice response" 0 -1)

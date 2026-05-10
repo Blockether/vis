@@ -1100,23 +1100,24 @@
         (keyword nm)))))
 
 (defn- mutating-call-form?
-  "True when `form` is a call whose head symbol classifies as a
-   side-effecting op via the engine contract
-   (`extension/side-effect-op?`). Source of truth lives in
-   `src/com/blockether/vis/internal/extension.clj`; tools register or
-   override their op-class via `extension/register-op-class!`.
+  "True when `form` is a call whose head symbol classifies as an
+   action op via the engine contract (`extension/op-tag` returns
+   `:op.tag/action`). Source of truth lives in
+   `src/com/blockether/vis/internal/extension.clj`; tools register
+   or override their op-tag via `extension/register-op-tag!`.
 
-   Reproduced from convo `73f3d325` turn 5: `(z/patch ...) ... (answer
-   \"Now fixed\")` in one iteration; z/patch failed `matched 4 time(s)`
-   but the answer claimed success because the model never saw the
-   failure result before the answer was composed. Read-only tools
-   (v/cat, v/rg, z/locators, z/patch-check, v/patch-check, ...) classify
-   as `:op/read` / `:op/search` / `:op/meta` and stay legal alongside
-   the answer."
+   Reproduced from convo `73f3d325` turn 5: `(z/patch ...) ...
+   (answer \"Now fixed\")` in one iteration; z/patch failed
+   `matched 4 time(s)` but the answer claimed success because the
+   model never saw the failure result before the answer was
+   composed. Read-only tools (v/cat, v/rg, z/locators,
+   z/patch-check, v/patch-check, ...) classify as
+   `:op.tag/observation` and stay legal alongside the answer;
+   action ops (`:op.tag/action`) are gated."
   [form]
   (and (seq? form)
     (when-let [op-kw (call-symbol->op-keyword (first form))]
-      (extension/side-effect-op? op-kw))))
+      (= :op.tag/action (extension/op-tag op-kw)))))
 
 (defn- form-contains-mutating-call?
   [expr]
