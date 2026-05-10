@@ -461,3 +461,39 @@
           (expect (str/includes? out "<details><summary>LLM messages ("))
           (expect (str/includes? out "USER_TURN_TEXT_FIXTURE")))
         (finally (vis/db-dispose-connection! s))))))
+
+;; ---------------------------------------------------------------------------
+;; § 5.1: No UUID leaks in user/LLM-facing surfaces (PLAN.md § 2.9 + § 2.10).
+;;
+;; Channels render `position`, never `:id`. UUIDs are programmatic-only.
+;; This test pins the rule against the markdown transcript renderer; sister
+;; tests in render_test.clj (TUI) and bot_test.clj (Telegram) cover their
+;; respective channels.
+;; ---------------------------------------------------------------------------
+
+(def ^:private uuid-pattern
+  ;; Canonical 36-char UUID with hyphens. The fixture's seed-generated UUIDs
+  ;; will match this; we want them ABSENT from the rendered markdown.
+  #"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
+
+(defn- uuid-leak? [^String text]
+  (boolean (re-find uuid-pattern text)))
+
+(defdescribe transcript-md-no-uuid-leak-test
+  (it "rendered transcript markdown contains zero UUID substrings"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid  (seed! s)
+              out  (transcript/transcript-md s cid)]
+          (expect (string? out))
+          ;; Position-based rendering present (sanity).
+          (expect (str/includes? out "Turn"))
+          ;; The hard rule: no UUIDs leak into agent/user-facing output.
+          ;; If this fails, find the renderer site rendering :id (UUID)
+          ;; instead of :position (int) per PLAN.md § 2.9.
+          (when (uuid-leak? out)
+            (println "UUID LEAK in transcript:")
+            (println (subs out 0 (min 400 (count out))))
+            (println "..."))
+          (expect (not (uuid-leak? out))))
+        (finally (vis/db-dispose-connection! s))))))

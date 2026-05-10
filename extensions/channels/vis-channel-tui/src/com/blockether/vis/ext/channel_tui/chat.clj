@@ -237,7 +237,7 @@
                         cancelled? (= :cancelled (:prior-outcome q))
                         assistant-message (cond-> (assistant-message answer (or (:created-at q) (java.util.Date.)))
                                             true       (assoc :conversation-turn-id (:id q))
-                                            (seq trace) (assoc :trace trace :ir answer)
+                                            (seq trace) (assoc :traces trace :ir answer)
                                             model  (assoc :model model)
                                             iteration-count (assoc :iteration-count iteration-count)
                                             duration-ms (assoc :duration-ms duration-ms)

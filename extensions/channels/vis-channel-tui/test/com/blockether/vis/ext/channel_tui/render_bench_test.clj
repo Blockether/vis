@@ -299,13 +299,13 @@
   {:role            :assistant
    :ir      (com.blockether.vis.internal.render/text->ir (apply str (repeat 200 "a ")))
    :text            "a a a"
-   :trace           (vec (repeat n-iters
-                           {:thinking  (apply str (repeat 50 "thinking. "))
-                            :code      (vec (repeat forms-per-iter "(+ 1 2)"))
-                            :results   (vec (repeat forms-per-iter "3"))
-                            :stdouts   (vec (repeat forms-per-iter ""))
-                            :durations (vec (repeat forms-per-iter 1))
-                            :successes (vec (repeat forms-per-iter true))}))
+   :traces           (vec (repeat n-iters
+                            {:thinking  (apply str (repeat 50 "thinking. "))
+                             :code      (vec (repeat forms-per-iter "(+ 1 2)"))
+                             :results   (vec (repeat forms-per-iter "3"))
+                             :stdouts   (vec (repeat forms-per-iter ""))
+                             :durations (vec (repeat forms-per-iter 1))
+                             :successes (vec (repeat forms-per-iter true))}))
    :iteration-count n-iters
    :timestamp       #inst "2026-04-30T00:00:00"})
 
@@ -347,7 +347,7 @@
                     (render/invalidate-cache!)
                     (doseq [m assistants]
                       (render/format-answer-with-thinking
-                        (:ir m) (:trace m) bubble-w settings)))
+                        (:ir m) (:traces m) bubble-w settings)))
                   [nil])
           virt  (bench-quick "new virtual/layout (auto-bottom, only visible projects)"
                   (fn [_]
