@@ -1,21 +1,33 @@
 (ns com.blockether.vis.bench-stream
   "Bench harness for the live-streaming TUI bubble pipeline.
 
-   Drives `format-answer-markdown-data` with a fresh assistant body
-   (re-parsed from a growing markdown string) at each `chunk` step, so
-   identity-keyed caches in `render.clj` always miss - exactly the
-   path that fires on every streamed token in production.
+   Two modes:
+
+     1. `run-progressive!` - simulate streaming. Grow body chunk by
+        chunk, time the full TUI render path per frame. Produces the
+        worst-case curve (cache always misses, each chunk produces a
+        fresh IR). Reports p50/p95/p99/max per body-size bucket.
+
+     2. `run-criterium!` - per-stage criterium quick-bench at fixed
+        body sizes. Isolates `text->ir`, walker (`ir->entries`),
+        wrap, full pipeline. Use this to attribute cost.
+
+   Goal: per-frame cost should be FLAT across body size. Today it is
+   linear in body length and overshoots the 80 ms render throttle by
+   the 50k-100k bucket.
 
    Run from nREPL:
 
      (require '[com.blockether.vis.bench-stream :as b] :reload)
-     (b/run-progressive! {})         ; default 150k cap, 500-char chunks
-     (b/run-sweep! {})               ; one-shot at fixed sizes
+     (b/run-progressive! {})
+     (b/run-criterium! {})
 
-   Results print as a table; also returned as data for further analysis."
+   Results print as a table; also returned as data."
   (:require [clojure.string :as str]
+            [criterium.core :as crit]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.ext.channel-tui.render :as render]))
+            [com.blockether.vis.ext.channel-tui.render :as render]
+            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]))
 
 (def ^:private lorem
   "Lorem **bold** _ipsum_ dolor sit amet, `consectetur` adipiscing elit.
@@ -75,13 +87,15 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
 (defn run-progressive!
   "Simulate progressive streaming: grow body by `chunk-chars` per step
    up to `target-chars`, time each step's render. Reports per-bucket
-   stats so you can see the cost curve as the buffer grows."
+   stats so you can see the cost curve as the buffer grows.
+
+   This is THE primary metric. We want all buckets to converge to
+   the same mean - constant per-frame cost regardless of body size."
   [{:keys [target-chars chunk-chars bubble-w warmup-frames]
-    :or   {target-chars 150000
-           chunk-chars  500
-           bubble-w     100
-           warmup-frames 5}}]
-  ;; warmup
+    :or   {target-chars   100000
+           chunk-chars    1000
+           bubble-w       100
+           warmup-frames  5}}]
   (dotimes [_ warmup-frames]
     (bench-frame! (body-of-length 2000) bubble-w))
   (render/invalidate-cache!)
@@ -95,19 +109,21 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
           (swap! frames conj {:size size :ns ns :lines lines})
           (recur (inc i)))))
     (let [all @frames
+          bucket-of (fn [s]
+                      (cond
+                        (< s 5000)   "<5k"
+                        (< s 20000)  "5k-20k"
+                        (< s 50000)  "20k-50k"
+                        (< s 100000) "50k-100k"
+                        :else        "100k+"))
           buckets (->> all
-                    (group-by #(let [s (:size %)]
-                                 (cond
-                                   (< s 5000)   "<5k"
-                                   (< s 20000)  "5k-20k"
-                                   (< s 50000)  "20k-50k"
-                                   (< s 100000) "50k-100k"
-                                   :else        "100k+")))
+                    (group-by #(bucket-of (:size %)))
                     (into (sorted-map-by
                             (fn [a b]
                               (compare
                                 (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] a)
-                                (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] b))))))]
+                                (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] b))))))
+          tot (summarize (mapv :ns all))]
       (println)
       (println (format "Progressive stream: %d steps × %d chars (bubble-w=%d)"
                  steps chunk-chars bubble-w))
@@ -118,41 +134,62 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
         (let [s (summarize (mapv :ns xs))]
           (printf "%-10s %6d %10.2f %10.2f %10.2f %10.2f %10.2f%n"
             name (:n s) (:mean-ms s) (:p50-ms s)
-            (:p95-ms s) (:p95-ms s) (:max-ms s))))
+            (:p95-ms s) (:p99-ms s) (:max-ms s))))
       (println)
-      (let [s (summarize (mapv :ns all))]
-        (printf "TOTAL: n=%d wall=%.0f ms  mean=%.2f  p99=%.2f  max=%.2f%n"
-          (:n s) (:total-ms s) (:mean-ms s) (:p99-ms s) (:max-ms s)))
-      (println "METRIC stream_total_ms=" (long (:total-ms (summarize (mapv :ns all)))))
-      (println "METRIC stream_p99_ms="   (long (:p99-ms   (summarize (mapv :ns all)))))
-      (println "METRIC stream_max_ms="   (long (:max-ms   (summarize (mapv :ns all)))))
+      (printf "TOTAL: n=%d wall=%.0f ms  mean=%.2f  p99=%.2f  max=%.2f%n"
+        (:n tot) (:total-ms tot) (:mean-ms tot) (:p99-ms tot) (:max-ms tot))
+      ;; Linearity coefficient: mean(100k bucket) / mean(<5k bucket).
+      ;; A constant-time renderer would have this ≈ 1.0. Today: ~12.
+      (let [small (some-> (get buckets "<5k")    (->> (mapv :ns) summarize :mean-ms))
+            big   (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+        (when (and small big (pos? small))
+          (printf "LINEARITY: 50k-100k / <5k = %.2fx  (target: ≤ 1.5x)%n"
+            (double (/ big small)))))
+      (println "METRIC stream_total_ms=" (long (:total-ms tot)))
+      (println "METRIC stream_p99_ms="   (long (:p99-ms tot)))
+      (println "METRIC stream_max_ms="   (long (:max-ms tot)))
+      (when-let [big (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+        (println "METRIC stream_50k_100k_mean_ms=" (long big)))
       {:per-frame all
        :buckets   (into {} (map (fn [[k xs]] [k (summarize (mapv :ns xs))]) buckets))
-       :total     (summarize (mapv :ns all))})))
+       :total     tot})))
 
-(defn run-sweep!
-  "One-shot: render each fixed body size N times, summarize."
-  [{:keys [sizes reps bubble-w]
-    :or   {sizes    [1000 5000 20000 50000 100000 150000]
-           reps     20
-           bubble-w 100}}]
-  (let [results
-        (into (sorted-map)
-          (for [size sizes]
-            (let [text (body-of-length size)
-                  ;; warmup
-                  _ (dotimes [_ 3] (bench-frame! text bubble-w))
-                  ns-samples
-                  (vec (for [_ (range reps)]
-                         (let [[ns _] (bench-frame! text bubble-w)] ns)))]
-              (render/invalidate-cache!)
-              [size (summarize ns-samples)])))]
-    (println)
-    (println "Fixed-size sweep (each row is a fresh-IR render, cache cold)")
-    (println "─────────────────────────────────────────────────────────────────────")
-    (printf "%10s %6s %10s %10s %10s %10s%n"
-      "size" "reps" "mean ms" "p50 ms" "p95 ms" "max ms")
-    (doseq [[size s] results]
-      (printf "%10d %6d %10.2f %10.2f %10.2f %10.2f%n"
-        size (:n s) (:mean-ms s) (:p50-ms s) (:p95-ms s) (:max-ms s)))
-    results))
+(defn- crit-quick
+  "Short criterium benchmark: ~3s warmup + ~1s sample. Good enough for
+   relative comparisons across optimization passes; not publication-grade."
+  [label f]
+  (println (format "── %s ──" label))
+  (let [r (crit/benchmark* f
+            {:warmup-jit-period       (long 3e9)   ; 3 s
+             :samples                 6
+             :target-execution-time   (long 5e8)   ; 0.5 s per sample
+             :overhead                0
+             :supress-jvm-option-warnings true})
+        mean-ns (* 1e9 (first (:mean r)))]
+    (printf "  mean = %.3f ms   (%.2f-%.2f ms)%n"
+      (/ mean-ns 1e6)
+      (/ (* 1e9 (first (:lower-q r))) 1e6)
+      (/ (* 1e9 (first (:upper-q r))) 1e6))
+    {:label label :mean-ms (/ mean-ns 1e6)}))
+
+(defn run-criterium!
+  "Per-stage criterium attribution at fixed body sizes."
+  [{:keys [sizes bubble-w] :or {sizes [5000 50000 100000] bubble-w 100}}]
+  (println)
+  (println "Per-stage criterium (cache cold each call - matches streaming)")
+  (println "═════════════════════════════════════════════════════════════════════")
+  (doall
+    (for [size sizes]
+      (let [text (body-of-length size)]
+        (println)
+        (println (format "▸ body=%d chars" size))
+        (let [parse (crit-quick "text->ir              "
+                      #(vis/text->ir text))
+              ir   (vis/text->ir text)
+              walk (crit-quick "ir->entries (walker)  "
+                     #(vec (ir-tui/ir->entries ir (- bubble-w 4) nil)))
+              full (crit-quick "format-answer-md-data "
+                     #(render/format-answer-markdown-data
+                        (vis/text->ir text) bubble-w
+                        {:conversation-turn-id (str (System/nanoTime))}))]
+          {:size size :parse parse :walk walk :full full})))))

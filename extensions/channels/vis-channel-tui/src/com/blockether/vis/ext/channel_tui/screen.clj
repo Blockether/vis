@@ -310,6 +310,44 @@
       (when-let [tc (.getBackCharacter screen (int x) (int row))]
         (.setCharacter screen (int x) (int row) (.withModifier tc SGR/REVERSE))))))
 
+(defn- paint-search-hits!
+  "Overlay reverse-video on every back-buffer cell that belongs to a
+   substring match for the active in-conversation search.
+
+   Mirrors `paint-selection!`: walks visible bubbles, scans the rows
+   they occupy in the back buffer, finds the (lowercase) query as a
+   plain substring — sentinels are NOT in the back buffer (the painter
+   already translated them into ANSI style modifiers on each cell), so
+   the row's characters are the visible glyphs only — and applies
+   `SGR/REVERSE` on the matched columns."
+  [^TerminalScreen screen layout text-top inner-h cols db]
+  (when-let [{:keys [active? query hits]} (:search db)]
+    (when (and active? (seq hits) (not (str/blank? (str query))))
+      (let [needle  (str/lower-case (str query))
+            n-len   (count needle)
+            hit-set (set hits)]
+        (doseq [{:keys [idx top height]} (:visible layout)
+                :when (contains? hit-set idx)]
+          (let [start-row (max text-top (+ text-top (long top)))
+                end-row   (min (+ text-top inner-h)
+                            (+ text-top (long top) (long height)))]
+            (doseq [row (range start-row end-row)]
+              (let [sb (StringBuilder.)
+                    _  (dotimes [c cols]
+                         (let [tc (.getBackCharacter screen (int c) (int row))
+                               s  (or (some-> tc .getCharacterString) " ")]
+                           (.append sb ^String s)))
+                    row-chars (.toString sb)
+                    lower     (str/lower-case row-chars)]
+                (loop [from 0]
+                  (let [pos (.indexOf ^String lower ^String needle (int from))]
+                    (when (>= pos 0)
+                      (doseq [x (range pos (+ pos n-len))]
+                        (when-let [tc (.getBackCharacter screen (int x) (int row))]
+                          (.setCharacter screen (int x) (int row)
+                            (.withModifier tc SGR/REVERSE))))
+                      (recur (+ pos n-len)))))))))))))
+
 (def ^:private bubble-content-h-pad
   "Horizontal text inset inside `render/draw-chat-bubble!` content rows."
   2)
@@ -658,6 +696,11 @@
           (selectable-ranges-for-source
             (:source sel) transcript-selectable-ranges input-selectable-ranges)
           viewport))
+      ;; Inline highlight of in-conversation search hits. Runs AFTER
+      ;; the main paint and AFTER mouse-selection overlay so a search
+      ;; hit inside an actively-selected range still shows reverse
+      ;; (the modifier is idempotent — stacking it doesn't double-flip).
+      (paint-search-hits! screen layout text-top inner-h cols db)
       (cr/commit-frame!)
       (.refresh screen Screen$RefreshType/DELTA)
       {:cols cols :rows rows :total-h total-h :inner-h inner-h
@@ -2033,7 +2076,20 @@
                                                                " for \"" query "\"")
                                                              pick-options))]
                                              (when-let [target (:msg-idx picked)]
-                                               (state/dispatch [:scroll-to-message target])))))))
+                                               (let [hit-idxs (mapv :msg-idx hits)
+                                                     start-idx (or (some (fn [[i v]]
+                                                                           (when (= v target) i))
+                                                                     (map-indexed vector hit-idxs))
+                                                                 0)]
+                                                 (state/dispatch [:search-set-active
+                                                                  {:query query
+                                                                   :hits  hit-idxs
+                                                                   :index start-idx}])
+                                                 (vis/notify!
+                                                   (str "Find \"" query "\" — match "
+                                                     (inc start-idx) "/" (count hit-idxs)
+                                                     "  (F3 next, Shift+F3 prev, Esc clear)")
+                                                   :level :info :ttl-ms copy-success-ttl-ms))))))))
 
                                    :providers
                                    (when-let [c (with-dialog-lock
@@ -2063,7 +2119,41 @@
                        :quit nil
 
                        :clear-input
-                       (do (state/dispatch [:reset-input])
+                       ;; If the in-conversation search overlay is active,
+                       ;; the FIRST Esc clears search (keeping the input
+                       ;; draft intact); subsequent Esc clears the draft
+                       ;; as usual.
+                       (cond
+                         (get-in @state/app-db [:search :active?])
+                         (do (state/dispatch [:search-clear])
+                           (vis/notify! "Search cleared" :level :info :ttl-ms copy-success-ttl-ms)
+                           (recur))
+                         :else
+                         (do (state/dispatch [:reset-input])
+                           (recur)))
+
+                       :search-next
+                       (do (state/dispatch [:search-next])
+                         (when-let [s (:search @state/app-db)]
+                           (let [n (count (:hits s))]
+                             (when (pos? n)
+                               (vis/notify!
+                                 (str "Find \"" (:query s) "\" — match "
+                                   (inc (long (:index s))) "/" n
+                                   "  (Shift+F3 prev, Esc clear)")
+                                 :level :info :ttl-ms copy-success-ttl-ms))))
+                         (recur))
+
+                       :search-prev
+                       (do (state/dispatch [:search-prev])
+                         (when-let [s (:search @state/app-db)]
+                           (let [n (count (:hits s))]
+                             (when (pos? n)
+                               (vis/notify!
+                                 (str "Find \"" (:query s) "\" — match "
+                                   (inc (long (:index s))) "/" n
+                                   "  (F3 next, Esc clear)")
+                                 :level :info :ttl-ms copy-success-ttl-ms))))
                          (recur))
 
                        :show-palette
