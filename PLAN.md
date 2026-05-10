@@ -26,27 +26,80 @@ spec hard to read and the renderer hard to extend:
   middle of a 1900-line file. A future tweak to one would have no
   effect on the other half of the codebase.
 
-### 1.2 Field names that don't say their type
+### 1.2 Field names that don't say their type, and a closed enum that says nothing
 
-`:op` and `:op-class` both live on the same `info` map, and the
+Three problems on the tool-result envelope, in lock-step:
+
+**(a) `:op` and `:op-class` are both "op something".** The
 distinction matters:
 
 - `:op` carries the operation **symbol** — `'v/cat`, `'z/patch`,
   `'vis/answer`. Open set; one-of-many namespaces.
-- `:op-class` carries the operation **tag** — closed `#{:op/read
-  :op/write :op/exec …}` enum.
+- `:op-class` carries an **intent tag** — a closed enum.
 
 Today both look like "op something" so readers conflate them.
-Worse, when an SCI eval has no symbol (raw user code), `(:op info)`
-is `nil` and `(:op-class info)` may be `:op/sci`, leading callers to
-write `(or (:op info) (:op-class info))` patches that flatten the
-distinction. **Renaming pins the type** at the field name:
+When an SCI eval has no symbol (raw user code), `(:op info)` is
+`nil` and `(:op-class info)` may carry the only meaningful
+classification, leading callers to write `(or (:op info)
+(:op-class info))` patches that flatten the distinction.
 
-- `:op` → `:op-symbol` (it's a symbol)
-- `:op-class` → `:op-tag` (it's a closed-enum tag)
+**(b) `:op-class` carries eight effect-classes that mix two
+orthogonal axes** — what the operation *does to bytes*
+(read/write/exec) AND what *kind of role* it plays in the agent
+loop (answer/nudge/inspect). Renderers have to dispatch on a
+value that conflates two questions, and the set has been growing
+as new tool kinds appear.
 
-Field names with type hints are how Rich Hickey designs spec
-keywords; this PR catches up.
+The right axis is **agent intent**, not byte effect:
+
+- `:explore` — the agent is investigating without committing:
+  `v/cat`, `v/ls`, `v/rg`, `v/glob`, `v/exists?`, doc lookups.
+- `:verify` — the agent is checking a hypothesis: dry-run patches,
+  test runs, lint, type-checks, `z/patch-check`.
+- `:modify` — the agent is changing state: `v/patch`, `v/write`,
+  `v/delete`, exec-with-effect, network calls that mutate.
+
+Three values cover what the LLM is **trying to do** at any tool
+call. The byte-level read/write distinction is recoverable from
+`:op/symbol` (you can map specific tools to byte semantics in a
+renderer arm if you ever need to). Three values is also what every
+UI surface actually wants to discriminate — explore (subdued),
+verify (neutral), modify (highlight).
+
+**(c) A separate "content shape" enum has no readers that don't
+have the result value.** Earlier drafts of this PLAN added a
+`::content-kind` field with `#{:text :data :binary :empty :json
+:csv :yaml}`. Three problems:
+
+1. **It duplicates what `:op/result` already conveys.** The actual
+   value lives in `:op/result`; renderers can `(string? v)` /
+   `(map? v)` / `(bytes? v)` if they need the shape. A separate
+   keyword saying "this result is a map" is redundant *and* a drift
+   trap (envelope says `:json`, result is actually a stringified
+   pprint, mismatch unrecoverable).
+2. **Content shape lives at the wrong layer.** It's a property of
+   the result value, so it should be expressible **inside the
+   envelope's `:op/result` slot** (e.g., the value itself is the
+   answer to "what shape am I?"). A sibling field that mirrors a
+   property of `:op/result` is a foreign-key with no integrity
+   check.
+3. **Every caller that reads `:content-kind` already has access
+   to `:op/result`.** Renderers, persistence, exporters — all of
+   them touch the result value too. None of them benefit from a
+   parallel keyword saying what the value is.
+
+**Renaming + collapsing pins the types and removes the redundant
+field:**
+
+- `:op` → `:op/symbol` (it's a symbol; namespace-grouped under `op/`)
+- `:op-class` → `:op/tag` (it's a closed-enum **intent tag**;
+  membership shrinks to `#{:explore :verify :modify}`)
+- `::info` → `:op/envelope` (it's a tool-result envelope, not a free-
+  form info bag)
+- `::content-kind` → **DELETED** (redundant with `:op/result`)
+
+Field names with type hints + namespace grouping are how Rich Hickey
+designs spec keywords; this PR catches up.
 
 ### 1.3 Six iteration-block roles where four would do
 
@@ -124,46 +177,45 @@ load. Removed in the next release after migration window.
 
 ### 2.1 `src/com/blockether/vis/internal/extension.clj`
 
-The single source of truth for tool-result-level fields. Final
-specs after this PR:
+The single source of truth for tool-result envelope specs. Final
+shape after this PR (keys are namespace-grouped under `op/`):
 
 ```clojure
 ;; ── operation classification ──────────────────────────────────────
-(s/def ::op-symbol
+(s/def :op/symbol
   ;; The fully-qualified symbol the iteration block evaluated.
   ;; Open set (any tool extension can register); nil for raw user
   ;; code with no recognised top-level call. Replaces the prior
-  ;; ::op spec.
+  ;; bare `:op` field.
   (s/nilable symbol?))
 
-(s/def ::op-tag
-  ;; The closed-enum tag classifying the operation's effect.
-  ;; Renamed from ::op-class. Set membership unchanged from today.
-  #{:op/read :op/write :op/exec :op/search
-    :op/answer :op/nudge :op/inspect :op/network})
-
-;; ── content shape ─────────────────────────────────────────────────
-(s/def ::content-kind
-  ;; Closed enum describing the SHAPE of the block's value, separate
-  ;; from its operation class. Lets renderers pick a layout
-  ;; (text vs structured-data vs binary) without re-inspecting the
-  ;; value.
-  #{:text :data :binary :empty})
+(s/def :op/tag
+  ;; Closed-enum INTENT tag describing what the agent is trying to
+  ;; do, not what bytes change. Three values cover every tool call:
+  ;;   :explore  v/cat, v/ls, v/rg, v/glob, doc lookups, exists?
+  ;;   :verify   z/patch-check, test runs, lint, type-checks
+  ;;   :modify   v/patch, v/write, v/delete, exec-with-effect
+  ;; Read/write/exec byte semantics are recoverable from :op/symbol
+  ;; in the rare renderer that needs them. Replaces the prior
+  ;; 8-value :op-class with mixed effect/role axes.
+  #{:explore :verify :modify})
 
 ;; ── metadata ──────────────────────────────────────────────────────
-(s/def ::metadata
+(s/def :op/metadata
   ;; Free-form auxiliary data extensions can attach to a tool result
   ;; (timing, locations, retry hints, etc.). Map-shape is mandatory
   ;; so accumulators can merge cleanly.
   (s/map-of keyword? any?))
 
-;; ── info envelope ─────────────────────────────────────────────────
-(s/def ::info
-  ;; Tool-result envelope. Adds ::op-symbol (renamed) and the new
-  ;; ::metadata slot. Keeps existing ::op-tag, ::success?, ::result,
-  ;; ::error, ::stdout, ::stderr fields.
-  (s/keys :opt-un [::op-symbol ::op-tag ::content-kind ::metadata
-                   ::success? ::result ::error ::stdout ::stderr]))
+;; ── envelope ──────────────────────────────────────────────────────
+(s/def :op/envelope
+  ;; The tool-result envelope. Renamed from the prior ::info bag.
+  ;; Every tool, every SCI eval, every system nudge produces one.
+  ;; All fields optional so partial / mid-flight envelopes are
+  ;; valid without ceremony.
+  (s/keys :opt [:op/symbol :op/tag :op/metadata
+                :op/success? :op/result :op/error
+                :op/stdout :op/stderr]))
 ```
 
 **Removed from `extension.clj`:**
@@ -172,9 +224,14 @@ specs after this PR:
 - `(s/def ::kind …)` at line 690 — duplicate of line 69. Keep line
   69's definition (top of the file, where extension-kind specs
   live); delete line 690.
-- `(s/def ::op …)` (line 56) — renamed to `::op-symbol`. No
-  fallback registration.
-- `(s/def ::op-class …)` (line current) — renamed to `::op-tag`.
+- `(s/def ::op …)` (line 56) — replaced by `:op/symbol` in the
+  namespace-grouped shape. No fallback registration.
+- `(s/def ::op-class …)` — replaced by `:op/tag` with the new
+  three-value intent set.
+- `(s/def ::info …)` — replaced by `:op/envelope`.
+- **No `::content-kind` ever lands.** It was in an earlier draft of
+  this PLAN; deleted because it duplicates `:op/result`'s value
+  shape (renderers can inspect the value directly).
 - `:rendering-kind` field is **not in `extension.clj`** and never
   was; it lives on iteration-block rows, owned by the new
   namespace below.
@@ -244,17 +301,18 @@ the legacy keyword space.
 
 ### 3.1 `src/com/blockether/vis/internal/extension.clj`
 
-| line     | change                                                   | why                                                                                          |
-|----------|----------------------------------------------------------|----------------------------------------------------------------------------------------------|
-| 54       | DELETE `(s/def ::rendered string?)`                      | dead — zero readers                                                                           |
-| 56       | RENAME `(s/def ::op …)` → `(s/def ::op-symbol …)`        | type-in-name; distinguish from `::op-tag`                                                     |
-| 69       | KEEP `(s/def ::kind …)`                                  | canonical location at top of file alongside other extension-kind specs                        |
-| 85       | UPDATE `(s/def ::info …)`                                | swap `::op` → `::op-symbol`, swap `::op-class` → `::op-tag`, add `::metadata` to `:opt-un`    |
-| 690      | DELETE duplicate `(s/def ::kind …)`                      | shadows line 69; future tweaks would silently miss callers                                    |
-| (current)| RENAME `(s/def ::op-class …)` → `(s/def ::op-tag …)`     | same rationale as `::op` → `::op-symbol`                                                      |
-| new      | ADD `(s/def ::op-tag #{…})`                              | promotes the bare `op-classes` set to a real spec                                             |
-| new      | ADD `(s/def ::content-kind #{…})`                        | layout shape, decoupled from operation class                                                  |
-| new      | ADD `(s/def ::metadata (s/map-of keyword? any?))`        | extension-attached aux data slot                                                              |
+| line      | change                                                | why                                                                |
+|-----------|-------------------------------------------------------|--------------------------------------------------------------------|
+| 54        | DELETE `(s/def ::rendered string?)`                   | dead — zero readers                                                |
+| 56        | DELETE `(s/def ::op …)`                               | replaced by `:op/symbol` in the namespace-grouped shape            |
+| 69        | KEEP `(s/def ::kind …)`                               | canonical extension-kind spec                                      |
+| 85        | DELETE `(s/def ::info …)`                             | replaced by `:op/envelope`                                         |
+| 690       | DELETE duplicate `(s/def ::kind …)`                   | shadows line 69; future tweaks would silently miss callers         |
+| (current) | DELETE `(s/def ::op-class …)`                         | replaced by `:op/tag` with three-value intent set                  |
+| new       | ADD `(s/def :op/symbol (s/nilable symbol?))`          | renamed from bare `:op`; type-in-name                              |
+| new       | ADD `(s/def :op/tag #{:explore :verify :modify})`     | three-value intent enum; replaces 8-value mixed-axes set           |
+| new       | ADD `(s/def :op/metadata (s/map-of keyword? any?))`   | extension-attached aux data slot                                   |
+| new       | ADD `(s/def :op/envelope (s/keys :opt [...]))`        | the tool-result envelope, renamed from `::info`                    |
 
 ### 3.2 `src/com/blockether/vis/internal/iter_block.clj` *(NEW FILE)*
 
@@ -263,30 +321,63 @@ docstrings.
 
 ### 3.3 Caller updates — same commit, no fallback
 
-Every read of the renamed fields migrates atomically:
+This is a **two-axis** migration (envelope keys + role keyword) in
+one atomic commit:
 
-| reader pattern                     | becomes                                        |
-|------------------------------------|------------------------------------------------|
-| `(:op info)`                       | `(:op-symbol info)`                            |
-| `(:op-class info)`                 | `(:op-tag info)`                               |
-| `(:rendering-kind exec)`           | `(:op-system-kind exec)` (via read-helper §2.3)|
-| `:vis/answer` (role keyword)       | `:answer`                                      |
-| `:vis/tool`                        | `:tool`                                        |
-| `:vis/system`                      | `:nudge`                                       |
-| `:vis/diagnostic`                  | `:nudge`                                       |
-| `:vis/error`                       | DELETED — readers now check `(false? (:success? info))` |
-| `:vis/sci`                         | `:tool`                                        |
+**Envelope key migration** (every reader of the prior `info` bag):
 
-Estimated callsites (per `rg`):
+| reader pattern             | becomes                                                |
+|----------------------------|--------------------------------------------------------|
+| `(:op info)`               | `(:op/symbol envelope)`                                |
+| `(:op-class info)`         | `(:op/tag envelope)` (and accept the new 3-value set)  |
+| `(:success? info)`         | `(:op/success? envelope)`                              |
+| `(:result info)`           | `(:op/result envelope)`                                |
+| `(:error info)`            | `(:op/error envelope)`                                 |
+| `(:stdout info)`           | `(:op/stdout envelope)`                                |
+| `(:stderr info)`           | `(:op/stderr envelope)`                                |
+| `(:rendered info)`         | DELETED — dead spec, never read in source              |
+| `(:rendering-kind exec)`   | `(:op-system-kind exec)` (via read-helper §2.3)        |
 
-- `(:op info)` reads — TBD by survey at implementation start.
-- `(:op-class info)` reads — TBD.
-- `:rendering-kind` reads — only in `persistance_sqlite` and
-  channel renderers (TUI, Telegram bot).
-- Role keyword reads — channel renderers + iteration-loop emission
-  sites.
+**Role keyword migration** (iteration-block dispatch):
 
-All reads land in **one commit** alongside the spec rename. Any
+| reader pattern                | becomes                                                       |
+|-------------------------------|---------------------------------------------------------------|
+| `:vis/answer`                 | `:answer`                                                     |
+| `:vis/tool`                   | `:tool`                                                       |
+| `:vis/system`                 | `:nudge`                                                      |
+| `:vis/diagnostic`             | `:nudge`                                                      |
+| `:vis/error`                  | DELETED — readers check `(false? (:op/success? envelope))`    |
+| `:vis/sci`                    | `:tool`                                                       |
+
+**Op-tag value migration** (sites that previously matched on the
+8-value class enum):
+
+| old value     | becomes                                                          |
+|---------------|------------------------------------------------------------------|
+| `:op/read`    | `:explore`                                                       |
+| `:op/search`  | `:explore`                                                       |
+| `:op/inspect` | `:explore`                                                       |
+| `:op/answer`  | DELETED — the iteration-block role `:answer` carries this        |
+| `:op/nudge`   | DELETED — the iteration-block role `:nudge` carries this         |
+| `:op/write`   | `:modify`                                                        |
+| `:op/exec`    | `:modify` (when state-changing) or `:verify` (when dry-run/check) |
+| `:op/network` | `:explore` (read-only fetches) or `:modify` (mutations)          |
+
+`:op/exec` and `:op/network` splits are **intent-driven** — the
+tool-extension author chooses the intent at registration time, not
+the renderer at dispatch time.
+
+Estimated callsites (per `rg`, to survey at implementation start):
+
+- `(:op info)`, `(:op-class info)`, `(:success? info)`,
+  `(:result info)`, `(:error info)`, `(:stdout info)`,
+  `(:stderr info)` — touch every channel renderer + iteration-loop
+  result-handling site.
+- `:rendering-kind` — only in `persistance_sqlite` and channel
+  renderers.
+- Role keyword — channel renderers + iteration-loop emission sites.
+
+All reads land in **one commit** alongside the spec migration. Any
 `rg` mismatch after the commit is a bug, not a back-compat ladder.
 
 ### 3.4 `persistance_sqlite/core.clj`
@@ -329,11 +420,19 @@ with a call to the helper). Write path swaps `:rendering-kind` →
 **Win:** four arms instead of seven; one closed set; error rendering
 becomes a status check inside each arm rather than a parallel role.
 
-### 4.2 Tool-result info readers
+### 4.2 Tool-result envelope readers
 
-`(:op info)` callsites become `(:op-symbol info)`. `(:op-class
-info)` callsites become `(:op-tag info)`. **No fallback;**
-mechanical rename.
+Every callsite that reached into the prior `info` bag updates to
+the namespace-grouped envelope keys (see §3.3 table). **No
+fallback;** mechanical rename. The envelope spec catches missed
+sites at validation boundaries; clj-kondo flags any literal `:op`
+/ `:op-class` / `:rendered` keyword reads in source.
+
+**Op-tag intent migration** (callers that previously dispatched on
+`:op/read` / `:op/write` etc.) collapse to the three-value set per
+§3.3. Renderers that needed the byte-level distinction recover it
+from `:op/symbol` (e.g., `(case (:op/symbol envelope) v/cat … v/patch
+…)`) on the rare occasions it actually matters.
 
 ### 4.3 Persistence
 
