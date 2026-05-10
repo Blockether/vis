@@ -22,18 +22,6 @@
 (defn- md-h          ^String [n & parts]
   (str (apply str (repeat (max 1 (min 6 n)) "#")) " "
     (str/join " " (map str parts))))
-(defn- md-summary    ^String [s] (str "<summary>" s "</summary>"))
-(defn- md-details    ^String [& parts]
-  (let [strs  (filter some? (map str parts))
-        {sums true bodies false} (group-by #(and (str/starts-with? % "<summary>")
-                                              (str/ends-with? % "</summary>")) strs)
-        sum   (first sums)
-        body  (when (seq bodies) (str/join "\n\n" bodies))]
-    (cond
-      (and sum body) (str "<details>\n" sum "\n\n" body "\n\n</details>")
-      sum            (str "<details>\n" sum "\n\n</details>")
-      body           (str "<details>\n" body "\n\n</details>")
-      :else          "<details>\n\n</details>")))
 (defn- md-ul         ^String [items]
   (str/join "\n" (map #(str "- " %) (filter some? items))))
 (defn- md-join       ^String [& parts]

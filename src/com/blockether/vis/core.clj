@@ -51,7 +51,7 @@
    [com.blockether.vis.internal.loop         :as lp]
    [com.blockether.vis.internal.main         :as binary]
    [com.blockether.vis.internal.manifest     :as manifest]
-   [com.blockether.vis.internal.render       :as render]
+   [com.blockether.vis.internal.render       :as ir]
    [com.blockether.vis.internal.notifications :as notifications]
    [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
@@ -140,7 +140,7 @@
 ;; Markdown` / `Export conversation` affordance without re-implementing
 ;; the projection. Lives in `internal.render` alongside the IR pipeline.
 ;; =============================================================================
-(def conversation->markdown render/conversation->markdown)
+(def conversation->markdown ir/conversation->markdown)
 
 ;; =============================================================================
 ;; Answer IR rendering — pure-Clojure walker for the 21-tag Hiccup-EDN IR.
@@ -148,10 +148,10 @@
 ;; `:channel/messages-renderer-fn` and call it through `tg/send-message!`
 ;; or the TUI screen-emit boundary. See `docs/specs/01-streaming-and-markdown.md`.
 ;; =============================================================================
-(def md-render        render/render)
-(def md->ast          render/->ast)
-(def md-extract-code  render/extract-code)
-(def md-extract-text  render/extract-text)
+(def render        ir/render)
+(def ->ast         ir/->ast)
+(def extract-code  ir/extract-code)
+(def extract-text  ir/extract-text)
 
 ;; =============================================================================
 ;; Progress tracker
