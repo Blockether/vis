@@ -298,6 +298,9 @@
 (defdelegate db-list-iteration-vars [db-info iteration-ref])
 (defdelegate db-list-iteration-blocks [db-info iteration-ref])
 
+;; --- Full-text search ---
+(defdelegate db-search [db-info query opts])
+
 ;; --- Var registry & history ---
 (defn db-latest-var-registry
   ([db-info conversation-ref]      ((deref (resolve-impl db-info 'db-latest-var-registry)) db-info conversation-ref))

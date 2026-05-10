@@ -823,75 +823,81 @@
      (map-indexed vector entries))})
 
 (defn- command-model []
-  (str "Current model: " (current-model-label)
-    "\n\nUse /models to list and choose."))
+  (vis/text->ir
+    (str "Current model: " (current-model-label)
+      "\n\nUse /models to list and choose.")))
 
 (defn- command-models [arg]
   (let [base-config (or (vis/load-config) {:providers []})
         entries     (model-cycle-entries base-config)
         active      (active-model-entry base-config)]
     (if (str/blank? (or arg ""))
-      {:message (if (seq entries)
-                  (str "Models\nCurrent: " (or (some-> active model-entry-label) "unknown")
-                    "\n\n" (str/join "\n" (model-list-lines entries active))
-                    "\n\nTap a button, or send /models 2, or /models provider/model.")
-                  "No models configured")
+      {:message (vis/text->ir
+                  (if (seq entries)
+                    (str "Models\nCurrent: " (or (some-> active model-entry-label) "unknown")
+                      "\n\n" (str/join "\n" (model-list-lines entries active))
+                      "\n\nTap a button, or send /models 2, or /models provider/model.")
+                    "No models configured"))
        :reply-markup (when (seq entries) (model-inline-keyboard entries active))}
-      {:message (:message (select-model! arg))})))
+      {:message (vis/text->ir (:message (select-model! arg)))})))
 
 (defn- model-label []
   (current-model-label))
 
 (defn- command-help []
-  (str "Vis Telegram commands:\n"
-    "/help - show this help\n"
-    "/status - show conversation, model, reasoning, verbosity\n"
-    "/model - show current model\n"
-    "/models - list models and choose with buttons\n"
-    "/models <n|provider/model> - choose model\n"
-    "/reasoning [quick|balanced|deep] - show/set reasoning effort, same as TUI Ctrl+R\n"
-    "/verbosity [low|medium|high] - show/set OpenAI Codex verbosity, same as TUI Ctrl+L\n"
-    (when (voice-extension?)
-      (str "/voice [off|input|output|duplex|on] - configure voice input/output for this chat\n"
-        "Voice messages - transcribe with the Parakeet ASR model, then send as text\n"))
-    "/cancel - cancel current request\n"
-    "/restart - restart the bot in a fresh Java process\n"
-    "/export - export this conversation as Markdown"))
+  (vis/text->ir
+    (str "Vis Telegram commands:\n"
+      "/help - show this help\n"
+      "/status - show conversation, model, reasoning, verbosity\n"
+      "/model - show current model\n"
+      "/models - list models and choose with buttons\n"
+      "/models <n|provider/model> - choose model\n"
+      "/reasoning [quick|balanced|deep] - show/set reasoning effort, same as TUI Ctrl+R\n"
+      "/verbosity [low|medium|high] - show/set OpenAI Codex verbosity, same as TUI Ctrl+L\n"
+      (when (voice-extension?)
+        (str "/voice [off|input|output|duplex|on] - configure voice input/output for this chat\n"
+          "Voice messages - transcribe with the Parakeet ASR model, then send as text\n"))
+      "/cancel - cancel current request\n"
+      "/restart - restart the bot in a fresh Java process\n"
+      "/export - export this conversation as Markdown")))
 
 (defn- command-status [chat-id]
   (let [{:keys [id title]} (vis/for-telegram-chat! chat-id)
         settings (chat-settings chat-id)]
-    (str "Conversation: " (subs (str id) 0 (min 8 (count (str id))))
-      (when-not (str/blank? title) (str " - " title))
-      "\nModel: " (model-label)
-      "\nReasoning: " (name (:reasoning-level settings))
-      "\nCodex verbosity: " (name (:openai-codex-verbosity settings))
-      "\nVoice mode: " (name (:voice-mode settings))
-      "\nIn flight: " (if (in-flight-token chat-id) "yes" "no"))))
+    (vis/text->ir
+      (str "Conversation: " (subs (str id) 0 (min 8 (count (str id))))
+        (when-not (str/blank? title) (str " - " title))
+        "\nModel: " (model-label)
+        "\nReasoning: " (name (:reasoning-level settings))
+        "\nCodex verbosity: " (name (:openai-codex-verbosity settings))
+        "\nVoice mode: " (name (:voice-mode settings))
+        "\nIn flight: " (if (in-flight-token chat-id) "yes" "no")))))
 
 (defn- command-reasoning [chat-id arg]
-  (if (str/blank? (or arg ""))
-    (str "Reasoning: " (name (:reasoning-level (chat-settings chat-id)))
-      "\nUse /reasoning quick, /reasoning balanced, or /reasoning deep.")
-    (let [level (normalize-reasoning-level arg)]
-      (if-not (= (keyword (str/lower-case (str/trim arg))) level)
-        (str "Unknown reasoning level: " arg
-          "\nUse quick, balanced, or deep.")
-        (do
-          (set-chat-setting! chat-id :reasoning-level level)
-          (str "Reasoning: " (name level)))))))
+  (vis/text->ir
+    (if (str/blank? (or arg ""))
+      (str "Reasoning: " (name (:reasoning-level (chat-settings chat-id)))
+        "\nUse /reasoning quick, /reasoning balanced, or /reasoning deep.")
+      (let [level (normalize-reasoning-level arg)]
+        (if-not (= (keyword (str/lower-case (str/trim arg))) level)
+          (str "Unknown reasoning level: " arg
+            "\nUse quick, balanced, or deep.")
+          (do
+            (set-chat-setting! chat-id :reasoning-level level)
+            (str "Reasoning: " (name level))))))))
 
 (defn- command-verbosity [chat-id arg]
-  (if (str/blank? (or arg ""))
-    (str "Codex verbosity: " (name (:openai-codex-verbosity (chat-settings chat-id)))
-      "\nUse /verbosity low, /verbosity medium, or /verbosity high.")
-    (let [verbosity (normalize-codex-verbosity arg)]
-      (if-not (= (keyword (str/lower-case (str/trim arg))) verbosity)
-        (str "Unknown verbosity: " arg
-          "\nUse low, medium, or high.")
-        (do
-          (set-chat-setting! chat-id :openai-codex-verbosity verbosity)
-          (str "Codex verbosity: " (name verbosity)))))))
+  (vis/text->ir
+    (if (str/blank? (or arg ""))
+      (str "Codex verbosity: " (name (:openai-codex-verbosity (chat-settings chat-id)))
+        "\nUse /verbosity low, /verbosity medium, or /verbosity high.")
+      (let [verbosity (normalize-codex-verbosity arg)]
+        (if-not (= (keyword (str/lower-case (str/trim arg))) verbosity)
+          (str "Unknown verbosity: " arg
+            "\nUse low, medium, or high.")
+          (do
+            (set-chat-setting! chat-id :openai-codex-verbosity verbosity)
+            (str "Codex verbosity: " (name verbosity))))))))
 
 (defn- voice-mode-available? [mode]
   (case mode
@@ -938,45 +944,47 @@
 
 (defn- command-voice [chat-id arg]
   (if-not (voice-extension?)
-    {:message "Voice is not loaded. Install/load vis-voice, then restart Telegram."}
+    {:message (vis/text->ir "Voice is not loaded. Install/load vis-voice, then restart Telegram.")}
     (if (str/blank? (or arg ""))
       (let [active (:voice-mode (chat-settings chat-id))
             modes  (available-voice-modes)]
-        {:message (str "Voice modes\nCurrent: " (name active)
-                    "\n\n" (str/join "\n" (voice-mode-lines active modes))
-                    "\n\ninput = voice messages transcribe to text answers."
-                    "\noutput = text prompts receive audio answers."
-                    "\nduplex = voice in, audio out."
-                    "\n\nTap a button, or send /voice duplex."
-                    "\nAvailable: input=" (if (voice-input-extension?) "yes" "missing")
-                    ", output=" (if (voice-output-extension?) "yes" "missing"))
+        {:message (vis/text->ir
+                    (str "Voice modes\nCurrent: " (name active)
+                      "\n\n" (str/join "\n" (voice-mode-lines active modes))
+                      "\n\ninput = voice messages transcribe to text answers."
+                      "\noutput = text prompts receive audio answers."
+                      "\nduplex = voice in, audio out."
+                      "\n\nTap a button, or send /voice duplex."
+                      "\nAvailable: input=" (if (voice-input-extension?) "yes" "missing")
+                      ", output=" (if (voice-output-extension?) "yes" "missing")))
          :reply-markup (voice-inline-keyboard active modes)})
       (let [raw  (keyword (str/lower-case (str/trim arg)))
             mode (normalize-voice-mode raw)]
-        {:message (if (and (not= raw mode)
-                        (not (contains? #{:on :voice :audio} raw)))
-                    (str "Unknown voice mode: " arg
-                      "\nUse off, input, output, duplex, or on.")
-                    (set-voice-mode! chat-id mode))}))))
+        {:message (vis/text->ir
+                    (if (and (not= raw mode)
+                          (not (contains? #{:on :voice :audio} raw)))
+                      (str "Unknown voice mode: " arg
+                        "\nUse off, input, output, duplex, or on.")
+                      (set-voice-mode! chat-id mode)))}))))
 
 (defn- command-cancel [chat-id]
-  (if-let [token (in-flight-token chat-id)]
-    (do
-      (vis/cancel! token)
-      "Cancelling current request...")
-    "No request is currently running."))
+  (vis/text->ir
+    (if-let [token (in-flight-token chat-id)]
+      (do
+        (vis/cancel! token)
+        "Cancelling current request...")
+      "No request is currently running.")))
 
 (defn- command-restart []
   (schedule-self-restart!)
-  "Restarting Telegram bot in a fresh Java process...")
+  (vis/text->ir "Restarting Telegram bot in a fresh Java process..."))
 
 (defn- command-export [chat-id]
   (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
         env      (vis/env-for id)
         markdown (when env (vis/conversation->markdown (:db-info env) id))]
-    (if (seq markdown)
-      markdown
-      "No persisted turns to export yet.")))
+    (vis/text->ir
+      (if (seq markdown) markdown "No persisted turns to export yet."))))
 
 (defn- parse-command [text]
   (let [text (str/trim (or text ""))]
@@ -1003,8 +1011,10 @@
             "/cancel"    {:message (command-cancel chat-id)}
             "/restart"   {:message (command-restart)}
             "/export"    {:message (command-export chat-id)}
-            {:message (str "Unknown command: " cmd "\n\n" (command-help))})]
-      (send! token chat-id (text->ir message) {:reply-markup reply-markup})
+            ;; Unknown command — build IR directly to keep the strict
+            ;; contract.
+            {:message (vis/text->ir (str "Unknown command: " cmd))})]
+      (send! token chat-id message {:reply-markup reply-markup})
       true)))
 
 (defn- answer-text
@@ -1111,7 +1121,7 @@
                        (let [voice-text (answer-voice-text result)]
                          (when (and (voice-config-flag :telegram-send-transcript? true)
                                  (not (str/blank? (str transcript))))
-                           (send! token chat-id (text->ir (transcript-message transcript))))
+                           (send! token chat-id (vis/text->ir (transcript-message transcript))))
                          (tg/send-chat-action! token chat-id "record_voice")
                          (send-answer-audio! token chat-id voice-text)
                          (when (voice-config-flag :telegram-send-answer-text? true)
@@ -1121,7 +1131,7 @@
                            (tg/send-message! token chat-id (answer-text result))))
                        (do
                          (when (and transcript (not (str/blank? (str transcript))))
-                           (send! token chat-id (text->ir (transcript-message transcript))))
+                           (send! token chat-id (vis/text->ir (transcript-message transcript))))
                          (tg/send-message! token chat-id
                            (str (answer-text result) (format-footer result))))))
                    (catch Exception e
@@ -1138,7 +1148,7 @@
                                     :data {:sender sender :chat-id chat-id :error (ex-message e)}
                                     :msg (str "error handling msg from " sender " in chat " chat-id)})
                          (try (send! token chat-id
-                                (text->ir (vis/format-error (vis/db-error->user-message e))))
+                                (vis/text->ir (vis/format-error (vis/db-error->user-message e))))
                            (catch Exception _ nil)))))
                    (finally
                      (clear-in-flight! chat-id turn-token))))]
@@ -1158,7 +1168,7 @@
                      :data {:sender sender :chat-id chat-id :error (ex-message e)}
                      :msg (str "voice ASR failed for chat " chat-id)})
           (try (send! token chat-id
-                 (text->ir (vis/format-error (str "Voice transcription failed: " (or (ex-message e) e)))))
+                 (vis/text->ir (vis/format-error (str "Voice transcription failed: " (or (ex-message e) e)))))
             (catch Exception _ nil))))))
   true)
 
@@ -1170,7 +1180,7 @@
       (and chat-id (not (chat-approved? chat-id)))
       (do
         (tg/answer-callback-query! token callback-id "Chat is not approved")
-        (send! token chat-id (text->ir (unauthorized-message chat-id)))
+        (send! token chat-id (vis/text->ir (unauthorized-message chat-id)))
         true)
 
       (and callback-id chat-id (string? data)
@@ -1179,7 +1189,7 @@
             result  (when (re-matches #"\d+" idx-str)
                       (select-model! (str (inc (Long/parseLong idx-str)))))]
         (tg/answer-callback-query! token callback-id (:message result))
-        (send! token chat-id (text->ir (or (:message result) "Model selection failed.")))
+        (send! token chat-id (vis/text->ir (or (:message result) "Model selection failed.")))
         true)
 
       (and callback-id chat-id (string? data)
@@ -1212,7 +1222,7 @@
           (nil? chat-id) nil
 
           (not (chat-approved? chat-id))
-          (do (send! token chat-id (text->ir (unauthorized-message chat-id))) true)
+          (do (send! token chat-id (vis/text->ir (unauthorized-message chat-id))) true)
 
           text
           (do

@@ -108,210 +108,9 @@
 (defn- has-attrs? [v]
   (and (vector? v) (>= (count v) 2) (map? (second v))))
 
-(declare ^:private canon-block ^:private canon-inline-children
-  ^:private node-tag ^:private node-children)
-
-(defn- text-flatten
-  "Concatenate every string anywhere in `x` (depth-first). Used to
-   collapse a raw-text container's children into a single body string,
-   regardless of whether the input is `[:c \"raw\"]` (LLM-flavored)
-   or `[:c [:span \"raw\"]]` (re-canonicalization input)."
-  ^String [x]
-  (cond
-    (string? x)     x
-    (vector? x)     (apply str (map text-flatten (drop 2 x)))
-    (sequential? x) (apply str (map text-flatten x))
-    (nil? x)        ""
-    :else           ""))
-
-(defn- string->span
-  "Lift a raw text string into a [:span ...] node, collapsing soft breaks
-   unless `preserve-ws?` is set. Empty strings become nil (filtered out)."
-  [^String s preserve-ws?]
-  (let [text (if preserve-ws? s (collapse-soft-breaks s))]
-    (when-not (= "" text)
-      [:span (cond-> {} preserve-ws? (assoc :preserve-ws? true)) text])))
-
-(defn- canon-inline-node
-  "Canonicalize one inline vector. `preserve-ws?` propagates from
-   ancestor `:c`/`:kbd`/`:span{:preserve-ws? true}`."
-  [node preserve-ws?]
-  (let [node     (ensure-attrs node)
-        tag      (first node)
-        attrs    (second node)
-        children (drop 2 node)]
-    (cond
-      ;; void inlines
-      (contains? void-inline-tags tag)
-      [tag attrs]
-
-      ;; raw-text leaf containers — body becomes single concatenated raw string
-      (contains? raw-text-tags tag)
-      [tag attrs (text-flatten children)]
-
-      ;; :span — body is a single (possibly collapsed) string
-      (= :span tag)
-      (let [pw?  (or (:preserve-ws? attrs) preserve-ws?)
-            text (text-flatten children)
-            text (if pw? text (collapse-soft-breaks text))]
-        (if (= "" text)
-          nil
-          [:span attrs text]))
-
-      ;; nested inline wrapper (:strong :em :a :mark :sup :sub)
-      :else
-      (let [child-nodes (canon-inline-children children preserve-ws?)]
-        (into [tag attrs] child-nodes)))))
-
-(defn- canon-inline-children
-  "Walk a sibling sequence of inline content (strings + inline vectors)
-   and return a vector of canonical inline nodes."
-  [children preserve-ws?]
-  (vec
-    (keep
-      (fn [c]
-        (cond
-          (string? c) (string->span c preserve-ws?)
-          (vector? c) (canon-inline-node c preserve-ws?)
-          (nil? c)    nil
-          :else       (string->span (str c) preserve-ws?)))
-      children)))
-
-(defn- canon-li-children
-  "All-blocks OR all-inlines (wrapped in a single :p). Mixed input is
-   bucketed in source order, with consecutive inline runs each
-   wrapped in their own :p."
-  [children]
-  (let [classified (mapv (fn [c] (cond
-                                   (and (vector? c) (block? c))  :block
-                                   (and (vector? c) (inline? c)) :inline
-                                   (string? c)                   :inline
-                                   :else                         :inline))
-                     children)]
-    (cond
-      (every? #(= :block %) classified)
-      (mapv canon-block children)
-
-      (every? #(= :inline %) classified)
-      (let [inline-children (canon-inline-children children false)]
-        (if (seq inline-children)
-          [(into [:p {}] inline-children)]
-          []))
-
-      :else
-      (loop [out [] buf [] cs (seq children)]
-        (let [flush (fn [out buf]
-                      (let [inl (canon-inline-children buf false)]
-                        (if (seq inl) (conj out (into [:p {}] inl)) out)))]
-          (if (nil? cs)
-            (flush out buf)
-            (let [c (first cs)]
-              (if (and (vector? c) (block? c))
-                (recur (conj (flush out buf) (canon-block c)) [] (next cs))
-                (recur out (conj buf c) (next cs))))))))))
-
-(defn- canon-block-children
-  "Sequence of children of a block parent that itself accepts inline
-   content (`:p`, `:h`, `:quote`, `:th`, `:td`). Strings + inline
-   vectors get canonicalized into spans/inlines."
-  [children]
-  (canon-inline-children children false))
-
-(defn- canon-blocks-strict
-  "For parents whose children must all be blocks (`:ir`, `:quote`,
-   `:ul`/`:ol` after :li-coercion is handled separately). Any loose
-   inline / string is bucketed into a `:p`."
-  [children]
-  (loop [out [] buf [] cs (seq children)]
-    (let [flush (fn [out buf]
-                  (let [inl (canon-inline-children buf false)]
-                    (if (seq inl) (conj out (into [:p {}] inl)) out)))]
-      (if (nil? cs)
-        (flush out buf)
-        (let [c (first cs)]
-          (cond
-            (and (vector? c) (block? c))
-            (recur (conj (flush out buf) (canon-block c)) [] (next cs))
-
-            ;; non-block vectors / strings buffer until the next block boundary
-            :else
-            (recur out (conj buf c) (next cs))))))))
-
-(defn- canon-block
-  "Canonicalize one block vector."
-  [node]
-  (let [node     (ensure-attrs node)
-        tag      (first node)
-        attrs    (second node)
-        children (drop 2 node)]
-    (case tag
-      :code  ; raw source; body = single string, ws preserved verbatim
-      [:code attrs (text-flatten children)]
-
-      :li
-      (into [:li attrs] (canon-li-children children))
-
-      (:ul :ol)
-      (into [tag attrs]
-        (mapv (fn [c]
-                (let [c (ensure-attrs c)]
-                  (if (and (vector? c) (= :li (first c)))
-                    (canon-block c)
-                    (canon-block [:li {} c]))))
-          children))
-
-      :table
-      (into [:table attrs]
-        (mapv (fn [c]
-                (let [c (ensure-attrs c)]
-                  (if (and (vector? c) (= :tr (first c)))
-                    (canon-block c)
-                    (canon-block [:tr {} c]))))
-          children))
-
-      :tr
-      (into [:tr attrs]
-        (mapv (fn [c]
-                (let [c (ensure-attrs c)]
-                  (if (and (vector? c) (#{:th :td} (first c)))
-                    (canon-block c)
-                    (canon-block [:td {} c]))))
-          children))
-
-      (:th :td)
-      (into [tag attrs] (canon-block-children children))
-
-      (:p :h)
-      (into [tag attrs] (canon-block-children children))
-
-      :quote
-      ;; quote contains blocks; loose inlines bucket into :p
-      (into [:quote attrs] (canon-blocks-strict children))
-
-      :summary
-      ;; summary head: inline content only
-      (into [:summary attrs] (canon-block-children children))
-
-      :details
-      ;; details: first child must be :summary; rest are body blocks.
-      ;; A details with no summary gets a synthetic empty one so the
-      ;; bubble painter always has a click target.
-      (let [children (vec children)
-            head     (first children)
-            head     (if (and (vector? head) (= :summary (node-tag head)))
-                       (canon-block (ensure-attrs head))
-                       (canon-block [:summary {} "Details"]))
-            body     (let [tail (if (and (vector? (first children))
-                                      (= :summary (node-tag (first children))))
-                                  (subvec children 1)
-                                  children)]
-                       (canon-blocks-strict tail))]
-        (into [:details attrs head] body))
-
-      ;; should not happen — caller dispatches by block?/inline?
-      (into [tag attrs] (canon-block-children children)))))
-
-(declare canonical?)
+;; ─── canonical? predicates ──────────────────────────────────────────────
+;; Pure structural checks; defined here so canon-* and `->ast` can call
+;; them without forward declares. Self-recursive, not mutually recursive.
 
 (defn- inline-canonical?
   "True when `x` is already a canonical inline node."
@@ -389,6 +188,267 @@
     (map? (nth x 1))
     (every? block-canonical? (drop 2 x))))
 
+;; ─── Canonicalization (canon-*) ─────────────────────────────────────────
+;; Mutual recursion across blocks/inlines (canon-block <-> canon-block-rebuild
+;; <-> canon-li-children <-> canon-block; canon-inline-children <-> canon-
+;; inline-node). Per AGENTS.md `declare` is allowed for genuine mutual
+;; recursion that no reordering can resolve.
+(declare ^:private canon-block ^:private canon-block-rebuild
+  ^:private canon-inline-children)
+
+(defn- text-flatten
+  "Concatenate every string anywhere in `x` (depth-first). Used to
+   collapse a raw-text container's children into a single body string,
+   regardless of whether the input is `[:c \"raw\"]` (LLM-flavored)
+   or `[:c [:span \"raw\"]]` (re-canonicalization input)."
+  ^String [x]
+  (cond
+    (string? x)     x
+    (vector? x)     (apply str (map text-flatten (drop 2 x)))
+    (sequential? x) (apply str (map text-flatten x))
+    (nil? x)        ""
+    :else           ""))
+
+(defn- string->span
+  "Lift a raw text string into a [:span ...] node, collapsing soft breaks
+   unless `preserve-ws?` is set. Empty strings become nil (filtered out)."
+  [^String s preserve-ws?]
+  (let [text (if preserve-ws? s (collapse-soft-breaks s))]
+    (when-not (= "" text)
+      [:span (cond-> {} preserve-ws? (assoc :preserve-ws? true)) text])))
+
+(defn- canon-inline-node
+  "Canonicalize one inline vector. `preserve-ws?` propagates from
+   ancestor `:c`/`:kbd`/`:span{:preserve-ws? true}`. Identity-preserving
+   on already-canonical input."
+  [node preserve-ws?]
+  ;; Fast path: if this single inline node is already canonical at
+   ;; this level, return it unchanged so parent vectors can stay
+   ;; `identical?` too.
+  (if (inline-canonical? node)
+    node
+    (let [orig     node
+          node     (ensure-attrs node)
+          tag      (first node)
+          attrs    (second node)
+          children (drop 2 node)]
+      (cond
+        (contains? void-inline-tags tag)
+        (if (and (= 2 (count orig)) (map? (nth orig 1 nil))) orig [tag attrs])
+
+        (contains? raw-text-tags tag)
+        [tag attrs (text-flatten children)]
+
+        (= :span tag)
+        (let [pw?  (or (:preserve-ws? attrs) preserve-ws?)
+              text (text-flatten children)
+              text (if pw? text (collapse-soft-breaks text))]
+          (if (= "" text)
+            nil
+            [:span attrs text]))
+
+        :else
+        (let [child-nodes (canon-inline-children children preserve-ws?)]
+          (into [tag attrs] child-nodes))))))
+
+(defn- map-keep-identity
+  "Like `mapv` but returns the input vector unchanged when `f` is
+   identity for every element — the building block for sub-tree
+   identity preservation across canonicalization passes.
+
+   Pairs with `clojure+.walk/walk` semantics: a transformation that
+   does nothing in net should leave the data structure `identical?`
+   so downstream `System/identityHashCode` caches stay hot."
+  [f xs]
+  (let [xs       (vec xs)
+        n        (count xs)
+        ys       (object-array n)
+        changed? (volatile! false)]
+    (dotimes [i n]
+      (let [x  (nth xs i)
+            x' (f x)]
+        (when-not (identical? x' x) (vreset! changed? true))
+        (aset ys i x')))
+    (if @changed? (vec ys) xs)))
+
+(defn- canon-inline-children
+  "Walk a sibling sequence of inline content (strings + inline vectors)
+   and return a vector of canonical inline nodes. Identity-preserving
+   on already-canonical input."
+  [children preserve-ws?]
+  ;; Two-step: lift any bare strings/nils into spans (always allocates
+   ;; for non-vector children), then identity-preserve over inline
+   ;; vectors so unchanged sub-trees stay `identical?`.
+  (let [lifted (vec
+                 (keep
+                   (fn [c]
+                     (cond
+                       (string? c) (string->span c preserve-ws?)
+                       (vector? c) c
+                       (nil? c)    nil
+                       :else       (string->span (str c) preserve-ws?)))
+                   children))]
+    (map-keep-identity
+      (fn [c]
+        (if (vector? c)
+          (canon-inline-node c preserve-ws?)
+          c))
+      lifted)))
+
+(defn- canon-li-children
+  "All-blocks OR all-inlines (wrapped in a single :p). Mixed input is
+   bucketed in source order, with consecutive inline runs each
+   wrapped in their own :p."
+  [children]
+  (let [classified (mapv (fn [c] (cond
+                                   (and (vector? c) (block? c))  :block
+                                   (and (vector? c) (inline? c)) :inline
+                                   (string? c)                   :inline
+                                   :else                         :inline))
+                     children)]
+    (cond
+      (every? #(= :block %) classified)
+      (map-keep-identity canon-block children)
+
+      (every? #(= :inline %) classified)
+      (let [inline-children (canon-inline-children children false)]
+        (if (seq inline-children)
+          [(into [:p {}] inline-children)]
+          []))
+
+      :else
+      (loop [out [] buf [] cs (seq children)]
+        (let [flush (fn [out buf]
+                      (let [inl (canon-inline-children buf false)]
+                        (if (seq inl) (conj out (into [:p {}] inl)) out)))]
+          (if (nil? cs)
+            (flush out buf)
+            (let [c (first cs)]
+              (if (and (vector? c) (block? c))
+                (recur (conj (flush out buf) (canon-block c)) [] (next cs))
+                (recur out (conj buf c) (next cs))))))))))
+
+(defn- canon-block-children
+  "Sequence of children of a block parent that itself accepts inline
+   content (`:p`, `:h`, `:quote`, `:th`, `:td`). Strings + inline
+   vectors get canonicalized into spans/inlines."
+  [children]
+  (canon-inline-children children false))
+
+(defn- canon-blocks-strict
+  "For parents whose children must all be blocks (`:ir`, `:quote`,
+   `:ul`/`:ol` after :li-coercion is handled separately). Any loose
+   inline / string is bucketed into a `:p`. Identity-preserving on
+   the common case where every child is already a canonical block
+   (the only path that actually allocates)."
+  [children]
+  (let [children (vec children)
+        ;; fast path: every child already a canonical block → just
+        ;; identity-preserve over canon-block.
+        all-blocks? (every? #(and (vector? %) (block? %)) children)]
+    (if all-blocks?
+      (map-keep-identity canon-block children)
+      ;; slow path: buffer loose inlines into :p.
+      (loop [out [] buf [] cs (seq children)]
+        (let [flush (fn [out buf]
+                      (let [inl (canon-inline-children buf false)]
+                        (if (seq inl) (conj out (into [:p {}] inl)) out)))]
+          (if (nil? cs)
+            (flush out buf)
+            (let [c (first cs)]
+              (cond
+                (and (vector? c) (block? c))
+                (recur (conj (flush out buf) (canon-block c)) [] (next cs))
+
+                :else
+                (recur out (conj buf c) (next cs))))))))))
+
+(defn- canon-block
+  "Canonicalize one block vector. Identity-preserving on already-
+   canonical input."
+  [node]
+  (if (block-canonical? node)
+    node
+    (canon-block-rebuild node)))
+
+(defn- canon-block-rebuild
+  "Internal: rebuild a block via tag dispatch. Skipped via identity
+   when `block-canonical?` is true at the call site."
+  [node]
+  (let [node     (ensure-attrs node)
+        tag      (first node)
+        attrs    (second node)
+        children (drop 2 node)]
+    (case tag
+      :code  ; raw source; body = single string, ws preserved verbatim
+      [:code attrs (text-flatten children)]
+
+      :li
+      (into [:li attrs] (canon-li-children children))
+
+      (:ul :ol)
+      (let [children (vec children)
+            children' (map-keep-identity
+                        (fn [c]
+                          (let [c (ensure-attrs c)]
+                            (if (and (vector? c) (= :li (first c)))
+                              (canon-block c)
+                              (canon-block [:li {} c]))))
+                        children)]
+        (if (and (= attrs (nth node 1 nil)) (identical? children' children))
+          node
+          (into [tag attrs] children')))
+
+      :table
+      (into [:table attrs]
+        (mapv (fn [c]
+                (let [c (ensure-attrs c)]
+                  (if (and (vector? c) (= :tr (first c)))
+                    (canon-block c)
+                    (canon-block [:tr {} c]))))
+          children))
+
+      :tr
+      (into [:tr attrs]
+        (mapv (fn [c]
+                (let [c (ensure-attrs c)]
+                  (if (and (vector? c) (#{:th :td} (first c)))
+                    (canon-block c)
+                    (canon-block [:td {} c]))))
+          children))
+
+      (:th :td)
+      (into [tag attrs] (canon-block-children children))
+
+      (:p :h)
+      (into [tag attrs] (canon-block-children children))
+
+      :quote
+      ;; quote contains blocks; loose inlines bucket into :p
+      (into [:quote attrs] (canon-blocks-strict children))
+
+      :summary
+      ;; summary head: inline content only
+      (into [:summary attrs] (canon-block-children children))
+
+      :details
+      ;; details: first child must be :summary; rest are body blocks.
+      ;; A details with no summary gets a synthetic empty one so the
+      ;; bubble painter always has a click target.
+      (let [children (vec children)
+            first-c  (first children)
+            head     (if (and (vector? first-c) (= :summary (first first-c)))
+                       (canon-block (ensure-attrs first-c))
+                       (canon-block [:summary {} "Details"]))
+            body     (let [tail (if (and (vector? first-c) (= :summary (first first-c)))
+                                  (subvec children 1)
+                                  children)]
+                       (canon-blocks-strict tail))]
+        (into [:details attrs head] body))
+
+      ;; should not happen — caller dispatches by block?/inline?
+      (into [tag attrs] (canon-block-children children)))))
+
 (defn ->ast
   "Soft-normalize any answer-input value into canonical [:ir & blocks].
    Pure, total, idempotent.
@@ -462,6 +522,8 @@
         (persistent! acc)
         (recur (.getNext n) (conj! acc n))))))
 
+;; Mutual: block parser walks block-children which may contain inlines;
+;; inline parser walks inline-children which may contain nested inlines.
 (declare ^:private cm->blocks ^:private cm->inlines)
 
 (defn- cm->inline-node [^Node n]
@@ -548,23 +610,34 @@
 
 (defn text->ir
   "Parse a plain-text or markdown string into canonical answer-IR.
+   Idempotent: when the input is already canonical IR, returns it
+   unchanged (`identical?` preserved — cache-friendly).
 
    Used at the boundaries that don't have IR upstream — thinking
-   text from the model and user-typed messages from the TUI input
-   box. Returns canonical `[:ir & blocks]` directly (no further
-   `->ast` round-trip needed). Empty / nil input yields `[:ir {}]`.
+   text from the model, per-block `:comment` strings, user-typed
+   messages from the TUI input box. Returns canonical `[:ir &
+   blocks]` directly (no further `->ast` round-trip needed). Empty /
+   nil input yields `[:ir {}]`.
 
    Implementation: commonmark-java parser + GFM tables / strikethrough
    extensions, then a faithful Node→IR walker. Soft line breaks
    collapse to a single space; hard line breaks become `[:br]`."
   [text]
-  (if (or (nil? text) (= "" text))
+  (cond
+    (canonical? text)
+    text   ; identity-preserving fast path
+
+    (or (nil? text) (= "" text))
     [:ir {}]
+
+    (string? text)
     (let [doc    (.parse md-parser ^String text)
           blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
-      ;; run through ->ast so any string-shaped IR fragments get
-      ;; canonicalized (collapsing soft breaks etc).
-      (->ast (into [:ir {}] blocks)))))
+      (->ast (into [:ir {}] blocks)))
+
+    :else
+    ;; non-string, non-canonical — best-effort coerce via ->ast
+    (->ast text)))
 
 ;; =============================================================================
 ;; Walker helpers (canonical inputs)
@@ -610,6 +683,9 @@
 ;; HTML walker — Telegram-flavored
 ;; =============================================================================
 
+;; render-html <-> render-html-children mutual: html walker dispatches per
+;; tag, recursing into children via the helper which itself recurses back
+;; into the walker.
 (declare ^:private render-html)
 
 (defn- render-html-children [nodes opts]
@@ -710,6 +786,7 @@
 ;; Markdown walker
 ;; =============================================================================
 
+;; render-md <-> render-md-children mutual; same pattern as html.
 (declare ^:private render-md)
 
 (defn- render-md-children [nodes opts]
@@ -807,6 +884,7 @@
 ;; Plain walker
 ;; =============================================================================
 
+;; render-plain <-> render-plain-children mutual; same pattern as html.
 (declare ^:private render-plain)
 
 (defn- render-plain-children [nodes opts]
@@ -938,6 +1016,40 @@
                 :else nil))]
       (walk ast)
       @out)))
+
+(defn search-text
+  "Universal plain-text projection for full-text search / clipboard /
+   logging. Accepts canonical IR, a markdown string, or anything
+   `->ast` can coerce; returns a single concatenated string suitable
+   for FT5 indexing or substring matching.
+
+   IR-side rendering: all `:p`, `:h`, `:li`, `:quote`, `:summary`,
+   `:details` body content collapses to spaces; `:code`/`:c` bodies
+   included verbatim (often the highest-signal text for search).
+   Strings are lifted via `text->ir` so search hits the same shape
+   regardless of upstream contract.
+
+   Idempotent on canonical input via the `text->ir` shortcut."
+  ^String [v]
+  (when (some? v)
+    (let [ir (cond
+               (canonical? v) v
+               (string? v)    (text->ir v)
+               :else          (->ast v))
+          out (volatile! [])]
+      (letfn [(walk [n]
+                (cond
+                  (string? n)         (vswap! out conj n)
+                  (not (vector? n))   nil
+                  (= :br (first n))   (vswap! out conj " ")
+                  (= :img (first n))  nil
+                  :else               (doseq [c (drop 2 n)] (walk c))))]
+        (walk ir))
+      ;; collapse any whitespace runs introduced by joining spans /
+      ;; block boundaries; FT search wants stable, single-spaced text.
+      (-> (str/join " " @out)
+        (str/replace #"\s+" " ")
+        (str/trim)))))
 
 (defn extract-text
   "Walk the AST and return concatenated plain-text content of all [:p]

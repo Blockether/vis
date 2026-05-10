@@ -143,6 +143,29 @@
     (expect (not (r/canonical? [:ir {} [:p [:span {} "x"]]])))
     (expect (not (r/canonical? [:ir {} [:p {} [:span {} "a\nb"]]]))))
 
+  (it "sub-tree identity preserved across partial-canonical input"
+    ;; Root fails `canonical?` (first :p has bare string), but the second
+    ;; :p IS already canonical — the partial-canonical fast path keeps it
+    ;; `identical?` so downstream identityHashCode caches stay hot.
+    (let [canonical-p [:p {} [:span {} "already canonical"]]
+          mixed       [:ir [:p "raw"] canonical-p]
+          out         (r/->ast mixed)]
+      (expect (r/canonical? out))
+      ;; second :p kept identical despite root rebuild
+      (expect (identical? canonical-p (nth out 3)))))
+
+  (it "identity propagates through nested wrapper inlines (:strong, :em, :a)"
+    (let [inner-span [:span {} "unchanged"]
+          strong     [:strong {} inner-span]
+          mixed-p    [:p {} [:span {} "raw inline"] strong]
+          mixed      [:ir mixed-p]
+          out        (r/->ast mixed)
+          out-p      (nth out 2)
+          out-strong (nth out-p 3)]
+      ;; the :strong wrapper itself stays identical because none of its
+      ;; sub-tree changed under canonicalization.
+      (expect (identical? strong out-strong))))
+
   (it "always inserts {} attrs on every vector node"
     (let [out (r/->ast [:ir [:p "x" [:strong "y"]]])]
       (expect (every? (fn [n] (or (not (vector? n)) (map? (second n))))
