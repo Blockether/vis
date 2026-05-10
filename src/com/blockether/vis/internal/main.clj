@@ -47,6 +47,7 @@
    [com.blockether.vis.internal.progress :as progress]
    [com.blockether.vis.internal.provider-limits :as provider-limits]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.internal.render :as render]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -774,6 +775,7 @@
         (case arg
           "--json"           (recur more (assoc opts :json? true) prompt-parts)
           "--edn"            (recur more (assoc opts :edn? true) prompt-parts)
+          "--code"           (recur more (assoc opts :code? true) prompt-parts)
           "--trace"          (recur more (assoc opts :trace? true) prompt-parts)
           ("--help" "-h")    (assoc opts :help? true :prompt "")
           "--debug"          (recur more (assoc opts :debug? true) prompt-parts)
@@ -790,6 +792,11 @@
   (stdout! "Flags:")
   (stdout! "  --json            Print result as a single JSON envelope.")
   (stdout! "  --edn             Print result as EDN.")
+  (stdout! "  --code            Print only [:code] block contents from the")
+  (stdout! "                    answer IR. Concatenated in source order;")
+  (stdout! "                    no fences, no language tags. Pipes cleanly")
+  (stdout! "                    into editors / interpreters. Errors when")
+  (stdout! "                    the answer contains no [:code] blocks.")
   (stdout! "  --trace           Log the full iteration trace via Telemere.")
   (stdout! "  --debug           Enable verbose debug logging.")
   (stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
@@ -811,13 +818,13 @@
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
-  (let [{:keys [prompt json? edn? trace? help? agent-name db] :as opts}
+  (let [{:keys [prompt json? edn? code? trace? help? agent-name db] :as opts}
         (parse-run-args residual)]
     (when (or help? (str/blank? prompt))
       (print-run-usage!)
       (System/exit 0))
     (let [agent-def (agent {:name (or agent-name "cli")})
-          run-opts  (cond-> (dissoc opts :prompt :json? :edn? :trace? :compact?
+          run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code? :trace? :compact?
                               :agent-name :db)
                       db (assoc :db (config/resolve-db-spec
                                       (if (= db ":memory") :memory
@@ -827,13 +834,29 @@
         json? (stdout! (result->json result))
         edn?  (stdout! (result->edn result))
 
+        code?
+        (let [blocks (render/extract-code (:answer result))]
+          (cond
+            (:error result)
+            (do (stdout! (error/format-error (:error result)))
+              (shutdown-agents)
+              (System/exit 1))
+
+            (empty? blocks)
+            (do (stdout! "Error: --code expects answer to contain at least one [:code] block; got prose only. Run without --code for rendered output.")
+              (shutdown-agents)
+              (System/exit 1))
+
+            :else
+            (stdout! (str/join "\n\n" blocks))))
+
         trace?
         (do (tel/log! {:level :info :id ::cli-trace
                        :data  (select-keys result [:answer :trace :iteration-count
                                                    :duration-ms :tokens :cost
                                                    :error :type])}
               "CLI trace result")
-          (stdout! (str (:answer result)))
+          (stdout! (render/render (:answer result) :markdown))
           (when (:error result)
             (when-let [ex (:exception result)]
               (stdout! "\nStack trace:")
@@ -847,7 +870,7 @@
           (System/exit 1))
 
         :else
-        (do (stdout! (str (:answer result)))
+        (do (stdout! (render/render (:answer result) :markdown))
           (when (:duration-ms result)
             (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents))))

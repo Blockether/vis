@@ -21,7 +21,6 @@
    normalization inserts {} where missing. :li content rule: all-blocks
    OR all-inlines; loose inlines wrapped in [:p ...]."
   (:require
-   [clojure.pprint :as pp]
    [clojure.string :as str]
    [com.blockether.vis.internal.persistance :as persistance]))
 
@@ -36,9 +35,6 @@
 
 (def ^:private inline-tags
   #{:strong :em :c :a :img :kbd :mark :sup :sub})
-
-(def ^:private known-tags
-  (into block-tags inline-tags))
 
 (defn- block? [node]
   (and (vector? node) (contains? block-tags (first node))))
