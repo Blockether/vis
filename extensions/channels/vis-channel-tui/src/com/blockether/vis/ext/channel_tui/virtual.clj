@@ -163,13 +163,13 @@
   (let [content-w (max 1 (- bubble-w 4))
         chrome-rows 3
         role     (:role message)
-        trace    (:trace message)
+        trace    (:traces message)
         ;; Pre-projection rough text estimate: extract plain text from
         ;; `:ir` so the height heuristic doesn't depend on `:text`
         ;; (which is only set by the walker AFTER projection).
         text     (or (:text message)
-                   (when-let [ir (:ir message)]
-                     (com.blockether.vis.core/extract-text ir)))]
+                   (some-> (:ir message)
+                     (->> (com.blockether.vis.internal.render/extract-text))))]
     (cond
       (= role :user)
       (long
@@ -258,10 +258,10 @@
    (let [show-timestamps? (boolean (get settings :show-timestamps false))
          strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))]
      (cond
-       (and (= :assistant (:role message)) (:trace message))
+       (and (= :assistant (:role message)) (:traces message))
        (let [{:keys [text lines line-meta]}
              (render/format-answer-with-thinking-data
-               (:ir message) (:trace message) bubble-w settings
+               (:ir message) (:traces message) bubble-w settings
                (:confidence message)
                (= :cancelled (:status message))
                {:conversation-id      conversation-id

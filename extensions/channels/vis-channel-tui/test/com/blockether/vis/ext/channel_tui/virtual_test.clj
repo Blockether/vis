@@ -37,7 +37,7 @@
    :timestamp #inst "2026-04-30T00:00:00"})
 
 (defn- trace-assistant-msg
-  "Build a minimal assistant message with a `:trace` of `n-iters`
+  "Build a minimal assistant message with a `:traces` of `n-iters`
    iterations, each carrying `forms-per-iter` code/result pairs and
    a fixed thinking string. Mirrors the shape `chat/rebuild-history`
    produces."
@@ -52,7 +52,7 @@
     {:role            :assistant
      :ir              (text->ir answer)
      :text            answer
-     :trace           trace
+     :traces           trace
      :iteration-count n-iters
      :timestamp       #inst "2026-04-30T00:00:00"}))
 
@@ -110,7 +110,7 @@
     {:role :assistant
      :ir (text->ir "done")
      :text "done"
-     :trace trace
+     :traces trace
      :iteration-count (count trace)
      :timestamp #inst "2026-04-30T00:00:00"}))
 
@@ -358,7 +358,7 @@
                         (fn [& args] (swap! calls inc) (apply real args))]
             (doseq [m msgs]
               (render/format-answer-with-thinking
-                (:ir m) (:trace m) bubble-w settings))
+                (:ir m) (:traces m) bubble-w settings))
             ;; Pre-warm warmed both - no fresh format-answer-with-thinking*
             ;; calls expected.
             (expect (zero? @calls))))))

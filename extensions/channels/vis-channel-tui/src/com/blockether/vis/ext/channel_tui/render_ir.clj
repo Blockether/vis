@@ -466,25 +466,52 @@
 ;; now — they're plain strings, not IR — so the painter contract
 ;; stays bivalent.
 
+(def ^:private answer-marker-set
+  {:h1      p/MARKER_MD_H1
+   :h2      p/MARKER_MD_H2
+   :h3      p/MARKER_MD_H3
+   :code    p/MARKER_MD_CODE
+   :bullet  p/MARKER_MD_BULLET
+   :quote   p/MARKER_MD_QUOTE
+   :table   p/MARKER_MD_TABLE_ROW
+   :summary p/MARKER_MD_SUMMARY
+   :plain   p/MARKER_ANSWER_TXT})
+
+(def ^:private thinking-marker-set
+  {:h1      p/MARKER_TH_MD_H1
+   :h2      p/MARKER_TH_MD_H2
+   :h3      p/MARKER_TH_MD_H3
+   :code    p/MARKER_TH_MD_CODE
+   :bullet  p/MARKER_TH_MD_BULLET
+   :quote   p/MARKER_TH_MD_QUOTE
+   :table   p/MARKER_TH_MD_TABLE_ROW
+   :summary p/MARKER_TH_MD_SUMMARY
+   :plain   p/MARKER_THINKING})
+
+(defn- marker-set-for [mode]
+  (case mode
+    :thinking thinking-marker-set
+    answer-marker-set))
+
 (defn- block-marker-for
-  "Pick the answer-zone block marker for a `:block-tag` (and optional
-   heading `:level`)."
-  ^String [block-tag level]
+  "Pick the block marker for a `:block-tag` (and optional heading
+   `:level`) from the `mode` marker set (`:answer` or `:thinking`)."
+  ^String [marker-set block-tag level]
   (case block-tag
     :h            (case (long (or level 1))
-                    1 p/MARKER_MD_H1
-                    2 p/MARKER_MD_H2
-                    p/MARKER_MD_H3)
-    :code         p/MARKER_MD_CODE
-    :ul           p/MARKER_MD_BULLET
-    :ol           p/MARKER_MD_BULLET
-    :li           p/MARKER_MD_BULLET
-    :quote        p/MARKER_MD_QUOTE
-    :table        p/MARKER_MD_TABLE_ROW
-    :summary      p/MARKER_MD_SUMMARY
-    :details-body p/MARKER_ANSWER_TXT
-    ;; :p, nil, anything else → plain answer text marker
-    p/MARKER_ANSWER_TXT))
+                    1 (:h1 marker-set)
+                    2 (:h2 marker-set)
+                    (:h3 marker-set))
+    :code         (:code marker-set)
+    :ul           (:bullet marker-set)
+    :ol           (:bullet marker-set)
+    :li           (:bullet marker-set)
+    :quote        (:quote marker-set)
+    :table        (:table marker-set)
+    :summary      (:summary marker-set)
+    :details-body (:plain marker-set)
+    ;; :p, nil, anything else → plain text marker
+    (:plain marker-set)))
 
 (defn- run->sentinel-segment
   "Wrap a run's text with the inline-span sentinels its style flags
@@ -504,23 +531,25 @@
 (defn lines->sentinel-strings
   "Convert walker output (vector of `{:runs :block-tag :block-level?}`
    maps) into the painter's sentinel-prefixed string contract. Each
-   line: `<block-marker><inline-sentinel-wrapped body>`.  Blank
-   lines retain their block tag so the painter can choose the
-   correct background fill (e.g. answer bg vs trace bg)."
-  [lines]
-  (mapv (fn [{:keys [runs block-tag block-level]}]
-          (let [marker (block-marker-for block-tag block-level)
-                body   (apply str (map run->sentinel-segment runs))]
-            (str marker body)))
-    lines))
+   line: `<block-marker><inline-sentinel-wrapped body>`. `:mode`
+   selects the marker set (`:answer` (default) or `:thinking`)."
+  ([lines] (lines->sentinel-strings lines nil))
+  ([lines opts]
+   (let [ms (marker-set-for (:mode opts))]
+     (mapv (fn [{:keys [runs block-tag block-level]}]
+             (let [marker (block-marker-for ms block-tag block-level)
+                   body   (apply str (map run->sentinel-segment runs))]
+               (str marker body)))
+       lines))))
 
 (defn ir->sentinel-strings
   "One-shot helper: canonical IR → vector of sentinel-prefixed strings
    ready for the existing bubble painter. Composes `ir->lines` with
-   the sentinel adapter."
+   the sentinel adapter. `:mode` (`:answer` or `:thinking`) selects
+   the marker set."
   ([ir width] (ir->sentinel-strings ir width nil))
   ([ir width opts]
-   (lines->sentinel-strings (ir->lines ir width opts))))
+   (lines->sentinel-strings (ir->lines ir width opts) opts)))
 
 (defn ir->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.
@@ -530,15 +559,20 @@
    :node-id ...}` for `:summary` lines).  `nil` `:meta` for content
    lines.
 
+   `:mode` selects the marker set:
+     `:answer`   (default) — answer-zone PUA chars (answer-bg paint)
+     `:thinking` — thinking-zone PUA chars (iter-header-bg + italic)
+
    This is the IR-side analogue of `markdown->entries`. Every
-   assistant-answer rendering path that used to parse the rendered
-   markdown back into entries should call this directly on the
-   canonical IR — no markdown round-trip."
+   bubble rendering path that used to parse the rendered markdown
+   back into entries should call this directly on the canonical IR
+   — no markdown round-trip."
   ([ir width] (ir->entries ir width nil))
   ([ir width opts]
-   (let [lines (ir->lines ir width opts)]
+   (let [lines (ir->lines ir width opts)
+         ms    (marker-set-for (:mode opts))]
      (mapv (fn [{:keys [runs block-tag block-level meta]}]
-             {:line (let [marker (block-marker-for block-tag block-level)
+             {:line (let [marker (block-marker-for ms block-tag block-level)
                           body   (apply str (map run->sentinel-segment runs))]
                       (str marker body))
               :meta meta})

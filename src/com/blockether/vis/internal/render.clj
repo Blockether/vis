@@ -56,10 +56,10 @@
    [com.blockether.vis.internal.persistance :as persistance])
   (:import
    [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
-   [org.commonmark.ext.gfm.tables TableBlock TableHead TableBody TableRow TableCell TablesExtension]
-   [org.commonmark.node BlockQuote BulletList Code Document Emphasis FencedCodeBlock
+   [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
+   [org.commonmark.node BlockQuote BulletList Code Emphasis FencedCodeBlock
     HardLineBreak Heading HtmlBlock HtmlInline Image IndentedCodeBlock Link
-    ListItem Node OrderedList Paragraph SoftLineBreak StrongEmphasis Text ThematicBreak]
+    Node OrderedList Paragraph SoftLineBreak StrongEmphasis Text ThematicBreak]
    [org.commonmark.parser Parser]))
 
 (set! *warn-on-reflection* true)

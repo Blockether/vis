@@ -43,7 +43,7 @@
                       :duration-ms 3}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             assistant (second history)
-            trace-entry (first (:trace assistant))]
+            trace-entry (first (:traces assistant))]
         ;; The (answer ...) form is still elided so the assistant
         ;; doesn't double-render its own answer prose. Everything
         ;; else - including the conversation-title call - shows up.
@@ -73,7 +73,7 @@
                         :stdout ""
                         :duration-ms 1}])]
         (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-              trace-entry (-> history second :trace first)]
+              trace-entry (-> history second :traces first)]
           (expect (= [:tool] (:result-kinds trace-entry)))
           (expect (= ["1: alpha\n2: beta"] (:results trace-entry)))))))
 
