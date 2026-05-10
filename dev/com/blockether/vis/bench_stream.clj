@@ -91,6 +91,99 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
          dt (- (System/nanoTime) t0)]
      [dt (count (:lines result))])))
 
+(defn run-progressive-window!
+  "Bench `ir->lines-window` vs `(subvec (ir->lines ...) start (+ start n))`.
+
+   Models user scrolled into a streaming bubble. The viewport is at
+   fixed row `start` (= scroll-within-bubble). Each frame the body
+   grows but the viewport row doesn't move. Window walker should
+   bail at `start + num + slack`, skipping the rest of the body.
+
+   `:mode :full` baseline = `(subvec (ir->lines ...) start (+ start num))`.
+   `:mode :window` optimized = `ir->lines-window`.
+
+   `:start-row` is the bubble-internal row offset; default 0 = head."
+  [{:keys [target-chars chunk-chars bubble-w start-row viewport-rows
+           warmup-frames mode]
+    :or   {target-chars   100000
+           chunk-chars    1000
+           bubble-w       100
+           start-row      0
+           viewport-rows  40
+           warmup-frames  5
+           mode           :full}}]
+  (let [content-w (- (long bubble-w) 4)
+        bench-frame!
+        (case mode
+          :full
+          (fn [^String text]
+            (let [ir (vis/text->ir text)
+                  t0 (System/nanoTime)
+                  lines (ir-tui/ir->lines ir content-w)
+                  have  (count lines)
+                  _     (if (>= (long start-row) have)
+                          []
+                          (vec (subvec lines start-row
+                                       (min have (+ (long start-row)
+                                                   (long viewport-rows))))))
+                  dt (- (System/nanoTime) t0)]
+              [dt have]))
+          :window
+          (fn [^String text]
+            (let [ir (vis/text->ir text)
+                  t0 (System/nanoTime)
+                  lines (ir-tui/ir->lines-window ir content-w start-row viewport-rows)
+                  dt (- (System/nanoTime) t0)]
+              [dt (count lines)])))]
+    (dotimes [_ warmup-frames]
+      (bench-frame! (body-of-length 2000)))
+    (let [frames (atom [])
+          steps  (long (/ target-chars chunk-chars))]
+      (loop [i 0]
+        (when (< i steps)
+          (let [size (* (inc i) chunk-chars)
+                [ns lines] (bench-frame! (body-of-length size))]
+            (swap! frames conj {:size size :ns ns :lines lines})
+            (recur (inc i)))))
+      (let [all @frames
+            bucket-of (fn [s]
+                        (cond
+                          (< s 5000)   "<5k"
+                          (< s 20000)  "5k-20k"
+                          (< s 50000)  "20k-50k"
+                          (< s 100000) "50k-100k"
+                          :else        "100k+"))
+            buckets (->> all
+                      (group-by #(bucket-of (:size %)))
+                      (into (sorted-map-by
+                              (fn [a b]
+                                (compare
+                                  (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] a)
+                                  (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] b))))))
+            tot (summarize (mapv :ns all))]
+        (println)
+        (println (format "Window-walker (mode=%s start=%d num=%d): %d steps × %d chars"
+                   mode start-row viewport-rows steps chunk-chars))
+        (println "──────────────────────────────────────────────────────────────────────")
+        (printf "%-10s %6s %10s %10s %10s %10s %10s%n"
+          "bucket" "n" "mean ms" "p50 ms" "p95 ms" "p99 ms" "max ms")
+        (doseq [[name xs] buckets]
+          (let [s (summarize (mapv :ns xs))]
+            (printf "%-10s %6d %10.2f %10.2f %10.2f %10.2f %10.2f%n"
+              name (:n s) (:mean-ms s) (:p50-ms s)
+              (:p95-ms s) (:p99-ms s) (:max-ms s))))
+        (println)
+        (printf "TOTAL: n=%d wall=%.0f ms  mean=%.2f  p99=%.2f  max=%.2f%n"
+          (:n tot) (:total-ms tot) (:mean-ms tot) (:p99-ms tot) (:max-ms tot))
+        (println "METRIC stream_window_total_ms="  (format "%.2f" (double (:total-ms tot))))
+        (println "METRIC stream_window_p99_ms="    (format "%.2f" (double (:p99-ms tot))))
+        (println "METRIC stream_window_max_ms="    (format "%.2f" (double (:max-ms tot))))
+        (when-let [big (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+          (println "METRIC stream_window_50k_100k_mean_ms=" (format "%.3f" (double big))))
+        {:per-frame all
+         :buckets   (into {} (map (fn [[k xs]] [k (summarize (mapv :ns xs))]) buckets))
+         :total     tot}))))
+
 (defn run-progressive-tail!
   "Bench `ir->lines-tail` vs `(take-last N (ir->lines ...))`.
 
