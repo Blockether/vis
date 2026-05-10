@@ -1,38 +1,51 @@
 -- =============================================================================
 -- V1 - vis schema (SQLite)
 --
--- Runtime process diagram
+-- Hierarchy:
 --
 --   conversation_soul (identity)
 --     └─ conversation_state (branch/fork)
---          ├─ conversation_turn_soul (user ask identity, branch-local)
---          │    └─ conversation_turn_state (one run/retry)
---          │         ├─ iteration (one LLM round-trip)
---          │         │    │
---          │         │    ├─ iteration.blocks BLOB
---          │         │    │    Nippy-encoded vec of per-block maps
---          │         │    │    {:idx :code :comment :result :error
---          │         │    │     :stdout :stderr :duration-ms
---          │         │    │     :timeout? :repaired?}
---          │         │    │
---          │         │    └─ expression_state (var versions only)
---          │         │
+--          ├─ conversation_turn_soul (user ask, branch-local)
+--          │    └─ conversation_turn_state (one run/retry of the turn)
+--          │         └─ conversation_turn_iteration (one LLM round-trip)
+--          │              │
+--          │              ├─ .blocks BLOB
+--          │              │    Nippy-encoded vec of per-block maps:
+--          │              │    {:idx :code :comment :role
+--          │              │     :op/symbol :op/tag :op/result :op/success?
+--          │              │     :op/error :op/stdout :op/stderr :op/metadata
+--          │              │     :duration-ms :timeout? :repaired?}
+--          │              │
+--          │              └─ expression_state (var versions only)
 --          │
 --          └─ expression_soul (branch-local var identities, kind='var')
---               └─ expression_dependency (var dependency graph, soul-level)
+--               └─ expression_dependency (var dep graph, soul-level)
+--
+-- Naming convention:
+--   *_soul   = immutable identity, branch-local
+--   *_state  = mutable snapshot; retry/fork = new state row
+--   parent_table_child = nested concept (conversation_turn_iteration
+--                        = an conversation_turn_iteration nested under a conversation_turn)
+--
+-- Position columns (1-based int) live alongside UUID PKs at every
+-- level. UUIDs are the join key; position is the public/agent-
+-- facing identifier (see PLAN.md §2.9, §2.10).
 --
 -- Flow per turn:
---   user ask -> conversation_turn_soul/conversation_turn_state -> iterations
---     each iteration writes its full block log inline into
---     iteration.blocks plus one expression_soul + expression_state
---     row per `(def ...)` it executed
---   -> conversation_turn_state done/error -> next turn (or branch/fork to new conversation_state)
+--   user request
+--     -> conversation_turn_soul + conversation_turn_state
+--     -> conversation_turn_iteration(s)
+--          each conversation_turn_iteration writes its full block log inline into
+--          .blocks plus one expression_soul + expression_state
+--          row per `(def ...)` it executed
+--     -> conversation_turn_state done/error
+--     -> next turn (or branch/fork to new conversation_state)
 --
 -- Fork flow:
 --   conversation_state(v1)
 --        └─ fork -> conversation_state(v2, parent_state_id=v1)
---
---   Each fork keeps isolated branch-local conversation_turn_soul + expression_soul identity.
+--   Each fork keeps isolated branch-local conversation_turn_soul +
+--   expression_soul identity.
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
@@ -145,8 +158,8 @@ CREATE TABLE conversation_turn_state (
   answer                       BLOB,        -- Nippy-frozen IR `[:ir & nodes]`. NULL while running.
   -- Per-turn final outcome, derived at turn end. Lets the next turn's
   -- handover digest say "previous turn complete | cancelled | error"
-  -- without scanning every iteration. Set by the iteration
-  -- loop on the terminal iteration and by
+  -- without scanning every conversation_turn_iteration. Set by the conversation_turn_iteration
+  -- loop on the terminal conversation_turn_iteration and by
   -- sweep-orphaned-running-turns! for cancelled / orphaned turns.
   prior_outcome                TEXT
                                CHECK (prior_outcome IS NULL OR
@@ -165,7 +178,7 @@ CREATE INDEX idx_conversation_turn_state_forked_from
 -- =============================================================================
 -- Iteration - one LLM round-trip within a conversation_turn_state.
 -- =============================================================================
-CREATE TABLE iteration (
+CREATE TABLE conversation_turn_iteration (
   id                              TEXT PRIMARY KEY NOT NULL,
   conversation_turn_state_id                  TEXT NOT NULL
                                   REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
@@ -176,7 +189,7 @@ CREATE TABLE iteration (
 
   llm_system_prompt               TEXT,
   llm_user_prompt                 TEXT,    -- JSON envelope for multimodal user input (text/images/audio/files)
-  llm_provider                    TEXT,    -- provider id used for this iteration (e.g. 'openai', 'github-copilot')
+  llm_provider                    TEXT,    -- provider id used for this conversation_turn_iteration (e.g. 'openai', 'github-copilot')
   llm_model                       TEXT,
 
   llm_full_duration_ms            INTEGER CHECK (
@@ -209,7 +222,7 @@ CREATE TABLE iteration (
   -- this column to rebuild the per-turn replay buffer.
   llm_assistant_message           TEXT,
 
-  -- Per-iteration token accounting + estimated USD cost. NULL when
+  -- Per-conversation_turn_iteration token accounting + estimated USD cost. NULL when
   -- the provider response did not surface usage (e.g. the LLM call
   -- itself failed before a response was returned). Reasoning /
   -- cached tokens are subsets of completion / prompt respectively;
@@ -233,9 +246,9 @@ CREATE TABLE iteration (
                                     llm_cost_usd IS NULL OR llm_cost_usd >= 0
                                   ),
 
-  metadata                        TEXT,    -- JSON-encoded per-iteration context (active extensions, etc.)
+  metadata                        TEXT,    -- JSON-encoded per-conversation_turn_iteration context (active extensions, etc.)
 
-  -- Per-iteration code-block log as ONE Nippy-encoded vec of
+  -- Per-conversation_turn_iteration code-block log as ONE Nippy-encoded vec of
   -- block maps:
   --   [{:idx N
   --     :code              "(some-code)"
@@ -252,14 +265,14 @@ CREATE TABLE iteration (
   -- \"Block\" matches the LLM-facing prompt vocabulary (each
   -- top-level form inside a fenced ```clojure ... ``` block). The
   -- per-call `expression_soul` rows are gone: every reader iterates
-  -- per-iteration anyway, so per-call rows added cost without index
+  -- per-conversation_turn_iteration anyway, so per-call rows added cost without index
   -- value. Var rows stay
   -- first-class (expression_soul kind='var') because var-history is
   -- the keystone of the data model - versioned, branched,
   -- dependency-graphed.
   blocks                          BLOB,
 
-  -- Index of the form that called `(answer ...)` when the iteration
+  -- Index of the form that called `(answer ...)` when the conversation_turn_iteration
   -- produced a final answer. Channels render the answer text below;
   -- this slot lets readers ELIDE that form from the displayed call
   -- log without re-walking the source. NULL for non-terminal
@@ -274,40 +287,40 @@ CREATE TABLE iteration (
   UNIQUE (conversation_turn_state_id, position)
 );
 
-CREATE INDEX idx_iteration_conversation_turn_state
-  ON iteration(conversation_turn_state_id, position);
+CREATE INDEX idx_conversation_turn_iteration_conversation_turn_state
+  ON conversation_turn_iteration(conversation_turn_state_id, position);
 
-CREATE INDEX idx_iteration_conversation_turn_state_created
-  ON iteration(conversation_turn_state_id, created_at);
+CREATE INDEX idx_conversation_turn_iteration_conversation_turn_state_created
+  ON conversation_turn_iteration(conversation_turn_state_id, created_at);
 
-CREATE TRIGGER trg_iteration_position_ai
-BEFORE INSERT ON iteration
+CREATE TRIGGER trg_conversation_turn_iteration_position_ai
+BEFORE INSERT ON conversation_turn_iteration
 BEGIN
   SELECT CASE
     WHEN NOT EXISTS (
-           SELECT 1 FROM iteration i
+           SELECT 1 FROM conversation_turn_iteration i
            WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
          AND NEW.position <> 1
-    THEN RAISE(ABORT, 'first iteration position must be 1')
+    THEN RAISE(ABORT, 'first conversation_turn_iteration position must be 1')
   END;
 
   SELECT CASE
     WHEN EXISTS (
-           SELECT 1 FROM iteration i
+           SELECT 1 FROM conversation_turn_iteration i
            WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
          AND NEW.position <> (
-           SELECT max(i.position) + 1 FROM iteration i
+           SELECT max(i.position) + 1 FROM conversation_turn_iteration i
            WHERE i.conversation_turn_state_id = NEW.conversation_turn_state_id)
-    THEN RAISE(ABORT, 'iteration position must increment by 1')
+    THEN RAISE(ABORT, 'conversation_turn_iteration position must increment by 1')
   END;
 END;
 
-CREATE TRIGGER trg_iteration_position_au
-BEFORE UPDATE ON iteration
+CREATE TRIGGER trg_conversation_turn_iteration_position_au
+BEFORE UPDATE ON conversation_turn_iteration
 BEGIN
   SELECT CASE
     WHEN NEW.conversation_turn_state_id <> OLD.conversation_turn_state_id OR NEW.position <> OLD.position
-    THEN RAISE(ABORT, 'iteration turn-state/position are immutable')
+    THEN RAISE(ABORT, 'conversation_turn_iteration turn-state/position are immutable')
   END;
 END;
 
@@ -324,7 +337,7 @@ END;
 --              pin literals without another schema migration.
 --
 -- Per-call rows were removed. Per-call data now lives in the
--- Nippy-encoded `iteration.blocks` BLOB; nothing else queried call rows
+-- Nippy-encoded `conversation_turn_iteration.blocks` BLOB; nothing else queried call rows
 -- by id, so the indirection added cost without value.
 --
 -- state_mode:
@@ -425,8 +438,8 @@ CREATE TABLE expression_state (
   id                  TEXT PRIMARY KEY NOT NULL,
   expression_soul_id  TEXT NOT NULL
                       REFERENCES expression_soul(id) ON DELETE CASCADE,
-  iteration_id        TEXT NOT NULL
-                      REFERENCES iteration(id) ON DELETE CASCADE,
+  conversation_turn_iteration_id        TEXT NOT NULL
+                      REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
 
   version             INTEGER NOT NULL CHECK (version >= 0),
 
@@ -448,7 +461,7 @@ CREATE INDEX idx_expression_state_soul
   ON expression_state(expression_soul_id, version);
 
 CREATE INDEX idx_expression_state_iteration
-  ON expression_state(iteration_id);
+  ON expression_state(conversation_turn_iteration_id);
 
 -- Version constraints for expression_state:
 -- - first row for an expression_soul must start at version = 0
@@ -507,9 +520,9 @@ END;
 -- extension_id is filled by runtime extension helpers from the registered
 -- extension identity. Extension callers should not supply or spoof it.
 --
--- iteration_block_id is a logical block id for future first-class block rows. Current block payloads still live in iteration.blocks BLOB, so
--- iteration_block_id is intentionally not a foreign key yet. Use
--- iteration_block_index with iteration_id for current block-scoped state.
+-- conversation_turn_iteration_block_id is a logical block id for future first-class block rows. Current block payloads still live in conversation_turn_iteration.blocks BLOB, so
+-- conversation_turn_iteration_block_id is intentionally not a foreign key yet. Use
+-- conversation_turn_iteration_block_index with conversation_turn_iteration_id for current block-scoped state.
 -- =============================================================================
 CREATE TABLE extension_aggregate (
   id                          TEXT PRIMARY KEY NOT NULL,
@@ -527,13 +540,13 @@ CREATE TABLE extension_aggregate (
                               REFERENCES conversation_state(id) ON DELETE CASCADE,
   conversation_turn_state_id  TEXT
                               REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
-  iteration_id                TEXT
-                              REFERENCES iteration(id) ON DELETE CASCADE,
-  iteration_block_index       INTEGER CHECK (
-                                iteration_block_index IS NULL OR iteration_block_index >= 0
+  conversation_turn_iteration_id                TEXT
+                              REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
+  conversation_turn_iteration_block_index       INTEGER CHECK (
+                                conversation_turn_iteration_block_index IS NULL OR conversation_turn_iteration_block_index >= 0
                               ),
-  iteration_block_id          TEXT CHECK (
-                                iteration_block_id IS NULL OR trim(iteration_block_id) <> ''
+  conversation_turn_iteration_block_id          TEXT CHECK (
+                                conversation_turn_iteration_block_id IS NULL OR trim(conversation_turn_iteration_block_id) <> ''
                               ),
 
   -- Singleton dedupe key for upsert. Generated from FK scope columns
@@ -541,12 +554,12 @@ CREATE TABLE extension_aggregate (
   -- otherwise defeat ON CONFLICT against the FK columns directly.
   scope_key                   TEXT GENERATED ALWAYS AS (
                                 CASE
-                                  WHEN iteration_block_id IS NOT NULL
-                                    THEN 'block-id:' || iteration_block_id
-                                  WHEN iteration_id IS NOT NULL AND iteration_block_index IS NOT NULL
-                                    THEN 'block:' || iteration_id || ':' || iteration_block_index
-                                  WHEN iteration_id IS NOT NULL
-                                    THEN 'iteration:' || iteration_id
+                                  WHEN conversation_turn_iteration_block_id IS NOT NULL
+                                    THEN 'block-id:' || conversation_turn_iteration_block_id
+                                  WHEN conversation_turn_iteration_id IS NOT NULL AND conversation_turn_iteration_block_index IS NOT NULL
+                                    THEN 'block:' || conversation_turn_iteration_id || ':' || conversation_turn_iteration_block_index
+                                  WHEN conversation_turn_iteration_id IS NOT NULL
+                                    THEN 'conversation_turn_iteration:' || conversation_turn_iteration_id
                                   WHEN conversation_turn_state_id IS NOT NULL
                                     THEN 'turn-state:' || conversation_turn_state_id
                                   WHEN conversation_state_id IS NOT NULL
@@ -560,8 +573,8 @@ CREATE TABLE extension_aggregate (
   created_at                  INTEGER NOT NULL,
   updated_at                  INTEGER NOT NULL CHECK (updated_at >= created_at),
 
-  CHECK ((iteration_block_index IS NULL AND iteration_block_id IS NULL)
-         OR iteration_id IS NOT NULL),
+  CHECK ((conversation_turn_iteration_block_index IS NULL AND conversation_turn_iteration_block_id IS NULL)
+         OR conversation_turn_iteration_id IS NOT NULL),
   UNIQUE (extension_id, aggregate_key, kind, scope_key)
 );
 
@@ -587,21 +600,21 @@ CREATE INDEX idx_extension_aggregate_conversation_turn_state
   WHERE conversation_turn_state_id IS NOT NULL;
 
 CREATE INDEX idx_extension_aggregate_iteration
-  ON extension_aggregate(iteration_id)
-  WHERE iteration_id IS NOT NULL;
+  ON extension_aggregate(conversation_turn_iteration_id)
+  WHERE conversation_turn_iteration_id IS NOT NULL;
 
 CREATE INDEX idx_extension_aggregate_iteration_block
-  ON extension_aggregate(iteration_id, iteration_block_index)
-  WHERE iteration_id IS NOT NULL AND iteration_block_index IS NOT NULL;
+  ON extension_aggregate(conversation_turn_iteration_id, conversation_turn_iteration_block_index)
+  WHERE conversation_turn_iteration_id IS NOT NULL AND conversation_turn_iteration_block_index IS NOT NULL;
 
 CREATE INDEX idx_extension_aggregate_iteration_block_id
-  ON extension_aggregate(iteration_block_id)
-  WHERE iteration_block_id IS NOT NULL;
+  ON extension_aggregate(conversation_turn_iteration_block_id)
+  WHERE conversation_turn_iteration_block_id IS NOT NULL;
 
 -- =============================================================================
 -- Log - structured logs.
 -- Event envelope:
---   - event: machine-stable event key (e.g. "iteration.llm.error")
+--   - event: machine-stable event key (e.g. "conversation_turn_iteration.llm.error")
 --   - data: JSON-encoded object/string with all event payload fields
 -- =============================================================================
 CREATE TABLE log (
@@ -619,8 +632,8 @@ CREATE TABLE log (
                          REFERENCES conversation_turn_soul(id) ON DELETE CASCADE,
   conversation_turn_state_id         TEXT
                          REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
-  iteration_id           TEXT
-                         REFERENCES iteration(id) ON DELETE CASCADE,
+  conversation_turn_iteration_id           TEXT
+                         REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
   expression_soul_id     TEXT
                          REFERENCES expression_soul(id) ON DELETE CASCADE,
   expression_state_id    TEXT
@@ -655,8 +668,8 @@ CREATE INDEX idx_log_conversation_turn_state
   WHERE conversation_turn_state_id IS NOT NULL;
 
 CREATE INDEX idx_log_iteration
-  ON log(iteration_id, created_at)
-  WHERE iteration_id IS NOT NULL;
+  ON log(conversation_turn_iteration_id, created_at)
+  WHERE conversation_turn_iteration_id IS NOT NULL;
 
 CREATE INDEX idx_log_expression_soul
   ON log(expression_soul_id, created_at)

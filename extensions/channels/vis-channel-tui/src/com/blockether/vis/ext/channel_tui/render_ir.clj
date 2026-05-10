@@ -308,6 +308,43 @@
         bar   {:text "│ " :style #{:quote} :node nil}]
     (mapv (fn [l] (update l :runs #(into [bar] %))) inner)))
 
+(defn- details->lines
+  "Render a `[:details]` block:
+   - one summary line tagged `:summary` carrying `:meta
+     {:kind :toggle-details :node-id <stable id>}` so the bubble
+     painter can register a click region;
+   - body lines tagged `:details-body`.
+   Whether the body is rendered or replaced with a placeholder is
+   the painter's call (it knows the live `:detail-expansions` map).
+   The walker emits both forms, the painter picks one."
+  [node width opts]
+  (let [attrs    (node-attrs node)
+        open?    (boolean (:open? attrs))
+        children (vec (node-children node))
+        summary  (first children)
+        body     (rest children)
+        node-id  (or (:node-id attrs) (str "details:" (hash node)))
+        ;; summary line: triangle indicator + summary text, indent body 2
+        marker   {:text (if open? "▾ " "▸ ") :style #{:marker} :node summary}
+        sum-runs (inlines->runs (node-children summary) #{:bold} nil)
+        sum-lines (wrap-runs sum-runs width [marker])
+        sum-tagged (mapv (fn [l]
+                           (-> l
+                             (assoc :block-tag :summary)
+                             (assoc :meta {:kind     :toggle-details
+                                           :node-id  node-id
+                                           :open?    open?})))
+                     sum-lines)
+        body-lines (when (or open? (nil? (:open? attrs)))
+                     (let [inner (blocks->lines body (max 1 (- width 2)) opts)
+                           pad   {:text "  " :style #{} :node nil}]
+                       (mapv (fn [l]
+                               (-> l
+                                 (update :runs #(into [pad] %))
+                                 (assoc :block-tag :details-body)))
+                         inner)))]
+    (vec (concat sum-tagged body-lines))))
+
 (defn- tag-lines
   "Stamp every produced line with `:block-tag` so downstream adapters
    (sentinel-string emitter, click/select region builder) can map
@@ -352,6 +389,12 @@
       :quote
       (conj (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
         (assoc (empty-line) :block-tag :quote))
+
+      :details
+      ;; details->lines already stamps per-line block tags + click meta;
+      ;; just pad with a trailing blank for visual spacing.
+      (conj (vec (details->lines node width opts))
+        (assoc (empty-line) :block-tag :details-body))
 
       ;; tables fall back to plain projection for v1; truncate lines
       ;; to width so they don't blow past the terminal
@@ -428,16 +471,18 @@
    heading `:level`)."
   ^String [block-tag level]
   (case block-tag
-    :h     (case (long (or level 1))
-             1 p/MARKER_MD_H1
-             2 p/MARKER_MD_H2
-             p/MARKER_MD_H3)
-    :code  p/MARKER_MD_CODE
-    :ul    p/MARKER_MD_BULLET
-    :ol    p/MARKER_MD_BULLET
-    :li    p/MARKER_MD_BULLET
-    :quote p/MARKER_MD_QUOTE
-    :table p/MARKER_MD_TABLE_ROW
+    :h            (case (long (or level 1))
+                    1 p/MARKER_MD_H1
+                    2 p/MARKER_MD_H2
+                    p/MARKER_MD_H3)
+    :code         p/MARKER_MD_CODE
+    :ul           p/MARKER_MD_BULLET
+    :ol           p/MARKER_MD_BULLET
+    :li           p/MARKER_MD_BULLET
+    :quote        p/MARKER_MD_QUOTE
+    :table        p/MARKER_MD_TABLE_ROW
+    :summary      p/MARKER_MD_SUMMARY
+    :details-body p/MARKER_ANSWER_TXT
     ;; :p, nil, anything else → plain answer text marker
     p/MARKER_ANSWER_TXT))
 
@@ -476,3 +521,25 @@
   ([ir width] (ir->sentinel-strings ir width nil))
   ([ir width opts]
    (lines->sentinel-strings (ir->lines ir width opts))))
+
+(defn ir->entries
+  "Drop-in replacement for the legacy `render/markdown->entries`.
+   Returns a vector of `{:line :meta}` maps where `:line` is the
+   sentinel-prefixed string the bubble painter consumes, and `:meta`
+   is per-line click-region metadata (e.g. `{:kind :toggle-details
+   :node-id ...}` for `:summary` lines).  `nil` `:meta` for content
+   lines.
+
+   This is the IR-side analogue of `markdown->entries`. Every
+   assistant-answer rendering path that used to parse the rendered
+   markdown back into entries should call this directly on the
+   canonical IR — no markdown round-trip."
+  ([ir width] (ir->entries ir width nil))
+  ([ir width opts]
+   (let [lines (ir->lines ir width opts)]
+     (mapv (fn [{:keys [runs block-tag block-level meta]}]
+             {:line (let [marker (block-marker-for block-tag block-level)
+                          body   (apply str (map run->sentinel-segment runs))]
+                      (str marker body))
+              :meta meta})
+       lines))))

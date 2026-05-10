@@ -5,6 +5,7 @@
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.format :as fmt])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize Symbols]
@@ -4755,20 +4756,19 @@
    (some->> (markdown->entries text max-w mode opts)
      (mapv :line))))
 
-(defn- answer->markdown-string
-  "Render the bubble's answer payload to a markdown string the layout
-   pipeline can chew on. STRICT: `answer` is canonical IR
-   (`[:ir & nodes]`) or nil. Strings are a programmer bug at this
-   layer — the IR boundary is upstream."
-  ^String [answer]
-  (cond
-    (nil? answer) ""
-    (and (vector? answer) (= :ir (first answer))) (vis/render answer :markdown)
-    :else
+(defn- assert-canonical-ir!
+  "STRICT: bubble layout takes canonical answer-IR (`[:ir & nodes]`)
+   or nil only. Strings/Hiccup/EDN are programmer bugs at this layer
+   — the IR boundary is upstream."
+  [ir]
+  (when-not (or (nil? ir) (and (vector? ir) (= :ir (first ir))))
     (throw (ex-info "format-answer-with-thinking-data: answer must be canonical [:ir ...] (or nil)"
-             {:got-type (some-> answer class .getName)
-              :got-preview (let [s (pr-str answer)]
+             {:got-type (some-> ir class .getName)
+              :got-preview (let [s (pr-str ir)]
                              (subs s 0 (min 200 (count s))))}))))
+
+(defn- ir-non-empty? [ir]
+  (and (vector? ir) (= :ir (first ir)) (> (count ir) 2)))
 
 (defn format-answer-with-thinking-data*
   "Uncached implementation. Returns `{:text :lines :line-meta}` so the
@@ -4796,23 +4796,26 @@
                                                  :conversation-turn-id (:conversation-turn-id opts)
                                                  :preview-default-lines (get settings :preview/default-lines 4)})))
                                     (collapse-repeated-error-runs trace)))
-        answer-str              (answer->markdown-string answer)
+        _                       (assert-canonical-ir! answer)
         fa-label                (label-text "final answer")
         conf-str                (when confidence (str " / " (name confidence)))
         full-label              (str fa-label (or conf-str ""))
         fa-pad                  (max 0 (- fill-w (count full-label) 1))
         fa-hdr                  (when (and show-final-hdr? (not cancelled?))
                                   (line-entry (str answer-hdr-marker (repeat-str \space fa-pad) full-label " ")))
-        md-entries              (markdown->entries answer-str (max 1 (- fill-w 2)) :answer
-                                  {:conversation-id      (:conversation-id opts)
-                                   :conversation-turn-id (:conversation-turn-id opts)
-                                   :detail-expansions   (:detail-expansions opts)
-                                   :section             :answer})
-        ans-entries             (if (seq md-entries)
-                                  md-entries
-                                  (mapv line-entry (wrap-text answer-str (max 1 (- fill-w 2)))))
+        ;; IR walker emits painter-ready entries directly. No
+        ;; markdown round-trip, no `markdown->entries` rebuild.
+        ans-entries             (if (ir-non-empty? answer)
+                                  (vec (ir-tui/ir->entries answer (max 1 (- fill-w 2))
+                                         {:conversation-id      (:conversation-id opts)
+                                          :conversation-turn-id (:conversation-turn-id opts)
+                                          :detail-expansions   (:detail-expansions opts)
+                                          :section             :answer}))
+                                  [])
         ans-pad                 (line-entry (str answer-pad-marker ""))
-        cancel-text             (or answer "Cancelled by user.")
+        cancel-text             (if (ir-non-empty? answer)
+                                  (str/trim (vis/extract-text answer))
+                                  "Cancelled by user.")
         cancel-rows             (mapv line-entry (wrap-text cancel-text (max 1 (- fill-w 2))))
         cancel-block            (vec (concat [(line-entry "")] cancel-rows [(line-entry "")]))
         answer-block            (cond-> []
@@ -4858,11 +4861,11 @@
 
 (defn format-answer-markdown-data*
   [answer bubble-w opts]
-  (let [content-w  (max 10 (- bubble-w 4))
-        md-entries (markdown->entries (or answer "") content-w :answer opts)
-        entries    (if (seq md-entries)
-                     (vec md-entries)
-                     (mapv (fn [line] {:line line :meta nil}) (wrap-text (or answer "") content-w)))]
+  (assert-canonical-ir! answer)
+  (let [content-w (max 10 (- bubble-w 4))
+        entries   (if (ir-non-empty? answer)
+                    (vec (ir-tui/ir->entries answer content-w opts))
+                    [])]
     (entries->payload entries)))
 
 (defn format-answer-markdown*
