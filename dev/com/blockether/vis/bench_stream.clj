@@ -27,7 +27,8 @@
             [criterium.core :as crit]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]))
+            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
+            [com.blockether.vis.ext.channel-tui.virtual :as virtual]))
 
 (def ^:private lorem
   "Lorem **bold** _ipsum_ dolor sit amet, `consectetur` adipiscing elit.
@@ -89,6 +90,100 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
          result (render/format-answer-markdown-data ir bubble-w opts)
          dt (- (System/nanoTime) t0)]
      [dt (count (:lines result))])))
+
+(defn run-progressive-layout!
+  "End-to-end production-realistic bench: drive `virtual/layout` with
+   a small scrollback (3 stable bubbles) plus one growing assistant
+   bubble. Each frame: extend the streaming bubble's body by
+   `chunk-chars`, lift to fresh IR, call `virtual/layout`, time wall
+   clock. Measures the path the TUI critical loop actually runs.
+
+   Emits `stream_layout_50k_100k_mean_ms` so this can be a separate
+   autoresearch metric from the synthetic format-answer bench."
+  [{:keys [target-chars chunk-chars bubble-w inner-h warmup-frames]
+    :or   {target-chars  100000
+           chunk-chars   1000
+           bubble-w      96
+           inner-h       40
+           warmup-frames 5}}]
+  (let [stable-bodies [(body-of-length 200)
+                       (body-of-length 1500)
+                       (body-of-length 800)]
+        stable-msgs (into [{:role :user :ir (vis/text->ir "What's up?")}]
+                      (mapv (fn [body]
+                              {:role :assistant
+                               :ir   (vis/text->ir body)
+                               :conversation-turn-id (str (gensym))})
+                        stable-bodies))
+        bench-frame!
+        (fn [^String stream-body]
+          (let [stream-ir (vis/text->ir stream-body)
+                msgs (conj stable-msgs
+                       {:role :assistant
+                        :ir   stream-ir
+                        :conversation-turn-id (str "stream-" (System/nanoTime))})
+                t0 (System/nanoTime)
+                _  (virtual/layout msgs bubble-w {} nil inner-h
+                     {:loading? false}
+                     {:conversation-id "bench"
+                      :detail-expansions {}})
+                dt (- (System/nanoTime) t0)]
+            dt))]
+    ;; Warmup
+    (dotimes [_ warmup-frames]
+      (bench-frame! (body-of-length 2000)))
+    (render/invalidate-cache!)
+    (let [frames (atom [])
+          steps  (long (/ target-chars chunk-chars))]
+      (loop [i 0]
+        (when (< i steps)
+          (let [size (* (inc i) chunk-chars)
+                ns   (bench-frame! (body-of-length size))]
+            (swap! frames conj {:size size :ns ns})
+            (recur (inc i)))))
+      (let [all @frames
+            bucket-of (fn [s]
+                        (cond
+                          (< s 5000)   "<5k"
+                          (< s 20000)  "5k-20k"
+                          (< s 50000)  "20k-50k"
+                          (< s 100000) "50k-100k"
+                          :else        "100k+"))
+            buckets (->> all
+                      (group-by #(bucket-of (:size %)))
+                      (into (sorted-map-by
+                              (fn [a b]
+                                (compare
+                                  (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] a)
+                                  (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] b))))))
+            tot (summarize (mapv :ns all))]
+        (println)
+        (println (format "Layout-driven stream: %d steps × %d chars (bubble-w=%d, inner-h=%d)"
+                   steps chunk-chars bubble-w inner-h))
+        (println "──────────────────────────────────────────────────────────────────────")
+        (printf "%-10s %6s %10s %10s %10s %10s %10s%n"
+          "bucket" "n" "mean ms" "p50 ms" "p95 ms" "p99 ms" "max ms")
+        (doseq [[name xs] buckets]
+          (let [s (summarize (mapv :ns xs))]
+            (printf "%-10s %6d %10.2f %10.2f %10.2f %10.2f %10.2f%n"
+              name (:n s) (:mean-ms s) (:p50-ms s)
+              (:p95-ms s) (:p99-ms s) (:max-ms s))))
+        (println)
+        (printf "TOTAL: n=%d wall=%.0f ms  mean=%.2f  p99=%.2f  max=%.2f%n"
+          (:n tot) (:total-ms tot) (:mean-ms tot) (:p99-ms tot) (:max-ms tot))
+        (let [small (some-> (get buckets "<5k")    (->> (mapv :ns) summarize :mean-ms))
+              big   (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+          (when (and small big (pos? small))
+            (printf "LINEARITY: 50k-100k / <5k = %.2fx  (target: ≤ 1.5x)%n"
+              (double (/ big small)))))
+        (println "METRIC stream_layout_total_ms=" (long (:total-ms tot)))
+        (println "METRIC stream_layout_p99_ms="   (long (:p99-ms tot)))
+        (println "METRIC stream_layout_max_ms="   (long (:max-ms tot)))
+        (when-let [big (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+          (println "METRIC stream_layout_50k_100k_mean_ms=" (long big)))
+        {:per-frame all
+         :buckets   (into {} (map (fn [[k xs]] [k (summarize (mapv :ns xs))]) buckets))
+         :total     tot}))))
 
 (defn run-progressive-windowed!
   "Like `run-progressive!` but passes `:max-lines viewport-rows` so
