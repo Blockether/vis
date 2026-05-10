@@ -11,11 +11,18 @@
 
    Tags:
      ROOT             :ir
-     BLOCKS    (11)   :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li
+     BLOCKS    (13)   :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li
                       :quote :table :tr :th :td
+                      :details{:open?} :summary
      INLINES   (11)   :span{:preserve-ws? :nowrap?} :br
                       :strong :em :c :a{:href}
                       :img{:src :alt} :kbd :mark :sup :sub
+
+   `:details` is the canonical disclosure widget (LLM-emitted
+   collapsible section). Children: exactly one `:summary` head
+   followed by zero-or-more body blocks. `{:open? true}` opens by
+   default; the TUI bubble painter toggles state via the click
+   region attached to the rendered summary line.
 
    ─── Canonical form (invariant after `->ast`) ───────────────────────────────
 
@@ -55,7 +62,7 @@
 ;; =============================================================================
 
 (def ^:private block-tags
-  #{:p :h :code :ul :ol :li :quote :table :tr :th :td})
+  #{:p :h :code :ul :ol :li :quote :table :tr :th :td :details :summary})
 
 (def ^:private inline-tags
   #{:span :br :strong :em :c :a :img :kbd :mark :sup :sub})
@@ -94,7 +101,8 @@
 (defn- has-attrs? [v]
   (and (vector? v) (>= (count v) 2) (map? (second v))))
 
-(declare ^:private canon-block ^:private canon-inline-children)
+(declare ^:private canon-block ^:private canon-inline-children
+  ^:private node-tag ^:private node-children)
 
 (defn- text-flatten
   "Concatenate every string anywhere in `x` (depth-first). Used to
@@ -273,6 +281,26 @@
       ;; quote contains blocks; loose inlines bucket into :p
       (into [:quote attrs] (canon-blocks-strict children))
 
+      :summary
+      ;; summary head: inline content only
+      (into [:summary attrs] (canon-block-children children))
+
+      :details
+      ;; details: first child must be :summary; rest are body blocks.
+      ;; A details with no summary gets a synthetic empty one so the
+      ;; bubble painter always has a click target.
+      (let [children (vec children)
+            head     (first children)
+            head     (if (and (vector? head) (= :summary (node-tag head)))
+                       (canon-block (ensure-attrs head))
+                       (canon-block [:summary {} "Details"]))
+            body     (let [tail (if (and (vector? (first children))
+                                      (= :summary (node-tag (first children))))
+                                  (subvec children 1)
+                                  children)]
+                       (canon-blocks-strict tail))]
+        (into [:details attrs head] body))
+
       ;; should not happen — caller dispatches by block?/inline?
       (into [tag attrs] (canon-block-children children)))))
 
@@ -419,6 +447,15 @@
         :ol       (str (render-html-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
         :li       (render-html-children children opts)
 
+        :details  (let [head (first children)
+                        body (rest children)
+                        head-html (when head (render-html-children (node-children head) opts))]
+                    (str "<blockquote" (when (:open? attrs) " expandable") ">"
+                      (when head-html (str "<b>" head-html "</b>\n"))
+                      (render-html-children body opts)
+                      "</blockquote>\n\n"))
+        :summary  (render-html-children children opts)
+
         :quote    (let [body (render-html-children children opts)]
                     (if (= :thinking (:context opts))
                       (str "<blockquote expandable>" body "</blockquote>\n\n")
@@ -508,6 +545,17 @@
         :ol       (str (render-md-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
         :li       (render-md-children children opts)
 
+        :details  (let [head      (first children)
+                        body      (rest children)
+                        head-md   (when head (render-md-children (node-children head) opts))
+                        open?     (boolean (:open? attrs))
+                        open-tag  (if open? "<details open>" "<details>")]
+                    (str open-tag "\n"
+                      (when head-md (str "<summary>" head-md "</summary>\n\n"))
+                      (render-md-children body opts)
+                      "</details>\n\n"))
+        :summary  (render-md-children children opts)
+
         :quote    (let [body (str/trim (render-md-children children opts))
                         prefixed (str/join "\n" (map #(str "> " %) (str/split-lines body)))]
                     (str prefixed "\n\n"))
@@ -585,6 +633,13 @@
         :ul       (str (render-plain-list :ul children opts) "\n")
         :ol       (str (render-plain-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
         :li       (render-plain-children children opts)
+
+        :details  (let [head    (first children)
+                        body    (rest children)
+                        h-text  (when head (str/trim (render-plain-children (node-children head) opts)))
+                        b-text  (render-plain-children body opts)]
+                    (str "▸ " (or h-text "Details") "\n" b-text "\n"))
+        :summary  (render-plain-children children opts)
 
         :quote    (let [body (str/trim (render-plain-children children opts))
                         prefixed (str/join "\n" (map #(str "│ " %) (str/split-lines body)))]
