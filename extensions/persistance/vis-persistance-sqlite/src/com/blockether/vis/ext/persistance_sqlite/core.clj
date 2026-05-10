@@ -498,7 +498,7 @@
                       (:conversation-state-id entry) (assoc :conversation_state_id (->id (:conversation-state-id entry)))
                       (:conversation-turn-soul-id entry)         (assoc :conversation_turn_soul_id (->id (:conversation-turn-soul-id entry)))
                       (:conversation-turn-state-id entry)        (assoc :conversation_turn_state_id (->id (:conversation-turn-state-id entry)))
-                      (:iteration-id entry)          (assoc :iteration_id (->id (:iteration-id entry)))
+                      (:iteration-id entry)          (assoc :conversation_turn_iteration_id (->id (:iteration-id entry)))
                       (:expression-soul-id entry)    (assoc :expression_soul_id (->id (:expression-soul-id entry)))
                       (:expression-state-id entry)   (assoc :expression_state_id (->id (:expression-state-id entry))))]})))))
 
@@ -736,9 +736,9 @@
                            :qst.llm_root_provider :qst.llm_root_model
                            :qst.created_at
                            [{:select [[[:count :*]]]
-                             :from   :iteration
-                             :where  [:= :iteration.conversation_turn_state_id :qst.id]}
-                            :iteration_count]]
+                             :from   :conversation_turn_iteration
+                             :where  [:= :conversation_turn_iteration.conversation_turn_state_id :qst.id]}
+                            :conversation_turn_iteration_count]]
                   :from   [[:conversation_turn_state :qst]]
                   :where  [:= :qst.conversation_turn_soul_id soul-id-s]
                   :order-by [[:qst.version :asc]]})]
@@ -748,7 +748,7 @@
                        :forked-from-conversation-turn-state-id  (some-> (:forked_from_conversation_turn_state_id row) ->uuid)
                        :status                      (->kw-back (:status row))
                        :created-at                  (->date (:created_at row))
-                       :iteration-count             (or (:iteration_count row) 0)}
+                       :iteration-count             (or (:conversation_turn_iteration_count row) 0)}
                 (:prior_outcome row)     (assoc :prior-outcome (->kw-back (:prior_outcome row)))
                 (:llm_root_provider row) (assoc :provider (->kw-back (:llm_root_provider row)))
                 (:llm_root_model row)    (assoc :model (:llm_root_model row))))
@@ -1047,7 +1047,7 @@
                              (query-one! tx-info
                                {:select [[[:coalesce [:+ [:max :position] 1] 1]
                                           :next_position]]
-                                :from   :iteration
+                                :from   :conversation_turn_iteration
                                 :where  [:= :conversation_turn_state_id conversation-turn-state-id-s]}))
                           1)
               raw-response-s (some-> llm-raw-response str)]
@@ -1057,7 +1057,7 @@
           ;;    are only for named vars.
           (let [blocks-vec (prepare-blocks-blob conversation-turn-soul-id-s position blocks)]
             (execute! tx-info
-              {:insert-into :iteration
+              {:insert-into :conversation_turn_iteration
                :values [(cond-> {:id                   iteration-id-s
                                  :conversation_turn_state_id       conversation-turn-state-id-s
                                  :position             position
@@ -1129,7 +1129,7 @@
                     {:insert-into :expression_state
                      :values [{:id                 (new-id)
                                :expression_soul_id soul-id
-                               :iteration_id       iteration-id-s
+                               :conversation_turn_iteration_id       iteration-id-s
                                :version            (inc max-ver)
                                :success            1
                                :expr               code
@@ -1269,7 +1269,7 @@
       (when state
         (mapv row->iteration
           (query! db-info
-            {:select [:*] :from :iteration
+            {:select [:*] :from :conversation_turn_iteration
              :where [:= :conversation_turn_state_id (:id state)]
              :order-by [[:position :asc]]}))))
     []))
@@ -1287,7 +1287,7 @@
            :from   [[:expression_state :est]]
            :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
            :where  [:and
-                    [:= :est.iteration_id iteration-id-s]
+                    [:= :est.conversation_turn_iteration_id iteration-id-s]
                     [:= :es.kind "var"]]
            :order-by [[:est.created_at :asc]]})))
     []))
@@ -1305,7 +1305,7 @@
     (let [iteration-id-s (->ref iteration-id)
           row            (query-one! db-info
                            {:select [:blocks]
-                            :from   :iteration
+                            :from   :conversation_turn_iteration
                             :where  [:= :id iteration-id-s]})
           decoded        (<-blob (:blocks row))]
       (vec (or decoded [])))
@@ -1330,7 +1330,7 @@
                        :qst.conversation_turn_soul_id]
               :from   [[:expression_soul :es]]
               :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]
-                       [:iteration :it]         [:= :it.id :est.iteration_id]
+                       [:conversation_turn_iteration :it]         [:= :it.id :est.conversation_turn_iteration_id]
                        [:conversation_turn_state :qst]      [:= :qst.id :it.conversation_turn_state_id]]
               :where  [:and
                        [:= :es.conversation_state_id state-id-s]
@@ -1367,7 +1367,7 @@
   [r]
   (cond-> {:conversation-state-id (:conversation_state_id r)}
     (:conversation_turn_soul_id r) (assoc :conversation-turn-id (->uuid (:conversation_turn_soul_id r)))
-    (:iteration_id r)             (assoc :iteration-id (->uuid (:iteration_id r)))
+    (:conversation_turn_iteration_id r)             (assoc :iteration-id (->uuid (:conversation_turn_iteration_id r)))
     (:iteration_position r)       (assoc :iteration-position (:iteration_position r))))
 
 (defn- row->bindings-entry
@@ -1397,12 +1397,12 @@
            (query! db-info
              (cond-> {:select [:es.name :es.conversation_state_id
                                :est.version :est.result :est.expr :est.created_at
-                               [:est.iteration_id :iteration_id]
+                               [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
                                [:it.position :iteration_position]
                                :qst.conversation_turn_soul_id]
                       :from   [[:expression_soul :es]]
                       :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]
-                               [:iteration :it] [:= :it.id :est.iteration_id]
+                               [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
                                [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
                       :where  [:and
                                [:= :es.conversation_state_id state-id-s]
@@ -1431,13 +1431,13 @@
                    :info (row->var-info r)}))
           (query! db-info
             {:select [:est.version :est.result :est.expr :est.created_at
-                      [:est.iteration_id :iteration_id]
+                      [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
                       [:it.position :iteration_position]
                       :es.conversation_state_id
                       :qst.conversation_turn_soul_id]
              :from   [[:expression_state :est]]
              :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]
-                      [:iteration :it] [:= :it.id :est.iteration_id]
+                      [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
                       [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
              :where  [:and
                       [:= :es.conversation_state_id state-id-s]
@@ -1471,12 +1471,12 @@
              (query! db-info
                (cond-> {:select [:es.name :es.conversation_state_id
                                  :est.version :est.result :est.expr :est.created_at
-                                 [:est.iteration_id :iteration_id]
+                                 [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
                                  [:it.position :iteration_position]
                                  :qst.conversation_turn_soul_id]
                         :from   [[:expression_state :est]]
                         :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]
-                                 [:iteration :it] [:= :it.id :est.iteration_id]
+                                 [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
                                  [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
                         :where  (cond-> [:and
                                          [:= :es.conversation_state_id state-id-s]
@@ -1530,9 +1530,9 @@
              :conversation_soul_id        (some-> (:conversation-soul-id opts) ->ref)
              :conversation_state_id       (some-> (:conversation-state-id opts) ->ref)
              :conversation_turn_state_id  (some-> (:conversation-turn-state-id opts) ->ref)
-             :iteration_id                (some-> (:iteration-id opts) ->ref)
-             :iteration_block_index       (:iteration-block-index opts)
-             :iteration_block_id          (some-> (:iteration-block-id opts) str)
+             :conversation_turn_iteration_id                (some-> (:iteration-id opts) ->ref)
+             :conversation_turn_iteration_block_index       (:iteration-block-index opts)
+             :conversation_turn_iteration_block_id          (some-> (:iteration-block-id opts) str)
              :created_at                  now
              :updated_at                  now}]
     (when (str/blank? (:extension_id row))
@@ -1547,8 +1547,8 @@
       (throw (ex-info "extension aggregate requires kind"
                {:type :extension-aggregate/missing-required
                 :key :kind})))
-    (when (and (or (:iteration_block_index row) (:iteration_block_id row))
-            (nil? (:iteration_id row)))
+    (when (and (or (:conversation_turn_iteration_block_index row) (:conversation_turn_iteration_block_id row))
+            (nil? (:conversation_turn_iteration_id row)))
       (throw (ex-info "extension aggregate block scope requires iteration-id"
                {:type :extension-aggregate/block-without-iteration})))
     row))
@@ -1560,9 +1560,9 @@
                   (:conversation_soul_id row)       (assoc :conversation-soul-id (:conversation_soul_id row))
                   (:conversation_state_id row)      (assoc :conversation-state-id (:conversation_state_id row))
                   (:conversation_turn_state_id row) (assoc :conversation-turn-state-id (:conversation_turn_state_id row))
-                  (:iteration_id row)               (assoc :iteration-id (:iteration_id row))
-                  (:iteration_block_index row)      (assoc :iteration-block-index (:iteration_block_index row))
-                  (:iteration_block_id row)         (assoc :iteration-block-id (:iteration_block_id row)))
+                  (:conversation_turn_iteration_id row)               (assoc :iteration-id (:conversation_turn_iteration_id row))
+                  (:conversation_turn_iteration_block_index row)      (assoc :iteration-block-index (:conversation_turn_iteration_block_index row))
+                  (:conversation_turn_iteration_block_id row)         (assoc :iteration-block-id (:conversation_turn_iteration_block_id row)))
           aggregate-key (<-edn-text (:aggregate_key row))]
       {:id            (:id row)
        :extension-id  (:extension_id row)
@@ -1585,10 +1585,10 @@
     (:conversation-soul-id opts)       (conj [:= :conversation_soul_id (->ref (:conversation-soul-id opts))])
     (:conversation-state-id opts)      (conj [:= :conversation_state_id (->ref (:conversation-state-id opts))])
     (:conversation-turn-state-id opts) (conj [:= :conversation_turn_state_id (->ref (:conversation-turn-state-id opts))])
-    (:iteration-id opts)               (conj [:= :iteration_id (->ref (:iteration-id opts))])
+    (:iteration-id opts)               (conj [:= :conversation_turn_iteration_id (->ref (:iteration-id opts))])
     (contains? opts :iteration-block-index)
-    (conj [:= :iteration_block_index (:iteration-block-index opts)])
-    (:iteration-block-id opts)         (conj [:= :iteration_block_id (str (:iteration-block-id opts))])))
+    (conj [:= :conversation_turn_iteration_block_index (:iteration-block-index opts)])
+    (:iteration-block-id opts)         (conj [:= :conversation_turn_iteration_block_id (str (:iteration-block-id opts))])))
 
 (defn- extension-aggregate-select
   [opts]
@@ -1633,9 +1633,9 @@
                              :conversation_soul_id        (:conversation_soul_id row)
                              :conversation_state_id       (:conversation_state_id row)
                              :conversation_turn_state_id  (:conversation_turn_state_id row)
-                             :iteration_id                (:iteration_id row)
-                             :iteration_block_index       (:iteration_block_index row)
-                             :iteration_block_id          (:iteration_block_id row)
+                             :conversation_turn_iteration_id                (:conversation_turn_iteration_id row)
+                             :conversation_turn_iteration_block_index       (:conversation_turn_iteration_block_index row)
+                             :conversation_turn_iteration_block_id          (:conversation_turn_iteration_block_id row)
                              :updated_at                  now}})
           (row->extension-aggregate
             (query-one! tx-info
@@ -1654,15 +1654,15 @@
                         (if (:conversation_turn_state_id row)
                           [:= :conversation_turn_state_id (:conversation_turn_state_id row)]
                           [:is :conversation_turn_state_id nil])
-                        (if (:iteration_id row)
-                          [:= :iteration_id (:iteration_id row)]
-                          [:is :iteration_id nil])
-                        (if (:iteration_block_index row)
-                          [:= :iteration_block_index (:iteration_block_index row)]
-                          [:is :iteration_block_index nil])
-                        (if (:iteration_block_id row)
-                          [:= :iteration_block_id (:iteration_block_id row)]
-                          [:is :iteration_block_id nil])]})))))))
+                        (if (:conversation_turn_iteration_id row)
+                          [:= :conversation_turn_iteration_id (:conversation_turn_iteration_id row)]
+                          [:is :conversation_turn_iteration_id nil])
+                        (if (:conversation_turn_iteration_block_index row)
+                          [:= :conversation_turn_iteration_block_index (:conversation_turn_iteration_block_index row)]
+                          [:is :conversation_turn_iteration_block_index nil])
+                        (if (:conversation_turn_iteration_block_id row)
+                          [:= :conversation_turn_iteration_block_id (:conversation_turn_iteration_block_id row)]
+                          [:is :conversation_turn_iteration_block_id nil])]})))))))
 
 (defn db-get-extension-aggregate
   [db-info opts]
