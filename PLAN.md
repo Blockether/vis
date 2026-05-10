@@ -1639,3 +1639,213 @@ SYSTEM VARS:
   any user has frozen prompts in their config; otherwise drop-in.
   Default to v2.
 
+
+---
+
+## 7. Implementation status (live)
+
+Five commits landed on `main` against this PLAN. Live as of
+commit `66080eab` (Phase 2 schema rename).
+
+### 7.1 Shipped
+
+| § | scope | commit |
+|---|---|---|
+| 2.12 | system-var slim 12→11, hierarchy prefix, `TURN_POSITION` + `TURN_ITERATION_POSITION` | `8891b43d` |
+| 2.11 | `op-class` → `op/tag` rename, 8→2 OODA enum, `side-effect-op-classes` + `side-effect-op?` deleted, callsites migrated to inline `(= :op.tag/action ...)` predicate | `dee3aa01` |
+| 2.1, 1.3, 1.4 | envelope rewrite: flat `:op/*` namespace, structured `:op/error` (`:message :trace :hint :block`), `:rendering-kind` → `:role`, role enum 6→4 (`:answer :nudge :tool :thinking`) | `30e57b3e` |
+| 2.3, 2.6 | `:op/result` moved inside envelope (kills the bare `:result` outlier); `envelope-success?` / `envelope-failure?` helpers; `ex->op-error` helper covering edamame + SCI + preflight error families with block-global coordinate translation | `d96faa5f` |
+| 2.12 | schema rename `iteration` → `conversation_turn_iteration` (table + 2 indices + 2 triggers + FK columns including `iteration_id` → `conversation_turn_iteration_id` + sibling `_block_*` columns); 30 HoneySQL queries updated; new top-of-file diagram | `66080eab` |
+
+### 7.2 Probed live (truth, not assumption)
+
+- `(env/SYSTEM_VAR_NAMES)` → 11-symbol set with hierarchy prefix
+- `(ext/op-tag :v/cat)` → `:op.tag/observation`; `(ext/op-tag :v/patch)` → `:op.tag/action`; default for unregistered ops → `:op.tag/observation`
+- `(ext/success {:result {} :op :v/cat :metadata {}})` → `#:op{:result … :symbol :v/cat :tag :op.tag/observation :success? true :error nil :stdout? :stderr? :metadata {…}}`
+- `(ext/envelope-success? e)` / `(ext/envelope-failure? e)` defensive predicates
+- `(ext/ex->op-error edamame-ex {:block-source "..."})` → `{:message :trace :block {:source :phase :edamame/parse :row :col :opened-loc}}`
+- `(ext/ex->op-error sci-ex {:block-source "..." :form-row 3})` → `:row` translated form-local→block-global; `:phase :sci/analysis` derived from ex-data
+- `verify.sh --quick` PASS (format + lint) at every commit boundary
+
+### 7.3 Pending (PLAN-driven, NOT yet shipped)
+
+Ordered by dependency. Each item names the PLAN section that
+specs it.
+
+#### 7.3.1 Reader sweep (≈ § 3 inventory residue)
+
+After Phase 4 the canonical envelope shape is `:op/*`. ~30 reader
+sites in code I didn't classify still read raw `:success?` /
+`:error` / `:result` / `:info`. Most are NOT envelope reads —
+they're block records, sink-entries, CLI return values, or
+generic intermediate maps. Each needs **per-site classification**:
+
+- `(:info x)`            → `(:op/metadata x)` only when `x` is an envelope; block records keep `:info` as their own field
+- `(:success? x)`        → `(:op/success? x)` only when envelope
+- `(:error x)`           → `(:op/error x)` only when envelope
+- `(:result x)`          → `(:op/result x)` only when envelope
+- `(get-in x [:info :op])` → `(:op/symbol x)` only when envelope
+
+Concrete files left:
+
+- `src/com/blockether/vis/internal/loop.clj` (~10 sites in block-construction + dispatch — most are block-record, not envelope)
+- `src/com/blockether/vis/internal/main.clj` (CLI return values — likely NOT envelopes)
+- `src/com/blockether/vis/internal/env.clj` (1 site at `:748` reading something into `:success?` — needs context)
+- `src/com/blockether/vis/internal/prompt.clj` (1 site)
+- `src/com/blockether/vis/internal/doctor.clj` (1 site, `(:info totals)` — different `:info`, not envelope)
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/chat.clj` (`select-keys` already migrated; per-site read still pending)
+- Persistence test fixtures + several edit/exa test fixtures
+- TUI render_test.clj fixtures (still reference old envelope shape in some `:detail` maps)
+
+Don't blind-replace; each site reads its surrounding context to
+decide whether the value is an envelope.
+
+#### 7.3.2 Renderer updates (§ 2.8 + § 2.9 + § 2.10)
+
+`[turn 7 · iteration 3 · block 0 · tool · z/patch]` header format
+across all channels. Specifically:
+
+- Block header rewrite to use the doubled-position pattern
+  (`turn N` from `TURN_POSITION`, `iteration N` from
+  `TURN_ITERATION_POSITION`, `block N` from `:block/position`).
+- UUID never appears in user/LLM-facing surfaces (regression
+  test in § 5.1).
+- Babashka-style source context for failures: full failing form
+  with `^---` arrow at `:op/error :block :row` / `:col`, and `>`
+  gutter prefix on the failing form's line range. § 2.8 has the
+  `render-context` helper sketch (probe-validated against SCI
+  + edamame ex-data).
+
+#### 7.3.3 Tests (§ 5)
+
+Three regression tests gate this PR:
+
+- **§ 5.1** No UUID leaks in transcript / TUI render / Telegram
+  bot output (one assertion per channel, three tests, one rule).
+- **§ 5.2** Block-global coordinate translation for SCI per-form
+  eval; edamame coords stay block-global; whole-block SCI eval
+  preserves indentation column.
+- **§ 5.3** Whole-block context with failing-form marker
+  (`>` gutter on form 2 of 3, `^---` arrow at exact column,
+  no truncation).
+
+#### 7.3.4 System prompt rewrite (§ 6)
+
+Replace the current ~120-line prose-heavy prompt with the ~60-
+line caveman version per § 6.1. Hard requirements:
+
+- Strategy declaration at turn open (`λ :answer` / `λ :ooda` /
+  `λ :architect`).
+- `OPS` section names `:op.tag/observation` and `:op.tag/action`
+  explicitly.
+- Error structure in the prompt names `:hint` as the field to
+  read first.
+- `BINDINGS` and `SYSTEM VARS` are sibling sections, not
+  conflated; `SYSTEM VARS` enumerates the 11-name registry by
+  hierarchy prefix.
+- Coding aesthetics in the prompt: `code > markdown`,
+  `data > control_flow`, `pure > stateful`, `z/patch > v/patch
+  > raw text`, `HoneySQL > raw SQL`, `one change → verify →
+  next`.
+
+Site: `src/com/blockether/vis/internal/prompt.clj`. Test:
+snapshot prompt output, assert line-count ≤ 70, assert required
+tokens present (`λ engage`, `:answer`, `:ooda`, `:architect`,
+`:op.tag/observation`, `:op.tag/action`, JOURNAL, BINDINGS,
+SYSTEM VARS).
+
+#### 7.3.5 Wider blob-format alignment (§ 2.12 + § 2.1 cross-ref)
+
+The persistence `prepare-blocks-blob` writes `:role` (good — done
+in Phase 4). It does NOT yet write the new envelope's `:op/*`
+fields directly; today the envelope is stored under `:result`
+verbatim (Nippy frozen). After Phase 4 a block looks like:
+
+```clojure
+{:idx 0
+ :code "(v/cat \"foo\")"
+ :role :tool
+ :result <serialized envelope = {:op/result … :op/symbol … :op/tag … :op/success? …}>
+ :error <fallback string for non-envelope errors>
+ :stdout <string>
+ :stderr <string>
+ :duration-ms 5
+ :timeout? false
+ :repaired? false}
+```
+
+That works but reads awkwardly: `:error` lives at block-level AND
+inside `:result :op/error`. Pick one. PLAN.md preference: keep
+block-level `:error` for non-envelope failures (raw user code
+without a tool), and let envelope errors flow through
+`:result :op/error`. Document this in § 2.12 if it's not already
+explicit.
+
+#### 7.3.6 Phase 4 leftover: `ex->op-error` integration
+
+The helper exists and is probed correct. **It is not yet wired
+into the iteration loop.** loop.clj currently builds errors via
+old paths (`:error` on block, etc.). The wiring task:
+
+- At every SCI eval failure site in `loop.clj`, route the
+  Throwable through `extension/ex->op-error` with the
+  surrounding `{:block-source :form-row :form-col}` context
+  (form bounds come from the `loop.clj:472` form-bounds
+  extractor; needs `:start-row`/`:end-row` extension per § 2.6).
+- Set the resulting structured map as `:op/error` on the
+  envelope (or as the block-level `:error` for raw non-tool
+  evals).
+
+#### 7.3.7 Form-bounds extension (§ 2.6 prereq)
+
+`loop.clj:472` form-bounds extractor records per-form
+`[start-byte end-byte]` from edamame metadata. § 2.6 + § 2.8
+need it to also record `:start-row` and `:end-row` (also from
+edamame's `:row`/`:end-row` meta on each form) so:
+
+- The error helper can translate form-local SCI line numbers to
+  block-global via `:form-row` arg.
+- The renderer can paint `>` gutter on the failing form's line
+  range.
+
+One-line change in the form-bounds map literal.
+
+### 7.4 Coordination notes
+
+The schema rename (Phase 2) collided with another agent
+("clanker") who had `V1__schema.sql` + `persistance/core.clj`
+dirty in the working tree. Final resolution: my schema rename
+edits landed atomically on top of clanker's WIP — they get the
+new table/column names too. Confirm clanker's V1 changes still
+reference `iteration` anywhere in their pending diffs.
+
+The clanker also has TUI `render.clj` + answer-IR work in
+progress. My touches there were minimal:
+
+- `op-class->color-role` → `op-tag->color-role` (function renamed,
+  case branches collapsed 8→2).
+- Added `(declare ^:private node-tag node-children)` to fix a
+  forward-reference lint error at `render.clj:293` that would
+  otherwise block `verify.sh --quick`.
+
+Coordinate any further TUI work with the clanker.
+
+### 7.5 Suggested next session order
+
+1. **§ 7.3.7** form-bounds extractor extension (1-line change,
+   prereq for everything else).
+2. **§ 7.3.6** wire `ex->op-error` into the iteration loop
+   (replaces ad-hoc error construction; produces structured
+   `:op/error` for every SCI failure).
+3. **§ 7.3.1** reader sweep (mechanical, low-risk; do AFTER
+   error wiring so the new shape is fully canonical before any
+   reader needs to handle both).
+4. **§ 7.3.3** § 5 regression tests (gate the PR).
+5. **§ 7.3.2** renderer updates (block header + source context
+   + `^---` arrow). Coordinate with clanker.
+6. **§ 7.3.4** system prompt rewrite. Last because behavior
+   should be locked first.
+7. **§ 7.3.5** blob-format alignment doc (low-risk, just
+   documentation).
+
+Each step independently committable. None depend on the next.
