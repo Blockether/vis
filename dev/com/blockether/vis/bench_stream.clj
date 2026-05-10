@@ -91,6 +91,96 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
          dt (- (System/nanoTime) t0)]
      [dt (count (:lines result))])))
 
+(defn run-progressive-tail!
+  "Bench `ir->lines-tail` vs `(take-last N (ir->lines ...))`.
+
+   `:mode :full` (default baseline) - full O(body) walk + take-last.
+   `:mode :tail` - `ir->lines-tail` (back-walk subset).
+   Output is bit-identical between the two by contract; the only
+   difference is per-frame cost.
+
+   `:viewport-rows` is the tail length we want.
+
+   Emits `stream_tail_50k_100k_mean_ms`."
+  [{:keys [target-chars chunk-chars bubble-w viewport-rows warmup-frames mode]
+    :or   {target-chars   100000
+           chunk-chars    1000
+           bubble-w       100
+           viewport-rows  80
+           warmup-frames  5
+           mode           :full}}]
+  (let [content-w (- (long bubble-w) 4)
+        bench-frame!
+        (case mode
+          :full
+          (fn [^String text]
+            (let [ir (vis/text->ir text)
+                  t0 (System/nanoTime)
+                  lines (ir-tui/ir->lines ir content-w)
+                  _     (vec (take-last viewport-rows lines))
+                  dt (- (System/nanoTime) t0)]
+              [dt (count lines)]))
+          :tail
+          (fn [^String text]
+            (let [ir (vis/text->ir text)
+                  t0 (System/nanoTime)
+                  lines (ir-tui/ir->lines-tail ir content-w viewport-rows)
+                  dt (- (System/nanoTime) t0)]
+              [dt (count lines)])))]
+    (dotimes [_ warmup-frames]
+      (bench-frame! (body-of-length 2000)))
+    (let [frames (atom [])
+          steps  (long (/ target-chars chunk-chars))]
+      (loop [i 0]
+        (when (< i steps)
+          (let [size (* (inc i) chunk-chars)
+                [ns lines] (bench-frame! (body-of-length size))]
+            (swap! frames conj {:size size :ns ns :lines lines})
+            (recur (inc i)))))
+      (let [all @frames
+            bucket-of (fn [s]
+                        (cond
+                          (< s 5000)   "<5k"
+                          (< s 20000)  "5k-20k"
+                          (< s 50000)  "20k-50k"
+                          (< s 100000) "50k-100k"
+                          :else        "100k+"))
+            buckets (->> all
+                      (group-by #(bucket-of (:size %)))
+                      (into (sorted-map-by
+                              (fn [a b]
+                                (compare
+                                  (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] a)
+                                  (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] b))))))
+            tot (summarize (mapv :ns all))]
+        (println)
+        (println (format "Tail-walker (mode=%s) stream: %d steps × %d chars (bubble-w=%d, tail-n=%d)"
+                   mode steps chunk-chars bubble-w viewport-rows))
+        (println "──────────────────────────────────────────────────────────────────────")
+        (printf "%-10s %6s %10s %10s %10s %10s %10s%n"
+          "bucket" "n" "mean ms" "p50 ms" "p95 ms" "p99 ms" "max ms")
+        (doseq [[name xs] buckets]
+          (let [s (summarize (mapv :ns xs))]
+            (printf "%-10s %6d %10.2f %10.2f %10.2f %10.2f %10.2f%n"
+              name (:n s) (:mean-ms s) (:p50-ms s)
+              (:p95-ms s) (:p99-ms s) (:max-ms s))))
+        (println)
+        (printf "TOTAL: n=%d wall=%.0f ms  mean=%.2f  p99=%.2f  max=%.2f%n"
+          (:n tot) (:total-ms tot) (:mean-ms tot) (:p99-ms tot) (:max-ms tot))
+        (let [small (some-> (get buckets "<5k")    (->> (mapv :ns) summarize :mean-ms))
+              big   (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+          (when (and small big (pos? small))
+            (printf "LINEARITY: 50k-100k / <5k = %.2fx  (target: ≤ 1.5x)%n"
+              (double (/ big small)))))
+        (println "METRIC stream_tail_total_ms="  (long (:total-ms tot)))
+        (println "METRIC stream_tail_p99_ms="    (long (:p99-ms tot)))
+        (println "METRIC stream_tail_max_ms="    (long (:max-ms tot)))
+        (when-let [big (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+          (println "METRIC stream_tail_50k_100k_mean_ms=" (long big)))
+        {:per-frame all
+         :buckets   (into {} (map (fn [[k xs]] [k (summarize (mapv :ns xs))]) buckets))
+         :total     tot}))))
+
 (defn run-progressive-layout!
   "End-to-end production-realistic bench: drive `virtual/layout` with
    a small scrollback (3 stable bubbles) plus one growing assistant
