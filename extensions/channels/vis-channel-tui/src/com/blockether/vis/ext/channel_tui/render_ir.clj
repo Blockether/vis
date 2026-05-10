@@ -512,6 +512,72 @@
        (vec (take n lines))
        lines))))
 
+(defn- ir-text-chars
+  "Sum of all text-content character counts in an IR node tree. Cheap
+   recursive walk - just counts string leaves. Used by
+   `ir->lines-tail` as a per-block height estimator.
+
+   Uses `.length` on Strings (direct char-array length, no Counted
+   dispatch) and `.count` on the IPersistentVector node so neither
+   goes through `clojure.core/count`'s reflective fast-path table."
+  ^long [node]
+  (cond
+    (string? node)
+    (long (.length ^String node))
+
+    (vector? node)
+    (let [^clojure.lang.IPersistentVector v node
+          n (long (.count v))]
+      (loop [i (long 1) acc (long 0)]
+        (if (>= i n)
+          acc
+          (recur (inc i) (+ acc (ir-text-chars (.nth v i)))))))
+
+    :else 0))
+
+(defn ir->lines-tail
+  "Render only the last `tail-n` styled lines of the IR.
+
+   Walks the top-level blocks BACKWARD, accumulating a cheap
+   per-block line estimate (text-chars / content-width), until
+   accumulated estimate ≥ `tail-n * 2` (slack covers blank-collapse
+   + per-block trailing blanks). Then renders ONLY those tail blocks
+   via the normal `ir->lines` and `(take-last tail-n)`.
+
+   Per-frame cost = O(visible-tail), independent of total body
+   length. The semantically-correct path for an auto-scrolled
+   tail-pinned bubble (vs the broken `:max-lines` cap which would
+   give the FIRST tail-n).
+
+   `tail-n` must be positive. If the body has fewer total estimated
+   lines than the budget, this falls back to a full walk."
+  ([input width tail-n] (ir->lines-tail input width tail-n nil))
+  ([input width tail-n opts]
+   (let [tail-n     (long tail-n)
+         ast        (ir/->ast input)
+         blocks     (vec (drop 2 ast))
+         nb         (count blocks)
+         content-w  (max 1 (long width))
+         ;; 2x slack covers post-walk blank collapse + estimator slop
+         budget     (long (* 2 tail-n))
+         picked-from
+         (loop [i (dec nb) accum 0]
+           (cond
+             (neg? i)             0
+             (>= accum budget)    (inc i)
+             :else
+             (let [b   (nth blocks i)
+                   est (max 1 (long (Math/ceil
+                                      (/ (double (max 1 (ir-text-chars b)))
+                                         (double content-w)))))]
+               (recur (dec i) (+ accum est)))))
+         tail-blocks (subvec blocks picked-from)
+         synth-ir    (into [:ir {}] tail-blocks)
+         tail-lines  (ir->lines synth-ir width opts)]
+     (if (<= (count tail-lines) tail-n)
+       tail-lines
+       (vec (take-last tail-n tail-lines))))))
+
 (defn lines->plain
   "Concatenate the text of every run in `lines`. Useful for tests +
    clipboard fallback (preferred clipboard path: `ir/render :markdown`)."
