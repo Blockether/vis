@@ -126,6 +126,11 @@
    `header-rows` + `draw-header!` only hits SQLite at most
    ~10×/second instead of ~25×/second on a streaming turn.
 
+   When the user sets `:show-goal-row? false` in TUI settings, we
+   short-circuit to nil BEFORE the cache + SQLite path. That removes
+   the entire goal lookup from the per-frame render path - useful for
+   users who don't use /goal at all and don't want goal display.
+
    The cost the comment underestimated: at warm steady-state each
    `get-goal` lookup is ~12ms via SQLite WAL, not microseconds.
    Multiplied by 2 calls/frame at 80ms ticks during streaming this
@@ -136,15 +141,21 @@
    conversation-id and any downstream throw — the header must never
    crash on a goal lookup."
   [db]
-  (if-let [conv-id (some-> db :conversation :id)]
-    (let [now (System/currentTimeMillis)
-          [cached-at cached-goal] (get @goal-cache conv-id)]
-      (if (and cached-at (< (- now (long cached-at)) goal-cache-ttl-ms))
-        cached-goal
-        (let [goal (current-goal-uncached db)]
-          (swap! goal-cache assoc conv-id [now goal])
-          goal)))
-    nil))
+  (cond
+    ;; User opted out of goal display entirely.
+    (false? (get-in db [:settings :show-goal-row?]))
+    nil
+
+    :else
+    (if-let [conv-id (some-> db :conversation :id)]
+      (let [now (System/currentTimeMillis)
+            [cached-at cached-goal] (get @goal-cache conv-id)]
+        (if (and cached-at (< (- now (long cached-at)) goal-cache-ttl-ms))
+          cached-goal
+          (let [goal (current-goal-uncached db)]
+            (swap! goal-cache assoc conv-id [now goal])
+            goal)))
+      nil)))
 
 (defn- goal-subtitle-visible?
   "True when the goal should occupy a subtitle row. Active and paused
