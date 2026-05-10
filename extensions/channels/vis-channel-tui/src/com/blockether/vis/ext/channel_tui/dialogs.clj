@@ -2020,6 +2020,8 @@
     :args [{:name "branch" :kind :positional :required false}]}
    {:id :fork-conversation   :label "Fork Conversation"}
    {:id :switch-conversation :label "Switch Conversation"}
+   {:id :search-in-conversation :label "Search in Conversation"
+    :args [{:name "query" :kind :positional :required false}]}
    {:id :providers           :label "Configure Providers"}
    {:id :settings            :label "Settings"}])
 

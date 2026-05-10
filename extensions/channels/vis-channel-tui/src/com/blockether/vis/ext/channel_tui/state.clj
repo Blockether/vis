@@ -1036,6 +1036,23 @@
   (fn [db [_ scroll]]
     (assoc db :messages-scroll scroll)))
 
+(reg-event-db :scroll-to-message
+  ;; In-conversation search lands here after the user picks a hit.
+  ;; The painter doesn't get told an exact :messages-scroll Y value
+  ;; (which it would need to compute heights for); instead it sees
+  ;; `:scroll-to-message-pending` and re-resolves the scroll target
+  ;; on the next frame, then clears the pending field. One-shot.
+  (fn [db [_ msg-idx]]
+    (cond-> db
+      (and (integer? msg-idx) (>= msg-idx 0))
+      (assoc :scroll-to-message-pending msg-idx))))
+
+(reg-event-db :scroll-to-message-resolved
+  ;; Painter calls this after consuming `:scroll-to-message-pending`
+  ;; so the same hit doesn't re-scroll on every redraw.
+  (fn [db _]
+    (dissoc db :scroll-to-message-pending)))
+
 (reg-event-db :scroll-up
   (fn [db [_ amount total-h inner-h]]
     (let [max-s (max 0 (- total-h inner-h))
