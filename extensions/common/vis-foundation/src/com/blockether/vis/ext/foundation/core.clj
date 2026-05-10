@@ -32,12 +32,46 @@
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
    [com.blockether.vis.ext.foundation.introspection :as introspection]
-   [com.blockether.vis.ext.foundation.markdown :as markdown]))
+   ))
+
+(def ^:private answer-ir-prompt
+  "Answers use IR (Hiccup-EDN). Always emit (answer [:ir & nodes]).
+
+Block tags: :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li :quote
+            :table :tr :th :td
+Inline tags: :strong :em :c (inline code) :a{:href} :img{:src :alt}
+             :kbd :mark :sup :sub
+
+Bare strings are text nodes. Attrs map is optional. :li content is
+either all blocks or all inlines (not mixed).
+
+For pure-code answers: [:ir [:code {:lang \"clojure\"} \"...\"]].
+
+Examples:
+
+(answer
+ [:ir
+  [:p \"Recurses on the rest until the empty case.\"]
+  [:p \"Complexity: \" [:c \"O(n)\"] \".\"]])
+
+(answer
+ [:ir
+  [:code {:lang \"clojure\"}
+   \"(defn reverse-list [xs] (reduce conj '() xs))\"]])
+
+(answer
+ [:ir
+  [:h {:level 2} \"Comparison\"]
+  [:table
+   [:tr [:th \"Approach\"]   [:th \"Big-O\"]]
+   [:tr [:td \"reduce\"]     [:td [:c \"O(n)\"]]]
+   [:tr [:td \"loop+recur\"] [:td [:c \"O(n)\"]]]]
+  [:p \"Both are linear; \" [:strong \"reduce\"] \" is more idiomatic.\"]])")
 
 (defn- combined-prompt
   "Stitch the per-area prompt fragments together. The environment
    fragment is a fn (it renders the live snapshot every time the
-   system prompt is assembled); introspection + editing + markdown
+   system prompt is assembled); introspection + editing + answer-IR
    fragments are static strings that we concatenate directly."
   [env]
   (str (environment/environment-prompt env)
@@ -46,7 +80,7 @@
     "\n\n"
     (editing/available-editing-prompt)
     "\n\n"
-    markdown/markdown-prompt))
+    answer-ir-prompt))
 
 (defn- call-resolved!
   [sym & args]
@@ -98,7 +132,6 @@
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols
                                 (editing/available-editing-symbols)
-                                markdown/markdown-symbols
                                 environment/environment-symbols))
      :ext/doctor-check-fn lazy-doctor-check-fn
      :ext/cli            [(doctor-cli-command)
