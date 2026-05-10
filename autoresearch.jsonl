@@ -1,0 +1,1 @@
+{"type":"config","name":"streaming-tui-perf","metricName":"stream_50k_100k_mean_ms","metricUnit":"ms","bestDirection":"lower"}
