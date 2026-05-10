@@ -29,7 +29,3 @@
   - [Markdown builders under `v/`](extensions/common/markdown.md)
 - [vis-exa extension](extensions/common/vis-exa.md)
 
-# Performance
-
-- [TUI live-streaming](perf/streaming-tui.md)
-

@@ -179,10 +179,7 @@
   ;;   clojure -M:dev tui          # Terminal.app attached nREPL+TUI JVM
   ;;   clojure -M:dev cli help     # nREPL + run a CLI entry point
   :dev {:extra-paths ["dev" "test"]
-        :extra-deps  {nrepl/nrepl                 {:mvn/version "1.3.1"}
-                      ;; Bench harness `dev/com/blockether/vis/bench_stream.clj`
-                      ;; uses criterium for proper warmed-up timing.
-                      criterium/criterium        {:mvn/version "0.4.6"}}
+        :extra-deps  {nrepl/nrepl {:mvn/version "1.3.1"}}
         ;; Keep dev nREPL / terminal-tui stderr as quiet as `bin/vis`.
         ;; Without these flags JDK native-access / Unsafe warnings can
         ;; corrupt the Lanterna screen before Vis redirects app logs.

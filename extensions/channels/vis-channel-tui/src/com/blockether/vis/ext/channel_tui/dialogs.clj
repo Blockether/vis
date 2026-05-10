@@ -332,7 +332,27 @@
 
 ;;; ── Selection dialog ────────────────────────────────────────────────────────
 
-(declare draw-scrollbar!)
+(defn scrollbar-geometry
+  [height total scroll]
+  (when (and (pos? height) (> total height))
+    (let [thumb-h    (max 1 (int (* height (/ (double height) total))))
+          max-scroll (max 1 (- total height))
+          thumb-top  (int (* (- height thumb-h)
+                            (/ (double (clamp scroll 0 max-scroll)) max-scroll)))]
+      {:track-h height
+       :thumb-h thumb-h
+       :thumb-top thumb-top})))
+
+(defn draw-scrollbar!
+  [g col top height total scroll]
+  (when-let [{:keys [track-h thumb-h thumb-top]}
+             (scrollbar-geometry height total scroll)]
+    (doseq [r (range track-h)]
+      (p/set-colors! g t/dialog-border t/dialog-bg)
+      (p/set-char! g col (+ top r) Symbols/SINGLE_LINE_VERTICAL))
+    (doseq [r (range thumb-h)]
+      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+      (p/set-char! g col (+ top thumb-top r) \█))))
 
 (defn select-dialog!
   "Show a selection list dialog. Returns selected item map or nil on Esc.
@@ -635,28 +655,6 @@
     (p/styled g [p/BOLD]
       (p/put-str! g x row (ellipsize line table-w)))
     (p/put-str! g x row (ellipsize line table-w))))
-
-(defn scrollbar-geometry
-  [height total scroll]
-  (when (and (pos? height) (> total height))
-    (let [thumb-h    (max 1 (int (* height (/ (double height) total))))
-          max-scroll (max 1 (- total height))
-          thumb-top  (int (* (- height thumb-h)
-                            (/ (double (clamp scroll 0 max-scroll)) max-scroll)))]
-      {:track-h height
-       :thumb-h thumb-h
-       :thumb-top thumb-top})))
-
-(defn draw-scrollbar!
-  [g col top height total scroll]
-  (when-let [{:keys [track-h thumb-h thumb-top]}
-             (scrollbar-geometry height total scroll)]
-    (doseq [r (range track-h)]
-      (p/set-colors! g t/dialog-border t/dialog-bg)
-      (p/set-char! g col (+ top r) Symbols/SINGLE_LINE_VERTICAL))
-    (doseq [r (range thumb-h)]
-      (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-      (p/set-char! g col (+ top thumb-top r) \█))))
 
 (defn file-picker-scrollbar-geometry
   [height total scroll]

@@ -739,9 +739,13 @@
 (s/def :ext.channel-hook/channel-id keyword?)
 (s/def :ext.channel-hook/hook-id keyword?)
 (s/def :ext.channel-hook/commands-fn ifn?) ;; (fn [ctx]) -> seq<{:id :label :run-fn}>
+(s/def :ext.channel-hook/render-fn   ifn?) ;; channel-specific render fn; shape per hook-id contract
+(s/def :ext.channel-hook/state-fn    ifn?) ;; channel-agnostic state extractor (when channels want raw data)
 (s/def ::channel-hook
   (s/keys :req-un [:ext.channel-hook/channel-id :ext.channel-hook/hook-id]
-    :opt-un [:ext.channel-hook/commands-fn]))
+    :opt-un [:ext.channel-hook/commands-fn
+             :ext.channel-hook/render-fn
+             :ext.channel-hook/state-fn]))
 (s/def :ext/channel-hooks (s/coll-of ::channel-hook :kind vector?))
 
 ;; Optional extension-owned environment/config declarations. These name
@@ -1349,6 +1353,11 @@
      :symbol sym
      :started-at-ms (long started-at-ms)}))
 
+;; Forward reference: tool-result enrichment (this section) calls
+;; `extension-info` from the public-API info module ~700 lines down.
+;; Not mutual recursion — plain forward call. The proper fix per
+;; AGENTS.md S2 is to split this 2700-line file into sub-modules
+;; (info / dispatch / registry); kept as declare meanwhile.
 (declare extension-info)
 
 (defn- enrich-tool-result-info
@@ -2016,6 +2025,10 @@
                    :data  {:ext ns-sym :error (ex-message t)}})))
     ext))
 
+;; Forward reference: `extension-info` (above) calls
+;; `extension-id-of-ns` from the extension-docs registry section
+;; ~400 lines down. Not mutual recursion. See note on `extension-info`
+;; declare above — fix is file split.
 (declare extension-id-of-ns)
 
 (def ^:private empty-source-markers
