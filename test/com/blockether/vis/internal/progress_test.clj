@@ -64,7 +64,7 @@
       ((:on-chunk tracker) {:phase :form-result :iteration 1 :form-idx 0
                             :code "(def hits (v/glob \"src\" \"**/*.clj\"))"
                             :result {:success? true :result ["src/a.clj"] :error nil}
-                            :rendering-kind :vis/silent
+                            :role :nudge
                             :stdout "" :stderr "" :execution-time-ms 5})
       (let [entry (first ((:get-timeline tracker)))]
         (is (= ["(def hits (v/glob \"src\" \"**/*.clj\"))"] (:code entry)))
@@ -73,7 +73,7 @@
 (deftest on-chunk-tool-result-render-test
   (testing ":form-result renders tool envelopes through extension renderer"
     (let [tracker (progress/make-progress-tracker)
-          result  (extension/merge-info
+          result  (extension/merge-into-metadata
                     (extension/success {:result {:lines ["x"]}
                                         :info {:op :demo}})
                     {:tool {:sym 'cat

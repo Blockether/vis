@@ -467,24 +467,24 @@
                    :truncation (dissoc trunc :content)}
         result    (cond-> result temp-file (assoc :temp-file temp-file))]
     (extension/success
-      {:result result
-       :info {:op op
-              :target {:kind :exa-mcp
-                       :tool tool-name
-                       :query query
-                       :endpoint (redact-endpoint endpoint)}}})))
+      {:result   result
+       :op       op
+       :metadata {:target {:kind :exa-mcp
+                           :tool tool-name
+                           :query query
+                           :endpoint (redact-endpoint endpoint)}}})))
 
 (defn- tool-failure
   [op tool-name query endpoint throwable]
   (extension/failure
-    {:result {:tool tool-name
-              :query query
-              :endpoint (when endpoint (redact-endpoint endpoint))}
-     :info {:op op
-            :target {:kind :exa-mcp
-                     :tool tool-name
-                     :query query
-                     :endpoint (when endpoint (redact-endpoint endpoint))}}
+    {:result    {:tool tool-name
+                 :query query
+                 :endpoint (when endpoint (redact-endpoint endpoint))}
+     :op        op
+     :metadata  {:target {:kind :exa-mcp
+                          :tool tool-name
+                          :query query
+                          :endpoint (when endpoint (redact-endpoint endpoint))}}
      :throwable throwable}))
 
 (defn- kw-get

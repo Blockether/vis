@@ -1508,20 +1508,25 @@
       prefix
       "00000000")))
 
-(defn- eval-rendering-kind
-  "Rendering kind for the outer lifecycle event. Host primitives still return
-   legacy sentinel values from SCI; translate them once here, then downstream
-   code reads `:rendering-kind`, not raw `:result`."
+(defn- eval-block-role
+  "Block role for the outer lifecycle event — one of the four values
+   in the iteration-block role enum (PLAN.md §1.3):
+     :answer    the model's final answer to the user
+     :tool      any SCI evaluation (tool call OR raw user code)
+     :nudge     system-emitted reminders / diagnostics
+     :thinking  model reasoning blocks
+   The previous `:vis/error` role is gone — errors are derived from
+   `:op/success?` on the envelope (or block-level `:error` slot for
+   non-tool evals). Replaces the prior `eval-rendering-kind` fn."
   [result]
   (cond
-    (:error result) :vis/error
-    (= :vis/system (:rendering-kind result)) :vis/system
-    (= :vis/tool (:rendering-kind result)) :vis/tool
-    (= :vis/answer (:rendering-kind result)) :vis/answer
-    (= :vis/diagnostic (:rendering-kind result)) :vis/diagnostic
-    (keyword? (:rendering-kind result)) (:rendering-kind result)
-    (= :vis/answer (:result result)) :vis/answer
-    :else :vis/sci))
+    (= :answer    (:role result)) :answer
+    (= :tool      (:role result)) :tool
+    (= :nudge     (:role result)) :nudge
+    (= :thinking  (:role result)) :thinking
+    (keyword? (:role result))     (:role result)
+    (= :vis/answer (:result result))    :answer
+    :else :tool))
 
 (defn- eval-info
   "Generic canonical info for every top-level form that passes
@@ -1536,11 +1541,11 @@
         started       (long (or (:execution-started-at-ms result)
                               (max 0 (- finished duration))))
         form-position (inc (long form-idx))]
-    (extension/normalize-info
+    (extension/normalize-metadata
       {:op             (or (:op result)
                          (case rendering-kind
-                           :vis/system :vis/system
-                           :vis/answer :vis/answer
+                           :nudge  :vis/system
+                           :answer :vis/answer
                            :sci/eval))
        :started-at-ms  started
        :finished-at-ms finished
@@ -1971,11 +1976,11 @@
                                  ;; def-display-result is now a pass-through; kept on the
                                  ;; call path so future display-tweaks have a single seam.
 
-                                 rendering-kind (eval-rendering-kind display-result)
-                                 info (eval-info turn-prefix iteration-position idx total-blocks display-result rendering-kind)
+                                 block-role (eval-block-role display-result)
+                                 info (eval-info turn-prefix iteration-position idx total-blocks display-result block-role)
                                  result* (assoc display-result
                                            :info info
-                                           :rendering-kind rendering-kind)]
+                                           :role block-role)]
                              ;; Per-form streaming chunk (:phase
                              ;; :form-result). Fires the moment a
                              ;; form lands so the channel can render
@@ -2000,7 +2005,7 @@
                                           :stderr            (:stderr result*)
                                           :execution-time-ms (:execution-time-ms result*)
                                           :info        (:info result*)
-                                          :rendering-kind    (:rendering-kind result*)
+                                          :role        (:role result*)
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))}))
                              {:block expr :result result* :form-comment form-comment}))
@@ -2020,7 +2025,7 @@
                                     :error (:error result)
                                     :execution-time-ms (:execution-time-ms result)
                                     :info (:info result)
-                                    :rendering-kind (:rendering-kind result)
+                                    :role (:role result)
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)}
                              form-comment (assoc :comment form-comment)))
@@ -2098,7 +2103,7 @@
                                :stderr            (:stderr b)
                                :execution-time-ms (:execution-time-ms b)
                                :info        (:info b)
-                               :rendering-kind    (:rendering-kind b)
+                               :role        (:role b)
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))
               model-name       (some-> (:name resolved-model) str)

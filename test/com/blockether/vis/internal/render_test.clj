@@ -25,10 +25,6 @@
 ;; Canonical-form invariant checker
 ;; ---------------------------------------------------------------------------
 
-(def ^:private inline-leaf-tags  #{:span :br :c :code :kbd :img})
-(def ^:private inline-wrap-tags  #{:strong :em :a :mark :sup :sub})
-(def ^:private block-tags        #{:p :h :code :ul :ol :li :quote :table :tr :th :td})
-
 (defn- canonical?
   "Walk an [:ir ...] AST and assert every invariant promised by
    `->ast`. Returns true or a {:violation ... :node ...} map."

@@ -144,14 +144,13 @@
   [{:keys [op path kind result info]}]
   (let [t (now-ms)]
     (extension/success
-      {:result     result
-       :info (merge {:op             op
-                     :target         (path->target path kind)
-                     :started-at-ms  t
-                     :finished-at-ms t
-                     :duration-ms    0}
-               (extension/op-presentation op)
-               info)})))
+      {:result   result
+       :op       op
+       :metadata (merge {:target         (path->target path kind)
+                         :started-at-ms  t
+                         :finished-at-ms t
+                         :duration-ms    0}
+                   info)})))
 
 (defn- tool-failure-on-error
   [op kind _render-fn]
@@ -163,27 +162,24 @@
           interrupted? (instance? InterruptedException err)
           t            (now-ms)
           error        (when interrupted?
-                         {:type    "java.lang.InterruptedException"
-                          :message (str (name op)
-                                     " interrupted while running; operation was cancelled.")
-                          :trace   []})]
+                         {:message (str (name op)
+                                     " interrupted while running; operation was cancelled.")})]
       {:result (extension/failure
-                 {:result     nil
-                  :info (cond-> (merge {:op             op
-                                        :target         target
-                                        :started-at-ms  t
-                                        :finished-at-ms t
-                                        :duration-ms    0}
-                                  (extension/op-presentation op))
-                          bash?
-                          (assoc :command (first args)
-                            :cwd path
-                            :opts (dissoc bash-opts :stdin))
-                          interrupted?
-                          (assoc :interrupted? true
-                            :status :interrupted))
-                  :error      error
-                  :throwable  (when-not error err)})})))
+                 {:result    nil
+                  :op        op
+                  :metadata  (cond-> {:target         target
+                                      :started-at-ms  t
+                                      :finished-at-ms t
+                                      :duration-ms    0}
+                               bash?
+                               (assoc :command (first args)
+                                 :cwd path
+                                 :opts (dissoc bash-opts :stdin))
+                               interrupted?
+                               (assoc :interrupted? true
+                                 :status :interrupted))
+                  :error     error
+                  :throwable (when-not error err)})})))
 
 ;; =============================================================================
 ;; .gitignore (cheap, lazy)

@@ -696,7 +696,7 @@
                      :ref (str "turn/" (subs (str qid) 0 8) "/iteration/1/block/1")
                      :status :done)
                   (:info exec)))
-        (expect (= :vis/sci (:rendering-kind exec))))))
+        (expect (= :tool (:role exec))))))
 
   (it "does not persist timeout child-event side ledgers"
     (let [s   (h/store)

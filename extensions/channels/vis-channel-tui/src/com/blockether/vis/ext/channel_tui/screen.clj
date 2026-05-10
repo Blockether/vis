@@ -373,9 +373,12 @@
                       (copyable-transcript-line? line))]
           {:row row :col text-left :width content-w})))))
 
-(defn- copyable-bubble-text [message]
-  (let [text (or (:raw-answer message) (:text message) "")]
-    (if (string? text) text (pr-str text))))
+(defn- copyable-bubble-text
+  "Whole-bubble copy hands the user the rendered markdown verbatim.
+   `:text` is always a string (set by `chat/render-answer` at the
+   strict IR boundary); the legacy `pr-str` fallback is gone."
+  [message]
+  (or (:text message) ""))
 
 (defn- bubble-copy-regions
   "Return absolute screen-cell rectangles for single-click whole-bubble copy.

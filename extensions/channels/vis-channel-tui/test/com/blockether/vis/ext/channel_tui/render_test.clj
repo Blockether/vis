@@ -2158,7 +2158,7 @@ body
           turn-id   "123e4567-e89b-12d3-a456-426614174000"
           thinking  (str/join "\n" (map #(format "line-%02d" %) (range 1 51)))
           payload   (render/format-answer-with-thinking-data
-                      "done" [{:thinking thinking}]
+                      [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
                       96 {:show-thinking true :show-iterations true} nil false
                       {:conversation-id cid
                        :conversation-turn-id turn-id})
@@ -2180,7 +2180,7 @@ body
           node-id  "thinking:t123e4567:i1:reasoning"
           thinking (str/join "\n" (map #(format "line-%02d" %) (range 1 51)))
           payload  (render/format-answer-with-thinking-data
-                     "done" [{:thinking thinking}]
+                     [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
                      96 {:show-thinking true :show-iterations true} nil false
                      {:conversation-id cid
                       :conversation-turn-id turn-id
@@ -2205,13 +2205,13 @@ body
           opts {:conversation-id "conversation"
                 :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"}
           payload (render/format-answer-with-thinking-data
-                    "" trace 96 {:show-iterations true} nil false opts)
+                    nil trace 96 {:show-iterations true} nil false opts)
           expanded (render/format-answer-with-thinking-data
-                     "" trace 96 {:show-iterations true} nil false
+                     nil trace 96 {:show-iterations true} nil false
                      (assoc opts :detail-expansions
                        {["conversation" "iteration:t123e4567:i1:b1:preview-body"] true}))
           raw-view (render/format-answer-with-thinking-data
-                     "" trace 96 {:show-iterations true} nil false
+                     nil trace 96 {:show-iterations true} nil false
                      (assoc opts :detail-expansions
                        {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}))]
       (expect (not (str/includes? (:text payload) "Preview.")))
@@ -2260,7 +2260,7 @@ body
                            (apply wrap-text* args))}
           (fn []
             (let [payload (render/format-answer-with-thinking-data
-                            "" [trace] 96 {:show-iterations true} nil false opts)]
+                            nil [trace] 96 {:show-iterations true} nil false opts)]
               (expect (str/includes? (:text payload) "1: selected line"))
               (expect (str/includes? (:text payload) "4: selected line"))
               (expect (not (str/includes? (:text payload) "5: selected line")))
@@ -2279,7 +2279,7 @@ body
                   :durations [1]
                   :successes [true]}]
           payload (render/format-answer-with-thinking-data
-                    "" trace 96 {:show-iterations true} nil false
+                    nil trace 96 {:show-iterations true} nil false
                     {:conversation-id "conversation"
                      :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
       (expect (str/includes? (:text payload) "EDIT patch"))
@@ -2299,7 +2299,7 @@ body
                         :durations [1]
                         :successes [true]}]
           payload     (render/format-answer-with-thinking-data
-                        "" trace 96 {:show-iterations true} nil false
+                        nil trace 96 {:show-iterations true} nil false
                         {:conversation-id "conversation"
                          :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
@@ -2323,7 +2323,7 @@ body
                         :durations [1]
                         :successes [true]}]
           payload     (render/format-answer-with-thinking-data
-                        "" trace 96 {:show-iterations true} nil false
+                        nil trace 96 {:show-iterations true} nil false
                         {:conversation-id "conversation"
                          :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
@@ -2390,7 +2390,7 @@ body
                     :durations [1]
                     :successes [true]}]
           payload (render/format-answer-with-thinking-data
-                    "" trace 80 {:show-iterations true} nil false
+                    nil trace 80 {:show-iterations true} nil false
                     {:conversation-id "conversation"
                      :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           fills   (atom [])
@@ -2475,7 +2475,7 @@ body
                     :durations [1]
                     :successes [true]}]
           payload (render/format-answer-with-thinking-data
-                    "" trace 96 {:show-iterations true} nil false
+                    nil trace 96 {:show-iterations true} nil false
                     {:conversation-id "conversation"
                      :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body    (strip-ansi (:text payload))]
@@ -2497,7 +2497,7 @@ body
                 :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                 :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}}
           payload (render/format-answer-with-thinking-data
-                    "" trace 96 {:show-iterations true} nil false opts)
+                    nil trace 96 {:show-iterations true} nil false opts)
           puts (atom [])
           active (atom #{})
           graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
@@ -2549,7 +2549,7 @@ body
           turn-id     "123e4567-e89b-12d3-a456-426614174000"
           fut         (future
                         (render/format-answer-with-thinking-data
-                          "" trace 96 {:show-iterations true} nil false
+                          nil trace 96 {:show-iterations true} nil false
                           {:conversation-id "conversation"
                            :conversation-turn-id turn-id}))
           payload     (deref fut 500 ::timeout)]
@@ -2585,7 +2585,7 @@ body
                     :conversation-turn-id "turn-1"}
           payload  (fn [opts]
                      (render/format-answer-with-thinking-data
-                       "done" trace 120 {:show-iterations true :show-thinking true}
+                       [:ir {} [:p {} [:span {} "done"]]] trace 120 {:show-iterations true :show-thinking true}
                        nil false opts))
           collapsed (payload opts)
           expanded  (payload (assoc opts :detail-expansions
@@ -2618,7 +2618,7 @@ body
                         :durations [1]
                         :successes [true]}]
           payload     (render/format-answer-with-thinking-data
-                        "" trace 96 {:show-iterations true} nil false
+                        nil trace 96 {:show-iterations true} nil false
                         {:conversation-id "conversation"
                          :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           puts        (atom [])
@@ -2685,7 +2685,7 @@ body
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
             payload (render/format-answer-with-thinking-data
-                      "" trace 96 {:show-iterations true} nil false opts)
+                      nil trace 96 {:show-iterations true} nil false opts)
             lines   (:lines payload)]
         (expect (some #(and (= p/MARKER_MD_BULLET (marker-of %))
                          (str/includes? % "alpha line")) lines))
@@ -2713,7 +2713,7 @@ body
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
             payload (render/format-answer-with-thinking-data
-                      "" trace 96 {:show-iterations true} nil false opts)
+                      nil trace 96 {:show-iterations true} nil false opts)
             text    (:text payload)]
         ;; The body row carries inline-bold sentinels so the painter
         ;; styles "important" as bold instead of leaving the literal
@@ -2741,7 +2741,7 @@ body
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {}}
             payload (render/format-answer-with-thinking-data
-                      "" trace 96 {:show-iterations true} nil false opts)
+                      nil trace 96 {:show-iterations true} nil false opts)
             lines   (:lines payload)]
         ;; The literal `- pretend-bullet` text stays in the row; we
         ;; never re-render error bodies as Markdown.
@@ -2871,7 +2871,7 @@ body
     (let [present (resolve 'com.blockether.vis.internal.presentation/system-call->md)
           md      (present {:op :vis/system
                             :body "Need user input."
-                            :rendering-kind :vis/system})
+                            :role :nudge})
           text    (str/join "\n" (md->lines md 80 :answer))]
       (expect (str/includes? text "SYSTEM"))
       (expect (str/includes? text "vis/system"))
@@ -2881,7 +2881,7 @@ body
   (it "does not draw a bottom border between reasoning and final answer"
     (render/invalidate-cache!)
     (let [payload (render/format-answer-with-thinking-data
-                    "done" [{:thinking "reasoning"}]
+                    [:ir {} [:p {} [:span {} "done"]]] [{:thinking "reasoning"}]
                     80 {:show-thinking true :show-iterations true} nil false {})]
       (expect (not (str/includes? (:text payload) p/MARKER_ANSWER_SEP)))
       (expect (not-any? #(str/starts-with? % p/MARKER_ANSWER_SEP) (:lines payload))))))

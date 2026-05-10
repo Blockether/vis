@@ -86,27 +86,27 @@
   [{:keys [op result info]}]
   (let [t (now-ms)]
     (extension/success
-      {:result result
-       :info (merge {:op op
-                     :target {:kind :project
-                              :resolved (rel-path ".")}
-                     :started-at-ms t
-                     :finished-at-ms t
-                     :duration-ms 0}
-               info)})))
+      {:result   result
+       :op       op
+       :metadata (merge {:target         {:kind :project
+                                          :resolved (rel-path ".")}
+                         :started-at-ms  t
+                         :finished-at-ms t
+                         :duration-ms    0}
+                   info)})))
 
 (defn- tool-failure-on-error
   [op]
   (fn [err _env _f _args]
     (let [t (now-ms)]
       {:result (extension/failure
-                 {:result nil
-                  :info {:op op
-                         :target {:kind :project
-                                  :resolved (rel-path ".")}
-                         :started-at-ms t
-                         :finished-at-ms t
-                         :duration-ms 0}
+                 {:result   nil
+                  :op       op
+                  :metadata {:target         {:kind :project
+                                              :resolved (rel-path ".")}
+                             :started-at-ms  t
+                             :finished-at-ms t
+                             :duration-ms    0}
                   :throwable err})})))
 
 (defn- option-files

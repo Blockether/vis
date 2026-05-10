@@ -212,7 +212,7 @@
   "Render a block whose children are inline (`:p`, `:h`, `:th`, `:td`,
    `:quote`-paragraph). `style-prefix` is a set merged into every
    produced run."
-  [children width opts style-prefix prefix-runs]
+  [children width _opts style-prefix prefix-runs]
   (let [runs (cond->> (inlines->runs children #{} nil)
                (seq style-prefix)
                (mapv (fn [r]
@@ -224,7 +224,7 @@
 (defn- code-block->lines
   "Code block: never wrap, never escape; preserve raw text. Runs carry
    `:code` style. Empty lines render as a blank line."
-  [node width {:keys [code-fence?] :as _opts}]
+  [node _width {:keys [code-fence?] :as _opts}]
   (let [src   (raw-body node)
         attrs (node-attrs node)
         lang  (:lang attrs)
@@ -246,7 +246,6 @@
 
 (defn- list->lines [tag children width opts]
   (let [ordered? (= :ol tag)
-        attrs    (node-attrs (when ordered? children))   ; ignored; :ul/:ol attrs pulled at parent
         n        (volatile! 1)]
     (vec
       (mapcat
@@ -318,8 +317,7 @@
         (if (seq ls) (conj (vec ls) (empty-line)) [(empty-line)]))
 
       :h
-      (let [level (or (:level (node-attrs node)) 1)
-            ls (inline-block->lines (node-children node) width opts #{:bold :heading} nil)]
+      (let [ls (inline-block->lines (node-children node) width opts #{:bold :heading} nil)]
         (if (seq ls) (conj (vec ls) (empty-line)) [(empty-line)]))
 
       :code

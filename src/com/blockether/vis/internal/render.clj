@@ -323,22 +323,6 @@
 (defn- node-attrs [node]    (if (has-attrs? node) (second node) {}))
 (defn- node-children [node] (if (has-attrs? node) (drop 2 node) (rest node)))
 
-(defn- span-text
-  "Extract text from a canonical inline node. For :span / :c / :code /
-   :kbd that's the raw body string. For wrapper inlines it concatenates
-   nested span text."
-  ^String [node]
-  (cond
-    (string? node)            node
-    (not (vector? node))      ""
-    :else
-    (let [tag (first node)]
-      (cond
-        (= :br tag)                  "\n"
-        (contains? raw-text-tags tag) (or (some #(when (string? %) %) (drop 2 node)) "")
-        (= :span tag)                 (or (some #(when (string? %) %) (drop 2 node)) "")
-        :else                         (apply str (map span-text (node-children node)))))))
-
 (defn- raw-body
   "Body string for `:span`, `:c`, `:code`, `:kbd`. Empty string when
    absent."

@@ -108,20 +108,23 @@
                   (:tokens assistant)))))))
 
 (defdescribe rebuild-history-renders-answer-test
-  (it "resumed assistant message routes the stored answer through render-answer"
+  (it "resumed assistant message routes the stored IR answer through render-answer"
     ;; Regression for convo b7ba1d93: resume path used to pass the
-    ;; raw persisted answer string straight into the assistant bubble.
-    ;; Live send! ran it through `vis/render :markdown`; resume did
-    ;; not. Both paths now share `chat/render-answer`, which dispatches
-    ;; via the `:channel/messages-renderer-fn` registered by
-    ;; `vis-channel-tui.core`. The loop persists the plain-text
-    ;; rendering, so the resume input is plain text by contract.
+    ;; persisted answer straight into the bubble without going through
+    ;; the channel renderer chokepoint. Both live and resume paths now
+    ;; share `chat/render-answer`, which dispatches via the
+    ;; `:channel/messages-renderer-fn` registered by `channel-tui.core`.
+    ;;
+    ;; STRICT: the V1 schema persists answers as Nippy-frozen canonical
+    ;; IR `[:ir & nodes]`; `db-list-conversation-turns` thaws them on
+    ;; read. The resume path receives IR by contract — strings here
+    ;; would be a programmer bug and must throw.
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-conversation-turns
                   (fn [_db _cid]
                     [{:id :turn-1
                       :user-request "siema"
-                      :answer "Siema! 👋 What can I do for you?"}])
+                      :answer [:ir {} [:p {} [:span {} "Siema! 👋 What can I do for you?"]]]}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id] [])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -129,21 +132,31 @@
             text (:text assistant)]
         (expect (string? text))
         (expect (str/includes? text "Siema!"))
-        ;; render-answer must be the entry point - bypass would
-        ;; leave any markdown-active chars unprocessed; sanity-check
-        ;; the rendered shape is non-empty trimmed text.
-        (expect (= (str/trim text) text))))))
+        (expect (= (str/trim text) text)))))
+
+  (it "render-answer throws on raw-string input (strict IR contract)"
+    (expect
+      (try ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer))
+            "raw markdown string")
+        false
+        (catch clojure.lang.ExceptionInfo _ true))))
+
+  (it "render-answer accepts nil as the empty placeholder"
+    (expect (= "" ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer)) nil)))))
 
 (defdescribe turn-options-test
   (it "forwards reasoning-default and extra-body to vis/send!"
-    (let [seen (atom nil)]
+    ;; STRICT contract: `vis/send!` returns canonical answer-IR; the
+    ;; bubble layer renders at the boundary, never here.
+    (let [seen (atom nil)
+          ir   [:ir {} [:p {} [:span {} "ok"]]]]
       (with-redefs [vis/send! (fn [_id _text opts]
                                 (reset! seen opts)
-                                {:answer "ok"})]
+                                {:answer ir})]
         (let [result (chat/turn! {:id "c1"} "hello"
                        {:reasoning-default :deep
                         :extra-body {:text {:verbosity "high"}}})]
-          (expect (= "ok" (:answer result)))
+          (expect (= ir (:answer result)))
           (expect (= 1 (:iteration-count result)))
           (expect (= :deep (:reasoning-default @seen)))
           (expect (= {:text {:verbosity "high"}} (:extra-body @seen))))))))

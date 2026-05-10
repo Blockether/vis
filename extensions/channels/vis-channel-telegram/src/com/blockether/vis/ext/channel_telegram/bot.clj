@@ -40,15 +40,56 @@
 ;; `tg/send-message!` so the API helper receives ready-to-ship HTML.
 
 (defn render-for-telegram
-  "Render any answer-input (string | Hiccup IR | [:ir ...]) to
-   Telegram-flavored HTML. `opts` forwarded to the IR walker."
-  ([input] (render-for-telegram input nil))
-  ([input opts] (vis/render input :html opts)))
+  "Render canonical answer-IR (`[:ir & nodes]`) to Telegram-flavored
+   HTML.
 
-(defn- send! [token chat-id input & [opts]]
-  ;; Rendering chokepoint. Always Telegram-HTML, never raw.
+   STRICT input contract: IR only, mirroring
+   `channel-tui.core/render-for-tui`. `nil` is accepted as the empty
+   placeholder. Strings, Hiccup vectors, EDN, etc. are programmer
+   bugs and throw — lift to IR upstream. Use the `text->ir` helper
+   below to build IR from plain command strings.
+
+   `opts` forwarded to the IR walker."
+  ([ir] (render-for-telegram ir nil))
+  ([ir opts]
+   (cond
+     (nil? ir) ""
+     (not (and (vector? ir) (= :ir (first ir))))
+     (throw (ex-info "render-for-telegram requires canonical [:ir ...] input; build IR upstream, do not pass raw text or Hiccup"
+              {:got-type (some-> ir class .getName)
+               :got-preview (let [s (pr-str ir)]
+                              (subs s 0 (min 200 (count s))))}))
+     :else (vis/render ir :html opts))))
+
+(defn- text->ir
+  "Lift a plain-text command-response string into canonical IR.
+   Blank lines split paragraphs (`:p`); intra-paragraph newlines
+   become hard breaks (`:br`). Used at the boundary where legacy
+   `command-*` helpers return strings — we never want soft-coerce in
+   `render-for-telegram`."
+  [s]
+  (if (or (nil? s) (= "" s))
+    [:ir {}]
+    (let [paragraphs (clojure.string/split (str s) #"\n\n+")
+          para->ir   (fn [p]
+                       (let [lines (clojure.string/split-lines p)
+                             runs  (vec (mapcat (fn [l]
+                                                  (if (= "" l)
+                                                    [[:br {}]]
+                                                    [[:span {} l] [:br {}]]))
+                                          lines))
+                             ;; drop trailing :br
+                             runs  (if (and (seq runs) (= :br (first (peek runs))))
+                                     (subvec runs 0 (dec (count runs)))
+                                     runs)]
+                         (into [:p {}] runs)))]
+      (into [:ir {}] (mapv para->ir paragraphs)))))
+
+(defn- send! [token chat-id ir & [opts]]
+  ;; STRICT IR rendering chokepoint. String callers must wrap via
+  ;; `text->ir` before invoking; passing a raw string here throws.
   (tg/send-message! token chat-id
-    (render-for-telegram input)
+    (render-for-telegram ir)
     opts))
 
 (defn- send-plain! [token chat-id text & [opts]]
@@ -963,13 +1004,13 @@
             "/restart"   {:message (command-restart)}
             "/export"    {:message (command-export chat-id)}
             {:message (str "Unknown command: " cmd "\n\n" (command-help))})]
-      (send! token chat-id message {:reply-markup reply-markup})
+      (send! token chat-id (text->ir message) {:reply-markup reply-markup})
       true)))
 
 (defn- answer-text
-  "Render the turn's answer to a Telegram-HTML string. The answer
-   value is either a legacy String or a canonical [:ir ...] AST; the
-   render-for-telegram helper normalizes both."
+  "Render the turn's answer to a Telegram-HTML string. `(:answer
+   result)` from `vis/send!` is canonical IR `[:ir & nodes]`; passed
+   directly to the strict renderer chokepoint."
   [result]
   (render-for-telegram (:answer result)))
 
@@ -1070,7 +1111,7 @@
                        (let [voice-text (answer-voice-text result)]
                          (when (and (voice-config-flag :telegram-send-transcript? true)
                                  (not (str/blank? (str transcript))))
-                           (send! token chat-id (transcript-message transcript)))
+                           (send! token chat-id (text->ir (transcript-message transcript))))
                          (tg/send-chat-action! token chat-id "record_voice")
                          (send-answer-audio! token chat-id voice-text)
                          (when (voice-config-flag :telegram-send-answer-text? true)
@@ -1080,7 +1121,7 @@
                            (tg/send-message! token chat-id (answer-text result))))
                        (do
                          (when (and transcript (not (str/blank? (str transcript))))
-                           (send! token chat-id (transcript-message transcript)))
+                           (send! token chat-id (text->ir (transcript-message transcript))))
                          (tg/send-message! token chat-id
                            (str (answer-text result) (format-footer result))))))
                    (catch Exception e
@@ -1097,7 +1138,7 @@
                                     :data {:sender sender :chat-id chat-id :error (ex-message e)}
                                     :msg (str "error handling msg from " sender " in chat " chat-id)})
                          (try (send! token chat-id
-                                (vis/format-error (vis/db-error->user-message e)))
+                                (text->ir (vis/format-error (vis/db-error->user-message e))))
                            (catch Exception _ nil)))))
                    (finally
                      (clear-in-flight! chat-id turn-token))))]
@@ -1117,7 +1158,7 @@
                      :data {:sender sender :chat-id chat-id :error (ex-message e)}
                      :msg (str "voice ASR failed for chat " chat-id)})
           (try (send! token chat-id
-                 (vis/format-error (str "Voice transcription failed: " (or (ex-message e) e))))
+                 (text->ir (vis/format-error (str "Voice transcription failed: " (or (ex-message e) e)))))
             (catch Exception _ nil))))))
   true)
 
@@ -1129,7 +1170,7 @@
       (and chat-id (not (chat-approved? chat-id)))
       (do
         (tg/answer-callback-query! token callback-id "Chat is not approved")
-        (send! token chat-id (unauthorized-message chat-id))
+        (send! token chat-id (text->ir (unauthorized-message chat-id)))
         true)
 
       (and callback-id chat-id (string? data)
@@ -1138,7 +1179,7 @@
             result  (when (re-matches #"\d+" idx-str)
                       (select-model! (str (inc (Long/parseLong idx-str)))))]
         (tg/answer-callback-query! token callback-id (:message result))
-        (send! token chat-id (or (:message result) "Model selection failed."))
+        (send! token chat-id (text->ir (or (:message result) "Model selection failed.")))
         true)
 
       (and callback-id chat-id (string? data)
@@ -1171,7 +1212,7 @@
           (nil? chat-id) nil
 
           (not (chat-approved? chat-id))
-          (do (send! token chat-id (unauthorized-message chat-id)) true)
+          (do (send! token chat-id (text->ir (unauthorized-message chat-id))) true)
 
           text
           (do

@@ -24,12 +24,27 @@
   "vis channels tui [--conversation-id ID | --resume]")
 
 (defn render-for-tui
-  "TUI's :channel/messages-renderer-fn. Renders any answer-input
-   (string | Hiccup IR | [:ir ...]) to plain markdown text the TUI
-   transcript already knows how to lay out. A future PR can swap to
-   styled Lanterna segments without touching call-sites."
-  ([input] (render-for-tui input nil))
-  ([input opts] (vis/render input :markdown opts)))
+  "TUI's :channel/messages-renderer-fn.
+
+   STRICT input contract: canonical answer-IR (`[:ir & nodes]` as
+   produced by `vis.internal.render/->ast`). Anything else is a
+   programmer bug at the call site — we throw with the actual type so
+   the offender shows up in stderr immediately. The IR boundary is
+   upstream (loop / persistence / chat helpers); this renderer never
+   soft-coerces strings, Hiccup, EDN, or anything else.
+
+   Returns plain markdown text the TUI transcript layouter consumes.
+   A follow-up commit replaces the markdown round-trip with the
+   styled-line walker (`channel-tui.render-ir/ir->lines`) without
+   changing this function's contract."
+  ([ir] (render-for-tui ir nil))
+  ([ir opts]
+   (when-not (and (vector? ir) (= :ir (first ir)))
+     (throw (ex-info "render-for-tui requires canonical [:ir ...] input; build IR upstream, do not pass raw text or Hiccup here"
+              {:got-type (some-> ir class .getName)
+               :got-preview (let [s (pr-str ir)]
+                              (subs s 0 (min 200 (count s))))})))
+   (vis/render ir :markdown opts)))
 
 (defn- parse-conversation-id-flag
   "Walk `args` and return the value of the first `--conversation-id` flag, or
