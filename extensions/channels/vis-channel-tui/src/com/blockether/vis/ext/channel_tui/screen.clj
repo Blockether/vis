@@ -345,8 +345,7 @@
   [message content-w]
   (or (:prewrapped-lines message)
     (let [text (or (:text message)
-                 (when-let [ir (:ir message)]
-                   (com.blockether.vis.core/render ir :markdown)))]
+                 (some-> (:ir message) (vis/render :markdown)))]
       (render/wrap-text (or text "") content-w))))
 
 (defn- bubble-selectable-ranges
@@ -385,8 +384,7 @@
    fall back to rendering `:ir` directly so clipboard always works."
   [message]
   (or (:text message)
-    (when-let [ir (:ir message)]
-      (com.blockether.vis.core/render ir :markdown))
+    (some-> (:ir message) (vis/render :markdown))
     ""))
 
 (defn- bubble-copy-regions

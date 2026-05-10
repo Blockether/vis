@@ -17,6 +17,7 @@
   (:require
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.channel-tui.virtual :as virtual]
+   [com.blockether.vis.internal.render :as ir]
    [lazytest.core :refer [defdescribe describe expect it]] [clojure.string :as str]))
 
 (def ^:private estimated-height @#'virtual/estimated-height)
@@ -26,7 +27,7 @@
 ;; ─── Fixtures ───────────────────────────────────────────────────────────────
 
 (defn- text->ir [s]
-  (com.blockether.vis.internal.render/text->ir (or s "")))
+  (ir/text->ir (or s "")))
 
 (defn- user-msg [text]
   {:role :user :text text :ir (text->ir text)

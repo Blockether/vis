@@ -865,7 +865,7 @@
 
 (defn- render-turn-block
   [include-prompts?
-   {:keys [id position user-request status prior-outcome provider model
+   {:keys [position user-request status prior-outcome provider model
            iteration-count failure-count
            iterations tokens cost-usd answer]}]
   ;; Per PLAN §2.9 + §5.1: render `position` (int), never `:id` (uuid).
