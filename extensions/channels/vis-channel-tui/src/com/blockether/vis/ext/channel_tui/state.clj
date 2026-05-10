@@ -329,7 +329,8 @@
     (update :differentiate-turns boolean)
     (update :mouse-selection-copy boolean)
     (update :voice/respond? boolean)
-    (update :show-goal-row? boolean)))
+    (update :contributors-disabled
+      (fn [v] (cond (nil? v) #{} (set? v) v :else (set v))))))
 
 (def default-settings
   "Per-user TUI settings. Persisted to `~/.vis/config.edn` under
@@ -374,13 +375,14 @@
    :differentiate-turns    true
    :mouse-selection-copy   true
    :voice/respond?         false
-   ;; When false, the header skips both the vis-goal SQLite lookup
-   ;; AND the subtitle row. Lets users who don't use /goal cut a
-   ;; per-frame DB query out of the render path (see autoresearch
-   ;; A8) and remove the goal banner from their TUI. Default true
-   ;; for back-compat with anyone relying on the existing display.
-   ;; See `header.clj/current-goal`.
-   :show-goal-row?         true})
+   ;; Set of contributor ids the user wants hidden in the TUI
+   ;; header / footer. Each extension that contributes a row /
+   ;; segment / status registers under a keyword id (e.g. :goal
+   ;; from vis-goal, :voice from vis-voice). Adding the id to this
+   ;; set skips that contributor's rendering. Default empty (every
+   ;; registered contributor shows). See
+   ;; `com.blockether.vis.ext.channel-tui.contributors`.
+   :contributors-disabled  #{}})
 
 (defn- load-persisted-settings
   "Read `:tui-settings` from `~/.vis/config.edn` and merge over

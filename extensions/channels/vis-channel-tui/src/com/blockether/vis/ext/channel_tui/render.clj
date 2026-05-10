@@ -1134,24 +1134,230 @@
               (or seg-start-char char-pos)
               (or seg-start-col col-pos))))))))
 
-;; Forward declarations - the link-chrome painter + ref extractor
-;; are defined further down (between the inline-marker tokeniser
-;; and `bubble-height*`) but are reached from the prose-painting
-;; loop in `draw-chat-bubble!` defined right below. Pulling the
-;; definitions up here would split a long, cohesive block of
-;; markdown / inline-marker code; the forward declares are the
-;; cheaper move.
-(declare extract-link-refs in-viewport? paint-link-chrome-row!
-  paint-resources-badge! resources-badge-label)
+;; ---------------------------------------------------------------------------
+;; Link / image / file-link resources
+;;
+;; Markdown references (`[text](url)`, `![alt](url)`,
+;; `[path:line](path#Lline)`) are collected from the message body,
+;; surfaced as one compact top-right resources badge, then shown in a
+;; modal picker when clicked. The old one-row-per-link strip helpers
+;; stay here for compatibility with tests and potential future layouts,
+;; but the active chat layout uses the badge + popup path.
+;;
+;; Why a badge instead of inline clickable spans:
+;;
+;;   - The inline tokeniser already runs over `:answer` text and
+;;     intentionally drops link/image markup as plain prose. Touching
+;;     it would force a second pass through the styled-line painter
+;;     and risk regressions in the existing markdown rendering.
+;;
+;;   - A single row-level click target is easier to hit in terminal
+;;     mouse mode than a set of mid-line spans.
+;;
+;;   - The badge gives a clean discoverability cue without pushing the
+;;     answer body down by one row per resource.
+;;
+;; Resources are OPT-OUT for callers that pass `:hide-links? true` on
+;; the message map. Today that flag isn’t set anywhere; reserved as
+;; an escape hatch for warnings / cancelled messages where we deem
+;; the chrome noise.
 
-;; `chrome-display-text` (further down) calls into `markdown->inline`
-;; via `strip-inline-markup` so the chrome row doesn't show raw
-;; `**` / `_` / backticks that the LLM put inside link bracket text.
-;; The actual `markdown->inline` body lives in the inline tokeniser
-;; section ~900 lines below; the existing forward-decl down there is
-;; far too late for a chrome helper this high in the file. We pin
-;; the var here so Clojure can resolve the symbol at compile time.
-(declare markdown->inline)
+(def ^:private link-icon-image    "\uD83D\uDCF7")  ; 📷
+(def ^:private link-icon-link     "\uD83D\uDD17")  ; 🔗
+(def ^:private link-icon-file     "\uD83D\uDCC4")  ; 📄
+(def ^:private link-icon-blocked  "\uD83D\uDEAB")  ; 🚫
+(def ^:private resources-icon     "\uD83D\uDCDA")  ; 📚
+
+(defn- resources-badge-label
+  "Return the widest resources badge that fits `max-w` display cells,
+   or nil when even the compact count cannot fit. The top-row badge is
+   intentionally compact because it shares the right edge with the
+   timestamp."
+  [n max-w]
+  (let [candidates [(str resources-icon " Resources " n)
+                    (str resources-icon " Resources")
+                    (str "Resources " n)
+                    (str resources-icon " " n)
+                    resources-icon]]
+    (some #(when (<= (p/display-width %) max-w) %) candidates)))
+
+(defn- in-viewport?
+  "True when `abs-row` is inside the currently-painted messages
+   viewport `[viewport-top, viewport-top + viewport-h)`."
+  [^long viewport-top ^long viewport-h ^long abs-row]
+  (and (>= abs-row viewport-top)
+    (< abs-row (+ viewport-top viewport-h))))
+
+(defn- paint-resources-badge!
+  "Paint and register the clickable top-row resources badge for one
+   bubble. Clicking opens a resources popup instead of opening a single
+   URL immediately."
+  [^TextGraphics g label refs x y width abs-col-base abs-row viewport-top viewport-h]
+  (let [hovered (cr/hovered)
+        hovered? (and (= :resources (:kind hovered))
+                   (= abs-row (:row (:bounds hovered)))
+                   (= (+ abs-col-base x) (:col (:bounds hovered))))
+        bg       (if hovered? t/link-chrome-hover-bg t/terminal-bg)
+        fg       (if hovered? t/link-chrome-hover-fg t/link-chrome-fg)]
+    (p/clear-styles! g)
+    (p/set-colors! g fg bg)
+    (when hovered?
+      (p/fill-rect! g x y width 1))
+    (p/put-str! g x y label)
+    (when (in-viewport? viewport-top viewport-h abs-row)
+      (cr/register!
+        {:bounds   {:row abs-row :col (+ abs-col-base x) :width width}
+         :kind     :resources
+         :refs     refs
+         :enabled? true}))))
+
+(defn- ref-icon
+  "Return the chrome icon string for `ref`. Disabled refs always
+   render with the blocked icon regardless of kind so the user
+   reads “this one is dead” before reading the URL."
+  ^String [{:keys [kind enabled?]}]
+  (cond
+    (not enabled?) link-icon-blocked
+    (= kind :image)      link-icon-image
+    (= kind :file)       link-icon-file
+    :else                link-icon-link))
+
+;; Inline-style sentinel codepoints in the U+E110-U+E117 PUA range
+;; (BOLD/ITALIC/STRIKE/CODE on/off pairs) are emitted upstream by the
+;; canonical IR walker. The chrome strip doesn't paint per-character
+;; SGR — it's a single-tone hover band — so we strip the sentinels
+;; back out before display, leaving plain text. The pre-pass lifts
+;; `**bold**` to `bold`, `*italic*` to `italic`, `` `code` `` to
+;; `code`, while unmatched openers (`*half`, `**incomplete`) stay
+;; literal — same behaviour the prose body gets. Without this pass
+;; the chrome shows raw markdown markup verbatim, e.g.
+;;   [See **here**](url) -> "🔗 See **here** -> url"
+;; which looks like a typo to the user.
+(defn- ir-node-visible-text
+  "Recursive walk: concatenate every visible text segment from a
+   canonical IR node, dropping link URLs and image srcs (we only
+   want the visible label, not the target). Used by chrome rows
+   where `[See **here**](url)` should read `See here`, not
+   `See here (url)` (which is what `extract-text`'s plain renderer
+   would emit for a link whose label differs from its href)."
+  ^String [node]
+  (cond
+    (string? node) node
+    (not (vector? node)) ""
+    :else
+    (let [tag (first node)
+          children (drop 2 node)]
+      (case tag
+        :br   " "
+        :img  ""
+        (:span :c :code :kbd) (or (some #(when (string? %) %) children) "")
+        (apply str (map ir-node-visible-text children))))))
+
+(defn- strip-inline-markup
+  "Strip inline markdown markup (`**bold**`, `` `code` ``, link
+   decoration, etc.) from `text`, yielding the plain visible label.
+   Used by chrome-row rendering so refs like `[See **here**](url)`
+   show as `🔗 See here -> url` (visible label only) instead of
+   leaking asterisks or the URL inside the bracket portion.
+
+   Lifts through `vis/text->ir` (commonmark parser) then walks the
+   IR concatenating only visible text — link/image targets dropped."
+  ^String [^String text]
+  (let [s (or text "")]
+    (if (str/blank? s)
+      s
+      (str/trim (ir-node-visible-text (vis/text->ir s))))))
+
+(defn- chrome-display-text
+  "Build the visible chrome row for a ref:
+     <icon> <text> -> <url>
+   The url tail is shortened to fit `max-w`. Pure.
+
+   `text` is run through `strip-inline-markup` so inline emphasis
+   inside the bracket portion (e.g. `[See **here**](url)`,
+   ``[Title with `code`](url)``) renders as plain text in the
+   chrome row instead of leaking raw `**` / backticks / `*`."
+  ^String [ref ^long max-w]
+  (let [icon  (ref-icon ref)
+        text  (strip-inline-markup (or (:text ref) ""))
+        url   (or (:url ref)  "")
+        sep   " -> "
+        ;; Reserve room: icon (2 cols) + space + sep + at least 8 cols
+        ;; of url.
+        head     (str icon " " text)
+        head-w   (p/display-width head)
+        sep-w    (p/display-width sep)
+        avail    (max 0 (- max-w head-w sep-w))
+        url-disp (if (<= (count url) avail)
+                   url
+                   (let [keep (max 0 (- avail 1))]
+                     (str (subs url 0 (min (count url) keep)) "...")))]
+    (str head sep url-disp)))
+
+(defn extract-link-refs*
+  "Pure ref extractor. Walks `text` once and returns the vec of
+   refs `links/parse-md-refs` produces, plus a synthesised
+   `:display` string for chrome painting at width `max-w`."
+  [^String text ^long max-w]
+  (let [refs (links/parse-md-refs text)]
+    (mapv (fn [r] (assoc r :display (chrome-display-text r max-w))) refs)))
+
+(defn extract-link-refs
+  "Memoised wrapper around `extract-link-refs*`. Keyed by the
+   message text’s identity-hash + width - the same trick
+   `bubble-height` uses to dodge re-walking immutable message bodies
+   on every paint."
+  [{:keys [text hide-links?]} max-w]
+  (if (or hide-links?
+        (> (count (or text "")) max-link-ref-text-chars))
+    []
+    (cached* [::refs (System/identityHashCode text) (long max-w)]
+      #(extract-link-refs* (or text "") max-w))))
+
+#_{:clj-kondo/ignore [:unused-private-var]}
+(defn- paint-link-chrome-row!
+  "Paint one chrome row at `(x, y)` (clip-relative coords) inside a
+   `bubble-w`-wide column. When the row’s absolute screen position
+   `abs-row` is inside the viewport AND the ref is enabled, register
+   a click region.
+
+   The row paints `<icon> <text> -> <url>` in three colour zones so
+   the affordance reads cleanly (link colour for the text, muted
+   gray for the arrow + url tail). Hover state inverts the row to a
+   pale blue band."
+  [^TextGraphics g
+   {:keys [display enabled?] :as ref}
+   x y bubble-w
+   abs-col-base abs-row
+   viewport-top viewport-h]
+  (let [hovered? (and enabled?
+                   (= abs-row (:row (:bounds (cr/hovered)))))
+        bg       (cond
+                   hovered? t/link-chrome-hover-bg
+                   :else    t/terminal-bg)
+        fg-text  (cond
+                   (not enabled?) t/link-chrome-blocked-fg
+                   hovered?       t/link-chrome-hover-fg
+                   :else          t/link-chrome-fg)]
+    (p/clear-styles! g)
+    (p/set-colors! g t/text-fg bg)
+    (p/fill-rect! g x y bubble-w 1)
+    ;; Whole row painted in one colour pass; the text/arrow/url
+    ;; tri-tone is a future polish - the single-tone read is
+    ;; already obviously a link, the tri-tone added complexity
+    ;; without changing the click affordance.
+    (p/set-colors! g fg-text bg)
+    (p/put-str! g x y display)
+    (when (and enabled? (in-viewport? viewport-top viewport-h abs-row))
+      (cr/register!
+        {:bounds   {:row abs-row :col (+ abs-col-base x) :width bubble-w}
+         :url      (:url ref)
+         :kind     (:kind ref)
+         :line     (:line ref)
+         :scheme   (:scheme ref)
+         :enabled? true}))))
+
+;; ---------------------------------------------------------------------------
 
 (defn- op-tag->color-role
   "Channel-local mapping from the engine `:op.tag/...` value to a
@@ -1977,232 +2183,6 @@
         ;;     + footer(meta)(0|1)
         ;;     + gap(1)
         (+ top-sep-h 1 top-pad bubble-h bottom-pad (if footer? 1 0) 1)))))
-
-;; ---------------------------------------------------------------------------
-;; Link / image / file-link resources
-;;
-;; Markdown references (`[text](url)`, `![alt](url)`,
-;; `[path:line](path#Lline)`) are collected from the message body,
-;; surfaced as one compact top-right resources badge, then shown in a
-;; modal picker when clicked. The old one-row-per-link strip helpers
-;; stay here for compatibility with tests and potential future layouts,
-;; but the active chat layout uses the badge + popup path.
-;;
-;; Why a badge instead of inline clickable spans:
-;;
-;;   - The inline tokeniser already runs over `:answer` text and
-;;     intentionally drops link/image markup as plain prose. Touching
-;;     it would force a second pass through the styled-line painter
-;;     and risk regressions in the existing markdown rendering.
-;;
-;;   - A single row-level click target is easier to hit in terminal
-;;     mouse mode than a set of mid-line spans.
-;;
-;;   - The badge gives a clean discoverability cue without pushing the
-;;     answer body down by one row per resource.
-;;
-;; Resources are OPT-OUT for callers that pass `:hide-links? true` on
-;; the message map. Today that flag isn’t set anywhere; reserved as
-;; an escape hatch for warnings / cancelled messages where we deem
-;; the chrome noise.
-
-(def ^:private link-icon-image    "\uD83D\uDCF7")  ; 📷
-(def ^:private link-icon-link     "\uD83D\uDD17")  ; 🔗
-(def ^:private link-icon-file     "\uD83D\uDCC4")  ; 📄
-(def ^:private link-icon-blocked  "\uD83D\uDEAB")  ; 🚫
-(def ^:private resources-icon     "\uD83D\uDCDA")  ; 📚
-
-(defn- resources-badge-label
-  "Return the widest resources badge that fits `max-w` display cells,
-   or nil when even the compact count cannot fit. The top-row badge is
-   intentionally compact because it shares the right edge with the
-   timestamp."
-  [n max-w]
-  (let [candidates [(str resources-icon " Resources " n)
-                    (str resources-icon " Resources")
-                    (str "Resources " n)
-                    (str resources-icon " " n)
-                    resources-icon]]
-    (some #(when (<= (p/display-width %) max-w) %) candidates)))
-
-(defn- paint-resources-badge!
-  "Paint and register the clickable top-row resources badge for one
-   bubble. Clicking opens a resources popup instead of opening a single
-   URL immediately."
-  [^TextGraphics g label refs x y width abs-col-base abs-row viewport-top viewport-h]
-  (let [hovered (cr/hovered)
-        hovered? (and (= :resources (:kind hovered))
-                   (= abs-row (:row (:bounds hovered)))
-                   (= (+ abs-col-base x) (:col (:bounds hovered))))
-        bg       (if hovered? t/link-chrome-hover-bg t/terminal-bg)
-        fg       (if hovered? t/link-chrome-hover-fg t/link-chrome-fg)]
-    (p/clear-styles! g)
-    (p/set-colors! g fg bg)
-    (when hovered?
-      (p/fill-rect! g x y width 1))
-    (p/put-str! g x y label)
-    (when (in-viewport? viewport-top viewport-h abs-row)
-      (cr/register!
-        {:bounds   {:row abs-row :col (+ abs-col-base x) :width width}
-         :kind     :resources
-         :refs     refs
-         :enabled? true}))))
-
-(defn- ref-icon
-  "Return the chrome icon string for `ref`. Disabled refs always
-   render with the blocked icon regardless of kind so the user
-   reads “this one is dead” before reading the URL."
-  ^String [{:keys [kind enabled?]}]
-  (cond
-    (not enabled?) link-icon-blocked
-    (= kind :image)      link-icon-image
-    (= kind :file)       link-icon-file
-    :else                link-icon-link))
-
-;; Inline-style sentinel codepoints emitted by `markdown->inline`
-;; (BOLD/ITALIC/STRIKE/CODE on/off pairs in the U+E110-U+E117 PUA
-;; range). The chrome strip doesn't paint per-character SGR - it's
-;; a single-tone hover band - so we strip the sentinels back out
-;; before display, leaving plain text. The pre-pass through
-;; `markdown->inline` is the trick: `**bold**` cleanly becomes
-;; `bold`, `*italic*` becomes `italic`, ` `code` ` becomes `code`,
-;; and unmatched openers (`*half`, `**incomplete`) stay literal
-;; - same behaviour the prose body gets. Without this pass the
-;; chrome shows raw markdown markup verbatim, e.g.
-;;   [See **here**](url) -> "🔗 See **here** -> url"
-;; which looks like a typo to the user.
-(defn- ir-node-visible-text
-  "Recursive walk: concatenate every visible text segment from a
-   canonical IR node, dropping link URLs and image srcs (we only
-   want the visible label, not the target). Used by chrome rows
-   where `[See **here**](url)` should read `See here`, not
-   `See here (url)` (which is what `extract-text`'s plain renderer
-   would emit for a link whose label differs from its href)."
-  ^String [node]
-  (cond
-    (string? node) node
-    (not (vector? node)) ""
-    :else
-    (let [tag (first node)
-          children (drop 2 node)]
-      (case tag
-        :br   " "
-        :img  ""
-        (:span :c :code :kbd) (or (some #(when (string? %) %) children) "")
-        (apply str (map ir-node-visible-text children))))))
-
-(defn- strip-inline-markup
-  "Strip inline markdown markup (`**bold**`, `` `code` ``, link
-   decoration, etc.) from `text`, yielding the plain visible label.
-   Used by chrome-row rendering so refs like `[See **here**](url)`
-   show as `🔗 See here -> url` (visible label only) instead of
-   leaking asterisks or the URL inside the bracket portion.
-
-   Lifts through `vis/text->ir` (commonmark parser) then walks the
-   IR concatenating only visible text — link/image targets dropped."
-  ^String [^String text]
-  (let [s (or text "")]
-    (if (str/blank? s)
-      s
-      (str/trim (ir-node-visible-text (vis/text->ir s))))))
-
-(defn- chrome-display-text
-  "Build the visible chrome row for a ref:
-     <icon> <text> -> <url>
-   The url tail is shortened to fit `max-w`. Pure.
-
-   `text` is run through `strip-inline-markup` so inline emphasis
-   inside the bracket portion (e.g. `[See **here**](url)`,
-   ``[Title with `code`](url)``) renders as plain text in the
-   chrome row instead of leaking raw `**` / backticks / `*`."
-  ^String [ref ^long max-w]
-  (let [icon  (ref-icon ref)
-        text  (strip-inline-markup (or (:text ref) ""))
-        url   (or (:url ref)  "")
-        sep   " -> "
-        ;; Reserve room: icon (2 cols) + space + sep + at least 8 cols
-        ;; of url.
-        head     (str icon " " text)
-        head-w   (p/display-width head)
-        sep-w    (p/display-width sep)
-        avail    (max 0 (- max-w head-w sep-w))
-        url-disp (if (<= (count url) avail)
-                   url
-                   (let [keep (max 0 (- avail 1))]
-                     (str (subs url 0 (min (count url) keep)) "...")))]
-    (str head sep url-disp)))
-
-(defn extract-link-refs*
-  "Pure ref extractor. Walks `text` once and returns the vec of
-   refs `links/parse-md-refs` produces, plus a synthesised
-   `:display` string for chrome painting at width `max-w`."
-  [^String text ^long max-w]
-  (let [refs (links/parse-md-refs text)]
-    (mapv (fn [r] (assoc r :display (chrome-display-text r max-w))) refs)))
-
-(defn extract-link-refs
-  "Memoised wrapper around `extract-link-refs*`. Keyed by the
-   message text’s identity-hash + width - the same trick
-   `bubble-height` uses to dodge re-walking immutable message bodies
-   on every paint."
-  [{:keys [text hide-links?]} max-w]
-  (if (or hide-links?
-        (> (count (or text "")) max-link-ref-text-chars))
-    []
-    (cached* [::refs (System/identityHashCode text) (long max-w)]
-      #(extract-link-refs* (or text "") max-w))))
-
-(defn- in-viewport?
-  "True when `abs-row` is inside the currently-painted messages
-   viewport `[viewport-top, viewport-top + viewport-h)`."
-  [^long viewport-top ^long viewport-h ^long abs-row]
-  (and (>= abs-row viewport-top)
-    (< abs-row (+ viewport-top viewport-h))))
-
-#_{:clj-kondo/ignore [:unused-private-var]}
-(defn- paint-link-chrome-row!
-  "Paint one chrome row at `(x, y)` (clip-relative coords) inside a
-   `bubble-w`-wide column. When the row’s absolute screen position
-   `abs-row` is inside the viewport AND the ref is enabled, register
-   a click region.
-
-   The row paints `<icon> <text> -> <url>` in three colour zones so
-   the affordance reads cleanly (link colour for the text, muted
-   gray for the arrow + url tail). Hover state inverts the row to a
-   pale blue band."
-  [^TextGraphics g
-   {:keys [display enabled?] :as ref}
-   x y bubble-w
-   abs-col-base abs-row
-   viewport-top viewport-h]
-  (let [hovered? (and enabled?
-                   (= abs-row (:row (:bounds (cr/hovered)))))
-        bg       (cond
-                   hovered? t/link-chrome-hover-bg
-                   :else    t/terminal-bg)
-        fg-text  (cond
-                   (not enabled?) t/link-chrome-blocked-fg
-                   hovered?       t/link-chrome-hover-fg
-                   :else          t/link-chrome-fg)]
-    (p/clear-styles! g)
-    (p/set-colors! g t/text-fg bg)
-    (p/fill-rect! g x y bubble-w 1)
-    ;; Whole row painted in one colour pass; the text/arrow/url
-    ;; tri-tone is a future polish - the single-tone read is
-    ;; already obviously a link, the tri-tone added complexity
-    ;; without changing the click affordance.
-    (p/set-colors! g fg-text bg)
-    (p/put-str! g x y display)
-    (when (and enabled? (in-viewport? viewport-top viewport-h abs-row))
-      (cr/register!
-        {:bounds   {:row abs-row :col (+ abs-col-base x) :width bubble-w}
-         :url      (:url ref)
-         :kind     (:kind ref)
-         :line     (:line ref)
-         :scheme   (:scheme ref)
-         :enabled? true}))))
-
-;; ---------------------------------------------------------------------------
 
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.

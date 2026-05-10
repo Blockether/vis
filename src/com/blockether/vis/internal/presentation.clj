@@ -224,6 +224,11 @@
   [{:keys [body]}]
   (str/trimr (->str body)))
 
+;; Mutual recursion: `present` (dispatch) calls per-kind renderers
+;; (`details->md`, `tool-call->md`, etc.); those renderers in turn
+;; call `present` recursively for nested body content (e.g. a
+;; details block whose body is itself a presentation map). Can't be
+;; sorted away — cycle is structural.
 (declare present)
 
 (defn details->md

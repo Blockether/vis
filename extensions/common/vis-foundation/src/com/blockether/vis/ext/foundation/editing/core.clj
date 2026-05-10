@@ -764,7 +764,13 @@
          (future-cancel stdin-f)
          (throw e))))))
 
-(declare bounded-render-text)
+(defn- bounded-render-text
+  [s]
+  (let [s (str s)]
+    (if (> (count s) journal-render-chars)
+      (str (subs s 0 journal-render-chars)
+        "\n...<+" (- (count s) journal-render-chars) " chars>")
+      s)))
 
 ;; =============================================================================
 ;; Tool-result facades
@@ -986,14 +992,6 @@
 ;; =============================================================================
 ;; Structured renderers
 ;; =============================================================================
-
-(defn- bounded-render-text
-  [s]
-  (let [s (str s)]
-    (if (> (count s) journal-render-chars)
-      (str (subs s 0 journal-render-chars)
-        "\n...<+" (- (count s) journal-render-chars) " chars>")
-      s)))
 
 ;; Inline markdown string-builder helpers (replaced the v/ DSL).
 (defn- md-code       ^String [s] (str "`" s "`"))
