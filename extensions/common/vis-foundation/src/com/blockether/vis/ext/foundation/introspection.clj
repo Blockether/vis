@@ -64,7 +64,7 @@
    suffix. The product concept is *turn*; everywhere this id is
    surfaced to the model (e.g. inspect current-turn results, the
    `:in-flight-turn-id` slot) it's labelled `turn`. Mirrors the
-   SCI-visible `TURN_CONVERSATION_TURN_ID` SYSTEM var so meta-fns can filter
+   SCI-visible `TURN_ID` SYSTEM var so meta-fns can filter
    it without round-tripping through SCI."
   [env]
   (some-> (:current-conversation-turn-id-atom env) deref))
@@ -72,7 +72,7 @@
 (defn- same-uuid?
   "True when two values denote the same UUID. Accepts UUID instances
    or any object whose `str` is the canonical UUID form. Used to
-   match `TURN_CONVERSATION_TURN_ID` against a turn's `:id` regardless of
+   match `TURN_ID` against a turn's `:id` regardless of
    whether the persistence layer returned a UUID or a string."
   [a b]
   (and a b (= (str a) (str b))))
@@ -380,7 +380,7 @@
   (turn-snapshot env))
 
 (defn- foundation-conversation
-  "Snapshot for a conversation. The in-flight turn (= current `TURN_CONVERSATION_TURN_ID`)
+  "Snapshot for a conversation. The in-flight turn (= current `TURN_ID`)
    is automatically excluded from `:turns` because its `:iteration-count` /
    `:total-cost` haven't been finalized yet - listing it would render
    as `null | $null` and confuse downstream summaries. The excluded id

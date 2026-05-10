@@ -2080,16 +2080,15 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented SYSTEM vars (post TURN_USER_REQUEST retirement)"
-    (expect (= '#{TURN_CONVERSATION_TURN_ID
-                  TURN_CONVERSATION_SOUL_ID
+  (it "SYSTEM_VAR_NAMES contains exactly the documented SYSTEM vars (post TURN_USER_REQUEST + post SOUL-ID/CONVERSATION_ID drop, STATE_ID kept)"
+    (expect (= '#{TURN_ID
+                  TURN_POSITION
                   TURN_CONVERSATION_STATE_ID
                   TURN_SYSTEM_PROMPT
                   TURN_ACTIVE_EXTENSIONS
                   TURN_ACCESSIBLE_SKILLS
-                  ITERATION_ID
-                  CONVERSATION_ID
-                  CONVERSATION_SOUL_ID
+                  TURN_ITERATION_ID
+                  TURN_ITERATION_POSITION
                   CONVERSATION_STATE_ID
                   CONVERSATION_TITLE
                   CONVERSATION_PREVIOUS_ANSWER}
@@ -2101,16 +2100,20 @@
       ;; TURN_USER_REQUEST retired - now read via the sandbox `(turn-request)` fn,
       ;; not stored as a SYSTEM-var snapshot.
       (expect (false? (system-var-sym? 'TURN_USER_REQUEST)))
-      (expect (true?  (system-var-sym? 'TURN_CONVERSATION_TURN_ID)))
-      (expect (true?  (system-var-sym? 'TURN_CONVERSATION_SOUL_ID)))
+      (expect (true?  (system-var-sym? 'TURN_ID)))
+      (expect (true?  (system-var-sym? 'TURN_POSITION)))
+      (expect (false? (system-var-sym? 'TURN_CONVERSATION_TURN_ID)))
+      (expect (false? (system-var-sym? 'TURN_CONVERSATION_SOUL_ID)))
       (expect (true?  (system-var-sym? 'TURN_CONVERSATION_STATE_ID)))
       (expect (true?  (system-var-sym? 'TURN_SYSTEM_PROMPT)))
       (expect (true?  (system-var-sym? 'TURN_ACTIVE_EXTENSIONS)))
       (expect (true?  (system-var-sym? 'TURN_ACCESSIBLE_SKILLS)))
-      (expect (true?  (system-var-sym? 'ITERATION_ID)))
+      (expect (true?  (system-var-sym? 'TURN_ITERATION_ID)))
+      (expect (true?  (system-var-sym? 'TURN_ITERATION_POSITION)))
+      (expect (false? (system-var-sym? 'ITERATION_ID)))
       (expect (false? (system-var-sym? 'ITERATION_PREVIOUS_REASONING)))
-      (expect (true?  (system-var-sym? 'CONVERSATION_ID)))
-      (expect (true?  (system-var-sym? 'CONVERSATION_SOUL_ID)))
+      (expect (false? (system-var-sym? 'CONVERSATION_ID)))
+      (expect (false? (system-var-sym? 'CONVERSATION_SOUL_ID)))
       (expect (true?  (system-var-sym? 'CONVERSATION_STATE_ID)))
       (expect (true?  (system-var-sym? 'CONVERSATION_TITLE)))
       (expect (true?  (system-var-sym? 'CONVERSATION_PREVIOUS_ANSWER)))

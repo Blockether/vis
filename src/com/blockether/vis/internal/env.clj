@@ -485,7 +485,12 @@
 ;; agent. Three lifetime tiers, each tagged by its prefix:
 ;;
 ;;   TURN_*         frozen at turn start, immutable for the whole turn
-;;     TURN_CONVERSATION_TURN_ID   UUID of THIS in-flight turn soul.
+;;     TURN_ID                     UUID of THIS in-flight turn soul.
+;;     TURN_POSITION               1-based int position of THIS turn within
+;;                                 its conversation_state. Per-conversation
+;;                                 monotonic; matches conversation_turn_soul.position.
+;;                                 Public-facing turn identifier (channels render
+;;                                 "turn 7"; UUIDs stay programmatic-only).
 ;;                                 (Retired: TURN_USER_REQUEST. The exact human-
 ;;                                 authored turn text is now read lazily through
 ;;                                 the sandbox `(turn-request)` primitive - a
@@ -493,7 +498,6 @@
 ;;                                 so the value is not pumped into per-iteration
 ;;                                 var-history rows. For richer history use
 ;;                                 `(v/conversation-state)` -> `:current-turn`/`:transcript`.)
-;;     TURN_CONVERSATION_SOUL_ID   UUID of the conversation_soul this turn lives under.
 ;;     TURN_CONVERSATION_STATE_ID  UUID of the latest conversation_state row at
 ;;                                 turn start. Stable for the whole turn even if a
 ;;                                 sibling write changes title; only an
@@ -526,7 +530,11 @@
 ;;                                    :docs               ["README.md" ...]}
 ;;
 ;;   ITERATION_*    rebound at every iteration boundary
-;;     ITERATION_ID                  UUID of the most recently persisted iteration
+;;     TURN_ITERATION_POSITION       1-based int position of THIS iteration
+;;                                   within its turn. Per-turn monotonic;
+;;                                   matches iteration.position. Bumped every
+;;                                   iteration alongside TURN_ITERATION_ID.
+;;     TURN_ITERATION_ID             UUID of the most recently persisted iteration
 ;;                                   row (nil before the first iteration commits;
 ;;                                   iteration N's :code sees iteration N-1's id
 ;;                                   because the row for N is written AFTER eval).
@@ -539,9 +547,12 @@
 ;;                                   `:thinking` column for forensics.
 ;;
 ;;   CONVERSATION_* conversation-state, mutates freely within the turn
-;;     CONVERSATION_ID               Alias for CONVERSATION_SOUL_ID.
-;;     CONVERSATION_SOUL_ID          UUID of the parent conversation_soul.
 ;;     CONVERSATION_STATE_ID         UUID of the current conversation_state branch.
+;;                                   Mutates on fork; tools that need branch-aware
+;;                                   identity read this. (CONVERSATION_ID and the
+;;                                   raw *_SOUL_ID variants were retired — they
+;;                                   were aliases / immutable-identity duplicates
+;;                                   with no consumers.)
 ;;     CONVERSATION_TITLE            current conversation title ("" until set).
 ;;                                   The model writes via the host primitive
 ;;                                   `(conversation-title "...")`, never by
@@ -572,15 +583,14 @@
    only after the model calls `(load-skill \"name\")` - that's the
    internal activation step. Hence: TURN_ACTIVE_EXTENSIONS (loaded) vs
    TURN_ACCESSIBLE_SKILLS (discoverable, lazy-load on demand)."
-  '#{TURN_CONVERSATION_TURN_ID
-     TURN_CONVERSATION_SOUL_ID
+  '#{TURN_ID
+     TURN_POSITION
      TURN_CONVERSATION_STATE_ID
      TURN_SYSTEM_PROMPT
      TURN_ACTIVE_EXTENSIONS
      TURN_ACCESSIBLE_SKILLS
-     ITERATION_ID
-     CONVERSATION_ID
-     CONVERSATION_SOUL_ID
+     TURN_ITERATION_ID
+     TURN_ITERATION_POSITION
      CONVERSATION_STATE_ID
      CONVERSATION_TITLE
      CONVERSATION_PREVIOUS_ANSWER})
