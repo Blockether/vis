@@ -253,8 +253,31 @@
 
 (declare block->lines)
 
-(defn- blocks->lines [children width opts]
-  (vec (mapcat #(block->lines % width opts) children)))
+(defn- blocks->lines
+  "Walk a sequence of canonical blocks, concatenating their line
+   outputs.
+
+   When `(:max-lines opts)` is set, the reduce short-circuits as soon
+   as the accumulator reaches `1.5 * limit` lines. The post-walk
+   pipeline in `ir->lines` may collapse blank-runs and only ever
+   shrinks the result, so walking N*1.5 lines and post-truncating to
+   N produces the same final output as walking the entire body. The
+   slack covers worst-case blank-collapse.
+
+   Without `:max-lines` the lazy mapcat path runs - bench shows it
+   is JIT-friendlier than transients for this small-vector recursive
+   shape (see autoresearch B2 discard)."
+  [children width opts]
+  (if-let [limit (:max-lines opts)]
+    (let [cap (long (* 3 (long (long limit)) 1/2))]   ; 1.5*limit
+      (reduce (fn [acc child]
+                (let [acc' (into acc (block->lines child width opts))]
+                  (if (>= (count acc') cap)
+                    (reduced acc')
+                    acc')))
+              []
+              children))
+    (vec (mapcat #(block->lines % width opts) children))))
 
 (defn- inline-block->lines
   "Render a block whose children are inline (`:p`, `:h`, `:th`, `:td`,
