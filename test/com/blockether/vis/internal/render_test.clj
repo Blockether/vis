@@ -13,257 +13,262 @@
    - Adversarial inputs (unknown tag, missing attrs)"
   (:require
    [clojure.string :as str]
-   [clojure.test :refer [deftest is testing]]
-   [com.blockether.vis.internal.render :as r]))
+   [com.blockether.vis.internal.render :as r]
+   [lazytest.core :refer [defdescribe describe expect it]]))
 
 ;; ---------------------------------------------------------------------------
 ;; ->ast normalization
 ;; ---------------------------------------------------------------------------
 
-(deftest ->ast-canonical-passthrough
-  (is (= [:ir {} "x"] (r/->ast [:ir "x"])))
-  (is (= [:ir {} "x"] (r/->ast [:ir {} "x"])))
-  (is (r/ir? (r/->ast [:ir]))))
+(defdescribe ->ast-normalization-test
+  (it "passes through canonical [:ir ...]"
+    (expect (= [:ir {} "x"] (r/->ast [:ir "x"])))
+    (expect (= [:ir {} "x"] (r/->ast [:ir {} "x"])))
+    (expect (r/ir? (r/->ast [:ir]))))
 
-(deftest ->ast-bare-string
-  (is (= [:ir {} "hello"] (r/->ast "hello")))
-  (is (= [:ir {} ""] (r/->ast ""))))
+  (it "wraps bare strings as text-node child of :ir"
+    (expect (= [:ir {} "hello"] (r/->ast "hello")))
+    (expect (= [:ir {} ""] (r/->ast ""))))
 
-(deftest ->ast-hiccup-non-ir-wraps
-  (is (= [:ir {} [:p {} "x"]] (r/->ast [:p "x"])))
-  (is (= [:ir {} [:strong {} "bold"]] (r/->ast [:strong "bold"]))))
+  (it "wraps non-:ir Hiccup vectors in :ir"
+    (expect (= [:ir {} [:p {} "x"]] (r/->ast [:p "x"])))
+    (expect (= [:ir {} [:strong {} "bold"]] (r/->ast [:strong "bold"]))))
 
-(deftest ->ast-vector-of-mixed
-  (is (= [:ir {} "one" [:strong {} "two"] [:code {:lang "edn"} "{:foo 1}"]]
-        (r/->ast ["one" [:strong "two"] {:foo 1}]))))
+  (it "coerces variadic mixed vectors element-by-element"
+    (expect (= [:ir {} "one" [:strong {} "two"] [:code {:lang "edn"} "{:foo 1}"]]
+              (r/->ast ["one" [:strong "two"] {:foo 1}]))))
 
-(deftest ->ast-anything-else-debug-coerced
-  (let [out (r/->ast 42)]
-    (is (r/ir? out))
-    (is (= :code (-> out (nth 2) first)))))
+  (it "debug-coerces anything else as edn code-block"
+    (let [out (r/->ast 42)]
+      (expect (r/ir? out))
+      (expect (= :code (-> out (nth 2) first)))))
 
-(deftest ->ast-attrs-always-present
-  (let [out (r/->ast [:ir [:p "x"]])]
-    (is (= {} (second out)))
-    (is (= {} (-> out (nth 2) second)))))
+  (it "always inserts {} attrs after normalization"
+    (let [out (r/->ast [:ir [:p "x"]])]
+      (expect (= {} (second out)))
+      (expect (= {} (-> out (nth 2) second))))))
 
-(deftest ->ast-li-content-discriminator
-  (testing "all-inlines li stays as-is"
-    (is (= [:ir {} [:ul {} [:li {} "x" [:strong {} "y"]]]]
-          (r/->ast [:ir [:ul [:li "x" [:strong "y"]]]]))))
-  (testing "all-blocks li stays as-is"
-    (is (= [:ir {} [:ul {} [:li {} [:p {} "x"] [:p {} "y"]]]]
-          (r/->ast [:ir [:ul [:li [:p "x"] [:p "y"]]]]))))
-  (testing "mixed li wraps loose inlines in :p preserving order"
-    (is (= [:ir {} [:ul {} [:li {} [:p {} "a"] [:p {} "b"] [:p {} "c"]]]]
-          (r/->ast [:ir [:ul [:li "a" [:p "b"] "c"]]])))))
+(defdescribe li-content-discriminator-test
+  (it "leaves all-inlines :li alone"
+    (expect (= [:ir {} [:ul {} [:li {} "x" [:strong {} "y"]]]]
+              (r/->ast [:ir [:ul [:li "x" [:strong "y"]]]]))))
+
+  (it "leaves all-blocks :li alone"
+    (expect (= [:ir {} [:ul {} [:li {} [:p {} "x"] [:p {} "y"]]]]
+              (r/->ast [:ir [:ul [:li [:p "x"] [:p "y"]]]]))))
+
+  (it "wraps loose inlines under mixed :li in :p, preserving order"
+    (expect (= [:ir {} [:ul {} [:li {} [:p {} "a"] [:p {} "b"] [:p {} "c"]]]]
+              (r/->ast [:ir [:ul [:li "a" [:p "b"] "c"]]])))))
 
 ;; ---------------------------------------------------------------------------
 ;; HTML render
 ;; ---------------------------------------------------------------------------
 
-(deftest html-text-escapes
-  (is (= "a &amp; b &lt;c&gt;" (r/render "a & b <c>" :html))))
+(defdescribe html-render-test
+  (describe "text escaping"
+    (it "escapes &, <, > in text nodes"
+      (expect (= "a &amp; b &lt;c&gt;" (r/render "a & b <c>" :html)))))
 
-(deftest html-headings-collapse-to-bold
-  (is (str/starts-with? (r/render [:ir [:h {:level 1} "Title"]] :html)
-        "<b>Title</b>")))
+  (describe "block tags"
+    (it "collapses headings to bold"
+      (expect (str/starts-with? (r/render [:ir [:h {:level 1} "Title"]] :html)
+                "<b>Title</b>")))
 
-(deftest html-paragraph
-  (is (str/includes? (r/render [:ir [:p "hi " [:strong "there"]]] :html)
-        "hi <b>there</b>")))
+    (it "renders paragraphs with inline emphasis"
+      (expect (str/includes? (r/render [:ir [:p "hi " [:strong "there"]]] :html)
+                "hi <b>there</b>")))
 
-(deftest html-inline-formatters
-  (is (= "<b>bold</b>"   (r/render [:ir [:strong "bold"]] :html)))
-  (is (= "<i>ital</i>"   (r/render [:ir [:em "ital"]] :html)))
-  (is (= "<code>x</code>" (r/render [:ir [:c "x"]] :html))))
+    (it "fenced code with language uses tg <pre><code class>"
+      (expect (str/includes?
+                (r/render [:ir [:code {:lang "clojure"} "(+ 1 1)"]] :html)
+                "<pre><code class=\"language-clojure\">(+ 1 1)</code></pre>")))
 
-(deftest html-code-block-with-lang
-  (is (str/includes?
-        (r/render [:ir [:code {:lang "clojure"} "(+ 1 1)"]] :html)
-        "<pre><code class=\"language-clojure\">(+ 1 1)</code></pre>")))
+    (it "fenced code without language drops to plain <pre>"
+      (expect (str/includes?
+                (r/render [:ir [:code "raw"]] :html)
+                "<pre>raw</pre>")))
 
-(deftest html-code-block-no-lang
-  (is (str/includes?
-        (r/render [:ir [:code "raw"]] :html)
-        "<pre>raw</pre>")))
+    (it "unordered list renders bullet glyphs"
+      (let [out (r/render [:ir [:ul [:li "a"] [:li "b"]]] :html)]
+        (expect (str/includes? out "• a"))
+        (expect (str/includes? out "• b"))))
 
-(deftest html-list-bullets
-  (let [out (r/render [:ir [:ul [:li "a"] [:li "b"]]] :html)]
-    (is (str/includes? out "• a"))
-    (is (str/includes? out "• b"))))
+    (it "ordered list with :start renders correct numbering"
+      (let [out (r/render [:ir [:ol {:start 3} [:li "a"] [:li "b"]]] :html)]
+        (expect (str/includes? out "3. a"))
+        (expect (str/includes? out "4. b"))))
 
-(deftest html-list-ordered
-  (let [out (r/render [:ir [:ol {:start 3} [:li "a"] [:li "b"]]] :html)]
-    (is (str/includes? out "3. a"))
-    (is (str/includes? out "4. b"))))
+    (it "blockquote renders as <blockquote>"
+      (expect (str/includes?
+                (r/render [:ir [:quote [:p "wisdom"]]] :html)
+                "<blockquote>")))
 
-(deftest html-link
-  (is (= "<a href=\"https://x.com\">click</a>"
-        (r/render [:ir [:a {:href "https://x.com"} "click"]] :html))))
+    (it ":context :thinking promotes :quote to <blockquote expandable>"
+      (expect (str/includes?
+                (r/render [:ir [:quote [:p "deep"]]] :html {:context :thinking})
+                "<blockquote expandable>")))
 
-(deftest html-quote
-  (is (str/includes?
-        (r/render [:ir [:quote [:p "wisdom"]]] :html)
-        "<blockquote>")))
+    (it "table renders as aligned monospace <pre>"
+      (let [out (r/render [:ir [:table
+                                [:tr [:th "A"] [:th "B"]]
+                                [:tr [:td "1"] [:td "2"]]]] :html)]
+        (expect (str/starts-with? out "<pre>"))
+        (expect (str/includes? out "A"))
+        (expect (str/includes? out "1")))))
 
-(deftest html-quote-thinking-context-expandable
-  (is (str/includes?
-        (r/render [:ir [:quote [:p "deep"]]] :html {:context :thinking})
-        "<blockquote expandable>")))
+  (describe "inline tags"
+    (it "renders strong/em/c/a/img"
+      (expect (= "<b>bold</b>"   (r/render [:ir [:strong "bold"]] :html)))
+      (expect (= "<i>ital</i>"   (r/render [:ir [:em "ital"]] :html)))
+      (expect (= "<code>x</code>" (r/render [:ir [:c "x"]] :html)))
+      (expect (= "<a href=\"https://x.com\">click</a>"
+                (r/render [:ir [:a {:href "https://x.com"} "click"]] :html)))
+      (expect (= "<i>🖼 chart</i>"
+                (r/render [:ir [:img {:src "x.png" :alt "chart"}]] :html))))
 
-(deftest html-table
-  (let [out (r/render [:ir [:table
-                            [:tr [:th "A"] [:th "B"]]
-                            [:tr [:td "1"] [:td "2"]]]] :html)]
-    (is (str/starts-with? out "<pre>"))
-    (is (str/includes? out "A"))
-    (is (str/includes? out "1"))))
+    (it "kbd renders as <code>"
+      (expect (= "<code>Ctrl+C</code>"
+                (r/render [:ir [:kbd "Ctrl+C"]] :html))))
 
-(deftest html-img-placeholder
-  (is (= "<i>🖼 chart</i>"
-        (r/render [:ir [:img {:src "x.png" :alt "chart"}]] :html))))
+    (it "mark renders as <b> (Telegram has no <mark>)"
+      (expect (= "<b>highlight</b>"
+                (r/render [:ir [:mark "highlight"]] :html))))
 
-(deftest html-unknown-tag-fallthrough
-  (is (= "inner"
-        (r/render [:ir [:unknown-future-tag "inner"]] :html))))
+    (it "sup/sub strip wrapper (Telegram has no <sup>/<sub>)"
+      (expect (= "x2" (r/render [:ir "x" [:sup "2"]] :html)))
+      (expect (= "H2O" (r/render [:ir "H" [:sub "2"] "O"] :html)))))
 
-(deftest html-kbd-renders-as-code
-  (is (= "<code>Ctrl+C</code>"
-        (r/render [:ir [:kbd "Ctrl+C"]] :html))))
+  (describe "robustness"
+    (it "unknown tag falls through to children"
+      (expect (= "inner"
+                (r/render [:ir [:unknown-future-tag "inner"]] :html))))
 
-(deftest html-mark-renders-as-bold
-  (is (= "<b>highlight</b>"
-        (r/render [:ir [:mark "highlight"]] :html))))
-
-(deftest html-sup-sub-strip
-  (is (= "x2" (r/render [:ir "x" [:sup "2"]] :html)))
-  (is (= "H2O" (r/render [:ir "H" [:sub "2"] "O"] :html))))
+    (it "deeply nested emphasis preserves nesting"
+      (expect (str/includes?
+                (r/render [:ir [:p [:strong [:em [:c "code"]]]]] :html)
+                "<b><i><code>code</code></i></b>")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Markdown render
 ;; ---------------------------------------------------------------------------
 
-(deftest md-headings
-  (is (str/starts-with? (r/render [:ir [:h {:level 2} "Title"]] :markdown)
-        "## Title")))
+(defdescribe md-render-test
+  (it "headings emit ATX hashes"
+    (expect (str/starts-with? (r/render [:ir [:h {:level 2} "Title"]] :markdown)
+              "## Title")))
 
-(deftest md-paragraph-preserves-emphasis
-  (is (str/includes?
-        (r/render [:ir [:p "hi " [:strong "bold"] " " [:em "ital"]]] :markdown)
-        "hi **bold** *ital*")))
+  (it "paragraph preserves emphasis as **bold** *ital*"
+    (expect (str/includes?
+              (r/render [:ir [:p "hi " [:strong "bold"] " " [:em "ital"]]] :markdown)
+              "hi **bold** *ital*")))
 
-(deftest md-code-block
-  (is (str/includes?
-        (r/render [:ir [:code {:lang "python"} "print(1)"]] :markdown)
-        "```python\nprint(1)\n```")))
+  (it "fenced code with lang"
+    (expect (str/includes?
+              (r/render [:ir [:code {:lang "python"} "print(1)"]] :markdown)
+              "```python\nprint(1)\n```")))
 
-(deftest md-inline-code-no-escape
-  (is (= "`(+ 1 1)`" (r/render [:ir [:c "(+ 1 1)"]] :markdown))))
+  (it "inline code is verbatim, no escape"
+    (expect (= "`(+ 1 1)`" (r/render [:ir [:c "(+ 1 1)"]] :markdown))))
 
-(deftest md-list-unordered
-  (let [out (r/render [:ir [:ul [:li "x"] [:li "y"]]] :markdown)]
-    (is (str/includes? out "- x"))
-    (is (str/includes? out "- y"))))
+  (it "lists use - and 1. markers"
+    (let [u (r/render [:ir [:ul [:li "x"] [:li "y"]]] :markdown)
+          o (r/render [:ir [:ol [:li "x"] [:li "y"]]] :markdown)]
+      (expect (str/includes? u "- x"))
+      (expect (str/includes? u "- y"))
+      (expect (str/includes? o "1. x"))
+      (expect (str/includes? o "2. y"))))
 
-(deftest md-list-ordered
-  (let [out (r/render [:ir [:ol [:li "x"] [:li "y"]]] :markdown)]
-    (is (str/includes? out "1. x"))
-    (is (str/includes? out "2. y"))))
+  (it "link uses [text](url)"
+    (expect (= "[click](https://x.com)"
+              (r/render [:ir [:a {:href "https://x.com"} "click"]] :markdown))))
 
-(deftest md-link
-  (is (= "[click](https://x.com)"
-        (r/render [:ir [:a {:href "https://x.com"} "click"]] :markdown))))
+  (it "blockquote prefixes each line with >"
+    (let [out (r/render [:ir [:quote [:p "line1"] [:p "line2"]]] :markdown)]
+      (expect (every? #(str/starts-with? % "> ") (str/split-lines (str/trim out))))))
 
-(deftest md-quote-prefixes-each-line
-  (let [out (r/render [:ir [:quote [:p "line1"] [:p "line2"]]] :markdown)]
-    (is (every? #(str/starts-with? % "> ") (str/split-lines (str/trim out))))))
-
-(deftest md-table-with-headers
-  (let [out (r/render [:ir [:table
-                            [:tr [:th "A"] [:th "B"]]
-                            [:tr [:td "1"] [:td "2"]]]] :markdown)]
-    (is (str/includes? out "| A | B |"))
-    (is (str/includes? out "| --- | --- |"))
-    (is (str/includes? out "| 1 | 2 |"))))
+  (it "GFM table with header row"
+    (let [out (r/render [:ir [:table
+                              [:tr [:th "A"] [:th "B"]]
+                              [:tr [:td "1"] [:td "2"]]]] :markdown)]
+      (expect (str/includes? out "| A | B |"))
+      (expect (str/includes? out "| --- | --- |"))
+      (expect (str/includes? out "| 1 | 2 |")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Plain render
 ;; ---------------------------------------------------------------------------
 
-(deftest plain-strips-formatting
-  (is (= "Hello world"
-        (str/trim (r/render [:ir [:p "Hello " [:strong "world"]]] :plain)))))
+(defdescribe plain-render-test
+  (it "strips inline emphasis"
+    (expect (= "Hello world"
+              (str/trim (r/render [:ir [:p "Hello " [:strong "world"]]] :plain)))))
 
-(deftest plain-code-bare-content
-  (is (= "(+ 1 1)"
-        (str/trim (r/render [:ir [:code {:lang "clojure"} "(+ 1 1)"]] :plain)))))
+  (it "code blocks emit bare content"
+    (expect (= "(+ 1 1)"
+              (str/trim (r/render [:ir [:code {:lang "clojure"} "(+ 1 1)"]] :plain)))))
 
-(deftest plain-link-shows-text-and-url-when-different
-  (is (str/includes?
-        (r/render [:ir [:a {:href "https://x.com"} "click"]] :plain)
-        "click (https://x.com)")))
+  (it "link shows text and URL when distinct"
+    (expect (str/includes?
+              (r/render [:ir [:a {:href "https://x.com"} "click"]] :plain)
+              "click (https://x.com)")))
 
-(deftest plain-link-shows-url-only-when-text-equals-url
-  (is (= "https://x.com"
-        (str/trim (r/render [:ir [:a {:href "https://x.com"} "https://x.com"]] :plain)))))
+  (it "link shows URL only when text equals URL"
+    (expect (= "https://x.com"
+              (str/trim (r/render [:ir [:a {:href "https://x.com"} "https://x.com"]] :plain)))))
 
-(deftest plain-quote-uses-bar-prefix
-  (let [out (r/render [:ir [:quote [:p "deep"]]] :plain)]
-    (is (str/includes? out "│ deep"))))
+  (it "blockquote uses bar prefix"
+    (let [out (r/render [:ir [:quote [:p "deep"]]] :plain)]
+      (expect (str/includes? out "│ deep")))))
 
 ;; ---------------------------------------------------------------------------
 ;; extract-code & extract-text
 ;; ---------------------------------------------------------------------------
 
-(deftest extract-code-source-order
-  (is (= ["one" "two"]
-        (r/extract-code [:ir
-                         [:p "intro"]
-                         [:code {:lang "clj"} "one"]
-                         [:p "middle"]
-                         [:code {:lang "py"} "two"]]))))
+(defdescribe extract-helpers-test
+  (it "extract-code returns block contents in source order"
+    (expect (= ["one" "two"]
+              (r/extract-code [:ir
+                               [:p "intro"]
+                               [:code {:lang "clj"} "one"]
+                               [:p "middle"]
+                               [:code {:lang "py"} "two"]]))))
 
-(deftest extract-code-empty-when-no-code
-  (is (= [] (r/extract-code [:ir [:p "just prose"]]))))
+  (it "extract-code returns empty when answer has no [:code]"
+    (expect (= [] (r/extract-code [:ir [:p "just prose"]]))))
 
-(deftest extract-text-concatenates-paragraphs
-  (is (= "first\n\nsecond"
-        (r/extract-text [:ir [:p "first"] [:code "x"] [:p "second"]]))))
-
-;; ---------------------------------------------------------------------------
-;; Render flavor errors
-;; ---------------------------------------------------------------------------
-
-(deftest unknown-flavor-throws
-  (is (thrown? Exception (r/render "x" :unknown-flavor))))
+  (it "extract-text concatenates [:p] content"
+    (expect (= "first\n\nsecond"
+              (r/extract-text [:ir [:p "first"] [:code "x"] [:p "second"]])))))
 
 ;; ---------------------------------------------------------------------------
-;; :max-length truncation
+;; Render flavor errors + opts
 ;; ---------------------------------------------------------------------------
 
-(deftest max-length-truncates-at-paragraph-boundary
-  (let [long-md (apply str (repeat 200 "word "))
-        out     (r/render [:ir [:p long-md] [:p long-md]] :markdown {:max-length 100})]
-    (is (<= (count out) 100))
-    (is (str/ends-with? out "…"))))
+(defdescribe render-options-test
+  (it "throws on unknown flavor"
+    (expect
+      (try (r/render "x" :unknown-flavor) false
+        (catch Exception _ true))))
+
+  (it ":max-length truncates at paragraph boundary with ellipsis"
+    (let [long-md (apply str (repeat 200 "word "))
+          out     (r/render [:ir [:p long-md] [:p long-md]] :markdown {:max-length 100})]
+      (expect (<= (count out) 100))
+      (expect (str/ends-with? out "…")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Adversarial / robustness
 ;; ---------------------------------------------------------------------------
 
-(deftest renderer-never-throws-on-garbage
-  (doseq [v ["string" "" [:ir] [:p] [:weird-tag "x"] [] {:not "hiccup"} 42 nil]]
-    (doseq [flavor [:html :markdown :plain]]
-      (is (string? (r/render v flavor))
-        (str "render must return string for " (pr-str v) " " flavor)))))
+(defdescribe robustness-test
+  (it "renderer never throws on garbage input"
+    (doseq [v ["string" "" [:ir] [:p] [:weird-tag "x"] [] {:not "hiccup"} 42 nil]]
+      (doseq [flavor [:html :markdown :plain]]
+        (expect (string? (r/render v flavor))
+          (str "render must return string for " (pr-str v) " " flavor)))))
 
-(deftest empty-ir-renders-empty-string
-  (is (= "" (r/render [:ir] :html)))
-  (is (= "" (r/render [:ir] :markdown)))
-  (is (= "" (r/render [:ir] :plain))))
-
-(deftest deeply-nested-emphasis
-  (is (str/includes?
-        (r/render [:ir [:p [:strong [:em [:c "code"]]]]] :html)
-        "<b><i><code>code</code></i></b>")))
+  (it "empty :ir renders empty string in every flavor"
+    (expect (= "" (r/render [:ir] :html)))
+    (expect (= "" (r/render [:ir] :markdown)))
+    (expect (= "" (r/render [:ir] :plain)))))

@@ -66,6 +66,25 @@
           (recur (subs remaining cut-at)
             (conj chunks (subs remaining 0 cut-at))))))))
 
+(defn post-message!
+  "Post a single message and return the parsed Telegram response
+   (`:ok :result :description ...`). Used by streaming live-bubble
+   when the caller needs `:result.message_id` to edit later.
+
+   Does NOT chunk over 4096 chars — the live-bubble window is bounded
+   by sliding-window thinking; multi-bubble answers go through the
+   regular `send-message!` path.
+
+   `text` defaults to Telegram-HTML; pass `:plain? true` for raw."
+  ([token chat-id text]
+   (post-message! token chat-id text nil))
+  ([token chat-id text {:keys [reply-markup plain?]}]
+   (let [payload (cond-> {"chat_id" chat-id
+                          "text"    text}
+                   (not plain?) (assoc "parse_mode" "HTML")
+                   reply-markup (assoc "reply_markup" reply-markup))]
+     (post-json! token "/sendMessage" payload))))
+
 (defn send-message!
   "Send a text reply.
 
@@ -113,6 +132,35 @@
       (throw (ex-info (str "Telegram setMyCommands failed: " (:description resp))
                {:body resp})))
     resp))
+
+(defn edit-message!
+  "Edit a previously-sent text message. Returns the parsed Telegram
+   response map; caller checks `:ok`.
+
+   `text` is expected to be pre-rendered Telegram-HTML (default) or
+   plain text when `:plain?` is true. `:reply-markup` keeps / changes
+   the inline keyboard; pass `{:inline_keyboard []}` to drop it.
+
+   On HTTP 400 with description `message is not modified`, returns
+   the response without retry (caller swallows). On HTTP 429, the
+   response carries `:parameters {:retry_after N}` for caller backoff."
+  ([token chat-id message-id text]
+   (edit-message! token chat-id message-id text nil))
+  ([token chat-id message-id text {:keys [reply-markup plain?]}]
+   (let [payload (cond-> {"chat_id"    chat-id
+                          "message_id" message-id
+                          "text"       text}
+                   (not plain?) (assoc "parse_mode" "HTML")
+                   reply-markup (assoc "reply_markup" reply-markup))]
+     (post-json! token "/editMessageText" payload))))
+
+(defn delete-message!
+  "Delete a message. Best-effort — swallows errors."
+  [token chat-id message-id]
+  (try
+    (post-json! token "/deleteMessage"
+      {"chat_id" chat-id "message_id" message-id})
+    (catch Exception _ nil)))
 
 (defn answer-callback-query!
   "Acknowledge a Telegram inline-keyboard callback. Best-effort."
