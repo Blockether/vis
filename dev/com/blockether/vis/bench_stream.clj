@@ -126,6 +126,11 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
         render-frame! (do (require 'com.blockether.vis.ext.channel-tui.screen)
                           (ns-resolve 'com.blockether.vis.ext.channel-tui.screen 'render-frame!))
         render-live!  (ns-resolve 'com.blockether.vis.ext.channel-tui.screen 'render-live-bubble-frame!)
+        ;; phase-isolation knobs. Set via dynamic var so the bench can
+        ;; force each phase off without touching production code.
+        skip-chrome?  (Boolean/parseBoolean (System/getProperty "bench.skip-chrome" "false"))
+        skip-refresh? (Boolean/parseBoolean (System/getProperty "bench.skip-refresh" "false"))
+        skip-bubble?  (Boolean/parseBoolean (System/getProperty "bench.skip-bubble" "false"))
         previous-layout (atom nil)
         ;; Stable scrollback (3 short bubbles + 1 user) so layout has
         ;; some baseline work to do.
@@ -157,8 +162,21 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
                 ;; First frame uses render-frame! to populate previous-layout;
                 ;; subsequent frames use render-live-bubble-frame! (production
                 ;; fast path for 80ms live ticks).
-                layout (if (nil? @previous-layout)
+                layout (cond
+                         (nil? @previous-layout)
                          (render-frame! screen cols rows db 0)
+
+                         (and skip-chrome? skip-refresh? skip-bubble?)
+                         ;; only the virtual/layout work
+                         (let [bubble-w (max 1 (- cols 4))
+                               inner-h  (- rows 4)]
+                           ((ns-resolve 'com.blockether.vis.ext.channel-tui.virtual 'layout)
+                            (:messages db) bubble-w (:settings db) nil inner-h
+                            {:progress (:progress db) :loading? true
+                             :progress-extra {:now-ms 0 :turn-start-ms 0}}
+                            {:conversation-id "x" :detail-expansions {}}))
+
+                         :else
                          (render-live! screen cols rows db 0 @previous-layout))
                 _  (reset! previous-layout layout)
                 dt (- (System/nanoTime) t0)]
