@@ -32,6 +32,30 @@
 (def ^:private telegram-restart-cmd-env "VIS_TELEGRAM_RESTART_CMD")
 (def ^:private telegram-allowed-chat-ids-env "TELEGRAM_ALLOWED_CHAT_IDS")
 
+;; ─── renderer chokepoint ────────────────────────────────────────────────
+;;
+;; Single point where answer-IR (or legacy strings) becomes
+;; Telegram-HTML. Registered on the channel as
+;; `:channel/messages-renderer-fn`. Bot calls it before every
+;; `tg/send-message!` so the API helper receives ready-to-ship HTML.
+
+(defn render-for-telegram
+  "Render any answer-input (string | Hiccup IR | [:ir ...]) to
+   Telegram-flavored HTML. `opts` forwarded to the IR walker."
+  ([input] (render-for-telegram input nil))
+  ([input opts] (vis/render input :html opts)))
+
+(defn- send! [token chat-id input & [opts]]
+  ;; Rendering chokepoint. Always Telegram-HTML, never raw.
+  (tg/send-message! token chat-id
+    (render-for-telegram input)
+    opts))
+
+(defn- send-plain! [token chat-id text & [opts]]
+  ;; Escape hatch for short status / cancellation lines that should
+  ;; ship as plain text without parse_mode.
+  (tg/send-message! token chat-id text (assoc opts :plain? true)))
+
 (def ^:private reasoning-level-order [:quick :balanced :deep])
 (def ^:private codex-verbosity-order [:low :medium :high])
 (def ^:private voice-mode-order [:off :input :output :duplex])
@@ -754,7 +778,7 @@
             "/restart"   {:message (command-restart)}
             "/export"    {:message (command-export chat-id)}
             {:message (str "Unknown command: " cmd "\n\n" (command-help))})]
-      (tg/send-message! token chat-id message {:reply-markup reply-markup})
+      (send! token chat-id message {:reply-markup reply-markup})
       true)))
 
 (defn- answer-text [result]
@@ -857,23 +881,24 @@
                        (do
                          (when (and (voice-config-flag :telegram-send-transcript? true)
                                  (not (str/blank? (str transcript))))
-                           (tg/send-message! token chat-id (transcript-message transcript)))
+                           (send! token chat-id (transcript-message transcript)))
                          (tg/send-chat-action! token chat-id "record_voice")
                          (send-answer-audio! token chat-id answer)
                          (when (voice-config-flag :telegram-send-answer-text? true)
-                           (tg/send-message! token chat-id (answer-details-message answer) {:html? true})))
-                       (tg/send-message! token chat-id
+                           ;; answer-details-message produces Telegram-HTML directly
+                           (tg/send-message! token chat-id (answer-details-message answer))))
+                       (send! token chat-id
                          (str (transcript-answer-text transcript answer)
                            (format-footer result)))))
                    (catch Exception e
                      (if (vis/cancellation? e)
-                       (try (tg/send-message! token chat-id "Cancelled by user.")
+                       (try (send-plain! token chat-id "Cancelled by user.")
                          (catch Exception _ nil))
                        (do
                          (tel/log! {:level :error :id ::handle-message
                                     :data {:sender sender :chat-id chat-id :error (ex-message e)}
                                     :msg (str "error handling msg from " sender " in chat " chat-id)})
-                         (try (tg/send-message! token chat-id
+                         (try (send! token chat-id
                                 (vis/format-error (vis/db-error->user-message e)))
                            (catch Exception _ nil)))))
                    (finally
@@ -887,13 +912,13 @@
         (tg/send-chat-action! token chat-id "typing")
         (let [text (download-and-transcribe-voice! token file-id)]
           (if (str/blank? text)
-            (tg/send-message! token chat-id "Voice transcription was blank.")
+            (send-plain! token chat-id "Voice transcription was blank.")
             (handle-user-text! token chat-id text sender {:transcript text})))
         (catch Exception e
           (tel/log! {:level :error :id ::voice-asr-failed
                      :data {:sender sender :chat-id chat-id :error (ex-message e)}
                      :msg (str "voice ASR failed for chat " chat-id)})
-          (try (tg/send-message! token chat-id
+          (try (send! token chat-id
                  (vis/format-error (str "Voice transcription failed: " (or (ex-message e) e))))
             (catch Exception _ nil))))))
   true)
@@ -906,7 +931,7 @@
       (and chat-id (not (chat-approved? chat-id)))
       (do
         (tg/answer-callback-query! token callback-id "Chat is not approved")
-        (tg/send-message! token chat-id (unauthorized-message chat-id))
+        (send! token chat-id (unauthorized-message chat-id))
         true)
 
       (and callback-id chat-id (string? data)
@@ -915,7 +940,7 @@
             result  (when (re-matches #"\d+" idx-str)
                       (select-model! (str (inc (Long/parseLong idx-str)))))]
         (tg/answer-callback-query! token callback-id (:message result))
-        (tg/send-message! token chat-id (or (:message result) "Model selection failed."))
+        (send! token chat-id (or (:message result) "Model selection failed."))
         true)
 
       (and callback-id chat-id (string? data)
@@ -938,7 +963,7 @@
           (nil? chat-id) nil
 
           (not (chat-approved? chat-id))
-          (do (tg/send-message! token chat-id (unauthorized-message chat-id)) true)
+          (do (send! token chat-id (unauthorized-message chat-id)) true)
 
           text
           (do
@@ -1074,4 +1099,5 @@
                       :channel/doc     "Run as a Telegram bot (needs TELEGRAM_BOT_TOKEN)."
                       :channel/usage   "vis channels telegram [approve|restart]"
                       :channel/main-fn #'channel-main
+                      :channel/messages-renderer-fn #'render-for-telegram
                       :channel/subcommands #'telegram-channel-subcommands}]}))

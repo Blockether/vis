@@ -31,8 +31,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
-   [com.blockether.vis.ext.foundation.introspection :as introspection]
-   ))
+   [com.blockether.vis.ext.foundation.introspection :as introspection]))
 
 (def ^:private answer-ir-prompt
   "Answers use IR (Hiccup-EDN). Always emit (answer [:ir & nodes]).

@@ -14,8 +14,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.extension :as extension]
-   )
+   [com.blockether.vis.internal.extension :as extension])
   (:import
    (java.net URI URLDecoder URLEncoder)
    (java.nio.charset StandardCharsets)
