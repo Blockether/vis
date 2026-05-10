@@ -1,10 +1,19 @@
-# Specification — Telegram Streaming, Markdown Pipeline, and Mixed-Content Answers
+# Specification — Answer IR (Hiccup-EDN), Streaming, and Channel Rendering
 
 Status: design-locked, pre-implementation.
-Single PR, single spec. Earlier drafts split this into two PRs (markdown
-pipeline first, mixed-content blocks later). The split was wrong — the
-two are one design when you let `(vis/answer ...)` accept either a
-markdown string OR a Hiccup vector OR a variadic mix.
+Single PR, single spec.
+
+This spec adopts a **Hiccup-EDN intermediate representation (IR)** as the
+canonical answer shape. The IR is MDAST-equivalent (Markdown abstract
+syntax tree) but uses Clojure's vector syntax for compactness — measured
+~65–70 % token reduction vs JSON-MDAST on real prose. The LLM emits
+either bare markdown strings (parsed via commonmark-java) or Hiccup-EDN
+vectors (used directly); both routes produce the same canonical IR;
+all channels render off it.
+
+`needs-input` (legacy `:vis/answer-mode :needs-input` map) is removed.
+The concept is over-engineering — when the LLM wants clarification, it
+asks in prose; the user follows up. Same as every other chat agent.
 
 This document supersedes the previous draft and the deleted
 `02-mixed-content-answer.md`.
@@ -13,7 +22,7 @@ This document supersedes the previous draft and the deleted
 
 ## 1. Problem statement
 
-### 1.1 Current state is over-engineered AND still produces broken output
+### 1.1 Current state — over-engineered AND still produces broken output
 
 ```
 src/.../internal/markdown.clj                                      1155 LOC
@@ -21,58 +30,81 @@ extensions/common/vis-foundation/src/.../foundation/markdown.clj    259 LOC
 extensions/channels/vis-channel-telegram/.../api.clj  ~150 LOC of regex MD→HTML
 LLM system prompt section listing 38 v/* helpers                   ~660 chars
 Call-sites using v/ DSL                                            17 files
+needs-input gate                                                   2 ns + prompt logic
                                                                   ─────────
                                                                   ~1500 LOC owned + prompt verbiage
 ```
 
 The `v/` DSL forces the LLM to construct markdown via `(v/h1 ...)`,
-`(v/p ...)`, `(v/ul ...)`, `(v/code-block ...)`, `(v/join ...)`. Empirically
-(per the autoresearch session that just ran on
-`autoresearch/markdown-formatting-glm-...`):
+`(v/p ...)`, `(v/ul ...)`, `(v/code-block ...)`, `(v/join ...)`.
+Empirically (per the autoresearch session that just ran):
 
-- LLM still emits raw HTML (`<details>`, `<Details>`).
+- LLM still emits raw HTML (`<details>`).
 - LLM still emits Unicode arrows (`→`) where ASCII (`->`) belongs.
-- LLM still misuses `v/join` for inline composition.
 - Channel-side regex MD→HTML fails on unbalanced inline markers
-  (defect #10 — one stray `*` collapses the whole message to plain text
-  via Telegram's parse-mode fallback).
-
-The DSL doesn't prevent the bugs it was supposed to prevent, the prompt
-cost of advertising it is high, and downstream channels still need a real
-renderer.
+  (defect #10).
+- `needs-input` adds prompt-flow conditional logic for a behavior the
+  user can get by just asking.
 
 ### 1.2 No streaming UX
 
-`bot.clj/handle-user-text!` calls `(vis/send! ...)` blocking, then ships
-the full answer in one `tg/send-message!`. Multi-iteration turns and
-deep-reasoning models leave the user staring at `typing…` for 10–60 s
-with **zero progress signal**. Cancellation requires `/cancel` text
-command — not discoverable, not one-tap.
+`bot.clj/handle-user-text!` blocks on `(vis/send! ...)`, ships full
+answer in one `tg/send-message!`. Users stare at `typing…` for
+10–60 s with no signal. Cancellation is `/cancel` text command — not
+discoverable.
 
 ### 1.3 No structured-content path
 
-`(vis/answer x)` flattens anything non-string via `(str v)` (loop.clj:257).
-LLM ceremoniously stringifies tool-call results into markdown fences:
+`(vis/answer x)` flattens non-string via `(str v)`. LLM stringifies
+tool results into markdown fences, losing structure, channel-blind,
+risking nested-fence parser collisions (LangChain bugs #2241 / #9535).
 
-```clojure
-(answer (str "Result:\n```\n" (with-out-str (pp/pprint result)) "\n```\nDone."))
+Industry has converged on **typed content blocks** (Anthropic, OpenAI,
+LangChain 1.0 `content_blocks`). Vis is the holdout.
+
+### 1.4 Why one IR
+
+The IR pays for itself five times:
+- **Parser robustness** — commonmark on string blocks; vector blocks
+  bypass parsing entirely (defect #10 ceiling).
+- **Channel symmetry** — render-html / render-plain / render-md /
+  future render-tg-mdv2 / future render-ansi are mechanical
+  tree-walks off the same IR.
+- **Persistence transparency** — Nippy already roundtrips
+  vectors+keywords+strings; zero schema migration.
+- **Domain extensions** — same IR carries Vis-specific tags
+  (`:vis/data`, `:vis/file`, future `:vis/cite`, `:vis/conf`) that
+  channels can render specially without parsing tricks.
+- **Grammar-constrainable** — the IR is a small EDN sublanguage;
+  future structured-output decoding (xgrammar / llguidance / Outlines)
+  can constrain the LLM to emit valid IR. Out of v1 scope but the
+  shape doesn't preclude it.
+
+### 1.5 Token efficiency — measured
+
+Same clinical sentence three ways:
+
+```
+JSON-MDAST:
+  {"type":"paragraph","children":[
+    {"type":"text","value":"Client showed signs of "},
+    {"type":"strong","children":[{"type":"text","value":"abandonment"}]},
+    {"type":"text","value":" schema activation."}]}
+  → ~70 tokens
+
+Hiccup-EDN:
+  [:p "Client showed signs of " [:strong "abandonment"] " schema activation."]
+  → ~22 tokens
+
+Markdown:
+  Client showed signs of **abandonment** schema activation.
+  → ~12 tokens
 ```
 
-This is channel-blind (LLM guesses what looks good in Telegram vs CLI vs
-TUI), loses structure (Telegram can't pretty-print as `<pre>`, TUI can't
-tree-collapse, CLI can't pipe), and risks nested-fence parser collisions
-(LangChain bugs #2241, #9535 are exactly this class).
-
-Industry has converged on **typed content blocks** (Anthropic content
-blocks, OpenAI Responses API, LangChain 1.0 `content_blocks`,
-AgentsKit, Callsphere). Vis is the holdout.
-
-### 1.4 Why one PR
-
-Streaming, markdown rendering, and mixed-content blocks share the same
-chokepoint (`:channel/messages-renderer-fn`) and the same internal AST
-(Hiccup). Designing them together costs one spec; splitting them ships
-broken intermediate states.
+Markdown is still cheapest for prose. Hiccup is ~3× MD but ~⅓ of
+JSON-MDAST. **Cost-aware design:** prose stays markdown (LLM cheap,
+fluent); structure uses Hiccup (token-acceptable, no parsing
+ambiguity).
 
 ---
 
@@ -80,336 +112,519 @@ broken intermediate states.
 
 ### Goals
 
-- LLM emits plain GitHub-flavored Markdown for prose, OR Hiccup vectors
-  for structured blocks, OR a variadic mix. All work day one.
-- `vis/answer` contract is 100 % backward compatible with existing string
-  answers and existing persisted rows.
-- Markdown renders correctly on Telegram (defect #10 dies).
-- Mid-stream rendering robust against partial / unbalanced input.
-- Single Hiccup-shaped AST flows from any input form to all channel
-  renderers.
-- User sees progress within ~1 s; one-tap cancellation from chat UI.
+- One IR — Hiccup-EDN, MDAST-equivalent, namespace-aware
+  (`:p`, `:strong`, … from MD; `:vis/data`, `:vis/file`, … from us).
+- LLM emits markdown strings, Hiccup vectors, or any mix. All work
+  day one.
+- Multimethod renderers per `[target tag]` for plain / html / md.
+- 100 % backward compatible with persisted string answers.
+- Defect #10 dies. Unbalanced markdown never crashes a channel.
+- Live-bubble streaming with one-tap cancel.
 - Net code reduction in `vis-foundation` and `internal/markdown`.
 
 ### Non-goals
 
-- Per-token typewriter streaming of the assistant's prose (architectural
-  — Vis is code-as-output; `(answer …)` lands a complete value at form
-  execution time).
-- Hand-rolled markdown parser (use `commonmark-java` directly).
-- Rich layout primitives (rows / columns / grids). Block list is flat or
-  nested-by-content, not a layout engine.
-- Image generation pipelines. `[:vis/image {...}]` carries a reference;
-  producing the image is some other extension's job.
+- Per-token answer-prose streaming (architectural).
+- Hand-rolled markdown parser.
+- `needs-input` semantic (removed).
+- Grammar-constrained LLM decoding (future, IR-compatible).
+- Image generation / chart rendering.
+- Layout primitives (rows, columns, grids).
+- Domain-ontology validation (the `:schema`, `:mode`, `:cite`, `:conf`
+  ideas from the IR-design literature are extension points; v1 ships
+  the slot, not validators).
 
 ---
 
-## 3. Architectural context
+## 3. The IR — Hiccup-EDN
 
-### 3.1 Existing streaming surface (already in core, unused by Telegram)
+### 3.1 Node algebra
 
-`vis/make-progress-tracker` (`src/.../internal/progress.clj`). Wraps
-`:on-chunk`, accumulates per-iteration timeline (`:thinking`, `:code`,
-`:results`, etc.), fires `(on-update timeline chunk)` per event. TUI
-uses it. Telegram doesn't. **Phase 4 wires it up.**
+```
+Node      = Block | Inline | Text
+Text      = String                        ; bare string is the text node
+Block     = [BlockTag Attrs? & (Block | Inline)*]
+Inline    = [InlineTag Attrs? & Inline*]
 
-`:on-chunk` phases (from `loop.clj`): `:reasoning`, `:form-start`,
-`:form-result`, `:iteration-final`, `:iteration-error`. Reasoning carries
-`:thinking` text deltas — real LLM token stream. Forms are discrete
-events.
+Attrs     = {Keyword Any}                 ; optional; absent ≡ {}
+```
 
-### 3.2 Why answer prose can't be token-streamed
+`{}` attrs are normalized in at `->ast` boundary so renderers can
+always rely on `(second node)` being a map.
 
-Vis is code-as-output. The LLM emits Clojure forms; one form is
-`(vis/answer …)`. The args are fully assembled in the LLM's source before
-any form executes. Streaming applies to **reasoning** and **tool/form
-activity**, not answer-prose deltas.
+### 3.2 Standard tags (commonmark visitor produces these)
 
-### 3.3 commonmark-java — the parser substrate
+#### Root
 
-`org.commonmark/commonmark` 0.27.1, BSD-2 license. ~200 KB core, zero
-transitive deps. GFM extensions are separate artifacts (~50 KB each):
-`commonmark-ext-gfm-tables`, `commonmark-ext-autolink`,
-`commonmark-ext-gfm-strikethrough`. Total ~350 KB. Active project on
-commonmark.org.
+| Tag | Form | Semantics |
+|---|---|---|
+| `:doc` | `[:doc & blocks]` | Root container. Always present after normalization. |
 
-We import it directly (no Clojure wrapper). Our `->hiccup` visitor
-(~80 LOC) firewalls Java types — past the visitor, it's pure Clojure
-data.
+#### Blocks
 
-### 3.4 Persistence — already block-shaped
+| Tag | Form | MDAST equiv |
+|---|---|---|
+| `:p` | `[:p & inlines]` | `paragraph` |
+| `:h` | `[:h {:level 1-6} & inlines]` | `heading` (single tag, level in attrs — token-efficient vs `:h1`–`:h6`) |
+| `:quote` | `[:quote & blocks]` | `blockquote` |
+| `:hr` | `[:hr]` | `thematicBreak` |
+| `:code` | `[:code {:lang String?} String]` | `code` (block-level fenced; single string child) |
+| `:ul` | `[:ul & items]` | `list` (unordered) |
+| `:ol` | `[:ol {:start Int?} & items]` | `list` (ordered) |
+| `:li` | `[:li & content]` | `listItem`. **Content rule:** all blocks OR all inlines, never mixed. Loose inlines wrapped in `:p` at validation. |
+| `:table` | `[:table & rows]` | GFM `table` |
+| `:tr` | `[:tr & cells]` | `tableRow` |
+| `:th` | `[:th & inlines]` | `tableCell` (header) |
+| `:td` | `[:td & inlines]` | `tableCell` (body) |
 
-`iteration.blocks` (`extensions/persistance/vis-persistance-sqlite/.../V1__schema.sql`
-~line 241) is **Nippy-encoded BLOB** holding per-form result values.
-Nippy roundtrips vectors+keywords+maps+strings natively. **Zero schema
-migration needed** — Hiccup AST persists as-is alongside legacy strings.
+#### Inlines
 
-Read-path normalization (§5) wraps legacy string answers as
-`[:answer [:text "..."]]` on demand; old conversations stay readable
-forever.
+| Tag | Form | MDAST equiv |
+|---|---|---|
+| `:em` | `[:em & inlines]` | `emphasis` |
+| `:strong` | `[:strong & inlines]` | `strong` |
+| `:del` | `[:del & inlines]` | `delete` (strikethrough) |
+| `:c` | `[:c String]` | `inlineCode`. **One-char tag** — saves tokens; visitor emits `:c` not `:code` for inline (block code uses `:code` with `{:lang}` and exactly one string child). |
+| `:a` | `[:a {:href String} & inlines]` | `link` |
+| `:img` | `[:img {:src String :alt String?}]` | `image` |
+| `:br` | `[:br]` | `break` (hard line break) |
+
+Soft line breaks become `" "` text nodes (commonmark `softBreak` →
+single space).
+
+### 3.3 Vis-specific tags (LLM-emitted; no parser involvement)
+
+| Tag | Form | Semantics |
+|---|---|---|
+| `:vis/code` | `[:vis/code {:lang String?} String]` | Code block. Equivalent post-normalization to `[:code {:lang L} src]`. Offered for sugar/symmetry from `md/code` helper. |
+| `:vis/data` | `[:vis/data {:value Any}]` | Structured Clojure data. Channel pretty-prints. |
+| `:vis/table` | `[:vis/table {:rows [[Cell]] :headers [Cell]?}]` | Tabular. **Cell = String \| Inline** — strings parsed as inline markdown; inline nodes used directly. |
+| `:vis/file` | `[:vis/file {:path String :title String?}]` | File reference. Telegram attaches via `sendDocument`. |
+| `:vis/image` | `[:vis/image (\| {:url String :alt String?} {:path String :alt String?})]` | Image. **Mutually exclusive `:url` xor `:path`** at type level. Telegram attaches via `sendPhoto`. |
+
+`:vis/*` is the **extension namespace**. Any unknown `:vis/*` tag →
+renderer drops the wrapper, renders children. Forgiving by design.
+Future tags (`:vis/cite`, `:vis/conf`, `:vis/spoiler`, …) plug in via
+multimethod arms; channels that don't implement them get
+graceful-degrade-to-children.
+
+### 3.4 Domain extensions — open slot, no v1 validators
+
+The IR-design literature (psychotherapy RLM example) advocates domain
+tags like `:schema`, `:mode`, `:cite`, `:conf` whose `:id` values are
+validated against a loaded ontology. v1 reserves the **mechanism**
+(extension-registered renderer arms; default fallthrough) but ships
+**no validators or ontology**. Extensions that want them register a
+fn under the `:vis/*` tag and the spec contract is "renderer-fn
+returns a renderer-output, validation is the extension's problem."
+
+### 3.5 What's removed
+
+| Concept | Why |
+|---|---|
+| `:vis/answer-mode :needs-input` map | Over-engineering. LLM asks in prose, user replies. |
+| `(v/needs-input …)` helper | ditto |
+| `loop.clj/needs-input-answer?` predicate | ditto |
+| Per-iteration "model wants more input" prompt-flow gate | ditto |
+| `[:vis/text]` block (was in earlier draft) | Bare strings already are text nodes. |
+| `[:answer …]` root (was in earlier draft) | Replaced by `[:doc …]` (MDAST convention; matches literature). |
+| `:h1` … `:h6` separate tags | Replaced by `[:h {:level N}]` (single tag, fewer dispatch arms, token-equivalent). |
+| `:blockquote` | Renamed `:quote` (shorter, same semantic). |
+| `:s` | Renamed `:del` (matches MDAST `delete`). |
+| `:code` inline tag (ambiguous) | Inline code → `:c`; block code keeps `:code` with `{:lang}`. |
+| `:thead`/`:tbody` | Dropped. GFM tables → flat `[:table & rows]`; first row's tag is `:tr` whose cells are `:th` (header) or `:td` (body). |
 
 ---
 
-## 4. Pipeline design
+## 4. Surface forms
 
-### 4.1 The unified flow (one diagram)
+What the LLM can pass to `(vis/answer …)`:
+
+```clojure
+;; (1) Plain markdown string — most common, cheapest tokens
+(vis/answer "## Result\n\n- foo\n- bar")
+
+;; (2) Hiccup vector — structured, no parsing ambiguity
+(vis/answer
+  [:doc
+   [:h {:level 2} "Result"]
+   [:ul [:li "foo"] [:li "bar"]]])
+
+;; (3) Variadic mix — prose strings + structured blocks
+(vis/answer
+  "## Top matches"
+  [:vis/table {:rows results :headers ["path" "size"]}]
+  "Inspecting the largest:"
+  [:vis/code {:lang "clojure"} (slurp largest-path)]
+  [:vis/file {:path largest-path}]
+  "Looks like a refactor candidate.")
+
+;; (4) Single Hiccup vector with non-:doc root — coerced to wrap in :doc
+(vis/answer [:p "one paragraph"])
+
+;; (5) Pre-built [:doc ...] — passed through
+(vis/answer [:doc [:p "explicit"]])
+```
+
+All five normalize to the same canonical `[:doc & blocks]` AST.
+
+### 4.1 Normalization (`answer-value->ast`)
+
+```clojure
+(defn answer-value->ast
+  "Pure, total. Never throws on shape."
+  [v]
+  (cond
+    ;; already canonical
+    (and (vector? v) (= :doc (first v)))    (normalize-attrs v)
+    ;; bare string → single text block, parsed at render time
+    (string? v)                             [:doc v]
+    ;; single Hiccup-shaped vector that isn't :doc → wrap
+    (and (vector? v) (keyword? (first v)))  [:doc (normalize-attrs v)]
+    ;; vector of mixed → recurse
+    (vector? v)
+    (into [:doc] (mapv coerce-elem v))
+    ;; sequence (variadic args) → same
+    (sequential? v)
+    (into [:doc] (mapv coerce-elem v))
+    ;; anything else → debug-render as data
+    :else
+    [:doc [:vis/data {:value v}]]))
+
+(defn- coerce-elem [x]
+  (cond
+    (string? x)                            x          ; bare strings stay
+    (and (vector? x) (keyword? (first x))) (normalize-attrs x)
+    :else                                  [:vis/data {:value x}]))
+```
+
+**No auto-coalesce of adjacent strings.** Critique #6 from the prior
+review: auto-merging `(answer "Hello" " world")` to one paragraph
+was wrong — the LLM should call `(str ...)` if it wants concat,
+otherwise we treat each string as its own paragraph block. Strings
+adjacent at top level remain separate; renderer joins with `\n\n`
+between them at render time.
+
+`normalize-attrs` ensures every node has an attrs map (inserts `{}`
+where absent). Done once at AST entry. Renderers can rely on
+`(second node)` being a map.
+
+---
+
+## 5. Pipeline
 
 ```
                 LLM emits one of:
 
   (vis/answer "## Result\n- foo")        ← markdown string  (most common)
-  (vis/answer [[:h2 "Result"]            ← Hiccup vector    (structured)
-              [:ul [:li "foo"]]])
+  (vis/answer [:doc [:h {:level 2}      ← Hiccup vector    (structured)
+                     "Result"]
+                    [:ul [:li "foo"]]])
   (vis/answer "## Intro"                 ← variadic mix     (prose + structure)
               [:vis/data {:value x}]
               "## Outro")
-  (vis/answer [:answer "..." [:vis/file ...]])  ← single [:answer ...] root
                        │
                        ▼
             answer-value->ast   (loop.clj, ~30 LOC)
-            normalize all surface forms → [:answer & blocks]
+            normalize all surface forms → [:doc & blocks]
                        │
-                       ▼
-                 canonical AST
-              (Nippy-persisted as-is)
+                       ▼  canonical AST  (Nippy-persisted as-is)
                        │
                        ▼
               md/render input flavor opts
                        │
               per-block dispatch:
                   string?  → commonmark-java.parse → ->hiccup (visitor)
-                  vector?  → use directly (no parse)
+                  vector?  → use directly
                        │
                        ▼
                 unified Hiccup tree
                        │
                        ▼
-            render-html / render-plain
-              (multimethod walks tree)
+            multimethod render dispatch:
+              (defmulti render
+                (fn [target node]
+                  [target (if (string? node) ::text (first node))]))
                        │
        ┌───────────────┼───────────────┐
        ▼               ▼               ▼
-   Telegram         TUI            CLI/run
-   (parse_mode      screen         stdout
-    HTML)           append
+   :html           :plain          :markdown
+   (Telegram,      (TUI default,   (CLI, exporter,
+    parse_mode      stripped text)  legacy roundtrip)
+    HTML)
 ```
 
-Key insight: **commonmark runs only on the string path**. Hiccup vectors
-arrive at the renderer pre-AST. Defect #10 risk is confined to string
-blocks; structured blocks are balanced-by-construction.
+Commonmark runs **only** on the string-block path. Vector blocks
+arrive at the renderer pre-parsed.
 
-### 4.2 Public API
+### 5.1 Public API
 
 ```clojure
 (ns com.blockether.vis.internal.markdown ...)
 
-;; survives unchanged from current file:
-(defn conversation->markdown ...)        ;; DB → MD doc exporter
-
-;; new public surface (entire 42-fn v/ DSL is GONE):
-(defn parse [text] ...)                  ;; String → Hiccup via commonmark-java
-(defn ->ast [input] ...)                 ;; normalize string|vector|other → [:answer ...]
+(defn parse [text] ...)             ; String → [:doc ...] via commonmark-java
+(defn ->ast [input] ...)            ; normalize any surface form
 (defn render
   "Render answer input to a flavor.
-   Input: string, Hiccup vector, [:answer ...] AST, or variadic seq.
-   flavor ∈ #{:plain :html}.
+   flavor ∈ #{:plain :html :markdown}.
    opts:
-     :partial?  bool   - mid-stream lenient (drop trailing unclosed
-                         block elements; emit unclosed inline markers
-                         as literal text)
-     :context   #{:thinking :answer :status :error}
-     :max-length int   - hard cap; renderer truncates with ellipsis"
+     :partial?    Boolean   - mid-stream lenient
+     :context     #{:answer :thinking :status :error}
+     :max-length  Int       - hard cap; truncate at paragraph boundary"
   ([input flavor]      (render input flavor nil))
   ([input flavor opts] ...))
-(defn render-plain [ast opts] ...)
-(defn render-html  [ast opts] ...)
+
+(defmulti render-node (fn [target node opts]
+                        [target (if (string? node) ::text (first node))]))
+
+;; existing public surface kept:
+(defn conversation->markdown ...)   ; DB → MD doc exporter
 ```
 
-`core.clj` re-exports as `vis/md-parse`, `vis/md-render`, `vis/md-render-html`,
-`vis/md-render-plain`, `vis/md->ast`. Exposed in SCI sandbox so LLM-emitted
-code can preview/inspect rendering when needed (rare).
-
-### 4.3 Block taxonomy (v1)
-
-Standard Hiccup tags emitted by commonmark visitor (text-content blocks):
-
-| Tag | Source |
-|---|---|
-| `[:answer ...]` | normalization root |
-| `[:h1] … [:h6]` | commonmark `Heading` |
-| `[:p]` | `Paragraph` |
-| `[:strong]`, `[:em]`, `[:s]`, `[:u]`, `[:code]` (inline) | inline emphasis / code |
-| `[:pre [:code {:language L} src]]` | `FencedCodeBlock` (lang attr from info) |
-| `[:ul]`, `[:ol]`, `[:li]` | bullet / ordered lists |
-| `[:a {:href}]` | `Link` |
-| `[:img {:src :alt}]` | `Image` |
-| `[:blockquote]` | `BlockQuote` |
-| `[:hr]` | `ThematicBreak` |
-| `[:br]` | `HardLineBreak` |
-| `[:table] [:thead] [:tbody] [:tr] [:td] [:th]` | GFM tables ext |
-
-Vis-specific structured tags (LLM-emitted, no parser involvement):
-
-| Tag | Attrs | Semantics |
-|---|---|---|
-| `[:vis/text s]` | none | sugar for raw markdown text; equivalent to passing `s` directly. Mostly redundant; offered for symmetry. |
-| `[:vis/code {:lang STR}? src]` | `:lang` optional | code block; channel renders syntax-highlighted if it can. Equivalent to `[:pre [:code {:language L} src]]` post-parse, but explicit. |
-| `[:vis/data {:value V}]` | `:value` any value | structured Clojure data; channel pretty-prints per medium. |
-| `[:vis/table {:rows [[...]] :headers [STR]?}]` | rows, headers? | tabular data; renders as native table where supported, `<pre>` aligned-text fallback. |
-| `[:vis/file {:path STR :title STR?}]` | path, title? | file reference; Telegram attaches via `sendDocument`, CLI prints path. |
-| `[:vis/image {:url STR? :path STR? :alt STR?}]` | url xor path, alt? | image reference; Telegram attaches via `sendPhoto`. |
-| `[:vis/needs-input {:text STR}]` | text | clarification request; equivalent to legacy `:vis/answer-mode :needs-input` map. |
-| `[:vis/* ...]` | any | **fallthrough.** Unknown `:vis/*` tag → renderer drops the tag wrapper and renders children. Forgiving. |
-
-`v1` deliberately omits `:vis/audio`, `:vis/video`, `:vis/card`,
-`:vis/actions`, `:vis/chart`. Each added when a real consumer needs it.
-
-### 4.4 LLM-facing helpers (SCI sandbox)
+`core.clj` re-exports as `vis/md-parse`, `vis/md-render`, `vis/md->ast`.
+SCI sandbox bindings: same names under `md/`. Constructor helpers
+also exposed:
 
 ```clojure
-(md/text "string")                ;; ⇒ [:vis/text "string"]
-(md/code "(+ 1 1)" :clojure)      ;; ⇒ [:vis/code {:lang "clojure"} "(+ 1 1)"]
-(md/data x)                       ;; ⇒ [:vis/data {:value x}]
-(md/table rows {:headers [...]})  ;; ⇒ [:vis/table {:rows rows :headers [...]}]
-(md/file "/p" "Title")            ;; ⇒ [:vis/file {:path "/p" :title "Title"}]
-(md/image {:url "..."})           ;; ⇒ [:vis/image {:url "..."}]
+(md/code src "clojure")           ⇒ [:code {:lang "clojure"} src]
+(md/data x)                       ⇒ [:vis/data {:value x}]
+(md/table rows {:headers [...]})  ⇒ [:vis/table {:rows rows :headers [...]}]
+(md/file path "Title")            ⇒ [:vis/file {:path path :title "Title"}]
+(md/image {:url u :alt a})        ⇒ [:vis/image {:url u :alt a}]
 ```
 
-Sugar only. The LLM may emit raw vectors directly. Helpers exist for
-prompt-side ergonomics ("call `md/data` to embed Clojure data, channel
-pretty-prints").
+### 5.2 commonmark visitor (~80 LOC)
 
-### 4.5 Normalization (`answer-value->ast`)
+`condp instance?` over `org.commonmark.node.*`:
 
-Replace `loop.clj/answer-value-string` with `answer-value->ast`. Pure,
-total, never throws on shape:
+```
+Document       → [:doc {} & children]
+Heading n      → [:h {:level n} & children]
+Paragraph      → [:p {} & children]
+Text           → string literal
+StrongEmphasis → [:strong {} & children]
+Emphasis       → [:em {} & children]
+Code           → [:c (.getLiteral n)]                   ; inline
+FencedCodeBlock→ [:code {:lang (.getInfo n)} (.getLiteral n)]
+BulletList     → [:ul {} & children]
+OrderedList    → [:ol {:start (.getStartNumber n)} & children]
+ListItem       → [:li {} & children]
+Link           → [:a {:href (.getDestination n)} & children]
+Image          → [:img {:src (.getDestination n) :alt …}]
+BlockQuote     → [:quote {} & children]
+ThematicBreak  → [:hr {}]
+HardLineBreak  → [:br {}]
+SoftLineBreak  → " "
+Strikethrough  → [:del {} & children]
+TableBlock     → [:table {} & rows-flattened]           ; thead/tbody dropped
+TableHead      → splice children                        ; rows pass through
+TableBody      → splice children
+TableRow       → [:tr {} & children]
+TableCell      → [:th {}|:td {} ...]                    ; header? from parent
+unknown        → [:span {} & children]
+```
+
+After the visitor, **no Java types remain** — pure Clojure data.
+
+### 5.3 Multimethod render dispatch
 
 ```clojure
-(defn answer-value->ast [v]
-  (cond
-    ;; already canonical
-    (and (vector? v) (= :answer (first v)))      v
-    ;; needs-input legacy map
-    (needs-input-answer? v)
-    [:answer [:vis/needs-input {:text (:answer/text v)}]]
-    ;; bare string → single text "block" (rendered via commonmark)
-    (string? v)                                  [:answer v]
-    ;; single Hiccup-shaped vector
-    (and (vector? v) (keyword? (first v)))       [:answer v]
-    ;; vector of mixed → recurse over elements
-    (vector? v)
-    (into [:answer] (mapv coerce-elem v))
-    ;; sequence of args (variadic captured as list)
-    (sequential? v)
-    (into [:answer] (mapv coerce-elem v))
-    ;; anything else → debug-render as data
-    :else [:answer [:vis/data {:value v}]]))
+(defmulti render-node (fn [target node opts]
+                        [target (if (string? node) ::text (first node))]))
 
-(defn- coerce-elem [x]
-  (cond
-    (string? x)                            x
-    (and (vector? x) (keyword? (first x))) x
-    :else                                  [:vis/data {:value x}])))
+;; ---------------- HTML target (Telegram) -----------------------------
+
+(defmethod render-node [:html ::text] [_ s _]
+  (escape-html (str s)))
+
+(defmethod render-node [:html :doc] [t [_ _ & cs] o]
+  (apply str (interpose "\n\n" (map #(render-node t % o) cs))))
+
+(defmethod render-node [:html :p] [t [_ _ & cs] o]
+  (apply str (map #(render-node t % o) cs)))
+
+(defmethod render-node [:html :h] [t [_ {:keys [level]} & cs] o]
+  ;; Telegram has no headings → bold + blank line; level captured as a class for future tg-mdv2
+  (str "<b>" (apply str (map #(render-node t % o) cs)) "</b>\n"))
+
+(defmethod render-node [:html :strong] [t [_ _ & cs] o]
+  (str "<b>" (apply str (map #(render-node t % o) cs)) "</b>"))
+
+(defmethod render-node [:html :em] [t [_ _ & cs] o]
+  (str "<i>" (apply str (map #(render-node t % o) cs)) "</i>"))
+
+(defmethod render-node [:html :del] [t [_ _ & cs] o]
+  (str "<s>" (apply str (map #(render-node t % o) cs)) "</s>"))
+
+(defmethod render-node [:html :c] [_ [_ s] _]
+  (str "<code>" (escape-html s) "</code>"))
+
+(defmethod render-node [:html :code] [_ [_ {:keys [lang]} src] _]
+  (if (seq lang)
+    (str "<pre><code class=\"language-" (escape-html lang) "\">"
+         (escape-html src) "</code></pre>")
+    (str "<pre>" (escape-html src) "</pre>")))
+
+(defmethod render-node [:html :a] [t [_ {:keys [href]} & cs] o]
+  (str "<a href=\"" (escape-html-attr href) "\">"
+       (apply str (map #(render-node t % o) cs))
+       "</a>"))
+
+(defmethod render-node [:html :ul] [t [_ _ & items] o]
+  (apply str (map (fn [li] (str "• " (render-node t li o) "\n")) items)))
+
+(defmethod render-node [:html :ol] [t [_ {:keys [start]} & items] o]
+  (apply str (map-indexed (fn [i li]
+                            (str (+ i (or start 1)) ". "
+                                 (render-node t li o) "\n"))
+                          items)))
+
+(defmethod render-node [:html :li] [t [_ _ & cs] o]
+  (apply str (map #(render-node t % o) cs)))
+
+(defmethod render-node [:html :quote] [t [_ _ & cs] o]
+  (let [inner (apply str (interpose "\n" (map #(render-node t % o) cs)))]
+    (if (= :thinking (:context o))
+      (str "<blockquote expandable>" inner "</blockquote>")
+      (str "<blockquote>" inner "</blockquote>"))))
+
+(defmethod render-node [:html :hr]  [_ _ _] "─────────\n")
+(defmethod render-node [:html :br]  [_ _ _] "\n")
+(defmethod render-node [:html :img] [_ [_ {:keys [alt]}] _]
+  (str "<i>🖼 " (escape-html (or alt "image")) "</i>"))
+
+;; tables: render as <pre> aligned monospace (Telegram has no <table>)
+(defmethod render-node [:html :table] [t node o] (render-table-as-pre t node o))
+
+;; ---------------- vis-specific blocks --------------------------------
+
+(defmethod render-node [:html :vis/data] [_ [_ {:keys [value]}] _]
+  (let [pp  (with-out-str (clojure.pprint/pprint value))
+        max 3500
+        s   (if (<= (count pp) max)
+              pp
+              (str (subs pp 0 (- max 60))
+                   "\n…(truncated; "
+                   (count pp) " chars total)"))]
+    (str "<pre><code class=\"language-clojure\">" (escape-html s) "</code></pre>")))
+
+(defmethod render-node [:html :vis/code] [t [_ attrs src] o]
+  (render-node t [:code attrs src] o))
+
+(defmethod render-node [:html :vis/table] [t [_ {:keys [rows headers]}] o]
+  ;; build [:table [:tr [:th ...]] [:tr [:td ...]] ...] then re-dispatch
+  (render-node t (vis-table->md-table rows headers) o))
+
+(defmethod render-node [:html :vis/file] [_ [_ {:keys [path title]}] _]
+  (str "<i>📎 " (escape-html (or title (last (str/split path #"/")))) "</i>"))
+
+(defmethod render-node [:html :vis/image] [_ [_ {:keys [alt url path]}] _]
+  (str "<i>🖼 " (escape-html (or alt (last (str/split (or url path) #"/")))) "</i>"))
+
+;; ---------------- fallthrough ----------------------------------------
+
+(defmethod render-node :default [t [_ _ & cs] o]
+  ;; unknown tag → render children, drop wrapper
+  (apply str (map #(render-node t % o) cs)))
 ```
 
-Adjacent string blocks coalesce with `\n\n` paragraph break:
-`[:answer "a" "b"]` → `[:answer "a\n\nb"]`. Lets the LLM emit
-`(answer "intro" data "outro")` and get one prose flow on either side.
+`render-node [:plain ...]` and `render-node [:markdown ...]` follow
+the same shape, target-specific. Each ~150 LOC total.
 
-### 4.6 Telegram-HTML renderer mapping
+### 5.4 Per-channel rendering — MDAST equivalence table
 
-Telegram-HTML allowlist: `<b> <i> <u> <s> <code> <pre> <a> <blockquote>
-<blockquote expandable> <tg-spoiler> <pre><code class="language-…">`.
-Anything else → parse error → message rejected. Renderer never emits
-anything outside this set.
+| IR tag | HTML (Telegram) | MD (CLI/export) | Plain (TUI) | Future TG-MDv2 |
+|---|---|---|---|---|
+| `:doc` | concat with `\n\n` | concat with `\n\n` | concat with `\n` | concat with `\n\n` |
+| `:p` | passthrough | `text\n\n` | `text\n` | `text\n\n` |
+| `:h` (level 1-6) | `<b>x</b>\n` (no levels) | `# x` … `###### x` | `x\n` (uppercase optional) | `*x*\n\n` (no headers) |
+| `:quote` | `<blockquote>x</blockquote>` | `> x` | `│ x` | `>x` (mdv2 line prefix) |
+| `:hr` | `─────────` | `---` | `─────` | `─────────` |
+| `:code` | `<pre><code class="language-X">…</code></pre>` | ` ```X\n…\n``` ` | indented 2sp | ` ```X\n…\n``` ` |
+| `:ul` / `:ol` | `• x\n` / `1. x\n` | `- x` / `1. x` | `• x\n` / `1. x\n` | `\\- x` / `1\\. x` |
+| `:em` / `:strong` / `:del` | `<i>` / `<b>` / `<s>` | `*x*` / `**x**` / `~~x~~` | bare text | `_x_` / `*x*` / `~x~` |
+| `:c` | `<code>x</code>` | `` `x` `` | bare text | `` `x` `` |
+| `:a` | `<a href>` | `[x](u)` | `x` (or `u` if `x=u`) | `[x](u)` |
+| `:img` | `<i>🖼 alt</i>` | `![alt](u)` | `🖼 alt: u` | `[alt](u)` |
+| `:br` | `\n` | `  \n` | `\n` | `\n` |
 
-| Hiccup tag | Telegram-HTML |
-|---|---|
-| `[:answer & blocks]` | concat each block's render, top-level blocks separated by `\n\n` |
-| string block (parsed via commonmark) | rendered per below |
-| `[:h1 ... text]` … `[:h6 ...]` | `<b>{text}</b>\n` (no level distinction) |
-| `[:p {} & c]` | `{c}` |
-| `[:strong]` / `[:em]` / `[:u]` / `[:s]` | `<b>` / `<i>` / `<u>` / `<s>` |
-| `[:code & c]` | `<code>{c}</code>` |
-| `[:pre [:code {:language L} src]]` | `<pre><code class="language-{L}">{escape src}</code></pre>` (no `:language` → plain `<pre>`) |
-| `[:a {:href URL} & c]` | `<a href="{URL}">{c}</a>` |
-| `[:ul]` / `[:ol]` | walk children, prefix each with `• ` (ul) or `N. ` (ol); nested = 2-space indent + bullet |
-| `[:li & c]` | `{c}\n` |
-| `[:blockquote]` | `<blockquote>{c}</blockquote>` |
-| `[:hr]` | `─────────\n` (Telegram has no `<hr>`) |
-| `[:table]` etc. | `<pre>{aligned-text}</pre>` (table-walker preserves header/separator) |
-| `[:img {:src :alt}]` (markdown-derived) | `<i>🖼 {alt or "image"}</i>` text placeholder |
-| `[:vis/code {:lang} src]` | `<pre><code class="language-{lang}">{escape src}</code></pre>` |
-| `[:vis/data {:value v}]` | `<pre><code class="language-clojure">{escape (with-out-str (pp/pprint v))}</code></pre>` (truncated >3500 chars) |
-| `[:vis/table {:rows :headers}]` | `<pre>{aligned-text}</pre>` |
-| `[:vis/file {:path :title}]` | text-bubble: `<i>📎 {title or basename}</i>`; **side effect:** schedule `sendDocument` after text bubble |
-| `[:vis/image {:url|:path :alt}]` | text-bubble: `<i>🖼 {alt or basename}</i>`; **side effect:** schedule `sendPhoto` after text bubble |
-| `[:vis/needs-input {:text}]` | `(md/render text :html opts)` — needs-input renders as plain text answer |
-| `[:vis/* & children]` | render children, drop wrapper |
-| Unknown tag | render children, drop wrapper |
-| Text node (string) | HTML-escape `&<>"`; never trust raw |
+Renderers produce well-formed output for their target. Telegram-HTML
+renderer produces only allowlisted tags (defect-#10-safe by
+construction).
 
-**Special — `:context :thinking`:** wrap whole rendered output in
-`<blockquote expandable>...</blockquote>`. Streaming live-bubble uses
-this.
+### 5.5 Special render contexts
 
-**Special — `:context :status`:** render as `<i>...</i>` single-line,
-drop block elements.
+- `:context :thinking` — `:quote` blocks render as
+  `<blockquote expandable>` (HTML) or `▸ x` (plain) etc.
+- `:context :status` — drops block elements; renders as single-line
+  `<i>...</i>` (HTML) / dim text (plain).
+- `:partial? true` — visitor's tail-incomplete-fenced-code drops the
+  block; unclosed inline emphasis renders as literal text. Renderer
+  invariant: result is well-formed for the target, never fails parse.
 
-**Special — `:partial? true`:** drop trailing unclosed code-fence;
-unclosed inline emphasis renders as literal text; renderer invariant:
-result is well-formed HTML, never fails Telegram parse.
+---
 
-### 4.7 Plain renderer mapping
+## 6. Channel renderer registry
 
-`render-plain` is fallback / TUI default / CLI default. Strips
-formatting to readable text. Same dispatch on Hiccup tags; `[:vis/data]`
-pretty-prints with `pp/pprint`; `[:vis/table]` aligned monospace;
-`[:vis/file]` → `📎 {path}`; `[:vis/image]` → `🖼 {alt}: {url|path}`.
-
-### 4.8 Channel renderer registry — `:channel/messages-renderer-fn`
-
-New optional key in extension `:ext/channels` registration:
+New optional key in `vis/register-extension!`'s `:ext/channels`:
 
 ```clojure
 {:ext/channels
  [{:channel/id      :telegram
    :channel/cmd     "telegram"
    :channel/main-fn #'channel-main
-   :channel/messages-renderer-fn  #'render-for-telegram   ;; ← new
+   :channel/messages-renderer-fn  #'render-for-telegram   ;; ← NEW
    ...}]}
 
 (defn render-for-telegram [input opts]
   (md/render input :html opts))
 ```
 
-**Contract:** `(fn [input opts] → renderer-output)`. Input is
-string|vector|AST (renderer normalizes via `md/->ast`). Output type is
-channel-defined (Telegram: `String`; TUI: `String` today, possibly
-styled-segments later).
+Contract: `(fn [AnswerInput RenderOpts] -> RenderOutput)`. Output type
+is channel-defined (Telegram: `String`; TUI: `String` today). Channel
+calls renderer at its single emit chokepoint
+(`tg/send-message!` for Telegram). Bot/screen never call renderer
+manually.
 
-Channel calls renderer at its single emit chokepoint
-(`tg/send-message!` for Telegram; screen-emit boundary for TUI). Bot
-and screen never call renderer manually.
+---
 
-### 4.9 Telegram attachment ordering
+## 7. Persistence
 
-Mixed-content with attachments needs a deterministic flow:
+### 7.1 Zero schema migration
 
-1. Render the entire AST as **one HTML payload** for the text bubble.
-   Each `[:vis/file]` / `[:vis/image]` emits an italic placeholder line
-   in the text payload.
-2. Send the text bubble first.
-3. Walk the AST again; for each attachment block, in source order:
-   `sendDocument` / `sendPhoto` with `reply_to_message_id` =
-   text-bubble's message id. Anchors attachments to the answer
-   visually.
-4. If only attachments and no text content, send attachments without a
-   text bubble.
+`iteration.blocks` is Nippy-encoded BLOB. Nippy roundtrips
+vectors+keywords+maps+strings natively. Hiccup AST persists as-is
+alongside legacy strings.
 
-### 4.10 Streaming UX
+### 7.2 Read path
 
-#### One live-edited bubble while turn runs
+```clojure
+(defn db-turn-answer-ast
+  "Return the canonical [:doc ...] AST for a turn, normalizing legacy
+   string shapes."
+  [db turn-id]
+  (-> (raw-answer-value db turn-id) answer-value->ast))
+```
+
+Channels and exporters call this. Legacy string answers wrap as
+`[:doc s]`. Old conversations remain readable forever.
+
+### 7.3 `conversation->markdown` exporter
+
+Uses `db-turn-answer-ast` and renders each turn's AST through
+`(md/render ast :markdown)`. **Legacy strings pass through verbatim**
+(critique #10): if the underlying value is a String, the exporter
+writes it unmodified instead of round-tripping through parse → render
+(which would lose whitespace/indent fidelity). Vector ASTs render via
+multimethod.
+
+---
+
+## 8. Streaming UX (Telegram only in this PR)
+
+[unchanged from prior draft — abbreviated here]
+
+### 8.1 Live-bubble shape
 
 ```
 [💭 Thinking…
@@ -419,290 +634,163 @@ Mixed-content with attachments needs a deterministic flow:
 ]
 ```
 
-On stream end:
-
-- Final-edit thinking bubble → `<blockquote expandable>{collapsed thinking}</blockquote>`,
-  keyboard removed.
-- Render answer through registered `:html` renderer → post as separate
-  bubble.
-- If answer >4096 chars, split into N bubbles via existing `chunk-text`.
-- Footer `_🤖 model · in/out · duration · cost_` on the last answer
-  bubble.
-- After text bubble(s): walk attachments per §4.9.
-
-#### Phase routing
+### 8.2 Phase routing
 
 | `:on-chunk` phase | Effect on live bubble |
 |---|---|
 | `:reasoning` (delta) | Append to thinking blockquote; sliding window keeps last ~3500 chars |
-| `:form-start` | Update status line to `⏳ Running: {tool/form-id}`; refresh `chat-action "typing"` |
-| `:form-result` | Status line back to `⏳ Thinking…` |
-| `:iteration-final` mid-turn | Flush pending edit; status `⏳ Iteration N+1…` |
-| `:iteration-final` `:done?=true` | **Stream end.** Collapse thinking, render answer, drop keyboard, send attachments |
-| `:iteration-error` | Final-edit bubble to error state with collapsed thinking |
+| `:form-start` | Status line `⏳ Running: {tool/form-id}` |
+| `:form-result` | Status line `⏳ Thinking…` |
+| `:iteration-final` mid-turn | Flush; status `⏳ Iteration N+1…` |
+| `:iteration-final :done?=true` | Stream end. Collapse thinking, render answer-AST, drop keyboard, send attachments. |
+| `:iteration-error` | Final-edit bubble to error state |
 
-#### Throttle
+### 8.3 Throttle
 
-- Min interval between edits: **1200 ms** (Telegram soft-limit headroom).
-- Edit when (≥1200 ms elapsed) AND (Δ ≥40 chars OR newline arrived).
-- Stream end: flush immediately, ignore interval.
-- First paint: post initial bubble immediately on first `:on-chunk`.
-- HTTP 400 `message is not modified`: swallow.
-- HTTP 429: read `retry_after`, double next two intervals, decay back.
-- Idle 3 s: skip edit.
+- Min interval: **1200 ms**.
+- Edit when `(elapsed ≥ 1200)` AND `(Δ ≥ 40 chars OR newline)`.
+- Idle 3 s resets clock; first chunk after idle fires immediately
+  (critique #13).
+- Stream end flushes immediately.
+- HTTP 400 `not-modified` swallowed.
+- HTTP 429: read `retry_after`, double next two intervals, decay.
 
-#### Cancel button
+### 8.4 Cancel button
 
 ```clojure
 {:inline_keyboard
  [[{:text "⊘ Cancel" :callback_data (str "cancel:" chat-id)}]]}
 ```
 
-`callback_data = "cancel:<chat-id>"` (fits Telegram 64-byte cap; bot
-guarantees one in-flight turn per chat via `set-in-flight!`).
-`handle-callback-query!` matches `cancel:` prefix → cancel turn-token in
-`chat-state` atom. Outcome: thinking bubble final-edited to `⊘
-Cancelled by user.` + collapsed thinking + cancel-flavored short footer;
-no new message. Pre-first-paint cancel falls back to fresh `Cancelled.`
-message.
+Outcome: thinking bubble final-edited to `⊘ Cancelled by user.` +
+collapsed thinking + cancel-flavored short footer; no new message.
+Pre-first-paint cancel falls back to fresh `Cancelled.` message.
+Spam-tap during cancel-in-flight: `answerCallbackQuery` with text
+`"Already cancelling…"` (critique #12).
 
-`/cancel` text command kept alongside the button.
+`/cancel` text command kept alongside.
 
-#### Voice-mode interplay
+### 8.5 Voice mode
 
-Voice-output chats stream the thinking bubble normally. After turn
-completion: existing voice flow runs unchanged (`record_voice`
-chat-action → synth WAV → send voice note → optional text-answer bubble
-gated by `:telegram-send-answer-text?`). Streaming primary value
-(liveness signal) applies regardless of output modality.
+Streams thinking bubble normally. After turn completion: existing
+voice flow unchanged. Mixed-content TTS reads `[:p]` content only;
+`[:vis/code]` / `[:vis/data]` / `[:vis/table]` summarized as "see
+chat for code/data/table"; attachments still ship.
 
-For mixed-content answers in voice mode: TTS reads concatenated
-`[:p]` / `[:vis/text]` content only (extracted via
-`md/extract-text-blocks`); `[:vis/code]`, `[:vis/data]`, `[:vis/table]`
-summarized as "see chat for code / data / table"; attachments still
-ship per §4.9 (3).
+### 8.6 Attachments — clarified semantics (critique #3)
 
-### 4.11 Footer
-
-Footer (`format-footer`) renders at the end of the last answer bubble.
-Single bubble in the common case; last chunk in the multi-chunk case.
-Thinking bubble's collapsed-summary state has no footer. Cancelled
-mid-stream: thinking bubble's `⊘ Cancelled by user.` final state gets a
-short footer (`_⊘ Cancelled · {duration} · {model}_`).
+Multi-iteration `(answer …)` with attachments: **only the
+turn-terminal `(answer …)`'s attachments ship.** Mid-turn `(answer
+…)` calls (in non-final iterations) are read for prompt-flow
+purposes but their attachments are not sent to the user. This
+matches spec §3.2 atomicity ("answer arrives whole at form-execution
+time" applies only at the terminal iteration). Attachment ordering
+within the terminal answer is source-order per §4.9.
 
 ---
 
-## 5. Persistence
+## 9. Implementation phases
 
-### 5.1 Zero schema migration
+### Phase 0+1+2+3 — atomic PR (critique #1)
 
-`iteration.blocks` Nippy-encodes per-form result values. `(answer …)`
-writes the normalized AST `[:answer & blocks]` into the answer-atom; the
-loop persists the form result as part of the iteration row. Nippy
-roundtrips vectors+keywords+maps+strings natively.
+The Phase-0 cosmetic regression is closed by shipping demolition +
+new core + registry + Telegram wiring **together**. Sub-tasks:
 
-Existing string answers persist as strings → on read, `db-turn-answer-ast`
-wraps as `[:answer s]`. Existing needs-input maps persist as maps →
-wrapped as `[:answer [:vis/needs-input {:text "..."}]]`. Old conversations
-remain readable forever.
-
-### 5.2 Read path
-
-```clojure
-(defn db-turn-answer-ast
-  "Return the canonical answer AST for a turn, normalizing legacy
-   string / needs-input shapes to [:answer ...] form."
-  [db turn-id]
-  (-> (raw-answer-value db turn-id) answer-value->ast))
-```
-
-Channels and exporters call this instead of reading raw answer-text.
-
-### 5.3 `conversation->markdown` exporter
-
-The existing exporter uses `db-turn-answer-ast` and renders each turn's
-AST through `(md/render ast :markdown)` (a `:markdown` flavor that
-walks Hiccup → markdown-string). String-only answers continue to render
-verbatim because their normalized AST is `[:answer "..."]` and rendering
-a string back to markdown is identity (commonmark-java has a
-`MarkdownRenderer`).
-
-`:markdown` flavor coverage:
-- Each Hiccup tag → standard markdown construct.
-- `[:vis/data]` → ` ```clojure ... ``` ` block.
-- `[:vis/table]` → GFM table.
-- `[:vis/file]` → `[title](file://path)` link.
-- `[:vis/image]` → `![alt](url)`.
-- `[:vis/needs-input]` → blockquote with the text.
-
----
-
-## 6. Implementation phases
-
-### Phase 0 — Demolition (its own PR, no new behavior)
-
-1. Remove from `extensions/common/vis-foundation/src/.../foundation/markdown.clj`
-   all `v/` markdown helpers (`h h1 h2 h3 h4 h5 h6 p ul ol checklist
-   blockquote code-block code bold italic i kbd strike underline link
-   image file-link anchor hr br details table join lines section
-   escape`). Keep namespace; rewrite docstring.
-2. Remove same fns from `src/.../internal/markdown.clj`. Keep
-   `conversation->markdown` (separate concern). File shrinks
-   ~1100→~400 LOC.
-3. Update 17 call-sites (rg `vis.internal.markdown` and
-   `foundation.markdown`) to inline plain markdown strings.
-4. Update `src/.../internal/prompt.clj` system-prompt section: drop the
-   v/ catalogue (~660 chars), replace with one sentence: "Answer in
-   GitHub-flavored Markdown. Use fenced code blocks with language tags.
-   For structured data, use Hiccup vectors via `md/data`, `md/code`,
-   `md/table`, `md/file`, `md/image`." (~170 chars net.)
-5. Remove `convert-md-to-html` + helpers from
-   `vis-channel-telegram/.../api.clj`. `tg/send-message!` temporarily
-   ships **plain text** (no parse_mode). Cosmetic regression for one
-   PR; closes in Phase 3.
-6. Delete tests for removed helpers (foundation markdown_test for the
-   helper coverage; keep `conversation->markdown` tests).
-7. Update `vis-foundation/resources/META-INF/vis-extension/vis.edn` to
-   drop removed symbol exports.
-8. `./verify.sh` passes; existing channels/tests green; LLM still
-   answers (raw markdown now); Telegram chats see plain-text answers.
-
-### Phase 1 — New markdown core
-
-1. Add to root `deps.edn`:
+1. Remove `v/` markdown DSL helpers (~38 fns) from
+   `vis-foundation/.../markdown.clj` and `internal/markdown.clj`.
+   Keep `conversation->markdown`.
+2. Remove `convert-md-to-html` from `vis-channel-telegram/.../api.clj`.
+3. Remove `:vis/answer-mode :needs-input` map handling:
+   `loop.clj/needs-input-answer?`, related prompt-flow gate,
+   foundation `(v/needs-input ...)`. Update tests.
+4. Update 17 call-sites to inline plain markdown strings.
+5. Update `prompt.clj` system-prompt section: drop v/ catalogue,
+   replace with: "Answer in GitHub-flavored Markdown. For
+   structured data, use Hiccup vectors via `md/data`, `md/code`,
+   `md/table`, `md/file`, `md/image`."
+6. Add to root `deps.edn`:
    ```clojure
    org.commonmark/commonmark                       {:mvn/version "0.27.1"}
    org.commonmark/commonmark-ext-gfm-tables        {:mvn/version "0.27.1"}
    org.commonmark/commonmark-ext-autolink          {:mvn/version "0.27.1"}
    org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.27.1"}
    ```
-2. In `src/.../internal/markdown.clj`:
-   - `(parse text)` — wrap commonmark `Parser/builder` with three
-     extensions; return `org.commonmark.node.Document`.
-   - `->hiccup` visitor — `condp instance?` over node classes (~80
-     LOC, see §4.6 of original spec drafts; same shape).
-   - `(->ast input)` — normalize string|vector|other to `[:answer ...]`.
-   - `(render input flavor opts)` — string→parse→visit→render or
-     vector→render directly.
-   - `render-html` / `render-plain` / `render-markdown` multimethods.
-   - Lenient `:partial?` mode: detect last block is incomplete; drop or
-     downgrade to text node.
-3. In `src/.../core.clj`: re-export.
-4. SCI sandbox bindings: same names under `md/` alias.
-5. New tests `src/.../internal/markdown_test.clj`:
-   - parse roundtrip for each construct;
-   - per-renderer per-flavor output for the same;
-   - normalization: all four surface forms → identical canonical AST;
-   - adversarial: lonely `*`, lonely backtick, unclosed fence, nested
-     emphasis, GFM table no-separator;
-   - `:partial?` lenient mode covers each adversarial case mid-stream;
-   - `:context :thinking` wraps in expandable blockquote;
-   - `:max-length` truncates at paragraph boundary;
-   - mixed-content: `(answer "prose" [:vis/data x] "more")` →
-     normalized → rendered correctly per flavor.
+7. New `internal/markdown.clj`:
+   - `parse` (commonmark wrapper)
+   - `->hiccup` visitor (~80 LOC)
+   - `->ast` normalization (~30 LOC)
+   - `render` + `render-node` multimethod (~400 LOC across three
+     flavors)
+   - `extract-text-blocks` for voice
+8. `core.clj` re-exports + SCI sandbox bindings.
+9. `extension.clj` adds `:channel/messages-renderer-fn` slot +
+   validator.
+10. `vis-channel-telegram/bot.clj` registers
+    `:channel/messages-renderer-fn #'render-for-telegram`.
+11. `tg/send-message!` looks up renderer-fn, calls it.
+12. `tg/send-document!`, `tg/send-photo!` added to `api.clj`.
+13. `bot.clj/handle-user-text!` reads
+    `(db-turn-answer-ast (:turn-id result))`, passes AST to renderer,
+    walks attachments per §8.6.
+14. `loop.clj/answer-value-string` removed; replaced by
+    `answer-value->ast`. `answer-str` shim does
+    `(md/render ast :plain)` for code paths wanting flat string.
+15. Tests for every above ns per AGENTS.md S3.
 
-### Phase 2 — Channel renderer registry
+### Phase 4 — streaming + cancel button
 
-1. `src/.../internal/extension.clj`: add `:channel/messages-renderer-fn`
-   to channel registration spec. Optional. Validator update.
-2. Tests: registration with and without slot; lazy resolution at emit
-   time so var redefs during dev pick up.
+[unchanged from prior draft]
 
-### Phase 3 — Telegram renderer + answer-AST + attachments
+### Phase 5 — voice integration
 
-1. Telegram extension registers `:channel/messages-renderer-fn
-   #'render-for-telegram`.
-2. `tg/send-message!` looks up renderer-fn, calls it. Bot stops passing
-   pre-rendered text.
-3. `bot.clj/handle-user-text!` reads
-   `(db-turn-answer-ast (:turn-id result))` instead of raw answer
-   string; passes AST to renderer; walks attachments per §4.9.
-4. Add `tg/send-document!`, `tg/send-photo!` to `api.clj` (multipart,
-   similar to existing `send-voice!`).
-5. Cosmetic regression from Phase 0 closes — answers re-gain HTML
-   formatting via commonmark + visitor + multimethod.
-6. `loop.clj/answer-value-string` removed; replaced by
-   `answer-value->ast` (returns AST, not string). `answer-str` shim
-   does `(md/render ast :plain)` for code paths that want a flat
-   string (logs, error formatting, etc.).
-7. Tests: existing telegram tests pass with HTML output; new tests for
-   exact mappings in §4.6; attachment ordering test (text bubble first,
-   then files/images as replies-to).
-
-### Phase 4 — Streaming + cancel button (the big behavioral change)
-
-1. `tg/edit-message!` in `api.clj` (HTTP `editMessageText`, accepts
-   `reply_markup`).
-2. `tg/delete-message!` for edge cleanup.
-3. `bot.clj/live-bubble!` helper — owns `chat_id` + `message_id` +
-   render state + throttle (§4.10 throttle policy). Calls
-   `tg/edit-message!` with renderer-fn output.
-4. `bot.clj/handle-user-text!`:
-   - Build progress-tracker whose `:on-update` drives `live-bubble!`.
-   - Pass tracker's `:on-chunk` via `:hooks {:on-chunk ...}` to
-     `vis/send!` opts.
-   - On `:iteration-final :done?=true`: final-edit thinking bubble
-     (collapse), remove keyboard, render answer-AST through renderer,
-     post bubble(s), walk attachments.
-5. `bot.clj/handle-callback-query!` matches `cancel:<chat-id>` → fires
-   cancellation on stored turn-token.
-6. Tests `bot_streaming_test.clj`: throttle 1200 ms; final flush
-   ignores interval; not-modified swallowed; 429 backoff doubles
-   interval; cancel button removes keyboard + edits in place;
-   pre-first-paint cancel → fresh message; sliding-window thinking
-   truncation; multi-iteration boundary flush.
-
-### Phase 5 — Voice-mode integration
-
-1. Voice path streams thinking bubble. After stream end: extract
-   `[:p]` / `[:vis/text]` content via `md/extract-text-blocks`;
-   synth → voice note. Attachments still ship per §4.9.
-2. Tests: voice + streaming + mixed-content together.
+[unchanged]
 
 ### Phase 6 — TUI through registry (separate PR, deferred)
 
-1. TUI extension registers `(fn [input opts] (md/render input :plain opts))`.
-2. Screen-emit boundary uses it.
-3. Future: `:tui-styled` flavor — own design discussion when needed.
-
 ---
 
-## 7. Risks & mitigations
+## 10. Risks & mitigations
 
 | Risk | Mitigation |
 |---|---|
-| commonmark-java dep wedge | Pin 0.27.1 across all four artifacts; AGENTS.md S1 noted; deps.edn diff is 4 lines. |
-| LLM emits malformed `[:vis/*]` (missing required attrs, unknown tag) | `[:vis/*]` fallthrough renders children only; missing attrs render block as `[:vis/data {:value <whole-block>}]` debug surface. Defect-#10 invariant extends to structured input. Renderer never crashes. |
-| Phase 0 cosmetic regression (plain-text Telegram answers) blocks too long | Phases 0–3 sequenced tight; window ~days. |
-| LLM output drifts after dropping `v/` DSL guidance | New prompt is two sentences. Models default to GFM out of the box. Worst case: prompt grows back. Cheap. |
-| Telegram rate-limit during streaming | Throttle constants centralized; 429 backoff in spec. |
-| Inline button spammed | Telegram dedupes rapid taps; cancellation-token idempotent. |
-| Attachments silently dropped by channels not implementing them | Renderer fallback: italic placeholder. Worst case user sees `_📎 path/to/file.txt_` — recoverable. |
-| `progress-tracker` semantics drift in core | TUI uses same tracker; cross-channel safety net. |
-| commonmark-java SCI compat | Library is host-Java-only; renderer is pure Clojure. SCI smoke test in Phase 1 confirms `md/render` works in sandbox via the Clojure renderer; LLM-emitted `(md/render ...)` calls execute in host context where Java is available. |
-| Persistence size growth | Nippy is compact; a 5-block answer ~2× the bytes of an equivalent string. KB-scale. |
-| Existing extensions wrapping `(:answer result)` as String break | `answer-str` shim returns rendered-plain string for back-compat. Affected: `vis/format-error`, `tg/answer-details-message`, voice synth. All migrated in Phase 3. |
-| Block taxonomy fan-out unbounded | v1 = 7 `:vis/*` tags + standard Hiccup. Each new tag → design discussion + PR. `:vis/*` fallthrough means unknown tags don't break old channels. |
+| commonmark-java version drift | Pin 0.27.1 across all four artifacts. |
+| LLM emits malformed `[:vis/*]` | `:default` multimethod arm renders children; missing required attrs degrade to `[:vis/data {:value <whole-block>}]` debug surface. Renderer never crashes. |
+| LLM regresses without `v/` DSL guidance | New prompt is two sentences. Models default to GFM. Cheap to iterate. |
+| Telegram `<blockquote expandable>` requires Bot API ≥ 7.0 | Documented requirement. Older Bot API silently shows non-expandable blockquote (full thinking visible) — degraded but functional. |
+| Tables: cell formatting | `Cell = String \| Inline`. String cells parsed as inline markdown; Hiccup cells used directly. Spec-defined. |
+| `:vis/image` `:url` xor `:path` | Type-level mutual exclusion; `->ast` validates and degrades to `[:vis/data]` debug if both/neither. |
+| Multi-iteration `(answer)` attachments | Only terminal-iteration attachments ship (§8.6). |
+| Streaming throttle race during cancel | `answerCallbackQuery "Already cancelling…"` on duplicate taps. |
+| commonmark-java SCI compat | Library is host-Java-only. Renderer is pure Clojure. SCI smoke test in Phase 1. LLM-side `md/render` calls work because they execute in host context where Java is available. |
+| Persistence size growth | Nippy compact; ~2× string-equivalent size. KB-scale. |
+| Existing extensions wrapping `(:answer result)` as String break | `answer-str` shim returns rendered-plain string for back-compat. |
+| Block taxonomy fan-out | v1 = ~5 `:vis/*` tags + standard MD. Each new tag → design discussion. `:vis/*` fallthrough means unknown tags don't break old channels. |
+| Parse perf in streaming hot path (critique #4) | Phase 1 includes regression test asserting `(parse 4KB)` < 50 ms on CI hardware. |
+| Long `:vis/data` truncation hides info (critique #2) | Truncation footer: `…(truncated; N chars total)`. User can re-ask; full data is in DB. |
 
 ---
 
-## 8. Out of scope (explicitly)
+## 11. Out of scope
 
-- Per-token answer-prose streaming (§3.2).
-- Streaming voice synth (audio is post-completion).
-- Telegram MarkdownV2 parse-mode (HTML is target; MdV2 is a one-line
-  flip later).
-- Reasoning-as-permanent-transcript (CoT remains live signal; full
-  transcript in Vis DB unchanged).
-- TUI styled-segment renderer (Phase 6 + future).
+- Per-token answer-prose streaming.
+- Streaming voice synth.
+- Telegram MarkdownV2 parse-mode (HTML primary; MdV2 is one renderer
+  arm + parse_mode flip later — IR-compatible).
+- Reasoning-as-permanent-transcript.
+- TUI styled-segment renderer.
 - DB schema changes (zero — Nippy already roundtrips).
 - Configuration UX for throttle constants.
-- Image generation / chart rendering pipelines.
+- Image generation / chart rendering.
 - Layout primitives.
+- Grammar-constrained LLM decoding.
+- Domain-ontology validation (`:schema`, `:cite`, `:conf`,
+  `:emotion`, `:mode` from the IR-design literature). Extension slot
+  exists; v1 ships no validators.
+- `needs-input` semantic (removed entirely).
 
 ---
 
-## 9. Open items
+## 12. Open items
 
-None at spec time. Implementation proceeds Phases 0 → 5 sequentially;
-Phase 6 is explicit follow-up PR.
+None at spec time. Implementation proceeds Phase 0+1+2+3 atomically;
+Phase 4 then 5; Phase 6 explicit follow-up.
