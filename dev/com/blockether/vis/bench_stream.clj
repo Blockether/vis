@@ -188,14 +188,22 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
    `chunk-chars`, lift to fresh IR, call `virtual/layout`, time wall
    clock. Measures the path the TUI critical loop actually runs.
 
+   `:scroll-mode` controls which scroll-state is exercised:
+     `:auto`     - scroll=nil (auto-pinned to bottom; tail-walker fast path).
+     `:scrolled` - scroll=0    (user scrolled to top; full render fallback).
+     `:mid`      - scroll=:mid (numeric mid-position; full render fallback).
+   Default `:auto`. Use `:scrolled` to verify the scroll-up path
+   doesn't regress catastrophically.
+
    Emits `stream_layout_50k_100k_mean_ms` so this can be a separate
    autoresearch metric from the synthetic format-answer bench."
-  [{:keys [target-chars chunk-chars bubble-w inner-h warmup-frames]
+  [{:keys [target-chars chunk-chars bubble-w inner-h warmup-frames scroll-mode]
     :or   {target-chars  100000
            chunk-chars   1000
            bubble-w      96
            inner-h       40
-           warmup-frames 5}}]
+           warmup-frames 5
+           scroll-mode   :auto}}]
   (let [stable-bodies [(body-of-length 200)
                        (body-of-length 1500)
                        (body-of-length 800)]
@@ -212,8 +220,17 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
                        {:role :assistant
                         :ir   stream-ir
                         :conversation-turn-id (str "stream-" (System/nanoTime))})
+                ;; scroll arg per scroll-mode (see docstring).
+                ;; `:scrolled` puts the viewport INTO the streaming
+                ;; bubble so its full O(body) render fires (the path
+                ;; the tail-pinned fast-path falls back to). Picking
+                ;; an enormous scroll number is safe - layout clamps.
+                scroll-arg (case scroll-mode
+                             :auto     nil
+                             :scrolled 999999
+                             :mid      (max 0 (long (/ (count stream-body) 8))))
                 t0 (System/nanoTime)
-                _  (virtual/layout msgs bubble-w {} nil inner-h
+                _  (virtual/layout msgs bubble-w {} scroll-arg inner-h
                      {:loading? false}
                      {:conversation-id "bench"
                       :detail-expansions {}})
@@ -266,11 +283,11 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
           (when (and small big (pos? small))
             (printf "LINEARITY: 50k-100k / <5k = %.2fx  (target: ≤ 1.5x)%n"
               (double (/ big small)))))
-        (println "METRIC stream_layout_total_ms=" (long (:total-ms tot)))
-        (println "METRIC stream_layout_p99_ms="   (long (:p99-ms tot)))
-        (println "METRIC stream_layout_max_ms="   (long (:max-ms tot)))
+        (println "METRIC stream_layout_total_ms=" (format "%.2f" (double (:total-ms tot))))
+        (println "METRIC stream_layout_p99_ms="   (format "%.2f" (double (:p99-ms tot))))
+        (println "METRIC stream_layout_max_ms="   (format "%.2f" (double (:max-ms tot))))
         (when-let [big (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
-          (println "METRIC stream_layout_50k_100k_mean_ms=" (long big)))
+          (println "METRIC stream_layout_50k_100k_mean_ms=" (format "%.3f" (double big))))
         {:per-frame all
          :buckets   (into {} (map (fn [[k xs]] [k (summarize (mapv :ns xs))]) buckets))
          :total     tot}))))

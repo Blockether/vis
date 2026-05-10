@@ -3547,7 +3547,12 @@
              confidence
              (boolean cancelled?)
              (:conversation-turn-id opts)
-             (turn-detail-expansions-key opts)]
+             (turn-detail-expansions-key opts)
+             ;; tail-lines opt switches to the back-walking renderer;
+             ;; must be in the cache key so a tail-pinned bubble's
+             ;; tail-N result doesn't shadow the same bubble's full
+             ;; render after the user scrolls up.
+             (:tail-lines opts)]
      #(format-answer-with-thinking-data* answer trace bubble-w settings confidence cancelled? opts))))
 
 (defn format-answer-with-thinking
@@ -3578,7 +3583,9 @@
              (System/identityHashCode answer)
              (long bubble-w)
              (:conversation-turn-id opts)
-             (relevant-detail-expansions-key opts)]
+             (relevant-detail-expansions-key opts)
+             ;; see comment in format-answer-with-thinking-data
+             (:tail-lines opts)]
      #(format-answer-markdown-data* answer bubble-w opts))))
 
 (defn format-answer-markdown
