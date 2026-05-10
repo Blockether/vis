@@ -25,7 +25,10 @@
         (is (= 1 (count tl)))
         (is (= 1 (:iteration (first tl))))
         (is (= "thinking..." (:thinking (first tl)))))))
-  (testing "reasoning event deltas preserve whitespace-only streaming chunks"
+  (testing "reasoning chunks accumulate into the iteration's :thinking field"
+    ;; The pre-existing `:events` interleaving log was removed (lived
+    ;; only in memory, never persisted). The accumulator just keeps
+    ;; the latest snapshot of `:thinking`.
     (let [tracker (progress/make-progress-tracker)]
       (doseq [thinking ["The contract APIs failed in iteration"
                         "The contract APIs failed in iteration "
@@ -33,18 +36,18 @@
                         "The contract APIs failed in iteration 1 - lines "
                         "The contract APIs failed in iteration 1 - lines 100-169"]]
         ((:on-chunk tracker) {:phase :reasoning :iteration 1 :thinking thinking}))
-      (let [entry         (first ((:get-timeline tracker)))
-            reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
+      (let [entry (first ((:get-timeline tracker)))]
         (is (= "The contract APIs failed in iteration 1 - lines 100-169"
               (:thinking entry)))
-        (is (= (:thinking entry) reconstructed))))
+        (is (not (contains? entry :events)))))
     (let [tracker (progress/make-progress-tracker)]
       (doseq [thinking [" " " a"]]
         ((:on-chunk tracker) {:phase :reasoning :iteration 1 :thinking thinking}))
-      (let [entry         (first ((:get-timeline tracker)))
-            reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
-        (is (= " a" (:thinking entry)))
-        (is (= (:thinking entry) reconstructed))))))
+      (let [entry (first ((:get-timeline tracker)))]
+        ;; `normalize-thinking-text` trims surrounding whitespace; bubble
+        ;; layout doesn't depend on leading/trailing space inside the
+        ;; per-iteration `:thinking` snapshot.
+        (is (= "a" (:thinking entry)))))))
 
 (deftest on-chunk-form-result-test
   (testing ":form_result phase records code and result"
@@ -96,16 +99,18 @@
                   "; info {:tool {:sym cat, :call \"v/cat\"}, :extension {:namespace com.acme.ext.fs}, :source {:paths [\"/tmp/ext.clj\"], :mtime-max 1, :hash-sha256 nil}}.")]
               (:results entry))))))
   (testing ":form-result preserves tool info needed by TUI summary labels"
+    ;; `extension/success` builds the post-phase-4 flat `:op/envelope`
+    ;; map (`:op/symbol`, `:op/tag`, `:op/metadata`, ...). The legacy
+    ;; `:info` key is gone; metadata lives under `:op/metadata`.
     (let [tracker (progress/make-progress-tracker)
           result  (extension/success
                     {:result {:hits [] :truncated-by :end-of-results}
-                     :info {:op :any
-                            :op/tag :op.tag/observation
-                            :color-role :tool-color/search
-                            :spec {:any ["alpha" "beta"] :paths ["src"]}
-                            :paths ["src"]
-                            :hit-count 0
-                            :truncated-by :end-of-results}})]
+                     :op :any
+                     :metadata {:color-role :tool-color/search
+                                :spec {:any ["alpha" "beta"] :paths ["src"]}
+                                :paths ["src"]
+                                :hit-count 0
+                                :truncated-by :end-of-results}})]
       (with-redefs [extension/channel-render-tool-result (fn [_result & _] "Searched `src`.")]
         ((:on-chunk tracker) {:phase :form-result :iteration 1 :form-idx 0
                               :code "(v/rg {:any [\"alpha\" \"beta\"] :paths [\"src\"]})"

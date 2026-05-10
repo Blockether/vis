@@ -5,58 +5,12 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.channel-tui.theme :as t]
-   [com.blockether.vis.internal.format :as fmt]
    [clojure.string :as str]
-   [lazytest.core :refer [defdescribe describe expect it]])
-  (:import
-   [java.util.concurrent CountDownLatch]))
+   [lazytest.core :refer [defdescribe describe expect it]]))
 
-;; ─── from render_test.clj ───
-
-;; Inline markdown string-builder helpers (formerly the v/ DSL).
-(defn- md-bold       ^String [s] (str "**" s "**"))
-(defn- md-code       ^String [s] (str "`" s "`"))
-(defn- md-code-block
-  (^String [body]      (str "```\n" body "\n```"))
-  (^String [lang body] (str "```" (or lang "") "\n" body "\n```")))
-(defn- md-h          ^String [n & parts]
-  (str (apply str (repeat (max 1 (min 6 n)) "#")) " "
-    (str/join " " (map str parts))))
-(defn- md-ul         ^String [items]
-  (str/join "\n" (map #(str "- " %) (filter some? items))))
-(defn- md-join       ^String [& parts]
-  (str/join "\n\n" (filter some? (map str parts))))
-
-(def ^:private md->lines @#'render/markdown->lines)
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
-(def ^:private format-clojure-ansi @#'render/format-clojure-ansi)
 (def ^:private input-more-hint @#'render/input-more-hint)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
-
-(defn- run-concurrently!
-  [thunks]
-  (let [gate    (CountDownLatch. 1)
-        failures (atom [])
-        threads (doall
-                  (map-indexed
-                    (fn [idx thunk]
-                      (doto (Thread.
-                              ^Runnable
-                              (fn []
-                                (.await gate)
-                                (try
-                                  (thunk)
-                                  (catch Throwable t
-                                    (swap! failures conj
-                                      {:idx idx
-                                       :class (.getName (class t))
-                                       :message (ex-message t)})))))
-                        (.start)))
-                    thunks))]
-    (.countDown gate)
-    (doseq [^Thread thread threads]
-      (.join thread))
-    @failures))
 
 (defn- marker-of
   "First codepoint of `s` as a single-char string, or nil for empty."
@@ -83,205 +37,9 @@
     (expect (= " 1 more " (input-more-hint 5 4)))
     (expect (= " 6 more " (input-more-hint 10 4)))))
 
-(defdescribe zprint-render-concurrency-test
-  (it "TUI Clojure formatting shares the process-wide zprint lock"
-    (let [code     (str "(def data " (pr-str (vec (range 300))) ")")
-          failures (run-concurrently!
-                     (concat
-                       (for [_ (range 4)]
-                         #(dotimes [_ 100]
-                            (format-clojure-ansi code 80)))
-                       (for [_ (range 4)]
-                         #(dotimes [i 100]
-                            (fmt/safe-zprint-str {:i i :data (vec (range 200))})))))]
-      (expect (= [] failures))))
-
-  (it "keeps every top-level form in file-shaped Clojure fences"
-    (let [src (str ";; file header\n"
-                "{:paths [\"src\"]}\n"
-                "{:aliases {:test {}}}")
-          out (strip-ansi (format-clojure-ansi src 80))]
-      (expect (str/includes? out ";; file header"))
-      (expect (str/includes? out ":paths"))
-      (expect (str/includes? out ":aliases"))))
-
-  (it "renders deps.edn fences with leading comments through to later map entries"
-    (let [fence (apply str (repeat 3 \`))
-          src   (str "## `deps.edn` - Root\n\n"
-                  fence "clojure\n"
-                  ";; vis - single-package monorepo.\n"
-                  "{:paths [\"src\"]\n"
-                  " :deps {com.blockether/vis-persistance-sqlite {:local/root \"extensions/persistance/vis-persistance-sqlite\"}}}\n"
-                  fence "\n")
-          rows  (mapv (comp strip-ansi body-of) (md->lines src 100 :answer))]
-      (expect (some #(str/includes? % ";; vis") rows))
-      (expect (some #(str/includes? % "com.blockether/vis-persistance-sqlite") rows)))))
-
-(defdescribe wrap-text-marker-test
-  (describe "structural row markers survive wrapping"
-    (it "keeps result background marker on every wrapped continuation"
-      (let [lines (render/wrap-text (str p/MARKER_RESULT "alpha beta gamma delta") 12)]
-        (expect (= [p/MARKER_RESULT p/MARKER_RESULT]
-                  (mapv marker-of lines)))
-        (expect (= ["alpha beta" "gamma delta"]
-                  (mapv body-of lines)))))
-
-    (it "keeps code background marker on hard-wrapped long forms"
-      (let [lines (render/wrap-text (str p/MARKER_CODE_OK (apply str (repeat 30 "x"))) 10)]
-        (expect (= 3 (count lines)))
-        (expect (every? #(= p/MARKER_CODE_OK (marker-of %)) lines))
-        (expect (every? #(<= (p/display-width (body-of %)) 10) lines))))
-
-    (it "does not invent markers for plain wrapped prose"
-      (let [lines (render/wrap-text "alpha beta gamma" 8)]
-        (expect (= ["alpha" "beta" "gamma"] lines))))
-
-    (it "keeps inline code styling active across wrapped command continuations"
-      (let [lines        (md->lines "Run `vis channels tui --conversation-id abcdef0123456789 --resume` now" 18 :answer)
-            command-rows (filter #(or (str/includes? % "channels")
-                                    (str/includes? % "conversation")
-                                    (str/includes? % "abcdef")
-                                    (str/includes? % "resume"))
-                           lines)]
-        (expect (seq command-rows))
-        (expect (every? #(<= (p/display-width %) 18) lines))
-        (expect (every? #(str/includes? % p/INLINE_CODE_ON) command-rows))
-        (expect (every? #(str/includes? % p/INLINE_CODE_OFF) command-rows))))
-
-    (it "keeps markdown link styling active across wrapped path continuations"
-      (let [lines     (md->lines "See [src/com/blockether/vis/internal/file.clj:534](src/com/blockether/vis/internal/file.clj#L534) now" 22 :answer)
-            link-rows (filter #(str/includes? % "file") lines)]
-        (expect (seq link-rows))
-        (expect (every? #(<= (p/display-width %) 22) lines))
-        (expect (every? #(str/includes? % p/INLINE_LINK_ON) link-rows))
-        (expect (every? #(str/includes? % p/INLINE_LINK_OFF) link-rows))))))
-
-(defdescribe markdown-headings-test
-  (describe "ATX headings 1-3 each carry their own marker"
-    (it "# Heading 1 -> MARKER_MD_H1"
-      (let [[line] (md->lines "# Heading 1" 80 :answer)]
-        (expect (= p/MARKER_MD_H1 (marker-of line)))
-        (expect (= "Heading 1" (body-of line)))))
-
-    (it "## Heading 2 -> MARKER_MD_H2"
-      (let [[line] (md->lines "## Heading 2" 80 :answer)]
-        (expect (= p/MARKER_MD_H2 (marker-of line)))
-        (expect (= "Heading 2" (body-of line)))))
-
-    (it "### Heading 3 -> MARKER_MD_H3"
-      (let [[line] (md->lines "### Heading 3" 80 :answer)]
-        (expect (= p/MARKER_MD_H3 (marker-of line)))
-        (expect (= "Heading 3" (body-of line))))))
-
-  (describe "H4-H6 fold onto the H3 marker (terminal palettes top out)"
-    ;; This is the regression we are pinning. Pre-fix, `#### Heading
-    ;; 4` had no matching `cond` branch, so it fell through to
-    ;; plain-text rendering and the literal `####` showed up in the
-    ;; answer body. The fix collapses H4-H6 onto the H3 marker (same
-    ;; convention as glow / mdcat / bat) so deep headings still read
-    ;; AS headings instead of leaking hash characters.
-    (it "#### Heading 4 -> MARKER_MD_H3, no leading hashes in body"
-      (let [[line] (md->lines "#### Heading 4" 80 :answer)]
-        (expect (= p/MARKER_MD_H3 (marker-of line)))
-        (expect (= "Heading 4" (body-of line)))
-        (expect (not (str/includes? (body-of line) "#")))))
-
-    (it "##### Heading 5 -> MARKER_MD_H3, no leading hashes in body"
-      (let [[line] (md->lines "##### Heading 5" 80 :answer)]
-        (expect (= p/MARKER_MD_H3 (marker-of line)))
-        (expect (= "Heading 5" (body-of line)))
-        (expect (not (str/includes? (body-of line) "#")))))
-
-    (it "###### Heading 6 -> MARKER_MD_H3, no leading hashes in body"
-      (let [[line] (md->lines "###### Heading 6" 80 :answer)]
-        (expect (= p/MARKER_MD_H3 (marker-of line)))
-        (expect (= "Heading 6" (body-of line)))
-        (expect (not (str/includes? (body-of line) "#"))))))
-
-  (describe "Boundary conditions"
-    (it "####### (7 hashes) is NOT a heading - too deep, falls through"
-      ;; CommonMark caps ATX headings at 6. A 7-hash line is plain
-      ;; text. We assert that the marker is NOT one of the heading
-      ;; markers.
-      (let [[line] (md->lines "####### too deep" 80 :answer)
-            mk    (marker-of line)]
-        (expect (not= p/MARKER_MD_H1 mk))
-        (expect (not= p/MARKER_MD_H2 mk))
-        (expect (not= p/MARKER_MD_H3 mk))))
-
-    (it "#NoSpace is NOT a heading - ATX requires a space after #"
-      (let [[line] (md->lines "#NoSpace" 80 :answer)
-            mk    (marker-of line)]
-        (expect (not= p/MARKER_MD_H1 mk))
-        (expect (not= p/MARKER_MD_H2 mk))
-        (expect (not= p/MARKER_MD_H3 mk))))
-
-    (it "All six heading levels in one document each render with a heading marker"
-      (let [doc   (str/join "\n"
-                    ["# H1" "## H2" "### H3" "#### H4" "##### H5" "###### H6"])
-            lines (md->lines doc 80 :answer)
-            heading-markers #{p/MARKER_MD_H1 p/MARKER_MD_H2 p/MARKER_MD_H3}]
-        (expect (= 6 (count lines)))
-        (expect (every? heading-markers (map marker-of lines)))
-        ;; And specifically: H4-H6 all map to H3.
-        (expect (= [p/MARKER_MD_H1 p/MARKER_MD_H2 p/MARKER_MD_H3
-                    p/MARKER_MD_H3 p/MARKER_MD_H3 p/MARKER_MD_H3]
-                  (mapv marker-of lines)))))))
-
-(defdescribe markdown-task-list-test
-  (describe "GitHub-style task-list checkboxes"
-    (it "renders unchecked and checked bullets as checkbox glyphs, not raw [ ] / [x] text"
-      (let [lines (md->lines (str "- [ ] write tests\n"
-                               "- [x] ship fix\n"
-                               "- [X] verify") 80 :answer)
-            bodies (mapv body-of lines)]
-        (expect (= [p/MARKER_MD_BULLET p/MARKER_MD_BULLET p/MARKER_MD_BULLET]
-                  (mapv marker-of lines)))
-        (expect (= ["  ☐ write tests" "  ☑ ship fix" "  ☑ verify"] bodies))
-        (expect (not-any? #(str/includes? % "[ ]") bodies))
-        (expect (not-any? #(str/includes? % "[x]") bodies))
-        (expect (not-any? #(str/includes? % "[X]") bodies)))))
-
-  (it "renders category-prefixed checkbox tokens inside list bodies"
-    (let [lines (md->lines (str "- A: [ ] Decide whether previous reasoning needs its own block\n"
-                             "- B: [x] Define shared presentation preview shape\n"
-                             "- C: [X] Document model policy\n"
-                             "- D: [ x ] Keep review protocol minimal") 80 :answer)
-          bodies (mapv body-of lines)]
-      (expect (= ["  • A: ☐ Decide whether previous reasoning needs its own block"
-                  "  • B: ☑ Define shared presentation preview shape"
-                  "  • C: ☑ Document model policy"
-                  "  • D: ☑ Keep review protocol minimal"]
-                bodies))
-      (expect (not-any? #(str/includes? % "[ ]") bodies))
-      (expect (not-any? #(str/includes? % "[x]") bodies))
-      (expect (not-any? #(str/includes? % "[X]") bodies))
-      (expect (not-any? #(str/includes? % "[ x ]") bodies))))
-
-  (it "renders backticked checkboxes inside reasoning bullets"
-    (let [lines (md->lines (str "- A: `[ ]` Decide whether previous reasoning needs its own block\n"
-                             "- B: `[x]` Define shared presentation preview shape\n"
-                             "- C: `[X]` Document model policy") 80 :thinking)
-          bodies (mapv body-of lines)]
-      (expect (= [p/MARKER_TH_MD_BULLET p/MARKER_TH_MD_BULLET p/MARKER_TH_MD_BULLET]
-                (mapv marker-of lines)))
-      (expect (= ["  • A: ☐ Decide whether previous reasoning needs its own block"
-                  "  • B: ☑ Define shared presentation preview shape"
-                  "  • C: ☑ Document model policy"]
-                bodies))
-      (expect (not-any? #(str/includes? % "[ ]") bodies))
-      (expect (not-any? #(str/includes? % "[x]") bodies))
-      (expect (not-any? #(str/includes? % "[X]") bodies))))
-
-  (it "wraps continuation rows under the checkbox body"
-    (let [lines (md->lines "- [x] alpha beta gamma delta" 16 :answer)
-          bodies (mapv body-of lines)]
-      (expect (= ["  ☑ alpha beta" "    gamma delta"] bodies)))))
-
 (defdescribe live-running-block-test
   (it "renders a block slot with no result as currently running with elapsed time"
     (let [lines (format-iteration-entry {:iteration     0
-                                         :events        [{:type :form-result :form-idx 0}]
                                          :code          ["(Thread/sleep 1000)"]
                                          :started-at-ms [1000]}
                   40 1 {:now-ms 2500})
@@ -306,58 +64,10 @@
       (expect (= p/MARKER_CODE_OK_PAD (marker-of (nth lines (- (count lines) 2)))))
       (expect (some #(= "3" (str/trim %)) bodies)))))
 
-(defdescribe markdown-fenced-code-language-test
-  (it "syntax-colors clojure fences produced by v/code-block"
-    (let [lines      (md->lines (md-code-block "clojure" "(def x {:a 1})") 80)
-          code-lines (filter #(= p/MARKER_MD_CODE (marker-of %)) lines)
-          bodies     (map body-of code-lines)]
-      (expect (some #(str/includes? % "\u001b[") bodies))
-      (expect (some #(str/includes? (strip-ansi %) "(def x {:a 1})") bodies))))
-
-  (it "syntax-colors diff fences like git additions and deletions"
-    (let [diff-text  (str "--- a/README.md\n"
-                       "+++ b/README.md\n"
-                       "@@ -1 +1 @@\n"
-                       "-old\n"
-                       "+new\n"
-                       " context")
-          lines      (md->lines (md-code-block "diff" diff-text) 80)
-          code-lines (filter #(= p/MARKER_MD_CODE (marker-of %)) lines)
-          bodies     (map body-of code-lines)]
-      (expect (some #(str/includes? % "\u001b[91m-old\u001b[0m") bodies))
-      (expect (some #(str/includes? % "\u001b[92m+new\u001b[0m") bodies))
-      (expect (some #(str/includes? % "\u001b[36m@@ -1 +1 @@\u001b[0m") bodies))
-      (expect (some #(= " context" %) bodies))))
-
-  (it "leaves unqualified plain fences uncolored"
-    (let [lines  (md->lines (md-code-block "plain text") 80)
-          bodies (map body-of (filter #(= p/MARKER_MD_CODE (marker-of %)) lines))]
-      (expect (not-any? #(str/includes? % "\u001b[") bodies))
-      (expect (some #(= "plain text" %) bodies)))))
-
-(defdescribe malformed-fence-answer-repro-test
-  (describe "glued fence repair for malformed final answers"
-    ;; Faithful reduction of conversation bbc79960's broken final
-    ;; answer shape: prose glued to an opening fence, then a closing
-    ;; fence glued to a trailing paragraph. Before the repair pass the
-    ;; TUI rendered the first fence literally and swallowed the final
-    ;; paragraph into an unterminated code block. We now normalize the
-    ;; fence boundaries before markdown parsing so the paragraph stays
-    ;; visible.
-    (it "keeps the trailing paragraph visible instead of swallowing it into code"
-      (let [src   "Here's the top-level directory structure of this repo:```text\n\n```So: I'm a language model."
-            lines (md->lines src 80 :answer)]
-        (expect (= "Here's the top-level directory structure of this repo:"
-                  (first lines)))
-        (expect (some #(= p/MARKER_MD_CODE (marker-of %)) lines))
-        (expect (some #(= "So: I'm a language model." %) lines))
-        (expect (not-any? #(str/includes? % "```text") lines))))))
-
 (defdescribe progress-rendering-test
   (it "live progress renders every iteration instead of hiding history"
     (let [mk-entry (fn [n]
-                     {:events    [{:type :form-result :form-idx 0}]
-                      :code      [(str "(+ " n " 1)")]
+                     {:code      [(str "(+ " n " 1)")]
                       :comments  []
                       :results   [(str (inc n))]
                       :stdouts   []
@@ -377,8 +87,7 @@
   (it "live progress renders bounded thinking chunks without hiding content"
     (let [body (strip-ansi
                  (render/progress->text
-                   {:iterations [{:events [{:type :thinking :thinking "alpha "}
-                                           {:type :thinking :thinking "beta"}]}]}
+                   {:iterations [{}]}
                    80
                    {:show-thinking true :show-iterations true}
                    {:now-ms 1000 :turn-start-ms 0}))]
@@ -389,7 +98,7 @@
   (it "live progress previews huge thinking before markdown wrapping"
     (let [huge-thinking (apply str (repeat 20000 "thinking "))
           payload       (render/progress->lines-data
-                          {:iterations [{:events [{:type :thinking :thinking huge-thinking}]}]}
+                          {:iterations [{}]}
                           96
                           {:show-thinking true :show-iterations true}
                           {:now-ms 1000 :turn-start-ms 0})
@@ -402,8 +111,7 @@
     (render/invalidate-cache!)
     (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
           payload     (render/progress->lines-data
-                        {:iterations [{:events    [{:type :form-result :form-idx 0}]
-                                       :code      ["(+ 1 2)"]
+                        {:iterations [{:code      ["(+ 1 2)"]
                                        :comments  [nil]
                                        :results   [huge-result]
                                        :stdouts   [""]
@@ -422,8 +130,7 @@
 
   (it "live progress bounds old iteration history by default while keeping latest work visible"
     (let [mk-entry (fn [n]
-                     {:events    [{:type :form-result :form-idx 0}]
-                      :code      [(str "(+ " n " 1)")]
+                     {:code      [(str "(+ " n " 1)")]
                       :comments  []
                       :results   [(str (inc n))]
                       :stdouts   []
@@ -450,8 +157,7 @@
 
   (it "expanded live progress history renders the hidden iterations on demand"
     (let [mk-entry (fn [n]
-                     {:events    [{:type :form-result :form-idx 0}]
-                      :code      [(str "(+ " n " 1)")]
+                     {:code      [(str "(+ " n " 1)")]
                       :comments  []
                       :results   [(str (inc n))]
                       :stdouts   []
@@ -577,9 +283,6 @@
     (it "renders reasoning / code / reasoning in event order"
       (let [lines (format-iteration-entry
                     {:thinking  "alpha\nbeta"
-                     :events    [{:type :thinking :thinking "alpha"}
-                                 {:type :form-result :form-idx 0}
-                                 {:type :thinking :thinking "\nbeta"}]
                      :code      ["(+ 1 1)"]
                      :comments  []
                      :results   ["2"]
@@ -592,16 +295,6 @@
             body  (strip-ansi (str/join "\n" (map body-of lines)))]
         (expect (< (.indexOf body "alpha") (.indexOf body "(+ 1 1)")))
         (expect (< (.indexOf body "(+ 1 1)") (.lastIndexOf body "beta")))))))
-
-(defdescribe markdown-headings-thinking-mode-test
-  (describe "Thinking-mode headings use the thinking marker bundle"
-    ;; The thinking-mode marker bundle is a parallel set of PUA
-    ;; codepoints; the renderer paints them with the iteration-bg + dim
-    ;; italic style. Same H4-H6 -> H3 collapse must apply.
-    (it "#### Heading 4 (thinking) -> MARKER_TH_MD_H3"
-      (let [[line] (md->lines "#### Heading 4" 80 :thinking)]
-        (expect (= p/MARKER_TH_MD_H3 (marker-of line)))
-        (expect (= "Heading 4" (body-of line)))))))
 
 ;; ─── from inline_styles_test.clj ───
 
@@ -617,8 +310,6 @@
 (def ^:private S' p/INLINE_STRIKE_OFF)
 (def ^:private C  p/INLINE_CODE_ON)
 (def ^:private C' p/INLINE_CODE_OFF)
-(def ^:private L  p/INLINE_LINK_ON)
-(def ^:private L' p/INLINE_LINK_OFF)
 
 (defdescribe inline-sentinel-test
   (describe "Predicate"
@@ -654,79 +345,6 @@
         (expect (= 2 (p/display-width cut)))
         (expect (.contains cut B))
         (expect (.contains cut B'))))))
-
-(defdescribe markdown->inline-test
-  (describe "Links"
-    (it "renders markdown links as underlined anchor text without URL duplication"
-      (expect (= (str "See " L "file.clj:534" L' " now")
-                (markdown->inline "See [file.clj:534](file.clj#L534) now"))))
-
-    (it "renders links inside bullets as markdown, not literal bracket syntax"
-      (let [lines (md->lines "- Core - [file.clj:534](file.clj#L534) `predicate-source?`." 100 :answer)
-            body  (str/join "\n" lines)]
-        (expect (str/includes? body p/INLINE_LINK_ON))
-        (expect (str/includes? body "file.clj:534"))
-        (expect (not (str/includes? body "](")))
-        (expect (not (str/includes? body "file.clj#L534"))))))
-
-  (describe "Bold"
-    (it "**bold** wraps the span"
-      (expect (= (str "hi " B "world" B' "!")
-                (markdown->inline "hi **world**!"))))
-    (it "__bold__ alternative syntax"
-      (expect (= (str B "x" B')
-                (markdown->inline "__x__"))))
-    (it "Multiple bold spans on one line"
-      (expect (= (str B "a" B' " " B "b" B')
-                (markdown->inline "**a** **b**"))))
-    (it "Empty **** falls through as literal asterisks"
-      (expect (= "****" (markdown->inline "****")))))
-
-  (describe "Italic"
-    (it "*italic* wraps the span"
-      (expect (= (str I "yo" I')
-                (markdown->inline "*yo*"))))
-    (it "_italic_ alternative syntax"
-      (expect (= (str I "yo" I')
-                (markdown->inline "_yo_"))))
-    (it "Bold takes precedence over italic for `**`"
-      ;; `**a**` should be BOLD, NOT italic-italic-a-italic-italic.
-      (expect (= (str B "a" B')
-                (markdown->inline "**a**")))))
-
-  (describe "Strike"
-    (it "~~strike~~ wraps the span"
-      (expect (= (str S "old" S')
-                (markdown->inline "~~old~~")))))
-
-  (describe "Inline code"
-    (it "`code` wraps the span"
-      (expect (= (str C "f(x)" C')
-                (markdown->inline "`f(x)`"))))
-    (it "Markdown inside `code` is NOT recursively parsed (literal)"
-      ;; Per our design: code spans are atomic, no nested **bold**.
-      (expect (= (str C "**not bold**" C')
-                (markdown->inline "`**not bold**`")))))
-
-  (describe "Mixed"
-    (it "Bold + italic + code on one line, all preserved"
-      (let [in  "**a** *b* `c`"
-            out (markdown->inline in)]
-        (expect (.contains out B))
-        (expect (.contains out I))
-        (expect (.contains out C))
-        ;; Display-width = original visible content = 'a b c' = 5
-        (expect (= 5 (p/display-width out)))))
-
-    (it "Unmatched opener falls through as literal"
-      (expect (= "**unclosed" (markdown->inline "**unclosed"))))
-
-    (it "Decorated text wraps to display columns, not Java chars"
-      ;; `**hello world**` -> 11 visible cols, but the sentinel-decorated
-      ;; string is 13 chars. wrap-text keyed on display-width must NOT
-      ;; insert a wrap at col 11.
-      (let [decorated (markdown->inline "**hello world**")]
-        (expect (= 11 (p/display-width decorated)))))))
 
 (defdescribe nested-spans-test
   (describe "Bold inside italic"
@@ -1014,220 +632,6 @@
         (expect (not (str/includes? painted p/INLINE_CODE_ON)))
         (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
-(defdescribe round-trip-pad-cell-test
-  (describe "pad-cell tolerates sentinel-bearing text"
-    (let [pad-cell @#'render/pad-cell]
-      (it "Bold cell pads to the same display-width as plain"
-        (let [plain  (pad-cell "hi" 5 :left)
-              styled (pad-cell (str B "hi" B') 5 :left)]
-          (expect (= (p/display-width plain)
-                    (p/display-width styled)))))
-      (it "Code cell pads to same width as plain"
-        (let [plain  (pad-cell "fn" 5 :left)
-              styled (pad-cell (str C "fn" C') 5 :left)]
-          (expect (= (p/display-width plain)
-                    (p/display-width styled))))))))
-
-;; ─── from table_render_test.clj ───
-
-;; render-table is private - reach in via the var to test it directly.
-(def ^:private render-table @#'render/render-table)
-
-(def ^:private dummy-markers
-  "render-table prepends a marker char per line so the bubble renderer
-   knows whether each line is a top border, header, separator, or row.
-   For width-math tests the marker identity is irrelevant - strip it
-   before measuring."
-  {:thead "H" :tsep "S" :trow "R"})
-
-(defn- strip-marker
-  "Drop the leading 1-char marker that render-table prepends to every
-   line. Returns the bare visual line."
-  [^String line]
-  (subs line 1))
-
-(defn- visual-widths
-  "All distinct display-widths in the rendered table (excluding the
-   marker prefix). A correct table is monomorphic - every line is the
-   same number of terminal columns wide."
-  [lines]
-  (->> lines (map strip-marker) (map p/display-width) distinct sort))
-
-(defdescribe pad-cell-width-test
-  ;; pad-cell is private; reach in.
-  (let [pad-cell @#'render/pad-cell]
-    (describe "pad-cell pads to display columns, not Java chars"
-      (it "ASCII cell padded to 5 cols"
-        (let [out (pad-cell "abc" 5 :left)]
-          ;; ` abc   ` -> 1 + 3 + 2 = 5 cols of body + 2 outer padding spaces = 7 cols
-          (expect (= 7 (p/display-width out)))))
-      (it "BMP single-col emoji '☕' padded to 5"
-        (let [out (pad-cell "☕" 5 :left)]
-          (expect (= 7 (p/display-width out)))))
-      (it "SMP emoji '📄' (2 chars / 2 cols) padded to 5 has the same visual width as ASCII"
-        (let [out (pad-cell "📄" 5 :left)]
-          (expect (= 7 (p/display-width out)))))
-      (it "VS-16 emoji '🏷️' (3 chars / 1 col after lanterna fork's VS-16 fix)"
-        ;; lanterna 3.1.5-vis.3's TextCharacter.isDoubleWidth returns
-        ;; false for VS-16 graphemes (matches what real terminals
-        ;; actually paint). display-width therefore reports 1, and
-        ;; pad-cell allocates one extra space than a wide-emoji cell
-        ;; would - cell winds up the SAME visual width as siblings.
-        (let [out (pad-cell "🏷️" 5 :left)]
-          (expect (= 7 (p/display-width out)))))
-      (it "Regional-indicator flag '🇵🇱' (4 chars / 2 cols) has no VS-16 - 7 cols"
-        (let [out (pad-cell "🇵🇱" 5 :left)]
-          (expect (= 7 (p/display-width out)))))
-      (it "Every emoji class - VS-16 included - pads to identical width when w=5"
-        (let [w (fn [s] (p/display-width (pad-cell s 5 :left)))]
-          (expect (= (w "abc") (w "☕") (w "📄") (w "🏷️") (w "🇵🇱"))))))
-
-    (describe "pad-cell truncation respects column count"
-      (it "Truncates ASCII over-wide content with ellipsis"
-        ;; "abcdefghij" -> 10 cols. w=5 -> " abcd... " = 1+5+1 = 7 cols.
-        (let [out (pad-cell "abcdefghij" 5 :left)]
-          (expect (= 7 (p/display-width out)))
-          (expect (str/includes? out "..."))))
-      (it "Never splits an emoji at the truncation boundary"
-        (let [out (pad-cell (str "x" "🏷️" "y") 2 :left)]
-          ;; w=2 -> " <body 2 cols> " = 4 cols
-          (expect (= 4 (p/display-width out))))))))
-
-(defdescribe render-table-width-test
-  (describe "User's exact pathological table renders with monomorphic row width"
-    ;; Reproduces the table from turn 71794c5e: 16 file rows, every
-    ;; row has [icon, name, size, type] and one row uses 🏷️ (VS-16).
-    ;; Pre-fix: that row was 1 col narrower than the others, every `┃`
-    ;; on it drifted, the whole grid broke. Post-fix: every line is
-    ;; the same width, the grid is monomorphic.
-    (let [headers ["Ikona" "Plik" "Rozmiar" "Typ"]
-          rows    [["📄" "AGENTS.md"    "31 KB"   "docs"]
-                   ["📝" "CHANGELOG.md" "1.3 KB"  "docs"]
-                   ["📋" "CRITIQUE.md"  "43 KB"   "docs"]
-                   ["🚧" "GATES.md"     "7 KB"    "docs"]
-                   ["📜" "LICENSE"      "11 KB"   "legal"]
-                   ["📖" "README.md"    "7.5 KB"  "docs"]
-                   ["🏷️" "VERSION"     "6 B"     "config"]   ;; <-- the row that broke
-                   ["📁" "bin/"         "985 B"   "bin"]
-                   ["🔧" "build.clj"    "13 KB"   "build"]
-                   ["📦" "deps.edn"     "5.8 KB"  "config"]
-                   ["📁" "docs/"        "8.6 MB"  "docs"]
-                   ["🔌" "extensions/"  "83 KB"   "code"]
-                   ["📁" "packages/"    "1.2 MB"  "code"]
-                   ["🧪" "test/"        "5.2 KB"  "tests"]
-                   ["✅" "verify.sh"    "13.5 KB" "scripts"]]
-          out     (render-table headers rows 200 dummy-markers)]
-
-      (it "renders the right number of lines (top + header + sep + N rows interspersed + bottom)"
-        ;; top + header + head-sep + (N rows + (N-1) row-seps) + bottom
-        (let [n (count rows)]
-          (expect (= (+ 4 n (dec n)) (count out)))))
-
-      (it "every line has the exact same display width - the grid is monomorphic"
-        ;; With lanterna 3.1.5-vis.3's VS-16 width fix, our model and
-        ;; the terminal agree on every emoji width. The grid is
-        ;; once again exactly one width across all rows.
-        (expect (= 1 (count (visual-widths out)))))
-
-      (it "each non-marker line ends with the right corner glyph for its row type"
-        (let [bare (mapv strip-marker out)]
-          (expect (str/ends-with? (first bare) "┐"))            ;; top - light corner
-          (expect (str/ends-with? (last bare) "┘"))             ;; bottom - light corner
-          (expect (every? #(str/ends-with? % "│")
-                    (remove #(re-find #"^[┌└├]" %) bare))))))) ;; data lines end with light vertical
-
-  (describe "Single-row table with VS-16 emoji in isolation"
-    (it "Header column-width is computed from display-width, not char count"
-      (let [out (render-table ["Ikona"] [["🏷️"] ["📄"]] 100 dummy-markers)]
-        (expect (= 1 (count (visual-widths out))))))
-
-    (it "Flag emoji (regional indicator pair) - 4 chars, 2 cols"
-      (let [out (render-table ["X"] [["🇵🇱"] ["abc"]] 100 dummy-markers)]
-        (expect (= 1 (count (visual-widths out))))))
-
-    (it "Mix of CJK (1 char / 2 cols) with ASCII"
-      (let [out (render-table ["A" "B"]
-                  [["日本語" "abc"]
-                   ["x" "y"]]
-                  100 dummy-markers)]
-        (expect (= 1 (count (visual-widths out))))))))
-
-(defdescribe render-table-cell-wrapping-test
-  ;; The user complaint: tables don't auto-wrap. Pre-fix render-table
-  ;; truncated long cells with `...` once the column was forced narrow,
-  ;; so a `vis ls` table on a 60-col bubble shrunk every filename to
-  ;; gibberish. Post-fix every overflowing cell word-wraps onto more
-  ;; physical lines inside the same row, and the grid stays
-  ;; monomorphic.
-  (describe "Cells that don't fit are word-wrapped onto multiple lines"
-    (it "narrow bubble: long cell content wraps instead of being truncated"
-      ;; 30-col viewport, 2 cols. Natural widths would need ~50 cols.
-      ;; Pre-fix: each col shrunk to ~6, content truncated with ....
-      ;; Post-fix: each col >= the longest token, content wrapped.
-      (let [out  (render-table
-                   ["Name" "Description"]
-                   [["alpha-module" "the very first module of the system"]
-                    ["beta"         "second module, smaller scope"]]
-                   30 dummy-markers)
-            bare (mapv strip-marker out)]
-        ;; Grid stays monomorphic.
-        (expect (= 1 (count (visual-widths out))))
-        ;; The whole table fits inside max-w.
-        (expect (every? #(<= (p/display-width %) 30) bare))
-        ;; No truncation ellipsis sneaked in - we wrapped, not cut.
-        (expect (not-any? #(str/includes? % "...") bare))
-        ;; Every original word is somewhere in the rendered output.
-        (let [joined (str/join " " bare)]
-          (doseq [w ["alpha-module" "first" "system" "smaller" "scope"]]
-            (expect (str/includes? joined w))))))
-
-    (it "wrapping a cell expands the row to multiple physical lines"
-      ;; One column, narrow viewport, content longer than the column.
-      ;; The single body row should emit > 1 inner line so the cell
-      ;; word-wraps vertically.
-      (let [out  (render-table
-                   ["Note"]
-                   [["this is a fairly long sentence that has to wrap"]]
-                   20 dummy-markers)
-            bare (mapv strip-marker out)
-            ;; Inner lines = everything that isn't a horizontal rule.
-            inner (filterv #(str/starts-with? % "│") bare)]
-        (expect (= 1 (count (visual-widths out))))
-        ;; Header (1) + at least 2 wrapped body lines.
-        (expect (>= (count inner) 3))
-        (expect (every? #(<= (p/display-width %) 20) bare))))
-
-    (it "multi-column row equalises height: every column gets the same number of physical lines"
-      ;; Cell-level wrapping must keep the grid aligned: if column A
-      ;; wraps to 3 lines, column B (1 line) is padded to 3 lines.
-      ;; Verified by counting `│` separators on every row line -
-      ;; identical separator counts ⇒ grid intact.
-      (let [out  (render-table
-                   ["A" "B" "C"]
-                   [["one two three four five six seven"
-                     "x"
-                     "y"]]
-                   30 dummy-markers)
-            bare (mapv strip-marker out)
-            inner (filterv #(str/starts-with? % "│") bare)]
-        (expect (= 1 (count (visual-widths out))))
-        ;; Every inner row has the same number of `│` (= n-cols + 1).
-        (expect (= 1 (count (distinct (map #(count (re-seq #"│" %))
-                                        inner)))))))
-
-    (it "naturally-fitting tables do NOT wrap (no behaviour change for short content)"
-      ;; Regression guard: the user's pathological table (max-w=200)
-      ;; fits naturally and must keep emitting exactly 1 physical
-      ;; line per logical row - no surprise expansion.
-      (let [out (render-table
-                  ["A" "B"]
-                  [["x" "y"]
-                   ["foo" "bar"]]
-                  100 dummy-markers)]
-        (expect (= 1 (count (visual-widths out))))
-        ;; top + header + sep + row + sep + row + bot = 7 lines.
-        (expect (= 7 (count out)))))))
-
 (defdescribe scrollbar-thumb-geometry-test
   ;; Pinning the painter/hit-test contract. Both the message-area
   ;; painter and the input-thread mouse handler must agree on which
@@ -1296,167 +700,6 @@
 ;; needs per-bubble state + click regions; this fix is the visual
 ;; baseline.
 ;; ─────────────────────────────────────────────────────────────────────────
-
-(defdescribe details-summary-rendering-test
-  (describe "`<details>` / `</details>` framing tags are dropped"
-    (it "`<details>` line emits no row"
-      ;; If the renderer ever leaks the framing tag back into the
-      ;; output we'll see a PLAIN `<details>` row reappear - this
-      ;; pins the drop.
-      (let [lines (md->lines "<details>\n<summary>L</summary>\n\nbody\n\n</details>" 60)]
-        (expect (not-any? #(str/includes? % "<details>") lines))
-        (expect (not-any? #(str/includes? % "</details>") lines))))
-
-    (it "`<details open>` (with attribute) is also dropped"
-      (let [lines (md->lines "<details open>\nbody\n</details>" 60)]
-        (expect (not-any? #(str/includes? % "<details") lines))
-        (expect (not-any? #(str/includes? % "</details>") lines))))
-
-    (it "`<details>` renders as a clickable disclosure collapsed by default"
-      (let [payload (render/format-answer-markdown-data
-                      "<details>\n<summary>Details / OK</summary>\n\nbody\n\n</details>"
-                      60
-                      {:conversation-id "cid" :detail-expansions {}})
-            lines   (:lines payload)
-            metas   (:line-meta payload)]
-        (expect (not-any? #(str/includes? % "<details") lines))
-        (expect (not-any? #(str/includes? % "</details>") lines))
-        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
-                         (str/includes? % "▸ Details / OK")) lines))
-        (expect (some #(= :toggle-details (:kind %)) metas))
-        (expect (not-any? #(str/includes? % "body") lines))))
-
-    (it "clicking the disclosure toggles between collapsed and expanded"
-      ;; Regression: the renderer used to default-expand `<details>`
-      ;; while the toggle handler stored only `true` (and treated
-      ;; missing-key as collapsed). The two layers disagreed on
-      ;; "absent" semantics, so a single click landed in a state
-      ;; (key=true, default-expanded=true) where the user saw zero
-      ;; visual change. The pin here forces both render-paths
-      ;; agree on collapsed-by-default.
-      (let [text "<details>
-<summary>Details / OK</summary>
-
-body
-
-</details>"
-            base-opts {:conversation-id "cid" :detail-expansions {}}
-            click-opts {:conversation-id "cid"
-                        :detail-expansions {["cid" "answer:details:d1"] true}}
-            collapsed (render/format-answer-markdown-data text 60 base-opts)
-            expanded  (render/format-answer-markdown-data text 60 click-opts)]
-        ;; Initial render: collapsed, body hidden, click region present.
-        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
-                         (str/includes? % "▸ Details / OK")) (:lines collapsed)))
-        (expect (not-any? #(str/includes? % "body") (:lines collapsed)))
-        (expect (some #(= :toggle-details (:kind %)) (:line-meta collapsed)))
-        ;; After one click the renderer flips to expanded and the body shows.
-        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
-                         (str/includes? % "▾ Details / OK")) (:lines expanded)))
-        (expect (some #(str/includes? % "body") (:lines expanded)))))
-
-    (it "answer disclosure node ids are scoped by conversation turn"
-      (let [text "<details>\n<summary>Details / OK</summary>\n\nbody\n\n</details>"
-            expanded (render/format-answer-markdown-data
-                       text
-                       60
-                       {:conversation-id "cid"
-                        :conversation-turn-id "11111111-1111-1111-1111-111111111111"
-                        :detail-expansions {["cid" "answer:t11111111:details:d1"] true}})
-            collapsed (render/format-answer-markdown-data
-                        text
-                        60
-                        {:conversation-id "cid"
-                         :conversation-turn-id "22222222-2222-2222-2222-222222222222"
-                         :detail-expansions {["cid" "answer:t11111111:details:d1"] true}})]
-        (expect (some #(str/includes? % "body") (:lines expanded)))
-        (expect (not-any? #(str/includes? % "body") (:lines collapsed)))))
-
-    (it "adds one visible top margin before disclosure summaries"
-      (let [lines (md->lines "Intro\n<details>\n<summary>L</summary>\n\nbody\n\n</details>" 60)
-            summary-idx (first (keep-indexed (fn [idx line]
-                                               (when (= p/MARKER_MD_SUMMARY (marker-of line))
-                                                 idx))
-                                 lines))]
-        (expect (some? summary-idx))
-        (expect (= "" (nth lines (dec summary-idx))))))
-
-    (it "body between framing tags renders as normal markdown"
-      ;; The whole point of stripping the wrappers is so the inner
-      ;; markdown still flows through the existing pipeline. A bullet
-      ;; inside <details> must still come out with the bullet marker.
-      (let [lines (md->lines "<details>\n<summary>L</summary>\n\n- item\n\n</details>" 60)
-            bullet-line (first (filter #(= p/MARKER_MD_BULLET (marker-of %)) lines))]
-        (expect (some? bullet-line))
-        (expect (str/includes? bullet-line "item")))))
-
-  (describe "`<summary>label</summary>` renders on its own SUMMARY band"
-    ;; The summary line carries `MARKER_MD_SUMMARY` (distinct from
-    ;; `MARKER_MD_BOLD`) so the painter can paint it with a tinted
-    ;; lavender band - the visual cue that the section is a
-    ;; disclosure region. Bolt-on `▾ ` glyph stays so the user reads
-    ;; the band as an expanded-disclosure header even before they
-    ;; notice the colour.
-    (it "emits a SUMMARY-marked row prefixed with `▾ `"
-      (let [[line] (filter #(= p/MARKER_MD_SUMMARY (marker-of %))
-                     (md->lines "<summary>Click to expand</summary>" 60))]
-        (expect (some? line))
-        (expect (str/starts-with? (body-of line) "▾ "))
-        (expect (str/includes? line "Click to expand"))))
-
-    (it "summary marker is distinct from BOLD (own painter zone)"
-      ;; Pinning that a regression that mapped `:summary` back to
-      ;; `:bold` (the painter would lose the lavender band) shows up
-      ;; as a test failure here, not as a silent visual regression.
-      (let [lines (md->lines "<summary>Logs</summary>" 60)]
-        (expect (some #(= p/MARKER_MD_SUMMARY (marker-of %)) lines))
-        (expect (not-any? #(= p/MARKER_MD_BOLD (marker-of %)) lines))))
-
-    (it "thinking-mode summary uses TH_MD_SUMMARY marker"
-      ;; <details> can land inside an iteration's `:thinking` block
-      ;; just like in the final answer; the dim variant of the band
-      ;; keeps the reasoning zone cohesive.
-      (let [[line] (filter #(= p/MARKER_TH_MD_SUMMARY (marker-of %))
-                     (md->lines "<summary>Plan</summary>" 60 :thinking))]
-        (expect (some? line))
-        (expect (str/starts-with? (body-of line) "▾ "))))
-
-    (it "inner inline markdown is honoured (`**bold** inside summary`)"
-      ;; `<summary>**Logs**</summary>` should keep the inner bold
-      ;; styling, same as a heading body would. The renderer routes
-      ;; the inner content through `markdown->inline` so the bold
-      ;; sentinels show up alongside the visible text.
-      (let [[line] (filter #(= p/MARKER_MD_SUMMARY (marker-of %))
-                     (md->lines "<summary>**Logs**</summary>" 60))]
-        (expect (str/includes? line p/INLINE_BOLD_ON))
-        (expect (str/includes? line "Logs"))
-        (expect (str/includes? line p/INLINE_BOLD_OFF)))))
-
-  (describe "full `(md-details (md-summary ...) body)` shape round-trips"
-    ;; Mirrors the actual emit shape `vis-foundation/markdown.clj`
-    ;; produces. Pre-fix the user saw three rows of raw HTML; post-fix
-    ;; only the disclosure label + body remain.
-    (it "summary label carries SUMMARY marker, body lines are PLAIN, framing tags absent"
-      (let [src    (str "<details>\n<summary>Logs</summary>\n\n"
-                     "Hidden text.\n\n</details>")
-            lines  (md->lines src 60)
-            text   (str/join "\n" lines)]
-        (expect (not (str/includes? text "<details")))
-        (expect (not (str/includes? text "<summary")))
-        (expect (some #(and (= p/MARKER_MD_SUMMARY (marker-of %))
-                         (str/includes? % "Logs")) lines))
-        ;; `:answer` mode uses an empty-string marker for PLAIN lines
-        ;; (see `md-marker-sets`). `marker-of` returns the FIRST char
-        ;; of the row, so for plain lines it's the first content char
-        ;; (`H`), not a known styling marker. We assert via
-        ;; "present and not styled by any known marker".
-        (let [styled-markers #{p/MARKER_MD_H1 p/MARKER_MD_H2 p/MARKER_MD_H3
-                               p/MARKER_MD_BOLD p/MARKER_MD_CODE
-                               p/MARKER_MD_BULLET p/MARKER_MD_QUOTE
-                               p/MARKER_MD_HR  p/MARKER_MD_SUMMARY}]
-          (expect (some #(and (str/includes? % "Hidden text.")
-                           (not (contains? styled-markers (marker-of %))))
-                    lines)))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Link-chrome strip - strip inline emphasis from anchor text
@@ -1558,16 +801,6 @@ body
 ;; the specific shapes the user reported.
 ;; ─────────────────────────────────────────────────────────────────────────
 
-(def ^:private coalesce-loose-list-items @#'render/coalesce-loose-list-items)
-
-(defn- bullet-bodies
-  "Return the visible body of every bullet line in a rendered output.
-   Matches `:answer` mode where the marker is `MARKER_MD_BULLET`."
-  [text bubble-w]
-  (->> (md->lines text bubble-w :answer)
-    (filter #(= p/MARKER_MD_BULLET (marker-of %)))
-    (mapv body-of)))
-
 (defn- strip-sentinels
   "Drop inline-style sentinels (PUA U+E110..U+E2FF) so equality
    assertions compare the visible text only."
@@ -1575,304 +808,6 @@ body
   (->> s
     (remove #(<= 0xE110 (int %) 0xE2FF))
     (apply str)))
-
-(defdescribe final-summary-section-normalization-test
-  (it "renders verification evidence under the Verification bullet, including its code block"
-    (let [src (str "## Summary\n\n"
-                "- **Verification**\n"
-                "- All cases verified via nREPL:```clojure\n"
-                "{:bug-fixed true}\n"
-                "```\n"
-                "- **verify.sh --quick**\n"
-                "- Format check PASS, lint PASS - all 2 steps passed.")
-          rows (->> (md->lines src 100 :answer)
-                 (mapv (fn [line]
-                         {:marker (marker-of line)
-                          :body   (strip-sentinels (body-of line))})))]
-      (expect (some #(= "  • Verification" (:body %)) rows))
-      (expect (some #(= "    ◦ All cases verified via nREPL:" (:body %)) rows))
-      (expect (some #(and (= p/MARKER_MD_CODE (:marker %))
-                       (str/includes? (:body %) "      ")
-                       (str/includes? (:body %) ":bug-fixed"))
-                rows))
-      (expect (some #(= "  • verify.sh --quick" (:body %)) rows))
-      (expect (some #(str/starts-with? (:body %) "    ◦ Format check PASS") rows)))))
-
-(defdescribe loose-bullet-coalesce-test
-  (describe "blank-line-fragmented bullets render as a single bullet line"
-    (it "joins one bullet's three paragraphs into one bullet body"
-      (let [src (str "- `dialogs.clj`\n"
-                  "\n"
-                  " - removed `:system-prompt` palette command entry")
-            bullets (bullet-bodies src 80)]
-        ;; Exactly ONE bullet, not three top-level paragraphs.
-        (expect (= 1 (count bullets)))
-        (let [body (strip-sentinels (first bullets))]
-          ;; The whole sentence reads as one line (modulo wrapping).
-          (expect (str/includes? body "dialogs.clj"))
-          (expect (str/includes? body "- removed"))
-          (expect (str/includes? body ":system-prompt"))
-          (expect (str/includes? body "palette command entry")))))
-
-    (do
-      (it "two consecutive bullets each get a single-line body"
-        (let [src (str "- `dialogs.clj`\n"
-                    "\n"
-                    " - removed `:system-prompt` palette command entry\n"
-                    "- `screen.clj`\n"
-                    "\n"
-                    " - removed `:system-prompt` handler (viewer dialog)")
-              bullets (bullet-bodies src 80)]
-          (expect (= 2 (count bullets)))
-          (expect (str/includes? (strip-sentinels (nth bullets 0)) "dialogs.clj"))
-          (expect (str/includes? (strip-sentinels (nth bullets 0)) "palette command entry"))
-          (expect (str/includes? (strip-sentinels (nth bullets 1)) "screen.clj"))
-          (expect (str/includes? (strip-sentinels (nth bullets 1)) "viewer dialog"))))
-
-      (it "keeps whitespace-only md-join separators inside one bullet item"
-        (let [src (str "- [provider.clj:756](provider.clj#L756)\n"
-                    "  \n"
-                    "   \n"
-                    "  \n"
-                    "  `safe-provider-status`\n"
-                    "  \n"
-                    "   calls \n"
-                    "  \n"
-                    "  `:provider/status-fn`\n"
-                    "  \n"
-                    "   or \n"
-                    "  \n"
-                    "  `:provider/detect-fn`\n"
-                    "  \n"
-                    "  .")
-              bodies (mapv strip-sentinels (bullet-bodies src 160))
-              flat   (str/join " " bodies)]
-          (expect (= 1 (count (filter #(str/starts-with? % "  • ") bodies))))
-          (expect (str/includes? flat "provider.clj:756"))
-          (expect (str/includes? flat "safe-provider-status"))
-          (expect (str/includes? flat "calls"))
-          (expect (str/includes? flat ":provider/status-fn"))
-          (expect (str/includes? flat "or"))
-          (expect (str/includes? flat ":provider/detect-fn")))))
-
-    (it "regression for the user's exact report - six fragmented bullets coalesce to six"
-      (let [src (str "## Pruned: System Prompt Copy / Inspector\n"
-                  "\n"
-                  "Removed the  `Inspect Latest System Prompt`  feature from TUI + core:\n"
-                  "\n"
-                  "- `dialogs.clj`\n"
-                  "\n"
-                  " - removed \n"
-                  "\n"
-                  "`:system-prompt`\n"
-                  "\n"
-                  " palette command entry\n"
-                  "- `screen.clj`\n"
-                  "\n"
-                  " - removed \n"
-                  "\n"
-                  "`:system-prompt`\n"
-                  "\n"
-                  " handler (viewer dialog)\n"
-                  "- `core.clj`\n"
-                  "\n"
-                  " - removed \n"
-                  "\n"
-                  "`effective-system-prompt`\n"
-                  "\n"
-                  " and \n"
-                  "\n"
-                  "`effective-system-prompt-for-turn`\n"
-                  "\n"
-                  " exports + docstring mention\n"
-                  "- `loop.clj`\n"
-                  "\n"
-                  " - removed both function definitions (\n"
-                  "\n"
-                  "`effective-system-prompt`\n"
-                  "\n"
-                  ", \n"
-                  "\n"
-                  "`effective-system-prompt-for-turn`\n"
-                  "\n"
-                  ")\n"
-                  "- `CLAUDE.md`\n"
-                  "\n"
-                  " - removed two references\n"
-                  "- `docs/src/extensions/overview.md`\n"
-                  "\n"
-                  " - updated paragraph about inspector\n"
-                  "\n"
-                  "**Loop clean: ** true\n"
-                  "\n"
-                  "**No remaining source references.**")
-            lines  (md->lines src 80 :answer)
-            bullets (bullet-bodies src 80)]
-        ;; SIX bullets in, SIX bullet items out. Each one carries the
-        ;; signature of its first source code-span so we can pin the
-        ;; mapping bullet-by-bullet.
-        (let [first-bodies (->> bullets
-                             (map strip-sentinels)
-                             ;; Some items wrap onto multiple lines;
-                             ;; pick only those with the ` • ` prefix
-                             ;; that opens a fresh item, not the
-                             ;; continuation indent.
-                             (filter #(str/starts-with? % "  • "))
-                             vec)]
-          (expect (= 6 (count first-bodies)))
-          (expect (str/includes? (nth first-bodies 0) "dialogs.clj"))
-          (expect (str/includes? (nth first-bodies 1) "screen.clj"))
-          (expect (str/includes? (nth first-bodies 2) "core.clj"))
-          (expect (str/includes? (nth first-bodies 3) "loop.clj"))
-          (expect (str/includes? (nth first-bodies 4) "CLAUDE.md"))
-          (expect (str/includes? (nth first-bodies 5) "overview.md")))
-        ;; The closing summary lines must NOT be folded into the
-        ;; last bullet. The two paragraphs render with different
-        ;; markers by design:
-        ;;   - `**Loop clean: ** true` is a plain-text paragraph
-        ;;     with inline bold sentinels (line carries trailing
-        ;;     ` true` after the closing `**`, so it doesn't match
-        ;;     the bold-only-line branch).
-        ;;   - `**No remaining source references.**` IS pure
-        ;;     `**...**` and renders as a bold-only line
-        ;;     (`MARKER_MD_BOLD`).
-        ;; Either way, both must appear as their OWN lines, not
-        ;; concatenated into the last bullet's body.
-        (let [stripped (mapv (comp strip-sentinels body-of) lines)]
-          (expect (some #(str/includes? % "Loop clean")          stripped))
-          (expect (some #(str/includes? % "No remaining source") stripped))
-          ;; Bold-only marker on the second one specifically.
-          (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
-                           (str/includes? % "No remaining source"))
-                    lines))))))
-
-  (describe "structural lines close an open list scope"
-    ;; New semantics (April 2026): a flush-left, letter-starting
-    ;; line after a single blank line ALSO closes the list scope -
-    ;; it reads as a fresh top-level paragraph, not a fragmented
-    ;; bullet body. Mirrors CommonMark loose-list-end behaviour and
-    ;; stops AGENTS.md-style `Modes:` / `Logs: ...` summary paragraphs
-    ;; from being silently folded into the last bullet. The two
-    ;; tests below were originally written under the older `fold
-    ;; everything until you hit a heading/fence` policy; updated
-    ;; here to match the new behaviour. The `eeaf9651` md-join
-    ;; regression test below STILL passes because md-join chunks
-    ;; never start with an alphanumeric character (always a space,
-    ;; backtick, `*`, or punctuation).
-    (it "heading after a fragmented bullet doesn't get sucked into it"
-      (let [src (str "- foo\n"
-                  "\n"
-                  "continuation\n"
-                  "\n"
-                  "## A new heading")
-            lines (md->lines src 80 :answer)
-            bullets (bullet-bodies src 80)]
-        (expect (= 1 (count bullets)))
-        ;; Bullet body is `foo` alone - `continuation` is a fresh
-        ;; flush-left paragraph and no longer folds in.
-        (expect (str/includes? (strip-sentinels (first bullets)) "foo"))
-        (expect (not (str/includes? (strip-sentinels (first bullets)) "continuation")))
-        ;; `continuation` survives as its own plain-text line
-        ;; (NOT under the bullet marker).
-        (expect (some #(and (not= p/MARKER_MD_BULLET (marker-of %))
-                         (str/includes? (strip-sentinels %) "continuation"))
-                  lines))
-        (expect (some #(and (= p/MARKER_MD_H2 (marker-of %))
-                         (str/includes? (body-of %) "A new heading"))
-                  lines))))
-
-    (it "code fence after a fragmented bullet stays a fence"
-      (let [src (str "- foo\n"
-                  "\n"
-                  "still bullet\n"
-                  "\n"
-                  "```clj\n"
-                  "(+ 1 2)\n"
-                  "```\n")
-            lines (md->lines src 80 :answer)
-            bullets (bullet-bodies src 80)]
-        (expect (= 1 (count bullets)))
-        ;; Bullet = `foo` alone. `still bullet` is a fresh paragraph.
-        (expect (str/includes? (strip-sentinels (first bullets)) "foo"))
-        (expect (not (str/includes? (strip-sentinels (first bullets)) "still bullet")))
-        (expect (some #(and (not= p/MARKER_MD_BULLET (marker-of %))
-                         (str/includes? (strip-sentinels %) "still bullet"))
-                  lines))
-        (expect (some #(and (= p/MARKER_MD_CODE (marker-of %))
-                         (str/includes? (strip-ansi (body-of %)) "(+ 1 2)"))
-                  lines))))
-
-    (it "bold-only paragraph after a bullet does not get coalesced"
-      ;; This is the regression that broke `**Loop clean:**` etc.
-      (let [src (str "- foo\n"
-                  "\n"
-                  "**Status:** done.")
-            lines (md->lines src 80 :answer)
-            bullets (bullet-bodies src 80)]
-        (expect (= 1 (count bullets)))
-        (expect (str/includes? (strip-sentinels (first bullets)) "foo"))
-        (expect (not (str/includes? (strip-sentinels (first bullets)) "Status")))
-        ;; Either MARKER_MD_BOLD (when the line is purely bold) or a
-        ;; plain line carrying inline-bold sentinels - both prove it
-        ;; is no longer part of the bullet.
-        (expect (some #(str/includes? (strip-sentinels %) "Status")
-                  lines)))))
-
-  (describe "two consecutive blank lines close the list (CommonMark loose-list end)"
-    (it "second paragraph after double-blank doesn't fold into bullet"
-      ;; Under the post-April-2026 fresh-paragraph rule, `still item`
-      ;; ALREADY closes the list on the FIRST blank because it's a
-      ;; flush-left, letter-starting line. So bullet = `foo` and
-      ;; `still item` + `fresh paragraph` are both their own
-      ;; top-level paragraphs. The double-blank rule is now a
-      ;; redundant safety net; the fresh-paragraph rule fires first.
-      (let [src (str "- foo\n"
-                  "\n"
-                  "still item\n"
-                  "\n"
-                  "\n"
-                  "fresh paragraph")
-            bullets (bullet-bodies src 80)
-            lines   (md->lines src 80 :answer)]
-        (expect (= 1 (count bullets)))
-        (expect (str/includes? (strip-sentinels (first bullets)) "foo"))
-        (expect (not (str/includes? (strip-sentinels (first bullets)) "still item")))
-        (expect (not (str/includes? (strip-sentinels (first bullets)) "fresh paragraph")))
-        ;; Both follow-up paragraphs survive as their own lines.
-        (expect (some #(str/includes? (strip-sentinels %) "still item") lines))
-        (expect (some #(str/includes? (strip-sentinels %) "fresh paragraph") lines)))))
-
-  (describe "punctuation reflow on coalesce"
-    (it "stray spaces around () , and . are tightened back to prose form"
-      (let [src (str "- foo (\n"
-                  "\n"
-                  "bar\n"
-                  "\n"
-                  ", baz\n"
-                  "\n"
-                  ")\n")
-            bullets (bullet-bodies src 80)]
-        (expect (= 1 (count bullets)))
-        ;; "( bar" -> "(bar", "bar ," -> "bar,", "baz )" -> "baz)"
-        (expect (str/includes? (strip-sentinels (first bullets)) "foo (bar, baz)")))))
-
-  (describe "well-formed input still passes through cleanly"
-    (it "single-line bullets are not altered by the pre-pass"
-      ;; Pure pass-through - the coalesce shouldn't ever change the
-      ;; shape of a bullet that's already on one line.
-      (let [src "- alpha\n- beta\n- gamma"
-            bullets (bullet-bodies src 80)]
-        (expect (= 3 (count bullets)))
-        (expect (str/includes? (strip-sentinels (nth bullets 0)) "alpha"))
-        (expect (str/includes? (strip-sentinels (nth bullets 1)) "beta"))
-        (expect (str/includes? (strip-sentinels (nth bullets 2)) "gamma"))))
-
-    (it "lines outside any list are not touched"
-      ;; `coalesce-loose-list-items` runs on the raw line vec; assert
-      ;; non-list input round-trips unchanged.
-      (let [in  ["plain prose" "" "more prose" "" "## heading"]
-            out (coalesce-loose-list-items in)]
-        (expect (= in out))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; e4167d48: bullet continuation must NOT strip whitespace inside
@@ -1895,54 +830,6 @@ body
 ;; Fix: tokenise on backticks first, only tighten prose tokens.
 ;; Mirror of `markdown/normalize-inline-spacing`'s tokenisation.
 ;; ─────────────────────────────────────────────────────────────────────────
-
-(defdescribe coalesce-preserves-code-span-whitespace-test
-  (it "keeps `{:k :v :w x}` whitespace intact when an inline-code span lands on its own paragraph inside a bullet (e4167d48 repro)"
-    (let [src    (str "1. Zwracać\n"
-                   "   \n"
-                   "   `{:rendering-kind :vis/silent :result title}`\n"
-                   "   \n"
-                   "    zamiast gołego stringa.")
-          merged (first (coalesce-loose-list-items (str/split-lines src)))]
-      (expect (str/includes? merged "Zwracać"))
-      (expect (str/includes? merged "zamiast gołego stringa."))
-      ;; Critical: spaces between EDN keywords inside the inline-code
-      ;; span must survive the punctuation tightening.
-      (expect (str/includes? merged ":rendering-kind :vis/silent"))
-      (expect (str/includes? merged ":vis/silent :result"))
-      (expect (not (str/includes? merged ":rendering-kind:vis/silent")))
-      (expect (not (str/includes? merged ":vis/silent:result")))))
-
-  (it "still tightens punctuation OUTSIDE inline-code spans (regression of original behaviour)"
-    ;; The reflow exists for a real reason: `( foo , bar )` shaped
-    ;; output from `v/join` should still collapse to `(foo, bar)`.
-    ;; Pin both directions so a future refactor can't widen the
-    ;; carve-out by accident.
-    (let [src    (str "1. start\n"
-                   "   \n"
-                   "   ( foo\n"
-                   "   \n"
-                   "   , bar\n"
-                   "   \n"
-                   "   ) end")
-          merged (first (coalesce-loose-list-items (str/split-lines src)))]
-      (expect (str/includes? merged "(foo"))
-      (expect (str/includes? merged "foo, bar"))
-      (expect (str/includes? merged "bar) end"))))
-
-  (it "end-to-end: rendered bullet keeps `{:k :v}` spaces intact in the TUI output"
-    (let [src     (str "1. Zwracać\n"
-                    "   \n"
-                    "   `{:rendering-kind :vis/silent :result title}`\n"
-                    "   \n"
-                    "    zamiast gołego stringa.")
-          bodies  (->> (md->lines src 200 :answer)
-                    (filter #(= p/MARKER_MD_BULLET (marker-of %)))
-                    (mapv #(strip-sentinels (body-of %)))
-                    (str/join " "))]
-      (expect (str/includes? bodies ":rendering-kind :vis/silent"))
-      (expect (str/includes? bodies ":vis/silent :result"))
-      (expect (not (str/includes? bodies ":rendering-kind:vis/silent"))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; md-join inline-bold inside a bullet - the `Let / me / dig / deeper`
@@ -1986,142 +873,6 @@ body
 ;; bubble renders as ONE flowing bullet with every code-span / bold
 ;; span inline.
 ;; ─────────────────────────────────────────────────────────────────────────
-
-(defdescribe md-join-bullet-inline-regression-test
-  (describe "md-join-built bullets render as flowing prose, not a paragraph ladder"
-    (it "reconstruct: turn-1 bullet from conversation eeaf9651-..."
-      (let [;; ── exact md-join shape used by the live answer ─────────────
-            first-bullet
-            (md-join (md-bold "Turn 1 - \"system prompt copy\" prune:")
-              " 38 failures across iterations 2-7. Iter 2+4: wrong file paths ("
-              (md-code "src/com/blockether/vis/tui")
-              ", "
-              (md-code "db.clj")
-              " not found). Iter 7: catastrophic "
-              (md-bold "reader boundary split")
-              " - a multi-line form got fragmented into bare symbols ("
-              (md-code "Let")
-              ", "
-              (md-code "me")
-              ", "
-              (md-code "dig")
-              ", "
-              (md-code "deeper")
-              ", "
-              (md-code "what")
-              ", etc.) - 28 unresolved-symbol errors in a single iteration. The agent was in a loop emitting prose as code tokens.")
-
-            second-bullet
-            (md-join (md-bold "Turn 3+ - footer % left removal:")
-              " 2 failed "
-              (md-code "z/patch")
-              " calls (f3, f4) due to "
-              (md-code "\"Unmatched delimiter: ]\"")
-              " at line 148 - the file was left in a broken state by a prior "
-              (md-code "v/edit")
-              " that created a duplicate binding line. Had to be recovered with targeted "
-              (md-code "v/edit")
-              " strikes in a follow-up turn.")
-
-            doc (md-join (md-h 3 "Root Cause Analysis")
-                  (md-ul [first-bullet second-bullet]))
-            bullets (bullet-bodies doc 80)]
-
-        ;; Two source bullets ⇒ exactly two rendered bullet items
-        ;; (the ` • ` line; continuations carry the indent prefix).
-        ;; `bvec` strips PUA sentinels; `flatten-bullet` reflows wrap
-        ;; whitespace so assertions read against single-spaced prose
-        ;; instead of the raw `    `-indented continuation rows.
-        (let [bvec        (mapv strip-sentinels bullets)
-              flatten-bullet
-              (fn [lines]
-                (-> (str/join " " lines)
-                  (str/replace #"\s+" " ")))
-              openers (vec (keep-indexed
-                             (fn [i s] (when (str/starts-with? s "  • ") i))
-                             bvec))]
-          (expect (= 2 (count openers)))
-
-          ;; Bullet 1: bold header inline + every code span inline.
-          ;; The defining symptom of the bug was each `Let` / `me` /
-          ;; `dig` / `deeper` / `what` landing on its own paragraph;
-          ;; they must now appear in ONE bullet body. Re-join every
-          ;; line of bullet 1 (opener + wrapped continuations) so the
-          ;; assertions ride above wrap-column boundaries.
-          (let [[s1 s2] openers
-                b1 (flatten-bullet (subvec bvec s1 (or s2 (count bvec))))]
-            (expect (str/includes? b1 "Turn 1 - \"system prompt copy\" prune:"))
-            (expect (str/includes? b1 "38 failures"))
-            (expect (str/includes? b1 "wrong file paths (src/com/blockether/vis/tui, db.clj"))
-            (expect (str/includes? b1 "reader boundary split"))
-            ;; The headline regression: the five fragmented words must
-            ;; all be present inside the first bullet, comma-separated,
-            ;; in the original prose order.
-            (expect (str/includes? b1 "(Let, me, dig, deeper, what, etc.)"))
-            (expect (str/includes? b1 "28 unresolved-symbol errors")))
-
-          ;; Bullet 2: code span containing `: ]` keeps the visible
-          ;; whitespace intact (the punctuation reflow must NOT
-          ;; tighten ` ]` inside the quoted error string).
-          (let [[_ s2] openers
-                b2 (flatten-bullet (subvec bvec s2))]
-            (expect (str/includes? b2 "Turn 3+ - footer % left removal:"))
-            (expect (str/includes? b2 "z/patch"))
-            (expect (str/includes? b2 "\"Unmatched delimiter: ]\""))
-            (expect (str/includes? b2 "v/edit"))))
-
-        ;; Negative assertion against the regression: NONE of the
-        ;; fragment words should show up as a flush-left plain
-        ;; paragraph (i.e. carry the empty `:plain` marker AND
-        ;; consist of just the word). Before the fix, the renderer
-        ;; emitted ~five rows like `MARKER_PLAIN + "Let"` etc.
-        (let [lines (md->lines doc 80 :answer)
-              one-word-paras (->> lines
-                               (map strip-sentinels)
-                               ;; non-bullet, short line containing
-                               ;; exactly one of the fragment words.
-                               (filter (fn [s]
-                                         (and (not (str/starts-with? s "  •"))
-                                           (not (str/starts-with? s "    "))
-                                           (#{"Let" "me" "dig" "deeper" "what"}
-                                            (str/trim s))))))]
-          (expect (zero? (count one-word-paras))))))
-
-    (it "top-level **Label:** value paragraphs still close the list"
-      ;; Counter-test for the relaxed rule. Even though `**Loop clean:**`
-      ;; starts with `**`, it has trailing content (` true`) - that's
-      ;; a real top-level paragraph, not an md-join artefact.
-      (let [src (str "- last bullet - paragraph about inspector\n"
-                  "\n"
-                  "**Loop clean:** true\n"
-                  "\n"
-                  "**No remaining source references.**")
-            lines (md->lines src 80 :answer)
-            bullets (bullet-bodies src 80)]
-        ;; ONE bullet (the original).
-        (expect (= 1 (count bullets)))
-        (let [b (strip-sentinels (first bullets))]
-          (expect (str/includes? b "last bullet"))
-          ;; `**Loop clean:**` must NOT have been folded into the
-          ;; bullet's body.
-          (expect (not (str/includes? b "Loop clean"))))
-        ;; The two bold paragraphs survive as their own lines (not
-        ;; folded into the bullet). Marker shape differs between
-        ;; them by design:
-        ;;   - `**Loop clean:** true` is a plain-text paragraph with
-        ;;     inline bold sentinels (because the line carries
-        ;;     trailing ` true` after the closing `**`, so it isn't
-        ;;     a pure bold-only line).
-        ;;   - `**No remaining source references.**` IS a pure
-        ;;     bold-only line, so it carries `MARKER_MD_BOLD`.
-        ;; The shared invariant: each paragraph appears as its own
-        ;; line (one of `lines`), separate from the bullet body
-        ;; above.
-        (expect (some #(str/includes? (strip-sentinels %) "Loop clean: true")
-                  lines))
-        (expect (some #(and (= p/MARKER_MD_BOLD (marker-of %))
-                         (str/includes? % "No remaining source references"))
-                  lines))))))
 
 (defn- dummy-text-graphics
   "Lenient TextGraphics stub for layout tests that care about click
@@ -2753,30 +1504,6 @@ body
 ;; paint the rendered ASCII rows on the code-block band.
 ;; ─────────────────────────────────────────────────────────────────────────
 
-(defdescribe mermaid-fenced-rendering-test
-  (it "renders mermaid fences via the registered extension into MD_CODE rows"
-    (render/invalidate-cache!)
-    (let [;; Lazily ensure the extension is loaded - its require side-effect
-          ;; registers the fenced renderer in the global extension registry.
-          _ (require 'com.blockether.vis.ext.mermaid.core)
-          source "```mermaid\nflowchart LR\n  A[Start] --> B[End]\n```"
-          lines (md->lines source 80)
-          code-rows (filter #(= p/MARKER_MD_CODE (marker-of %)) lines)
-          bodies (map (comp strip-ansi body-of) code-rows)]
-      (expect (some #(str/includes? % "Mermaid (flowchart)") bodies))
-      (expect (some #(str/includes? % "Start") bodies))
-      (expect (some #(str/includes? % "End") bodies))))
-
-  (it "falls back to the plain code-block renderer when source is empty"
-    ;; Robustness: a malformed mermaid block (empty body) should not
-    ;; crash and should still paint as a CODE-marked region so the
-    ;; user sees "there was a fence here".
-    (render/invalidate-cache!)
-    (let [_ (require 'com.blockether.vis.ext.mermaid.core)
-          source "```mermaid\n```"
-          lines (md->lines source 80)]
-      (expect (some #(= p/MARKER_MD_CODE (marker-of %)) lines)))))
-
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Details with Markdown body - markdown inside <details> renders fully.
 ;; Regression test for the user-facing `<details>` block in answers:
@@ -2836,46 +1563,6 @@ body
 ;; surface contract from the TUI side too: presentation maps must round-
 ;; trip into Markdown that the TUI can then tokenise as usual.
 ;; ─────────────────────────────────────────────────────────────────────────
-
-(defdescribe presentation-contract-tui-roundtrip-test
-  (it "presentation/tool-call rendered Markdown tokenises into TUI rows"
-    (require 'com.blockether.vis.internal.presentation)
-    (let [present (resolve 'com.blockether.vis.internal.presentation/tool-call->md)
-          md      (present {:op :v/bash
-                            :args {:cmd "ls"}
-                            :result "# Output\n\n- file1\n- file2"
-                            :status :done
-                            :duration-ms 5})
-          lines   (md->lines md 80 :answer)]
-      (expect (some #(= p/MARKER_MD_SUMMARY (marker-of %)) lines)
-        "`<summary>` rows from the presentation map become SUMMARY-marker rows")
-      ;; The `**TOOL**` inline-bold survives tokenisation as bold sentinels.
-      (expect (str/includes? (str/join "\n" lines) p/INLINE_BOLD_ON))))
-
-  (it "presentation/provider-error rendered Markdown carries advice as plain prose"
-    (require 'com.blockether.vis.internal.presentation)
-    (let [present (resolve 'com.blockether.vis.internal.presentation/provider-error->md)
-          md      (present {:message "Schema rejected"
-                            :type :svar.spec/schema-rejected
-                            :advice "Switch model and retry."
-                            :raw-preview "...raw..."})
-          lines   (md->lines md 80 :answer)
-          text    (str/join "\n" lines)]
-      (expect (str/includes? text "PROVIDER ERROR"))
-      (expect (str/includes? text "Switch model and retry."))
-      (expect (some #(= p/MARKER_MD_SUMMARY (marker-of %)) lines)
-        "raw preview embeds as a <summary> row")))
-
-  (it "presentation/system-call rendered Markdown surfaces SYSTEM heading + body"
-    (require 'com.blockether.vis.internal.presentation)
-    (let [present (resolve 'com.blockether.vis.internal.presentation/system-call->md)
-          md      (present {:op :vis/system
-                            :body "Need user input."
-                            :role :nudge})
-          text    (str/join "\n" (md->lines md 80 :answer))]
-      (expect (str/includes? text "SYSTEM"))
-      (expect (str/includes? text "vis/system"))
-      (expect (str/includes? text "Need user input.")))))
 
 (defdescribe answer-separator-test
   (it "does not draw a bottom border between reasoning and final answer"

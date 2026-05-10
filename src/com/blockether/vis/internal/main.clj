@@ -995,6 +995,60 @@
         (stdout! "  Fork:        vis conversations --fork <ID> [--title TITLE]"))))
   (shutdown-agents))
 
+(def ^:private search-field-labels
+  {"answer_text"   "answer"
+   "thinking_text" "thinking"
+   "comments_text" "comments"
+   "user_request"  "prompt"
+   "expr"          "expr"})
+
+(defn- cli-conversations-search!
+  "`vis conversations search <query>` handler. Runs an FTS5 search
+   across user prompts, assistant answers, model thinking, per-block
+   comments, and persisted expression source. Hits print one per
+   line:
+
+     <conversation-id-prefix>  <field>  <snippet>
+
+   Snippets carry `[match]` markers around hit terms so the user can
+   see context. `--limit N` caps the result count (default 25)."
+  [parsed _residual]
+  (config/init-cli!)
+  (let [query (or (get parsed "query") "")
+        limit (or (some-> (get parsed "limit") str/trim Long/parseLong) 25)]
+    (cond
+      (str/blank? query)
+      (do (stdout! "vis conversations search <query> [--limit N]")
+        (stdout! "")
+        (stdout! "Searches conversation answers, thinking, comments,")
+        (stdout! "prompts, and persisted expression source.")
+        (shutdown-agents)
+        (System/exit 1))
+
+      :else
+      (let [d    (lp/db-info)
+            hits (or (persistance/db-search d query {:limit limit}) [])]
+        (cond
+          (empty? hits)
+          (do (stdout! (str "No matches for: " query))
+            (shutdown-agents))
+
+          :else
+          (do
+            (stdout! (str (count hits) " match" (when (not= 1 (count hits)) "es")
+                       " for: " query))
+            (stdout! "")
+            (doseq [hit hits]
+              (let [label   (get search-field-labels (:field hit) (:field hit))
+                    id-pref (let [s (str (:owner-id hit))]
+                              (subs s 0 (min 8 (count s))))
+                    snippet (str/replace (or (:snippet hit) "") #"\s+" " ")]
+                (stdout!
+                  (str id-pref
+                    "  " (format "%-8s" label)
+                    "  " snippet))))
+            (shutdown-agents)))))))
+
 (defn- cli-conversations!
   "`vis conversations` handler.
 
@@ -1513,7 +1567,7 @@
           :cmd/subcommands #(registry/registered-under ["providers"])}
 
          {:cmd/name  "conversations"
-          :cmd/doc   "List conversations stored on disk, or fork one."
+          :cmd/doc   "List conversations stored on disk, or fork / search them."
           :cmd/usage "vis conversations [all|tui|telegram|cli] [--fork ID [--title TITLE]]"
           :cmd/args  [{:name "channel" :kind :positional :type :string
                        :doc  "Optional channel filter (all|tui|telegram|cli; default all)."}
@@ -1524,7 +1578,9 @@
           :cmd/examples ["vis conversations"
                          "vis conversations telegram"
                          "vis conversations --fork 3a7b2c1d-..."
-                         "vis conversations --fork 3a7b2c1d --title \"Branch A\""]
+                         "vis conversations --fork 3a7b2c1d --title \"Branch A\""
+                         "vis conversations search \"foo bar\""]
+          :cmd/subcommands #(registry/registered-under ["conversations"])
           :cmd/run-fn cli-conversations!}
 
          {:cmd/name  "doctor"
@@ -1589,6 +1645,18 @@
                          "vis providers logout github-copilot-individual"
                          "vis providers logout openai-codex"]
           :cmd/run-fn cli-providers-logout!}
+         {:cmd/name   "search"
+          :cmd/parent ["conversations"]
+          :cmd/doc    "Full-text search across answers, thinking, comments, prompts, and expressions."
+          :cmd/usage  "vis conversations search <query> [--limit N]"
+          :cmd/args   [{:name "query" :kind :positional :type :string
+                        :doc  "FTS5 query (`foo bar` for AND, `foo OR bar`, `foo*` for prefix)."}
+                       {:name "limit" :kind :flag :type :string
+                        :doc  "Max hits to print (default 25)."}]
+          :cmd/examples ["vis conversations search \"znajduje nodes\""
+                         "vis conversations search \"refactor*\""
+                         "vis conversations search \"foo OR bar\" --limit 100"]
+          :cmd/run-fn cli-conversations-search!}
          {:cmd/name   "list"
           :cmd/parent ["extensions"]
           :cmd/doc    "List every registered extension with metadata."

@@ -224,8 +224,7 @@
       (render/invalidate-cache!)
       (let [huge-result (str/join " " (repeat 1000 "abcdefghij"))
             m           {:role :assistant :text "Sending request to provider..."}
-            trace       [{:events    [{:type :form-result :form-idx 0}]
-                          :code      ["(+ 1 2)"]
+            trace       [{:code      ["(+ 1 2)"]
                           :comments  [nil]
                           :results   [huge-result]
                           :stdouts   [""]
@@ -249,8 +248,7 @@
       (let [m              {:role :assistant :text "Sending request to provider..."}
             huge-result    (str/join " " (repeat 1000 "abcdefghij"))
             progress-entry (fn [i done?]
-                             {:events    [{:type :form-result :form-idx 0}]
-                              :code      [(str "(do (Thread/sleep 1000) " i ")")]
+                             {:code      [(str "(do (Thread/sleep 1000) " i ")")]
                               :results   [(when done? huge-result)]
                               :stdouts   [""]
                               :durations [(when done? 1000)]

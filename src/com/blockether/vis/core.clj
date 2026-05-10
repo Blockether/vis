@@ -151,6 +151,7 @@
 (def render        ir/render)
 (def ->ast         ir/->ast)
 (def text->ir      ir/text->ir)
+(def search-text   ir/search-text)
 (def extract-code  ir/extract-code)
 (def extract-text  ir/extract-text)
 
@@ -251,6 +252,9 @@
 (def db-list-conversation-turn-iterations            persistance/db-list-conversation-turn-iterations)
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
 (def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
+
+;; Full-text search
+(def db-search                          persistance/db-search)
 
 ;; Var registry & turn history
 (def db-latest-var-registry              persistance/db-latest-var-registry)

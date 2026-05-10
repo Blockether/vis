@@ -551,6 +551,22 @@
   ([ir width opts]
    (lines->sentinel-strings (ir->lines ir width opts) opts)))
 
+(defn ir->inline-sentinel-string
+  "Flatten a canonical IR into a single sentinel-wrapped inline string
+   suitable for chrome-row labels. NO block markers — just inline
+   sentinels (`INLINE_BOLD_ON/OFF`, `INLINE_CODE_ON/OFF`, etc.) wrapping
+   styled runs. Hard breaks `[:br]` become spaces (single line
+   contract). Used by detail-summary chrome and other label
+   surfaces that previously ran through `markdown->inline`."
+  ^String [ir]
+  (let [;; pass huge width so walker never wraps; we want one flat run
+        lines (ir->lines ir Integer/MAX_VALUE)
+        ;; concat all runs across all lines, joining lines with single space
+        line-strs (mapv (fn [{:keys [runs]}]
+                          (apply str (map run->sentinel-segment runs)))
+                    lines)]
+    (str/replace (str/join " " (remove str/blank? line-strs)) #"\s+" " ")))
+
 (defn ir->entries
   "Drop-in replacement for the legacy `render/markdown->entries`.
    Returns a vector of `{:line :meta}` maps where `:line` is the

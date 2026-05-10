@@ -91,6 +91,32 @@
   ^bytes [v]
   (nippy/freeze v))
 
+(defn- reindex-search!
+  "Replace every `search` row for `(owner-table, owner-id, field)` with
+   `(vis/search-text v)`. Skips when projection is blank — FT5
+   indexing empty rows just inflates the index.
+
+   Used as the write-side hook for the rich text fields the bubble
+   layer carries as IR (or markdown strings lifted via `text->ir`):
+   answer, thinking, per-block comments. Search hits land back on
+   `(owner_table, owner_id)` which the caller translates to the
+   right BLOB row."
+  [tx-info owner-table owner-id field v]
+  (let [text (some-> v vis/search-text)]
+    (execute! tx-info
+      {:delete-from :search
+       :where [:and
+               [:= :owner_table owner-table]
+               [:= :owner_id (str owner-id)]
+               [:= :field field]]})
+    (when-not (or (nil? text) (= "" text))
+      (execute! tx-info
+        {:insert-into :search
+         :values [{:owner_table owner-table
+                   :owner_id    (str owner-id)
+                   :field       field
+                   :text        text}]}))))
+
 (defn- <-blob
   "Deserialize a Nippy byte array from a BLOB column back to a Clojure value."
   [^bytes bs]
@@ -914,7 +940,13 @@
                          (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
                          (some? answer)   (assoc :answer (->blob answer))
                          prior-outcome    (assoc :prior_outcome (name prior-outcome)))
-               :where  [:= :id (:id state)]})))))))
+               :where  [:= :id (:id state)]})
+            ;; Index answer plain-text projection for FT5 search. The
+            ;; canonical IR stays in `:answer` BLOB; FTS hits map back
+            ;; via `(owner_table, owner_id) = ("conversation_turn_state",
+            ;; state-id)` and the caller thaws the BLOB.
+            (when (some? answer)
+              (reindex-search! tx-info "conversation_turn_state" (:id state) "answer_text" answer))))))))
 
 ;; Extra workflow persistence removed.
 
@@ -1096,7 +1128,19 @@
                           (some? (:output tokens))    (assoc :llm_output_tokens    (long (:output tokens)))
                           (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
                           (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
-                          (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]}))
+                          (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]})
+            ;; Index thinking + per-block comment plain-text projections
+            ;; for FTS5 search. Both are markdown strings; `vis/search-text`
+            ;; lifts them via `text->ir` then concatenates.
+            (let [thinking-s (str/trim (or thinking ""))]
+              (when-not (= "" thinking-s)
+                (reindex-search! tx-info "conversation_turn_iteration"
+                  iteration-id-s "thinking_text" thinking-s)))
+            (let [comments (->> blocks-vec (keep :comment) (remove str/blank?))]
+              (when (seq comments)
+                (reindex-search! tx-info "conversation_turn_iteration"
+                  iteration-id-s "comments_text"
+                  (clojure.string/join "\n\n" comments)))))
           ;; 3. Vars -> expression_soul (kind=var, stateful) + expression_state (versioned)
           (when conversation-state-id
             (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
@@ -1669,6 +1713,48 @@
   (when (ds db-info)
     (row->extension-aggregate
       (query-one! db-info (assoc (extension-aggregate-select opts) :limit 1)))))
+
+(defn db-search
+  "Full-text search over the FTS5 `search` index. Returns a vector of
+   hits sorted by FTS5 rank (highest relevance first), each entry
+   shaped:
+
+     {:owner-table  String   ; e.g. \"conversation_turn_state\" / \"conversation_turn_iteration\"
+      :owner-id     String   ; UUID into that table
+      :field        String   ; \"answer_text\" | \"thinking_text\" | \"comments_text\" | \"user_request\" | \"expr\"
+      :snippet      String   ; FTS5 snippet with `[match]` markers around hit terms
+      :rank         double}  ; FTS5 rank (lower = better match)
+
+   `query` is a literal FT5 MATCH expression (`\"foo bar\"` for AND,
+   `\"foo OR bar\"`, prefix `foo*`, etc.); see SQLite FTS5 docs.
+
+   `opts` may include:
+     :limit        max hits returned (default 50)
+     :owner-table  filter to one table (string)
+     :field        filter to one field (string)"
+  ([db-info query] (db-search db-info query nil))
+  ([db-info query {:keys [limit owner-table field]}]
+   (when (and (ds db-info) (string? query) (not (str/blank? query)))
+     ;; SQLite FTS5 spells the match operator as `<table> MATCH ?`,
+     ;; which HoneySQL's vocabulary doesn't model directly. Raw SQL
+     ;; with positional params is the simplest faithful expression.
+     (let [base "SELECT owner_table, owner_id, field, snippet(search, 3, '[', ']', '…', 32) AS snippet, rank FROM search WHERE search MATCH ?"
+           [filt-sql filt-params] (cond-> ["" []]
+                                    owner-table (-> (update 0 str " AND owner_table = ?")
+                                                  (update 1 conj owner-table))
+                                    field       (-> (update 0 str " AND field = ?")
+                                                  (update 1 conj field)))
+           sql-vec (into [(str base filt-sql " ORDER BY rank ASC LIMIT ?") query]
+                     (conj filt-params (max 1 (long (or limit 50)))))]
+       (mapv
+         (fn [row]
+           {:owner-table (:owner_table row)
+            :owner-id    (:owner_id row)
+            :field       (:field row)
+            :snippet     (:snippet row)
+            :rank        (:rank row)})
+         (jdbc/execute! (ds db-info) sql-vec
+           {:builder-fn rs/as-unqualified-lower-maps}))))))
 
 (defn db-list-extension-aggregates
   [db-info opts]
