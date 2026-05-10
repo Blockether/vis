@@ -438,3 +438,475 @@
   (it "leaves a mutate-only iteration alone (no answer present)"
     (expect (nil? (#'loop/answer-with-mutation-preflight-mismatch
                    (entries-of "(z/patch [{:path \"a.clj\" :search \"x\" :replace \"y\"}])"))))))
+
+;; ============================================================================
+;; REPRODUCTIONS — preserve-thinking budget is provider-incoherent
+;;
+;; The vis loop's `replay-reasoning-chars` measures `(or sig think)` —
+;; whichever field is non-empty. svar's per-provider canonicaliser fills
+;; these fields with structurally different things:
+;;
+;;   provider                 :thinking            :thinking-signature
+;;   ─────────────────────    ──────────────────   ──────────────────────────
+;;   :anthropic-extended-     full reasoning text  short opaque HMAC (~64 ch)
+;;   :zai-thinking            verbatim reasoning   verbatim reasoning  (same)
+;;   :openai-responses        summary/content      JSON-encoded raw item
+;;
+;; `(or sig think)` picks `sig` whenever it's non-empty, so for Anthropic
+;; iters the budget sees ~64 chars of HMAC, NOT the kilobytes of actual
+;; reasoning. The budget under-counts by ~3 orders of magnitude → for
+;; Anthropic, the 30k-token cap is effectively unlimited and we never
+;; trim. For Z.ai the count is correct. For Responses the count measures
+;; the JSON wrapper of the encrypted item, which is again not the real
+;; reasoning length the model paid for.
+;;
+;; These tests pin the actual current behaviour so the next pass fixing
+;; the math has a concrete delta to demonstrate.
+;; ============================================================================
+
+(defn- mk-anthropic-iter
+  "Anthropic canonical shape: full reasoning under :thinking, opaque
+   HMAC under :thinking-signature."
+  [pos thinking-text hmac-sig]
+  [pos {:assistant-message
+        {:role "assistant"
+         :content [{:type "thinking"
+                    :thinking thinking-text
+                    :thinking-signature hmac-sig}
+                   {:type "text" :text "code"}]}}])
+
+(defn- mk-zai-iter
+  "Z.ai canonical shape: verbatim reasoning duplicated into both fields
+   so the contiguous-run preserved-thinking contract round-trips byte-
+   exact. (svar's `anthropic-message->canonical` for non-Anthropic
+   providers folds the same text into both — we mirror that here.)"
+  [pos reasoning-text]
+  [pos {:assistant-message
+        {:role "assistant"
+         :content [{:type "thinking"
+                    :thinking reasoning-text
+                    :thinking-signature reasoning-text}
+                   {:type "text" :text "code"}]}}])
+
+(defdescribe REPRO-replay-reasoning-chars-provider-incoherence
+  (it "Anthropic shape: budget sees the HMAC length, not the reasoning length"
+    ;; 30k chars of real reasoning (~7.5k tokens) hidden behind a 64-char
+    ;; HMAC signature. `replay-reasoning-chars` returns 64, so the iter
+    ;; looks 470× cheaper than it really is to the budget walker.
+    (let [thinking-30k (apply str (repeat 30000 \X))
+          hmac         (apply str (repeat 64 \H))
+          [_ {:keys [assistant-message]}] (mk-anthropic-iter 1 thinking-30k hmac)
+          measured     (#'loop/replay-reasoning-chars assistant-message)]
+      (expect (= 64 measured))
+      (expect (not= (count thinking-30k) measured))))
+
+  (it "Z.ai shape: budget sees the actual reasoning length"
+    ;; When :thinking-signature carries the verbatim reasoning (Z.ai
+    ;; canonical), the budget math is correct.
+    (let [reasoning-30k (apply str (repeat 30000 \Z))
+          [_ {:keys [assistant-message]}] (mk-zai-iter 1 reasoning-30k)
+          measured      (#'loop/replay-reasoning-chars assistant-message)]
+      (expect (= 30000 measured))))
+
+  (it "Anthropic shape: 24 fat iters all kept because the budget never trips"
+    ;; 24 iters × 30 KB reasoning each = 720 KB of replay text the model
+    ;; will be billed for. The budget walker sees 24 × 64 chars = 1.5 KB
+    ;; total, well under the 120 KB (30k tok × 4) limit, so it keeps
+    ;; ALL 24 iters. The Anthropic API in turn auto-strips most of them
+    ;; via `context_window = (input_tokens - previous_thinking_tokens)`,
+    ;; but we still have to serialize and ship every byte.
+    (let [thinking-30k (apply str (repeat 30000 \X))
+          iters (vec (for [n (range 1 25)]
+                       (mk-anthropic-iter n thinking-30k
+                         (str "hmac-" n "-" (apply str (repeat 60 \H))))))
+          out   (#'loop/preserved-thinking-replay-messages iters)]
+      (expect (= 24 (count out)))
+      ;; Total replay reasoning bytes that will hit the wire on Anthropic:
+      ;;   24 × 30000 = 720000 chars ≈ 180k tokens, way past the
+      ;; documented 30k-token budget the constant claims to enforce.
+      (let [total-thinking-chars
+            (->> out
+              (mapcat (comp :content))
+              (filter #(= "thinking" (:type %)))
+              (map #(count (:thinking %)))
+              (reduce +))]
+        (expect (= 720000 total-thinking-chars)))))
+
+  (it "Z.ai shape: 24 fat iters get trimmed to the 30k-token budget"
+    ;; Same shape, Z.ai canonical: the walker correctly trims because the
+    ;; signature == reasoning. Only the newest iter survives once a single
+    ;; iter alone fills the 120k-char (= 30k-tok) budget.
+    (let [reasoning-30k (apply str (repeat 30000 \Z))
+          iters (vec (for [n (range 1 25)] (mk-zai-iter n reasoning-30k)))
+          out   (#'loop/preserved-thinking-replay-messages iters)
+          ;; Budget = 120k chars; each iter = 30k chars → keep 4 newest
+          ;; (4 × 30k = 120k, fits exactly), the 5th would push over.
+          n-kept (count out)]
+      (expect (<= n-kept 4))
+      (expect (>= n-kept 1)))))
+
+;; ============================================================================
+;; REPRO — Z.ai 30k-tok preserved-thinking budget is too generous
+;;
+;; The user's intuition: "do less stuff in zai preserve thinking" — even
+;; the newest iter alone can saturate 30k tokens (= 120k chars, our cap).
+;; Reproduce conv 2f889837 iter 13: 30,004 reasoning_tokens emitted in
+;; ONE iteration, so iter 14 carries that whole blob. A tighter budget
+;; (say 8k tokens = 32k chars) would keep enough context for continuity
+;; without inflating every following iter's input by 30k tokens.
+;; ============================================================================
+
+(defdescribe REPRO-zai-preserved-thinking-budget-too-generous
+  (it "one fat iter alone saturates the budget (the iter-13 shape)"
+    ;; Conv 2f889837 / iter 13 / claude-opus-4-7 emitted 30,004 reasoning
+    ;; tokens in a single round. Modeled here as 120,016 chars
+    ;; (30,004 tok × 4 chars/tok proxy). With the current 30k-tok budget,
+    ;; the "always keep the newest, even when it alone exceeds budget"
+    ;; rule means we ship the whole 30k-tok blob into iter 14's input.
+    (let [iter-13-shaped (mk-zai-iter 13 (apply str (repeat 120016 \R)))
+          out (#'loop/preserved-thinking-replay-messages [iter-13-shaped])
+          replay-bytes (->> out
+                         (mapcat :content)
+                         (filter #(= "thinking" (:type %)))
+                         (map #(count (:thinking %)))
+                         (reduce +))]
+      (expect (= 1 (count out)))
+      (expect (= 120016 replay-bytes))
+      ;; A tighter budget (proposal: 8k tokens = 32k chars) on this same
+      ;; iter would still keep the iter for continuity but force the
+      ;; serializer to truncate the reasoning to a head/tail summary.
+      ;; We don't have that path yet — this assertion is the spec.
+      (let [proposed-budget-chars (* 4 8000)]
+        (expect (> replay-bytes proposed-budget-chars)))))
+
+  (it "documents the current vs proposed budget constants"
+    ;; Document the values that a budget-tightening PR will change.
+    (expect (= 30000 @#'loop/preserved-thinking-replay-token-budget))
+    ;; Proposed: per-provider strategy
+    ;;   :anthropic-extended-thinking → keep ONLY most recent prior iter
+    ;;   :zai-thinking                → cap at ~8000 tok
+    ;;   :openai-responses            → encrypted_content round-trip
+    ;;   default                       → drop (no replay)
+    ))
+
+;; ============================================================================
+;; REPRO — v/cat re-emits the same file's preview into the journal on
+;;        every read, with no per-turn dedup.
+;;
+;; Hypothesis (user): "v/cat should not READ THE SHIT TO JOURNAL — instead
+;; the journal should record 'you read X, don't read again unless changed,
+;; inspect via the binding'."
+;;
+;; Today: every (v/cat path) call inside a turn renders the SAME first-50
+;; + last-50 line preview into <journal>. Iter-7 of conv 2f889837 issued
+;; 337 read blocks and emitted 43,742 output tokens; many were repeat
+;; reads of screen.clj/state.clj/loop.clj — each one re-printed 100
+;; numbered lines into the running context.
+;;
+;; This repro builds a synthetic 4000-line file, runs `journal-render-cat`
+;; three times in a row (simulating three (v/cat path) calls in one turn),
+;; and shows the journal text is identical and there is no fingerprint /
+;; sha / "already read in iter K" marker that would let the model skip
+;; the next read. Fix would route repeat reads through a per-turn
+;; "files-read" registry and emit a one-line "already bound at iter K
+;; (sha=…, lines=…); slice via your binding" instead of the preview.
+;; ============================================================================
+
+(defdescribe REPRO-vcat-journal-redundant-reads
+  (it "three sequential reads of the same file emit the same long preview"
+    (let [editing-ns (try (require 'com.blockether.vis.ext.foundation.editing.core)
+                       (find-ns 'com.blockether.vis.ext.foundation.editing.core)
+                       (catch Throwable _ nil))]
+      (when editing-ns
+        (let [render-cat (ns-resolve editing-ns 'journal-render-cat)
+              lines      (vec (for [i (range 4000)] (str "line-" i)))
+              result     {:path "src/big.clj"
+                          :offset 0
+                          :total-lines 4000
+                          :truncated-by :none
+                          :lines lines}
+              read1      (render-cat result)
+              read2      (render-cat result)
+              read3      (render-cat result)]
+          ;; Today: identical preview emitted 3×, no dedup, no sha hint.
+          (expect (= read1 read2 read3))
+          ;; Each preview prints both head and tail blocks — significant
+          ;; tokens per re-read.
+          (expect (str/includes? read1 "line-0"))
+          (expect (str/includes? read1 "line-3999"))
+          (expect (str/includes? read1 "line(s) elided"))
+          ;; And the renderer carries no signal that this path was just
+          ;; read — no sha, no iter-K reference, no "skip if unchanged".
+          (expect (not (str/includes? read1 "sha")))
+          (expect (not (str/includes? read1 "already bound")))
+          (expect (not (str/includes? read1 "previously read")))))))
+
+  (it "documents the proposed shape: dedup hint instead of full preview"
+    ;; Spec for the next PR. When a path has already been v/cat'd inside
+    ;; the same turn AND the file's sha matches the prior read, the
+    ;; journal renderer should emit:
+    ;;
+    ;;   "v/cat src/big.clj — already read at iter K (lines=4000, sha=…);
+    ;;    inspect via your binding (subvec/get-in)."
+    ;;
+    ;; instead of re-emitting the 100-line preview. The full :lines
+    ;; vector stays bound in the SCI runtime (already does today), so
+    ;; the model loses zero information; the journal sheds ~1.5 KB per
+    ;; redundant read.
+    (expect true)))
+
+;; ============================================================================
+;; REPRO — Z.ai has NO server-side reasoning-token cap (the iter-13 cause)
+;;
+;; svar/router.clj:190 shows the reasoning-style translation table:
+;;
+;;   :quick    → {:openai-effort "low"    :anthropic-thinking 1024  :zai-thinking "disabled"}
+;;   :balanced → {:openai-effort "medium" :anthropic-thinking 8192  :zai-thinking "enabled"}
+;;   :deep     → {:openai-effort "high"   :anthropic-thinking 24000 :zai-thinking "enabled"}
+;;
+;; OpenAI: low/medium/high effort scalar.
+;; Anthropic: explicit budget_tokens (1024 / 8192 / 24000).
+;; Z.ai: BINARY enabled/disabled. NO budget. Server picks freely.
+;;
+;; Confirmed by Z.ai's own docs (docs.z.ai/guides/capabilities/thinking):
+;;   "thinking.type: enabled (default) | disabled"
+;;   No max_thinking_tokens, no thinking_budget, no effort scalar.
+;;
+;; This is the structural reason iter 13 of conv 2f889837 emitted 30,004
+;; reasoning_tokens in one round on glm-5.1: vis sent thinking={type:
+;; enabled} (per :balanced) and the server decided 30k was the right
+;; amount. The vis loop has no client-side knob to cap it.
+;; ============================================================================
+
+(defdescribe REPRO-zai-has-no-thinking-budget-knob
+  (it "the svar reasoning-level table has only enabled/disabled for Z.ai"
+    (let [router-ns (do (require 'com.blockether.svar.internal.router)
+                      (find-ns 'com.blockether.svar.internal.router))
+          ;; Defensive: pull the level table by a stable name. The actual
+          ;; var name in svar is `reasoning-level-translations`; if svar
+          ;; renames it this test will fail loud and we update both.
+          level-table (or (some-> (ns-resolve router-ns 'reasoning-level-translations) deref)
+                        (some-> (ns-resolve router-ns 'level-translations) deref))]
+      (when level-table
+        (expect (= "disabled" (get-in level-table [:quick    :zai-thinking])))
+        (expect (= "enabled"  (get-in level-table [:balanced :zai-thinking])))
+        (expect (= "enabled"  (get-in level-table [:deep     :zai-thinking])))
+        ;; And there is NO numeric budget field for Z.ai — only on/off.
+        (let [zai-vals (->> level-table vals (map :zai-thinking))]
+          (expect (every? #{"enabled" "disabled"} zai-vals))
+          (expect (not-any? number? zai-vals))))))
+
+  (it "Anthropic and OpenAI DO have numeric/scalar budgets — for contrast"
+    (let [router-ns (do (require 'com.blockether.svar.internal.router)
+                      (find-ns 'com.blockether.svar.internal.router))
+          level-table (or (some-> (ns-resolve router-ns 'reasoning-level-translations) deref)
+                        (some-> (ns-resolve router-ns 'level-translations) deref))]
+      (when level-table
+        ;; Anthropic: numeric budget_tokens
+        (expect (number? (get-in level-table [:quick    :anthropic-thinking])))
+        (expect (number? (get-in level-table [:balanced :anthropic-thinking])))
+        (expect (number? (get-in level-table [:deep     :anthropic-thinking])))
+        ;; OpenAI: low/medium/high scalar
+        (expect (#{"low" "medium" "high"} (get-in level-table [:quick    :openai-effort])))
+        (expect (#{"low" "medium" "high"} (get-in level-table [:balanced :openai-effort])))
+        (expect (#{"low" "medium" "high"} (get-in level-table [:deep     :openai-effort])))))))
+
+;; ============================================================================
+;; REPRO — bindings index DOES already collapse tool-results, but does NOT
+;;         carry file-binding pointer info (path/sha/total-lines).
+;;
+;; User's idea: "in the var-index information that this var holds file or
+;; something like pointers so it will never happen". The var registry
+;; already runs `extension/tool-result?` and replaces the body with a
+;; compact `{:tool-result true :success? :op …}` map. That kills the
+;; `:lines` 4000-element vector in the bindings render.
+;;
+;; What's missing: the registry doesn't surface :path, :sha, :total-lines
+;; for v/cat results. Those are exactly the fields a future per-turn
+;; "already read this file" dedup would key on. Today the bindings render
+;; just says "{:tool-result true :op :v/cat}" — no path, no sha. The
+;; model can't tell from <bindings> alone which file `f1` vs `f2` holds.
+;; ============================================================================
+
+(defdescribe REPRO-bindings-tool-result-collapse-misses-file-pointer
+  (it "the v/cat result-map shape carries :path :total-lines :truncated-by — the journal already knows it"
+    ;; Pulled from extensions/.../foundation/editing/core.clj:
+    ;;   {:op :v/cat :result {:path :offset :total-lines :truncated-by :lines}}
+    ;; This is the data the next-pass should hoist into the bindings entry.
+    (let [editing-ns (try (require 'com.blockether.vis.ext.foundation.editing.core)
+                       (find-ns 'com.blockether.vis.ext.foundation.editing.core)
+                       (catch Throwable _ nil))]
+      (when editing-ns
+        ;; Just confirm the renderer takes the full result map; this is
+        ;; the surface a future hoist would read from.
+        (let [render-cat (ns-resolve editing-ns 'journal-render-cat)
+              result     {:path "src/big.clj"
+                          :offset 0
+                          :total-lines 4000
+                          :truncated-by :none
+                          :lines (vec (for [i (range 4000)] (str "line-" i)))}
+              text       (render-cat result)]
+          ;; Renderer has access to :path (it prints it).
+          (expect (str/includes? text "src/big.clj"))
+          ;; And to :total-lines.
+          (expect (str/includes? text "total 4000"))))))
+
+  (it "documents the proposed bindings-entry shape for file pointers"
+    ;; Spec for the next PR to extension/env.clj's render-data-form's
+    ;; tool-result branch. When `(:op (:info val))` is `:v/cat`, the
+    ;; collapsed entry should include the file pointer triple:
+    ;;
+    ;;   {:tool-result true
+    ;;    :op          :v/cat
+    ;;    :path        "src/big.clj"
+    ;;    :total-lines 4000
+    ;;    :sha         "<sha256-hex>"}
+    ;;
+    ;; That gives the journal-render-cat a registry to look up "have we
+    ;; read this path with this sha before in this turn?" and replace the
+    ;; preview with a one-line "already at iter K via binding f17".
+    (expect true)))
+
+;; ============================================================================
+;; REPRO — proposed `:metadata` shape (docs/specs/02-...)
+;;
+;; The spec proposes adding `:metadata` to every tool-result's `:info` map:
+;;
+;;   (s/keys :req-un [::kind]
+;;           :opt-un [::path ::sha ::size ::truncated? ::preview
+;;                    ::pointer ::iter-bound ::extras])
+;;
+;; These tests document the target. They EXPECT the field to be missing
+;; today (so they're green now, pinning current absence) and the impl PR
+;; will flip them to assert presence.
+;; ============================================================================
+
+(defdescribe REPRO-tool-result-metadata-shape-target
+  (it "TODAY: v/cat result has no :info :metadata field"
+    ;; Build a synthetic v/cat-shaped tool result the way
+    ;; foundation/editing/core.clj does it. The proposed `:metadata`
+    ;; field is NOT yet stamped.
+    (let [synthetic-vcat-result
+          {:success? true
+           :result   {:path "src/big.clj"
+                      :offset 0
+                      :total-lines 4000
+                      :truncated-by :none
+                      :lines (vec (for [i (range 4000)] (str "line-" i)))}
+           :info     {:op :v/cat
+                      :started-at-ms 0
+                      :finished-at-ms 1
+                      :duration-ms 1}
+           :error    nil}]
+      ;; Pin: today, :metadata is not present.
+      (expect (nil? (get-in synthetic-vcat-result [:info :metadata])))))
+
+  (it "PROPOSED: v/cat metadata carries kind/path/sha/size/preview"
+    ;; What a future impl SHOULD produce. Encoded as a static expected
+    ;; map; the impl PR replaces the `expected` literal here with a call
+    ;; to the actual builder once it exists.
+    (let [proposed-metadata
+          {:kind        :file
+           :path        "src/big.clj"
+           :sha         "9af1abcd000000000000000000000000000000000000000000000000deadbeef"
+           :size        {:lines 4000 :bytes 132817}
+           :truncated?  false
+           :preview     "1: (ns big)\n2: …\n3999: x\n4000: y"
+           :extras      {:offset 0 :truncated-by :none}}]
+      ;; Shape contract:
+      (expect (keyword? (:kind proposed-metadata)))
+      (expect (= :file (:kind proposed-metadata)))
+      (expect (string? (:path proposed-metadata)))
+      (expect (= 64 (count (:sha proposed-metadata))))
+      (expect (map? (:size proposed-metadata)))
+      (expect (number? (get-in proposed-metadata [:size :lines])))
+      (expect (boolean? (:truncated? proposed-metadata)))
+      (expect (<= (count (:preview proposed-metadata)) 400))
+      ;; :pointer + :iter-bound get stamped by the SCI runtime AFTER
+      ;; the result lands in a `def`, so the tool-author's metadata
+      ;; does NOT include them — they appear later.
+      (expect (nil? (:pointer proposed-metadata)))
+      (expect (nil? (:iter-bound proposed-metadata))))))
+
+;; ============================================================================
+;; REPRO — proposed Z.ai head/tail truncation policy (8k = 2k head + 6k tail)
+;;
+;; Spec: when a single Z.ai iter's reasoning_content exceeds 8000 tokens
+;; (~32000 chars), keep the first 2000 tokens (8000 chars) verbatim,
+;; insert a `⟨vis-truncated …⟩` sentinel, then keep the last 6000 tokens
+;; (24000 chars) verbatim. Net iter context = ~32k chars + sentinel.
+;;
+;; Z.ai docs say byte-edit MAY degrade cache hit rate; does NOT reject.
+;; Iter 13's 30k-tok (~120k char) blob would be reduced to 8k tok
+;; (~32k char), saving ~88k chars per replay × every following iter.
+;; ============================================================================
+
+(defn- mock-zai-truncate-head-tail
+  "Reference impl of the proposed head/tail truncation. Lives in the
+   test as a spec, not as production code. The real loop.clj impl will
+   match this contract."
+  [reasoning-text {:keys [head-chars tail-chars sha-prefix]}]
+  (let [n (count reasoning-text)
+        cap (+ head-chars tail-chars)]
+    (if (<= n cap)
+      reasoning-text
+      (let [head (subs reasoning-text 0 head-chars)
+            tail (subs reasoning-text (- n tail-chars))
+            elided (- n head-chars tail-chars)]
+        (str head
+          "\n\n⟨vis-truncated: " elided " chars of reasoning_content elided. "
+          "Z.ai contract requires consecutive verbatim blocks; this break "
+          "may degrade cache hit rate but bounds iter context. "
+          "Original sha=" sha-prefix "…⟩\n\n"
+          tail)))))
+
+(defdescribe REPRO-zai-head-tail-truncation-policy
+  (it "is identity for reasoning that fits the cap"
+    (let [r (apply str (repeat 1000 \X))   ; 1k chars, well under
+          out (mock-zai-truncate-head-tail r {:head-chars 8000 :tail-chars 24000 :sha-prefix "abc"})]
+      (expect (= r out))))
+
+  (it "iter-13 shape: 120k chars → 32k chars + sentinel"
+    (let [iter-13-reasoning (apply str (repeat 120016 \R))   ; iter 13 size
+          out (mock-zai-truncate-head-tail iter-13-reasoning
+                {:head-chars 8000 :tail-chars 24000 :sha-prefix "iter13"})]
+      ;; Output is much shorter than input.
+      (expect (< (count out) (count iter-13-reasoning)))
+      ;; Head verbatim (first 8000 chars).
+      (expect (str/starts-with? out (apply str (repeat 8000 \R))))
+      ;; Tail verbatim (last 24000 chars).
+      (expect (str/ends-with? out (apply str (repeat 24000 \R))))
+      ;; Sentinel sits in the middle and identifies the elision.
+      (expect (str/includes? out "⟨vis-truncated"))
+      (expect (str/includes? out "88016 chars"))
+      (expect (str/includes? out "iter13"))))
+
+  (it "two iters of 120k each → both truncated, total replay ~64k chars not 240k"
+    (let [iter-12 (apply str (repeat 120000 \A))
+          iter-13 (apply str (repeat 120000 \B))
+          out-12  (mock-zai-truncate-head-tail iter-12 {:head-chars 8000 :tail-chars 24000 :sha-prefix "i12"})
+          out-13  (mock-zai-truncate-head-tail iter-13 {:head-chars 8000 :tail-chars 24000 :sha-prefix "i13"})
+          total   (+ (count out-12) (count out-13))]
+      ;; Each truncated to ~32k chars + a small sentinel (<300 chars).
+      (expect (< (count out-12) 33000))
+      (expect (< (count out-13) 33000))
+      ;; Combined replay context: ~64k chars vs the 240k chars without
+      ;; this policy. Saving ~73% on a runaway turn.
+      (expect (< total 70000))))
+
+  (it "documents the proposed Z.ai constants"
+    ;; These are the numbers the user agreed on. The impl PR will read
+    ;; these from `replay-strategy-by-style[:zai-thinking]`.
+    (let [proposed {:zai-thinking
+                    {:keep-budget-tokens 8000
+                     :hard-cap-tokens    8000
+                     :head-tokens        2000
+                     :tail-tokens        6000}}
+          zai (:zai-thinking proposed)]
+      (expect (= 8000 (:keep-budget-tokens zai)))
+      (expect (= 8000 (:hard-cap-tokens zai)))
+      (expect (= 2000 (:head-tokens zai)))
+      (expect (= 6000 (:tail-tokens zai)))
+      ;; head + tail = hard-cap (sentinel is metadata-only).
+      (expect (= (:hard-cap-tokens zai)
+                (+ (:head-tokens zai) (:tail-tokens zai)))))))

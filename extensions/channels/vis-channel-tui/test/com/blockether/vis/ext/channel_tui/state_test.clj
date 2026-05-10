@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.state-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.state :as state]
@@ -679,3 +680,35 @@
           (expect (nil? (:progress restored-db)))
           ;; And we don't leak the snapshot once it has been used.
           (expect (nil? (:submitted-input restored-db))))))))
+
+(defdescribe send-skill-message-test
+  (it "keeps user-typed slash text visible while injecting skill body into agent text"
+    (let [send-skill-fn (-> #'state/event-registry deref deref (get :send-skill-message) :fn)
+          db            {:conversation {:id "c1"}
+                         :active-workspace-id :main
+                         :messages []
+                         :messages-scroll 0
+                         :input-history []
+                         :settings {:reasoning-level :balanced}
+                         :pastes {}}]
+      (with-redefs [vis/cancellation-token (fn [] :token)]
+        (let [{:keys [db fx]} (send-skill-fn db
+                                [:send-skill-message
+                                 "caveman"
+                                 "BODY: be terse."
+                                 "explain X"
+                                 "/caveman explain X"])
+              [event] fx]
+          ;; user bubble + history hold the user-typed slash text only
+          (expect (= "/caveman explain X" (-> db :messages first :text)))
+          (expect (= "/caveman explain X" (last (:input-history db))))
+          ;; agent-text fences the skill body and appends user args
+          (let [agent-text (nth event 3)]
+            (expect (str/starts-with? agent-text
+                      "<active_skill name=\"caveman\">"))
+            (expect (str/includes? agent-text "BODY: be terse."))
+            (expect (str/ends-with? agent-text "explain X")))
+          ;; display-text (last positional) carries the user-typed slash
+          (expect (= "/caveman explain X" (last event)))
+          ;; extra-body slot is NOT hijacked - stays nil for this provider
+          (expect (nil? (nth event 6))))))))
