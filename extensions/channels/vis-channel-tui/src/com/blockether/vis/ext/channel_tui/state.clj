@@ -1127,6 +1127,67 @@
              reasoning-level extra-body turn-features workspace client-turn-id
              visible-text]]})))
 
+(defn- skill-agent-text
+  "Combine the skill body and the user's argument string into the
+   single text the LLM sees. The skill body is wrapped in an
+   `<active_skill name=...>` fence so the model can recognise (and
+   reference) it as an injected directive rather than as user prose."
+  [skill-name skill-body user-args]
+  (let [args (str/trim (or user-args ""))
+        body (str/trim (or skill-body ""))]
+    (str "<active_skill name=\"" skill-name "\">\n"
+      body
+      "\n</active_skill>\n\n"
+      (if (str/blank? args)
+        (str "Engage the `" skill-name "` skill on the current conversation.")
+        args))))
+
+(reg-event-fx :send-skill-message
+  ;; Dispatched from the TUI when a slash command's `:skill?` flag is
+  ;; true. The user types `/<skill-name> [args]`; the screen reads
+  ;; the skill body once, then we send a normal turn with two splits:
+  ;;   - `display-text` = `/<skill-name> [args]` (user bubble + history)
+  ;;   - agent-text     = skill body fence + args (LLM-facing only)
+  ;; `extra-body` is preserved as the openai-codex verbosity payload
+  ;; via `turn-extra-body` - we do NOT repurpose that slot.
+  (fn [db [_ skill-name skill-body user-args display-text]]
+    (let [workspace-id    (current-workspace-id db)
+          workspace       (active-workspace db)
+          token           (vis/cancellation-token)
+          extra-body      (turn-extra-body db)
+          turn-features   (cond-> {}
+                            (get-in db [:settings :voice/respond?])
+                            (assoc :voice-response? true))
+          reasoning-level (when (reasoning-effort-configurable?)
+                            (get-in db [:settings :reasoning-level]))
+          client-turn-id  (str (java.util.UUID/randomUUID))
+          agent-text      (skill-agent-text skill-name skill-body user-args)]
+      {:db (-> db
+             (update :messages conj (assoc (chat/user-message display-text)
+                                      :client-turn-id client-turn-id))
+             (update :messages conj (assoc (chat/assistant-message pending-assistant-text)
+                                      :pending? true
+                                      :client-turn-id client-turn-id))
+             (update :input-history (fn [xs]
+                                      (let [xs (vec (or xs []))]
+                                        (if (= display-text (last xs)) xs (conj xs display-text)))))
+             (assoc :messages-scroll nil :loading? true
+               :cancel-token token
+               :cancelling? false
+               :progress {:iterations []}
+               :turn-start-ms (System/currentTimeMillis)
+               :submitted-input {:text display-text
+                                 :pastes nil
+                                 :paste-counter (:paste-counter db)
+                                 :input-history (vec (or (:input-history db) []))}
+               :input-history-index nil
+               :input-history-draft nil
+               :slash-command-index 0
+               :slash-command-hidden? false))
+       :fx [[:rlm-turn workspace-id (:conversation db) agent-text token
+             reasoning-level extra-body turn-features workspace client-turn-id
+             display-text]]})))
+
 (reg-event-fx :cancel-turn
   (fn [db _]
     (if-not (:loading? db)
