@@ -74,15 +74,93 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
 
 (defn- bench-frame!
   "Run one streaming-frame: lift fresh IR, time
-   `format-answer-markdown-data`, return [ns lines-count]."
-  [^String text ^long bubble-w]
-  (let [ir (vis/text->ir text)
-        ;; force realization with a unique opts key so cache always misses
-        opts {:conversation-turn-id (str "bench-" (System/nanoTime))}
-        t0 (System/nanoTime)
-        result (render/format-answer-markdown-data ir bubble-w opts)
-        dt (- (System/nanoTime) t0)]
-    [dt (count (:lines result))]))
+   `format-answer-markdown-data`, return [ns lines-count].
+
+   `extra-opts` (optional) is merged into the opts map - lets callers
+   pass `{:max-lines 200}` to exercise the windowed walker path."
+  ([^String text ^long bubble-w]
+   (bench-frame! text bubble-w nil))
+  ([^String text ^long bubble-w extra-opts]
+   (let [ir (vis/text->ir text)
+         ;; force realization with a unique opts key so cache always misses
+         opts (merge {:conversation-turn-id (str "bench-" (System/nanoTime))}
+                     extra-opts)
+         t0 (System/nanoTime)
+         result (render/format-answer-markdown-data ir bubble-w opts)
+         dt (- (System/nanoTime) t0)]
+     [dt (count (:lines result))])))
+
+(defn run-progressive-windowed!
+  "Like `run-progressive!` but passes `:max-lines viewport-rows` so
+   the walker only emits roughly the last viewport-h rows of the
+   bubble. Models the realistic TUI workload: the terminal can only
+   ever paint `viewport-rows` lines per bubble per frame, so walking
+   1500 lines of a 100k buffer to use 30 of them is wasted work.
+
+   The metric `stream_windowed_50k_100k_mean_ms` measures the cost
+   of bounded-output streaming. Goal: flat curve across body sizes."
+  [{:keys [target-chars chunk-chars bubble-w warmup-frames viewport-rows]
+    :or   {target-chars   100000
+           chunk-chars    1000
+           bubble-w       100
+           viewport-rows  200
+           warmup-frames  5}}]
+  (let [extra-opts {:max-lines viewport-rows}]
+    (dotimes [_ warmup-frames]
+      (bench-frame! (body-of-length 2000) bubble-w extra-opts))
+    (render/invalidate-cache!)
+    (let [frames (atom [])
+          steps  (long (/ target-chars chunk-chars))]
+      (loop [i 0]
+        (when (< i steps)
+          (let [size (* (inc i) chunk-chars)
+                text (body-of-length size)
+                [ns lines] (bench-frame! text bubble-w extra-opts)]
+            (swap! frames conj {:size size :ns ns :lines lines})
+            (recur (inc i)))))
+      (let [all @frames
+            bucket-of (fn [s]
+                        (cond
+                          (< s 5000)   "<5k"
+                          (< s 20000)  "5k-20k"
+                          (< s 50000)  "20k-50k"
+                          (< s 100000) "50k-100k"
+                          :else        "100k+"))
+            buckets (->> all
+                      (group-by #(bucket-of (:size %)))
+                      (into (sorted-map-by
+                              (fn [a b]
+                                (compare
+                                  (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] a)
+                                  (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] b))))))
+            tot (summarize (mapv :ns all))]
+        (println)
+        (println (format "Windowed stream: %d steps × %d chars (bubble-w=%d, max-lines=%d)"
+                   steps chunk-chars bubble-w viewport-rows))
+        (println "──────────────────────────────────────────────────────────────────────")
+        (printf "%-10s %6s %10s %10s %10s %10s %10s%n"
+          "bucket" "n" "mean ms" "p50 ms" "p95 ms" "p99 ms" "max ms")
+        (doseq [[name xs] buckets]
+          (let [s (summarize (mapv :ns xs))]
+            (printf "%-10s %6d %10.2f %10.2f %10.2f %10.2f %10.2f%n"
+              name (:n s) (:mean-ms s) (:p50-ms s)
+              (:p95-ms s) (:p99-ms s) (:max-ms s))))
+        (println)
+        (printf "TOTAL: n=%d wall=%.0f ms  mean=%.2f  p99=%.2f  max=%.2f%n"
+          (:n tot) (:total-ms tot) (:mean-ms tot) (:p99-ms tot) (:max-ms tot))
+        (let [small (some-> (get buckets "<5k")    (->> (mapv :ns) summarize :mean-ms))
+              big   (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+          (when (and small big (pos? small))
+            (printf "LINEARITY: 50k-100k / <5k = %.2fx  (target: ≤ 1.5x)%n"
+              (double (/ big small)))))
+        (println "METRIC stream_windowed_total_ms="  (long (:total-ms tot)))
+        (println "METRIC stream_windowed_p99_ms="    (long (:p99-ms tot)))
+        (println "METRIC stream_windowed_max_ms="    (long (:max-ms tot)))
+        (when-let [big (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+          (println "METRIC stream_windowed_50k_100k_mean_ms=" (long big)))
+        {:per-frame all
+         :buckets   (into {} (map (fn [[k xs]] [k (summarize (mapv :ns xs))]) buckets))
+         :total     tot}))))
 
 (defn run-progressive!
   "Simulate progressive streaming: grow body by `chunk-chars` per step
