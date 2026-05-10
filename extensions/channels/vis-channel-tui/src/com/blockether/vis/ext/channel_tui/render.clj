@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.channel-tui.render
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
-            [com.blockether.vis.internal.markdown :as md-repair]
+
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.links :as links]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
@@ -2330,23 +2330,24 @@
 (def ^:private auto-collapse-line-threshold 12)
 (def ^:private auto-collapse-char-threshold 700)
 (def ^:private thinking-preview-edge-lines 10)
-(def ^:private live-thinking-preview-chars 2400)
+(def ^:private live-thinking-preview-chars 800)
 
 (defn- live-preview-thinking-text
+  "During live streaming, render only a bounded *tail* of the reasoning
+   text so the bubble stays a fixed compact size as the stream grows.
+   Showing first+last (sandwich) caused the bubble to occupy ~30 lines
+   forever and made the inline marker drift mid-bubble; the head was
+   stale anyway. Tail-only keeps the latest chunk visible and bounds
+   bubble height."
   [thinking]
   (let [s (str/trim (str thinking))
         n (count s)]
     (if (<= n live-thinking-preview-chars)
       s
-      (let [edge   (quot live-thinking-preview-chars 2)
-            hidden (max 0 (- n (* 2 edge)))]
-        (str (subs s 0 edge)
-          "
-
-▸ REASONING / " hidden " chars hidden while live
-
-"
-          (subs s (- n edge) n))))))
+      (let [tail   (subs s (- n live-thinking-preview-chars) n)
+            hidden (- n live-thinking-preview-chars)]
+        (str "▸ REASONING / " hidden " chars hidden while live\n\n"
+          tail)))))
 
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
@@ -4739,7 +4740,7 @@
    (when (and text (not (str/blank? text)))
      (let [text (str text)]
        (cached* (markdown-entries-cache-key text max-w mode opts)
-         #(let [text     (md-repair/normalize-chat-markdown text)
+         #(let [text     text
                 segments (parse-detail-segments (coalesce-loose-list-items (str/split-lines text)))]
             (vec (render-detail-segments segments max-w mode opts))))))))
 

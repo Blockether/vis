@@ -12,7 +12,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.markdown :as md]
+
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.workspace-context :as workspace-context]
    [edamame.core :as edamame])
@@ -322,7 +322,7 @@
   [result]
   ;; `result` is the inner repair payload only (no :info access from
   ;; the new contract). Show the canonical pr-str inside a clojure block.
-  (md/code-block "clojure" (pr-str result)))
+  (str "```clojure\n" (pr-str result) "\n```"))
 
 (def repair-range-symbol
   (vis/symbol #'repair-range

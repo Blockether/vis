@@ -15,7 +15,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.markdown :as md])
+   )
   (:import
    (java.net URI URLDecoder URLEncoder)
    (java.nio.charset StandardCharsets)
@@ -448,11 +448,10 @@
 (defn- channel-render-exa
   [result]
   (let [{:keys [tool query content truncated? temp-file]} result]
-    (md/join
-      (md/p "Exa" (md/code tool) ":" (md/code query))
+    (str "Exa `" tool "`: `" query "`\n\n"
       content
       (when truncated?
-        (md/p "Output truncated; full output saved to" (md/code temp-file) ".")))))
+        (str "\n\nOutput truncated; full output saved to `" temp-file "`.")))))
 
 (defn- tool-success
   [{:keys [tool-name op query args mcp endpoint limits]}]
