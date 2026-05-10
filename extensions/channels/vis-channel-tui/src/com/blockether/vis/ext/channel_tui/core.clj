@@ -23,6 +23,14 @@
 (def tui-usage
   "vis channels tui [--conversation-id ID | --resume]")
 
+(defn render-for-tui
+  "TUI's :channel/messages-renderer-fn. Renders any answer-input
+   (string | Hiccup IR | [:ir ...]) to plain markdown text the TUI
+   transcript already knows how to lay out. A future PR can swap to
+   styled Lanterna segments without touching call-sites."
+  ([input] (render-for-tui input nil))
+  ([input opts] (vis/render input :markdown opts)))
+
 (defn- parse-conversation-id-flag
   "Walk `args` and return the value of the first `--conversation-id` flag, or
    nil. Lightweight enough to avoid loading the screen ns. Mirrors
@@ -139,6 +147,7 @@
                       :channel/doc       "Interactive terminal UI."
                       :channel/usage     tui-usage
                       :channel/owns-tty? true
-                      :channel/main-fn   #'channel-main}]}))
+                      :channel/main-fn   #'channel-main
+                      :channel/messages-renderer-fn #'render-for-tui}]}))
 
 (vis/register-extension! tui-extension)

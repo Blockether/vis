@@ -1,543 +1,285 @@
-# Plan — Answer IR + Streaming + Channel Rendering
+# PLAN — Tool-Result `:metadata` + Iteration-Block Classification (HARD REWRITE)
 
-Implementation plan companion to `docs/specs/01-streaming-and-markdown.md`.
-Spec captures design rationale and alternatives; this file tracks the
-concrete work and is the source of truth for what ships.
+**No backward compat in code.** One read-side compat shim in the SQLite persistence layer for ONE release (then deleted), because Nippy-frozen blobs in users' local `~/.vis/vis.mdb` carry the legacy field. Everything else: hard delete.
 
-Status: pre-implementation, design-locked.
+Reproductions in `test/com/blockether/vis/internal/loop_test.clj`.
 
 ---
 
-## 1. What ships
+## Headline change — `:metadata` is a NEW thing
 
-A single canonical Hiccup-EDN IR for `(vis/answer ...)`, three pure-Clojure
-walkers (`html` / `markdown` / `plain`), a per-channel renderer registry slot,
-streaming + one-tap cancel for Telegram, and a `vis run --code` flag that
-extracts code from any answer.
+The biggest concept introduced by this plan is the **`:metadata` map under `:info`** on every tool-result. It does not exist today. It carries the op-tag, content-kind, path, sha, size, truncation flag, preview, and (SCI-stamped) pointer/iter-bound. **Every tool author stamps it. Every consumer reads from it.**
 
-Net change:
-- **Removes** ~1500 LOC of `v/` markdown DSL + regex MD→HTML pipeline +
-  `needs-input` prompt-flow gate.
-- **Adds** ~400 LOC: IR types + normalization + three walkers + registry slot
-  + Telegram streaming/cancel.
-- **Removes** zero deps.
-- **Adds** zero deps. (Pure Clojure walkers; no commonmark.)
+Without `:metadata`, the bindings index can't tell which file a binding holds, the journal can't summarise without peeking into raw payloads, and the model can't see "I've already read this file." With `:metadata`, all three problems collapse to "read the metadata."
+
+This is the *new thing*. The renames (`:op` → `:op-symbol`, `:rendering-kind` → `:op-system-kind`, `:op-class` → `:op-tag`) are cosmetic surface around it.
 
 ---
 
-## 2. Locked design
+## Locked field names
 
-### 2.1 IR — 21 tags, pure HTML/MDAST subset
+### On every tool-result (in `:info`)
 
-```
-ROOT             :ir
-BLOCKS    (11)   :p
-                 :h          {:level 1-6}
-                 :code       {:lang String?}     ; one string child
-                 :ul
-                 :ol         {:start Int?}
-                 :li
-                 :quote
-                 :table
-                 :tr
-                 :th
-                 :td
-INLINES   (9)    :strong
-                 :em
-                 :c          inline code
-                 :a          {:href String}
-                 :img        {:src String :alt String?}
-                 :kbd
-                 :mark
-                 :sup
-                 :sub
-```
+| field | type | what |
+|---|---|---|
+| `:op-symbol` | keyword | which symbol was called (`:v/cat`, `:v/patch`, …) — RENAMED from `:op` |
+| `:metadata` | map (NEW) | content-shape + effect classification (see below) |
 
-Bare strings are text nodes. Attrs map is optional in the source the LLM
-emits; normalization (§2.2) inserts `{}` so renderers always see attrs at
-position 1.
+### Inside `:info :metadata` (NEW)
 
-`:li` content rule: all-blocks OR all-inlines, not mixed. Loose inlines
-get wrapped in `[:p ...]` at normalization.
+| field | type | required | what |
+|---|---|---|---|
+| `:op-tag` | enum | ✓ | `:op/read :op/search :op/edit :op/create :op/delete :op/move :op/shell :op/meta` |
+| `:content-kind` | enum | ✓ | `:file :tree :search-hits :patch-result :exec-output :json :other` |
+| `:path` | string | when filesystem-bound | absolute or repo-relative path |
+| `:sha` | hex64 | when content is bytes-stable | sha-256 of canonical content |
+| `:size` | map | optional | `{:lines N}` / `{:bytes N}` / `{:hits N}` / `{:files N}` |
+| `:truncated?` | boolean | optional | true when payload was capped at the tool boundary |
+| `:preview` | string ≤ 400 chars | optional | head/tail snippet, tool-author owned |
+| `:pointer` | string | SCI-stamped | `def`-bound symbol name (e.g. `"f17"`) |
+| `:iter-bound` | nat-int | SCI-stamped | iteration the binding was created in |
+| `:extras` | map | optional | tool-specific overflow |
 
-No `:vis/*` namespace. No domain extension slot in v1. No `:doc`/`:answer`
-roots — only `:ir`.
+### On every iteration block (top-level, separate from tool-result)
 
-### 2.2 `(answer ...)` contract — soft normalization
+| field | type | what |
+|---|---|---|
+| `:op-system-kind` | enum (NEW) | `:answer :nudge :tool :thinking` (4 values total — see hard removals below) |
 
-Soft-coerce, never throw. The LLM's prompt instructs it to always emit
-`[:ir & nodes]`; coercion handles legacy data and forgetful models silently.
+---
 
-| LLM passes | Becomes after `answer-value->ast` |
-|---|---|
-| `[:ir ...]` | used as-is (after attrs normalization, `:li`-content discriminator) |
-| `[:tag ...]` (Hiccup, non-`:ir` root) | `[:ir <node>]` |
-| `"text"` (bare string) | `[:ir "text"]` |
-| Anything else | `[:ir [:code {:lang "edn"} (pr-str x)]]` (debug surface) |
-
-The auto-wrap behavior is **not advertised in the prompt**. Prompt always
-shows the canonical `[:ir & nodes]` form so the LLM emits it consistently;
-the wrapping is a runtime safety net.
-
-### 2.3 LLM prompt — replaces the 660-char `v/` catalogue
-
-```
-Answers use IR (Hiccup-EDN). Always emit (answer [:ir & nodes]).
-
-Block tags: :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li :quote
-            :table :tr :th :td
-Inline tags: :strong :em :c (inline code) :a{:href} :img{:src :alt}
-             :kbd :mark :sup :sub
-
-Bare strings are text nodes. Attrs map is optional. :li content is
-either all blocks or all inlines (not mixed).
-
-For pure-code answers: [:ir [:code {:lang "clojure"} "..."]].
-
-Examples:
-
-(answer
- [:ir
-  [:p "Recurses on the rest until the empty case."]
-  [:p "Complexity: " [:c "O(n)"] "."]])
-
-(answer
- [:ir
-  [:code {:lang "clojure"}
-   "(defn reverse-list [xs] (reduce conj '() xs))"]])
-
-(answer
- [:ir
-  [:h {:level 2} "Comparison"]
-  [:table
-   [:tr [:th "Approach"]   [:th "Big-O"]]
-   [:tr [:td "reduce"]     [:td [:c "O(n)"]]]
-   [:tr [:td "loop+recur"] [:td [:c "O(n)"]]]]
-  [:p "Both are linear; " [:strong "reduce"] " is more idiomatic."]])
-```
-
-Total ~800 chars. Net vs current 660-char `v/` catalogue: +140 chars,
-gains: schema-correct examples, no DSL ceremony, models work in their
-trained lingua franca (Hiccup).
-
-### 2.4 Channel renderer registry
-
-New optional key in `vis/register-extension!` channel registration:
+## Locked enums
 
 ```clojure
-{:ext/channels
- [{:channel/id      :telegram
-   :channel/main-fn #'channel-main
-   :channel/messages-renderer-fn  #'render-for-telegram   ;; ← NEW
-   ...}]}
+;; In src/com/blockether/vis/internal/extension.clj
+(s/def ::op-tag
+  #{:op/read :op/search :op/edit :op/create
+    :op/delete :op/move :op/shell :op/meta})
 
-(defn render-for-telegram [ir-or-string opts]
-  (md/render ir-or-string :html opts))
+(s/def ::content-kind
+  #{:file :tree :search-hits :patch-result
+    :exec-output :json :other})
+
+;; In src/com/blockether/vis/internal/iter_block.clj  (NEW file)
+(s/def ::op-system-kind
+  #{:answer :nudge :tool :thinking})
 ```
-
-Contract: `(fn [AnswerInput RenderOpts] -> RenderOutput)`. `AnswerInput`
-is whatever the DB returned (`[:ir ...]`, legacy string, etc.); the
-renderer normalizes via `md/->ast`. Output type channel-defined
-(Telegram: String; TUI: String today).
-
-Single chokepoint per channel. `tg/send-message!` looks up + calls the
-fn; bot code never calls renderer manually.
-
-### 2.5 `vis run --code` flag
-
-Default `vis run "..."` renders to `:markdown` flavor and prints.
-
-`vis run "..." --code` extracts and concatenates `[:code]` block contents
-in source order, no fences. Multi-`[:code]` answer joins with `\n\n`.
-No `[:code]` in answer → exits 1 with:
-
-```
-Error: --code expects answer to contain at least one [:code] block;
-got prose only. Run without --code for rendered output.
-```
-
-`--code` is mutually exclusive with `--json` / `--edn` (existing flags
-not removed; `--code` joins them as a fourth output mode).
-
-### 2.6 Streaming UX (Telegram)
-
-#### 2.6.1 Streaming transport — `sendMessageDraft` with edit-based fallback
-
-Primary: **`sendMessageDraft`** (Bot API 9.3+, opened to all bots in 9.5,
-March 2026). Purpose-built for streaming partial messages while the model
-generates. Properties:
-
-- **No notification** fires during streaming (draft is not a real message).
-- **No `(edited)` tag** on the final message (draft converts to real
-  message via final `sendMessage`).
-- **Higher update frequency** allowed than `editMessageText`'s ~1 msg/sec
-  ceiling.
-- UX feel: "someone typing in real-time" rather than "message updated".
-
-Fallback: legacy **`sendMessage` + `editMessageText` loop** for older
-self-hosted Bot API servers that don't have 9.3+. Same throttle (§2.6.3).
-
-**Capability detection** at bot startup:
-
-1. On `channel-main` startup, attempt `sendMessageDraft` once with a probe
-   (e.g., draft a placeholder to the bot's own admin chat or use a no-op
-   target if the API allows; otherwise lazy-detect on first user turn).
-2. On success → store `:streaming-mode :draft` in `chat-state`.
-3. On `400 Bad Request: method not found` or `TEXTDRAFT_PEER_INVALID` →
-   store `:streaming-mode :edit`.
-4. Per-turn: read flag, dispatch to `live-bubble!` variant.
-
-**No periodic re-probing** — Bot API version doesn't downgrade. Once
-detected, stay.
-
-If the user is on Telegram cloud (`api.telegram.org`), they're always on
-the latest Bot API → draft path always succeeds. Self-hosted users on
-<9.3 stay on legacy path automatically. Zero config knob.
-
-#### 2.6.2 Live-bubble shape (transport-independent)
-
-One live-edited bubble during turn:
-
-```
-[💭 Thinking…
- <blockquote expandable>{last ~3500 chars of CoT, sliding window}</blockquote>
- ⏳ Running: tool-name
- [⊘ Cancel]                                 ← inline keyboard
-]
-```
-
-Phase routing of `:on-chunk`:
-- `:reasoning` → append to thinking blockquote, sliding window
-- `:form-start` / `:form-result` → status line swap
-- `:iteration-final` mid-turn → flush + status update
-- `:iteration-final :done?=true` → collapse thinking, render answer-IR,
-  drop keyboard
-
-#### 2.6.3 Throttle
-
-Identical for both transports (`sendMessageDraft` is more permissive
-but we keep the budget conservative to avoid surprise 429s):
-
-Throttle: 1200 ms min interval; ≥40 chars Δ OR newline; idle 3 s resets
-clock; first chunk after idle fires immediately; HTTP 400 not-modified
-swallowed; HTTP 429 doubles next two intervals then decays.
-
-Cancel button: `callback_data = "cancel:<chat-id>"`; on tap →
-cancellation-token fires; thinking bubble final-edits to `⊘ Cancelled by
-user.` + collapsed thinking + short footer; keyboard dropped.
-Spam-tap during cancel-in-flight: `answerCallbackQuery "Already cancelling…"`.
-Pre-first-paint cancel falls back to fresh `Cancelled.` message.
-
-### 2.7 Persistence
-
-Zero schema migration. `iteration.blocks` Nippy-encoded; vectors+keywords+
-maps+strings roundtrip natively. Legacy strings + needs-input maps stay
-readable via normalization in `db-turn-answer-ast`.
 
 ---
 
-## 3. Phases
+## HARD REMOVALS
 
-Phases 0–3 ship as **one atomic PR** to avoid the cosmetic-regression
-window in Telegram. Phase 4 (streaming) and Phase 5 (voice) are separate
-PRs that depend on Phases 0–3.
+### From `extension.clj`
 
-### Phase A — atomic foundation PR (Phases 0+1+2+3 of spec)
+1. **`(s/def ::rendered string?)`** at line 54 — dead, no readers anywhere. **DELETE.**
+2. **Duplicate `(s/def ::kind …)`** at lines 69 AND 690 (same `non-blank-string?`, both for extension-kind). **DELETE one**, keep the other in its file location.
+3. **Field name `:op`** → renamed to `:op-symbol`. Spec `::op` → `::op-symbol`. No fallback. Anything reading `(:op info)` becomes `(:op-symbol info)` in the same commit.
 
-Single PR. Scope:
+### From the iteration-block role taxonomy
 
-#### A.1 Demolish
+Today's 6 values collapse to 4. Hard removals:
 
-- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/markdown.clj`
-  — remove all `v/` helpers (`h h1 h2 h3 h4 h5 h6 p ul ol checklist
-  blockquote code-block code bold italic i kbd strike underline link
-  image file-link anchor hr br details table join lines section escape`).
-  Keep ns; ns-doc rewrites to "this namespace is now empty; markdown
-  surface lives in `vis.internal.markdown`."
-- `src/com/blockether/vis/internal/markdown.clj` — strip everything
-  except `conversation->markdown` and its private helpers. File goes
-  ~1155 → ~400 LOC.
-- `extensions/channels/vis-channel-telegram/src/com/blockether/vis/ext/channel_telegram/api.clj`
-  — remove `convert-md-to-html`, `markdown-table-*` helpers,
-  `escape-markdown-v2`, `markdown-quote`, `html-inline`. Keep
-  `escape-html`, `chunk-text`, HTTP wrappers, voice/file fns.
-- `src/com/blockether/vis/internal/loop.clj`
-  — remove `needs-input-answer?`, `answer-value-string`. Replace with
-  `answer-value->ast` (§2.2). Update every call site of
-  `answer-value-string` and `answer-str` to use the new shim.
-- `src/com/blockether/vis/internal/prompt.clj`
-  — remove the `v/` catalogue section; replace with the prompt in §2.3.
-- `extensions/common/vis-foundation/resources/META-INF/vis-extension/vis.edn`
-  — remove SCI exports for the deleted helpers.
-- All call-sites of `vis.internal.markdown` / `foundation.markdown`
-  (17 files per `rg`) — convert to plain markdown strings inline OR
-  remove if the call only existed to construct prompt verbiage.
+| current | action | rationale |
+|---|---|---|
+| `:vis/answer` | → `:answer` | keep, rename only |
+| `:vis/tool` | → `:tool` | keep, rename only |
+| `:vis/system` | → `:nudge` | system-emitted preflight rejections, convergence reminders, etc. are nudges. Renamed for accuracy |
+| `:vis/diagnostic` | **MERGED INTO `:nudge`** | diagnostics are a subtype of system nudges; one rendering path is enough |
+| `:vis/error` | **DELETED** | errors are orthogonal — `:success? false` already lives on tool-results. Any block of any kind can fail. The renderer dispatches on `:success?`, not on a separate `:error` kind |
+| `:vis/sci` | **MERGED INTO `:tool`** | every SCI eval IS effectively a tool call; `:op-symbol` distinguishes which one (or none, for raw user code). One rendering path for both |
+| **NEW** | `:thinking` | model reasoning blocks lifted into the iteration-block stream so the renderer dispatches uniformly across thinking + tool + answer + nudge |
 
-#### A.2 Build the IR core
+Final closed set: **`#{:answer :nudge :tool :thinking}`** (4 values).
 
-New code in `src/com/blockether/vis/internal/markdown.clj`:
+### From the field name `:rendering-kind`
+
+Hard rename to `:op-system-kind` everywhere. No fallback in source code. **One read-side compat shim in `persistance_sqlite/core.clj`** for one release, because existing local DB blobs carry `:rendering-kind <legacy-value>`:
 
 ```clojure
-(ns com.blockether.vis.internal.markdown
-  "Vis answer IR — Hiccup-EDN with 21-tag MDAST-equivalent shape.
-
-   Public surface:
-     (parse text)           ; legacy string → [:ir text]  (no commonmark; verbatim)
-     (->ast input)          ; soft-normalize any input → [:ir & nodes]
-     (render input flavor opts)  ; one of :html :markdown :plain
-     (extract-code ast)     ; for vis run --code
-     (extract-text ast)     ; for voice TTS
-     conversation->markdown ; existing exporter, unchanged
-
-   Internal:
-     normalize-attrs        ; insert {} where attrs missing
-     normalize-li-content   ; wrap loose inlines in :p
-     ir-walker-html         ; ~120 LOC, plain case dispatch
-     ir-walker-markdown     ; ~120 LOC
-     ir-walker-plain        ; ~80 LOC")
+(defn- read-op-system-kind [exec]
+  ;; New rows: :op-system-kind. Legacy rows: :rendering-kind.
+  ;; Translate legacy values into the new closed set.
+  (or (:op-system-kind exec)
+      (case (:rendering-kind exec)
+        :vis/answer     :answer
+        :vis/tool       :tool
+        :vis/sci        :tool             ; collapsed
+        :vis/system     :nudge
+        :vis/diagnostic :nudge            ; collapsed
+        :vis/error      :tool             ; collapsed; :success? false carries the error fact
+        nil)))
 ```
 
-No commonmark dep. `(parse text)` is a one-liner that wraps a string as
-`[:ir text]` for back-compat with persisted string answers. The IR is the
-canonical shape; nothing parses markdown into IR (LLM emits IR directly).
+Six lines of fallback. Deleted in the next release after this one ships.
 
-Walker dispatch: plain `case` on `(first node)` per target. One function
-per flavor. ~400 LOC total across the three walkers.
+### From the `op-classes` set
 
-`core.clj` re-exports as `vis/md-render`, `vis/md->ast`,
-`vis/md-extract-code`. SCI sandbox bindings under `md/`.
-
-#### A.3 Channel registry slot
-
-`src/com/blockether/vis/internal/extension.clj`:
-- Add `:channel/messages-renderer-fn` to channel registration spec.
-- Optional. Validator update.
-- Lazy resolution at emit time (var deref) so dev-time redefs are picked
-  up.
-
-#### A.4 Telegram + TUI chokepoints + answer-AST + Telegram attachments
-
-- `vis-channel-telegram/.../bot.clj` registers
-  `:channel/messages-renderer-fn #'render-for-telegram`.
-- `tg/send-message!` looks up the registered fn, calls it, ships result
-  with `parse_mode HTML`.
-- `vis-channel-tui/.../core.clj` registers
-  `:channel/messages-renderer-fn #'render-for-tui` where
-  `(render-for-tui [input opts] (md/render input :markdown opts))`.
-- `vis-channel-tui/.../screen.clj` screen-emit boundary calls the
-  registered fn instead of any inline rendering. Identifies the boundary
-  by reading where messages currently get appended to the transcript pane.
-- `bot.clj/handle-user-text!` reads
-  `(db-turn-answer-ast (:turn-id result))`, passes to renderer; renderer
-  output is the HTML string for the bubble.
-- `[:img]` blocks: renderer emits inline placeholder `<i>🖼 alt</i>`
-  text; bot's post-render walk detects `:img` blocks in the AST and
-  schedules `tg/send-photo!` with `reply_to_message_id` = text-bubble
-  message id. Source-order traversal.
-- New `tg/send-photo!` in `api.clj` (multipart, similar to existing
-  `send-voice!`).
-
-#### A.5 CLI `--code` flag
-
-`src/com/blockether/vis/internal/main.clj` `cli-run!` and the `run`
-spec's `:cmd/args`:
-- Add `{:name "code" :kind :flag :type :boolean :doc "Print only [:code] block contents."}`.
-- After result: if `--code`, call `(md/extract-code (:answer-ast result))`
-  → concat with `\n\n` → stdout. If empty, exit 1 with the error
-  message in §2.5.
-- If neither `--code` nor `--json` nor `--edn`, default render is
-  `(md/render answer-ast :markdown)` → stdout.
-
-#### A.6 Tests (per AGENTS.md S3, every touched ns gets coverage)
-
-Tests in matching `test/` paths:
-
-- `test/com/blockether/vis/internal/markdown_test.clj` (replaces existing)
-  - 21-tag normalization roundtrip
-  - soft-coerce: each entry in §2.2 table maps to expected canonical AST
-  - `:li` content discriminator: loose inlines wrapped in `:p`
-  - walker output for each flavor, every tag (skeletal smoke + one
-    realistic mixed answer per flavor)
-  - `extract-code` returns concatenated `[:code]` content in source order
-  - adversarial: malformed Hiccup, unknown tag, missing required attr,
-    empty `[:ir]`
-- `test/com/blockether/vis/internal/loop_test.clj` (extend existing)
-  - `answer-value->ast` covers every entry in §2.2 table
-- `extensions/channels/vis-channel-telegram/test/.../api_test.clj`
-  - Removed: tests for `convert-md-to-html`, `markdown-table-*`,
-    `escape-markdown-v2`. Replaced with HTML-output assertions that go
-    through the registered renderer.
-- `extensions/channels/vis-channel-telegram/test/.../bot_test.clj`
-  - Renderer dispatch via registry
-  - `:img` block triggers `send-photo!` after text bubble
-  - Multi-`:img` answers ship images in source order
-- `extensions/common/vis-foundation/test/.../markdown_test.clj`
-  - Deleted (the helpers are deleted).
-- `extensions/common/vis-foundation/test/.../core_test.clj`
-  - Drop tests for removed `v/` exports.
-
-#### A.7 Verify gate
-
-`./verify.sh` (full, not `--quick`) must pass before the PR merges:
-- All Clojure tests green
-- LLM smoke test: send a prompt, receive a `[:ir ...]` answer, verify
-  Telegram-HTML rendering doesn't fail parse_mode
+No removals. The 8 `:op/X` values stay. Only the field name changes (`:op-class` → `:op-tag`).
 
 ---
 
-### Phase B — streaming + cancel button (own PR, depends on A)
+## File homes
 
-Scope:
+### `src/com/blockether/vis/internal/extension.clj`
 
-- `tg/send-message-draft!`, `tg/edit-message-draft!`,
-  `tg/finalize-message-draft!`, `tg/edit-message!`, `tg/delete-message!`
-  in `vis-channel-telegram/.../api.clj`.
-- `bot.clj/detect-streaming-mode!` — capability probe at startup
-  (§2.6.1); caches `:draft` or `:edit` per channel instance.
-- `bot.clj/live-bubble!` helper — abstracts over transport. Owns
-  `chat_id` + `message_id` + render state + throttle (§2.6.3). Two
-  internal implementations behind one interface:
-  - `live-bubble-draft!` — uses `sendMessageDraft` /
-    `editMessageDraft` / final `sendMessage`. Bot API ≥ 9.3.
-  - `live-bubble-edit!` — legacy `sendMessage` + `editMessageText`
-    loop. Fallback for older self-hosted Bot API.
-- `bot.clj/handle-user-text!` rewrite:
-  - Read detected `:streaming-mode` flag; pick `live-bubble-draft!`
-    or `live-bubble-edit!`.
-  - Build `vis/make-progress-tracker` whose `:on-update` drives
-    the picked live-bubble.
-  - Pass tracker's `:on-chunk` via `:hooks {:on-chunk ...}` to
-    `vis/send!` opts.
-  - On `:iteration-final :done?=true`: collapse thinking bubble,
-    drop keyboard, render answer-AST through registered renderer-fn,
-    finalize bubble (transport-specific: draft → real `sendMessage`;
-    edit → final `editMessageText`), post additional answer bubbles
-    if multi-chunk, walk attachments per A.4.
-- `bot.clj/handle-callback-query!` matches `cancel:<chat-id>` → fires
-  cancellation on stored turn-token; updates bubble (transport-specific
-  cancel-edit); spam-tap protection.
-- Per-turn fallback: if `:draft` mode and a draft call returns an
-  unexpected error (e.g., capability silently revoked), drop to `:edit`
-  for the rest of the turn. Sticky downgrade.
+| change | line | what |
+|---|---|---|
+| RENAME `(s/def ::op …)` → `(s/def ::op-symbol …)` | 56 | |
+| ADD `(s/def ::op-tag #{…})` | new | the closed enum, formerly the bare `op-classes` set |
+| ADD `(s/def ::content-kind #{…})` | new | content shape enum |
+| ADD `(s/def ::metadata …)` | new | the metadata map spec |
+| UPDATE `(s/def ::info …)` | 85 | swap `::op` → `::op-symbol`; add `::metadata` to `:opt-un` |
+| DELETE `(s/def ::rendered string?)` | 54 | dead |
+| DEDUPE `(s/def ::kind …)` | 69 vs 690 | keep one |
 
-Tests:
-- `bot_streaming_test.clj`:
-  - capability detection: probe success → `:draft`; probe 400 →
-    `:edit`; cached across calls.
-  - both transports: throttle 1200 ms; final flush ignores interval;
-    not-modified swallowed; 429 backoff doubles interval; cancel
-    button removes keyboard + edits in place; pre-first-paint cancel
-    → fresh message; sliding-window thinking truncation;
-    multi-iteration boundary flush.
-  - per-turn fallback: simulated draft error mid-stream →
-    transparent switch to edit transport for remaining chunks of
-    that turn.
-  - draft-specific: verify final message has no `(edited)` tag
-    (assertion on `Message.edit_date` being nil).
+### `src/com/blockether/vis/internal/iter_block.clj` *(NEW)*
 
----
+```clojure
+(ns com.blockether.vis.internal.iter-block
+  "Spec for iteration-block-level classification fields. Iteration
+   blocks are the units of an iteration trace: each one is the result
+   of one assistant turn through the SCI loop.
 
-### Phase C — voice integration (own PR, depends on B)
+   These fields live at the iteration-block top level, NOT inside
+   tool-result `:info`. Tool-result fields live in `extension.clj`."
+  (:require [clojure.spec.alpha :as s]))
 
-Scope:
-- Voice path streams thinking bubble (Phase B) normally.
-- After turn completion: extract `(md/extract-text answer-ast)` →
-  synthesize → send voice note. Existing audio flow downstream
-  unchanged.
-- `:img` attachments in voice mode: still ship per A.4 attachment walk.
-- `:code` / `:table` blocks: voice TTS skips them with a "see chat for
-  code/table" announcement marker (or just drops them — UX call during
-  implementation).
+(s/def ::op-system-kind
+  #{:answer :nudge :tool :thinking})
 
-Tests:
-- `bot_voice_test.clj`: voice + streaming + IR mixed answer ships
-  thinking bubble during turn, voice note + optional text bubble after,
-  attachments shipped.
+(s/def ::iter-block
+  (s/keys :req-un [::op-system-kind]))
+```
 
----
+40 lines including a smoke test in `iter_block_test.clj`.
 
-### Phase D removed — TUI chokepoint folded into Phase A
+### `src/com/blockether/vis/internal/loop.clj`
 
-TUI registry wiring is no longer a separate phase. It ships in Phase A:
-- TUI extension (`vis-channel-tui`) registers
-  `:channel/messages-renderer-fn (fn [input opts] (md/render input :markdown opts))`
-  in `vis-channel-tui/.../core.clj`.
-- TUI's screen-emit boundary in
-  `vis-channel-tui/.../screen.clj` calls the registered fn instead of
-  inline rendering. (TUIs in modern terminals render markdown reasonably
-  via `:markdown` flavor; explicit `:tui-styled` styled-segment renderer
-  remains future work.)
-- Falls under Phase A's atomic-PR umbrella so the chokepoint contract is
-  exercised by both consumers from day one.
-
----
-
-## 4. Risks
-
-| Risk | Mitigation |
+| line | change |
 |---|---|
-| LLM regresses without `v/` DSL guidance | Few-shot examples in prompt (§2.3) ground it; auto-wrap soft-coerces forgetful output. |
-| `sendMessageDraft` capability changes between Bot API versions | Detect at startup (§2.6.1); cache result; per-turn sticky downgrade on unexpected error. Self-hosted users on <9.3 transparently use legacy edit path. |
-| Draft path silently dropped messages on edge cases (cf. OpenClaw #19001) | Per-turn fallback to edit path on first draft-call error; final-edit always re-confirms terminal state. |
-| LLM emits malformed IR (unknown tag, missing required attr) | Walker `:default` arm renders children, drops wrapper. `->ast` normalizes attrs. Renderer never throws. |
-| Soft-coerce hides bugs (LLM keeps emitting strings, we silently wrap) | Ship a debug counter in `tel/log!` for "auto-wrapped non-IR answer" so we can detect prompt drift. |
-| Telegram `<blockquote expandable>` requires Bot API ≥ 7.0 | Documented requirement. Older Bot API silently shows non-expandable blockquote — degraded but functional. |
-| `:img` with local-path src ships gigabyte file | Renderer/sender enforces 20 MB Telegram photo cap; oversize → degrade to file path text in placeholder. |
-| Multi-iteration `(answer)` attachments | Only terminal-iteration's attachments ship. Mid-turn `(answer)` calls' images dropped. Spec §8.6. |
-| Walker output edge cases (escape rules, nested lists, table alignment) | Per-flavor walker test coverage in A.6 catches them; ~80 cases. |
-| Persistence size growth | Nippy compact; KB-scale. |
-| LLM emits structural table (`:table`/`:tr`/`:td`) but with cell strings containing markdown | Cell rule pinned: `Cell = String \| Inline-node`. String cells rendered verbatim text; if LLM wants emphasis, it nests `[:strong ...]`. Tested explicitly. |
-| `vis run --code` extracts wrong block when answer has multiple `:code` blocks | Concatenate in source order; if user wants only one, prompt LLM more precisely. Documented behavior. |
+| 1506-1518 | `eval-rendering-kind` → rename `eval-op-system-kind`; collapse 6 values to 4 per the merge table |
+| 1972, 1997, 2017, 2091 | 4 writer sites: `:rendering-kind` → `:op-system-kind` |
+
+### `src/com/blockether/vis/internal/presentation.clj`
+
+Lines 122, 128, 137 — `:rendering-kind` → `:op-system-kind` in `select-keys`.
+
+### `src/com/blockether/vis/internal/env.clj`
+
+| line | change |
+|---|---|
+| 736-740 | bindings render: read from `:info :metadata` (use `:op-tag`, `:content-kind`, `:path`, `:sha`, `:size`, `:pointer`) |
+| (new) | SCI eval hook: when `(def f17 (some-tool …))` lands a tool-result, stamp `[:info :metadata :pointer]` and `[:info :metadata :iter-bound]` on the value |
+
+### `src/com/blockether/vis/internal/progress.clj`
+
+Line 109 — read `:hit-count` / `:truncated-by` from `[:info :metadata]` instead of result top-level.
+
+### `extensions/persistance/vis-persistance-sqlite/src/.../core.clj`
+
+| line | change |
+|---|---|
+| 968-988 | `normalize-rendering-kind` → `normalize-op-system-kind`; ADD `read-op-system-kind` tolerant-read shim (legacy compat for one release) |
+| (new) | write `:op-system-kind` only; never write the old key |
+
+### `extensions/common/vis-foundation/src/.../transcript.clj`
+
+Line 382 — `:rendering-kind` → `:op-system-kind`.
+
+### `extensions/common/vis-foundation/src/.../editing/core.clj`
+
+Producer side: every tool stamps `:metadata` into `:info`. Concrete sites for `v/cat`, `v/rg`, `v/ls`, `v/glob`, `v/exists?`, `v/patch`, `v/write`, `v/append`, `v/bash`, `v/create-dirs`, `v/delete`, `v/move`, `v/copy`. Same commit pulls `:total-lines` / `:truncated-by` / `:offset` / `:hit-count` OUT of `:result` — `:result` becomes pure payload (e.g. just `:lines` for `v/cat`, just `:hits` for `v/rg`).
+
+### `extensions/languages/clojure/src/.../core.clj`
+
+Producer side for `z/locators`, `z/symbols`, `z/locator-for-symbol`, `z/patch`, `z/patch-check`, `z/repair-range`, `z/repair-locator`, `z/repair-file`. Same shape as foundation tools.
+
+### Tests
+
+| file | what |
+|---|---|
+| `test/com/blockether/vis/internal/extension_test.clj` | spec roundtrip for new `::metadata`, `::op-tag`, `::content-kind`, renamed `::op-symbol` |
+| `test/com/blockether/vis/internal/iter_block_test.clj` *(NEW)* | spec smoke for `::op-system-kind` |
+| `test/com/blockether/vis/internal/loop_test.clj` | flip existing repros (`REPRO-tool-result-metadata-shape-target`, `REPRO-bindings-tool-result-collapse-misses-file-pointer`) to assert the new shape |
+| `test/com/blockether/vis/internal/prompt_test.clj` | 1 hit, mechanical |
+| `test/com/blockether/vis/internal/progress_test.clj` | 1 hit, mechanical |
+| `extensions/persistance/.../persistance_sqlite_test.clj` | NEW: legacy-blob tolerant-read regression |
+| `docs/src/extensions/spec.md` | doc update |
 
 ---
 
-## 5. Out of scope
+## Step list (ordered, file-bounded)
 
-- Per-token answer-prose streaming (architectural).
-- Streaming voice synth.
-- Telegram MarkdownV2 parse-mode.
-- `:vis/*` namespace / domain extensions.
-- `needs-input` semantic (removed).
-- Hand-rolled or library-based markdown parser (LLM emits IR; no parsing).
-- DB schema changes (zero — Nippy roundtrips).
-- Image generation pipelines.
-- Layout primitives.
-- Grammar-constrained LLM decoding.
-- TUI styled-segment renderer (deferred to follow-up PR after D).
+| # | scope | files | est lines |
+|---|---|---|---|
+| 1 | **Spec only** — new `::metadata`, `::op-tag`, `::content-kind`, `::op-symbol`; new `iter_block.clj` with `::op-system-kind`; delete dead specs; spec tests | `extension.clj`, `extension_test.clj`, NEW `iter_block.clj` + test | ~120 |
+| 2 | **Producer cleanup** — every tool stamps `:metadata`; pull fields OUT of `:result` | `editing/core.clj`, `lang-clojure/.../core.clj` (~12 sites) | ~150 |
+| 3 | **Reader cleanup** — every site reads from `:metadata`; v/cat + v/rg docstrings rewritten | `env.clj`, `progress.clj`, `prompt.clj`, journal renderers | ~30 |
+| 4 | **SCI runtime stamping** — `:pointer` + `:iter-bound` post-eval hook | `env.clj` SCI hook | ~40 |
+| 5 | **Iteration-block rename** — `:rendering-kind` → `:op-system-kind`; collapse 6 values to 4; persistence tolerant-read shim | `loop.clj`, `presentation.clj`, `transcript.clj`, `persistance_sqlite/core.clj`, 3 tests | ~80 |
 
----
+**Dependencies:** Step 2 + Step 3 must land in the same commit (producer change makes readers obsolete). Steps 1, 4, 5 are independent.
 
-## 6. Sequencing & merge order
+**Recommended landing order:** 1 → 5 → 4 → (2+3 together).
 
-1. **PR A** (this plan §3 Phase A). Foundation — includes both Telegram
-   AND TUI chokepoints wired through `:channel/messages-renderer-fn`.
-   Atomic.
-2. **PR B** depends on A merged. Streaming + cancel (Telegram only).
-3. **PR C** depends on B merged. Voice.
-4. _(was Phase D)_ TUI registry wiring is in PR A; no separate PR.
+Step 1 first because it's pure spec and unblocks the rest.
+Step 5 second because it's the highest-risk (touches persistence) and we want it baked in CI first.
+Step 4 third because SCI stamping is independent and small.
+Steps 2+3 together last because they're the largest mechanical change and depend on Step 1's spec being live.
 
 ---
 
-## 7. Open items
+## Reproductions to flip (already landed in `loop_test.clj`)
 
-None at plan time. Implementation can begin Phase A immediately.
+| repro | today | post-impl |
+|---|---|---|
+| `REPRO-tool-result-metadata-shape-target` "TODAY: v/cat result has no :info :metadata field" | `(nil? metadata)` | DELETE |
+| `REPRO-tool-result-metadata-shape-target` "PROPOSED" | static literal | call actual builder; assert |
+| `REPRO-bindings-tool-result-collapse-misses-file-pointer` | `(expect true)` | assert env.clj produces full metadata view |
+| `REPRO-replay-reasoning-chars-provider-incoherence` (4 cases) | unchanged (Z.ai truncation OUT of scope) |
+| `REPRO-zai-preserved-thinking-budget-too-generous` (2 cases) | unchanged |
+| `REPRO-vcat-journal-redundant-reads` (2 cases) | unchanged (per-turn dedup OUT of scope) |
+| `REPRO-zai-has-no-thinking-budget-knob` (2 cases) | unchanged |
+| `REPRO-zai-head-tail-truncation-policy` (4 cases) | unchanged |
 
-## 8. References
+NEW repro to add in Step 5: `REPRO-op-system-kind-rename-target` — pin the legacy→new value mapping in the persistence shim.
 
-Industry research informing this plan:
+---
 
-- Bot API changelog — `expandable_blockquote` (2024), `sendMessageDraft`
-  (Bot API 9.3 Dec 2025, opened to all bots in 9.5 March 2026). Source:
-  https://core.telegram.org/bots/api-changelog
-- OpenClaw / Clawdbot streaming migration to `sendMessageDraft`
-  (issues #32041, #32180): no notification, no `(edited)` tag, faster
-  update frequency.
-- anything-llm production rate-limit data (issue #5447): edit-based
-  streaming hit 429s, settled on 1000-1500ms intervals. Validates our
-  1200 ms throttle ceiling.
-- Industry consensus on content blocks (Anthropic, OpenAI Responses
-  API, LangChain 1.0 `content_blocks`): typed structured blocks for
-  mixed prose + non-text. Vis IR matches this shape via Hiccup-EDN.
-- `telegramify-markdown` (sudoskys, Python): MessageEntity-based
-  rendering as defect-#10-proof alternative to parse_mode. Noted as
-  potential future evolution (out of scope for this PR).
+## What is OUT of scope, explicitly
+
+- Per-turn `files-read-atom` + journal dedup of repeat reads.
+- Z.ai head/tail preserved-thinking truncation.
+- `:render/as` field — fenced renderer covers it.
+- `:op/proof` — no real distinction from `:op/meta` worth a split.
+- Server-side conversation compaction.
+- Any new SQLite columns.
+- Any change to `op-classes` set membership (only the field name `:op-class` → `:op-tag` changes).
+
+---
+
+## Decisions locked
+
+| # | decision | choice |
+|---|---|---|
+| D1 | preserve-thinking truncation | OUT |
+| D2 | per-turn files-read-atom dedup | OUT |
+| D3 | `:render/as` rendering hint | OUT (fenced renderer covers it) |
+| D4 | `:op/proof` split | OUT (no real distinction from `:op/meta`) |
+| D5 | `:op-tag` field required in `:metadata` | YES (producer stamps from `op-class-of`) |
+| D6 | dead `(s/def ::rendered)` | DELETE |
+| D7 | duplicate `::kind` | DEDUPE — pick one location |
+| D8 | block role field name | `:op-system-kind` (renamed from `:rendering-kind`) |
+| D9 | block role value set | `#{:answer :nudge :tool :thinking}` (4 values; collapsed from 6) |
+| D10 | block role legacy values | `:vis/diagnostic` → `:nudge`; `:vis/sci` → `:tool`; `:vis/error` → DELETED (use `:success?`); `:vis/system` → `:nudge` |
+| D11 | tool-result symbol field name | `:op-symbol` (renamed from `:op`) |
+| D12 | tool-result effect class field name | `:op-tag` (renamed from `:op-class`) |
+| D13 | tool-result content kind field name | `:content-kind` spec, `:kind` map key |
+| D14 | persistence backward compat | tolerant-read shim for ONE release in `persistance_sqlite/core.clj`, then delete |
+| D15 | iteration-block spec home | NEW file `src/com/blockether/vis/internal/iter_block.clj` |
+
+---
+
+## Ready to start
+
+Step 1 unblocks everything else. ~120 lines, isolated to spec + new file. Safe first commit.

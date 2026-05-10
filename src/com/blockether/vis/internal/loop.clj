@@ -42,7 +42,7 @@
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.lifecycle :as lifecycle]
-   [com.blockether.vis.internal.markdown :as markdown]
+   [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
@@ -262,10 +262,18 @@
     (string? v) v
     :else (str v)))
 
-(defn answer-str [answer]
-  (let [v (:result answer answer)
-        s (answer-value-string v)]
-    (markdown/normalize-chat-markdown s)))
+(defn answer-str
+  "Render the answer value to a flat string for legacy callers (logs,
+   error formatting, plain-text channel paths). New code should call
+   `(render/render v :plain)` or another flavor directly.
+
+   Bypasses the IR pipeline only for needs-input legacy maps so the
+   prompt-flow gate keeps reading `:answer/text` without a render hop."
+  [answer]
+  (let [v (:result answer answer)]
+    (cond
+      (needs-input-answer? v) (:answer/text v)
+      :else                   (render/render v :plain))))
 
 (defn append-runtime-appendices
   "No-op compatibility shim; runtime appendices were removed."

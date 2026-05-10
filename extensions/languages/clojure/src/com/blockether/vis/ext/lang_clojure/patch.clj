@@ -18,7 +18,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.markdown :as md]
+
    [com.blockether.vis.internal.workspace-context :as workspace-context]
    [rewrite-clj.parser :as parser]
    [rewrite-clj.zip :as z])
@@ -401,15 +401,15 @@
 (defn- channel-render-patch-check
   [result]
   (let [{:keys [valid? checks failures]} (or result {})]
-    (md/join
-      (md/p (if valid? "All zipper edits valid." (str (count failures) " zipper edit(s) failed.")))
+    (str (if valid? "All zipper edits valid." (str (count failures) " zipper edit(s) failed.")) "\n\n"
       (when (seq checks)
-        (md/code-block "text"
+        (str "```text\n"
           (str/join "\n"
             (map (fn [{:keys [edit-index path matches locator-error]}]
                    (str "#" edit-index " " path " matches=" matches
                      (when locator-error (str " locator-error=" locator-error))))
-              checks)))))))
+              checks))
+          "\n```")))))
 
 (defn- write-plans!
   [plans]
@@ -462,9 +462,8 @@
 (defn- channel-render-patch-result
   [result]
   (let [files (if (sequential? result) result [result])]
-    (md/join
-      (md/p "Patched" (count files) "Clojure file(s).")
-      (md/ul (map (fn [{:keys [path]}] (md/code path)) files)))))
+    (str "Patched " (count files) " Clojure file(s).\n\n"
+      (str/join "\n" (map (fn [{:keys [path]}] (str "- `" path "`")) files)))))
 
 ;; =============================================================================
 ;; Locator discovery
@@ -582,16 +581,16 @@
 (defn- channel-render-locators
   [result]
   (let [rows (vec (or result []))]
-    (md/join
-      (md/p "Found" (count rows) "zipper locator(s).")
+    (str "Found " (count rows) " zipper locator(s).\n\n"
       (when (seq rows)
-        (md/code-block "text"
+        (str "```text\n"
           (str/join "\n\n"
             (map-indexed
               (fn [idx {:keys [path tag locator source span]}]
                 (str (inc idx) ". " path " " (pr-str span) " " tag "\n"
                   (preview-text (or source locator ""))))
-              (take 8 rows))))))))
+              (take 8 rows)))
+          "\n```")))))
 
 ;; =============================================================================
 ;; Symbol declarations
