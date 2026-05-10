@@ -34,6 +34,7 @@
      :max-lines       int    ; hard cap (default unlimited)"
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.internal.render :as ir]))
 
 (set! *warn-on-reflection* true)
@@ -307,46 +308,66 @@
         bar   {:text "│ " :style #{:quote} :node nil}]
     (mapv (fn [l] (update l :runs #(into [bar] %))) inner)))
 
+(defn- tag-lines
+  "Stamp every produced line with `:block-tag` so downstream adapters
+   (sentinel-string emitter, click/select region builder) can map
+   each rendered line back to its semantic source.  For headings we
+   also propagate `:level` so adapters can pick H1/H2/H3 markers."
+  [lines block-tag & {:keys [level]}]
+  (mapv (fn [l]
+          (cond-> (assoc l :block-tag block-tag)
+            level (assoc :block-level level)))
+    lines))
+
 (defn- block->lines
-  "Render one block node into a vector of lines."
+  "Render one block node into a vector of lines. Each line carries a
+   `:block-tag` used by downstream adapters."
   [node width opts]
   (let [tag (node-tag node)]
     (case tag
       :p
-      (let [ls (inline-block->lines (node-children node) width opts #{} nil)]
-        (if (seq ls) (conj (vec ls) (empty-line)) [(empty-line)]))
+      (let [ls (inline-block->lines (node-children node) width opts #{} nil)
+            ls (if (seq ls) ls [(empty-line)])]
+        (conj (vec (tag-lines ls :p)) (assoc (empty-line) :block-tag :p)))
 
       :h
-      (let [ls (inline-block->lines (node-children node) width opts #{:bold :heading} nil)]
-        (if (seq ls) (conj (vec ls) (empty-line)) [(empty-line)]))
+      (let [level (or (:level (node-attrs node)) 1)
+            ls (inline-block->lines (node-children node) width opts #{:bold :heading} nil)
+            ls (if (seq ls) ls [(empty-line)])]
+        (conj (vec (tag-lines ls :h :level level))
+          (assoc (empty-line) :block-tag :h :block-level level)))
 
       :code
-      (conj (vec (code-block->lines node width opts)) (empty-line))
+      (conj (vec (tag-lines (code-block->lines node width opts) :code))
+        (assoc (empty-line) :block-tag :code))
 
       :ul
-      (conj (vec (list->lines :ul (node-children node) width opts)) (empty-line))
+      (conj (vec (tag-lines (list->lines :ul (node-children node) width opts) :ul))
+        (assoc (empty-line) :block-tag :ul))
 
       :ol
-      (conj (vec (list->lines :ol (node-children node) width opts)) (empty-line))
+      (conj (vec (tag-lines (list->lines :ol (node-children node) width opts) :ol))
+        (assoc (empty-line) :block-tag :ol))
 
       :quote
-      (conj (vec (quote->lines (node-children node) width opts)) (empty-line))
+      (conj (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
+        (assoc (empty-line) :block-tag :quote))
 
       ;; tables fall back to plain projection for v1; truncate lines
       ;; to width so they don't blow past the terminal
       :table
       (let [md (ir/render [:ir node] :plain)
-            cap (max 1 (long width))]
-        (conj (vec (map (fn [l]
-                          (let [t (if (> (count l) cap)
-                                    (str (subs l 0 (max 0 (- cap 1))) "…")
-                                    l)]
-                            {:runs (if (= "" t) [] [{:text t :style #{} :node node}])}))
-                     (str/split-lines md)))
-          (empty-line)))
+            cap (max 1 (long width))
+            ls (mapv (fn [l]
+                       (let [t (if (> (count l) cap)
+                                 (str (subs l 0 (max 0 (- cap 1))) "…")
+                                 l)]
+                         {:runs (if (= "" t) [] [{:text t :style #{} :node node}])}))
+                 (str/split-lines md))]
+        (conj (vec (tag-lines ls :table)) (assoc (empty-line) :block-tag :table)))
 
       ;; unknown / leftover inline at block position
-      [(empty-line)])))
+      [(assoc (empty-line) :block-tag :p)])))
 
 ;; =============================================================================
 ;; Public API
@@ -385,3 +406,73 @@
   (str/join "\n"
     (map (fn [l] (apply str (map (fn [r] (or (:text r) "")) (:runs l))))
       lines)))
+
+;; =============================================================================
+;; Sentinel-string adapter — bridge to the existing bubble painter
+;; =============================================================================
+;;
+;; The pre-IR bubble painter consumes vectors of strings, where each
+;; string starts with a block marker (`MARKER_MD_H1` / `MARKER_MD_BULLET`
+;; / etc., see `primitives.clj`) and embeds inline span sentinels
+;; (`INLINE_BOLD_ON/OFF`, `INLINE_CODE_ON/OFF`, ...). This adapter
+;; emits exactly that surface from canonical IR walker output, so
+;; assistant-answer rendering can switch off the markdown→parse→wrap
+;; pipeline without touching the painter.
+;;
+;; User-typed messages still go through `render/markdown->lines` for
+;; now — they're plain strings, not IR — so the painter contract
+;; stays bivalent.
+
+(defn- block-marker-for
+  "Pick the answer-zone block marker for a `:block-tag` (and optional
+   heading `:level`)."
+  ^String [block-tag level]
+  (case block-tag
+    :h     (case (long (or level 1))
+             1 p/MARKER_MD_H1
+             2 p/MARKER_MD_H2
+             p/MARKER_MD_H3)
+    :code  p/MARKER_MD_CODE
+    :ul    p/MARKER_MD_BULLET
+    :ol    p/MARKER_MD_BULLET
+    :li    p/MARKER_MD_BULLET
+    :quote p/MARKER_MD_QUOTE
+    :table p/MARKER_MD_TABLE_ROW
+    ;; :p, nil, anything else → plain answer text marker
+    p/MARKER_ANSWER_TXT))
+
+(defn- run->sentinel-segment
+  "Wrap a run's text with the inline-span sentinels its style flags
+   demand. Bold / italic / code / link each get an ON…OFF pair."
+  ^String [{:keys [text style]}]
+  (let [text (or text "")]
+    (cond-> text
+      (contains? style :code)   (->> (str p/INLINE_CODE_ON))
+      (contains? style :code)   (str p/INLINE_CODE_OFF)
+      (contains? style :italic) (->> (str p/INLINE_ITALIC_ON))
+      (contains? style :italic) (str p/INLINE_ITALIC_OFF)
+      (contains? style :bold)   (->> (str p/INLINE_BOLD_ON))
+      (contains? style :bold)   (str p/INLINE_BOLD_OFF)
+      (contains? style :link)   (->> (str p/INLINE_LINK_ON))
+      (contains? style :link)   (str p/INLINE_LINK_OFF))))
+
+(defn lines->sentinel-strings
+  "Convert walker output (vector of `{:runs :block-tag :block-level?}`
+   maps) into the painter's sentinel-prefixed string contract. Each
+   line: `<block-marker><inline-sentinel-wrapped body>`.  Blank
+   lines retain their block tag so the painter can choose the
+   correct background fill (e.g. answer bg vs trace bg)."
+  [lines]
+  (mapv (fn [{:keys [runs block-tag block-level]}]
+          (let [marker (block-marker-for block-tag block-level)
+                body   (apply str (map run->sentinel-segment runs))]
+            (str marker body)))
+    lines))
+
+(defn ir->sentinel-strings
+  "One-shot helper: canonical IR → vector of sentinel-prefixed strings
+   ready for the existing bubble painter. Composes `ir->lines` with
+   the sentinel adapter."
+  ([ir width] (ir->sentinel-strings ir width nil))
+  ([ir width opts]
+   (lines->sentinel-strings (ir->lines ir width opts))))

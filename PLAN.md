@@ -278,7 +278,7 @@ specs after this PR:
   ;; operation it describes. Every field lives under the `op`
   ;; namespace so readers grep one prefix to find the entire
   ;; envelope contract.
-  (s/keys :opt-un [::op/symbol ::op/tag ::op/metadata
+  (s/keys :opt-un [::op/symbol ::op/tag ::op/result ::op/metadata
                    ::op/success? ::op/error ::op/stdout ::op/stderr]))
 
 
@@ -1033,15 +1033,17 @@ and callers): every HoneySQL `:from [:iteration]` /
 
 ### 2.3 Removed from earlier draft
 
-- **`::op/result` (content-shape enum) is removed.** Renderers
-  decide layout from the value itself + `::op/tag`; a parallel
+- **`::op/result` as a content-shape enum was removed.** A parallel
   shape enum was speculative and had no readers committed to it.
-  Reintroduce only if a concrete renderer demands it.
-- **`::result` (the raw return value)** is not in the envelope
-  spec. The return value is an SCI evaluation result of arbitrary
-  shape; spec'ing it as `any?` adds nothing. Carriers that need it
-  (transcript, persistence) keep it as a plain unkeyed map entry,
-  outside the validated envelope.
+  The keyword `::op/result` was then **REPURPOSED** to carry the
+  raw SCI eval value — see below.
+- **`:op/result` carries the raw return value.** Originally PLAN
+  proposed leaving `:result` outside the envelope as a plain
+  unqualified key. That left ONE bare key in an otherwise
+  fully-namespaced envelope, which read inconsistently and made
+  grep noisy. The decision flipped: the value lives inside the
+  envelope under `:op/result` so every field is `op/*`. Spec stays
+  permissive (`any?`) since the shape varies per tool.
 
 ### 2.4 Rename table (final)
 
