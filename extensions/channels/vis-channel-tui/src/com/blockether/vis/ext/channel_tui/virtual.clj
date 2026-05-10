@@ -164,7 +164,12 @@
         chrome-rows 3
         role     (:role message)
         trace    (:trace message)
-        text     (:text message)]
+        ;; Pre-projection rough text estimate: extract plain text from
+        ;; `:ir` so the height heuristic doesn't depend on `:text`
+        ;; (which is only set by the walker AFTER projection).
+        text     (or (:text message)
+                   (when-let [ir (:ir message)]
+                     (com.blockether.vis.core/extract-text ir)))]
     (cond
       (= role :user)
       (long
@@ -185,7 +190,7 @@
             ;; Heuristic for answer width: `:text` is the rendered
             ;; markdown string (assistant-message stores it eagerly
             ;; via render-answer). The layout pipeline re-wraps from
-            ;; `:raw-answer` IR; this size estimate just picks a
+            ;; `:ir` IR; this size estimate just picks a
             ;; ballpark row count.
             ans-c    (char-count text)]
         (long
@@ -256,7 +261,7 @@
        (and (= :assistant (:role message)) (:trace message))
        (let [{:keys [text lines line-meta]}
              (render/format-answer-with-thinking-data
-               (:raw-answer message) (:trace message) bubble-w settings
+               (:ir message) (:trace message) bubble-w settings
                (:confidence message)
                (= :cancelled (:status message))
                {:conversation-id      conversation-id
@@ -266,10 +271,16 @@
            (assoc :text text :prewrapped-lines lines :line-meta line-meta)
            strip-ts))
 
+       ;; Both assistant- and user-messages now carry canonical IR on
+       ;; `:ir` (chat/assistant-message + chat/user-message lift
+       ;; via vis/text->ir at construction). The walker is the single
+       ;; bubble layout engine; the rendered markdown string stays in
+       ;; `:text` for clipboard/copy.
        (#{:assistant :user} (:role message))
-       (let [{:keys [text lines line-meta]}
+       (let [ir (:ir message)
+             {:keys [text lines line-meta]}
              (render/format-answer-markdown-data
-               (:text message) bubble-w
+               ir bubble-w
                {:conversation-id      conversation-id
                 :conversation-turn-id (turn-identity message)
                 :detail-expansions   detail-expansions})]

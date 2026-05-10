@@ -150,6 +150,7 @@
 ;; =============================================================================
 (def render        ir/render)
 (def ->ast         ir/->ast)
+(def text->ir      ir/text->ir)
 (def extract-code  ir/extract-code)
 (def extract-text  ir/extract-text)
 

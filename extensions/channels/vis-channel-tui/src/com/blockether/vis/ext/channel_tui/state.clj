@@ -1244,7 +1244,7 @@
                     response (-> (chat/assistant-message answer-ir)
                                (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
                                  (seq trace)
-                                 (assoc :trace trace :raw-answer answer-ir)
+                                 (assoc :trace trace :ir answer-ir)
                                  (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                                  model      (assoc :model model)
                                  iteration-count (assoc :iteration-count iteration-count)

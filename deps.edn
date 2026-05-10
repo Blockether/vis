@@ -63,6 +63,12 @@
   ;;   lanterna                 -> vis-channel-tui
   com.blockether/svar              {:mvn/version "0.4.14"}
   com.blockether/anomaly           {:mvn/version "1.0.1"}
+  ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
+  ;; to lift LLM-emitted thinking strings + user-typed messages into
+  ;; canonical answer-IR. Standard CommonMark + GFM tables / strikethrough.
+  org.commonmark/commonmark              {:mvn/version "0.24.0"}
+  org.commonmark/commonmark-ext-gfm-tables {:mvn/version "0.24.0"}
+  org.commonmark/commonmark-ext-gfm-strikethrough {:mvn/version "0.24.0"}
   babashka/process                 {:mvn/version "0.6.25"}
   org.clojure/clojure              {:mvn/version "1.12.4"}
   com.taoensso/telemere            {:mvn/version "1.2.1"}

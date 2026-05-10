@@ -194,8 +194,14 @@
     (expect (= [] (:messages @state/app-db)))
     (state/dispatch [:select-workspace-tab-index 0])
     (expect (= {:id "main-c"} (:conversation @state/app-db)))
+    ;; Bubble messages now carry IR only (:text is computed lazily
+    ;; by the walker projection); derive plain text via extract-text
+    ;; for the assertion.
     (expect (= ["main prompt" "main answer"]
-              (mapv :text (:messages @state/app-db))))
+              (mapv (fn [m]
+                      (when-let [ir (:ir m)]
+                        (com.blockether.vis.core/extract-text ir)))
+                (:messages @state/app-db))))
     (expect (false? (:loading? @state/app-db))))
 
   (it "selects workspace tabs by zero-based index and cycles to the next tab"
