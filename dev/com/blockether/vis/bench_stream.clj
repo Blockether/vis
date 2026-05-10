@@ -91,6 +91,134 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
          dt (- (System/nanoTime) t0)]
      [dt (count (:lines result))])))
 
+(defn run-progressive-end-to-end!
+  "END-TO-END PRODUCTION bench: drives `screen/render-frame!` against
+   a real `TerminalScreen` backed by a `DefaultVirtualTerminal` (in-
+   memory, no actual terminal I/O). Measures: virtual/layout +
+   draw-messages-area + chrome paints + Lanterna DELTA refresh.
+
+   This is the realistic per-frame cost. Includes EVERYTHING the
+   render thread does in production except the actual stdout write.
+
+   Each frame: append `chunk-chars` to the live iteration's :thinking,
+   bump :render-version, call render-frame!, time it.
+
+   Emits `stream_e2e_*` metrics."
+  [{:keys [target-chars chunk-chars cols rows warmup-frames]
+    :or   {target-chars  100000
+           chunk-chars   1000
+           cols          200
+           rows          50
+           warmup-frames 5}}]
+  (let [screen-cls (Class/forName "com.googlecode.lanterna.screen.TerminalScreen")
+        vt-cls     (Class/forName "com.googlecode.lanterna.terminal.virtual.DefaultVirtualTerminal")
+        size-cls   (Class/forName "com.googlecode.lanterna.TerminalSize")
+        size       (.newInstance (.getConstructor size-cls
+                                   (into-array Class [Integer/TYPE Integer/TYPE]))
+                     (object-array [(int cols) (int rows)]))
+        term       (.newInstance (.getConstructor vt-cls (into-array Class [size-cls]))
+                     (object-array [size]))
+        screen     (.newInstance (.getConstructor screen-cls
+                                   (into-array Class
+                                     [(Class/forName "com.googlecode.lanterna.terminal.Terminal")]))
+                     (object-array [term]))
+        _          (.startScreen screen)
+        render-frame! (do (require 'com.blockether.vis.ext.channel-tui.screen)
+                          (ns-resolve 'com.blockether.vis.ext.channel-tui.screen 'render-frame!))
+        render-live!  (ns-resolve 'com.blockether.vis.ext.channel-tui.screen 'render-live-bubble-frame!)
+        previous-layout (atom nil)
+        ;; Stable scrollback (3 short bubbles + 1 user) so layout has
+        ;; some baseline work to do.
+        stable-msgs [{:role :user :ir (vis/text->ir "What's up?")}
+                     {:role :assistant :ir (vis/text->ir (body-of-length 800))
+                      :conversation-turn-id (str (gensym))}
+                     {:role :user :ir (vis/text->ir "And then?")
+                      :conversation-turn-id (str (gensym))}]
+        bench-frame!
+        (fn [^String thinking-text ^long version]
+          (let [progress {:iterations [{:thinking thinking-text}]}
+                ;; Pending assistant placeholder = the loading bubble.
+                msgs (conj stable-msgs
+                       {:role :assistant :pending? true
+                        :ir [:ir {} [:p {} [:span {} "Sending..."]]]
+                        :conversation-turn-id (str (gensym))})
+                db {:messages msgs
+                    :progress progress
+                    :loading? true
+                    :render-version version
+                    :input {:lines [""] :crow 0 :ccol 0}
+                    :settings {:show-thinking true
+                               :show-iterations true
+                               :differentiate-turns false}
+                    :detail-expansions {}
+                    :conversation {:id "bench-conv"}
+                    :turn-start-ms 0}
+                t0 (System/nanoTime)
+                ;; First frame uses render-frame! to populate previous-layout;
+                ;; subsequent frames use render-live-bubble-frame! (production
+                ;; fast path for 80ms live ticks).
+                layout (if (nil? @previous-layout)
+                         (render-frame! screen cols rows db 0)
+                         (render-live! screen cols rows db 0 @previous-layout))
+                _  (reset! previous-layout layout)
+                dt (- (System/nanoTime) t0)]
+            dt))]
+    (try
+      (dotimes [i warmup-frames]
+        (bench-frame! (body-of-length 2000) (long i)))
+      (let [frames (atom [])
+            steps  (long (/ target-chars chunk-chars))]
+        (loop [i 0]
+          (when (< i steps)
+            (let [size (* (inc i) chunk-chars)
+                  ns   (bench-frame! (body-of-length size)
+                                     (long (+ i warmup-frames 1)))]
+              (swap! frames conj {:size size :ns ns})
+              (recur (inc i)))))
+        (let [all @frames
+              bucket-of (fn [s]
+                          (cond
+                            (< s 5000)   "<5k"
+                            (< s 20000)  "5k-20k"
+                            (< s 50000)  "20k-50k"
+                            (< s 100000) "50k-100k"
+                            :else        "100k+"))
+              buckets (->> all
+                        (group-by #(bucket-of (:size %)))
+                        (into (sorted-map-by
+                                (fn [a b]
+                                  (compare
+                                    (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] a)
+                                    (.indexOf ["<5k" "5k-20k" "20k-50k" "50k-100k" "100k+"] b))))))
+              tot (summarize (mapv :ns all))]
+          (println)
+          (println (format "END-TO-END render-frame! @ %dx%d: %d steps × %d chars"
+                     cols rows steps chunk-chars))
+          (println "──────────────────────────────────────────────────────────────────────")
+          (printf "%-10s %6s %10s %10s %10s %10s %10s%n"
+            "bucket" "n" "mean ms" "p50 ms" "p95 ms" "p99 ms" "max ms")
+          (doseq [[name xs] buckets]
+            (let [s (summarize (mapv :ns xs))]
+              (printf "%-10s %6d %10.2f %10.2f %10.2f %10.2f %10.2f%n"
+                name (:n s) (:mean-ms s) (:p50-ms s)
+                (:p95-ms s) (:p99-ms s) (:max-ms s))))
+          (println)
+          (printf "TOTAL: n=%d wall=%.0f ms  mean=%.2f  p99=%.2f  max=%.2f%n"
+            (:n tot) (:total-ms tot) (:mean-ms tot) (:p99-ms tot) (:max-ms tot))
+          (println "METRIC stream_e2e_total_ms=" (format "%.2f" (double (:total-ms tot))))
+          (println "METRIC stream_e2e_mean_ms=" (format "%.3f" (double (:mean-ms tot))))
+          (println "METRIC stream_e2e_p99_ms="   (format "%.2f" (double (:p99-ms tot))))
+          (println "METRIC stream_e2e_max_ms="   (format "%.2f" (double (:max-ms tot))))
+          (when-let [big (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
+            (println "METRIC stream_e2e_50k_100k_mean_ms=" (format "%.3f" (double big))))
+          (when-let [bigger (some-> (get buckets "100k+") (->> (mapv :ns) summarize :mean-ms))]
+            (println "METRIC stream_e2e_100k_plus_mean_ms=" (format "%.3f" (double bigger))))
+          {:per-frame all
+           :buckets   (into {} (map (fn [[k xs]] [k (summarize (mapv :ns xs))]) buckets))
+           :total     tot}))
+      (finally
+        (try (.stopScreen screen) (catch Throwable _ nil))))))
+
 (defn run-progressive-progress!
   "Bench `render/progress->lines-data` directly - the ACTUAL production
    hot path for live streaming. Each frame: extend the LAST iteration's
