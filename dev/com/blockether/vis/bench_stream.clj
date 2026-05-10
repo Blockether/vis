@@ -172,11 +172,11 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
           (when (and small big (pos? small))
             (printf "LINEARITY: 50k-100k / <5k = %.2fx  (target: ≤ 1.5x)%n"
               (double (/ big small)))))
-        (println "METRIC stream_tail_total_ms="  (long (:total-ms tot)))
-        (println "METRIC stream_tail_p99_ms="    (long (:p99-ms tot)))
-        (println "METRIC stream_tail_max_ms="    (long (:max-ms tot)))
+        (println "METRIC stream_tail_total_ms="  (format "%.2f" (double (:total-ms tot))))
+        (println "METRIC stream_tail_p99_ms="    (format "%.2f" (double (:p99-ms tot))))
+        (println "METRIC stream_tail_max_ms="    (format "%.2f" (double (:max-ms tot))))
         (when-let [big (some-> (get buckets "50k-100k") (->> (mapv :ns) summarize :mean-ms))]
-          (println "METRIC stream_tail_50k_100k_mean_ms=" (long big)))
+          (println "METRIC stream_tail_50k_100k_mean_ms=" (format "%.3f" (double big))))
         {:per-frame all
          :buckets   (into {} (map (fn [[k xs]] [k (summarize (mapv :ns xs))]) buckets))
          :total     tot}))))
