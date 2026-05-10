@@ -260,7 +260,7 @@
            tokens (:tokens result)
            cost   (:cost result)
            confidence (:confidence result)]
-       (cond-> {:answer          (if (string? answer) answer (pr-str answer))
+       (cond-> {:answer          (vis/render answer :markdown)
                 :iteration-count (or (:iteration-count result) 1)
                 :duration-ms     (:duration-ms result)
                 :conversation-turn-id        (:conversation-turn-id result)}

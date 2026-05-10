@@ -51,7 +51,7 @@
    [com.blockether.vis.internal.loop         :as lp]
    [com.blockether.vis.internal.main         :as binary]
    [com.blockether.vis.internal.manifest     :as manifest]
-   [com.blockether.vis.internal.markdown     :as markdown]
+   [com.blockether.vis.internal.render       :as ir]
    [com.blockether.vis.internal.notifications :as notifications]
    [com.blockether.vis.internal.persistance  :as persistance]
    [com.blockether.vis.internal.progress     :as progress]
@@ -138,9 +138,20 @@
 ;; Markdown string. Lives in the runtime so EVERY channel - TUI,
 ;; Telegram, CLI agent, third-party plug-ins - can ship a `Copy as
 ;; Markdown` / `Export conversation` affordance without re-implementing
-;; the projection. See `internal.markdown/DEFAULT_OPTS` for tunables.
+;; the projection. Lives in `internal.render` alongside the IR pipeline.
 ;; =============================================================================
-(def conversation->markdown markdown/conversation->markdown)
+(def conversation->markdown ir/conversation->markdown)
+
+;; =============================================================================
+;; Answer IR rendering — pure-Clojure walker for the 21-tag Hiccup-EDN IR.
+;; Channels register their preferred renderer via
+;; `:channel/messages-renderer-fn` and call it through `tg/send-message!`
+;; or the TUI screen-emit boundary. See `docs/specs/01-streaming-and-markdown.md`.
+;; =============================================================================
+(def render        ir/render)
+(def ->ast         ir/->ast)
+(def extract-code  ir/extract-code)
+(def extract-text  ir/extract-text)
 
 ;; =============================================================================
 ;; Progress tracker

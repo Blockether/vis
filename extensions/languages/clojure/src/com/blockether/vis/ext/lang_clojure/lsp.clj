@@ -9,7 +9,7 @@
    [clojure-lsp.api :as lsp]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.markdown :as md]
+
    [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import
    (java.io File StringWriter)
@@ -185,9 +185,8 @@
 
 (defn- channel-render-lsp
   [result]
-  (md/join
-    (md/p (if (sequential? result) (count result) 1) "result(s).")
-    (md/code-block "clojure" (pr-str result))))
+  (str (if (sequential? result) (count result) 1) " result(s).\n\n"
+    "```clojure\n" (pr-str result) "\n```"))
 
 (defn- lsp-symbol
   [v]
