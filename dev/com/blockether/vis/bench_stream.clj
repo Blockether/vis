@@ -162,8 +162,14 @@ Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi.
                 ;; First frame uses render-frame! to populate previous-layout;
                 ;; subsequent frames use render-live-bubble-frame! (production
                 ;; fast path for 80ms live ticks).
+                ;; `bench.force-full=true` keeps using render-frame! every
+                ;; frame - models the workload where user types in the input
+                ;; box during streaming (each keystroke bumps version, the
+                ;; partial-live? predicate sees app-db diff outside the
+                ;; whitelisted keys, falls through to full render).
+                force-full? (Boolean/parseBoolean (System/getProperty "bench.force-full" "false"))
                 layout (cond
-                         (nil? @previous-layout)
+                         (or (nil? @previous-layout) force-full?)
                          (render-frame! screen cols rows db 0)
 
                          (and skip-chrome? skip-refresh? skip-bubble?)
