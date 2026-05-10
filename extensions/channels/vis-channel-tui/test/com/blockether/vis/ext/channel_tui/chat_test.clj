@@ -129,10 +129,15 @@
                   (fn [_db _turn-id] [])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             assistant (second history)
-            text (:text assistant)]
-        (expect (string? text))
-        (expect (str/includes? text "Siema!"))
-        (expect (= (str/trim text) text)))))
+            ;; Pre-projection bubble carries `:ir` only — `:text` is
+            ;; computed lazily by the walker (`virtual.clj` projection)
+            ;; or by clipboard via `vis/render :markdown`. The test
+            ;; renders explicitly to assert the IR round-trip.
+            ir   (:ir assistant)
+            text (vis/render ir :markdown)]
+        (expect (vector? ir))
+        (expect (= :ir (first ir)))
+        (expect (str/includes? text "Siema!")))))
 
   (it "render-answer throws on raw-string input (strict IR contract)"
     (expect

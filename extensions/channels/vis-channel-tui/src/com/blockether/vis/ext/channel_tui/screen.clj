@@ -339,9 +339,15 @@
     (not-any? #(str/starts-with? line %) transcript-copy-skip-markers)))
 
 (defn- projected-content-lines
+  "Lines for clipboard / selection layout. Bubble messages always
+   carry `:ir` (canonical answer-IR); we derive the markdown string
+   on demand if the walker hasn't projected the bubble yet."
   [message content-w]
   (or (:prewrapped-lines message)
-    (render/wrap-text (:text message) content-w)))
+    (let [text (or (:text message)
+                 (when-let [ir (:ir message)]
+                   (com.blockether.vis.core/render ir :markdown)))]
+      (render/wrap-text (or text "") content-w))))
 
 (defn- bubble-selectable-ranges
   "Return absolute screen-cell ranges for visible transcript message content.
@@ -375,10 +381,13 @@
 
 (defn- copyable-bubble-text
   "Whole-bubble copy hands the user the rendered markdown verbatim.
-   `:text` is always a string (set by `chat/render-answer` at the
-   strict IR boundary); the legacy `pr-str` fallback is gone."
+   `:text` is set by the walker projection; pre-projection messages
+   fall back to rendering `:ir` directly so clipboard always works."
   [message]
-  (or (:text message) ""))
+  (or (:text message)
+    (when-let [ir (:ir message)]
+      (com.blockether.vis.core/render ir :markdown))
+    ""))
 
 (defn- bubble-copy-regions
   "Return absolute screen-cell rectangles for single-click whole-bubble copy.

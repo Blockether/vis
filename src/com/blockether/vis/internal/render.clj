@@ -53,7 +53,14 @@
      anything else                — surfaced as [:code {:lang \"edn\"} pr-str]"
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.persistance :as persistance]))
+   [com.blockether.vis.internal.persistance :as persistance])
+  (:import
+   [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
+   [org.commonmark.ext.gfm.tables TableBlock TableHead TableBody TableRow TableCell TablesExtension]
+   [org.commonmark.node BlockQuote BulletList Code Document Emphasis FencedCodeBlock
+    HardLineBreak Heading HtmlBlock HtmlInline Image IndentedCodeBlock Link
+    ListItem Node OrderedList Paragraph SoftLineBreak StrongEmphasis Text ThematicBreak]
+   [org.commonmark.parser Parser]))
 
 (set! *warn-on-reflection* true)
 
@@ -342,6 +349,136 @@
   "True when x is a canonical [:ir ...] AST."
   [x]
   (and (vector? x) (= :ir (first x))))
+
+;; =============================================================================
+;; text->ir — commonmark-java markdown parser → canonical IR
+;; =============================================================================
+;;
+;; Used at the boundaries that DON'T have IR upstream:
+;;   - LLM-emitted thinking strings (`:thinking` field on iterations);
+;;   - user-typed input box messages.
+;; Both arrive as plain markdown strings; this function lifts them into
+;; canonical IR so the entire downstream pipeline (TUI walker, Telegram
+;; renderer, exporter) sees one shape.
+
+(def ^:private ^Parser md-parser
+  (-> (Parser/builder)
+    (.extensions [(TablesExtension/create)
+                  (StrikethroughExtension/create)])
+    (.build)))
+
+(defn- cm-children-seq
+  "Iterate `Node.getNext` linked list as a Clojure seq."
+  [^Node node]
+  (when node
+    (loop [^Node n (.getFirstChild node) acc (transient [])]
+      (if (nil? n)
+        (persistent! acc)
+        (recur (.getNext n) (conj! acc n))))))
+
+(declare ^:private cm->blocks ^:private cm->inlines)
+
+(defn- cm->inline-node [^Node n]
+  (cond
+    (instance? Text n)             [:span {} (.getLiteral ^Text n)]
+    (instance? Code n)             [:c {} (.getLiteral ^Code n)]
+    (instance? StrongEmphasis n)   (into [:strong {}] (cm->inlines n))
+    (instance? Emphasis n)         (into [:em {}] (cm->inlines n))
+    (instance? Strikethrough n)    (into [:em {}] (cm->inlines n))   ; closest IR analogue
+    (instance? Link n)             (into [:a {:href (.getDestination ^Link n)}] (cm->inlines n))
+    (instance? Image n)            [:img {:src (.getDestination ^Image n)
+                                          :alt (.getTitle ^Image n)}]
+    (instance? SoftLineBreak n)    [:span {} " "]                    ; soft → single space
+    (instance? HardLineBreak n)    [:br {}]
+    (instance? HtmlInline n)       [:span {} (.getLiteral ^HtmlInline n)]
+    :else                          [:span {} ""]))
+
+(defn- cm->inlines [^Node parent]
+  (mapv cm->inline-node (cm-children-seq parent)))
+
+(defn- cm-list-item->li [^Node li]
+  (let [block-children (cm-children-seq li)]
+    (into [:li {}]
+      (mapcat (fn [^Node b]
+                (cond
+                  (instance? Paragraph b)   [(into [:p {}] (cm->inlines b))]
+                  :else                     (cm->blocks b)))
+        block-children))))
+
+(defn- cm->table-cell [^Node cell]
+  (into (if (and (instance? TableCell cell) (.isHeader ^TableCell cell))
+          [:th {}] [:td {}])
+    (cm->inlines cell)))
+
+(defn- cm->table-row [^Node row]
+  (into [:tr {}] (mapv cm->table-cell (cm-children-seq row))))
+
+(defn- cm->table [^Node tbl]
+  (into [:table {}]
+    (mapcat (fn [^Node section] (mapv cm->table-row (cm-children-seq section)))
+      (cm-children-seq tbl))))
+
+(defn- cm->blocks
+  "Convert one commonmark Node into a vector of canonical IR block(s)."
+  [^Node n]
+  (cond
+    (instance? Heading n)
+    [(into [:h {:level (.getLevel ^Heading n)}] (cm->inlines n))]
+
+    (instance? Paragraph n)
+    [(into [:p {}] (cm->inlines n))]
+
+    (instance? FencedCodeBlock n)
+    [[:code {:lang (let [info (.getInfo ^FencedCodeBlock n)] (when (seq info) info))}
+      (.getLiteral ^FencedCodeBlock n)]]
+
+    (instance? IndentedCodeBlock n)
+    [[:code {} (.getLiteral ^IndentedCodeBlock n)]]
+
+    (instance? BulletList n)
+    [(into [:ul {}] (mapv cm-list-item->li (cm-children-seq n)))]
+
+    (instance? OrderedList n)
+    [(into [:ol {:start (.getMarkerStartNumber ^OrderedList n)}]
+       (mapv cm-list-item->li (cm-children-seq n)))]
+
+    (instance? BlockQuote n)
+    [(into [:quote {}] (mapcat cm->blocks (cm-children-seq n)))]
+
+    (instance? ThematicBreak n)
+    [[:hr {}]]
+
+    (instance? TableBlock n)
+    [(cm->table n)]
+
+    (instance? HtmlBlock n)
+    ;; Recognise <details>/<summary> disclosure blocks; everything else
+    ;; becomes a verbatim paragraph so it stays visible.
+    (let [literal (.getLiteral ^HtmlBlock n)]
+      [[:p {} [:span {} literal]]])
+
+    :else
+    (mapcat cm->blocks (cm-children-seq n))))
+
+(defn text->ir
+  "Parse a plain-text or markdown string into canonical answer-IR.
+
+   Used at the boundaries that don't have IR upstream — thinking
+   text from the model and user-typed messages from the TUI input
+   box. Returns canonical `[:ir & blocks]` directly (no further
+   `->ast` round-trip needed). Empty / nil input yields `[:ir {}]`.
+
+   Implementation: commonmark-java parser + GFM tables / strikethrough
+   extensions, then a faithful Node→IR walker. Soft line breaks
+   collapse to a single space; hard line breaks become `[:br]`."
+  [text]
+  (if (or (nil? text) (= "" text))
+    [:ir {}]
+    (let [doc    (.parse md-parser ^String text)
+          blocks (vec (mapcat cm->blocks (cm-children-seq doc)))]
+      ;; run through ->ast so any string-shaped IR fragments get
+      ;; canonicalized (collapsing soft breaks etc).
+      (->ast (into [:ir {}] blocks)))))
 
 ;; =============================================================================
 ;; Walker helpers (canonical inputs)

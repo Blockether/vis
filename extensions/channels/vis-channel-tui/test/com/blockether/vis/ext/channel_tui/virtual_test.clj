@@ -25,11 +25,16 @@
 
 ;; ─── Fixtures ───────────────────────────────────────────────────────────────
 
+(defn- text->ir [s]
+  (com.blockether.vis.internal.render/text->ir (or s "")))
+
 (defn- user-msg [text]
-  {:role :user :text text :timestamp #inst "2026-04-30T00:00:00"})
+  {:role :user :text text :ir (text->ir text)
+   :timestamp #inst "2026-04-30T00:00:00"})
 
 (defn- plain-assistant-msg [text]
-  {:role :assistant :text text :timestamp #inst "2026-04-30T00:00:00"})
+  {:role :assistant :text text :ir (text->ir text)
+   :timestamp #inst "2026-04-30T00:00:00"})
 
 (defn- trace-assistant-msg
   "Build a minimal assistant message with a `:trace` of `n-iters`
@@ -45,7 +50,7 @@
                       :durations (vec (repeat forms-per-iter 1))
                       :successes (vec (repeat forms-per-iter true))}))]
     {:role            :assistant
-     :raw-answer      answer
+     :ir              (text->ir answer)
      :text            answer
      :trace           trace
      :iteration-count n-iters
@@ -103,7 +108,7 @@
                             :durations (vec (repeat (count chunk) 1))
                             :successes (vec (repeat (count chunk) true))})))]
     {:role :assistant
-     :raw-answer "done"
+     :ir (text->ir "done")
      :text "done"
      :trace trace
      :iteration-count (count trace)
@@ -353,7 +358,7 @@
                         (fn [& args] (swap! calls inc) (apply real args))]
             (doseq [m msgs]
               (render/format-answer-with-thinking
-                (:raw-answer m) (:trace m) bubble-w settings))
+                (:ir m) (:trace m) bubble-w settings))
             ;; Pre-warm warmed both - no fresh format-answer-with-thinking*
             ;; calls expected.
             (expect (zero? @calls))))))

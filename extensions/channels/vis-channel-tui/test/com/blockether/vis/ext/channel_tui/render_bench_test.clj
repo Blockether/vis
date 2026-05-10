@@ -297,7 +297,7 @@
 
 (defn- big-trace-msg [n-iters forms-per-iter]
   {:role            :assistant
-   :raw-answer      (apply str (repeat 200 "a "))
+   :ir      (com.blockether.vis.internal.render/text->ir (apply str (repeat 200 "a ")))
    :text            "a a a"
    :trace           (vec (repeat n-iters
                            {:thinking  (apply str (repeat 50 "thinking. "))
@@ -347,7 +347,7 @@
                     (render/invalidate-cache!)
                     (doseq [m assistants]
                       (render/format-answer-with-thinking
-                        (:raw-answer m) (:trace m) bubble-w settings)))
+                        (:ir m) (:trace m) bubble-w settings)))
                   [nil])
           virt  (bench-quick "new virtual/layout (auto-bottom, only visible projects)"
                   (fn [_]
