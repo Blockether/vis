@@ -1235,21 +1235,21 @@
 ;; the var here so Clojure can resolve the symbol at compile time.
 (declare markdown->inline markdown->lines)
 
-(defn- op-class->color-role
-  "Channel-local mapping from the engine `:op/...` class to a TUI color
-   role. Editing extensions emit `:op-class` ONLY — they don't decide
-   colors. This is the single point where the TUI binds the engine
-   contract to its own theme vocabulary."
-  [op-class]
-  (case op-class
-    :op/read   :tool-color/read
-    :op/search :tool-color/search
-    :op/edit   :tool-color/edit
-    :op/create :tool-color/create
-    :op/delete :tool-color/delete
-    :op/move   :tool-color/move
-    :op/shell  :tool-color/shell
-    :op/meta   :tool-color/meta
+(defn- op-tag->color-role
+  "Channel-local mapping from the engine `:op.tag/...` value to a
+   TUI color role. Editing extensions emit `:op/tag` ONLY — they
+   don't decide colors. This is the single point where the TUI
+   binds the engine contract to its own theme vocabulary.
+
+   Tags collapsed from 8 (read/search/edit/create/delete/move/
+   shell/meta) to 2 (observation/action) per PLAN.md §2.1. The
+   TUI keeps its 8 color roles for visual richness; renderers can
+   look at `:op` (the symbol) for finer-grained painting if
+   needed, but the canonical mapping below uses just the tag."
+  [op-tag]
+  (case op-tag
+    :op.tag/observation :tool-color/read
+    :op.tag/action      :tool-color/edit
     nil))
 
 (defn- tool-color-role->fg
@@ -1267,12 +1267,13 @@
     nil))
 
 (defn- meta->color-role
-  "Resolve a color role from a meta map carrying `:op-class` and/or a
-   legacy `:color-role`. Prefers explicit `:color-role` for backcompat
-   with any leftover emitter; falls back to the engine class."
+  "Resolve a color role from a meta map carrying `:op/tag` and/or a
+   legacy `:color-role`. Prefers explicit `:color-role` for
+   backcompat with any leftover emitter; falls back to the engine
+   tag."
   [m]
   (or (:color-role m)
-    (op-class->color-role (:op-class m))))
+    (op-tag->color-role (:op/tag m))))
 
 (defn- paint-preview-switcher!
   [g x y fbx iw abs-row meta bg fg inactive-fg base-styles]
@@ -2547,7 +2548,7 @@
   [detail]
   (when (map? detail)
     (let [op      (:op detail)
-          cls     (:op-class detail)
+          cls     (:op/tag detail)
           op-name (when-not (and (= :op/search cls) (#{:all :any} op))
                     (some-> op name))
           label   (case cls
@@ -2569,7 +2570,10 @@
 
 (defn- self-describing-tool-result?
   [detail]
-  (contains? #{:op/search :op/shell} (:op-class detail)))
+  ;; Both observation (search-style) and action (shell-style) ops
+  ;; can emit substantial output; treat both as candidates for the
+  ;; output-collapsing path. Tag pivot per PLAN.md §2.1.
+  (contains? #{:op.tag/observation :op.tag/action} (:op/tag detail)))
 
 (defn- preview-switcher-entry
   [{:keys [marker active-mode conversation-id node-id max-w summary-left summary-suffix
@@ -3430,12 +3434,12 @@
                                      c-lines
                                      (when status-line [status-line])
                                      [(line-entry (str c-pad ""))]))
-                stdout-str    (when-not (= :op/shell (:op-class result-detail))
+                stdout-str    (when-not (= :v/bash (:op result-detail))
                                 (or (when-let [s (when stdouts (get stdouts idx))]
                                       (when-not (str/blank? (str s)) s))
                                   (when-let [s (:stdout result-detail)]
                                     (when-not (str/blank? (str s)) s))))
-                stderr-str    (when-not (= :op/shell (:op-class result-detail))
+                stderr-str    (when-not (= :v/bash (:op result-detail))
                                 (or (when-let [s (when stderrs (get stderrs idx))]
                                       (when-not (str/blank? (str s)) s))
                                   (when-let [s (:stderr result-detail)]

@@ -1,5 +1,6 @@
 (ns com.blockether.vis.ext.channel-tui.chat-test
-  (:require [com.blockether.vis.core :as vis]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -105,6 +106,33 @@
                   (:cost assistant)))
         (expect (= {:input 120 :output 30 :reasoning 7 :cached 4}
                   (:tokens assistant)))))))
+
+(defdescribe rebuild-history-renders-answer-test
+  (it "resumed assistant message routes the stored answer through render-answer"
+    ;; Regression for convo b7ba1d93: resume path used to pass the
+    ;; raw persisted answer string straight into the assistant bubble.
+    ;; Live send! ran it through `vis/render :markdown`; resume did
+    ;; not. Both paths now share `chat/render-answer`, which dispatches
+    ;; via the `:channel/messages-renderer-fn` registered by
+    ;; `vis-channel-tui.core`. The loop persists the plain-text
+    ;; rendering, so the resume input is plain text by contract.
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-conversation-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "siema"
+                      :answer "Siema! 👋 What can I do for you?"}])
+                  vis/db-list-conversation-turn-iterations
+                  (fn [_db _turn-id] [])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            assistant (second history)
+            text (:text assistant)]
+        (expect (string? text))
+        (expect (str/includes? text "Siema!"))
+        ;; render-answer must be the entry point - bypass would
+        ;; leave any markdown-active chars unprocessed; sanity-check
+        ;; the rendered shape is non-empty trimmed text.
+        (expect (= (str/trim text) text))))))
 
 (defdescribe turn-options-test
   (it "forwards reasoning-default and extra-body to vis/send!"

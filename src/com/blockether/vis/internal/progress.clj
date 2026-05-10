@@ -105,7 +105,7 @@
   [tool-result]
   (when (extension/tool-result? tool-result)
     (let [prov (:info tool-result)]
-      (cond-> (select-keys prov [:op :op-class
+      (cond-> (select-keys prov [:op :op/tag
                                  :spec :paths :hit-count :truncated-by
                                  :command :cwd :target])
         (get-in tool-result [:result :stdout])

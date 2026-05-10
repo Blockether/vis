@@ -144,21 +144,23 @@
 
 (it "defers op classification to the engine contract (no editing-local copy)"
   ;; The classification table + presentation map live in
-  ;; `com.blockether.vis.internal.extension` (`op-class-of`,
-  ;; `op-presentation`). Editing used to keep a thin shim; that shim is
-  ;; gone and callers go straight to the engine. The shape test stays
-  ;; here so the contract drift is caught next to the consumer.
-  (doseq [[op class] [[:v/cat :op/read]
-                      [:z/locators :op/read]
-                      [:v/rg :op/search]
-                      [:v/patch :op/edit]
-                      [:v/create-dirs :op/create]
-                      [:v/delete :op/delete]
-                      [:v/move :op/move]
-                      [:v/bash :op/shell]
-                      [:v/extensions :op/meta]]]
-    (expect (= class (extension/op-class-of op)))
-    (expect (= {:op-class class} (extension/op-presentation op)))))
+  ;; `com.blockether.vis.internal.extension` (`op-tag`,
+  ;; `op-presentation`). Editing used to keep a thin shim; that
+  ;; shim is gone and callers go straight to the engine. Tags
+  ;; collapsed to 2 values per PLAN.md §2.11; ops not in the
+  ;; registration table (e.g. :v/bash, :v/extensions) get the
+  ;; safe default :op.tag/observation.
+  (doseq [[op tag] [[:v/cat         :op.tag/observation]
+                    [:z/locators    :op.tag/observation]
+                    [:v/rg          :op.tag/observation]
+                    [:v/patch       :op.tag/action]
+                    [:v/create-dirs :op.tag/action]
+                    [:v/delete      :op.tag/action]
+                    [:v/move        :op.tag/action]
+                    [:v/bash        :op.tag/observation]   ; default; bash wrapper overrides at call site
+                    [:v/extensions  :op.tag/observation]]] ; unregistered -> default
+    (expect (= tag (extension/op-tag op)))
+    (expect (= {:op/tag tag} (extension/op-presentation op)))))
 
 (defdescribe editing-prompt-read-policy-test
   (it "teaches full-read vars, canonical patching, and no duplicate rereads by default"

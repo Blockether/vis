@@ -131,9 +131,11 @@
        :kind      kind})))
 
 ;; Engine contract lives in `com.blockether.vis.internal.extension`:
-;;   `extension/op-class-of`     - canonical op-keyword -> :op/... class.
-;;   `extension/side-effect-op?` - predicate used by the iteration loop.
-;;   `extension/op-presentation` - `:info` metadata embedded in tool envelopes.
+;;   `extension/op-tag`          - canonical op-keyword -> :op.tag/... value.
+;;   `extension/op-presentation` - `:info` metadata `{:op/tag ...}` embedded in tool envelopes.
+;; The iteration loop's mutating-call gate inlines
+;; `(= :op.tag/action (extension/op-tag op-kw))` directly
+;; (no separate `side-effect-op?` helper).
 ;; Editing used to keep its own copies; they were thin shims and crossed
 ;; the abstraction boundary (color-role lived here too). Use the engine
 ;; functions directly.

@@ -1,64 +1,172 @@
 (ns com.blockether.vis.internal.render-test
   "Tests for the answer-IR rendering pipeline.
 
-   Coverage:
-   - ->ast normalization for every surface form (string, hiccup,
-     variadic, [:ir...] passthrough, garbage)
-   - Attrs map insertion
-   - :li content discriminator (all-blocks, all-inlines, mixed)
-   - render :html / :markdown / :plain across every block & inline tag
-   - extract-code, extract-text
-   - :max-length truncation
-   - :context :thinking expandable blockquote
-   - Adversarial inputs (unknown tag, missing attrs)"
+   Covers:
+   - `->ast` canonicalization to the strict post-`->ast` invariants
+     (text only inside :span / raw-bodies of :code/:c/:kbd; no '\\n'
+     in spans; explicit :br for hard breaks; attrs map present on every
+     node).
+   - render :html / :markdown / :plain across every block & inline tag.
+   - extract-code, extract-text.
+   - :max-length truncation, :context :thinking expandable blockquote.
+   - Adversarial inputs (unknown tag, missing attrs, garbage values).
+   - Real-world fixture from conversation `bdc79ae9` — assistant
+     message contained literal `\" \\n   \"` mid-paragraph soft breaks
+     that produced a 3-space hanging indent in the TUI. Canonical
+     form must collapse them so the bug is structurally impossible."
   (:require
+   [clojure.java.io :as io]
+   [clojure.edn :as edn]
    [clojure.string :as str]
    [com.blockether.vis.internal.render :as r]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
 ;; ---------------------------------------------------------------------------
-;; ->ast normalization
+;; Canonical-form invariant checker
 ;; ---------------------------------------------------------------------------
 
-(defdescribe ->ast-normalization-test
-  (it "passes through canonical [:ir ...]"
-    (expect (= [:ir {} "x"] (r/->ast [:ir "x"])))
-    (expect (= [:ir {} "x"] (r/->ast [:ir {} "x"])))
-    (expect (r/ir? (r/->ast [:ir]))))
+(def ^:private inline-leaf-tags  #{:span :br :c :code :kbd :img})
+(def ^:private inline-wrap-tags  #{:strong :em :a :mark :sup :sub})
+(def ^:private block-tags        #{:p :h :code :ul :ol :li :quote :table :tr :th :td})
 
-  (it "wraps bare strings as text-node child of :ir"
-    (expect (= [:ir {} "hello"] (r/->ast "hello")))
-    (expect (= [:ir {} ""] (r/->ast ""))))
+(defn- canonical?
+  "Walk an [:ir ...] AST and assert every invariant promised by
+   `->ast`. Returns true or a {:violation ... :node ...} map."
+  [ast]
+  (letfn [(string-ok-context?
+            [parent-tag]
+            (contains? #{:span :code :c :kbd} parent-tag))
+          (walk [n parent-tag]
+            (cond
+              (string? n)
+              (cond
+                (not (string-ok-context? parent-tag))
+                {:violation :bare-string-in-vector :parent parent-tag :s n}
+                (and (= :span parent-tag) (str/includes? n "\n"))
+                {:violation :newline-in-span :s n}
+                :else true)
 
-  (it "wraps non-:ir Hiccup vectors in :ir"
-    (expect (= [:ir {} [:p {} "x"]] (r/->ast [:p "x"])))
-    (expect (= [:ir {} [:strong {} "bold"]] (r/->ast [:strong "bold"]))))
+              (not (vector? n))
+              {:violation :non-vector :node n}
 
-  (it "coerces variadic mixed vectors element-by-element"
-    (expect (= [:ir {} "one" [:strong {} "two"] [:code {:lang "edn"} "{:foo 1}"]]
-              (r/->ast ["one" [:strong "two"] {:foo 1}]))))
+              (not (map? (second n)))
+              {:violation :missing-attrs :node n}
 
-  (it "debug-coerces anything else as edn code-block"
+              :else
+              (let [tag (first n)
+                    children (drop 2 n)]
+                (cond
+                  (= :br tag)
+                  (if (seq children)
+                    {:violation :br-has-children :node n}
+                    true)
+
+                  (= :img tag)
+                  (if (seq children)
+                    {:violation :img-has-children :node n}
+                    true)
+
+                  (#{:span :code :c :kbd} tag)
+                  (let [bad (remove (fn [c] (or (string? c) (nil? c))) children)]
+                    (if (seq bad)
+                      {:violation :raw-body-must-be-string :tag tag :children children}
+                      true))
+
+                  :else
+                  (or (some #(let [r (walk % tag)] (when (not= true r) r))
+                        children)
+                    true)))))]
+    (let [r (walk ast nil)]
+      (if (= true r) true r))))
+
+;; ---------------------------------------------------------------------------
+;; ->ast canonicalization
+;; ---------------------------------------------------------------------------
+
+(defdescribe ->ast-canonical-test
+  (it "wraps bare top-level string in :p > :span"
+    (expect (= [:ir {} [:p {} [:span {} "hello"]]] (r/->ast "hello"))))
+
+  (it "drops empty-string content"
+    (expect (= [:ir {}] (r/->ast ""))))
+
+  (it "wraps non-:ir Hiccup in :ir, lifting strings into :span"
+    (expect (= [:ir {} [:p {} [:span {} "x"]]]                 (r/->ast [:p "x"])))
+    (expect (= [:ir {} [:p {} [:strong {} [:span {} "bold"]]]] (r/->ast [:strong "bold"]))))
+
+  (it "lifts every bare string in :p children into :span"
+    (let [out (r/->ast [:ir [:p "hi " [:strong "there"] " world"]])]
+      (expect (= [:ir {} [:p {}
+                          [:span {} "hi "]
+                          [:strong {} [:span {} "there"]]
+                          [:span {} " world"]]]
+                out))))
+
+  (it "collapses '\\s*\\n\\s*' soft breaks to a single space inside :p"
+    ;; This is the bdc79ae9 reproduction in miniature.
+    (let [out (r/->ast [:ir [:p [:c "z/locators"] " \n   znajduje nodes"]])]
+      (expect (= [:ir {} [:p {}
+                          [:c {} "z/locators"]
+                          [:span {} " znajduje nodes"]]]
+                out))))
+
+  (it "preserves whitespace in :code block bodies verbatim"
+    (let [src "(let [x 1]\n  x)"
+          out (r/->ast [:ir [:code {:lang "clj"} src]])]
+      (expect (= [:ir {} [:code {:lang "clj"} src]] out))))
+
+  (it "preserves whitespace in :c (inline code) bodies verbatim"
+    (let [out (r/->ast [:ir [:p [:c "  spaced  "] " after"]])]
+      (expect (= [:ir {} [:p {}
+                          [:c {} "  spaced  "]
+                          [:span {} " after"]]]
+                out))))
+
+  (it "is idempotent on already-canonical input"
+    (let [a (r/->ast [:ir [:p "foo " [:c "bar"] " baz"]])
+          b (r/->ast a)]
+      (expect (= a b))))
+
+  (it "always inserts {} attrs on every vector node"
+    (let [out (r/->ast [:ir [:p "x" [:strong "y"]]])]
+      (expect (every? (fn [n] (or (not (vector? n)) (map? (second n))))
+                (tree-seq vector? rest out)))))
+
+  (it "debug-coerces non-Hiccup values as edn code-block"
     (let [out (r/->ast 42)]
       (expect (r/ir? out))
-      (expect (= :code (-> out (nth 2) first)))))
+      (expect (= :code (-> out (nth 2) first)))
+      (expect (= "42" (-> out (nth 2) (nth 2))))))
 
-  (it "always inserts {} attrs after normalization"
-    (let [out (r/->ast [:ir [:p "x"]])]
-      (expect (= {} (second out)))
-      (expect (= {} (-> out (nth 2) second))))))
+  (it "every output passes the canonical-form invariant checker"
+    (doseq [v ["hello" "" [:ir] [:p "x"] [:p "x" [:strong "y"]]
+               [:ir [:ul [:li "a"] [:li [:p "b"] [:p "c"]]]]
+               42 nil {:not "hiccup"}]]
+      (expect (= true (canonical? (r/->ast v)))
+        (str "canonical? failed on " (pr-str v) " → " (pr-str (r/->ast v)))))))
+
+;; ---------------------------------------------------------------------------
+;; :li content discriminator
+;; ---------------------------------------------------------------------------
 
 (defdescribe li-content-discriminator-test
-  (it "leaves all-inlines :li alone"
-    (expect (= [:ir {} [:ul {} [:li {} "x" [:strong {} "y"]]]]
+  (it "all-inlines :li wraps inline run in single :p"
+    (expect (= [:ir {} [:ul {} [:li {} [:p {}
+                                        [:span {} "x"]
+                                        [:strong {} [:span {} "y"]]]]]]
               (r/->ast [:ir [:ul [:li "x" [:strong "y"]]]]))))
 
-  (it "leaves all-blocks :li alone"
-    (expect (= [:ir {} [:ul {} [:li {} [:p {} "x"] [:p {} "y"]]]]
+  (it "all-blocks :li keeps blocks at top level"
+    (expect (= [:ir {} [:ul {} [:li {}
+                                [:p {} [:span {} "x"]]
+                                [:p {} [:span {} "y"]]]]]
               (r/->ast [:ir [:ul [:li [:p "x"] [:p "y"]]]]))))
 
-  (it "wraps loose inlines under mixed :li in :p, preserving order"
-    (expect (= [:ir {} [:ul {} [:li {} [:p {} "a"] [:p {} "b"] [:p {} "c"]]]]
+  (it "mixed :li buckets each inline run into its own :p, preserving order"
+    (expect (= [:ir {} [:ul {} [:li {}
+                                [:p {} [:span {} "a"]]
+                                [:p {} [:span {} "b"]]
+                                [:p {} [:span {} "c"]]]]]
               (r/->ast [:ir [:ul [:li "a" [:p "b"] "c"]]])))))
 
 ;; ---------------------------------------------------------------------------
@@ -137,7 +245,10 @@
 
     (it "sup/sub strip wrapper (Telegram has no <sup>/<sub>)"
       (expect (= "x2" (r/render [:ir "x" [:sup "2"]] :html)))
-      (expect (= "H2O" (r/render [:ir "H" [:sub "2"] "O"] :html)))))
+      (expect (= "H2O" (r/render [:ir "H" [:sub "2"] "O"] :html))))
+
+    (it ":br renders as newline"
+      (expect (str/includes? (r/render [:ir [:p "a" [:br] "b"]] :html) "a\nb"))))
 
   (describe "robustness"
     (it "unknown tag falls through to children"
@@ -182,6 +293,9 @@
   (it "link uses [text](url)"
     (expect (= "[click](https://x.com)"
               (r/render [:ir [:a {:href "https://x.com"} "click"]] :markdown))))
+
+  (it ":br renders as GFM hard-break (two spaces + newline)"
+    (expect (str/includes? (r/render [:ir [:p "a" [:br] "b"]] :markdown) "a  \nb")))
 
   (it "blockquote prefixes each line with >"
     (let [out (r/render [:ir [:quote [:p "line1"] [:p "line2"]]] :markdown)]
@@ -272,3 +386,44 @@
     (expect (= "" (r/render [:ir] :html)))
     (expect (= "" (r/render [:ir] :markdown)))
     (expect (= "" (r/render [:ir] :plain)))))
+
+;; ---------------------------------------------------------------------------
+;; bdc79ae9 fixture — real LLM output that produced the 3-space hanging
+;; indent in the TUI. Canonical IR must collapse soft breaks so no
+;; downstream walker can reproduce the bug.
+;; ---------------------------------------------------------------------------
+
+(defn- read-fixture-ir []
+  (when-let [r (io/resource "fixtures/bdc79ae9_answer_ir.edn")]
+    (edn/read-string (slurp r))))
+
+(defn- find-fixture-file ^java.io.File []
+  (let [f (io/file "extensions/channels/vis-channel-tui/test/resources/fixtures/bdc79ae9_answer_ir.edn")]
+    (when (.exists f) f)))
+
+(defdescribe bdc79ae9-fixture-test
+  (it "fixture is reachable"
+    (expect (or (some? (read-fixture-ir))
+              (some? (find-fixture-file)))))
+
+  (it "canonical AST contains no '\\n' inside :span bodies"
+    (when-let [raw (or (read-fixture-ir)
+                     (some-> (find-fixture-file) slurp edn/read-string))]
+      (let [ast (r/->ast raw)
+            spans (filter #(and (vector? %) (= :span (first %))) (tree-seq vector? rest ast))
+            offenders (filter (fn [[_ _ s]] (and (string? s) (str/includes? s "\n"))) spans)]
+        (expect (empty? offenders)
+          (str "spans with newline: " (vec offenders))))))
+
+  (it "fixture passes the canonical-form invariant checker"
+    (when-let [raw (or (read-fixture-ir)
+                     (some-> (find-fixture-file) slurp edn/read-string))]
+      (expect (= true (canonical? (r/->ast raw))))))
+
+  (it "markdown projection of the fixture has no 3-space-indented continuation lines"
+    (when-let [raw (or (read-fixture-ir)
+                     (some-> (find-fixture-file) slurp edn/read-string))]
+      (let [md (r/render raw :markdown)
+            offenders (filter #(re-matches #"^   \S.*" %) (str/split-lines md))]
+        (expect (empty? offenders)
+          (str "lines with 3-space hanging indent: " (vec (take 3 offenders))))))))
