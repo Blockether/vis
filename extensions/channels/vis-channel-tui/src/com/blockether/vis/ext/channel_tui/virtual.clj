@@ -418,20 +418,30 @@
                            :text text
                            :prewrapped-lines lines
                            :line-meta line-meta))
-                       ;; Tail-pinned bubble fast path: when the user
-                       ;; is at auto-bottom (scroll == nil) and this is
-                       ;; the last message, only the bottom inner-h
-                       ;; lines of it are visible. Render only the
-                       ;; last 2*inner-h lines via `ir->lines-tail`
-                       ;; (back-walks blocks; output is byte-identical
-                       ;; to (take-last N (full-walk))). Once the user
-                       ;; scrolls, scroll becomes a number and we fall
-                       ;; back to full render so they can see the
-                       ;; whole bubble. See A3 / A4 in autoresearch.
-                       (let [tail-pinned? (and (nil? scroll)
-                                            (= i (long (dec n))))
-                             tail-n       (when tail-pinned?
-                                            (long (* 2 inner-h)))]
+                       ;; Tail-pinned bubble fast path: when this is
+                       ;; the last message AND the effective scroll
+                       ;; position lands the viewport at the very
+                       ;; bottom of the bubble, only the bottom
+                       ;; inner-h lines are visible. Render only the
+                       ;; last 2*inner-h lines via `ir->lines-tail`.
+                       ;;
+                       ;; Bottom-locked detection: eff-1 == max-scroll.
+                       ;; This is true when scroll == nil (auto-bottom)
+                       ;; AND when scroll was passed a number that
+                       ;; got clamped to max (e.g. End key, wheel-down
+                       ;; past the tail). Both produce identical
+                       ;; user-visible content; A4 only handled the
+                       ;; first case. See A3 / A4 / A6.
+                       ;;
+                       ;; Any other scroll position (user scrolled UP
+                       ;; to read deep history) falls through to the
+                       ;; full walker so the whole bubble is
+                       ;; accessible.
+                       (let [max-scroll     (max 0 (- est-tot inner-h))
+                             bottom-locked? (and (= i (long (dec n)))
+                                              (= eff-1 max-scroll))
+                             tail-n         (when bottom-locked?
+                                              (long (* 2 inner-h)))]
                          (project-message m bubble-w settings
                            (cond-> {:conversation-id conversation-id
                                     :detail-expansions detail-expansions}
