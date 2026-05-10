@@ -300,6 +300,191 @@
       (finally
         (.delete tmp)))))
 
+;; ─── streaming live-bubble ───────────────────────────────────────────────
+;;
+;; One Telegram message per turn, edited in place as the LLM thinks +
+;; runs forms. Driven by `vis/make-progress-tracker`'s on-update
+;; callback. Throttle: 1200ms / 40-char delta / newline; idle 3s
+;; resets the clock; HTTP 429 doubles next two intervals; `message is
+;; not modified` swallowed.
+
+(def ^:private throttle-min-ms 1200)
+(def ^:private throttle-min-delta 40)
+(def ^:private thinking-window-chars 3500)
+
+(defn- now-ms ^long [] (System/currentTimeMillis))
+
+(defn- cancel-keyboard [chat-id]
+  {:inline_keyboard [[{:text "⊘ Cancel" :callback_data (str "cancel:" chat-id)}]]})
+
+(defn- thinking-html
+  "Wrap the sliding-window reasoning text in an expandable blockquote.
+   Bot API ≥ 7.0 renders `<blockquote expandable>` as collapsible;
+   older clients show plain blockquote (full text visible) — degraded
+   but functional."
+  [thinking]
+  (when-not (str/blank? thinking)
+    (let [escaped (-> thinking
+                    (str/replace "&" "&amp;")
+                    (str/replace "<" "&lt;")
+                    (str/replace ">" "&gt;"))
+          windowed (if (> (count escaped) thinking-window-chars)
+                     (str "…" (subs escaped (- (count escaped) thinking-window-chars)))
+                     escaped)]
+      (str "<blockquote expandable>" windowed "</blockquote>"))))
+
+(defn- live-bubble-html
+  "Compose the full bubble HTML from current state. Always starts with
+   the lit thinking lamp + status line so the user sees activity
+   immediately."
+  [{:keys [thinking-acc status-line]}]
+  (let [parts (cond-> ["💭 <b>Thinking…</b>"]
+                (seq thinking-acc) (conj (thinking-html thinking-acc))
+                (seq status-line)  (conj (str "<i>" status-line "</i>")))]
+    (str/join "\n\n" parts)))
+
+(defn- bubble-state-for [chat-id]
+  (get-in @chat-state [chat-id :live-bubble]))
+
+(defn- update-bubble-state! [chat-id f & args]
+  (apply swap! chat-state update-in [chat-id :live-bubble] f args))
+
+(defn- start-live-bubble!
+  "Post the initial '💭 Thinking…' bubble with cancel keyboard. Returns
+   `:ok` on success, `:unavailable` when Telegram refuses.
+
+   Stores `{:message-id, :pending-html, :last-edit-ms, :keyboard?,
+   :backoff-ms, :thinking-acc, :status-line}` under
+   `[chat-id :live-bubble]` so update-bubble!  / cancel callback can
+   find it."
+  [token chat-id]
+  (let [initial-html "💭 <b>Thinking…</b>"
+        resp (try (tg/post-message! token chat-id initial-html
+                    {:reply-markup (cancel-keyboard chat-id)})
+               (catch Exception _ nil))]
+    (if-let [mid (some-> resp :result :message_id)]
+      (do (update-bubble-state! chat-id (constantly
+                                          {:message-id     mid
+                                           :pending-html   initial-html
+                                           :last-edit-ms   (now-ms)
+                                           :keyboard?      true
+                                           :backoff-ms     0
+                                           :thinking-acc   ""
+                                           :status-line    nil}))
+        :ok)
+      :unavailable)))
+
+(defn- should-edit?
+  "Throttle predicate. `flush?` bypasses interval / delta checks (used
+   on stream end and when the user-visible state must update now,
+   e.g. status-line swap)."
+  [{:keys [last-edit-ms backoff-ms pending-html]} new-html flush?]
+  (cond
+    flush?                                            true
+    (= new-html pending-html)                         false
+    (< (- (now-ms) last-edit-ms) (max throttle-min-ms (or backoff-ms 0)))
+    (boolean (or (str/ends-with? new-html "\n")
+               (>= (- (count new-html) (count (or pending-html "")))
+                 throttle-min-delta)))
+    :else                                             true))
+
+(defn- apply-edit-result!
+  "Patch live-bubble state with the response from a tg/edit-message!
+   call. Handles `not modified` (no-op) and 429 (back off)."
+  [chat-id new-html resp]
+  (cond
+    (and resp (:ok resp))
+    (update-bubble-state! chat-id
+      assoc :pending-html new-html :last-edit-ms (now-ms) :backoff-ms 0)
+
+    (and resp (= 400 (:error_code resp))
+      (str/includes? (str (:description resp)) "is not modified"))
+    (update-bubble-state! chat-id
+      assoc :last-edit-ms (now-ms))
+
+    (and resp (= 429 (:error_code resp)))
+    (let [retry-after (-> resp :parameters :retry_after (or 1))]
+      (update-bubble-state! chat-id
+        assoc :backoff-ms (* 1000 (max retry-after 1)) :last-edit-ms (now-ms)))
+
+    :else
+    (update-bubble-state! chat-id assoc :last-edit-ms (now-ms))))
+
+(defn- update-live-bubble!
+  "Compose new bubble HTML from current state and edit if the throttle
+   allows (or `:flush? true`). No-op when no bubble has been posted."
+  [token chat-id & {:keys [flush?]}]
+  (when-let [{:keys [message-id keyboard?] :as state} (bubble-state-for chat-id)]
+    (let [new-html (live-bubble-html state)]
+      (when (should-edit? state new-html flush?)
+        (let [resp (try (tg/edit-message! token chat-id message-id new-html
+                          (when keyboard?
+                            {:reply-markup (cancel-keyboard chat-id)}))
+                     (catch Exception _ nil))]
+          (apply-edit-result! chat-id new-html resp))))))
+
+(defn- finalize-live-bubble!
+  "Stream-end edit: collapse thinking, drop the cancel keyboard. The
+   actual answer text ships AFTER, as a separate message."
+  [token chat-id outcome]
+  (when-let [{:keys [message-id thinking-acc]} (bubble-state-for chat-id)]
+    (let [glyph     (case outcome
+                      :cancelled "⊘ <b>Cancelled by user.</b>"
+                      :error     "⚠️ <b>Error during thinking.</b>"
+                      "💭 <b>Thinking complete.</b>")
+          html (str glyph
+                 (when (seq thinking-acc)
+                   (str "\n\n" (thinking-html thinking-acc))))]
+      (try
+        (tg/edit-message! token chat-id message-id html
+          {:reply-markup {:inline_keyboard []}})
+        (catch Exception _ nil)))
+    (update-bubble-state! chat-id (constantly nil))))
+
+(defn- on-tracker-update!
+  "Progress-tracker `:on-update` handler. Reads the timeline, projects
+   it into the bubble state, and calls update-live-bubble!."
+  [token chat-id _timeline chunk]
+  (when (bubble-state-for chat-id)
+    (let [phase (:phase chunk)]
+      (cond
+        ;; Reasoning text deltas accumulate into thinking-acc.
+        (= phase :reasoning)
+        (when-let [delta (or (:thinking chunk) (:reasoning chunk))]
+          (update-bubble-state! chat-id update :thinking-acc str delta)
+          (update-live-bubble! token chat-id))
+
+        ;; Form starts swap the status line; flush so the user sees the
+        ;; new step within a tick.
+        (= phase :form-start)
+        (do
+          (update-bubble-state! chat-id assoc :status-line
+            (str "⏳ Running form #" (inc (or (:form-idx chunk) 0))
+              (when-let [code (:code chunk)]
+                (let [first-line (-> code str/split-lines first str/trim)]
+                  (when (seq first-line)
+                    (str " — " (subs first-line 0 (min 60 (count first-line)))))))))
+          (update-live-bubble! token chat-id :flush? true))
+
+        (= phase :form-result)
+        (do
+          (update-bubble-state! chat-id assoc :status-line "⏳ Thinking…")
+          (update-live-bubble! token chat-id))
+
+        (and (= phase :iteration-final) (not (:done? chunk)))
+        (do
+          (update-bubble-state! chat-id assoc :status-line
+            (str "⏳ Iteration " (inc (or (:iteration chunk) 0))))
+          (update-live-bubble! token chat-id :flush? true))
+
+        ;; Stream-end is handled by handle-user-text! finally clause;
+        ;; we still flush thinking so the final bubble carries a clean
+        ;; collapsed view.
+        (and (= phase :iteration-final) (:done? chunk))
+        (update-live-bubble! token chat-id :flush? true)
+
+        :else nil))))
+
 (defn- format-footer [result]
   ;; Canonical " / "-joined turn-summary line, decorated for Telegram.
   ;; Keep this RAW Markdown-ish text. `tg/send-message!` owns escaping.
@@ -861,7 +1046,12 @@
    (let [turn-token (vis/cancellation-token)
          settings   (chat-settings chat-id)
          voice-response? (voice-output-mode? settings)
-         opts       (cond-> {:cancel-atom (vis/cancellation-atom turn-token)}
+         tracker    (vis/make-progress-tracker
+                      {:on-update (fn [timeline chunk]
+                                    (try (on-tracker-update! token chat-id timeline chunk)
+                                      (catch Exception _ nil)))})
+         opts       (cond-> {:cancel-atom (vis/cancellation-atom turn-token)
+                             :hooks       {:on-chunk (:on-chunk tracker)}}
                       (turn-reasoning-default settings)
                       (assoc :reasoning-default (turn-reasoning-default settings))
 
@@ -871,12 +1061,17 @@
                       voice-response?
                       (assoc :turn/features {:voice-response? true}))]
      (set-in-flight! chat-id turn-token)
-     (let [fut (future
+     (let [bubble-status (start-live-bubble! token chat-id)
+           fut (future
                  (try
-                   (tg/send-chat-action! token chat-id "typing")
+                   (when (= :unavailable bubble-status)
+                     ;; Pre-first-paint failure path — keep the legacy
+                     ;; typing indicator so the chat doesn't look frozen.
+                     (tg/send-chat-action! token chat-id "typing"))
                    (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
                          result       (vis/send! id text opts)
                          answer       (answer-text result)]
+                     (finalize-live-bubble! token chat-id :collapse)
                      (if voice-response?
                        (do
                          (when (and (voice-config-flag :telegram-send-transcript? true)
@@ -885,16 +1080,20 @@
                          (tg/send-chat-action! token chat-id "record_voice")
                          (send-answer-audio! token chat-id answer)
                          (when (voice-config-flag :telegram-send-answer-text? true)
-                           ;; answer-details-message produces Telegram-HTML directly
                            (tg/send-message! token chat-id (answer-details-message answer))))
                        (send! token chat-id
                          (str (transcript-answer-text transcript answer)
                            (format-footer result)))))
                    (catch Exception e
                      (if (vis/cancellation? e)
-                       (try (send-plain! token chat-id "Cancelled by user.")
-                         (catch Exception _ nil))
                        (do
+                         (finalize-live-bubble! token chat-id :cancelled)
+                         (when (= :unavailable bubble-status)
+                           ;; Pre-first-paint cancel — fresh message.
+                           (try (send-plain! token chat-id "Cancelled by user.")
+                             (catch Exception _ nil))))
+                       (do
+                         (finalize-live-bubble! token chat-id :error)
                          (tel/log! {:level :error :id ::handle-message
                                     :data {:sender sender :chat-id chat-id :error (ex-message e)}
                                     :msg (str "error handling msg from " sender " in chat " chat-id)})
@@ -950,6 +1149,16 @@
                       (set-voice-mode! chat-id raw)
                       "Voice selection failed.")]
         (tg/answer-callback-query! token callback-id message)
+        true)
+
+      (and callback-id chat-id (string? data)
+        (str/starts-with? data "cancel:"))
+      (let [in-flight (in-flight-token chat-id)]
+        (if in-flight
+          (do
+            (tg/answer-callback-query! token callback-id "Cancelling…")
+            (try (vis/cancel! in-flight) (catch Exception _ nil)))
+          (tg/answer-callback-query! token callback-id "Already cancelled."))
         true))))
 
 (defn- handle-update! [token update]
