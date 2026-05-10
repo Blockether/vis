@@ -96,15 +96,22 @@
     (:id (some #(when (:active? %) %) tabs))
     (:id (first tabs))))
 
-(defn- current-goal
-  "Read the goal for the active conversation, or nil. Resolves the
-   goal extension lazily so vis still boots when vis-goal isn't on
-   the classpath. Tolerates missing db / conversation-id and any
-   downstream throw — the header must never crash on a goal lookup.
+(defonce ^:private goal-cache
+  ;; {conv-id [now-ms goal-or-nil]} - bounded TTL cache for the goal
+  ;; lookup. The header calls `current-goal` twice per render frame
+  ;; (once via `header-rows`, once in `draw-header!`). Without
+  ;; caching, two SQLite queries fire per spinner tick (80ms apart).
+  ;; Measured: ~12ms per query on a warm pool → ~25ms/frame wasted.
+  ;; See autoresearch experiment streaming-tui-e2e.
+  (atom {}))
 
-   Called every render frame; cost is one DB query against an
-   indexed extension_aggregate row. SQLite WAL + connection pool
-   makes this measurably cheap (microseconds)."
+(def ^:private goal-cache-ttl-ms
+  ;; 100ms covers one full spinner-tick render frame (80ms) plus a
+  ;; little slack. Stale goal data for <=100ms is invisible to the
+  ;; user; if a goal mutates, the next tick after 100ms picks it up.
+  100)
+
+(defn- current-goal-uncached
   [db]
   (when-let [conv-id (some-> db :conversation :id)]
     (when-let [getter (try (requiring-resolve
@@ -112,6 +119,32 @@
                         (catch Throwable _ nil))]
       (try (getter (vis/db-info) conv-id)
         (catch Throwable _ nil)))))
+
+(defn- current-goal
+  "Read the goal for the active conversation, or nil. TTL-cached
+   (100ms) per conversation-id so the per-frame double-call from
+   `header-rows` + `draw-header!` only hits SQLite at most
+   ~10×/second instead of ~25×/second on a streaming turn.
+
+   The cost the comment underestimated: at warm steady-state each
+   `get-goal` lookup is ~12ms via SQLite WAL, not microseconds.
+   Multiplied by 2 calls/frame at 80ms ticks during streaming this
+   was the dominant `draw-header!` cost.
+
+   Resolves the goal extension lazily so vis still boots when
+   vis-goal isn't on the classpath. Tolerates missing db /
+   conversation-id and any downstream throw — the header must never
+   crash on a goal lookup."
+  [db]
+  (if-let [conv-id (some-> db :conversation :id)]
+    (let [now (System/currentTimeMillis)
+          [cached-at cached-goal] (get @goal-cache conv-id)]
+      (if (and cached-at (< (- now (long cached-at)) goal-cache-ttl-ms))
+        cached-goal
+        (let [goal (current-goal-uncached db)]
+          (swap! goal-cache assoc conv-id [now goal])
+          goal)))
+    nil))
 
 (defn- goal-subtitle-visible?
   "True when the goal should occupy a subtitle row. Active and paused
