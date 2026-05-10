@@ -38,10 +38,21 @@
       s)))
 
 (defn user-message
-  "Create a structured user message with timestamp."
+  "Create a structured user message with timestamp.
+   The user types raw markdown into the input box; we lift it to
+   canonical IR via `vis/text->ir` immediately so the bubble layer
+   (and every downstream consumer) sees the same shape it sees for
+   assistant answers.
+
+   The message carries ONLY `:ir` — every consumer that needs a
+   string projection computes it on demand (and caches the result
+   client-side, e.g. via `virtual.clj` projection) instead of us
+   eagerly rendering at construction."
   ([text] (user-message text (java.util.Date.)))
   ([text timestamp]
-   {:role :user :text text :timestamp timestamp}))
+   {:role      :user
+    :ir        (vis/text->ir text)
+    :timestamp timestamp}))
 
 (def empty-ir
   "Canonical empty IR — used as the placeholder when an answer slot is
@@ -81,10 +92,22 @@
 (defn assistant-message
   "Create a structured assistant (vis) message with timestamp.
    STRICT: `ir` must be canonical `[:ir & nodes]` (or nil for empty
-   placeholder). Non-IR inputs throw via `render-answer`."
+   placeholder). Non-IR inputs throw via `render-answer`.
+
+   The message carries ONLY `:ir`. Walker-driven projection
+   (`virtual.clj`) computes the rendered markdown string lazily and
+   caches it on the projected message map; nothing here pre-renders."
   ([ir] (assistant-message ir (java.util.Date.)))
   ([ir timestamp]
-   {:role :assistant :text (render-answer ir) :timestamp timestamp}))
+   ;; Validate IR contract eagerly so non-IR garbage surfaces at the
+   ;; construction site, not deep in the painter.
+   (let [ir (or ir empty-ir)]
+     (when-not (and (vector? ir) (= :ir (first ir)))
+       (throw (ex-info "chat/assistant-message requires canonical [:ir ...] input"
+                {:got-type (some-> ir class .getName)})))
+     {:role      :assistant
+      :ir        ir
+      :timestamp timestamp})))
 
 (defn- rebuild-history
   "Reconstruct message history from DB for a conversation.
@@ -214,7 +237,7 @@
                         cancelled? (= :cancelled (:prior-outcome q))
                         assistant-message (cond-> (assistant-message answer (or (:created-at q) (java.util.Date.)))
                                             true       (assoc :conversation-turn-id (:id q))
-                                            (seq trace) (assoc :trace trace :raw-answer answer)
+                                            (seq trace) (assoc :trace trace :ir answer)
                                             model  (assoc :model model)
                                             iteration-count (assoc :iteration-count iteration-count)
                                             duration-ms (assoc :duration-ms duration-ms)

@@ -4887,6 +4887,34 @@
   ([answer bubble-w opts]
    (:text (format-answer-markdown-data answer bubble-w opts))))
 
+;; -------------------------------------------------------------------------
+;; User-message text path. User-typed messages don't pass through the IR
+;; pipeline (they're literal strings the user typed in the input box), so
+;; we keep the legacy markdown→entries path here. Assistant messages
+;; always go through `format-answer-with-thinking-data` /
+;; `format-answer-markdown-data` which now consume canonical IR.
+;; -------------------------------------------------------------------------
+
+(defn- format-user-text-data*
+  [text bubble-w]
+  (let [content-w (max 10 (- bubble-w 4))
+        entries   (or (markdown->entries (or text "") content-w :answer nil)
+                    [])
+        entries   (if (seq entries)
+                    entries
+                    (mapv (fn [l] {:line l :meta nil}) (wrap-text (or text "") content-w)))]
+    (entries->payload entries)))
+
+(defn format-user-text-data
+  "Lay out a user-typed message string into the painter's prewrapped
+   `{:text :lines :line-meta}` shape. Assistant rendering uses the IR
+   walker (`format-answer-markdown-data` / `format-answer-with-thinking-data`);
+   user messages still go through `markdown->entries` because there's
+   no IR boundary upstream of the input box."
+  [text bubble-w]
+  (cached* [::fut-data (or text "") (long bubble-w)]
+    #(format-user-text-data* text bubble-w)))
+
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
 
 ;; -- Messages-area layout constants ----------------------------------------

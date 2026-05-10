@@ -473,12 +473,22 @@
                              (let [line (max 0 (dec row))]
                                (when (< line n)
                                  (+ (nth line-starts line) (max 0 (dec col)))))))
+               ;; Per-form bounds. Map shape (extended PLAN §2.6 +
+               ;; §7.3.7) so callers needing block-global coordinate
+               ;; translation (ex->op-error) can read `:start-row` /
+               ;; `:start-col` / `:end-row` / `:end-col` directly.
+               ;; Byte offsets remain for slice extraction.
                form-bounds (mapv (fn [f]
                                    (when-let [m (and (instance? clojure.lang.IObj f) (meta f))]
                                      (let [s (offset-of (:row m) (:col m))
                                            e (offset-of (:end-row m) (:end-col m))]
                                        (when (and s e (>= s 0) (<= e (count src)) (<= s e))
-                                         [s e]))))
+                                         {:start     s
+                                          :end       e
+                                          :start-row (:row m)
+                                          :start-col (:col m)
+                                          :end-row   (:end-row m)
+                                          :end-col   (:end-col m)}))))
                              forms)
                ;; For form K, two slices:
                ;;   `:comment` = the GAP (end-of-K-1 .. start-of-K).
@@ -492,24 +502,30 @@
                ;; clean for display while still preserving the
                ;; model's authored prose alongside each form.
                comment-slice (fn [idx]
-                               (when-let [[start _] (nth form-bounds idx nil)]
-                                 (let [prev-end (or (some-> (nth form-bounds (dec idx) nil)
-                                                      (nth 1))
+                               (when-let [bnd (nth form-bounds idx nil)]
+                                 (let [start    (:start bnd)
+                                       prev-end (or (some-> (nth form-bounds (dec idx) nil)
+                                                      :end)
                                                   0)]
                                    (when (> start prev-end)
                                      (let [trimmed (str/trim (subs src prev-end start))]
                                        (when (pos? (count trimmed))
                                          trimmed))))))
                expr-slice (fn [idx]
-                            (when-let [[start end] (nth form-bounds idx nil)]
+                            (when-let [{:keys [start end]} (nth form-bounds idx nil)]
                               (subs src start end)))]
            (mapv (fn [idx form]
                    (let [expr-src (or (expr-slice idx)
                                     (binding [*print-meta* false] (pr-str form)))
-                         comment  (comment-slice idx)]
+                         comment  (comment-slice idx)
+                         bnd      (nth form-bounds idx nil)]
                      (cond-> {:expr (str/trim (str expr-src))}
                        comment    (assoc :comment comment)
-                       repaired?  (assoc :repaired? true))))
+                       repaired?  (assoc :repaired? true)
+                       bnd        (assoc :start-row (:start-row bnd)
+                                    :start-col (:start-col bnd)
+                                    :end-row   (:end-row   bnd)
+                                    :end-col   (:end-col   bnd)))))
              (range) forms)))]
       (try
         ;; Attempt 1: edamame on raw source.
@@ -611,19 +627,34 @@
                              :error nil})
                           (catch Throwable e
                             (reset! thrown e)
+                            ;; Per PLAN §2.6 + §7.3.6: route the Throwable
+                            ;; through `extension/ex->op-error` to produce a
+                            ;; structured :op/error map (with :message :trace
+                            ;; :hint? :block?). SCI parses the whole `code`
+                            ;; string at once, so its :line/:column are
+                            ;; already block-global — no form-row translation
+                            ;; needed at this site.
+                            ;;
+                            ;; Legacy `:error` string is preserved alongside
+                            ;; for downstream readers that haven't migrated
+                            ;; to the structured shape yet (§7.3.1 sweep).
                             {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
-                             :journal     @journal-sink
-                             :channel     @channel-sink
-                             :error (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))}))))
+                             :journal  @journal-sink
+                             :channel  @channel-sink
+                             :error    (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))
+                             :op-error (try (extension/ex->op-error e {:block-source code})
+                                         (catch Throwable _ nil))}))))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
                              (reset! thrown e)
                              {:result nil :stdout "" :stderr ""
-                              :journal     @journal-sink
-                              :channel     @channel-sink
-                              :error (str (.getSimpleName (class e)) ": " (ex-message e))}))]
+                              :journal  @journal-sink
+                              :channel  @channel-sink
+                              :error    (str (.getSimpleName (class e)) ": " (ex-message e))
+                              :op-error (try (extension/ex->op-error e {:block-source code})
+                                          (catch Throwable _ nil))}))]
     (.close stdout-writer)
     (.close stderr-writer)
     ;; Park `*1`/`*2`/`*3`/`*e` after each top-level form. Push only when
@@ -2001,6 +2032,7 @@
                                           :journal           (:journal result*)
                                           :channel           (:channel result*)
                                           :error             (:error result*)
+                                          :op-error          (:op-error result*)
                                           :stdout            (:stdout result*)
                                           :stderr            (:stderr result*)
                                           :execution-time-ms (:execution-time-ms result*)
@@ -2023,6 +2055,7 @@
                                     :stdout (:stdout result)
                                     :stderr (:stderr result)
                                     :error (:error result)
+                                    :op-error (:op-error result)
                                     :execution-time-ms (:execution-time-ms result)
                                     :info (:info result)
                                     :role (:role result)
@@ -2099,6 +2132,7 @@
                                :comment           (get block-comments form-idx)
                                :result            (:result b)
                                :error             (:error b)
+                               :op-error          (:op-error b)
                                :stdout            (:stdout b)
                                :stderr            (:stderr b)
                                :execution-time-ms (:execution-time-ms b)

@@ -216,3 +216,52 @@
         (expect (every? string? out))
         ;; the bug-paragraph still flows on one wrap chunk
         (expect (some #(str/includes? % "znajduje nodes wiarygodnie") out))))))
+
+;; ---------------------------------------------------------------------------
+;; :details / :summary disclosure widget
+;; ---------------------------------------------------------------------------
+
+(defdescribe details-walker-test
+  (it ":details emits one summary line tagged :summary with toggle meta"
+    (let [lines (ir-tui/ir->lines
+                  [:ir [:details {:open? true}
+                        [:summary "Click me"]
+                        [:p "hidden body"]]]
+                  80)
+          summary-line (first (filter #(= :summary (:block-tag %)) lines))]
+      (expect (some? summary-line))
+      (expect (= :toggle-details (get-in summary-line [:meta :kind])))
+      (expect (true? (get-in summary-line [:meta :open?])))
+      (expect (string? (get-in summary-line [:meta :node-id])))))
+
+  (it ":details {:open? true} body lines tagged :details-body"
+    (let [lines (ir-tui/ir->lines
+                  [:ir [:details {:open? true} [:summary "X"] [:p "body"]]]
+                  80)
+          body-lines (filter #(= :details-body (:block-tag %)) lines)]
+      (expect (seq body-lines))
+      (expect (some (fn [l] (some #(str/includes? (or (:text %) "") "body") (:runs l))) body-lines))))
+
+  (it ":details with no :open? omits body (collapsed by default)"
+    (let [lines (ir-tui/ir->lines
+                  [:ir [:details [:summary "X"] [:p "body"]]]
+                  80)
+          body-lines (filter #(= :details-body (:block-tag %)) lines)]
+      ;; The closed default still emits an empty trailing line so the
+      ;; bubble has visual spacing; no body content though.
+      (expect (not-any? (fn [l] (some #(str/includes? (or (:text %) "") "body") (:runs l)))
+                body-lines))))
+
+  (it "`ir->entries` propagates `:meta` per line for the painter's click regions"
+    (let [entries (ir-tui/ir->entries
+                    [:ir [:p "intro"]
+                     [:details {:open? true}
+                      [:summary "toggle"]
+                      [:p "body"]]]
+                    80)
+          summary (first (filter #(= :toggle-details (get-in % [:meta :kind])) entries))]
+      (expect (some? summary))
+      (expect (string? (:line summary)))
+      ;; meta carries node-id + open? for state diff
+      (expect (true? (get-in summary [:meta :open?])))
+      (expect (string? (get-in summary [:meta :node-id]))))))
