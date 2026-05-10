@@ -359,7 +359,7 @@
    find it."
   [token chat-id]
   (let [initial-html "💭 <b>Thinking…</b>"
-        resp (try (tg/post-message! token chat-id initial-html
+        resp (try (tg/post-draft-message! token chat-id initial-html
                     {:reply-markup (cancel-keyboard chat-id)})
                (catch Exception _ nil))]
     (if-let [mid (some-> resp :result :message_id)]
@@ -966,15 +966,24 @@
       (send! token chat-id message {:reply-markup reply-markup})
       true)))
 
-(defn- answer-text [result]
-  (let [answer (:answer result)]
-    (cond
-      (and (map? answer)
-        (= :needs-input (:vis/answer-mode answer))
-        (string? (:answer/text answer)))
-      (:answer/text answer)
-      (string? answer) answer
-      :else (pr-str answer))))
+(defn- answer-text
+  "Render the turn's answer to a Telegram-HTML string. The answer
+   value is either a legacy String or a canonical [:ir ...] AST; the
+   render-for-telegram helper normalizes both."
+  [result]
+  (render-for-telegram (:answer result)))
+
+(defn- answer-voice-text
+  "Plain-text projection of the answer for voice TTS. Strips structure
+   so the synth doesn't read code blocks / tables aloud verbatim.
+   Falls back to a generic line when the answer carries no [:p]
+   content (e.g., a code-only answer)."
+  [result]
+  (let [answer (:answer result)
+        spoken (when answer (vis/extract-text answer))]
+    (if (str/blank? spoken)
+      "The assistant returned a structured answer (code or data). See the chat for details."
+      spoken)))
 
 (defn- voice-config-flag
   [k default]
@@ -993,14 +1002,6 @@
 (defn- transcript-message
   [transcript]
   (str "*Transcription*\n" (markdown-quote transcript)))
-
-(defn- html-escape
-  [s]
-  (str/escape (str s) {\& "&amp;" \< "&lt;" \> "&gt;" \" "&quot;" \' "&#39;"}))
-
-(defn- answer-details-message
-  [answer]
-  (str "<b>Answer</b>\n<blockquote expandable>" (html-escape answer) "</blockquote>"))
 
 (defn- voice-output-mode? [settings]
   (contains? #{:output :duplex} (:voice-mode settings)))
@@ -1033,12 +1034,6 @@
         (try (.delete wav) (catch Throwable _))
         (when ogg (try (.delete ogg) (catch Throwable _)))))))
 
-(defn- transcript-answer-text [transcript answer]
-  (if (str/blank? (str transcript))
-    answer
-    (str "> Transcribed text\n> " (str/replace (str/trim (str transcript)) #"\n" "\n> ")
-      "\n\n" answer)))
-
 (defn- handle-user-text!
   ([token chat-id text sender]
    (handle-user-text! token chat-id text sender nil))
@@ -1069,21 +1064,25 @@
                      ;; typing indicator so the chat doesn't look frozen.
                      (tg/send-chat-action! token chat-id "typing"))
                    (let [{:keys [id]} (vis/for-telegram-chat! chat-id)
-                         result       (vis/send! id text opts)
-                         answer       (answer-text result)]
+                         result       (vis/send! id text opts)]
                      (finalize-live-bubble! token chat-id :collapse)
                      (if voice-response?
-                       (do
+                       (let [voice-text (answer-voice-text result)]
                          (when (and (voice-config-flag :telegram-send-transcript? true)
                                  (not (str/blank? (str transcript))))
                            (send! token chat-id (transcript-message transcript)))
                          (tg/send-chat-action! token chat-id "record_voice")
-                         (send-answer-audio! token chat-id answer)
+                         (send-answer-audio! token chat-id voice-text)
                          (when (voice-config-flag :telegram-send-answer-text? true)
-                           (tg/send-message! token chat-id (answer-details-message answer))))
-                       (send! token chat-id
-                         (str (transcript-answer-text transcript answer)
-                           (format-footer result)))))
+                           ;; Full HTML answer ships alongside the voice
+                           ;; note so users see code/tables that TTS
+                           ;; deliberately skipped.
+                           (tg/send-message! token chat-id (answer-text result))))
+                       (do
+                         (when (and transcript (not (str/blank? (str transcript))))
+                           (send! token chat-id (transcript-message transcript)))
+                         (tg/send-message! token chat-id
+                           (str (answer-text result) (format-footer result))))))
                    (catch Exception e
                      (if (vis/cancellation? e)
                        (do
