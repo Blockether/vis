@@ -34,28 +34,30 @@
    [clojure.pprint :as pp]
    [clojure.string :as str]))
 
-;; Inline markdown string-builder helpers (replaced the v/ DSL).
-;; These produce raw markdown for tool-result presentation; channels
-;; then run them through their own renderer-fn.
+;; Inline markdown string-builder helpers.
+;; All channels render markdown via their registered
+;; :channel/messages-renderer-fn; presentation strings stay in pure
+;; GFM (no <details>/<summary>/<kbd>/<details> raw HTML — those break
+;; Telegram's HTML parse_mode and have no analog in the IR taxonomy).
 (defn- md-bold       ^String [s]      (str "**" s "**"))
 (defn- md-italic     ^String [s]      (str "*" s "*"))
 (defn- md-code       ^String [s]      (str "`" s "`"))
 (defn- md-code-block
   (^String [body]      (str "```\n" body "\n```"))
   (^String [lang body] (str "```" (or lang "") "\n" body "\n```")))
-(defn- md-summary    ^String [s]      (str "<summary>" s "</summary>"))
-(defn- md-details
-  ^String [& parts]
-  (let [strs  (filter some? (map str parts))
-        {sums true bodies false} (group-by #(and (str/starts-with? % "<summary>")
-                                              (str/ends-with? % "</summary>")) strs)
-        sum   (first sums)
-        body  (when (seq bodies) (str/join "\n\n" bodies))]
+(defn- md-section
+  "Render `summary` as a bold label, body indented underneath.
+   Replaces the prior `<details><summary>...</summary>...</details>`
+   pattern. Visual collapsibility is gone; channels that owned real
+   toggle state (TUI) can re-introduce it via styled rendering later."
+  ^String [summary body]
+  (let [s (str (or summary ""))
+        b (str (or body ""))]
     (cond
-      (and sum body) (str "<details>\n" sum "\n\n" body "\n\n</details>")
-      sum            (str "<details>\n" sum "\n\n</details>")
-      body           (str "<details>\n" body "\n\n</details>")
-      :else          "<details>\n\n</details>")))
+      (and (str/blank? s) (str/blank? b)) ""
+      (str/blank? b)                       (str "**" s "**")
+      (str/blank? s)                       b
+      :else                                (str "**" s "**\n\n" b))))
 
 (set! *warn-on-reflection* true)
 
@@ -225,10 +227,12 @@
 (declare present)
 
 (defn details->md
-  "Render a `:vis.presentation/details` block. When `:body` is a
-   string, embed verbatim. When it's a seq of presentation maps, run
-   each through `present` and join with blank lines."
-  [{:keys [summary body collapsed?]}]
+  "Render a `:vis.presentation/details` block as `**summary**\n\nbody`.
+   Visual collapsibility (the prior `<details>` HTML) is gone;
+   channels that own toggle state can re-introduce it via styled
+   rendering. The `:collapsed?` flag is accepted for API compat but
+   no longer affects output."
+  [{:keys [summary body]}]
   (let [body-text (cond
                     (string? body) body
                     (presentation? body) (present body)
@@ -236,22 +240,8 @@
                                          (map #(if (presentation? %) (present %) (->str %)))
                                          (remove str/blank?)
                                          (str/join "\n\n"))
-                    :else (->str body))
-        body-text (str/trim body-text)
-        sum (md-summary (or summary "Details"))]
-    (cond
-      ;; A "collapsed" view in pure markdown still shows summary + body
-      ;; collapsed under <details>. Channels that own real toggle state
-      ;; (TUI) own the actual show/hide; the markdown shape preserves
-      ;; both halves so static exports stay faithful.
-      (str/blank? body-text)
-      (md-details (md-summary (or summary "Details")))
-
-      collapsed?
-      (md-details sum body-text)
-
-      :else
-      (md-details sum body-text))))
+                    :else (->str body))]
+    (md-section (or summary "Details") (str/trim body-text))))
 
 (defn tool-call->md
   "Render a `:vis.presentation/tool-call` block.
@@ -277,7 +267,7 @@
         args-block (when (some? args)
                      (let [s (pretty-args args)]
                        (when (non-blank? s)
-                         (md-details (md-summary "args")
+                         (md-section "args"
                            (as-markdown-fence "edn" (str/trim s))))))
         result-block (cond
                        (nil? result) nil
@@ -286,16 +276,16 @@
                          nil
                          ;; Result text is already markdown by convention
                          ;; (extension render-fns return markdown).
-                         (md-details (md-summary "result")
+                         (md-section "result"
                            (str/trim result)))
                        :else
-                       (md-details (md-summary "result")
+                       (md-section "result"
                          (as-markdown-fence "edn" (pr-str result))))
         stdout-block (when (non-blank? stdout)
-                       (md-details (md-summary "stdout")
+                       (md-section "stdout"
                          (as-markdown-fence "text" (str/trim stdout))))
         stderr-block (when (non-blank? stderr)
-                       (md-details (md-summary "stderr")
+                       (md-section "stderr"
                          (as-markdown-fence "text" (str/trim stderr))))
         error-block (when error
                       (let [text (cond
@@ -314,7 +304,7 @@
           stderr-block
           error-block
           (when info
-            (md-details (md-summary "info")
+            (md-section "info"
               (as-markdown-fence "edn"
                 (with-out-str (pp/pprint info)))))]
       (remove nil?)
@@ -339,10 +329,10 @@
         args-block (when (some? args)
                      (let [s (pretty-args args)]
                        (when (non-blank? s)
-                         (md-details (md-summary "args")
+                         (md-section "args"
                            (as-markdown-fence "edn" (str/trim s))))))
         result-block (when (and result (not (str/blank? (->str result))))
-                       (md-details (md-summary "result")
+                       (md-section "result"
                          (if (string? result)
                            (str/trim result)
                            (as-markdown-fence "edn" (pr-str result)))))
@@ -376,7 +366,7 @@
         msg (when (non-blank? message)
               (str (md-bold "Message:") " " (->str message)))
         raw (when (non-blank? raw-preview)
-              (md-details (md-summary "raw")
+              (md-section "raw"
                 (as-markdown-fence "text" (str/trim (str raw-preview)))))
         adv (when (non-blank? advice)
               (str (md-bold "Advice:") " " (->str advice)))]
@@ -394,10 +384,9 @@
   (let [src (str/trim (->str source))
         fence (md-code-block "mermaid" src)
         ascii (when (seq rendered-lines)
-                (md-details (md-summary
-                              (str "Mermaid diagram"
-                                (when diagram-type
-                                  (str " (" (name diagram-type) ")"))))
+                (md-section (str "Mermaid diagram"
+                              (when diagram-type
+                                (str " (" (name diagram-type) ")")))
                   (md-code-block "text"
                     (str/join "\n" (mapv ->str rendered-lines)))))]
     (->> [fence ascii]
