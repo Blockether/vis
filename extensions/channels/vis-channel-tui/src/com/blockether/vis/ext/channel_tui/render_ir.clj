@@ -64,6 +64,10 @@
 ;; Inline → flat run sequence
 ;; =============================================================================
 
+;; Mutual recursion: `inline->runs` dispatches per-node, then for
+;; nested inline tags (`:strong`/`:em`/`:a` etc.) calls back into
+;; `inlines->runs`, which itself maps over children invoking
+;; `inline->runs`. Two-way cycle — can't be sorted away.
 (declare inlines->runs)
 
 (defn- inline->runs
@@ -251,6 +255,10 @@
 ;; Block walker
 ;; =============================================================================
 
+;; Mutual recursion: `block->lines` (final dispatch) calls
+;; `blocks->lines`/`list->lines`/`quote->lines`/`details->lines` for
+;; nested children; each of those calls back into `block->lines`.
+;; The cycle is structural (markdown blocks nest), can't be sorted.
 (declare block->lines)
 
 (defn- blocks->lines

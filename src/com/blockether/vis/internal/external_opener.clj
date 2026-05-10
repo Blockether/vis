@@ -224,8 +224,6 @@
     nil
     (catch Throwable t t)))
 
-(declare open!)
-
 (defn- spawn-first!
   "Try argv candidates in order. Returns the winning argv, or nil if
    every candidate failed to spawn."
@@ -236,20 +234,6 @@
         (if (nil? err)
           argv
           (recur more))))))
-
-(defn open-file-in-editor!
-  "Open local file target `s` in a GUI editor when possible, preserving
-   `#Lline` anchors for editor CLIs. Falls back to `open!` for missing
-   editors, non-local targets, rejected paths, and unsupported shapes.
-   Never throws."
-  [s]
-  (if-let [{:keys [scheme target line]} (safe-target s)]
-    (if (#{:file :rel} scheme)
-      (if-let [argv (spawn-first! (file-editor-commands target line))]
-        {:status :ok :command argv :scheme scheme :target target :line line :error nil}
-        (open! s))
-      (open! s))
-    (open! s)))
 
 (defn open!
   "Open `s` via the host OS opener. Never throws.
@@ -299,3 +283,17 @@
                     (System/getProperty "os.name"))})
         {:status :path-escape :command nil :scheme scheme :target nil
          :error (str "Path escapes the working directory: " (pr-str s))}))))
+
+(defn open-file-in-editor!
+  "Open local file target `s` in a GUI editor when possible, preserving
+   `#Lline` anchors for editor CLIs. Falls back to `open!` for missing
+   editors, non-local targets, rejected paths, and unsupported shapes.
+   Never throws."
+  [s]
+  (if-let [{:keys [scheme target line]} (safe-target s)]
+    (if (#{:file :rel} scheme)
+      (if-let [argv (spawn-first! (file-editor-commands target line))]
+        {:status :ok :command argv :scheme scheme :target target :line line :error nil}
+        (open! s))
+      (open! s))
+    (open! s)))

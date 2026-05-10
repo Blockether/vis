@@ -215,11 +215,37 @@
         truncated? (boolean (re-find #" ...<\+\d+ chars>$" bounded))]
     [bounded truncated?]))
 
+;; -----------------------------------------------------------------------------
+;; Token-budget primitives (used by <journal> + nudges below).
+;; -----------------------------------------------------------------------------
+
+(defn- ^:long count-prompt-tokens
+  "Token count for `text` against `model`. Falls back to
+   `(quot (count text) 4)` (rough English/code rule of thumb) when
+   the encoder lookup fails for an unrecognized model id."
+  [model text]
+  (when (string? text)
+    (or (try
+          (when (string? model)
+            (svar-router/count-tokens model text))
+          (catch Throwable _ nil))
+      (long (quot (count text) 4)))))
+
+(defn- model-context-limit
+  "Best-effort lookup of `model`'s context window. Falls back to a
+   conservative 32k when the table doesn't know the model id, which
+   is the smallest mainstream tier still in production use - better
+   to nudge a bit early on a 200k model than to never nudge at all."
+  [model]
+  (or (try
+        (when (string? model)
+          (svar-router/context-limit model svar-router/MODEL_CONTEXT_LIMITS))
+        (catch Throwable _ nil))
+    32000))
+
 ;; =============================================================================
 ;; <journal> - newest token-budgeted code + results
 ;; =============================================================================
-
-(declare count-prompt-tokens model-context-limit)
 
 (defn- effective-context-limit
   [model context-limit]
@@ -510,30 +536,6 @@
    current as the conversation drifts, infrequent enough that a
    settled conversation isn't pestered every turn."
   12)
-
-(defn- ^:long count-prompt-tokens
-  "Token count for `text` against `model`. Falls back to
-   `(quot (count text) 4)` (rough English/code rule of thumb) when
-   the encoder lookup fails for an unrecognized model id."
-  [model text]
-  (when (string? text)
-    (or (try
-          (when (string? model)
-            (svar-router/count-tokens model text))
-          (catch Throwable _ nil))
-      (long (quot (count text) 4)))))
-
-(defn- model-context-limit
-  "Best-effort lookup of `model`'s context window. Falls back to a
-   conservative 32k when the table doesn't know the model id, which
-   is the smallest mainstream tier still in production use - better
-   to nudge a bit early on a 200k model than to never nudge at all."
-  [model]
-  (or (try
-        (when (string? model)
-          (svar-router/context-limit model svar-router/MODEL_CONTEXT_LIMITS))
-        (catch Throwable _ nil))
-    32000))
 
 (defn- title-nudge
   "Built-in title nudge that fires when:

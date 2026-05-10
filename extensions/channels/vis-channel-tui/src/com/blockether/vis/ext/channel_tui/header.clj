@@ -36,13 +36,24 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
-            [com.blockether.vis.ext.channel-tui.theme :as t]
-            ;; Pure goal helpers for paused-aware elapsed math + the
-            ;; one-line summary formatter. The READ side of the goal
-            ;; (db lookup) is resolved lazily via `requiring-resolve`
-            ;; below so vis still boots when vis-goal isn't on the
-            ;; classpath.
-            [com.blockether.vis.internal.goal :as goal]))
+            [com.blockether.vis.ext.channel-tui.theme :as t]))
+
+;; -- Channel-hook conventions consumed by this namespace --------------
+;;
+;; Extensions contribute to the header band by adding entries to their
+;; `:ext/channel-hooks` vec. The TUI consumes the following hook ids:
+;;
+;;   {:channel-id :tui
+;;    :hook-id    :tui/header-row
+;;    :render-fn  (fn [db cols] -> {:height long :draw! (fn [g row])} | nil)}
+;;
+;; Same declarative pattern as `:goal/slash` (slash commands) and
+;; `:voice/foo` (voice indicator). No `requiring-resolve` into
+;; channel-tui from extension code; channel-tui never imports specific
+;; extension namespaces. Symmetric with how other channels would
+;; expose their own hook conventions (e.g. `:telegram/preamble`).
+;;
+;; See `com.blockether.vis.internal.extension/channel-hooks-for`.
 
 (def ^:private id-display-chars
   "How many leading characters of the conversation UUID to show in
@@ -54,8 +65,9 @@
 (def ^:const HEADER_ROWS
   "Minimum rows reserved by the header band: top rule + content + bottom
    rule. Use `header-rows` for a concrete app-db, because workspace tabs add
-   one row only when there is more than one tab and an active /goal adds
-   one subtitle row."
+   one row only when more than one tab exists, and registered header-row
+   contributors (see `contributors.clj`) add their own rows below the
+   title."
   3)
 
 (def ^:private placeholder-title
@@ -96,84 +108,60 @@
     (:id (some #(when (:active? %) %) tabs))
     (:id (first tabs))))
 
-(defonce ^:private goal-cache
-  ;; {conv-id [now-ms goal-or-nil]} - bounded TTL cache for the goal
-  ;; lookup. The header calls `current-goal` twice per render frame
-  ;; (once via `header-rows`, once in `draw-header!`). Without
-  ;; caching, two SQLite queries fire per spinner tick (80ms apart).
-  ;; Measured: ~12ms per query on a warm pool → ~25ms/frame wasted.
-  ;; See autoresearch experiment streaming-tui-e2e.
-  (atom {}))
+(defn- contributor-disabled?
+  [db hook-id]
+  (let [disabled (get-in db [:settings :contributors-disabled])]
+    (and (set? disabled) (contains? disabled hook-id))))
 
-(def ^:private goal-cache-ttl-ms
-  ;; 100ms covers one full spinner-tick render frame (80ms) plus a
-  ;; little slack. Stale goal data for <=100ms is invisible to the
-  ;; user; if a goal mutates, the next tick after 100ms picks it up.
-  100)
+(defn- header-row-specs
+  "Query every extension's `:tui/header-row` hook, run its `:render-fn`,
+   collect the non-nil row specs. The hook contract:
 
-(defn- current-goal-uncached
-  [db]
-  (when-let [conv-id (some-> db :conversation :id)]
-    (when-let [getter (try (requiring-resolve
-                             'com.blockether.vis.ext.goal.core/get-goal)
-                        (catch Throwable _ nil))]
-      (try (getter (vis/db-info) conv-id)
-        (catch Throwable _ nil)))))
+     :render-fn  (fn [db cols] -> {:height long :draw! (fn [g row])} | nil)
 
-(defn- current-goal
-  "Read the goal for the active conversation, or nil. TTL-cached
-   (100ms) per conversation-id so the per-frame double-call from
-   `header-rows` + `draw-header!` only hits SQLite at most
-   ~10×/second instead of ~25×/second on a streaming turn.
+   Render-fns may return nil to skip drawing this frame (e.g. the
+   goal contributor returns nil when no goal is set). Settings can
+   disable a hook by id via `:contributors-disabled` set.
 
-   When the user sets `:show-goal-row? false` in TUI settings, we
-   short-circuit to nil BEFORE the cache + SQLite path. That removes
-   the entire goal lookup from the per-frame render path - useful for
-   users who don't use /goal at all and don't want goal display.
-
-   The cost the comment underestimated: at warm steady-state each
-   `get-goal` lookup is ~12ms via SQLite WAL, not microseconds.
-   Multiplied by 2 calls/frame at 80ms ticks during streaming this
-   was the dominant `draw-header!` cost.
-
-   Resolves the goal extension lazily so vis still boots when
-   vis-goal isn't on the classpath. Tolerates missing db /
-   conversation-id and any downstream throw — the header must never
-   crash on a goal lookup."
-  [db]
-  (cond
-    ;; User opted out of goal display entirely.
-    (false? (get-in db [:settings :show-goal-row?]))
-    nil
-
-    :else
-    (if-let [conv-id (some-> db :conversation :id)]
-      (let [now (System/currentTimeMillis)
-            [cached-at cached-goal] (get @goal-cache conv-id)]
-        (if (and cached-at (< (- now (long cached-at)) goal-cache-ttl-ms))
-          cached-goal
-          (let [goal (current-goal-uncached db)]
-            (swap! goal-cache assoc conv-id [now goal])
-            goal)))
-      nil)))
-
-(defn- goal-subtitle-visible?
-  "True when the goal should occupy a subtitle row. Active and paused
-   goals always show; done(:cleared|:achieved|:unmet|:budget-limited)
-   keep their last subtitle so the user can read the outcome — they
-   only disappear when the user / model fires a fresh `(goal/set ...)`
-   or `/goal X` (which replaces the row in place)."
-  [goal]
-  (and goal (some? (:status goal))))
+   Hook crashes never propagate — a misbehaving extension can't
+   take down the render thread; it just loses its row that frame."
+  [db cols]
+  (vec
+    (for [{:keys [hook-id render-fn]} (vis/channel-hooks-for :tui)
+          :when (and (ifn? render-fn)
+                  (not (contributor-disabled? db hook-id))
+                  ;; Only consume hooks whose id is namespaced under
+                  ;; `:tui/header-row` or has the literal id. Lets
+                  ;; extensions use richer id keywords (e.g.
+                  ;; `:goal/header-row`) without conflicting with
+                  ;; other tui channel-hook surfaces.
+                  (or (= :tui/header-row hook-id)
+                    (= "header-row" (name hook-id))))
+          :let [spec (try (render-fn db cols)
+                       (catch Throwable _ nil))]
+          :when (and spec (pos? (long (or (:height spec) 0))))]
+      {:id hook-id :spec spec})))
 
 (defn header-rows
   "Rows needed by the header for this app-db. Workspace tabs add one
-   row when more than one tab exists; an active or terminated /goal
-   adds another row for the subtitle."
-  [db]
-  (+ HEADER_ROWS
-    (if (seq (workspace-tabs db)) 1 0)
-    (if (goal-subtitle-visible? (current-goal db)) 1 0)))
+   row when more than one tab exists; each enabled extension that
+   declares a `:tui/header-row` channel-hook adds its render-fn's
+   reported height.
+
+   Note: render-fns are invoked here AND in `draw-header!` (the
+   render path needs both the total height and the draw-fn).
+   Extensions should keep their render-fn cheap or memoise
+   per-frame internally — the goal extension uses a 100ms TTL atom
+   for its SQLite lookup."
+  ([db]
+   ;; Arity without cols: pass a sentinel. Most hooks key their
+   ;; height on db state only.
+   (header-rows db 0))
+  ([db cols]
+   (+ HEADER_ROWS
+     (if (seq (workspace-tabs db)) 1 0)
+     (reduce + 0 (map #(long (:height (:spec %)))
+                   (header-row-specs db cols))))))
 
 (defn- short-id [conversation]
   (when-let [id (some-> conversation :id str)]
@@ -281,15 +269,13 @@
         tabs-row     (when (seq tabs) header-top)
         separator-row (if (seq tabs) (inc header-top) header-top)
         content-row  (+ header-top (if (seq tabs) 2 1))
-        ;; Goal subtitle row sits BETWEEN the title content row and
-        ;; the bottom rule. Only allocated when a goal exists; nil
-        ;; means "no subtitle row, draw the bottom rule one row
-        ;; higher". Centered like the title; never bleeds into LEFT
-        ;; banner / RIGHT id columns.
-        goal*        (current-goal db)
-        goal-row     (when (goal-subtitle-visible? goal*)
-                       (inc content-row))
-        bottom-row   (dec (+ header-top (header-rows db)))
+        ;; Extension-contributed rows sit BETWEEN the title content
+        ;; row and the bottom rule. Each `:tui/header-row` hook
+        ;; returns a row spec or nil; we allocate rows for the
+        ;; non-nil ones and call their `:draw!` to paint. Hooks
+        ;; that return nil cost zero vertical space.
+        contrib-specs (header-row-specs db cols)
+        bottom-row   (dec (+ header-top (header-rows db cols)))
         edge-pad     1
         id-short     (short-id (:conversation db))
         full-uuid    (full-id  (:conversation db))
@@ -454,33 +440,27 @@
                :text     full-uuid
                :enabled? true})))))
 
-    ;; Goal subtitle row (only when a goal exists). Painted between
-    ;; the title row and the bottom rule. Wipes the row first so
-    ;; previous-frame characters can't bleed through, then center-
-    ;; renders the one-line summary in the muted footer color so it
-    ;; reads as a hint, not a competing primary.
-    (when goal-row
-      (let [now-ms  (System/currentTimeMillis)
-            summary (goal/format-goal-summary goal* now-ms)]
-        (p/clear-styles! g)
-        (p/set-colors! g t/footer-fg t/terminal-bg)
-        (p/fill-rect! g 0 goal-row cols 1)
-        (when (and (string? summary) (not (str/blank? summary)))
-          (let [;; Goal-status badge color: paused = warn-yellow,
-                ;; done = muted, active = same as title-fg-muted.
-                fg (case (:status goal*)
-                     :paused t/footer-warning-fg
-                     :done   t/footer-fg-muted
-                     t/footer-fg)
-                trimmed (let [max-w (max 0 (- cols (* 2 edge-pad)))]
-                          (ellipsize summary max-w))
-                w  (p/display-width trimmed)
-                col (max edge-pad (quot (- cols w) 2))]
+    ;; Extension-contributed rows. Each `:tui/header-row` hook gets
+    ;; its allocated row range below the content row. We wipe each
+    ;; row first so previous-frame characters can't bleed through,
+    ;; then hand the painter to the hook's `:draw!`.
+    (loop [row (inc content-row)
+           specs (seq contrib-specs)]
+      (when specs
+        (let [{:keys [id spec]} (first specs)
+              h (long (:height spec))
+              draw! (:draw! spec)]
+          (when (pos? h)
             (p/clear-styles! g)
-            (p/set-colors! g fg t/terminal-bg)
-            (p/enable! g p/ITALIC)
-            (p/put-str! g col goal-row trimmed)
-            (p/clear-styles! g)))))
+            (p/set-colors! g t/footer-fg t/terminal-bg)
+            (p/fill-rect! g 0 row cols h)
+            (when (ifn? draw!)
+              (try (draw! g (long row))
+                (catch Throwable _
+                  ;; Hook crashed — leave its row blank. Painter
+                  ;; never crashes the render thread.
+                  nil))))
+          (recur (+ row h) (next specs)))))
 
     (draw-rule! g bottom-row cols)
 

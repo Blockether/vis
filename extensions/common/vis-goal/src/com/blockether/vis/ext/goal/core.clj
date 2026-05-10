@@ -619,6 +619,100 @@
       ;; cmd-args field documents.
       (run-set! ctx (str args)))))
 
+;; =============================================================================
+;; TUI header row contributor (declarative)
+;; =============================================================================
+;;
+;; The goal feature owns its display in the TUI header via an
+;; `:ext/channel-hooks` entry (see `vis-extension` below). Pure
+;; declarative — no `requiring-resolve` into channel-tui, no hard
+;; coupling in either direction. Channel-tui discovers this hook by
+;; iterating registered extensions and filtering on hook-id pattern.
+;;
+;; If channel-tui isn't on the classpath the hook is registered but
+;; never invoked. Headless tools / Telegram-only deployments don't
+;; pay any cost. Telegram or future channels declare their own
+;; equivalent hooks; this namespace doesn't need to know about them.
+
+(def ^:private goal-tui-cache
+  ;; {conv-id [now-ms goal-or-nil]} — 100ms TTL. The render-fn is
+  ;; called twice per frame (once for height layout, once for draw),
+  ;; so without caching every 80ms tick fires two SQLite queries
+  ;; (~12ms each warm). TTL keeps it to one query per tick. User-
+  ;; driven mutations bypass this cache and invalidate on the next
+  ;; tick (TTL slack ≤100ms; users won't notice).
+  (atom {}))
+
+(def ^:private goal-tui-cache-ttl-ms 100)
+
+(defn- cached-goal-for-conv
+  [conv-id]
+  (let [now (System/currentTimeMillis)
+        [cached-at cached-goal] (get @goal-tui-cache conv-id)]
+    (if (and cached-at (< (- now (long cached-at)) goal-tui-cache-ttl-ms))
+      cached-goal
+      (let [g (try (get-goal (vis/db-info) conv-id) (catch Throwable _ nil))]
+        (swap! goal-tui-cache assoc conv-id [now g])
+        g))))
+
+(def ^:private tui-paint-deps
+  ;; Resolve channel-tui's theme + primitive vars once and capture
+  ;; their VALUES. Avoids the per-frame requiring-resolve hashmap
+  ;; lookup and lets us call the primitives as ordinary functions.
+  ;; Returns nil when channel-tui isn't on the classpath — the
+  ;; render-fn checks and short-circuits.
+  (delay
+    (try
+      (let [resolve! #(some-> (requiring-resolve %) deref)]
+        (when-let [set-colors (resolve! 'com.blockether.vis.ext.channel-tui.primitives/set-colors!)]
+          {:fg-active    (resolve! 'com.blockether.vis.ext.channel-tui.theme/footer-fg)
+           :fg-paused    (resolve! 'com.blockether.vis.ext.channel-tui.theme/footer-warning-fg)
+           :fg-done      (resolve! 'com.blockether.vis.ext.channel-tui.theme/footer-fg-muted)
+           :bg           (resolve! 'com.blockether.vis.ext.channel-tui.theme/terminal-bg)
+           :set-colors   set-colors
+           :put-str      (resolve! 'com.blockether.vis.ext.channel-tui.primitives/put-str!)
+           :enable       (resolve! 'com.blockether.vis.ext.channel-tui.primitives/enable!)
+           :clear-styles (resolve! 'com.blockether.vis.ext.channel-tui.primitives/clear-styles!)
+           :italic       (resolve! 'com.blockether.vis.ext.channel-tui.primitives/ITALIC)}))
+      (catch Throwable _ nil))))
+
+(defn- goal-row-render
+  "Header row contributor for the goal subtitle. Called twice per frame
+   (height-layout + draw). Returns a row spec or nil.
+
+   Render shape: one row, centered italic summary, color-coded by status:
+     :paused  → warn-yellow
+     :done    → muted (so historical outcomes don't compete with new content)
+     active   → footer-fg (subtitle weight)"
+  [db ^long cols]
+  (when-let [conv-id (some-> db :conversation :id)]
+    (when-let [goal (cached-goal-for-conv conv-id)]
+      (when (some? (:status goal))
+        (let [summary (goal-pure/format-goal-summary goal (System/currentTimeMillis))
+              deps    @tui-paint-deps]
+          (when (and (string? summary) (not (str/blank? summary)) deps)
+            (let [edge-pad 1
+                  max-w (max 0 (- cols (* 2 edge-pad)))
+                  text  (if (<= (count summary) max-w)
+                          summary
+                          (str (subs summary 0 (max 0 (dec max-w))) "..."))
+                  w     (long (count text))
+                  col   (max edge-pad (quot (- cols w) 2))
+                  {:keys [fg-active fg-paused fg-done bg
+                          set-colors put-str enable clear-styles italic]} deps
+                  fg    (case (:status goal)
+                          :paused fg-paused
+                          :done   fg-done
+                          fg-active)]
+              {:height 1
+               :draw!
+               (fn [g row]
+                 (clear-styles g)
+                 (set-colors g fg bg)
+                 (enable g italic)
+                 (put-str g (long col) (long row) text)
+                 (clear-styles g))})))))))
+
 (defn- goal-tui-commands
   "Returns the list of TUI slash commands the goal extension contributes.
    The dispatcher always shows `/goal` in the slash menu (via
@@ -669,8 +763,24 @@
      ;; TUI surface: `/goal ...` slash command. Registered as a
      ;; channel-hook so the TUI's command-suggest / dispatcher pick it
      ;; up automatically; no TUI code change needed.
-     :ext/channel-hooks [{:channel-id  :tui
-                          :hook-id     :goal/slash
-                          :commands-fn #'goal-tui-commands}]}))
+     :ext/channel-hooks
+     [{:channel-id  :tui
+       :hook-id     :goal/slash
+       :commands-fn #'goal-tui-commands}
+      ;; Header subtitle row contributor. Channel-tui consumes any
+      ;; hook whose `:hook-id` ends in "header-row" (or equals
+      ;; `:tui/header-row` exactly) and calls its `:render-fn` per
+      ;; frame with `(db cols) -> {:height :draw!} | nil`. Pure
+      ;; declarative — no `requiring-resolve` into channel-tui from
+      ;; here, no hard-coded extension lookups from channel-tui to
+      ;; here. See header.clj's `header-row-specs` for the contract.
+      ;; Other channels (Telegram, future web) can declare their own
+      ;; equivalent hooks (`:telegram/preamble`, etc.) without
+      ;; touching this extension or each other.
+      {:channel-id :tui
+       :hook-id    :goal/header-row
+       :render-fn  #'goal-row-render}]}))
 
 (vis/register-extension! vis-extension)
+
+
