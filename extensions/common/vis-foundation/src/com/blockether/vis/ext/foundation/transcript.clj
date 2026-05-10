@@ -285,14 +285,14 @@
 
 (defn- tool-call-row
   [turn iteration block var-row envelope]
-  (let [tool-info (:info envelope)
-        result          (:result envelope)
-        op              (or (:op tool-info) :v/tool)
+  (let [tool-meta       (:op/metadata envelope)
+        result          (:op/result envelope)
+        op              (or (:op/symbol envelope) :v/tool)
         parent-ref      (when block (block-ref turn iteration block))
         ref             (when parent-ref (str parent-ref "/tool/" (op-slug op)))
-        status          (event-status (:error envelope) (:success? envelope)
-                          (or (:timed-out? result) (:timeout? envelope)))
-        tool            (:tool tool-info)]
+        status          (event-status (:op/error envelope) (:op/success? envelope)
+                          (or (:timed-out? result) (:timeout? tool-meta)))
+        tool            (:tool tool-meta)]
     (cond-> {:kind           :tool-call
              :ref            ref
              :parent-ref     parent-ref
@@ -302,19 +302,19 @@
              :op             op
              :tool           (or (:sym tool) (:call tool) tool)
              :status         status
-             :success?      (:success? envelope)
-             :duration-ms    (or (:duration-ms tool-info)
+             :success?       (:op/success? envelope)
+             :duration-ms    (or (:duration-ms tool-meta)
                                (:duration-ms result)
                                0)
              :code           (:code block)
              :result         result
              :result-summary (result-summary result)
-             :info     tool-info}
+             :info           tool-meta}
       var-row              (assoc :var (:name var-row))
-      (:command tool-info) (assoc :command (:command tool-info))
+      (:command tool-meta) (assoc :command (:command tool-meta))
       (:command result)    (assoc :command (:command result))
-      (:target tool-info) (assoc :target (:target tool-info))
-      (:error envelope)    (assoc :error (:error envelope)))))
+      (:target tool-meta)  (assoc :target  (:target tool-meta))
+      (:op/error envelope) (assoc :error  (:op/error envelope)))))
 
 (defn- block-by-code
   [iteration]
