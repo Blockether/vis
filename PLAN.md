@@ -161,6 +161,41 @@ not removed; `--code` joins them as a fourth output mode).
 
 ### 2.6 Streaming UX (Telegram)
 
+#### 2.6.1 Streaming transport — `sendMessageDraft` with edit-based fallback
+
+Primary: **`sendMessageDraft`** (Bot API 9.3+, opened to all bots in 9.5,
+March 2026). Purpose-built for streaming partial messages while the model
+generates. Properties:
+
+- **No notification** fires during streaming (draft is not a real message).
+- **No `(edited)` tag** on the final message (draft converts to real
+  message via final `sendMessage`).
+- **Higher update frequency** allowed than `editMessageText`'s ~1 msg/sec
+  ceiling.
+- UX feel: "someone typing in real-time" rather than "message updated".
+
+Fallback: legacy **`sendMessage` + `editMessageText` loop** for older
+self-hosted Bot API servers that don't have 9.3+. Same throttle (§2.6.3).
+
+**Capability detection** at bot startup:
+
+1. On `channel-main` startup, attempt `sendMessageDraft` once with a probe
+   (e.g., draft a placeholder to the bot's own admin chat or use a no-op
+   target if the API allows; otherwise lazy-detect on first user turn).
+2. On success → store `:streaming-mode :draft` in `chat-state`.
+3. On `400 Bad Request: method not found` or `TEXTDRAFT_PEER_INVALID` →
+   store `:streaming-mode :edit`.
+4. Per-turn: read flag, dispatch to `live-bubble!` variant.
+
+**No periodic re-probing** — Bot API version doesn't downgrade. Once
+detected, stay.
+
+If the user is on Telegram cloud (`api.telegram.org`), they're always on
+the latest Bot API → draft path always succeeds. Self-hosted users on
+<9.3 stay on legacy path automatically. Zero config knob.
+
+#### 2.6.2 Live-bubble shape (transport-independent)
+
 One live-edited bubble during turn:
 
 ```
@@ -177,6 +212,11 @@ Phase routing of `:on-chunk`:
 - `:iteration-final` mid-turn → flush + status update
 - `:iteration-final :done?=true` → collapse thinking, render answer-IR,
   drop keyboard
+
+#### 2.6.3 Throttle
+
+Identical for both transports (`sendMessageDraft` is more permissive
+but we keep the budget conservative to avoid surprise 429s):
 
 Throttle: 1200 ms min interval; ≥40 chars Δ OR newline; idle 3 s resets
 clock; first chunk after idle fires immediately; HTTP 400 not-modified
@@ -343,28 +383,51 @@ Tests in matching `test/` paths:
 
 Scope:
 
-- `tg/edit-message!`, `tg/delete-message!` in
-  `vis-channel-telegram/.../api.clj`.
-- `bot.clj/live-bubble!` helper — owns `chat_id` + `message_id` +
-  render state + throttle (§2.6).
+- `tg/send-message-draft!`, `tg/edit-message-draft!`,
+  `tg/finalize-message-draft!`, `tg/edit-message!`, `tg/delete-message!`
+  in `vis-channel-telegram/.../api.clj`.
+- `bot.clj/detect-streaming-mode!` — capability probe at startup
+  (§2.6.1); caches `:draft` or `:edit` per channel instance.
+- `bot.clj/live-bubble!` helper — abstracts over transport. Owns
+  `chat_id` + `message_id` + render state + throttle (§2.6.3). Two
+  internal implementations behind one interface:
+  - `live-bubble-draft!` — uses `sendMessageDraft` /
+    `editMessageDraft` / final `sendMessage`. Bot API ≥ 9.3.
+  - `live-bubble-edit!` — legacy `sendMessage` + `editMessageText`
+    loop. Fallback for older self-hosted Bot API.
 - `bot.clj/handle-user-text!` rewrite:
+  - Read detected `:streaming-mode` flag; pick `live-bubble-draft!`
+    or `live-bubble-edit!`.
   - Build `vis/make-progress-tracker` whose `:on-update` drives
-    `live-bubble!`.
+    the picked live-bubble.
   - Pass tracker's `:on-chunk` via `:hooks {:on-chunk ...}` to
     `vis/send!` opts.
   - On `:iteration-final :done?=true`: collapse thinking bubble,
     drop keyboard, render answer-AST through registered renderer-fn,
-    post bubble(s), walk attachments per A.4.
+    finalize bubble (transport-specific: draft → real `sendMessage`;
+    edit → final `editMessageText`), post additional answer bubbles
+    if multi-chunk, walk attachments per A.4.
 - `bot.clj/handle-callback-query!` matches `cancel:<chat-id>` → fires
-  cancellation on stored turn-token; updates bubble; spam-tap
-  protection.
+  cancellation on stored turn-token; updates bubble (transport-specific
+  cancel-edit); spam-tap protection.
+- Per-turn fallback: if `:draft` mode and a draft call returns an
+  unexpected error (e.g., capability silently revoked), drop to `:edit`
+  for the rest of the turn. Sticky downgrade.
 
 Tests:
-- `bot_streaming_test.clj`: throttle 1200 ms; final flush ignores
-  interval; not-modified swallowed; 429 backoff doubles interval;
-  cancel button removes keyboard + edits in place; pre-first-paint
-  cancel → fresh message; sliding-window thinking truncation;
-  multi-iteration boundary flush.
+- `bot_streaming_test.clj`:
+  - capability detection: probe success → `:draft`; probe 400 →
+    `:edit`; cached across calls.
+  - both transports: throttle 1200 ms; final flush ignores interval;
+    not-modified swallowed; 429 backoff doubles interval; cancel
+    button removes keyboard + edits in place; pre-first-paint cancel
+    → fresh message; sliding-window thinking truncation;
+    multi-iteration boundary flush.
+  - per-turn fallback: simulated draft error mid-stream →
+    transparent switch to edit transport for remaining chunks of
+    that turn.
+  - draft-specific: verify final message has no `(edited)` tag
+    (assertion on `Message.edit_date` being nil).
 
 ---
 
@@ -406,6 +469,8 @@ Lanterna styled-segment vectors. Out of scope for D.
 | Risk | Mitigation |
 |---|---|
 | LLM regresses without `v/` DSL guidance | Few-shot examples in prompt (§2.3) ground it; auto-wrap soft-coerces forgetful output. |
+| `sendMessageDraft` capability changes between Bot API versions | Detect at startup (§2.6.1); cache result; per-turn sticky downgrade on unexpected error. Self-hosted users on <9.3 transparently use legacy edit path. |
+| Draft path silently dropped messages on edge cases (cf. OpenClaw #19001) | Per-turn fallback to edit path on first draft-call error; final-edit always re-confirms terminal state. |
 | LLM emits malformed IR (unknown tag, missing required attr) | Walker `:default` arm renders children, drops wrapper. `->ast` normalizes attrs. Renderer never throws. |
 | Soft-coerce hides bugs (LLM keeps emitting strings, we silently wrap) | Ship a debug counter in `tel/log!` for "auto-wrapped non-IR answer" so we can detect prompt drift. |
 | Telegram `<blockquote expandable>` requires Bot API ≥ 7.0 | Documented requirement. Older Bot API silently shows non-expandable blockquote — degraded but functional. |
@@ -446,3 +511,23 @@ Lanterna styled-segment vectors. Out of scope for D.
 ## 7. Open items
 
 None at plan time. Implementation can begin Phase A immediately.
+
+## 8. References
+
+Industry research informing this plan:
+
+- Bot API changelog — `expandable_blockquote` (2024), `sendMessageDraft`
+  (Bot API 9.3 Dec 2025, opened to all bots in 9.5 March 2026). Source:
+  https://core.telegram.org/bots/api-changelog
+- OpenClaw / Clawdbot streaming migration to `sendMessageDraft`
+  (issues #32041, #32180): no notification, no `(edited)` tag, faster
+  update frequency.
+- anything-llm production rate-limit data (issue #5447): edit-based
+  streaming hit 429s, settled on 1000-1500ms intervals. Validates our
+  1200 ms throttle ceiling.
+- Industry consensus on content blocks (Anthropic, OpenAI Responses
+  API, LangChain 1.0 `content_blocks`): typed structured blocks for
+  mixed prose + non-text. Vis IR matches this shape via Hiccup-EDN.
+- `telegramify-markdown` (sudoskys, Python): MessageEntity-based
+  rendering as defect-#10-proof alternative to parse_mode. Noted as
+  potential future evolution (out of scope for this PR).
