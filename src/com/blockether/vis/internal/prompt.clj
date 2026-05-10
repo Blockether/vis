@@ -27,12 +27,12 @@
         `<user_turn_request_main_goal>`, not inside the trailer.
 
    The blocks above plus the SYSTEM vars (every name in
-   `SYSTEM_VAR_NAMES` - `TURN_CONVERSATION_TURN_ID`,
-   `TURN_CONVERSATION_SOUL_ID`, `TURN_CONVERSATION_STATE_ID`,
-   `TURN_SYSTEM_PROMPT`, `TURN_ACTIVE_EXTENSIONS`,
-   `TURN_ACCESSIBLE_SKILLS`, `ITERATION_ID`, `CONVERSATION_ID`,
-   `CONVERSATION_SOUL_ID`, `CONVERSATION_STATE_ID`,
-   `CONVERSATION_TITLE`, `CONVERSATION_PREVIOUS_ANSWER`) bound in SCI
+   `SYSTEM_VAR_NAMES` - `TURN_ID`, `TURN_POSITION`,
+   `TURN_CONVERSATION_STATE_ID`, `TURN_SYSTEM_PROMPT`,
+   `TURN_ACTIVE_EXTENSIONS`, `TURN_ACCESSIBLE_SKILLS`,
+   `TURN_ITERATION_ID`, `TURN_ITERATION_POSITION`,
+   `CONVERSATION_STATE_ID`, `CONVERSATION_TITLE`,
+   `CONVERSATION_PREVIOUS_ANSWER`) bound in SCI
    cover everything the model needs. SYSTEM vars are direct sandbox
    bindings - reference them by name; they are not re-serialized
    into the trailer. The retired `TURN_USER_REQUEST` lives on as the
@@ -535,47 +535,6 @@
         (catch Throwable _ nil))
     32000))
 
-(defn- context-pressure-nudge
-  "Built-in context-pressure nudge that fires when the assembled prompt
-   (system prompt + current user request + new iteration trailer) crosses
-   `CONTEXT_PRESSURE_THRESHOLD` of the model's input-token budget.
-   Returns nil when usage is below threshold or token info is
-   unavailable.
-
-   The nudge does NOT auto-summarize - RLM puts curation in the
-   model's hands. Instead it (a) reports the live usage so the model
-   sees the budget concretely, (b) gives a Chain-of-Density-style
-   recipe for a `(def ...)` summary the MODEL writes itself, and (c)
-   reminds the model that older raw iters stay reachable through the
-   foundation read API even after they roll off the journal."
-  [_model used-tokens limit-tokens]
-  (when (and (integer? used-tokens) (integer? limit-tokens) (pos? limit-tokens))
-    (let [util (double (/ used-tokens limit-tokens))]
-      (when (>= util CONTEXT_PRESSURE_THRESHOLD)
-        (str "Context window is at "
-          (int (Math/round (* 100.0 util))) "% ("
-          used-tokens " / " limit-tokens " tokens). Older <journal>\n"
-          "  lines drop when the journal exceeds its token budget. Curate the\n"
-          "  insight you've earned BEFORE that happens - emit a structured\n"
-          "  `(def ...)` so the value lands in <bindings> + persisted var store and\n"
-          "  survives the roll. Chain-of-Density-style recipe (use only\n"
-          "  facts that already appeared in the journal; no new\n"
-          "  characterizations / evaluative adjectives):\n"
-          "\n"
-          "    (def turn-summary\n"
-          "      {:findings   [{:where \"src/auth.clj:42\" :what \"jwt-decode rejects nbf-skew\"}\n"
-          "                    {:where \"turn/<turn8>/iteration/<n>/block/<k>\" :what \"<concrete-fact>\"}]\n"
-          "       :errors     [{:iteration N :class :patch-no-match :recovery \"...\"}]\n"
-          "       :decisions  [{:choice \"validate-then-decode\" :rationale \"...\"}]\n"
-          "       :next-step  \"extract verify-jwt to its own ns\"})\n"
-          "\n"
-          "  Keys above are illustrative - use whatever shape fits the\n"
-          "  task. Atoms preferred (file paths, symbol names, error keys,\n"
-          "  concrete values) over prose. Raw iteration output stays reachable via\n"
-          "  `(v/conversation-state)` after journal lines roll off; use its :transcript\n"
-          "  and :failures keys when you genuinely need precision your\n"
-          "  `(def ...)` didn't capture.")))))
-
 (defn- title-nudge
   "Built-in title nudge that fires when:
      1. `CONVERSATION_TITLE` is currently empty, OR
@@ -739,9 +698,7 @@
         prompt-text (str/join "\n\n"
                       (keep identity
                         [system-prompt current-user-content active-skills-block recent-block bindings-block]))
-        used-tokens (count-prompt-tokens model prompt-text)
-        pressure-line (when (and used-tokens ctx-limit)
-                        (context-pressure-nudge model used-tokens ctx-limit))
+        _used-tokens (count-prompt-tokens model prompt-text)
         ext-nudges (when (seq active-extensions)
                      (let [iter-position (if (some? iteration)
                                            (inc (long iteration))
@@ -769,7 +726,6 @@
                          active-extensions)))
         all-nudges (cond-> []
                      title-line       (conj (normalize-system-nudge :low title-line))
-                     pressure-line    (conj (normalize-system-nudge :high pressure-line))
                      (seq ext-nudges) (into ext-nudges))
         nudges-block (system-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))

@@ -276,9 +276,14 @@
       :else                   (render/render v :plain))))
 
 (defn append-runtime-appendices
-  "No-op compatibility shim; runtime appendices were removed."
-  [_environment answer-text _answer-value]
-  (str answer-text))
+  "No-op compatibility shim; runtime appendices were removed.
+
+   Identity on the answer value: previously `(str answer-text)`, which
+   collapsed canonical IR vectors into Java `.toString` text. The
+   pipeline now keeps `[:ir & nodes]` end-to-end; channel renderers
+   own the final flavor."
+  [_environment answer _answer-value]
+  answer)
 
 (def edamame-opts
   {:all true
@@ -2043,7 +2048,11 @@
           ;; resolved-model)` would land a stringified map in
           ;; `iteration.llm_model`; surface `:name` and `:provider`
           ;; separately so both columns get clean values.
-        (let [final-answer    (answer-str {:result value})
+        ;; `value` is already canonical `[:ir & nodes]` (or a
+        ;; needs-input map) - `answer-fn` ran `render/->ast` at the
+        ;; SCI boundary. Persist the IR as-is; channels render at
+        ;; their boundary via `:channel/messages-renderer-fn`.
+        (let [final-answer    value
               total-forms     (count code-entries)
               position-bad?   (answer-position-violation? form-idx total-forms iteration-position)
               own-form-error  (when-not position-bad?
@@ -2498,12 +2507,19 @@
     (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
 
 (defn update-iteration-id!
-  "Rebind `ITERATION_ID` in the SCI sandbox to the freshly-persisted
-   iteration row's UUID. Mirrors `:current-iteration-id-atom`. No-op
-   when `iteration-id` is nil."
-  [environment iteration-id]
-  (when iteration-id
-    (env/bind-and-bump! environment 'ITERATION_ID iteration-id)))
+  "Rebind `TURN_ITERATION_ID` and `TURN_ITERATION_POSITION` in the
+   SCI sandbox to the freshly-persisted iteration row's UUID + 1-based
+   position. Mirrors `:current-iteration-id-atom`. No-op for both when
+   `iteration-id` is nil. `iteration-position` is optional; nil leaves
+   the position bound at its previous value (callers that don't know
+   it can pass nil)."
+  ([environment iteration-id]
+   (update-iteration-id! environment iteration-id nil))
+  ([environment iteration-id iteration-position]
+   (when iteration-id
+     (env/bind-and-bump! environment 'TURN_ITERATION_ID iteration-id))
+   (when iteration-position
+     (env/bind-and-bump! environment 'TURN_ITERATION_POSITION (long iteration-position)))))
 
 (defn inject-system-var-snapshots
   "Append a SYSTEM-var snapshot to `vars-snapshot` for EVERY name in
@@ -2511,10 +2527,10 @@
    persisted var history then have ONE row per iteration for each X,
    even when the value is unchanged or blank.
 
-   Yes, turn-frozen vars (TURN_CONVERSATION_TURN_ID,
-   TURN_CONVERSATION_SOUL_ID, TURN_CONVERSATION_STATE_ID,
-   TURN_SYSTEM_PROMPT, TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS,
-   CONVERSATION_ID, CONVERSATION_SOUL_ID, CONVERSATION_STATE_ID) repeat verbatim across
+   Yes, turn-frozen vars (TURN_ID, TURN_POSITION,
+   TURN_CONVERSATION_STATE_ID, TURN_SYSTEM_PROMPT,
+   TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS,
+   CONVERSATION_STATE_ID) repeat verbatim across
    iterations of the same turn - that is the intentional contract:
    \"every iteration carries a snapshot of every SYSTEM var\". The
    dedup-on-unchanged optimization the previous version did was a
@@ -2525,23 +2541,23 @@
    never stores nil for a SYSTEM var - makes the version vec a clean
    log of values across iterations."
   [vars-snapshot {:keys [final-answer
-                         turn-conversation-turn-id iteration-id
-                         conversation-soul-id conversation-state-id
+                         turn-id turn-position
+                         iteration-id iteration-position
+                         conversation-state-id
                          system-prompt
                          extensions-snapshot accessible-skills-snapshot
                          conversation-title]}]
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
-      (stamp "TURN_CONVERSATION_TURN_ID"                (or turn-conversation-turn-id ""))
-      (stamp "TURN_CONVERSATION_SOUL_ID"    (or conversation-soul-id ""))
+      (stamp "TURN_ID"                      (or turn-id ""))
+      (stamp "TURN_POSITION"                (or turn-position 0))
       (stamp "TURN_CONVERSATION_STATE_ID"   (or conversation-state-id ""))
       (stamp "TURN_SYSTEM_PROMPT"           (or system-prompt ""))
       (stamp "TURN_ACTIVE_EXTENSIONS"       (or extensions-snapshot []))
       (stamp "TURN_ACCESSIBLE_SKILLS"       (or accessible-skills-snapshot []))
-      (stamp "ITERATION_ID"                 (or iteration-id ""))
-      (stamp "CONVERSATION_ID"              (or conversation-soul-id ""))
-      (stamp "CONVERSATION_SOUL_ID"         (or conversation-soul-id ""))
+      (stamp "TURN_ITERATION_ID"            (or iteration-id ""))
+      (stamp "TURN_ITERATION_POSITION"      (or iteration-position 0))
       (stamp "CONVERSATION_STATE_ID"        (or conversation-state-id ""))
       (stamp "CONVERSATION_TITLE"           (or conversation-title ""))
       (stamp "CONVERSATION_PREVIOUS_ANSWER" (or final-answer "")))))
@@ -2922,14 +2938,18 @@
     ;; TURN_USER_REQUEST retired. The current human turn text and richer
     ;; per-iteration / cross-turn history both flow through
     ;; `(v/conversation-state)` -> :current-turn :user-request / :transcript :turns.
-    (env/bind-and-bump! environment 'TURN_CONVERSATION_TURN_ID conversation-turn-id)
-    (env/bind-and-bump! environment 'TURN_CONVERSATION_SOUL_ID
-      (:conversation-id environment))
+    (env/bind-and-bump! environment 'TURN_ID conversation-turn-id)
+    (let [turn-position (try
+                          (some->> (persistance/db-list-conversation-turns
+                                     (:db-info environment) (:conversation-id environment))
+                            (some #(when (= (str (:id %)) (str conversation-turn-id))
+                                     (:position %)))
+                            long)
+                          (catch Throwable _ 0))]
+      (env/bind-and-bump! environment 'TURN_POSITION (or turn-position 0)))
     (let [conversation-state-id (persistance/db-latest-conversation-state-id
                                   (:db-info environment) (:conversation-id environment))]
       (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID conversation-state-id)
-      (env/bind-and-bump! environment 'CONVERSATION_ID (:conversation-id environment))
-      (env/bind-and-bump! environment 'CONVERSATION_SOUL_ID (:conversation-id environment))
       (env/bind-and-bump! environment 'CONVERSATION_STATE_ID conversation-state-id))
     ;; The full assembled system prompt that drives THIS turn. SYSTEM
     ;; vars are excluded from `<bindings>` (see `env/build-bindings`)
@@ -2952,9 +2972,11 @@
     ;; returns the same shape on demand; both surfaces stay in sync.
     (env/bind-and-bump! environment 'TURN_ACCESSIBLE_SKILLS
       (prompt/accessible-skills-snapshot))
-    ;; Reset ITERATION_ID to nil at turn start; rebound by
+    ;; Reset TURN_ITERATION_ID + TURN_ITERATION_POSITION at turn start;
+    ;; rebound by
     ;; `update-iteration-id!` after each iteration row commits.
-    (env/bind-and-bump! environment 'ITERATION_ID nil)
+    (env/bind-and-bump! environment 'TURN_ITERATION_ID nil)
+    (env/bind-and-bump! environment 'TURN_ITERATION_POSITION 0)
     (update-title-system-var! environment)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
@@ -3249,7 +3271,7 @@
                                                    tc (assoc :tokens (:tokens tc)
                                                         :cost-usd (:cost-usd tc)))))]
                         (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
-                        (update-iteration-id! environment err-iteration-id)
+                        (update-iteration-id! environment err-iteration-id (long (or iteration 0)))
                       ;; Live error chunk - `:phase :iteration-error`
                       ;; signals the iteration aborted before any
                       ;; forms could run. No per-form chunks fired
@@ -3325,12 +3347,20 @@
                                                            :created-at  (:created-at conversation-row)}
                                                     (:turn-count conversation-row)
                                                     (assoc :turn-count (:turn-count conversation-row))))
+                          turn-position (try
+                                          (some->> (persistance/db-list-conversation-turns
+                                                     (:db-info environment) (:conversation-id environment))
+                                            (some #(when (= (str (:id %)) (str conversation-turn-id))
+                                                     (:position %)))
+                                            long)
+                                          (catch Throwable _ 0))
                           vars-snapshot (inject-system-var-snapshots vars-snapshot
                                           {:thinking           thinking
                                            :final-answer       final-answer
-                                           :turn-conversation-turn-id      conversation-turn-id
+                                           :turn-id                        conversation-turn-id
+                                           :turn-position      (or turn-position 0)
                                            :iteration-id       previous-iteration-id
-                                           :conversation-soul-id  (:conversation-id environment)
+                                           :iteration-position (long (or iteration 0))
                                            :conversation-state-id (persistance/db-latest-conversation-state-id
                                                                     (:db-info environment)
                                                                     (:conversation-id environment))
@@ -3369,7 +3399,7 @@
                                              tc (assoc :tokens (:tokens tc)
                                                   :cost-usd (:cost-usd tc)))))
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
-                          _ (update-iteration-id! environment iteration-id)
+                          _ (update-iteration-id! environment iteration-id (long (or iteration 0)))
                           ;; Lifecycle :iteration-end (success path).
                           ;; The :status keyword distinguishes :final
                           ;; (the model emitted (answer ...)),
@@ -4362,8 +4392,39 @@
         ;; Returns the marker keyword so the per-form result row makes
         ;; request visible.
         answer-fn                (fn answer [s]
+                                   ;; Canonicalize the answer value to
+                                   ;; `[:ir & nodes]` AT THE ENTRY
+                                   ;; POINT. From here on, every
+                                   ;; downstream consumer (DB persist,
+                                   ;; channel renderers, voice TTS,
+                                   ;; logs) sees one shape and one
+                                   ;; shape only.
+                                   ;;
+                                   ;; `render/->ast` is total and pure:
+                                   ;;   string         -> [:ir {} "..."]
+                                   ;;   [:ir ...]      -> normalized in place
+                                   ;;   [:tag ...]     -> wrapped in :ir
+                                   ;;   seq of mixed   -> wrapped + per-child coerced
+                                   ;;   anything else  -> [:ir {} [:code {:lang "edn"} (pr-str x)]]
+                                   ;;
+                                   ;; The previous `(str s)` invoked
+                                   ;; Java `.toString` on Hiccup/IR
+                                   ;; vectors, producing a literal
+                                   ;; `"[:ir [:p ...]]"` string that no
+                                   ;; downstream renderer could undo.
+                                   ;; EXCEPTION: needs-input payloads
+                                   ;; are data, not prose. The
+                                   ;; prompt-flow gate reads them as
+                                   ;; maps via `needs-input-answer?` /
+                                   ;; `:answer/text`. Coercing those to
+                                   ;; IR would dump them as an EDN code
+                                   ;; block. Pass the map through
+                                   ;; untouched - `answer-str` already
+                                   ;; special-cases the shape.
                                    (reset! answer-atom
-                                     {:value    (str s)
+                                     {:value    (if (needs-input-answer? s)
+                                                  s
+                                                  (render/->ast s))
                                       :form-idx @current-form-idx-atom})
                                    :vis/answer)
         ;; SCI binding for the conversation title:
