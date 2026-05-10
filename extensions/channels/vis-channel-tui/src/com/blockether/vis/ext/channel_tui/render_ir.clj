@@ -578,6 +578,39 @@
        tail-lines
        (vec (take-last tail-n tail-lines))))))
 
+(defn ir->lines-window
+  "Render only rows `[start, start+num)` of the IR.
+
+   Internally walks blocks forward with `:max-lines (start + num +
+   slack)` so the walker short-circuits via the A1 `blocks->lines`
+   path - work is O(start + num), not O(body). Output is
+   bit-identical to `(subvec (ir->lines ir w opts) start (+ start
+   num))` when both are in range; result is clamped if the body has
+   fewer lines.
+
+   Use cases:
+     - `start = 0`: equivalent to `(:max-lines num)` head-cap.
+     - `start > 0`: scrolled into a long bubble; only render the
+       window. Note: skipping is still done by the walker producing
+       `start` lines then discarding them - true zero-cost prefix
+       skip would require per-block estimate-based skipping which
+       this fn does not do.
+
+   `num` must be positive. `start` must be non-negative."
+  ([input width start num] (ir->lines-window input width start num nil))
+  ([input width start num opts]
+   (let [start (max 0 (long start))
+         num   (max 1 (long num))
+         ;; 50% slack covers post-walk blank-collapse (lines vec ends
+         ;; up shorter than walker output). Without slack, a window
+         ;; near the body bottom could return fewer than `num` lines.
+         cap   (long (+ start (* 3 num)))
+         lines (ir->lines input width (assoc (or opts {}) :max-lines cap))
+         have  (count lines)]
+     (if (>= start have)
+       []
+       (vec (subvec lines start (min have (+ start num))))))))
+
 (defn lines->plain
   "Concatenate the text of every run in `lines`. Useful for tests +
    clipboard fallback (preferred clipboard path: `ir/render :markdown`)."
