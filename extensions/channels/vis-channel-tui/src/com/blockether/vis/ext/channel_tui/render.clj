@@ -963,24 +963,6 @@
 (def ^:private th-md-hr-marker         p/MARKER_TH_MD_HR)
 (def ^:private th-md-summary-marker    p/MARKER_TH_MD_SUMMARY)
 
-(def ^:private md-marker-sets
-  "Per-mode marker bundle. Selected by `markdown->lines` mode arg.
-   `:answer` lines render with answer-bg (no italic). `:thinking`
-   lines render with iteration-header-bg + italic so the whole reasoning
-   block reads as one dim, italicized region."
-  {:answer   {:h1 md-h1-marker :h2 md-h2-marker :h3 md-h3-marker
-              :bold md-bold-marker :code md-code-marker
-              :bullet md-bullet-marker :quote md-quote-marker :hr md-hr-marker
-              :thead md-table-head-marker :tsep md-table-sep-marker :trow md-table-row-marker
-              :summary md-summary-marker
-              :plain ""}
-   :thinking {:h1 th-md-h1-marker :h2 th-md-h2-marker :h3 th-md-h3-marker
-              :bold th-md-bold-marker :code th-md-code-marker
-              :bullet th-md-bullet-marker :quote th-md-quote-marker :hr th-md-hr-marker
-              :thead th-md-table-head-marker :tsep th-md-table-sep-marker :trow th-md-table-row-marker
-              :summary th-md-summary-marker
-              :plain thinking-marker}})
-
 (defn- ansi-code->fg [code current-fg base-fg]
   (case code
     0 base-fg
@@ -1014,47 +996,6 @@
     current-fg
     codes))
 
-(defn- clojure-lang? [lang]
-  (contains? #{"clj" "cljc" "cljs" "clojure" "edn"}
-    (str/lower-case (str/trim (or lang "")))))
-
-(defn- diff-lang? [lang]
-  (contains? #{"diff" "patch" "udiff"}
-    (str/lower-case (str/trim (or lang "")))))
-
-(defn- ansi-fg
-  [code s]
-  (str "\u001b[" code "m" s "\u001b[0m"))
-
-(defn- diff-line-ansi-code
-  [line]
-  (cond
-    (str/starts-with? line "+") 92
-    (str/starts-with? line "-") 91
-    (str/starts-with? line "@@") 36
-    (or (str/starts-with? line "diff --git")
-      (str/starts-with? line "index ")) 90
-    :else nil))
-
-(defn- fence-lang [line]
-  (let [trimmed (str/trim (or line ""))]
-    (when (str/starts-with? trimmed "```")
-      (str/trim (subs trimmed 3)))))
-
-(defn- leading-space-count [^String s]
-  (count (take-while #(= \space %) (or s ""))))
-
-(defn- strip-leading-spaces-up-to [n line]
-  (let [line (or line "")
-        drop-n (min (long n) (leading-space-count line))]
-    (subs line drop-n)))
-
-(defn- nested-prefix
-  [indent labels]
-  (let [level (min 3 (quot (leading-space-count indent) 2))]
-    (str (repeat-str \space (+ 2 (* level 2)))
-      (nth labels level))))
-
 (defn- format-clojure-ansi
   "Format Clojure/EDN source via zprint and keep zprint's ANSI syntax
    coloring. The TUI painter translates those ANSI SGR codes to
@@ -1073,30 +1014,6 @@
         width     (long width)]
     (cached* [:clojure-ansi width code-text]
       #(fmt/format-clojure-ansi code-text width))))
-
-(defn- code-block-lines
-  ([m lang code-lines max-w]
-   (code-block-lines m lang code-lines max-w ""))
-  ([m lang code-lines max-w prefix]
-   (let [prefix-w   (p/display-width prefix)
-         code-w     (max 1 (- (long max-w) prefix-w))
-         code-text  (str/join "\n" code-lines)
-         body-lines (cond
-                      (clojure-lang? lang)
-                      (str/split-lines (format-clojure-ansi code-text code-w))
-
-                      (diff-lang? lang)
-                      (mapcat (fn [line]
-                                (let [code (diff-line-ansi-code line)]
-                                  (map #(cond->> % code (ansi-fg code))
-                                    (wrap-text line code-w))))
-                        code-lines)
-
-                      :else
-                      (mapcat #(wrap-text % code-w) code-lines))]
-     (vec (concat [(str (:code m) prefix)]
-            (map #(str (:code m) prefix %) body-lines)
-            [(str (:code m) prefix)])))))
 
 (defn- paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
@@ -1234,7 +1151,7 @@
 ;; section ~900 lines below; the existing forward-decl down there is
 ;; far too late for a chrome helper this high in the file. We pin
 ;; the var here so Clojure can resolve the symbol at compile time.
-(declare markdown->inline markdown->lines)
+(declare markdown->inline)
 
 (defn- op-tag->color-role
   "Channel-local mapping from the engine `:op.tag/...` value to a
@@ -1357,8 +1274,11 @@
         ;; instead of mashed against it.
         h-pad     2
         content-w (max 1 (- bubble-w (* 2 h-pad)))
+        ;; `:prewrapped-lines` is set by `virtual.clj` projection for
+        ;; every visible bubble (walker output); the `wrap-text`
+        ;; fallback only triggers for placeholders / synthetic msgs
+        ;; that bypass projection (rare).
         raw-lines (or (:prewrapped-lines message)
-                    (and user? (markdown->lines text content-w :answer))
                     (wrap-text text content-w))
         lines     (clip-lines-preserving-markers raw-lines content-w)
         line-meta (or (:line-meta message)
@@ -2151,16 +2071,40 @@
 ;; chrome shows raw markdown markup verbatim, e.g.
 ;;   [See **here**](url) -> "🔗 See **here** -> url"
 ;; which looks like a typo to the user.
-(def ^:private chrome-text-sentinel-re #"[\uE110-\uE119]")
+(defn- ir-node-visible-text
+  "Recursive walk: concatenate every visible text segment from a
+   canonical IR node, dropping link URLs and image srcs (we only
+   want the visible label, not the target). Used by chrome rows
+   where `[See **here**](url)` should read `See here`, not
+   `See here (url)` (which is what `extract-text`'s plain renderer
+   would emit for a link whose label differs from its href)."
+  ^String [node]
+  (cond
+    (string? node) node
+    (not (vector? node)) ""
+    :else
+    (let [tag (first node)
+          children (drop 2 node)]
+      (case tag
+        :br   " "
+        :img  ""
+        (:span :c :code :kbd) (or (some #(when (string? %) %) children) "")
+        (apply str (map ir-node-visible-text children))))))
 
 (defn- strip-inline-markup
-  "Run `text` through `markdown->inline` then drop the styling
-   sentinels, yielding plain visible text. See the comment above
-   `chrome-text-sentinel-re` for the rationale."
+  "Strip inline markdown markup (`**bold**`, `` `code` ``, link
+   decoration, etc.) from `text`, yielding the plain visible label.
+   Used by chrome-row rendering so refs like `[See **here**](url)`
+   show as `🔗 See here -> url` (visible label only) instead of
+   leaking asterisks or the URL inside the bracket portion.
+
+   Lifts through `vis/text->ir` (commonmark parser) then walks the
+   IR concatenating only visible text — link/image targets dropped."
   ^String [^String text]
-  (-> (or text "")
-    markdown->inline
-    (str/replace chrome-text-sentinel-re "")))
+  (let [s (or text "")]
+    (if (str/blank? s)
+      s
+      (str/trim (ir-node-visible-text (vis/text->ir s))))))
 
 (defn- chrome-display-text
   "Build the visible chrome row for a ref:
@@ -2272,8 +2216,10 @@
         top-sep-h  (if turn-separator? 2 0)
         h-pad      2
         content-w  (max 1 (- bubble-w (* 2 h-pad)))
+        ;; Same contract: virtual.clj projection populates
+        ;; `:prewrapped-lines` via the IR walker for every visible
+        ;; bubble; `wrap-text` is the bare-string fallback.
         lines      (or prewrapped-lines
-                     (and (= role :user) (markdown->lines text content-w :answer))
                      (wrap-text text content-w))
         top-pad    (if (= role :user) 1 0)
         bottom-pad (if (= role :user) 1 0)
@@ -2389,14 +2335,10 @@
    so completed iterations hit the cache forever even when the parent
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
-  [{:keys [thinking events code comments results result-kinds result-details
+  [{:keys [thinking code comments results result-kinds result-details
            stdouts stderrs durations successes started-at-ms error
            repeat-count]}]
   [(text-fingerprint thinking)
-   (when events
-     (mapv (fn [e]
-             [(:type e) (:form-idx e) (text-fingerprint (:thinking e))])
-       events))
    (mapv text-fingerprint code)
    (mapv text-fingerprint comments)
    (mapv text-fingerprint results)
@@ -2643,7 +2585,13 @@
                     summary
                     (or hint ""))
         visible   (format-detail-summary-line left suffix (max 1 max-w))
-        wrapped   (wrap-text (markdown->inline visible) (max 1 max-w))
+        ;; Lift visible-label string through the IR walker so inline
+        ;; emphasis (`**bold**`, `` `code` ``, etc.) renders with
+        ;; sentinel-wrapped runs the painter understands; legacy
+        ;; `markdown->inline` regex parser is gone.
+        wrapped   (wrap-text (ir-tui/ir->inline-sentinel-string
+                               (vis/text->ir visible))
+                    (max 1 max-w))
         meta      {:kind :toggle-details
                    :conversation-id (str conversation-id)
                    :node-id (str node-id)
@@ -2655,8 +2603,6 @@
   [lines raw-text]
   (or (> (count lines) auto-collapse-line-threshold)
     (> (count (str (or raw-text ""))) auto-collapse-char-threshold)))
-
-(declare markdown->lines-plain)
 
 (defn- markdown-marker-prefix?
   "True when the line starts with a markdown structural marker emitted
@@ -2672,35 +2618,32 @@
         (= c \u200B) (= c \u200C) (= c \u200D) (= c \uFEFF)))))
 
 (defn- markdown-body-entries
-  "Render `text` as Markdown via `markdown->lines-plain`, then return
-   one entry per visual row.
+  "Render `text` as markdown into painter entries via the IR walker
+   (`vis/text->ir` → `ir-tui/ir->entries`).
 
-   For each rendered line:
+   For each emitted line:
 
    - If the line already starts with a markdown structural marker
      (`MARKER_MD_H1`, `MARKER_MD_BULLET`, fenced-code marker, etc.),
-     keep it verbatim. Headings/bullets/code blocks own their row paint;
-     stacking another structural marker would either steal the row or
-     lose the heading/code rendering.
+     keep it verbatim. Headings/bullets/code blocks own their row
+     paint; stacking another structural marker would either steal the
+     row or lose the heading/code rendering.
    - Otherwise prepend `body-marker` so plain prose still picks up the
      surrounding details bg (e.g. result-bg).
-
-   Inline marker sentinels (\\uE11x for bold/italic/code spans) live
-   mid-line and are preserved verbatim by `wrap-text` so this helper
-   does not need to special-case them.
 
    Returns `nil` for blank input so the caller can fall back to the
    plain `wrap-text` path."
   [text body-marker max-w]
   (when-not (str/blank? text)
-    (let [rendered (markdown->lines-plain (str/trim text) max-w :answer)]
-      (when (seq rendered)
-        (mapv (fn [line]
+    (let [ir      (vis/text->ir (str/trim text))
+          entries (ir-tui/ir->entries ir max-w)]
+      (when (seq entries)
+        (mapv (fn [{:keys [line meta]}]
                 {:line (if (markdown-marker-prefix? line)
                          line
                          (str body-marker line))
-                 :meta nil})
-          rendered)))))
+                 :meta meta})
+          entries)))))
 
 (defn- indent-output-entry
   [entry]
@@ -2887,89 +2830,11 @@
      :line-meta line-meta
      :text      (str/join "\n" lines)}))
 
-(declare markdown->entries)
-
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
 ;;
 ;; `markdown->inline` is forward-declared once at the top of the
 ;; file (search `(declare markdown->inline)`), so no second declare
 ;; here.
-
-(defn- word-char-at?
-  "True iff index `i` is inside `s` and points at a letter or digit.
-   Out-of-bounds -> false. Used to enforce CommonMark/GFM's intra-word
-   underscore rule: `VAR_NAME_HERE` must not light up as italic."
-  [^String s ^long i]
-  (and (>= i 0)
-    (< i (.length s))
-    (Character/isLetterOrDigit (.charAt s i))))
-
-(defn- find-inline-close
-  "Scan `s` from index `from` for the next occurrence of `closer`,
-   stepping over nested constructs that stay atomic:
-
-   - Code spans (`` `...` ``) are atomic; their content can include any
-     character (including the closer we're hunting for) without our
-     scanner being fooled. Skip from one backtick to its matching pair.
-     The exception is when WE are the code-span scanner (closer = ``\\`
-     ``) - then we just want the next backtick, no further skipping.
-   - When `closer` is a SINGLE char (`*` or `_`), a doubled-pair like
-     `**...**` or `__...__` belongs to a nested bold span, NOT to the open
-     italic we're trying to close. Skip the whole nested pair. This is
-     what makes `*italic with **bold** inside*` parse the way a human
-     reads it (italic wrapping bold) instead of `italic with` /
-     literal-`*bold` / italic-` inside`.
-   - Underscore closers (`_` and `__`) are rejected when the character
-     immediately after the candidate match is a letter or digit.
-     CommonMark/GFM forbids intra-word underscore emphasis, so
-     `FOO_BAR_BAZ` must NOT close at the second `_`. Companion rule on
-     opener-side lives in `markdown->inline`.
-
-   Empty spans (`**` immediately followed by `**`, etc.) are rejected
-   by returning -1 - GitHub does the same.
-
-   Returns the index of the matched closer or -1 if none."
-  [^String s ^String closer ^long from]
-  (let [n           (.length s)
-        cl-len      (.length closer)
-        single-ch   (when (= 1 cl-len) (.charAt closer 0))
-        underscore? (= \_ (.charAt closer 0))]
-    (loop [k from]
-      (cond
-        (> (+ k cl-len) n) -1
-
-        ;; Step over code spans - unless we ARE the code-span scanner.
-        (and (not= closer "`") (= (.charAt s k) \`))
-        (let [end (.indexOf s "`" (inc k))]
-          (if (neg? end) (recur (inc k)) (recur (inc end))))
-
-        ;; When closing a single `*` (or `_`), skip past nested
-        ;; doubled `**...**` (or `__...__`) so the outer italic doesn't
-        ;; eat the inner bold's opener.
-        (and single-ch
-          (= (.charAt s k) ^char single-ch)
-          (< (inc k) n)
-          (= (.charAt s (inc k)) ^char single-ch))
-        (let [doubled (str single-ch single-ch)
-              end     (.indexOf s doubled (+ k 2))]
-          (if (neg? end)
-            ;; Unmatched double - step past the first char only and continue.
-            (recur (inc k))
-            (recur (+ end 2))))
-
-        ;; Match!
-        (.regionMatches s k closer 0 cl-len)
-        (cond
-          ;; Empty span (`__` immediately after the opener, etc.).
-          (= k from) -1
-          ;; Intra-word underscore: candidate `_` / `__` followed by
-          ;; a word char cannot close. Keep scanning past it.
-          (and underscore? (word-char-at? s (+ k cl-len)))
-          (recur (+ k cl-len))
-          :else k)
-
-        :else
-        (recur (inc k))))))
 
 ;; ── Markdown link / image pre-pass ────────────────────────────────────────
 ;;
@@ -2984,197 +2849,6 @@
 ;; which dominated cold-open cost on long conversations (multi-MB of
 ;; trace lines, dozens of `[path](path)` links per answer).
 ;;
-;; The new version walks chars in a single loop and lazily allocates
-;; a `StringBuilder` only when the first match is actually found -
-;; the (very common) case where a line carries no link markup at all
-;; returns the input string unchanged with zero allocations.
-
-(defn- find-md-link-url-end
-  "Given `s` of length `n` and `start` pointing at the first char of
-   the URL inside `[text](url)`, return the index of the closing `)`
-   that ends the link, or -1 if no valid URL ends at this position.
-
-   Mirrors the URL portion of the regex
-   `([^)\\s]+)(?:\\s+\"[^\"]*\")?\\)`: at least one non-space
-   non-paren URL char, optional ` \"title\"`, then `)`."
-  ^long [^String s ^long n ^long start]
-  (loop [k start]
-    (if (>= k n)
-      -1
-      (let [c (.charAt s k)]
-        (cond
-          (= c \))
-          (if (> k start) k -1)            ;; URL must have >=1 char
-
-          (or (= c \space) (= c \tab))
-          (if (= k start)
-            -1                              ;; whitespace before any URL char
-            (let [ws-end (loop [m k]
-                           (if (and (< m n)
-                                 (let [cc (.charAt s m)]
-                                   (or (= cc \space) (= cc \tab))))
-                             (recur (inc m))
-                             m))]
-              (if (and (< ws-end n) (= \" (.charAt s ws-end)))
-                (let [title-close (.indexOf s "\"" (inc ws-end))]
-                  (if (and (>= title-close 0)
-                        (< (inc title-close) n)
-                        (= \) (.charAt s (inc title-close))))
-                    (inc title-close)
-                    -1))
-                -1)))
-
-          :else (recur (inc k)))))))
-
-(defn- strip-md-links
-  "Remove markdown link / image markup from `s`, leaving the anchor
-   text for links and dropping images entirely. Hand-rolled scanner;
-   see the comment block above `find-md-link-url-end` for why.
-
-   Returns `s` UNCHANGED (same identity) when the input carries no
-   link/image markup, so downstream identity-keyed caches stay hot."
-  ^String [^String s]
-  (let [n (.length s)]
-    (loop [i 0
-           last-write 0
-           ^StringBuilder sb nil]
-      (if (>= i n)
-        (if (nil? sb)
-          s
-          (do (.append sb s last-write n)
-            (.toString sb)))
-        (let [c (.charAt s i)
-              image? (and (= c \!)
-                       (< (inc i) n)
-                       (= \[ (.charAt s (inc i))))]
-          (if (or image? (= c \[))
-            (let [bracket-i  (if image? (inc i) i)
-                  text-start (inc bracket-i)
-                  bracket-close (.indexOf s "]" text-start)]
-              (if (and (>= bracket-close 0)
-                    (< (inc bracket-close) n)
-                    (= \( (.charAt s (inc bracket-close))))
-                (let [url-from (+ bracket-close 2)
-                      url-end  (find-md-link-url-end s n url-from)]
-                  (if (neg? url-end)
-                    (recur (inc i) last-write sb)
-                    (let [match-end (inc url-end)
-                          ^StringBuilder b (or sb (StringBuilder. n))]
-                      (.append b s last-write i)
-                      (when-not image?
-                        (.append b p/INLINE_LINK_ON)
-                        (.append b s text-start bracket-close)
-                        (.append b p/INLINE_LINK_OFF))
-                      (recur match-end match-end b))))
-                (recur (inc i) last-write sb)))
-            (recur (inc i) last-write sb)))))))
-
-(defn- markdown->inline
-  "Tokenize CommonMark inline syntax (`**bold**`, `__bold__`,
-   `*italic*`, `_italic_`, `~~strike~~`, `` `code` ``) into
-   sentinel-decorated text the bubble painter can render with SGR.
-
-   Strategy: left-to-right scan with a fixed priority table
-   (longest opener first: `**`/`__` before `*`/`_`, `~~` before `~`,
-   then backtick). When a span is matched, its CONTENT is recursively
-   re-tokenized so nested spans render correctly:
-
-     **bold *italic* bold-again**
-     ~~strike `with code` strike-again~~
-     *italic with **bold** inside*
-
-   The `find-inline-close` helper above understands the nesting
-   rules: it steps over doubled-char pairs when scanning for a
-   single-char close, and steps over code spans (which are atomic).
-
-   Code spans are the ONE exception: their content is NOT re-tokenized.
-   `` `**not-bold**` `` keeps the asterisks literal, mirroring GitHub.
-
-   Empty spans (`****`, `__`, `~~~~`) and orphan openers fall through
-   as literal text - also matches GitHub behaviour for the same input.
-
-   Link and image markup (`[text](url)`, `![alt](url)`) is stripped
-   in a pre-pass BEFORE tokenisation: only the anchor text survives,
-   wrapped in link sentinels so it paints underlined. Click/open still
-   lives in the resources badge/popup; the body must not duplicate the
-   URL inline.
-
-   What this is NOT: a full CommonMark parser. We DO honour CommonMark's
-   intra-word underscore rule (`VAR_NAME_HERE` is left alone - `_` /
-   `__` cannot open when preceded by a word char, cannot close when
-   followed by one), because identifier-mangling is the single most
-   visible regression a markdown presenter can ship. Asterisks keep
-   the permissive behaviour: `a*b*c` is still italic-b, mirroring real
-   prose. No autolinks. No HTML. No images. We cover the 95% of inline
-   markup real assistant answers emit; the other 5% is either rare
-   enough to ignore or already handled by line-level markers
-   (`# heading`, `- bullet`, `> quote`, fenced code)."
-  ^String [^String s]
-  (if (or (nil? s) (zero? (.length ^String s)))
-    (or s "")
-    ;; NOTE: do NOT wrap this body in `cached*`. Every line of every
-    ;; iteration trace would land its own entry; the 512-cap LRU
-    ;; saturates after a single 22-iter bubble (~228 entries) and
-    ;; evicts the much-more-valuable `format-answer-with-thinking`
-    ;; entries that are keyed at the WHOLE-bubble level. The
-    ;; algorithmic win comes from `strip-md-links` (StringBuilder),
-    ;; the steady-state win comes from the outer fawt cache; an
-    ;; inline-level cache between them just thrashes both.
-    (let [s  (strip-md-links s)
-          n  (.length ^String s)
-          sb (StringBuilder.)
-          ;; Each token entry: [opener, closer, ON-sentinel, OFF-sentinel,
-          ;;                    recurse-into-content?].
-          ;; Order matters - longer openers tried first (`**` before `*`)
-          ;; so `**foo**` parses as bold rather than italic-`foo`-italic.
-          tokens [["**" "**" p/INLINE_BOLD_ON   p/INLINE_BOLD_OFF   true]
-                  ["__" "__" p/INLINE_BOLD_ON   p/INLINE_BOLD_OFF   true]
-                  ["~~" "~~" p/INLINE_STRIKE_ON p/INLINE_STRIKE_OFF true]
-                  ["*"  "*"  p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF true]
-                  ["_"  "_"  p/INLINE_ITALIC_ON p/INLINE_ITALIC_OFF true]
-                  ["`"  "`"  p/INLINE_CODE_ON   p/INLINE_CODE_OFF   false]]
-          ;; CommonMark/GFM intra-word underscore rule: `_` and `__`
-          ;; cannot OPEN emphasis when the immediately preceding
-          ;; character is a letter or digit. This is what keeps
-          ;; `VARIABLES_LIKE_THIS`, `snake_case_var`, `text_with_under`
-          ;; etc. rendering as plain literal text instead of being
-          ;; mangled into italics with the underscores eaten.
-          ;; Asterisks (`*` / `**`) keep CommonMark's permissive
-          ;; behaviour - `a*b*c` is still italic-b - because real
-          ;; prose relies on it.
-          opener-allowed?
-          (fn [^String op ^long i]
-            (or (not= \_ (.charAt op 0))
-              (not (word-char-at? s (dec i)))))
-          match-opener (fn [^long i]
-                         (some (fn [[op _ _ _ _ :as t]]
-                                 (let [op-len (.length ^String op)]
-                                   (when (and (<= (+ i op-len) n)
-                                           (.regionMatches s i ^String op 0 op-len)
-                                           (opener-allowed? op i))
-                                     t)))
-                           tokens))]
-      (loop [i 0]
-        (if (>= i n)
-          (.toString sb)
-          (if-let [[opener closer on off recurse?] (match-opener i)]
-            (let [content-from (+ i (.length ^String opener))
-                  close-at     (find-inline-close s closer content-from)]
-              (if (neg? close-at)
-                ;; No matching close - emit opener char as literal,
-                ;; advance one char and let later positions reattempt.
-                (do (.append sb (.charAt s i))
-                  (recur (inc i)))
-                (let [content (subs s content-from close-at)]
-                  (.append sb ^String on)
-                  (.append sb ^String (if recurse?
-                                        (markdown->inline content)
-                                        content))
-                  (.append sb ^String off)
-                  (recur (+ close-at (.length ^String closer))))))
-            (do (.append sb (.charAt s i))
-              (recur (inc i)))))))))
-
 (defn- collapse-repeated-error-runs
   "Walk an iterations vec; collapse runs of consecutive iterations that
    share the same error signature into one rendered block carrying a
@@ -3198,7 +2872,7 @@
           (subvec remaining run))))))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking events code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms error repeat-count]}
+  [{:keys [thinking code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines live-preview?]
        :or   {show-header? true preview-default-lines 4 live-preview? false}}]]
@@ -3533,44 +3207,18 @@
                      [(line-entry (str iteration-pad-marker ""))]
                      code+result-lines
                      [(line-entry (str iteration-pad-marker ""))])))))
-        ordered
-        (when (seq events)
-          (let [event-lines (loop [remaining    events
-                                   block-number 1
-                                   out          []]
-                              (if-let [event (first remaining)]
-                                (case (:type event)
-                                  :thinking
-                                  (let [[thinking-run more] (split-with #(= :thinking (:type %)) remaining)]
-                                    (recur more
-                                      block-number
-                                      (into out
-                                        (concat
-                                          (when (seq out) [(line-entry (str iteration-pad-marker ""))])
-                                          (thinking-lines (mapv :thinking thinking-run))))))
-
-                                  :form-result
-                                  (recur (rest remaining)
-                                    (inc block-number)
-                                    (into out
-                                      (concat
-                                        (when (seq out) [(line-entry (str iteration-pad-marker ""))])
-                                        (form-lines (:form-idx event) block-number))))
-
-                                  (recur (rest remaining) block-number out))
-                                out))]
-            (when (seq event-lines)
-              (vec (concat
-                     [(line-entry (str iteration-pad-marker ""))]
-                     event-lines
-                     [(line-entry (str iteration-pad-marker ""))])))))
-        body (or ordered grouped)
+        body (or grouped [])
         trailing-errors (error-lines)]
-    (if (seq ordered)
-      (into (vec header) (concat body trailing-errors))
-      (into (vec (concat header (thinking-lines thinking) trailing-errors)) body))))
+    ;; Layout: header (with optional ITERATION-N label) + collected
+    ;; thinking lines + any error rows + body (per-form code/result
+    ;; pairs). The pre-existing `:events`-driven interleaved variant
+    ;; was removed when the runtime contract dropped `:events` (see
+    ;; `progress.clj` doc). Resume / live now share the same flat
+    ;; layout.
+    (into (vec (concat header (thinking-lines thinking) trailing-errors))
+      body)))
 
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} format-iteration-entry
+(defn format-iteration-entry
   [entry code-width iteration-number & [opts]]
   (mapv :line (apply format-iteration-entry-entries entry code-width iteration-number [opts])))
 
@@ -3751,7 +3399,7 @@
          iter-entry-fn    (fn [[idx entry]]
                             (let [stripped (if show-thinking?
                                              entry
-                                             (dissoc entry :thinking :events))
+                                             (dissoc entry :thinking))
                                   ;; Only include the second-bucket in the
                                   ;; cache key for iterations that actually
                                   ;; have a running block. Done iterations
@@ -3805,968 +3453,7 @@
 
 ;;; ── Markdown table parsing ───────────────────────────────────────────────
 
-(defn- table-row?
-  "Truthy when `s` looks like a markdown pipe table row: starts and
-   ends with `|` after trim and contains at least one inner pipe."
-  [s]
-  (when (string? s)
-    (let [t (str/trim s)]
-      (and (>= (count t) 3)
-        (str/starts-with? t "|")
-        (str/ends-with?   t "|")
-        (> (count (str/split t #"\|")) 2)))))
-
-(defn- table-separator-row?
-  "Truthy when `s` is the `|---|:---:|---:|` style separator that
-   marks the divider between header and body of a markdown table."
-  [s]
-  (and (table-row? s)
-    (let [t (str/trim s)]
-      (boolean (re-matches #"^\|\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|$" t)))))
-
-(defn- parse-table-row
-  "Split `| a | b | c |` into [\"a\" \"b\" \"c\"]. Strips outer pipes,
-   trims each cell, and drops any inline markdown emphasis since we
-   can't render mid-cell styled spans in the grid."
-  [s]
-  (let [t (str/trim s)
-        ;; chop leading/trailing |
-        inner (subs t 1 (max 1 (dec (count t))))
-        cells (str/split inner #"\|" -1)]
-    (mapv (fn [c]
-            (-> (or c "")
-              str/trim
-              (str/replace #"\*\*([^*]+)\*\*" "$1")
-              (str/replace #"`([^`]+)`" "$1")))
-      cells)))
-
-(defn- numeric-cell?
-  "True when `s` parses as a number after stripping spaces, NBSP,
-   thousands separators, and surrounding whitespace. Handles Polish
-   formatting like `4 879`, `12 104`, `1,5`, `-3.14`. Empty cells
-   are NOT numeric - they shouldn't pin a column to right-align on
-   their own."
-  [s]
-  (let [t (some-> s str str/trim)]
-    (and (string? t)
-      (pos? (count t))
-      (try
-        (let [normalized (-> t
-                           (str/replace "\u00a0" "")  ;; NBSP
-                           (str/replace " " "")
-                           (str/replace "," "."))]
-          (Double/parseDouble normalized)
-          true)
-        (catch NumberFormatException _ false)))))
-
-(defn- column-align
-  "Return `:right` when every non-empty body cell in `col-cells` is
-   numeric; `:left` otherwise. Headers are excluded from the
-   detection - a header named \"2024\" shouldn't right-align a
-   column of free-form text below it. Empty body cells are ignored."
-  [col-cells]
-  (let [filled (filter (fn [s] (and s (pos? (count (str/trim (str s)))))) col-cells)]
-    (if (and (seq filled) (every? numeric-cell? filled))
-      :right
-      :left)))
-
-(defn- pad-cell
-  "Render one cell padded to `w` terminal COLUMNS with the given
-   alignment. Returns ` <padded content> ` - the leading and trailing
-   spaces are mandatory: they sit between the `│` column dividers,
-   giving every cell a one-space inner margin so text never touches
-   the vertical lines.
-
-   `align` is `:left` (default, trailing pad) or `:right` (leading
-   pad). Numeric columns are auto-detected as `:right` so columns of
-   `389 / 12 104 / 4 879` line up on the units position - the only
-   way numeric tables read naturally.
-
-   Width math: every length here is **display columns**, not Java
-   chars. Without this, a cell containing ‘🏿️’ (3 Java chars / 2 cols)
-   ends up one column narrower than a sibling cell containing ‘📄’
-   (2 chars / 2 cols), which silently shifts every `┃` separator on
-   that row and breaks the grid alignment."
-  [text w align]
-  (let [t (str text)
-        t-cols (p/display-width t)
-        t (cond
-            (<= t-cols w) t
-            ;; Truncate to (w-1) columns and append ...; ellipsis is 1 col,
-            ;; so total width is exactly `w`. truncate-cols is
-            ;; grapheme-safe and won't split an emoji in half.
-            (>= w 2)      (str (p/truncate-cols t (dec w)) "...")
-            ;; w == 1: no room for ellipsis, just slice.
-            :else         (p/truncate-cols t w))
-        ;; Re-measure after possible truncation so the pad amount is
-        ;; expressed in COLUMNS, not Java chars. truncate-cols
-        ;; guarantees display-width <= (dec w); the +1 for the ellipsis
-        ;; or unchanged path keeps the math honest.
-        ;;
-        ;; (VS-16 padding compensation lived here briefly when the
-        ;; lanterna fork still reported `isDoubleWidth=true` for
-        ;; 🏷️ / ❤️. Lanterna 3.1.5-vis.3 fixes that at the source
-        ;; - see the dep comment in vis-channel-tui/deps.edn - so VS-16
-        ;; graphemes now report `display-width=1` consistently and
-        ;; pad-cell allocates the right space without a per-cell hack.)
-        pad-cols (max 0 (- w (p/display-width t)))
-        pad (repeat-str \space pad-cols)
-        body (case align
-               :right (str pad t)
-               (str t pad))]
-    (str " " body " ")))
-
-(def ^:private TABLE_CELL_MIN_W_CAP
-  "Soft floor for column width when shrinking a table to fit the
-   viewport. Picked so a column carrying one nasty 30-char token
-   (URL, hex digest, identifier) doesn't blow the whole table out:
-   that token will word-break across lines instead of forcing every
-   other column down to 1 column. 12 cols reads as a comfortable
-   lower bound for typical prose; only kicks in when the natural
-   widths don't fit."
-  12)
-
-(defn- longest-token-width
-  "Display width of the widest whitespace-delimited token across
-   `cells`. Used as the per-column floor when shrinking - keeps the
-   word-wrapper from constantly hard-breaking ordinary words. Floors
-   at 1 so the result is always a sensible column width."
-  ^long [cells]
-  (long
-    (reduce
-      (fn [m s]
-        (let [s (str s)]
-          (if (str/blank? s)
-            m
-            (apply max m
-              (map p/display-width (str/split s #"\s+"))))))
-      1
-      cells)))
-
-(defn- wrap-cell-lines
-  "Word-wrap one cell's text to fit `w` display columns, reusing the
-   shared `wrap-text*` so behaviour matches the rest of the bubble:
-   break at spaces when possible, hard-break on column otherwise.
-   Returns at least one line; an empty/blank cell yields `[\"\"]` so
-   row-height equalisation always sees something to pad against."
-  [text ^long w]
-  (let [s (str text)]
-    (cond
-      (<= w 0)                   [""]
-      (str/blank? s)             [""]
-      (<= (p/display-width s) w) [s]
-      :else                      (wrap-text* s w))))
-
-(defn- render-table
-  "Render a parsed markdown table (headers vec + rows vec-of-vecs) as
-   a list of marker-prefixed display lines.
-
-   Style: full grid - square outer corners (`┌┐└┘`), `┬┼┴` T-junctions
-   where columns meet horizontals, `│` between columns, `─` for
-   horizontals.
-
-   The drawing of these lines is split across two passes by
-   `paint-table-line!` (in the per-line marker switch above): the
-   box-drawing glyphs paint in the muted `code-border-fg` so the
-   chrome doesn't compete with the content, and the cell text on
-   top paints in `code-block-fg` (bold for header rows). Putting
-   everything in the same dark color made the grid read as solid
-   ink - the user complaint that triggered this design.
-
-   `markers` is `{:thead :tsep :trow}` from `md-marker-sets`. Tables
-   wider than `max-w` first try to shrink each column toward its
-   `longest-token-width` floor (capped at `TABLE_CELL_MIN_W_CAP`),
-   then word-wrap each cell vertically across as many sub-rows as
-   needed to keep all content inside the grid. Only when the floors
-   themselves can't fit (extreme case: many columns, narrow bubble)
-   does the renderer fall back to uniform scale-down + hard breaks.
-   Net effect: a `vis ls` table no longer truncates filenames; long
-   prose cells flow onto the next visual line within the same row."
-
-  [headers rows max-w {:keys [thead tsep trow]}]
-  (let [n-cols    (max 1 (apply max (count headers) (map count rows)))
-        pad-cells (fn [r] (vec (concat r (repeat (max 0 (- n-cols (count r))) ""))))
-        h         (pad-cells headers)
-        rs        (mapv pad-cells rows)
-        ;; Per-column width = max DISPLAY-WIDTH (terminal columns) of
-        ;; every cell in that column, including the header.
-        ;;
-        ;; VS-16 compensation lives in pad-cell, not here. Each cell
-        ;; carrying a VS-16 grapheme adds its own +1 padding so its
-        ;; visual width matches sibling cells - see pad-cell. Tried
-        ;; expanding col-width for the whole column instead; rejected
-        ;; because it over-pads non-VS-16 cells (📄, 📁, ✅ etc. render
-        ;; correctly without the bonus, so adding it everywhere shifts
-        ;; them right by 1 - the user-visible 'still misaligned, need
-        ;; even more' regression). Per-cell bonus is the right grain.
-        col-widths-raw
-        (mapv (fn [i]
-                (apply max 1
-                  (p/display-width (nth h i ""))
-                  (map #(p/display-width (nth % i "")) rs)))
-          (range n-cols))
-        ;; Total layout width = sum(col widths) + 2*n_cols (per-cell
-        ;; one-space padding on each side of the cell text) +
-        ;; (n_cols + 1) verticals (the `│` column dividers, one on
-        ;; each end + one between every pair of cells).
-        overhead   (+ (* 2 n-cols) (inc n-cols))
-        avail      (max n-cols (- max-w overhead))
-        sum-w      (max 1 (reduce + 0 col-widths-raw))
-        ;; Per-column floor: never shrink a column below its widest
-        ;; single token (capped). Word-wrap then breaks naturally on
-        ;; spaces inside the column instead of slicing 'AGENTS.md' to
-        ;; 'AGE...' just because the bubble is narrow. The cap stops a
-        ;; lone 200-char URL from monopolising the table.
-        col-mins   (mapv (fn [i]
-                           (min TABLE_CELL_MIN_W_CAP
-                             (longest-token-width
-                               (cons (nth h i "")
-                                 (map #(nth % i "") rs)))))
-                     (range n-cols))
-        sum-min    (reduce + 0 col-mins)
-        col-widths (cond
-                     ;; Natural widths fit - no shrinking needed.
-                     (<= (+ sum-w overhead) max-w)
-                     col-widths-raw
-
-                     ;; Mins fit. Distribute remaining budget on per-
-                     ;; column slack (raw - min) so wider columns
-                     ;; receive proportionally more of the surplus,
-                     ;; while every column keeps its word-wrap floor.
-                     (<= sum-min avail)
-                     (let [budget    (- avail sum-min)
-                           slack     (mapv (fn [i]
-                                             (max 0 (- (nth col-widths-raw i)
-                                                      (nth col-mins i))))
-                                       (range n-cols))
-                           slack-sum (reduce + 0 slack)
-                           extra     (if (zero? slack-sum)
-                                       (vec (repeat n-cols 0))
-                                       (mapv (fn [s]
-                                               (int (* (/ (double s) slack-sum)
-                                                      budget)))
-                                         slack))
-                           base      (mapv + col-mins extra)
-                           used      (reduce + 0 base)
-                           leftover  (max 0 (- avail used))]
-                       (vec (map-indexed
-                              (fn [i w] (if (< i leftover) (inc w) w))
-                              base)))
-
-                     ;; Even the floors don't fit (many narrow cols /
-                     ;; tiny bubble). Degrade to the original uniform
-                     ;; scale-down - content will hard-break, but the
-                     ;; table still lands inside `max-w`.
-                     :else
-                     (let [scale  (/ (double avail) sum-w)
-                           shrunk (mapv #(max 1 (int (* % scale))) col-widths-raw)
-                           used   (reduce + 0 shrunk)
-                           extra  (max 0 (- avail used))]
-                       (if (zero? extra)
-                         shrunk
-                         (vec (map-indexed
-                                (fn [i w] (if (< i extra) (inc w) w))
-                                shrunk)))))
-        ;; LIGHT box-drawing variants - the heavy glyphs read as
-        ;; aggressive bold lines on macOS Terminal / iTerm2 with a
-        ;; thick monospaced font; users wanted a quieter grid that
-        ;; does not compete with the cell text for attention. Light
-        ;; glyphs render thinner, the muted `code-border-fg`
-        ;; foreground keeps them visible without dominating.
-        bar        (fn [w] (repeat-str \─ (+ w 2)))
-        top-line   (str "┌" (str/join "┬" (map bar col-widths)) "┐")
-        head-sep   (str "├" (str/join "┼" (map bar col-widths)) "┤")
-        ;; Same shape as `head-sep` - inserted between every pair of
-        ;; body rows so each row sits in its own visual cell. Without
-        ;; this the body looked like a stack of pipe-separated text
-        ;; rows; with it, the table reads as a proper grid.
-        row-sep    head-sep
-        bot-line   (str "└" (str/join "┴" (map bar col-widths)) "┘")
-        ;; Per-column alignment: numeric columns right-align, every
-        ;; other column stays left. The header inherits the column's
-        ;; alignment so the title sits over the data correctly
-        ;; (e.g. a `Predkosc (km/h)` header above right-aligned
-        ;; integers also right-aligns).
-        col-aligns (mapv (fn [i] (column-align (map #(nth % i "") rs)))
-                     (range n-cols))
-        ;; Word-wrap each cell to its column width, then equalise
-        ;; per-cell line counts with empty lines so the grid stays
-        ;; aligned across multi-line rows. A 1-line row wraps to
-        ;; itself; a row whose widest cell wraps to N lines emits N
-        ;; physical lines, every other cell padded with blanks.
-        format-row-lines
-        (fn [cells]
-          (let [wrapped (vec (map-indexed
-                               (fn [i c]
-                                 (wrap-cell-lines c (nth col-widths i)))
-                               cells))
-                row-h   (long (apply max 1 (map count wrapped)))
-                padded  (mapv (fn [ws]
-                                (vec (concat ws
-                                       (repeat (- row-h (count ws)) ""))))
-                          wrapped)]
-            (mapv
-              (fn [k]
-                (str "│"
-                  (str/join "│"
-                    (map-indexed
-                      (fn [i col-lines]
-                        (pad-cell (nth col-lines k)
-                          (nth col-widths i)
-                          (nth col-aligns i)))
-                      padded))
-                  "│"))
-              (range row-h))))]
-    (vec (concat
-           [(str tsep top-line)]
-           ;; Header may itself wrap when a long heading meets a
-           ;; shrunk column; mark every sub-line with `thead` so the
-           ;; bubble paints them all bold.
-           (mapv #(str thead %) (format-row-lines h))
-           [(str tsep head-sep)]
-           ;; Interleave `row-sep` between every pair of body rows
-           ;; so each logical row sits in its own boxed cell. Each
-           ;; logical row may now expand to multiple physical lines
-           ;; (cell-level word-wrap), so flatten after interposing.
-           (apply concat
-             (interpose
-               [(str tsep row-sep)]
-               (mapv (fn [r]
-                       (mapv #(str trow %) (format-row-lines r)))
-                 rs)))
-           [(str tsep bot-line)]))))
-
-(defn- consume-table
-  "At a markdown table boundary, peel off the header + separator + body
-   rows from `lines` (a seq) and return `[table-render-lines
-   remaining-lines]`. Caller has already verified `(table-row? hdr)`
-   and `(table-separator-row? (second lines))`."
-  [lines max-w markers]
-  (let [hdr  (first lines)
-        sep  (second lines)
-        body (next (next lines))
-        [body-rows tail]
-        (loop [bs body acc []]
-          (if (and bs (table-row? (first bs)) (not (table-separator-row? (first bs))))
-            (recur (next bs) (conj acc (parse-table-row (first bs))))
-            [acc bs]))
-        headers (parse-table-row hdr)
-        _       sep ;; separator just consumed
-        rendered (render-table headers body-rows max-w markers)]
-    [rendered tail]))
-
-(def ^:private list-marker-line-re
-  ;; Single-source regex shared by `coalesce-loose-list-items` (the
-  ;; pre-pass) and the bullet branch of `markdown->lines`. Matches
-  ;; both `- foo` / `* foo` / `+ foo` and `1. foo` / `1) foo` so the
-  ;; pre-pass covers numbered lists too.
-  #"^\s*(?:[-*+]|\d+[.)])\s+.*")
-
-(defn- list-marker-line? [^String line]
-  (boolean (re-matches list-marker-line-re line)))
-
-(defn- task-checked?
-  [mark]
-  (contains? #{"x" "X"} mark))
-
-(defn- task-checkbox-glyph
-  [checked?]
-  (if checked? "☑" "☐"))
-
-(defn- task-list-line
-  [^String line]
-  (when-let [[_ indent mark body]
-             (re-matches #"^(\s*)[-*+]\s+\[\s*([xX]?)\s*\]\s*(.*)$" line)]
-    {:indent indent
-     :checked? (task-checked? mark)
-     :body body}))
-
-(defn- task-checkbox-body
-  [^String body]
-  (when-let [[_ label-prefix mark tail]
-             (re-matches #"^((?:[^\[]*?:\s*)?)`?\[\s*([xX]?)\s*\]`?\s*(.*)$" body)]
-    {:label-prefix label-prefix
-     :checked? (task-checked? mark)
-     :body tail}))
-
-(defn- decorate-task-checkbox-body
-  [body]
-  (if-let [{:keys [label-prefix checked? body]} (task-checkbox-body (str body))]
-    (str (or label-prefix "")
-      (task-checkbox-glyph checked?)
-      (when-not (str/blank? body) " ")
-      body)
-    body))
-
-(defn- task-list-prefix
-  [indent checked?]
-  (let [glyph (str (task-checkbox-glyph checked?) " ")]
-    (nested-prefix indent (repeat 4 glyph))))
-
-(defn- top-level-bold-paragraph-line?
-  "True when a line opens with `**...**` AND has more content after
-   the closing `**`. Matches the shape of a top-level \"label: value\"
-   paragraph (`**Loop clean:** true`, `**Status:** done.`) that we
-   want to peel off the end of a preceding list.
-
-   Excluded by design: lines that are PURELY a `**...**` span and
-   nothing else (`**reader boundary split**`). Those are an artefact
-   of `md/join` separating an inline bold from its surrounding prose
-   with `\n\n`; the line is meant to flow inline as part of the
-   bullet's body, not to start a fresh paragraph.
-
-   The two shapes are visually identical at the start (`**...`);
-   the trailing content after the closing `**` is what tells them
-   apart. `find-inline-close` would do the same check at parse time,
-   but here we only need a cheap structural sniff."
-  [^String t]
-  (and (str/starts-with? t "**")
-    (let [close-idx (str/index-of t "**" 2)]
-      (boolean
-        (and close-idx
-          ;; At least one non-whitespace char after the closing `**`.
-          (let [tail (subs t (+ (long close-idx) 2))]
-            (not (str/blank? tail))))))))
-
-(defn- structural-non-list-line?
-  "Block-level elements that close an open list scope when they
-   appear on their own line. We close on these so a heading or fence
-   landing right after a list item doesn't get sucked into the item
-   as a continuation paragraph. Mirrors the cases `markdown->lines`
-   has dedicated branches for; keep the two in sync.
-
-   Bold paragraphs are split into two cases by
-   `top-level-bold-paragraph-line?`:
-     - `**Status:** done.` (label + value) - closes the list, the
-       summary lines that authors put after a list never want to
-       fold INTO the last bullet.
-     - `**word**` alone (`md/join` artefact) - stays a continuation,
-       so the bullet that contains a flowing sentence with embedded
-       bold spans renders as one wrapped bullet, not as the bullet
-       header followed by an avalanche of one-word paragraphs (the
-       `Let / me / dig / deeper` regression)."
-  [^String line]
-  (let [t (str/trim line)]
-    (or (str/starts-with? t "```")               ;; code fence
-      (re-matches #"^#{1,6} .*" t)              ;; ATX heading
-      (re-matches #"^([-*_])\1{2,}$" t)         ;; horizontal rule
-      (re-matches #"^>\s?.*" t)                 ;; blockquote
-      (re-matches #"^\|.*\|$" t)                ;; pipe-table row
-      (re-matches #"(?i)^</?details(\s[^>]*)?>$" t) ;; details framing tags
-      (re-matches #"(?i)^<summary>.*</summary>$" t) ;; summary tag
-      (top-level-bold-paragraph-line? t))))      ;; **prefix:** value
-
-(def ^:private continuation-tail-char?
-  "Trailing characters on the running bullet line that signal `the
-   sentence isn't done`. When the previous chunk ended with one of
-   these, the next chunk - even a flush-left, letter-starting one -
-   is treated as a continuation rather than a fresh paragraph. Covers
-   open brackets / parens / braces, dashes, colons, semicolons,
-   commas - every punctuator that grammar guarantees demands more
-   text after it."
-  #{\( \[ \{ \: \; \, \-})
-
-(defn- fresh-paragraph-line?
-  "True when `line` looks like a brand-new top-level paragraph that
-   appeared after a blank line - i.e. flush-left, opens with an
-   alphanumeric character. Used by `coalesce-loose-list-items` to
-   close an open list scope when the post-blank line is OBVIOUSLY a
-   new paragraph rather than an `md/join`-fragmented continuation
-   of the current bullet.
-
-   The two real-world shapes this discriminates:
-
-     Case A (close - fresh paragraph after a list, the AGENTS.md
-     pattern):
-       - bullet item ...
-       - bullet item ...
-
-       Modes:
-
-     Case B (keep coalescing - `md/join` artefact INSIDE a bullet's
-     body, the eeaf9651 regression):
-       - **Header:** intro
-
-        38 failures across iterations ...
-
-       `src/com/blockether/...`
-
-       , `db.clj`
-
-   Case B's continuations always start with whitespace (md/join
-   author-supplied leading space), a backtick (` `code` `), a `*`
-   (bold span), or punctuation (`,`, `(`, `)`, `:`). None of those
-   trip the `[A-Za-z0-9]` test. Case A's `Modes:` / `Logs:` /
-   `Baseline = ...` ALL open with a letter, so the test fires and
-   the list closes cleanly.
-
-   Indented continuations (`  more text` directly under a bullet)
-   are NOT flush-left, so this returns false and the line still
-   folds into the current bullet - preserving the documented
-   `- foo\n\n indented continuation` reflow."
-  [^String line]
-  (boolean (re-matches #"^[A-Za-z0-9].*" line)))
-
-(defn- coalesce-loose-list-items
-  "Pre-pass over input lines that collapses multi-paragraph list
-   items into single-line items.
-
-   Why: poorly-formatted LLM (or hand-typed) markdown often emits
-
-       - `dialogs.clj`
-
-        - removed `:system-prompt` palette command
-
-   where blank lines INSIDE a list item turn the bullet's body into
-   a chain of loose top-level paragraphs (CommonMark spec-compliant
-   but visually broken: only the first fragment paints under the
-   `• ` marker, every subsequent paragraph shows up flush-left as
-   if it weren't part of the bullet at all). The TUI bubble has
-   nowhere to render that hierarchy correctly, so we coalesce the
-   loose paragraphs back into the bullet line before parsing.
-
-   The list scope ends on:
-   - another bullet / numbered list marker (start of next item),
-   - any non-list structural line (heading, code fence, blockquote,
-     pipe-table row, horizontal rule, `<details>` / `<summary>`),
-   - two consecutive blank lines (CommonMark loose-list close),
-   - end of input.
-
-   Lines outside an open list pass through unchanged - we only
-   reshape content that's clearly a fragmented bullet item.
-
-   Continuations are joined with a single ASCII space; leading
-   whitespace on the continuation line is dropped (it was Markdown
-   indentation, not visible content)."
-  [lines]
-  (loop [lines    (seq lines)
-         current  nil      ;; the bullet line we're accumulating into
-         blanks   0         ;; buffered consecutive blank lines
-         acc      []]
-    (cond
-      ;; End of input - flush.
-      (nil? lines)
-      (cond-> acc current (conj current))
-
-      :else
-      (let [line (first lines) rst (next lines)]
-        (cond
-          ;; In list scope, see another list marker -> flush current,
-          ;; start a new item. Buffered blanks were intra-item; drop
-          ;; them (the new item separates itself).
-          (and current (list-marker-line? line))
-          (recur rst line 0 (conj acc current))
-
-          ;; In list scope, hit a structural non-list line -> flush
-          ;; current with one blank separator (so the heading / fence
-          ;; that follows reads as a fresh block), then re-process
-          ;; this line in idle mode by NOT advancing `lines`.
-          (and current (structural-non-list-line? line))
-          (recur lines nil 0 (conj acc current ""))
-
-          ;; In list scope, blank line. One blank -> buffer; two in a
-          ;; row -> list closes (CommonMark loose-list end).
-          (and current (str/blank? line))
-          (let [n (if (empty? line) (inc blanks) (max 1 blanks))]
-            (if (>= n 2)
-              (recur rst nil 0 (conj acc current ""))
-              (recur rst current n acc)))
-
-          ;; In list scope, plain text line that LOOKS LIKE a fresh
-          ;; top-level paragraph (flush-left, opens with a letter or
-          ;; digit) AND we just saw a blank line -> close the list
-          ;; scope and re-process the line in idle mode. This stops
-          ;; AGENTS.md-style summary paragraphs (`Modes:`, `Logs: ...`,
-          ;; `Baseline = ...`) after a bullet list from being silently
-          ;; folded into the last bullet's body. CommonMark closes a
-          ;; list on a single blank line + non-indented continuation;
-          ;; we mirror that for the plain-prose case while leaving
-          ;; `md/join` artefacts (lines opening with whitespace,
-          ;; backtick, `*`, punctuation) on the continuation path so
-          ;; the eeaf9651 regression stays fixed.
-          ;;
-          ;; Exception: if `current` ends with an open-grammar tail
-          ;; char (`(`, `[`, `{`, `:`, `;`, `,`, `-`, `-`, `-`), the
-          ;; sentence is mid-clause and the next line continues it,
-          ;; even when that line is flush-left and letter-starting.
-          ;; Covers the `- foo (\n\nbar\n\n, baz\n\n)` reflow case.
-          ;; Tested by AGENTS.md repro + `loose-bullet-coalesce-test`.
-          (and current
-            (pos? blanks)
-            (fresh-paragraph-line? line)
-            (let [^String trimmed (str/trimr current)
-                  n (.length trimmed)]
-              (or (zero? n)
-                (not (continuation-tail-char? (.charAt trimmed (dec n)))))))
-          (recur lines nil 0 (conj acc current ""))
-
-          ;; In list scope, plain text line -> continuation. Strip
-          ;; leading indentation (Markdown structural whitespace),
-          ;; join with one space onto the running bullet text.
-          ;; Then re-flow whitespace around punctuation that the
-          ;; fragmentation left orphaned: ill-formed input often
-          ;; has `(\n\nfoo\n\n,\n\nbar\n\n)` which would otherwise
-          ;; emerge as `( foo , bar )`. The replacements collapse
-          ;; ` ,` / ` .` / ` ;` / ` :` / ` )` and `( ` back to their
-          ;; natural prose forms — BUT only OUTSIDE inline-code
-          ;; spans, because Clojure / EDN forms inside `` `...` ``
-          ;; legitimately carry whitespace before `:` (keyword args,
-          ;; map literals like `{:k :v}`). Pre-fix the punctuation
-          ;; reflow ran on the whole joined string and ate the
-          ;; spaces inside `` `{:rendering-kind :vis/silent :result
-          ;; title}` ``, surfacing it as `{:rendering-kind:vis/
-          ;; silent:result title}` to the user (conv
-          ;; e4167d48-8632-4d5b-bfb1-5ae1092eeb5e).
-          ;;
-          ;; `[` / `]` are intentionally NOT reflowed: in real prose
-          ;; they almost always appear inside quoted text or code
-          ;; spans (`\"Unmatched delimiter: ]\"`). Tightening ` ]` to
-          ;; `]` there would mangle the user-visible payload.
-          current
-          (let [cont (str/trim line)
-                joined (if (str/blank? cont)
-                         current
-                         (let [raw (str (str/trimr current) " " cont)
-                               ;; Tokenise into balanced inline-code
-                               ;; spans (`` `...` ``) vs prose; only
-                               ;; the prose segments get the
-                               ;; punctuation-tightening regexes
-                               ;; applied. The `re-seq` pattern is
-                               ;; the same one used by
-                               ;; `markdown/normalize-inline-spacing`
-                               ;; — backtick-delimited spans first,
-                               ;; then non-backtick runs, then a
-                               ;; lone backtick fallback.
-                               tighten-prose
-                               (fn [^String t]
-                                 (-> t
-                                   (str/replace #" +([,;:.\)])" "$1")
-                                   (str/replace #"(\() +" "$1")))]
-                           (->> (re-seq #"`[^`\n]+`|[^`]+|`" raw)
-                             (map (fn [^String tok]
-                                    (if (and (> (count tok) 1)
-                                          (str/starts-with? tok "`")
-                                          (str/ends-with? tok "`"))
-                                      tok
-                                      (tighten-prose tok))))
-                             (apply str))))]
-            (recur rst joined 0 acc))
-
-          ;; Idle, see a list marker -> enter list scope.
-          (list-marker-line? line)
-          (recur rst line 0 acc)
-
-          ;; Idle, anything else -> pass through unchanged.
-          :else
-          (recur rst nil 0 (conj acc line)))))))
-
-(defn- markdown->lines-plain
-  "Markdown renderer without real `<details>` state. Kept as the base
-   parser; `markdown->entries` wraps it with recursive details support
-   and click metadata."
-  ([text max-w] (markdown->lines-plain text max-w :answer))
-  ([text max-w mode]
-   (when (and text (not (str/blank? text)))
-     (let [m       (get md-marker-sets mode (md-marker-sets :answer))
-           plain-m (:plain m)
-           emit-plain (fn [s] (str plain-m s))
-           input-lines (coalesce-loose-list-items (str/split-lines text))]
-       (loop [lines  (seq input-lines)
-              in-code? false
-              acc    []]
-         (if-not lines
-           acc
-           (let [line (first lines)
-                 rst  (next lines)]
-             (cond
-               (and (not in-code?) (str/starts-with? (str/trim line) "```"))
-               (let [lang        (fence-lang line)
-                     indent      (leading-space-count line)
-                     prefix      (repeat-str \space indent)
-                     [code tail] (split-with #(not (str/starts-with? (str/trim %) "```")) rst)
-                     code        (if (pos? indent)
-                                   (mapv #(strip-leading-spaces-up-to indent %) code)
-                                   code)
-                     tail        (if (seq tail) (next tail) tail)]
-                 (recur (seq tail) false
-                   (into acc
-                     (let [source (str/join "\n" code)
-                           rendered (vis/render-fenced-block
-                                      {:surface :tui
-                                       :lang lang
-                                       :source source
-                                       :source-lines (vec code)
-                                       :width max-w
-                                       :mode mode})
-                           lines (:lines rendered)]
-                       (if (seq lines)
-                         (mapv #(str (:code m) prefix %) lines)
-                         (code-block-lines m lang code max-w prefix))))))
-
-               (str/starts-with? (str/trim line) "```")
-               (recur rst false (conj acc (str (:code m) "")))
-
-               in-code?
-               (recur rst true
-                 (into acc (mapv #(str (:code m) %)
-                             (wrap-text line max-w))))
-
-               (and (table-row? line)
-                 (table-separator-row? (first rst)))
-               (let [[tbl tail] (consume-table lines max-w m)]
-                 (recur (seq tail) false (into acc tbl)))
-
-               (re-matches #"(?i)^\s*</?details(\s[^>]*)?>\s*$" line)
-               (recur rst false acc)
-
-               (re-matches #"(?i)^\s*<summary>.*</summary>\s*$" line)
-               (let [[_ inner] (re-matches #"(?i)^\s*<summary>(.*)</summary>\s*$" line)
-                     decorated (markdown->inline (or inner ""))
-                     prefix    "▾ "
-                     wrap-w    (max 1 (- max-w (count prefix)))]
-                 (recur rst false
-                   (into acc
-                     (into [(str (:summary m) prefix (first (wrap-text decorated wrap-w)))]
-                       (mapv #(str (:summary m) "  " %)
-                         (rest (wrap-text decorated wrap-w)))))))
-
-               (re-matches #"^#{3,6} .*" line)
-               (let [hash-count (count (re-find #"^#+" line))
-                     body       (markdown->inline (subs line (inc hash-count)))]
-                 (recur rst false
-                   (into acc (mapv #(str (:h3 m) %)
-                               (wrap-text body max-w)))))
-
-               (str/starts-with? line "## ")
-               (recur rst false
-                 (into acc (mapv #(str (:h2 m) %)
-                             (wrap-text (markdown->inline (subs line 3)) max-w))))
-
-               (str/starts-with? line "# ")
-               (recur rst false
-                 (into acc (mapv #(str (:h1 m) %)
-                             (wrap-text (markdown->inline (subs line 2)) max-w))))
-
-               (re-matches #"^\s*([-*_])\1{2,}\s*$" line)
-               (recur rst false
-                 (conj acc (str (:hr m) (repeat-str \─ max-w))))
-
-               (re-matches #"^\s*>\s?.*" line)
-               (let [trimmed (str/replace line #"^\s*>\s?" "")
-                     decorated (markdown->inline trimmed)
-                     wrapped (wrap-text decorated (max 1 (- max-w 2)))]
-                 (recur rst false
-                   (into acc (mapv #(str (:quote m) "┃ " %) wrapped))))
-
-               (task-list-line line)
-               (let [{:keys [indent checked? body]} (task-list-line line)
-                     prefix    (task-list-prefix indent checked?)
-                     prefix-w  (p/display-width prefix)
-                     decorated (markdown->inline (or body ""))
-                     wrapped   (wrap-text decorated (max 1 (- max-w prefix-w)))]
-                 (recur rst false
-                   (into acc
-                     (into [(str (:bullet m) prefix (first wrapped))]
-                       (mapv #(str (:bullet m) (repeat-str \space prefix-w) %) (rest wrapped))))))
-
-               (re-matches #"^\s*[-*+]\s+.*" line)
-               (let [[_ indent trimmed] (re-matches #"^(\s*)[-*+]\s+(.*)$" line)
-                     prefix    (nested-prefix indent ["• " "◦ " "▪ " "• "])
-                     decorated (markdown->inline (decorate-task-checkbox-body trimmed))
-                     wrapped   (wrap-text decorated (max 1 (- max-w (count prefix))))]
-                 (recur rst false
-                   (into acc
-                     (into [(str (:bullet m) prefix (first wrapped))]
-                       (mapv #(str (:bullet m) (repeat-str \space (count prefix)) %) (rest wrapped))))))
-
-               (re-matches #"^\s*\d+[.)]\s+.*" line)
-               (let [[_ indent num body] (re-matches #"^(\s*)(\d+)[.)]\s+(.*)$" line)
-                     decorated (markdown->inline (decorate-task-checkbox-body (or body "")))
-                     prefix    (nested-prefix indent [(str num ". ") (str num ". ") (str num ". ") (str num ". ")])
-                     wrapped   (wrap-text decorated (max 1 (- max-w (count prefix))))]
-                 (recur rst false
-                   (into acc
-                     (into [(str (:bullet m) prefix (first wrapped))]
-                       (mapv #(str (:bullet m) (repeat-str \space (count prefix)) %)
-                         (rest wrapped))))))
-
-               (and (str/starts-with? (str/trim line) "**")
-                 (str/ends-with? (str/trim line) "**")
-                 (> (count (str/trim line)) 4))
-               (let [trimmed (str/trim line)
-                     inner   (markdown->inline (subs trimmed 2 (- (count trimmed) 2)))]
-                 (recur rst false
-                   (into acc (mapv #(str (:bold m) %)
-                               (wrap-text inner max-w)))))
-
-               (str/blank? line)
-               (recur rst false (conj acc (emit-plain "")))
-
-               :else
-               (let [decorated (markdown->inline line)]
-                 (recur rst false
-                   (into acc (mapv emit-plain (wrap-text decorated max-w)))))))))))))
-
-(defn- detail-open-kind [line]
-  (when-let [[_ tag] (and (string? line)
-                       (re-matches #"(?i)^\s*<(details)(?:\s[^>]*)?>\s*$" line))]
-    ;; HTML/CommonMark tags are case-insensitive; normalise so downstream
-    ;; cache keys and meta stay stable regardless of `<Details>` vs `<details>`.
-    (keyword (str/lower-case tag))))
-
-(defn- details-open-line? [line]
-  (boolean (detail-open-kind line)))
-
-(defn- details-close-line? [line]
-  (boolean (and (string? line)
-             (re-matches #"(?i)^\s*</details>\s*$" line))))
-
-(defn- summary-content [line]
-  (when-let [[_ inner] (and (string? line)
-                         (re-matches #"(?i)^\s*<summary>(.*)</summary>\s*$" line))]
-    inner))
-
-(defn- trim-trailing-blank-lines
-  [lines]
-  (vec (reverse (drop-while str/blank? (reverse (or lines []))))))
-
-(defn- parse-detail-segments
-  [lines]
-  (letfn [(consume* [lines path]
-            (loop [remaining (seq lines)
-                   plain []
-                   segs []
-                   next-idx 1]
-              (cond
-                (nil? remaining)
-                [(cond-> segs (seq plain) (conj {:type :plain :lines plain})) nil]
-
-                (details-close-line? (first remaining))
-                [(cond-> segs (seq plain) (conj {:type :plain :lines plain})) remaining]
-
-                (details-open-line? (first remaining))
-                (let [plain'           (trim-trailing-blank-lines plain)
-                      margin-top?      (boolean (or (seq segs) (seq plain')))
-                      segs             (cond-> segs (seq plain') (conj {:type :plain :lines plain'}))
-                      detail-kind      (detail-open-kind (first remaining))
-                      path'            (conj path next-idx)
-                      after-open       (next remaining)
-                      explicit-summary (summary-content (first after-open))
-                      summary          (or explicit-summary
-                                         "Details")
-                      body-start       (if explicit-summary (next after-open) after-open)
-                      [body rem]       (consume* body-start path')
-                      rem'             (if (and rem (details-close-line? (first rem))) (next rem) rem)
-                      seg              {:type :detail :detail-kind detail-kind :summary summary :path path' :segments body :margin-top? margin-top?}]
-                  (recur rem' [] (conj segs seg) (inc next-idx)))
-
-                :else
-                (recur (next remaining) (conj plain (first remaining)) segs next-idx))))]
-    (first (consume* lines []))))
-
-(defn- render-detail-segments
-  [segments max-w mode opts]
-  (mapcat
-    (fn [{:keys [type lines summary path segments detail-kind margin-top?]}]
-      (case type
-        :plain
-        (mapv (fn [line] {:line line :meta nil})
-          (or (markdown->lines-plain (str/join "\n" lines) max-w mode) []))
-
-        :detail
-        (let [m            (get md-marker-sets mode (md-marker-sets :answer))
-              marker       (:summary m)
-              conversation-id (:conversation-id opts)
-              turn-id      (:conversation-turn-id opts)
-              section      (:section opts)
-              iteration-number (:iteration-number opts)
-              detail-ctx   {:conversation-id conversation-id
-                            :conversation-turn-id turn-id
-                            :iteration-number iteration-number
-                            :block-number (:block-number opts)
-                            :details-path path
-                            :section section
-                            :kind detail-kind}
-              node-id      (detail-node-id detail-ctx)
-              ;; `<details>` autocollapses by default IF the surface
-              ;; can actually toggle: a non-nil `:conversation-id`
-              ;; means the bubble lives inside a real chat where the
-              ;; click-regions registry is being painted, so the user
-              ;; can re-open the disclosure with one click. Without
-              ;; a conversation-id (Markdown snapshot exports,
-              ;; standalone unit-test rendering, ...) we have no
-              ;; click-region painter to feed and the disclosure
-              ;; would be a one-way trap door - render expanded in
-              ;; that case so the body is never silently lost.
-              ;;
-              ;; Pre-fix this defaulted to expanded EVEN inside the
-              ;; chat surface, which produced two visible bugs:
-              ;;   (a) heavy answers blew out the bubble even when
-              ;;       the author wrapped the payload in `<details>`
-              ;;       to keep the surface compact;
-              ;;   (b) clicks did nothing visible - the toggle
-              ;;       handler stored `true` then read-back default
-              ;;       `true`, so absent-key (collapsed by toggle
-              ;;       handler convention) and present-key-true
-              ;;       (just-clicked) both resolved to expanded. The
-              ;;       two layers disagreed on "absent" semantics.
-              expanded?    (detail-expanded? (:detail-expansions opts)
-                             conversation-id
-                             node-id
-                             (nil? conversation-id))
-              body-entries (vec (render-detail-segments segments max-w mode opts))]
-          (vec (concat
-                 (when margin-top? [{:line "" :meta nil}])
-                 (detail-summary-entries (assoc detail-ctx
-                                           :marker marker
-                                           :max-w max-w
-                                           :summary summary
-                                           :hidden-entries body-entries
-                                           :collapsed? (not expanded?)
-                                           :node-id node-id))
-                 (when expanded?
-                   (tag-copy-block-body body-entries node-id
-                     (entries->body-text body-entries))))))))
-    segments))
-
-(defn- markdown-entries-cache-key
-  [text max-w mode opts]
-  ;; Never call `(hash text)` here: first hash of a huge String scans
-  ;; the whole thing, exactly what this cache is supposed to avoid.
-  ;; Bounded fingerprint only. Collision risk is acceptable for a render
-  ;; cache; wrong cache entry would be cosmetic and LRU-bounded, while
-  ;; full hashing can freeze the UI.
-  (let [n (count text)]
-    [::md-entries
-     n
-     (subs text 0 (min 64 n))
-     (subs text (max 0 (- n 256)))
-     (long max-w)
-     mode
-     (:conversation-id opts)
-     (:conversation-turn-id opts)
-     (:iteration-number opts)
-     (:block-number opts)
-     (:section opts)
-     (relevant-detail-expansions-key opts)]))
-
-(defn markdown->entries
-  ([text max-w] (markdown->entries text max-w :answer nil))
-  ([text max-w mode] (markdown->entries text max-w mode nil))
-  ([text max-w mode opts]
-   (when (and text (not (str/blank? text)))
-     (let [text (str text)]
-       (cached* (markdown-entries-cache-key text max-w mode opts)
-         #(let [text     text
-                segments (parse-detail-segments (coalesce-loose-list-items (str/split-lines text)))]
-            (vec (render-detail-segments segments max-w mode opts))))))))
-
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} markdown->lines
-  ([text max-w] (markdown->lines text max-w :answer nil))
-  ([text max-w mode] (markdown->lines text max-w mode nil))
-  ([text max-w mode opts]
-   (some->> (markdown->entries text max-w mode opts)
-     (mapv :line))))
+      ;; **prefix:** value
 
 (defn- assert-canonical-ir!
   "STRICT: bubble layout takes canonical answer-IR (`[:ir & nodes]`)
@@ -4898,34 +3585,6 @@
   ([answer bubble-w] (format-answer-markdown answer bubble-w nil))
   ([answer bubble-w opts]
    (:text (format-answer-markdown-data answer bubble-w opts))))
-
-;; -------------------------------------------------------------------------
-;; User-message text path. User-typed messages don't pass through the IR
-;; pipeline (they're literal strings the user typed in the input box), so
-;; we keep the legacy markdown→entries path here. Assistant messages
-;; always go through `format-answer-with-thinking-data` /
-;; `format-answer-markdown-data` which now consume canonical IR.
-;; -------------------------------------------------------------------------
-
-(defn- format-user-text-data*
-  [text bubble-w]
-  (let [content-w (max 10 (- bubble-w 4))
-        entries   (or (markdown->entries (or text "") content-w :answer nil)
-                    [])
-        entries   (if (seq entries)
-                    entries
-                    (mapv (fn [l] {:line l :meta nil}) (wrap-text (or text "") content-w)))]
-    (entries->payload entries)))
-
-(defn format-user-text-data
-  "Lay out a user-typed message string into the painter's prewrapped
-   `{:text :lines :line-meta}` shape. Assistant rendering uses the IR
-   walker (`format-answer-markdown-data` / `format-answer-with-thinking-data`);
-   user messages still go through `markdown->entries` because there's
-   no IR boundary upstream of the input box."
-  [text bubble-w]
-  (cached* [::fut-data (or text "") (long bubble-w)]
-    #(format-user-text-data* text bubble-w)))
 
 ;;; ── Messages area (bubble-based) ───────────────────────────────────────────
 

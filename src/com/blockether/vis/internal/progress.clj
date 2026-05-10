@@ -47,8 +47,6 @@
 
      {:iteration N
       :thinking  str-or-nil
-      :events    [{:type :thinking :thinking str}
-                  {:type :form-result :form-idx int} ...]
       :code      [str ...]            ;; per-form, idx-aligned
       :results   [str-or-formatted-error ...]
       :result-kinds [keyword ...] ;; :preview, :tool, :value, or :error
@@ -62,9 +60,10 @@
       :final     nil-or-{:answer :iteration-count :status}
       :done?     bool}
 
-   `:events` preserves the live stream order so channels can render
-   reasoning / code / reasoning / code instead of flattening all
-   thinking above all code."
+   The pre-existing `:events` interleaving log was removed: it lived
+   only in memory (never persisted), and resumed bubbles re-rendered
+   without it via the legacy flat layout anyway. One layout path is
+   enough."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.error :as error]
@@ -74,7 +73,6 @@
 (defn- empty-iteration-entry [iteration]
   {:iteration iteration
    :thinking  nil
-   :events    []
    :code      []
    :comments  []
    :results   []
@@ -102,16 +100,20 @@
     :else :value))
 
 (defn- tool-result-detail
+  "Project tool-result envelope to the small detail map TUI labels
+   consume. Phase-4 envelope is flat (`:op/symbol`, `:op/tag`,
+   `:op/metadata`, `:op/stdout`, `:op/stderr`); legacy `:info` key
+   is gone."
   [tool-result]
   (when (extension/tool-result? tool-result)
-    (let [prov (:info tool-result)]
-      (cond-> (select-keys prov [:op :op/tag
-                                 :spec :paths :hit-count :truncated-by
-                                 :command :cwd :target])
-        (get-in tool-result [:result :stdout])
-        (assoc :stdout (get-in tool-result [:result :stdout]))
-        (get-in tool-result [:result :stderr])
-        (assoc :stderr (get-in tool-result [:result :stderr]))))))
+    (let [meta (or (:op/metadata tool-result) {})]
+      (cond-> {}
+        (:op/symbol tool-result) (assoc :op (:op/symbol tool-result))
+        (:op/tag tool-result)    (assoc :op/tag (:op/tag tool-result))
+        :always (merge (select-keys meta [:spec :paths :hit-count :truncated-by
+                                          :command :cwd :target]))
+        (some? (:op/stdout tool-result)) (assoc :stdout (:op/stdout tool-result))
+        (some? (:op/stderr tool-result)) (assoc :stderr (:op/stderr tool-result))))))
 
 (defn- form-result-detail
   [chunk]
@@ -154,83 +156,18 @@
         :else
         (prompt/safe-pr-str (:result chunk))))))
 
-(def ^:private thinking-event-target-chars
-  "Target max chars per live thinking event.
-
-   svar sends accumulated reasoning; tracker converts it back to deltas.
-   Keep those deltas as bounded render events instead of merging them
-   into one forever-growing markdown block. TUI can then cache old
-   chunks and render only changed/new tail chunks."
-  4000)
-
-(defn- string-chunks [s chunk-size]
-  (let [s (str s)
-        n (count s)]
-    (loop [i 0
-           out []]
-      (if (>= i n)
-        out
-        (let [j (min n (+ i chunk-size))]
-          (recur j (conj out (subs s i j))))))))
-
-(defn- append-thinking-delta [events delta]
-  (let [events (vec (or events []))
-        delta  (str delta)]
-    (if (zero? (count delta))
-      events
-      (let [last-event (peek events)
-            last-text  (when (= :thinking (:type last-event)) (or (:thinking last-event) ""))
-            room       (if last-text (max 0 (- thinking-event-target-chars (count last-text))) 0)
-            [events delta]
-            (if (pos? room)
-              (let [head (subs delta 0 (min room (count delta)))
-                    tail (subs delta (count head))]
-                [(update events (dec (count events)) update :thinking str head) tail])
-              [events delta])]
-        (into events
-          (map (fn [chunk] {:type :thinking :thinking chunk}))
-          (string-chunks delta thinking-event-target-chars))))))
-
 (defn- normalize-thinking-text [thinking]
   (some-> thinking str str/trim))
 
-(defn- write-thinking-event [events prev-thinking new-thinking]
-  (let [events       (vec (or events []))
-        prev-text    (or (normalize-thinking-text prev-thinking) "")
-        current-text (or (normalize-thinking-text new-thinking) "")]
-    (cond
-      (zero? (count current-text))
-      events
-
-      (and (pos? (count prev-text))
-        (str/starts-with? current-text prev-text))
-      (append-thinking-delta events (subs current-text (count prev-text)))
-
-      :else
-      (append-thinking-delta events current-text))))
-
-(defn- write-form-event [events form-idx]
-  (let [events (vec (or events []))
-        event  {:type :form-result :form-idx form-idx}
-        hit    (first (keep-indexed (fn [idx e]
-                                      (when (and (= :form-result (:type e))
-                                              (= form-idx (:form-idx e)))
-                                        idx))
-                        events))]
-    (if (some? hit)
-      (assoc events hit event)
-      (conj events event))))
-
 (defn- write-form-start-slot
   "Per-form start chunks land at `:form-idx` before eval completes.
-   Only `:code` / `:comments` / `:events` are populated; result-side
-   vectors intentionally stay empty so renderers can distinguish
+   Only `:code` / `:comments` / `:started-at-ms` are populated; result-
+   side vectors intentionally stay empty so renderers can distinguish
    running code from completed success or failure."
   [entry chunk]
   (let [idx  (:form-idx chunk)
         need (inc idx)]
     (-> entry
-      (update :events write-form-event idx)
       (update :code     #(assoc (pad-to % need) idx (:code chunk)))
       (update :comments #(assoc (pad-to % need) idx (:comment chunk)))
       (update :started-at-ms #(assoc (pad-to % need) idx (:started-at-ms chunk))))))
@@ -244,7 +181,6 @@
   (let [idx (:form-idx chunk)
         need (inc idx)]
     (-> entry
-      (update :events write-form-event idx)
       (update :code      #(assoc (pad-to % need) idx (:code chunk)))
       (update :comments  #(assoc (pad-to % need) idx (:comment chunk)))
       (update :results   #(assoc (pad-to % need) idx (format-form-result chunk)))
@@ -266,20 +202,6 @@
     (into (subvec v 0 idx) (subvec v (inc idx)))
     v))
 
-(defn- drop-form-events [events idx-set]
-  (if (seq idx-set)
-    (let [dropped-before (fn [idx]
-                           (count (filter #(< % idx) idx-set)))]
-      (into []
-        (keep (fn [event]
-                (if (= :form-result (:type event))
-                  (let [idx (:form-idx event)]
-                    (when-not (contains? idx-set idx)
-                      (update event :form-idx - (dropped-before idx))))
-                  event)))
-        events))
-    events))
-
 (defn- elide-form-slots
   "Remove form slots at the given indices from every parallel vector
    in `entry`. Indices shift down, which is fine - the channel
@@ -299,7 +221,7 @@
         (update :durations drop-slot idx)
         (update :successes drop-slot idx)
         (update :started-at-ms drop-slot idx)))
-    (update entry :events drop-form-events idx-set)
+    entry
     (sort > idx-set)))
 
 (defn- update-entry
@@ -311,9 +233,7 @@
     :reasoning
     (let [next-thinking (or (normalize-thinking-text (:thinking chunk))
                           (normalize-thinking-text (:thinking entry)))]
-      (-> entry
-        (update :events write-thinking-event (:thinking entry) next-thinking)
-        (assoc :thinking next-thinking)))
+      (assoc entry :thinking next-thinking))
 
     :form-start
     (write-form-start-slot entry chunk)
