@@ -129,8 +129,55 @@
     break?            [run]
     (str/blank? text) (when (seq text) [run])
     :else
-    (->> (re-seq #"[^\s]+|[ \t]+" text)
-      (map (fn [s] {:text s :style style :href href :node node})))))
+    ;; Manual scan replaces `(re-seq #"[^\s]+|[ \t]+" text)`.
+    ;; The regex allocates a `Matcher` + lazy result seq per run;
+    ;; for prose with thousands of words per streaming chunk this is
+    ;; ~20k Matcher objects/chunk. A single linear scan emitting atom
+    ;; maps directly into a transient gives identical output (the
+    ;; regex alternation is just "non-whitespace OR space-or-tab")
+    ;; with one allocation per atom, no regex machinery. Behaviour:
+    ;; consecutive non-ws chars form a word atom; consecutive
+    ;; \u0020 / \u0009 chars form a whitespace atom; \n/\r/etc. were
+    ;; already excluded by the regex `[^\s]+` arm and we exclude them
+    ;; here too (the walker hands them off via `:break?` runs).
+    (let [^String s text
+          n (.length s)
+          atoms (transient [])]
+      (loop [i 0]
+        (if (>= i n)
+          (persistent! atoms)
+          (let [c (.charAt s i)]
+            (cond
+              ;; space or tab → whitespace atom
+              (or (= c \space) (= c \tab))
+              (let [start i
+                    j (loop [j (inc i)]
+                        (if (and (< j n)
+                              (let [c2 (.charAt s j)]
+                                (or (= c2 \space) (= c2 \tab))))
+                          (recur (inc j)) j))]
+                (conj! atoms {:text  (.substring s start j)
+                              :style style :href href :node node})
+                (recur j))
+
+              ;; treat any other whitespace (newline, etc.) as word
+              ;; boundary but skip it (matches old regex which only
+              ;; matched [ \t]+ for the ws arm and skipped \n via
+              ;; `[^\s]+` not consuming it; behaviour: drop the char).
+              (Character/isWhitespace c)
+              (recur (inc i))
+
+              ;; non-whitespace word
+              :else
+              (let [start i
+                    j (loop [j (inc i)]
+                        (if (and (< j n)
+                              (let [c2 (.charAt s j)]
+                                (not (Character/isWhitespace c2))))
+                          (recur (inc j)) j))]
+                (conj! atoms {:text  (.substring s start j)
+                              :style style :href href :node node})
+                (recur j)))))))))
 
 (defn- wrap-runs
   "Greedy word-wrap. Returns a vector of lines; each line is `{:runs [...]}`.
