@@ -14,6 +14,7 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -135,3 +136,83 @@
             joined (str/join " " ts)]
         (expect (str/includes? joined "główny koń roboczy. Z :source-contains i :symbol znajduje nodes wiarygodnie")
           (str "joined snippet not found; sample lines: " (vec (take 5 ts))))))))
+
+;; ---------------------------------------------------------------------------
+;; block-tag enrichment + sentinel-string adapter
+;; ---------------------------------------------------------------------------
+
+(defdescribe block-tag-test
+  (it ":p block stamps :block-tag :p on every produced line"
+    (let [lines (ir-tui/ir->lines [:ir [:p "hello"]] 80)]
+      (expect (every? #(= :p (:block-tag %)) lines))))
+
+  (it ":h block stamps :block-tag :h with :block-level"
+    (let [lines (ir-tui/ir->lines [:ir [:h {:level 2} "Title"]] 80)
+          [first-line] lines]
+      (expect (= :h (:block-tag first-line)))
+      (expect (= 2 (:block-level first-line)))))
+
+  (it ":code block stamps :block-tag :code on every line including blanks inside"
+    (let [lines (ir-tui/ir->lines [:ir [:code "a\n\nb"]] 80)]
+      (expect (every? #(= :code (:block-tag %)) lines))))
+
+  (it ":ul list stamps :block-tag :ul on marker + continuation lines"
+    (let [lines (ir-tui/ir->lines [:ir [:ul [:li "x"] [:li "y"]]] 80)]
+      (expect (every? #(= :ul (:block-tag %)) lines)))))
+
+(defn- markers [strings]
+  (mapv #(subs % 0 1) strings))
+
+(defn- bodies [strings]
+  (mapv #(subs % 1) strings))
+
+(defdescribe sentinel-adapter-test
+  (it "emits H1/H2/H3 markers for headings, picking by :level"
+    (let [out (ir-tui/ir->sentinel-strings
+                [:ir [:h {:level 1} "A"] [:h {:level 2} "B"] [:h {:level 3} "C"]]
+                80)
+          ms  (markers out)]
+      (expect (some #(= p/MARKER_MD_H1 %) ms))
+      (expect (some #(= p/MARKER_MD_H2 %) ms))
+      (expect (some #(= p/MARKER_MD_H3 %) ms))))
+
+  (it "emits MARKER_MD_BULLET for ul / ol items"
+    (let [out (ir-tui/ir->sentinel-strings [:ir [:ul [:li "x"]]] 80)]
+      (expect (some #(= p/MARKER_MD_BULLET (subs % 0 1)) out))))
+
+  (it "emits MARKER_MD_CODE for fenced code"
+    (let [out (ir-tui/ir->sentinel-strings [:ir [:code {:lang "clj"} "(+ 1 1)"]] 80)]
+      (expect (some #(= p/MARKER_MD_CODE (subs % 0 1)) out))))
+
+  (it "emits MARKER_ANSWER_TXT for plain paragraphs"
+    (let [out (ir-tui/ir->sentinel-strings [:ir [:p "hello world"]] 80)]
+      (expect (some #(= p/MARKER_ANSWER_TXT (subs % 0 1)) out))))
+
+  (it "wraps :strong runs in INLINE_BOLD_ON/OFF sentinel pair"
+    (let [out (ir-tui/ir->sentinel-strings
+                [:ir [:p "hi " [:strong "bold"] " rest"]]
+                80)
+          body (str/join "" (bodies out))]
+      (expect (str/includes? body (str p/INLINE_BOLD_ON "bold" p/INLINE_BOLD_OFF)))))
+
+  (it "wraps :c (inline code) in INLINE_CODE_ON/OFF sentinel pair"
+    (let [out (ir-tui/ir->sentinel-strings
+                [:ir [:p "use " [:c "send!"] " here"]]
+                80)
+          body (str/join "" (bodies out))]
+      (expect (str/includes? body (str p/INLINE_CODE_ON "send!" p/INLINE_CODE_OFF)))))
+
+  (it "sentinel adapter is a string-only contract (every entry begins with a marker)"
+    (let [out (ir-tui/ir->sentinel-strings
+                [:ir [:h {:level 1} "T"] [:p "x"] [:ul [:li "y"]] [:code "z"]]
+                80)]
+      (expect (every? string? out))
+      (expect (every? #(>= (count %) 1) out))))
+
+  (it "bdc79ae9 fixture round-trips through the sentinel adapter without throwing"
+    (when-let [raw (fixture-ir)]
+      (let [out (ir-tui/ir->sentinel-strings raw 100)]
+        (expect (vector? out))
+        (expect (every? string? out))
+        ;; the bug-paragraph still flows on one wrap chunk
+        (expect (some #(str/includes? % "znajduje nodes wiarygodnie") out))))))

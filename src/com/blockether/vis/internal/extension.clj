@@ -110,6 +110,7 @@
 ;; ---- envelope leaf specs (op/*) ----
 (s/def :op/symbol     keyword?)        ; e.g. :v/cat ; nil for raw user code
 (s/def :op/tag        keyword?)        ; #{:op.tag/observation :op.tag/action}
+(s/def :op/result     any?)            ; the actual SCI eval value; shape varies per tool
 (s/def :op/success?   boolean?)
 (s/def :op/stdout     (s/nilable string?))
 (s/def :op/stderr     (s/nilable string?))
@@ -142,7 +143,7 @@
 ;; ---- the envelope ----
 (s/def :op/envelope
   (s/and
-    (s/keys :opt-un [:op/symbol :op/tag :op/success? :op/error
+    (s/keys :opt-un [:op/symbol :op/tag :op/result :op/success? :op/error
                      :op/stdout :op/stderr :op/metadata])
     (fn [{:op/keys [success? error]}]
       (if success?
@@ -374,7 +375,7 @@
 
    Produces a flat `:op/envelope` map."
   [{:keys [result op metadata stdout stderr]} success? error]
-  (cond-> {:result      result
+  (cond-> {:op/result   result
            :op/success? success?
            :op/error    error
            :op/metadata (normalize-metadata metadata)}
@@ -398,6 +399,98 @@
   [{:keys [error throwable] :as args}]
   (let [err (or error (when throwable (normalize-error throwable)))]
     (envelope-of args false err)))
+
+(defn envelope-success?
+  "True when `envelope` is an `:op/envelope` and `:op/success?` is
+   true. Use this instead of raw `(:op/success? e)` in renderers and
+   nudges — it (a) reads as English and (b) returns false for non-
+   envelopes (defensive against shape drift)."
+  [envelope]
+  (and (tool-result? envelope) (true? (:op/success? envelope))))
+
+(defn envelope-failure?
+  "True when `envelope` is an `:op/envelope` and `:op/success?` is
+   false (i.e. failure path with a structured `:op/error`). Returns
+   false for non-envelopes."
+  [envelope]
+  (and (tool-result? envelope) (false? (:op/success? envelope))))
+
+(defn ex->op-error
+  "Convert an arbitrary `Throwable` to a structured `:op/error` map
+   per PLAN.md §2.1 + §2.6.
+
+   Output shape:
+     {:message <one-line headline, required>
+      :trace   <preformatted multi-line string, optional>
+      :hint    <recovery suggestion, optional>
+      :block   {:source :phase :row :col :opened-loc?, optional}}
+
+   Edamame parse errors (`:edamame/error`) get block-global
+   `:row`/`:col` straight from `ex-data`, plus `:opened-loc` when
+   the error is a delimiter mismatch (the canonical actionable
+   pointer).
+
+   SCI errors (`:sci/error`) get FORM-LOCAL `:line`/`:column`;
+   callers that have block-bounds in hand pass them via
+   `:form-row` / `:form-col` so this fn translates to block-global
+   coordinates. The `:phase` is derived from SCI's `:phase`
+   ex-data string (`\"analysis\"` -> `:sci/analysis`; otherwise
+   `:sci/runtime`).
+
+   Other throwables become `:phase :preflight` with no row/col
+   (transport / spec / wrapping failures).
+
+   Optional opts:
+     :block-source  the verbatim source the form was built from;
+                    embedded in `:block.source` so the model
+                    sees its own input echoed back.
+     :form-row      block-global row of the FAILING form's first
+                    line (1-based). Used to translate SCI's
+                    form-local `:line` into block-global `:row`.
+     :form-col      block-global col of the FAILING form's start.
+                    Translation applies only on `:line == 1`.
+     :hint          override / pre-supply a recovery hint string."
+  [^Throwable t & [{:keys [block-source form-row form-col hint]}]]
+  (let [d         (ex-data t)
+        sci?      (= :sci/error      (:type d))
+        edamame?  (= :edamame/error  (:type d))
+        cause     (some-> t .getCause)
+        message   (or (not-empty (ex-message t))
+                    (.getName (class t)))
+        trace     (try (normalize-trace t) (catch Throwable _ nil))
+        ;; row/col translation
+        row       (cond
+                    edamame?            (:row d)
+                    sci?                (when-let [l (:line d)]
+                                          (if form-row
+                                            (+ (dec l) (long form-row))
+                                            l))
+                    :else               nil)
+        col       (cond
+                    edamame?            (:col d)
+                    sci?                (when-let [c (:column d)]
+                                          (if (and form-col (= 1 (:line d)))
+                                            (+ (dec c) (long form-col))
+                                            c))
+                    :else               nil)
+        opened    (when edamame? (:edamame/opened-delimiter-loc d))
+        phase     (cond
+                    edamame?                       :edamame/parse
+                    (and sci? (= "analysis"
+                                (str (:phase d))))   :sci/analysis
+                    sci?                           :sci/runtime
+                    :else                          :preflight)
+        block     (when block-source
+                    (cond-> {:source block-source :phase phase}
+                      row    (assoc :row row)
+                      col    (assoc :col col)
+                      opened (assoc :opened-loc opened)))
+        cause-data (when cause (ex-data cause))]
+    (cond-> {:message message}
+      (not (str/blank? trace))     (assoc :trace trace)
+      hint                         (assoc :hint hint)
+      block                        (assoc :block block)
+      cause-data                   (assoc :cause-data cause-data))))
 
 ;; =============================================================================
 ;; Symbol entry spec
@@ -1270,7 +1363,7 @@
           sym-name (:ext.symbol/sym sym-entry)
           base     {:position position :form form-str}]
       (if (:op/success? result)
-        (let [unwrapped (:result result)
+        (let [unwrapped (:op/result result)
               j-text   (safely-render (:ext.symbol/journal-render-fn sym-entry)
                          sym-name ":journal-render-fn" unwrapped)
               c-text   (safely-render (:ext.symbol/channel-render-fn sym-entry)
@@ -2153,7 +2246,7 @@
           (throw (AssertionError.
                    (str "No :journal-render-fn for tool result with op "
                      (pr-str (:op/symbol tool-result))))))
-        (assert-string! (render-fn (:result tool-result))
+        (assert-string! (render-fn (:op/result tool-result))
           ":journal-render-fn" sym-entry)))))
 
 (defn channel-render-tool-result
@@ -2180,7 +2273,7 @@
           (throw (AssertionError.
                    (str "No :channel-render-fn for tool result with op "
                      (pr-str (get-in tool-result [:info :op]))))))
-        (assert-string! (render-fn (:result tool-result))
+        (assert-string! (render-fn (:op/result tool-result))
           ":channel-render-fn" sym-entry)))))
 
 (defn- topo-sort-extensions
