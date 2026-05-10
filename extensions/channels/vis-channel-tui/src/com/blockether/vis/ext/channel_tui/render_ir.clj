@@ -721,7 +721,10 @@
    — no markdown round-trip."
   ([ir width] (ir->entries ir width nil))
   ([ir width opts]
-   (let [lines (ir->lines ir width opts)
+   (let [tail-n (:tail-lines opts)
+         lines (if tail-n
+                 (ir->lines-tail ir width (long tail-n) opts)
+                 (ir->lines ir width opts))
          ms    (marker-set-for (:mode opts))]
      (mapv (fn [{:keys [runs block-tag block-level meta]}]
              {:line (let [marker (block-marker-for ms block-tag block-level)
