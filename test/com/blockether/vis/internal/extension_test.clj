@@ -18,6 +18,7 @@
      6. Symbol-level parse rescue is part of the validated builder surface.
      7. Extension info includes cached source markers."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.internal.extension :as ext]
    [com.blockether.vis.internal.registry :as registry]
    [com.blockether.vis.internal.workspace-context :as workspace-context]
@@ -360,3 +361,176 @@
                     false
                     (catch Exception _ true))]
       (expect thrown?))))
+
+;; ============================================================================
+;; § 5.2: Block-global coordinate translation in ex->op-error
+;;
+;; PLAN.md § 2.5 + § 2.6 + § 7.3.6: ex->op-error must produce block-global
+;; :row/:col regardless of which engine threw. SCI per-form eval gives
+;; FORM-LOCAL line/col; edamame parse-string-all gives BLOCK-GLOBAL row/col
+;; already.
+;; ============================================================================
+
+(defdescribe sci-error-coords-translated-to-block-global-test
+  (it "form-local SCI :line/:column translate to block-global via :form-row + :form-col"
+    ;; Synthesize an ex-info matching SCI's :type :sci/error shape so we
+    ;; don't need the SCI runtime in the test classpath.
+    (let [block-source "(def x 1)\n(def y 2)\n(inc 1 2 3)\n(def z 99)"
+          ;; SCI evaluating form 3 (line 3 of block) standalone reports
+          ;; FORM-LOCAL :line 1 :column 1 in ex-data (probed live earlier).
+          sci-ex (ex-info "Wrong number of args (3) passed to: clojure.core/inc"
+                   {:type :sci/error :line 1 :column 1 :phase "analysis"})
+          op-error (ext/ex->op-error sci-ex
+                     {:block-source block-source :form-row 3 :form-col 1})]
+      (expect (= "Wrong number of args (3) passed to: clojure.core/inc"
+                (:message op-error)))
+      (expect (= :sci/analysis (get-in op-error [:block :phase])))
+      (expect (= 3 (get-in op-error [:block :row]))
+        "form-local line 1 + form-row 3 -> block-global row 3")
+      (expect (= 1 (get-in op-error [:block :col]))
+        "form-local col 1 + form-col 1 -> block-global col 1 (line==1 case)")
+      (expect (= block-source (get-in op-error [:block :source])))))
+
+  (it "SCI errors on non-first form line keep their column unshifted"
+    ;; When the SCI :line > 1, the column is already block-global because
+    ;; only the first line of a form is offset by :form-col.
+    (let [block-source "line1\n(let [a 1\n      b (inc 1 2 3)])"
+          sci-ex (ex-info "Wrong number of args (3) passed to: clojure.core/inc"
+                   {:type :sci/error :line 2 :column 9 :phase "analysis"})
+          op-error (ext/ex->op-error sci-ex
+                     {:block-source block-source :form-row 2 :form-col 1})]
+      (expect (= 3 (get-in op-error [:block :row]))
+        "form-row 2 + form-local line 2 -> block-global row 3")
+      (expect (= 9 (get-in op-error [:block :col]))
+        "form-local col 9 stays put when sci-line > 1")))
+
+  (it "phase derives :sci/runtime when ex-data :phase is absent"
+    (let [sci-ex (ex-info "boom" {:type :sci/error :line 1 :column 1})
+          op-error (ext/ex->op-error sci-ex {:block-source "(boom)"})]
+      (expect (= :sci/runtime (get-in op-error [:block :phase]))))))
+
+(defdescribe edamame-error-coords-stay-block-global-test
+  (it "edamame :row/:col are kept verbatim (already block-global from parse-string-all)"
+    ;; Synthesize an ex-info matching edamame's :type :edamame/error shape.
+    ;; Probed live earlier: edamame parse-string-all over a multi-form block
+    ;; reports row/col in BLOCK-global coordinates.
+    (let [block-source "(def a 1)\n(def b 2)\n(def c 3)\n(def d 4)"
+          ;; Made-up parse failure at row 4 col 6.
+          edamame-ex (ex-info "Invalid keyword: ::::bad."
+                       {:type :edamame/error :row 4 :col 6})
+          op-error (ext/ex->op-error edamame-ex {:block-source block-source})]
+      (expect (= :edamame/parse (get-in op-error [:block :phase])))
+      (expect (= 4 (get-in op-error [:block :row]))
+        "edamame :row passed through unchanged (no translation needed)")
+      (expect (= 6 (get-in op-error [:block :col])))))
+
+  (it ":opened-loc beats :row/:col on delimiter mismatches (PLAN § 2.5)"
+    ;; Probed live: edamame's primary :row/:col on EOF-while-reading errors
+    ;; points at WHERE PARSER GAVE UP (often EOF, useless). The actually-
+    ;; actionable position is :edamame/opened-delimiter-loc — the unmatched
+    ;; opener.
+    (let [block-source "(def a 1)\n(def b 2)\n(def c \"oops\n(def d 4)\n(def e 5)"
+          edamame-ex (ex-info "EOF while reading, expected \" to match \" at [3,8]"
+                       {:type :edamame/error
+                        :row 5 :col 10                              ; EOF, useless
+                        :edamame/expected-delimiter "\""
+                        :edamame/opened-delimiter "\""
+                        :edamame/opened-delimiter-loc {:row 3 :col 8}})  ; the actual fix point
+          op-error (ext/ex->op-error edamame-ex {:block-source block-source})]
+      (expect (= 5 (get-in op-error [:block :row]))
+        ":row stays as edamame's EOF marker (callers/renderer prefer :opened-loc)")
+      (expect (= {:row 3 :col 8} (get-in op-error [:block :opened-loc]))
+        ":opened-loc lifted from :edamame/opened-delimiter-loc"))))
+
+(defdescribe preflight-error-test
+  (it "non-engine throwables get :phase :preflight with no row/col"
+    (let [op-error (ext/ex->op-error (ex-info "envelope rejected"
+                                       {:type :vis/preflight})
+                     {:block-source "bad form"})]
+      (expect (= "envelope rejected" (:message op-error)))
+      (expect (= :preflight (get-in op-error [:block :phase])))
+      (expect (nil? (get-in op-error [:block :row])))
+      (expect (nil? (get-in op-error [:block :col]))))))
+
+;; ============================================================================
+;; § 5.3: render-error-context — whole-block context with failing-form marker
+;;
+;; PLAN.md § 2.8: babashka-style display. Every line gutter-numbered;
+;; failing form's line range gets `>` gutter prefix; arrow `^---` lands
+;; at exact column on the line below the failure. No truncation.
+;; ============================================================================
+
+(defdescribe render-error-context-test
+  (it "renders all forms (no truncation) with > marker on the failing form"
+    (let [block-source "(def a 1)\n(def b 2)\n(inc 1 2 3)\n(def d 4)"
+          op-error (ext/ex->op-error
+                     (ex-info "Wrong number of args" {:type :sci/error :line 3 :column 1})
+                     {:block-source block-source})
+          rendered (ext/render-error-context (:block op-error)
+                     {:form-start-row 3 :form-end-row 3})
+          lines    (str/split-lines rendered)]
+      ;; All 4 source lines + 1 arrow line = 5 total (no truncation).
+      (expect (= 5 (count lines)))
+      ;; Failing-form line 3 has `>` marker, sibling forms have space.
+      (expect (str/starts-with? (nth lines 0) "  ")
+        "form 1 line: space gutter")
+      (expect (str/starts-with? (nth lines 1) "  ")
+        "form 2 line: space gutter")
+      (expect (str/starts-with? (nth lines 2) "> ")
+        "form 3 (failing) line: > gutter")
+      ;; Line 3 is followed by the arrow line.
+      (expect (str/includes? (nth lines 3) "^---"))
+      ;; form 4 line: space gutter
+      (expect (str/starts-with? (nth lines 4) "  "))))
+
+  (it "multi-line form: > gutter spans the form's full line range"
+    ;; Form is lines 1..5; arrow on line 3.
+    (let [block-source "(let [a 1\n      b 2\n      c (inc 1 2 3)\n      d 4]\n  (+ a b c d))"
+          op-error (ext/ex->op-error
+                     (ex-info "Wrong number of args" {:type :sci/error :line 3 :column 9})
+                     {:block-source block-source})
+          rendered (ext/render-error-context (:block op-error)
+                     {:form-start-row 1 :form-end-row 5})
+          lines    (str/split-lines rendered)]
+      ;; 5 source + 1 arrow = 6 lines.
+      (expect (= 6 (count lines)))
+      ;; All 5 source lines have > gutter (the whole let-form is the failing form).
+      (doseq [src-idx (filter #(not= 3 %) (range 5))]   ; skip arrow at index 3
+        (expect (str/starts-with? (nth lines (if (< src-idx 3) src-idx (inc src-idx)))
+                  "> ")
+          (str "src line " src-idx " should have > marker")))
+      ;; Arrow line at index 3 (between line 3 and line 4).
+      (expect (str/includes? (nth lines 3) "^---"))))
+
+  (it "edamame :opened-loc beats :row/:col for arrow placement"
+    ;; Probed live: arrow lands at :opened-loc {:row 3 :col 8}, NOT at
+    ;; :row 5 :col 10 (which is EOF on this fixture).
+    (let [block-source "(def a 1)\n(def b 2)\n(def c \"oops\n(def d 4)\n(def e 5)"
+          edamame-ex (ex-info "EOF while reading"
+                       {:type :edamame/error
+                        :row 5 :col 10
+                        :edamame/opened-delimiter-loc {:row 3 :col 8}})
+          op-error (ext/ex->op-error edamame-ex {:block-source block-source})
+          rendered (ext/render-error-context (:block op-error))
+          lines    (str/split-lines rendered)]
+      ;; 5 source lines + 1 arrow line on line 3.
+      (expect (= 6 (count lines)))
+      ;; The arrow line should be RIGHT AFTER line 3 (the unmatched-opener
+      ;; line), NOT after line 5 (EOF).
+      (let [arrow-line-idx (first (keep-indexed
+                                    (fn [i s] (when (str/includes? s "^---") i))
+                                    lines))]
+        (expect (= 3 arrow-line-idx)
+          "arrow at line index 3 (right after source line 3, the unmatched opener)"))))
+
+  (it "no truncation: 50-line forms render in full"
+    ;; Pathological case from PLAN § 2.8: long forms still render whole,
+    ;; because the size IS often the failure mode.
+    (let [block-source (str/join "\n"
+                         (for [i (range 50)] (str "(line-" i ")")))
+          op-error (ext/ex->op-error
+                     (ex-info "boom" {:type :sci/error :line 25 :column 1})
+                     {:block-source block-source})
+          rendered (ext/render-error-context (:block op-error))]
+      (expect (= 51 (count (str/split-lines rendered)))
+        "50 source lines + 1 arrow line"))))
