@@ -66,5 +66,5 @@ Normal source installs keep the Vis checkout at `~/.vis/sourcecode`. When an age
       :context "Recursive Language Models paper -- design vis is built on"}
      {:file "src/com/blockether/vis/internal/prompt.clj"
       :context "System-prompt assembler that calls vis-foundation's combined-prompt fn"}
-     {:file "docs/src/extensions/common/markdown.md"
-      :context "Full markdown-builder reference for the unified v/ surface."}]}}}}
+     {:file "docs/specs/01-streaming-and-markdown.md"
+      :context "Answer-IR (Hiccup-EDN) spec; replaces the legacy v/ markdown DSL."}]}}}}

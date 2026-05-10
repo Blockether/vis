@@ -13,7 +13,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.markdown :as md]
+
    [com.blockether.vis.internal.workspace-context :as workspace-context]
    [rewrite-clj.zip :as z])
   (:import
@@ -519,9 +519,8 @@
 
 (defn- channel-render-xref
   [result]
-  (md/join
-    (md/p (if (sequential? result) (count result) 1) "result(s).")
-    (md/code-block "clojure" (pr-str result))))
+  (str (if (sequential? result) (count result) 1) " result(s).\n\n"
+    "```clojure\n" (pr-str result) "\n```"))
 
 (defn- xref-symbol
   [v]

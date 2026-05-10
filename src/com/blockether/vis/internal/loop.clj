@@ -42,7 +42,6 @@
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.lifecycle :as lifecycle]
-   [com.blockether.vis.internal.markdown :as markdown]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
