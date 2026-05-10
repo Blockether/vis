@@ -211,12 +211,15 @@
    bubbles."
   80)
 
-(def ^:private pending-assistant-text "Sending request to provider...")
+(def ^:private pending-assistant-ir
+  "Canonical IR placeholder shown in the assistant bubble while the
+   request is in flight. Construction sites also stamp `:pending?
+   true` on the message map; the predicate below relies on that flag
+   exclusively — we never compare on rendered text content."
+  [:ir {} [:p {} [:span {} "Sending request to provider..."]]])
 
 (defn- pending-assistant-message? [m]
-  (and (= :assistant (:role m))
-    (or (:pending? m)
-      (= pending-assistant-text (:text m)))))
+  (and (= :assistant (:role m)) (true? (:pending? m))))
 
 (defn- replace-pending-assistant
   "Replace the pending assistant slot for a completed turn. Prefer the
@@ -1097,7 +1100,7 @@
       {:db (-> db
              (update :messages conj (assoc (chat/user-message visible-text)
                                       :client-turn-id client-turn-id))
-             (update :messages conj (assoc (chat/assistant-message pending-assistant-text)
+             (update :messages conj (assoc (chat/assistant-message pending-assistant-ir)
                                       :pending? true
                                       :client-turn-id client-turn-id))
              (update :input-history (fn [xs]
@@ -1165,7 +1168,7 @@
       {:db (-> db
              (update :messages conj (assoc (chat/user-message display-text)
                                       :client-turn-id client-turn-id))
-             (update :messages conj (assoc (chat/assistant-message pending-assistant-text)
+             (update :messages conj (assoc (chat/assistant-message pending-assistant-ir)
                                       :pending? true
                                       :client-turn-id client-turn-id))
              (update :input-history (fn [xs]
@@ -1233,10 +1236,15 @@
               (restore-submitted-input workspace (:submitted-input workspace))
               (let [start    (:turn-start-ms workspace)
                     wall-ms  (when start (- (System/currentTimeMillis) start))
-                    response (-> (chat/assistant-message (or answer ""))
+                    ;; `answer` arrives as canonical IR from `chat/turn!`
+                    ;; (loop result coerced + lifted there). NULL/missing
+                    ;; collapses to empty IR; we never feed strings to the
+                    ;; render chokepoint.
+                    answer-ir (or answer chat/empty-ir)
+                    response (-> (chat/assistant-message answer-ir)
                                (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
                                  (seq trace)
-                                 (assoc :trace trace :raw-answer (or answer ""))
+                                 (assoc :trace trace :raw-answer answer-ir)
                                  (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                                  model      (assoc :model model)
                                  iteration-count (assoc :iteration-count iteration-count)

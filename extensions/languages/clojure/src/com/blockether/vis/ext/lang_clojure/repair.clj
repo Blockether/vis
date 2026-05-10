@@ -214,14 +214,13 @@
   [{:keys [op path result info]}]
   (let [t (now-ms)]
     (extension/success
-      {:result result
-       :info (merge {:op op
-                     :target {:kind :file
-                              :resolved path}
-                     :started-at-ms t
-                     :finished-at-ms t
-                     :duration-ms 0}
-               info)})))
+      {:result   result
+       :op       op
+       :metadata (merge {:target         {:kind :file :resolved path}
+                         :started-at-ms  t
+                         :finished-at-ms t
+                         :duration-ms    0}
+                   info)})))
 
 (defn- tool-failure-on-error
   [op]
@@ -229,12 +228,12 @@
     (let [path (or (:path (first args)) (first args) ".")
           t    (now-ms)]
       {:result (extension/failure
-                 {:result nil
-                  :info {:op op
-                         :target {:kind :file :requested (str path)}
-                         :started-at-ms t
-                         :finished-at-ms t
-                         :duration-ms 0}
+                 {:result    nil
+                  :op        op
+                  :metadata  {:target         {:kind :file :requested (str path)}
+                              :started-at-ms  t
+                              :finished-at-ms t
+                              :duration-ms    0}
                   :throwable err})})))
 
 (defn- repair-selection!

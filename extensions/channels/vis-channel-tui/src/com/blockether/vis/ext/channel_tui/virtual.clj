@@ -164,8 +164,7 @@
         chrome-rows 3
         role     (:role message)
         trace    (:trace message)
-        text     (:text message)
-        ans      (:raw-answer message)]
+        text     (:text message)]
     (cond
       (= role :user)
       (long
@@ -183,7 +182,12 @@
             think-c  (long (reduce (fn [^long acc it]
                                      (+ acc (char-count (:thinking it))))
                              0 trace))
-            ans-c    (char-count ans)]
+            ;; Heuristic for answer width: `:text` is the rendered
+            ;; markdown string (assistant-message stores it eagerly
+            ;; via render-answer). The layout pipeline re-wraps from
+            ;; `:raw-answer` IR; this size estimate just picks a
+            ;; ballpark row count.
+            ans-c    (char-count text)]
         (long
           (+ chrome-rows
             n-iter                              ;; iteration headers

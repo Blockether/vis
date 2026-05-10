@@ -1,5 +1,4 @@
 {:paths ["src" "resources"]
  :deps {com.blockether/vis {:local/root "../../.."}
         rewrite-clj/rewrite-clj {:mvn/version "1.2.50"}
-        com.github.danlentz/clj-xref {:mvn/version "0.1.1"}
         com.github.clojure-lsp/clojure-lsp {:mvn/version "2026.02.20-16.08.58"}}}

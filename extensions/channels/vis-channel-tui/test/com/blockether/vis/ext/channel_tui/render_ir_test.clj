@@ -15,8 +15,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
-   [com.blockether.vis.internal.render :as ir]
-   [lazytest.core :refer [defdescribe describe expect it]]))
+   [lazytest.core :refer [defdescribe expect it]]))
 
 ;; ---------------------------------------------------------------------------
 ;; small helpers

@@ -52,7 +52,6 @@
   [:tr {} [:th {} "Funkcja"] [:th {} "Problem"]]
   [:tr
    {}
-   [:td {} [:c {} "z/locator-for-symbol"]]
    [:td
     {}
     "Zwraca 7x "
@@ -64,7 +63,6 @@
     ". Zero diagnostyki błędu."]]
   [:tr
    {}
-   [:td {} [:c {} "z/locator-for-ref"]]
    [:td
     {}
     "Arity error — "
@@ -72,7 +70,6 @@
     ". SCI alias nie zgadza się z implementacją."]]
   [:tr
    {}
-   [:td {} [:c {} "z/xref-analyze!"]]
    [:td
     {}
     [:c
@@ -81,7 +78,6 @@
     ". Przyjmuję string path, w środku się wywala."]]
   [:tr
    {}
-   [:td {} [:c {} "z/who-calls"]]
    [:td
     {}
     "To samo — "
@@ -89,7 +85,6 @@
     "."]]
   [:tr
    {}
-   [:td {} [:c {} "z/context-for"]]
    [:td
     {}
     "Nie error, ale "
@@ -97,7 +92,6 @@
     " na publicznym symbolu. Bezużyteczne."]]
   [:tr
    {}
-   [:td {} [:c {} "z/calls-who"]]
    [:td {} "Pusta tablica. Zero analizy."]]]
  [:h {:level 3} "⚠️ Dziwne"]
  [:p
@@ -131,7 +125,6 @@
  [:p
   {}
   "Półtora xref API rzuca wyjątki. "
-  [:c {} "locator-for-symbol"]
   " zwraca same nile. \n   Warstwa semantyczna nie istnieje w praktyce. Na razie ignoruję ją i polegam na "
   [:c {} "v/rg"]
   " + "
@@ -141,9 +134,7 @@
   {}
   [:strong {} "Moja obiekcja:"]
   " Promowanie "
-  [:c {} "z/locator-for-symbol"]
   " i "
-  [:c {} "z/who-calls"]
   " w docs/AGENTS.md jako \n   primary discovery path jest wprowadzające w błąd — one nie działają. \n   Docs powinien kierować do "
   [:c {} "z/locators {:source-contains ...}"]
   " i "

@@ -803,7 +803,7 @@
    tool surface before answering. Does NOT pre-bind a SCI var, does
    NOT prescribe a specific `(v/cat ...)` / `(v/preview ...)` form,
    does NOT inject a line range. The model picks the right tool
-   (`v/cat`, `z/symbols`, `z/locators`, `z/who-calls`, etc.) based on
+   (`v/cat`, `z/symbols`, `z/locators`, etc.) based on
    the question.
 
    Unresolved paths fall back to the visible `@path` token verbatim

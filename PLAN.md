@@ -83,6 +83,16 @@ Collapsing these three gives **four real roles**:
 #{:answer :nudge :tool :thinking}
 ```
 
+**Field name: unqualified `:role`, not `:block/role`.** Block-record
+contents in the codebase are all unqualified kebab-case (`:idx`,
+`:code`, `:result`, `:error`, `:stdout`, `:stderr`,
+`:duration-ms`). The qualified `:block/*` namespace from §2.10
+lives on records that REFERENCE a block (introspection responses,
+foreign-key joins) — not on fields INSIDE the block. So the role
+field is plain `:role` to match its siblings; `:block/role`
+would be the only qualified key in an otherwise-unqualified
+record and read as inconsistent.
+
 Plus one **new** role for parity:
 
 - **`:thinking`** lifts model reasoning into the same iteration-
