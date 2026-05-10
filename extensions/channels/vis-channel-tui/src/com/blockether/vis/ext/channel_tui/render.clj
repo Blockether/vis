@@ -2444,12 +2444,19 @@
       :else "empty")))
 
 (defn- detail-id-suffix
-  ^String [{:keys [conversation-turn-id iteration-number block-number details-path]}]
+  ;; User-facing badge displayed at the right edge of disclosure rows.
+  ;; Per PLAN §2.9 + §5.1: render positions (ints), never UUIDs. The
+  ;; legacy `:conversation-turn-id` arg is accepted for backwards
+  ;; compat with callers that haven't been migrated to pass
+  ;; `:turn-position`, but we DO NOT render it — the Turn segment is
+  ;; simply omitted when only the UUID is available. Eventually all
+  ;; callers should pass `:turn-position` and the legacy arg goes away.
+  ^String [{:keys [turn-position iteration-number block-number details-path]}]
   (let [parts (cond-> []
-                (some? conversation-turn-id) (conj (str "Turn: " (short-id-fragment conversation-turn-id)))
-                iteration-number (conj (str "Iteration: " iteration-number))
-                block-number (conj (str "Block: " block-number))
-                (seq details-path) (conj (str "Details: " (str/join "." details-path))))]
+                (some? turn-position) (conj (str "Turn: " turn-position))
+                iteration-number      (conj (str "Iteration: " iteration-number))
+                block-number          (conj (str "Block: " block-number))
+                (seq details-path)    (conj (str "Details: " (str/join "." details-path))))]
     (if (seq parts)
       (str "[" (str/join ", " parts) "]")
       "[Details]")))

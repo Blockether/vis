@@ -492,6 +492,58 @@
       block                        (assoc :block block)
       cause-data                   (assoc :cause-data cause-data))))
 
+(defn render-error-context
+  "Render the source from an `:op/error :block` map per PLAN §2.8
+   layout: babashka-style. Every line is gutter-numbered. The line
+   containing the failure gets a `^---` arrow at the exact column
+   on the line below it. Lines belonging to the failing form
+   (`form-start-row`..`form-end-row` from PLAN §7.3.7 form-bounds
+   extension) get a `>` gutter prefix; sibling forms get a space.
+   No truncation — always shows the whole `:source` block.
+
+   When `:opened-loc` is present (edamame delimiter mismatch), it
+   wins over `:row`/`:col` for arrow placement — it points at the
+   actually-actionable unmatched opener.
+
+   Returns a string. Pure. No SCI/TUI dependencies.
+
+   Args:
+     block - `{:source :phase :row? :col? :opened-loc?}` map
+             from `:op/error :block`.
+     opts  - optional map; recognised keys:
+               :form-start-row  1-based int, range start for `>`
+                                marker. nil => no marker.
+               :form-end-row    1-based int, inclusive end of
+                                marker range. nil => no marker."
+  ([block] (render-error-context block nil))
+  ([{:keys [source row col opened-loc]} {:keys [form-start-row form-end-row]}]
+   (when (string? source)
+     (let [;; Edamame: opened-loc beats row/col for arrow placement.
+           arrow-row    (or (:row opened-loc) row)
+           arrow-col    (or (:col opened-loc) col)
+           lines        (vec (str/split source #"\n" -1))
+           total        (count lines)
+           gutter-w     (count (str total))
+           in-form?     (fn [ln-1based]
+                          (and form-start-row form-end-row
+                            (<= form-start-row ln-1based form-end-row)))
+           fmt-line     (fn [idx0]
+                          (let [ln (inc idx0)
+                                marker (if (in-form? ln) ">" " ")]
+                            (format (str "%s %" gutter-w "d: %s")
+                              marker ln (nth lines idx0))))
+           arrow-line   (when (and arrow-row arrow-col
+                                (<= 1 arrow-row total))
+                          (str (apply str (repeat (+ gutter-w 4) \space))
+                            (apply str (repeat (max 0 (dec arrow-col)) \space))
+                            "^---"))
+           arrow-idx0   (when arrow-line (dec arrow-row))]
+       (->> (range total)
+         (mapcat (fn [idx0]
+                   (cond-> [(fmt-line idx0)]
+                     (= idx0 arrow-idx0) (conj arrow-line))))
+         (str/join "\n"))))))
+
 ;; =============================================================================
 ;; Symbol entry spec
 ;; =============================================================================

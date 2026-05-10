@@ -51,7 +51,8 @@
    :warn-on-boxed` clean across this namespace per the repo's GraalVM
    ratchet."
   (:require
-   [com.blockether.vis.ext.channel-tui.render :as render])
+   [com.blockether.vis.ext.channel-tui.render :as render]
+   [com.blockether.vis.internal.render :as ir])
   (:import
    [java.util LinkedHashMap]))
 
@@ -168,8 +169,7 @@
         ;; `:ir` so the height heuristic doesn't depend on `:text`
         ;; (which is only set by the walker AFTER projection).
         text     (or (:text message)
-                   (some-> (:ir message)
-                     (->> (com.blockether.vis.internal.render/extract-text))))]
+                   (some-> (:ir message) ir/extract-text))]
     (cond
       (= role :user)
       (long

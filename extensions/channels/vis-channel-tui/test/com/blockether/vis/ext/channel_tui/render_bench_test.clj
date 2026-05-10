@@ -34,6 +34,7 @@
    [clojure.string :as str]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
+   [com.blockether.vis.internal.render :as ir]
    [criterium.core :as crit]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -297,7 +298,7 @@
 
 (defn- big-trace-msg [n-iters forms-per-iter]
   {:role            :assistant
-   :ir      (com.blockether.vis.internal.render/text->ir (apply str (repeat 200 "a ")))
+   :ir      (ir/text->ir (apply str (repeat 200 "a ")))
    :text            "a a a"
    :traces           (vec (repeat n-iters
                             {:thinking  (apply str (repeat 50 "thinking. "))

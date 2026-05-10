@@ -311,39 +311,125 @@
       ;; should not happen — caller dispatches by block?/inline?
       (into [tag attrs] (canon-block-children children)))))
 
+(declare canonical?)
+
+(defn- inline-canonical?
+  "True when `x` is already a canonical inline node."
+  [x]
+  (and (vector? x)
+    (>= (count x) 2)
+    (map? (nth x 1))
+    (let [tag (nth x 0)]
+      (case tag
+        :br   (= 2 (count x))
+        :img  (= 2 (count x))
+        :span (and (= 3 (count x))
+                (string? (nth x 2))
+                (not (str/includes? (nth x 2) "\n")))
+        (:c :code :kbd)
+        (and (= 3 (count x)) (string? (nth x 2)))
+        (:strong :em :a :mark :sup :sub)
+        (every? inline-canonical? (drop 2 x))
+        false))))
+
+(defn- block-canonical?
+  "True when `x` is a canonical block node."
+  [x]
+  (and (vector? x)
+    (>= (count x) 2)
+    (map? (nth x 1))
+    (let [tag (nth x 0)
+          children (drop 2 x)]
+      (case tag
+        (:p :h :th :td)
+        (every? inline-canonical? children)
+
+        :code
+        (and (= 3 (count x)) (string? (nth x 2)))
+
+        (:ul :ol)
+        (every? #(and (vector? %) (= :li (first %)) (block-canonical? %)) children)
+
+        :li
+        (or (every? block-canonical? children)
+          (and (= 1 (count children))
+            (vector? (first children))
+            (= :p (first (first children)))
+            (block-canonical? (first children))))
+
+        :quote
+        (every? block-canonical? children)
+
+        :table
+        (every? #(and (vector? %) (= :tr (first %)) (block-canonical? %)) children)
+
+        :tr
+        (every? #(and (vector? %) (#{:th :td} (first %)) (block-canonical? %)) children)
+
+        :details
+        (and (seq children)
+          (let [head (first children)]
+            (and (vector? head) (= :summary (first head)) (block-canonical? head)))
+          (every? block-canonical? (rest children)))
+
+        :summary
+        (every? inline-canonical? children)
+
+        false))))
+
+(defn canonical?
+  "Cheap structural check: `x` is already a canonical `[:ir & blocks]`
+   AST. When true, `(->ast x)` is the identity (returns the same
+   object), so downstream caches keyed on `System/identityHashCode`
+   hit cleanly across repeated render passes."
+  [x]
+  (and (vector? x)
+    (= :ir (first x))
+    (>= (count x) 2)
+    (map? (nth x 1))
+    (every? block-canonical? (drop 2 x))))
+
 (defn ->ast
   "Soft-normalize any answer-input value into canonical [:ir & blocks].
    Pure, total, idempotent.
 
-   See namespace docstring for the canonical-form invariants this
-   establishes."
+   Identity-preserving: when the input already satisfies the canonical
+   invariants (`canonical?`), the return value is the SAME object.
+   This keeps downstream `System/identityHashCode` caches
+   (`format-answer-with-thinking-data`, etc.) hot across repeated
+   render passes — walker output is computed once per canonical IR
+   identity, not once per equal-but-fresh allocation.
+
+   See namespace docstring for the full canonical-form invariants."
   [v]
-  (let [raw-children
-        (cond
-          (and (vector? v) (= :ir (first v)))
-          (let [v (ensure-attrs v)] (drop 2 v))
+  (if (canonical? v)
+    v   ;; identical preserved — cache-friendliness fast path
+    (let [raw-children
+          (cond
+            (and (vector? v) (= :ir (first v)))
+            (let [v (ensure-attrs v)] (drop 2 v))
 
-          (string? v)
-          [v]
+            (string? v)
+            [v]
 
-          (and (vector? v) (keyword? (first v)))
-          [v]
+            (and (vector? v) (keyword? (first v)))
+            [v]
 
-          (sequential? v)
-          (seq v)
+            (sequential? v)
+            (seq v)
 
-          :else
-          [[:code {:lang "edn"} (pr-str v)]])
+            :else
+            [[:code {:lang "edn"} (pr-str v)]])
 
-        coerced
-        (mapv (fn [x]
-                (cond
-                  (string? x)                              x
-                  (and (vector? x) (keyword? (first x)))   x
-                  (nil? x)                                  nil
-                  :else                                     [:code {:lang "edn"} (pr-str x)]))
-          raw-children)]
-    (into [:ir {}] (canon-blocks-strict (filter some? coerced)))))
+          coerced
+          (mapv (fn [x]
+                  (cond
+                    (string? x)                              x
+                    (and (vector? x) (keyword? (first x)))   x
+                    (nil? x)                                  nil
+                    :else                                     [:code {:lang "edn"} (pr-str x)]))
+            raw-children)]
+      (into [:ir {}] (canon-blocks-strict (filter some? coerced))))))
 
 (defn ir?
   "True when x is a canonical [:ir ...] AST."
