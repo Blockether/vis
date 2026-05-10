@@ -315,12 +315,18 @@ per flavor. ~400 LOC total across the three walkers.
 - Lazy resolution at emit time (var deref) so dev-time redefs are picked
   up.
 
-#### A.4 Telegram chokepoint + answer-AST + attachments
+#### A.4 Telegram + TUI chokepoints + answer-AST + Telegram attachments
 
 - `vis-channel-telegram/.../bot.clj` registers
   `:channel/messages-renderer-fn #'render-for-telegram`.
 - `tg/send-message!` looks up the registered fn, calls it, ships result
   with `parse_mode HTML`.
+- `vis-channel-tui/.../core.clj` registers
+  `:channel/messages-renderer-fn #'render-for-tui` where
+  `(render-for-tui [input opts] (md/render input :markdown opts))`.
+- `vis-channel-tui/.../screen.clj` screen-emit boundary calls the
+  registered fn instead of any inline rendering. Identifies the boundary
+  by reading where messages currently get appended to the transcript pane.
 - `bot.clj/handle-user-text!` reads
   `(db-turn-answer-ast (:turn-id result))`, passes to renderer; renderer
   output is the HTML string for the bubble.
@@ -450,17 +456,19 @@ Tests:
 
 ---
 
-### Phase D — TUI through registry (own PR, deferred)
+### Phase D removed — TUI chokepoint folded into Phase A
 
-Scope:
+TUI registry wiring is no longer a separate phase. It ships in Phase A:
 - TUI extension (`vis-channel-tui`) registers
-  `(fn [input opts] (md/render input :plain opts))`.
-- TUI's screen-emit boundary uses the registered fn instead of inline
-  rendering.
-- No new flavors. `:plain` is enough for v1.
-
-Future PR (separate): introduce `:tui-styled` flavor returning
-Lanterna styled-segment vectors. Out of scope for D.
+  `:channel/messages-renderer-fn (fn [input opts] (md/render input :markdown opts))`
+  in `vis-channel-tui/.../core.clj`.
+- TUI's screen-emit boundary in
+  `vis-channel-tui/.../screen.clj` calls the registered fn instead of
+  inline rendering. (TUIs in modern terminals render markdown reasonably
+  via `:markdown` flavor; explicit `:tui-styled` styled-segment renderer
+  remains future work.)
+- Falls under Phase A's atomic-PR umbrella so the chokepoint contract is
+  exercised by both consumers from day one.
 
 ---
 
@@ -501,10 +509,12 @@ Lanterna styled-segment vectors. Out of scope for D.
 
 ## 6. Sequencing & merge order
 
-1. **PR A** (this plan §3 Phase A). Foundation. Atomic.
-2. **PR B** depends on A merged. Streaming + cancel.
+1. **PR A** (this plan §3 Phase A). Foundation — includes both Telegram
+   AND TUI chokepoints wired through `:channel/messages-renderer-fn`.
+   Atomic.
+2. **PR B** depends on A merged. Streaming + cancel (Telegram only).
 3. **PR C** depends on B merged. Voice.
-4. **PR D** depends on A merged (independent of B/C). TUI registry wiring.
+4. _(was Phase D)_ TUI registry wiring is in PR A; no separate PR.
 
 ---
 
