@@ -49,14 +49,39 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-(s/def ::success? boolean?)
-(s/def ::result any?)
-(s/def ::rendered string?)
+;; Forward declare — `op-tag` is defined ~2000 lines below in the
+;; op-classification section, but `envelope-of` (in this section)
+;; needs to call it. Sorting defs in dependency order would push
+;; the entire envelope/constructor section below the registration
+;; table, burying the canonical envelope contract under registration
+;; minutiae. The declare is the cleaner exception per AGENTS.md S4.
+(declare op-tag)
 
-(s/def ::op keyword?)
-(s/def ::started-at-ms integer?)
-(s/def ::finished-at-ms integer?)
-(s/def ::duration-ms nat-int?)
+;; ============================================================
+;; Tool-result envelope spec (PLAN.md §2.1, atomic Phase 4)
+;;
+;; The old `::info` map (which lived inside an outer wrapper of
+;; {:success? :result :info :error}) is REPLACED by a flat
+;; envelope. Every metadata field lives under the `op/*`
+;; namespace; `:result` (the actual SCI eval value) stays as a
+;; plain unkeyed entry per PLAN §2.3 and is NOT in the spec
+;; (its shape is `any?`).
+;;
+;; Old shape (deleted):
+;;   {:success? bool :result <v>
+;;    :info {:op kw :started-at-ms ... :duration-ms ...}
+;;    :error {:type :message :trace [<frames>]}}
+;;
+;; New shape (this PR):
+;;   {:result <v>                 ; outer, plain key, NOT in spec
+;;    :op/symbol  :v/cat
+;;    :op/tag     :op.tag/observation
+;;    :op/success? true
+;;    :op/error   nil
+;;    :op/stdout  ""
+;;    :op/stderr  ""
+;;    :op/metadata {:paths [...] :duration-ms 5 ...}}
+;; ============================================================
 
 (s/def ::sym symbol?)
 (s/def ::alias symbol?)
@@ -82,36 +107,49 @@
 (s/def ::hash-sha256 (s/nilable (s/and string? #(= 64 (count %)))))
 (s/def ::source (s/keys :req-un [::paths ::mtime-max ::hash-sha256]))
 
-(s/def ::info
+;; ---- envelope leaf specs (op/*) ----
+(s/def :op/symbol     keyword?)        ; e.g. :v/cat ; nil for raw user code
+(s/def :op/tag        keyword?)        ; #{:op.tag/observation :op.tag/action}
+(s/def :op/success?   boolean?)
+(s/def :op/stdout     (s/nilable string?))
+(s/def :op/stderr     (s/nilable string?))
+(s/def :op/metadata   (s/map-of keyword? any?))   ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
+
+;; ---- structured op/error sub-specs ----
+(s/def :op.error/message  (s/and string? #(not (str/blank? %))))
+(s/def :op.error/trace    (s/nilable string?))
+(s/def :op.error/hint     (s/nilable (s/and string? #(not (str/blank? %)))))
+
+(s/def :op.error.block/source     string?)
+(s/def :op.error.block/row        pos-int?)
+(s/def :op.error.block/col        pos-int?)
+(s/def :op.error.block/opened-loc (s/nilable
+                                    (s/keys :req-un [:op.error.block/row
+                                                     :op.error.block/col])))
+(s/def :op.error.block/phase      #{:edamame/parse :sci/analysis :sci/runtime :preflight})
+
+(s/def :op.error/block (s/nilable
+                         (s/keys :req-un [:op.error.block/source :op.error.block/phase]
+                           :opt-un [:op.error.block/row
+                                    :op.error.block/col
+                                    :op.error.block/opened-loc])))
+
+(s/def :op/error
+  (s/nilable
+    (s/keys :req-un [:op.error/message]
+      :opt-un [:op.error/trace :op.error/hint :op.error/block])))
+
+;; ---- the envelope ----
+(s/def :op/envelope
   (s/and
-    (s/keys :req-un [::op ::started-at-ms ::finished-at-ms ::duration-ms]
-      :opt-un [::tool ::source])
-    #(or (not (contains? % :extension))
-       (s/valid? ::tool-result-extension (:extension %)))))
-
-(s/def ::type (s/and string? #(not (str/blank? %))))
-(s/def ::message string?)
-(s/def ::class string?)
-(s/def ::method string?)
-(s/def ::file string?)
-(s/def ::line pos-int?)
-(s/def ::origin #{:user-code :tool :runtime :library})
-(s/def ::trace-frame (s/keys :req-un [::class ::method ::file ::origin]
-                       :opt-un [::line]))
-(s/def ::trace (s/coll-of ::trace-frame :kind vector?))
-(s/def ::error-map (s/keys :req-un [::type ::message ::trace]))
-(s/def ::error (s/nilable ::error-map))
-
-(s/def ::tool-result-base
-  (s/keys :req-un [::success? ::result ::info ::error]))
-
-(s/def ::tool-result
-  (s/and
-    ::tool-result-base
-    (fn [{:keys [success? error]}]
+    (s/keys :opt-un [:op/symbol :op/tag :op/success? :op/error
+                     :op/stdout :op/stderr :op/metadata])
+    (fn [{:op/keys [success? error]}]
       (if success?
         (nil? error)
-        (some? error)))))
+        (or (nil? success?) (some? error))))))
+
+(s/def ::result any?)                     ; raw SCI eval value, outside the envelope
 
 ;; ---------------------------------------------------------------------------
 ;; Sink-entry shape (one entry per tool-symbol call inside a top-level form)
@@ -225,8 +263,10 @@
   entry)
 
 (defn tool-result?
+  "True when `x` is a valid `:op/envelope` map. Renamed conceptually;
+   name kept for caller compatibility."
   [x]
-  (s/valid? ::tool-result x))
+  (s/valid? :op/envelope x))
 
 (defn assert-tool-result!
   [x]
@@ -234,63 +274,43 @@
     (throw (ex-info "Invalid tool result"
              {:type :vis/invalid-tool-result
               :value x
-              :explain (s/explain-data ::tool-result x)})))
+              :explain (s/explain-data :op/envelope x)})))
   x)
 
-(defn normalize-info
-  "Fill the common info clock keys when absent.
+(defn normalize-metadata
+  "Fill timing keys on the `:op/metadata` map when absent. Returns a
+   metadata map (NOT an envelope). The envelope wraps the result of
+   this fn under `:op/metadata`.
 
-   Required by the tool-result contract:
-     :op
-     :started-at-ms
-     :finished-at-ms
-     :duration-ms
+   Timing keys (always populated):
+     :started-at-ms  :finished-at-ms  :duration-ms
 
-   Callers may pass richer maps (tool / extension / source metadata);
-   this helper only normalizes the shared timing surface."
-  [info]
-  (let [info (or info {})
+   Callers may pass richer maps (tool / extension / source metadata,
+   tool-specific :paths / :hit-count / :command); this helper only
+   normalizes the shared timing surface."
+  [metadata]
+  (let [metadata (or metadata {})
         t          (now-ms)
-        started    (long (or (:started-at-ms info) t))
-        finished   (long (or (:finished-at-ms info) t))
-        duration   (long (or (:duration-ms info)
+        started    (long (or (:started-at-ms metadata) t))
+        finished   (long (or (:finished-at-ms metadata) t))
+        duration   (long (or (:duration-ms metadata)
                            (max 0 (- finished started))))]
-    (assoc info
+    (assoc metadata
       :started-at-ms started
       :finished-at-ms finished
       :duration-ms duration)))
 
-(defn merge-info
-  "Merge `extra` into an already-valid tool-result envelope, re-check
-   the contract, and preserve metadata. Used by the extension wrapper
-   to stamp extension/source info onto tool-like returns."
-  [tool-result extra]
-  (let [meta*  (meta tool-result)
-        merged (-> tool-result
-                 (update :info #(merge (or % {}) extra))
+(defn merge-into-metadata
+  "Merge `extra` into the `:op/metadata` slot of an already-valid
+   envelope, re-check the contract, and preserve metadata. Used by the
+   extension wrapper to stamp extension/source info onto tool-like
+   returns."
+  [envelope extra]
+  (let [meta*  (meta envelope)
+        merged (-> envelope
+                 (update :op/metadata #(merge (or % {}) extra))
                  assert-tool-result!)]
     (with-meta merged meta*)))
-
-(defn- frame-origin
-  [^StackTraceElement frame]
-  (let [class-name (.getClassName frame)
-        file-name  (.getFileName frame)
-        method     (.getMethodName frame)]
-    (cond
-      (or (= class-name "user")
-        (= class-name "sandbox")
-        (= file-name "iteration")
-        (= method "anonymous-fn"))
-      :user-code
-
-      (str/starts-with? class-name "com.blockether.vis.ext.")
-      :tool
-
-      (str/starts-with? class-name "com.blockether.vis.internal.")
-      :runtime
-
-      :else
-      :library)))
 
 (defn- noisy-frame?
   [^StackTraceElement frame]
@@ -305,42 +325,79 @@
       (str/starts-with? class-name "jdk.internal.reflect."))))
 
 (defn normalize-trace
+  "Convert a Throwable's stack into the preformatted, babashka-style
+   single-string `::op.error/trace` per PLAN §2.7. First line is
+   `<ClassName>: <message>` (matches babashka error-handler header);
+   subsequent lines are filtered frames (one per line, `class/method
+   - file:line`).
+
+   Frames in `noisy-frame?` (sci.impl, clojure.lang reflection,
+   java.lang.reflect, jdk.internal.reflect) are dropped to keep the
+   trace LLM-friendly. Capped at `max-trace-frames` lines after the
+   header."
   [^Throwable t]
-  (->> (.getStackTrace t)
-    (remove noisy-frame?)
-    (map (fn [^StackTraceElement frame]
-           (cond-> {:class  (.getClassName frame)
-                    :method (.getMethodName frame)
-                    :file   (or (.getFileName frame) "unknown")
-                    :origin (frame-origin frame)}
-             (pos? (.getLineNumber frame))
-             (assoc :line (.getLineNumber frame)))))
-    (take max-trace-frames)
-    vec))
+  (let [header  (str (.getName (class t)) ": " (or (ex-message t) ""))
+        frames  (->> (.getStackTrace t)
+                  (remove noisy-frame?)
+                  (take max-trace-frames)
+                  (map (fn [^StackTraceElement f]
+                         (str (.getClassName f) "/" (.getMethodName f)
+                           " - " (or (.getFileName f) "unknown")
+                           (when (pos? (.getLineNumber f))
+                             (str ":" (.getLineNumber f)))))))]
+    (str/join "\n" (cons header frames))))
 
 (defn normalize-error
+  "Build a structured `:op/error` map from a Throwable per PLAN §2.1.
+   Required `:message`; optional `:trace` (preformatted string
+   including header + frames). `:hint` and `:block` are tool/engine-
+   supplied via `merge-into-metadata` style updates after
+   construction."
   [^Throwable t]
-  {:type    (.getName (class t))
-   :message (or (ex-message t) "")
-   :trace   (normalize-trace t)})
+  (let [trace (normalize-trace t)]
+    (cond-> {:message (or (not-empty (ex-message t))
+                        (.getName (class t)))}
+      (not (str/blank? trace))
+      (assoc :trace trace))))
+
+(defn- envelope-of
+  "Internal builder used by both `success` and `failure`. Accepts
+   only the canonical shape:
+
+     :result   raw SCI eval value (outside the envelope spec)
+     :op       op symbol e.g. :v/cat (nil for raw user code)
+     :metadata free-form aux map: :tool, :extension, :source,
+               :paths, :hit-count, :command, :started-at-ms,
+               :finished-at-ms, :duration-ms, etc.
+     :stdout   captured stdout string (optional)
+     :stderr   captured stderr string (optional)
+
+   Produces a flat `:op/envelope` map."
+  [{:keys [result op metadata stdout stderr]} success? error]
+  (cond-> {:result      result
+           :op/success? success?
+           :op/error    error
+           :op/metadata (normalize-metadata metadata)}
+    op             (assoc :op/symbol op
+                     :op/tag    (op-tag op))
+    (some? stdout) (assoc :op/stdout stdout)
+    (some? stderr) (assoc :op/stderr stderr)
+    :always        assert-tool-result!))
 
 (defn success
-  [{:keys [result info]}]
-  (-> {:success?   true
-       :result     result
-       :info (normalize-info info)
-       :error      nil}
-    assert-tool-result!))
+  "Construct a successful tool-result envelope. See `envelope-of` for
+   the call shape. Returns a `:op/envelope` map (flat, all metadata
+   under `op/*`)."
+  [args]
+  (envelope-of args true nil))
 
 (defn failure
-  [{:keys [result info error throwable]}]
-  (let [err (or error
-              (when throwable (normalize-error throwable)))]
-    (-> {:success?   false
-         :result     result
-         :info (normalize-info info)
-         :error      err}
-      assert-tool-result!)))
+  "Construct a failing tool-result envelope. `:throwable` auto-builds
+   an `:op/error` map via `normalize-error`. Explicit `:error`
+   (already structured) wins."
+  [{:keys [error throwable] :as args}]
+  (let [err (or error (when throwable (normalize-error throwable)))]
+    (envelope-of args false err)))
 
 ;; =============================================================================
 ;; Symbol entry spec
@@ -1153,7 +1210,7 @@
   [ext sym-entry result]
   (if (tool-result? result)
     (let [ext-prov (extension-info ext)]
-      (merge-info
+      (merge-into-metadata
         result
         {:tool      (cond-> {:sym  (:ext.symbol/sym sym-entry)
                              :call (tool-call-name ext (:ext.symbol/sym sym-entry))}
@@ -1212,7 +1269,7 @@
           form-str (sink-form-string ext sym-entry args)
           sym-name (:ext.symbol/sym sym-entry)
           base     {:position position :form form-str}]
-      (if (:success? result)
+      (if (:op/success? result)
         (let [unwrapped (:result result)
               j-text   (safely-render (:ext.symbol/journal-render-fn sym-entry)
                          sym-name ":journal-render-fn" unwrapped)
@@ -1220,7 +1277,7 @@
                          sym-name ":channel-render-fn" unwrapped)]
           (record-journal-entry! (assoc base :success? true :result j-text :error nil))
           (record-channel-entry! (assoc base :success? true :result c-text :error nil)))
-        (let [err (:error result)]
+        (let [err (:op/error result)]
           (record-journal-entry! (assoc base :success? false :result nil :error err))
           (record-channel-entry! (assoc base :success? false :result nil :error err))))))
   result)
@@ -1998,8 +2055,11 @@
 
 (defn- tool-result-symbol-entry
   [tool-result]
-  (let [ext-ns (get-in tool-result [:info :extension :namespace])
-        sym    (get-in tool-result [:info :tool :sym])]
+  ;; Per PLAN §2.1, `:tool` and `:extension` blobs live under
+  ;; `:op/metadata` on the new flat envelope (they were inside
+  ;; `:info` on the old shape).
+  (let [ext-ns (get-in tool-result [:op/metadata :extension :namespace])
+        sym    (get-in tool-result [:op/metadata :tool :sym])]
     (when (and ext-ns sym)
       (some (fn [entry]
               (when (= sym (:ext.symbol/sym entry))
@@ -2007,37 +2067,53 @@
         (:ext/symbols (get @extension-registry ext-ns))))))
 
 (defn- format-error-fields
-  "Pull the `:type` and `:message` out of a tool-result `:error` map for
-   the engine's default error formatters. Falls back to the value itself
-   when shapes drift (defensive: never throw inside a renderer)."
+  "Pull the `:message` (and an inferred `:type` from the trace's first
+   line) out of an `:op/error` map for the engine's default error
+   formatters. Defensive: never throws inside a renderer.
+
+   Per PLAN §2.1 the new structured error has `:message :trace :hint
+   :block`. The `:type` historical field is no longer carried; the
+   underlying exception class name appears as the prefix of the
+   preformatted `:trace` first line
+   (e.g. `clojure.lang.ArityException: ...`)."
   [error]
-  (cond
-    (map? error) {:type    (or (:type error) "unknown")
-                  :message (or (:message error) "")}
-    (instance? Throwable error) {:type    (.getName (class error))
-                                 :message (or (.getMessage ^Throwable error) "")}
-    :else {:type "unknown" :message (str error)}))
+  (let [type-from-trace (fn [trace]
+                          (when-let [first-line (some-> trace
+                                                  (str/split #"\n" 2)
+                                                  first)]
+                            (when (str/includes? first-line ": ")
+                              (first (str/split first-line #": " 2)))))]
+    (cond
+      (map? error)
+      {:type    (or (type-from-trace (:trace error)) "error")
+       :message (or (:message error) "")}
+      (instance? Throwable error)
+      {:type    (.getName (class error))
+       :message (or (.getMessage ^Throwable error) "")}
+      :else
+      {:type "unknown" :message (str error)})))
 
 (defn default-journal-error-text
-  "Engine fallback used by `journal-render-tool-result` when a symbol does
-   NOT declare `:ext.symbol/journal-render-error-fn`. Single-line, terse.
-   `:type` + `:message` only; full trace lives in transcript DB."
+  "Engine fallback used by `journal-render-tool-result` when a symbol
+   does NOT declare `:ext.symbol/journal-render-error-fn`. Single-line,
+   terse. `:type` + `:message` only; full trace lives in transcript
+   DB."
   ([tool-result] (default-journal-error-text tool-result nil))
   ([tool-result _ctx]
-   (let [op   (get-in tool-result [:info :op])
-         {:keys [type message]} (format-error-fields (:error tool-result))]
+   (let [op   (:op/symbol tool-result)
+         {:keys [type message]} (format-error-fields (:op/error tool-result))]
      (str "ERROR "
        (when op (str ":op " op " "))
        ":type " type
        " :message " (pr-str message)))))
 
 (defn default-channel-error-text
-  "Engine fallback used by `channel-render-tool-result` when a symbol does
-   NOT declare `:ext.symbol/channel-render-error-fn`. Markdown one-liner;
-   uniform across every channel."
+  "Engine fallback used by `channel-render-tool-result` when a symbol
+   does NOT declare `:ext.symbol/channel-render-error-fn`. Markdown
+   one-liner; uniform across every channel."
   [tool-result]
-  (let [op   (get-in tool-result [:info :op])
-        {:keys [type message]} (format-error-fields (:error tool-result))]
+  (let [op   (:op/symbol tool-result)
+        {:keys [type message]} (format-error-fields (:op/error tool-result))]
     (str "**ERROR**"
       (when op (str " `" op "`"))
       " — " type
@@ -2059,7 +2135,7 @@
   "Render a tool-result for the model-facing `<journal>` block.
 
    Dispatch:
-     - On (:success? false): call the symbol's `:journal-render-error-fn`
+     - On (:op/success? false): call the symbol's `:journal-render-error-fn`
        if present, otherwise `default-journal-error-text`.
      - On success: unwrap `(:result tool-result)` and call the symbol's
        MANDATORY `:journal-render-fn` with that single arg.
@@ -2067,7 +2143,7 @@
    Renderers must return strings; non-string returns throw."
   [tool-result]
   (let [sym-entry (tool-result-symbol-entry tool-result)]
-    (if-not (:success? tool-result)
+    (if-not (:op/success? tool-result)
       (let [error-fn (or (:ext.symbol/journal-render-error-fn sym-entry)
                        default-journal-error-text)
             rendered (error-fn tool-result)]
@@ -2076,7 +2152,7 @@
         (when-not render-fn
           (throw (AssertionError.
                    (str "No :journal-render-fn for tool result with op "
-                     (pr-str (get-in tool-result [:info :op]))))))
+                     (pr-str (:op/symbol tool-result))))))
         (assert-string! (render-fn (:result tool-result))
           ":journal-render-fn" sym-entry)))))
 
@@ -2086,7 +2162,7 @@
    channel adapter's responsibility, not the symbol renderer's.
 
    Dispatch:
-     - On (:success? false): call the symbol's `:channel-render-error-fn`
+     - On (:op/success? false): call the symbol's `:channel-render-error-fn`
        if present, otherwise `default-channel-error-text`.
      - On success: unwrap `(:result tool-result)` and call the symbol's
        MANDATORY `:channel-render-fn` with the unwrapped result.
@@ -2094,7 +2170,7 @@
    Renderers must return strings; non-string returns throw."
   [tool-result]
   (let [sym-entry (tool-result-symbol-entry tool-result)]
-    (if-not (:success? tool-result)
+    (if-not (:op/success? tool-result)
       (let [error-fn (or (:ext.symbol/channel-render-error-fn sym-entry)
                        default-channel-error-text)
             rendered (error-fn tool-result)]

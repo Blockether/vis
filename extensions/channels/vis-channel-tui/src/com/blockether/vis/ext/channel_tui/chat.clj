@@ -43,31 +43,48 @@
   ([text timestamp]
    {:role :user :text text :timestamp timestamp}))
 
-(defn render-answer
-  "Render any answer-input (string | Hiccup | [:ir ...] | seq) to the
-   plain-markdown string the TUI bubble renderer expects.
+(def empty-ir
+  "Canonical empty IR — used as the placeholder when an answer slot is
+   absent (e.g. resumed turns whose answer column is NULL because the
+   turn never finished). Never feed `nil` or `\"\"` to the TUI render
+   chokepoints; lift to `empty-ir` instead."
+  [:ir {}])
 
-   The TUI channel registers `:channel/messages-renderer-fn` (see
-   `core/render-for-tui`); we look it up lazily to avoid a load-time
-   cycle with `core.clj`. If the channel isn't registered yet (e.g.
-   unit tests that load `chat.clj` in isolation) we fall back to the
-   shared `vis/render` markdown flavor. Either way, no `pr-str` of
-   IR vectors ever reaches the bubble."
-  [text]
-  (let [renderer (some-> (vis/channel-by-id :tui) :channel/messages-renderer-fn)]
-    (cond
-      (nil? text)    ""
-      renderer       (renderer text)
-      :else          (vis/render text :markdown))))
+(defn render-answer
+  "Render canonical answer-IR (`[:ir & nodes]`) to the markdown string
+   the TUI bubble renderer expects.
+
+   STRICT input contract: IR only. `nil` is accepted as a convenience
+   for unfilled answer slots and renders as the empty string. Strings,
+   Hiccup vectors, EDN values, etc. are programmer bugs — the IR
+   boundary lives upstream (loop emits IR, persistence stores Nippy IR,
+   resumed turns thaw to IR). Anything else throws with the offending
+   type so the bug surfaces at the wrong call site, not silently in the
+   bubble.
+
+   Dispatches via the TUI channel's `:channel/messages-renderer-fn`
+   (`core/render-for-tui`) when registered; otherwise falls back to
+   `vis/render :markdown` directly so unit tests that load this ns in
+   isolation still work. Both paths share the same strict IR contract."
+  [ir]
+  (cond
+    (nil? ir) ""
+    (not (and (vector? ir) (= :ir (first ir))))
+    (throw (ex-info "chat/render-answer requires canonical [:ir ...] input; build IR upstream, do not pass raw text"
+             {:got-type (some-> ir class .getName)
+              :got-preview (let [s (pr-str ir)]
+                             (subs s 0 (min 200 (count s))))}))
+    :else
+    (let [renderer (some-> (vis/channel-by-id :tui) :channel/messages-renderer-fn)]
+      (if renderer (renderer ir) (vis/render ir :markdown)))))
 
 (defn assistant-message
   "Create a structured assistant (vis) message with timestamp.
-   Non-string `text` is routed through the registered TUI renderer
-   (`:channel/messages-renderer-fn`) so IR / Hiccup answers render
-   as markdown instead of `pr-str`'d EDN."
-  ([text] (assistant-message text (java.util.Date.)))
-  ([text timestamp]
-   {:role :assistant :text (render-answer text) :timestamp timestamp}))
+   STRICT: `ir` must be canonical `[:ir & nodes]` (or nil for empty
+   placeholder). Non-IR inputs throw via `render-answer`."
+  ([ir] (assistant-message ir (java.util.Date.)))
+  ([ir timestamp]
+   {:role :assistant :text (render-answer ir) :timestamp timestamp}))
 
 (defn- rebuild-history
   "Reconstruct message history from DB for a conversation.
@@ -80,7 +97,11 @@
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
-                        answer    (or (:answer q) "")
+                        ;; `:answer` from `db-list-conversation-turns` is the
+                        ;; thawed Nippy IR `[:ir & nodes]` (see
+                        ;; conversation_turn_state.answer in V1 schema). NULL
+                        ;; on running / never-finished turns → lift to empty IR.
+                        answer    (or (:answer q) empty-ir)
                         model     (:model q)
                         tokens    (cond-> {}
                                     (:input-tokens q)     (assoc :input (:input-tokens q))
@@ -103,8 +124,10 @@
                         ;; `(answer "...")` call as code above it.
                         turn-iterations (vis/db-list-conversation-turn-iterations d (:id q))
                         last-iteration-id (some-> (last turn-iterations) :id)
-                        produced-answer? (and (some? answer)
-                                           (not (str/blank? (str answer))))
+                        ;; Empty IR is `[:ir {}]` (count 2 — just root tag
+                        ;; + attrs); a real answer adds at least one block.
+                        produced-answer? (and (vector? answer) (= :ir (first answer))
+                                           (> (count answer) 2))
                         trace (into []
                                 (map (fn [it]
                                        (let [all-exprs   (vec (vis/db-list-iteration-blocks d (:id it)))
@@ -189,9 +212,9 @@
                         ;; the same way live cancellations render -
                         ;; on bare terminal-bg, no bubble-wide fill.
                         cancelled? (= :cancelled (:prior-outcome q))
-                        assistant-message (cond-> (assistant-message (or answer "") (or (:created-at q) (java.util.Date.)))
+                        assistant-message (cond-> (assistant-message answer (or (:created-at q) (java.util.Date.)))
                                             true       (assoc :conversation-turn-id (:id q))
-                                            (seq trace) (assoc :trace trace :raw-answer (or answer ""))
+                                            (seq trace) (assoc :trace trace :raw-answer answer)
                                             model  (assoc :model model)
                                             iteration-count (assoc :iteration-count iteration-count)
                                             duration-ms (assoc :duration-ms duration-ms)
@@ -268,19 +291,23 @@
                        (seq workspace)   (merge workspace))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
-           ;; Plain text - the bubble renderer dims it via the
-           ;; `:status :cancelled` field we propagate below, NOT via
-           ;; markdown italic. Underscores would just render as
-           ;; literal underscores once markdown processing is
-           ;; skipped for cancelled messages.
+           ;; `(:answer result)` from `vis/send!` is canonical IR
+           ;; (`[:ir & nodes]`). Synthetic placeholders for cancelled /
+           ;; empty turns are lifted into IR here so `render-answer` /
+           ;; the channel chokepoint never see raw strings.
            answer (or (:answer result)
-                    (when cancelled? "Cancelled by user.")
-                    "[empty response]")
+                    (cond
+                      cancelled? [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                      :else      [:ir {} [:p {} [:span {} "[empty response]"]]]))
            model  (or (get-in result [:cost :model]) (get result :model))
            tokens (:tokens result)
            cost   (:cost result)
            confidence (:confidence result)]
-       (cond-> {:answer          (render-answer answer)
+       ;; Return canonical IR on `:answer`. The bubble layer (state
+           ;; event handler -> assistant-message -> render-answer) is
+           ;; the single rendering chokepoint. Pre-rendering here would
+           ;; force every consumer back through string parsing.
+       (cond-> {:answer          answer
                 :iteration-count (or (:iteration-count result) 1)
                 :duration-ms     (:duration-ms result)
                 :conversation-turn-id        (:conversation-turn-id result)}

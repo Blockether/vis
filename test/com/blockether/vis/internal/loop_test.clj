@@ -22,7 +22,7 @@
                    :stderr ""
                    :error nil})]
       (expect (= :raw-var (:result result)))
-      (expect (nil? (:rendering-kind result)))))
+      (expect (nil? (:role result)))))
 
   (it "is a pure pass-through: errors and timeouts are not modified"
     (let [err  {:result nil :error {:msg "boom"} :stdout "" :stderr ""}

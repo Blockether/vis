@@ -144,7 +144,7 @@
                  :iteration 1
                  :blocks-by-iteration [[1 {:blocks [{:code "(def xd \"XDDD\")"
                                                      :result "XDDD"
-                                                     :rendering-kind :vis/silent}
+                                                     :role :nudge}
                                                     {:code "(+ 1 1)"
                                                      :result 2}]}]]})]
       (expect (str/includes? out "<journal>"))

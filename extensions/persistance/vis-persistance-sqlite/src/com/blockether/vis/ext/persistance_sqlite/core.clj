@@ -965,16 +965,25 @@
 ;; Iteration - iteration table
 ;; =============================================================================
 
-(defn- normalize-rendering-kind
+(defn- normalize-role
+  "Per PLAN §1.3: 4-value block role enum.
+   Maps the block's `:role` (or legacy `:rendering-kind`) to one of
+   `#{:answer :nudge :tool :thinking}`. Errors are derived from
+   `:op/success?` on the envelope, NOT a separate `:vis/error` role.
+
+   Legacy value mapping (for blobs persisted before the cutover):
+     :vis/answer                  -> :answer
+     :vis/tool, :vis/sci          -> :tool
+     :vis/system, :vis/diagnostic -> :nudge
+     :vis/error                   -> derived from :error -> default :tool"
   [exec]
-  (cond
-    (:error exec) :vis/error
-    (= :vis/system (:rendering-kind exec)) :vis/system
-    (= :vis/tool (:rendering-kind exec)) :vis/tool
-    (= :vis/answer (:rendering-kind exec)) :vis/answer
-    (= :vis/diagnostic (:rendering-kind exec)) :vis/diagnostic
-    (keyword? (:rendering-kind exec)) (:rendering-kind exec)
-    :else :vis/sci))
+  (let [v (or (:role exec) (:rendering-kind exec))]
+    (case v
+      (:answer :tool :nudge :thinking) v
+      :vis/answer                      :answer
+      (:vis/tool :vis/sci)             :tool
+      (:vis/system :vis/diagnostic)    :nudge
+      :tool)))
 
 (defn- prepare-blocks-blob
   "Encode the per-iteration code-block log as one Nippy-frozen vec."
@@ -985,7 +994,7 @@
         (fn [pos exec]
           (cond-> {:idx pos
                    :code (:code exec)
-                   :rendering-kind (normalize-rendering-kind exec)}
+                   :role (normalize-role exec)}
             (some? (:comment exec))            (assoc :comment (:comment exec))
             (some? (:result exec))             (assoc :result (freeze-safe (:result exec)))
             (seq (:journal exec))              (assoc :journal (freeze-safe (:journal exec)))

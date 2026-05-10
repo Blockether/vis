@@ -379,7 +379,7 @@
              :iteration-id   (:id iteration)
              :iteration      (:position iteration)
              :form-position  (inc (long (block-index block)))
-             :rendering-kind (:rendering-kind block)
+             :role (:role block)
              :status         (event-status error true (:timeout? block))
              :duration-ms    (or (:duration-ms block) 0)
              :code           (:code block)}

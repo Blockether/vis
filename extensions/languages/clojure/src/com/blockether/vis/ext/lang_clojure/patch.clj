@@ -110,13 +110,13 @@
   [{:keys [op path kind result info]}]
   (let [t (now-ms)]
     (extension/success
-      {:result     result
-       :info (merge {:op             op
-                     :target         (path->target path kind)
-                     :started-at-ms  t
-                     :finished-at-ms t
-                     :duration-ms    0}
-               info)})))
+      {:result   result
+       :op       op
+       :metadata (merge {:target         (path->target path kind)
+                         :started-at-ms  t
+                         :finished-at-ms t
+                         :duration-ms    0}
+                   info)})))
 
 (defn- first-edit-path
   [args]
@@ -133,13 +133,13 @@
     (let [path (first-edit-path args)
           t    (now-ms)]
       {:result (extension/failure
-                 {:result     nil
-                  :info {:op             op
-                         :target         (path->target path :file)
-                         :started-at-ms  t
-                         :finished-at-ms t
-                         :duration-ms    0}
-                  :throwable  err})})))
+                 {:result    nil
+                  :op        op
+                  :metadata  {:target         (path->target path :file)
+                              :started-at-ms  t
+                              :finished-at-ms t
+                              :duration-ms    0}
+                  :throwable err})})))
 
 ;; =============================================================================
 ;; Zipper patching

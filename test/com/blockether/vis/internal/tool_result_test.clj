@@ -38,10 +38,10 @@
     (expect (throws? clojure.lang.ExceptionInfo
               #(tr/assert-tool-result! {:success? true :result 1}))))
 
-  (it "merge-info re-validates the envelope without presentation carriers"
+  (it "merge-into-metadata re-validates the envelope without presentation carriers"
     (let [base (tr/success {:result true
                             :info {:op :exists?}})
-          out  (tr/merge-info base
+          out  (tr/merge-into-metadata base
                  {:tool {:sym 'exists?
                          :call "v/exists?"}
                   :extension {:namespace 'com.acme.ext.fs}
@@ -66,7 +66,7 @@
                              :ext/symbols [sym]})]
       (try
         (tr/register-extension! ext)
-        (let [out (tr/merge-info
+        (let [out (tr/merge-into-metadata
                     (tr/success {:result true :info {:op :v/exists?}})
                     {:tool {:sym 'exists? :call "fs/exists?"}
                      :extension {:namespace 'com.acme.ext.fs}
@@ -90,7 +90,7 @@
       (try
         (tr/register-extension! ext)
         (let [ex  (try (throw (ex-info "boom" {})) (catch Throwable t t))
-              out (tr/merge-info
+              out (tr/merge-into-metadata
                     (tr/failure {:result nil :info {:op :n/noisy} :throwable ex})
                     {:tool {:sym 'noisy :call "n/noisy"}
                      :extension {:namespace 'com.acme.ext.noisy}

@@ -187,7 +187,9 @@
                           :render-version 0})
     (state/dispatch [:select-workspace-tab-index 1])
     (state/dispatch [:init-conversation {:id "tab-c"} []])
-    (state/dispatch [:message-received :main "main answer" {:model "m"}])
+    (state/dispatch [:message-received :main
+                     [:ir {} [:p {} [:span {} "main answer"]]]
+                     {:model "m"}])
     (expect (= {:id "tab-c"} (:conversation @state/app-db)))
     (expect (= [] (:messages @state/app-db)))
     (state/dispatch [:select-workspace-tab-index 0])
@@ -624,7 +626,9 @@
         (let [sent-db      (:db (send-message-fn db [:send-message text]))
               reset-db     (reset-input-fn sent-db [:reset-input])
               restored-db  (message-received-fn reset-db
-                             [:message-received "Cancelled by user." {:status :cancelled}])]
+                             [:message-received
+                              [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                              {:status :cancelled}])]
           (expect (= initial-messages (:messages restored-db)))
           (expect (= text (input/input->text (:input restored-db))))
           (expect (= {1 {:id 1 :content "hello"}} (:pastes restored-db)))
@@ -664,7 +668,8 @@
               ;; before the user pressed Esc.
               traced-db   (set-progress-fn reset-db [:set-progress-iterations fake-trace])
               restored-db (message-received-fn traced-db
-                            [:message-received "Cancelled by user."
+                            [:message-received
+                             [:ir {} [:p {} [:span {} "Cancelled by user."]]]
                              {:status :cancelled :iteration-count 2}])
               cancelled-bubble (last (:messages restored-db))]
           ;; The cancelled bubble survives, carries the trace, and

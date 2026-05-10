@@ -119,13 +119,13 @@
   "Tool invocation presentation map. Required keys (any one is
    enough): `:op`, `:tool`, or `:label`. Optional: `:args`, `:result`,
    `:stdout`, `:stderr`, `:error`, `:duration-ms`, `:status`,
-   `:info`, `:ref`, `:rendering-kind`. The renderer formats the
+   `:info`, `:ref`, `:role`. The renderer formats the
    call as a self-describing details block."
   [opts]
   (merge {:vis.presentation/kind :vis.presentation/tool-call}
     (select-keys opts [:op :tool :label :args :result :stdout :stderr
                        :error :duration-ms :status :info :ref
-                       :rendering-kind])))
+                       :role])))
 
 (defn system-call
   "System-call event (vis/system, vis/needs-input, vis/answer with
@@ -134,7 +134,7 @@
   [opts]
   (merge {:vis.presentation/kind :vis.presentation/system-call}
     (select-keys opts [:op :tool :label :result :error :status
-                       :rendering-kind :info :ref :body :args])))
+                       :role :info :ref :body :args])))
 
 (defn provider-error
   "Provider/schema/parse failure presentation map. Required:

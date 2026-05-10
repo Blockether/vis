@@ -4755,10 +4755,27 @@
    (some->> (markdown->entries text max-w mode opts)
      (mapv :line))))
 
+(defn- answer->markdown-string
+  "Render the bubble's answer payload to a markdown string the layout
+   pipeline can chew on. STRICT: `answer` is canonical IR
+   (`[:ir & nodes]`) or nil. Strings are a programmer bug at this
+   layer — the IR boundary is upstream."
+  ^String [answer]
+  (cond
+    (nil? answer) ""
+    (and (vector? answer) (= :ir (first answer))) (vis/render answer :markdown)
+    :else
+    (throw (ex-info "format-answer-with-thinking-data: answer must be canonical [:ir ...] (or nil)"
+             {:got-type (some-> answer class .getName)
+              :got-preview (let [s (pr-str answer)]
+                             (subs s 0 (min 200 (count s))))}))))
+
 (defn format-answer-with-thinking-data*
   "Uncached implementation. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with
-   the already-wrapped lines."
+   the already-wrapped lines.
+
+   STRICT: `answer` is canonical answer-IR (`[:ir & nodes]`) or nil."
   [answer trace bubble-w settings confidence cancelled? opts]
   (let [content-w               (max 10 (- bubble-w 4))
         fill-w                  (max 1 (dec content-w))
@@ -4779,7 +4796,7 @@
                                                  :conversation-turn-id (:conversation-turn-id opts)
                                                  :preview-default-lines (get settings :preview/default-lines 4)})))
                                     (collapse-repeated-error-runs trace)))
-        answer-str              (or answer "")
+        answer-str              (answer->markdown-string answer)
         fa-label                (label-text "final answer")
         conf-str                (when confidence (str " / " (name confidence)))
         full-label              (str fa-label (or conf-str ""))
