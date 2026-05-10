@@ -252,9 +252,16 @@
 (defn project-message
   "Apply the same `:text` projection `screen/apply-settings` used to
    apply, but for ONE message at a time so the virtual layer can call
-   it lazily per-bubble. Hits the same caches `apply-settings` did."
+   it lazily per-bubble. Hits the same caches `apply-settings` did.
+
+   `:tail-lines` opt (when present, positive long) routes the IR
+   walker through `ir-tui/ir->lines-tail` so only the LAST tail-lines
+   styled lines are produced - O(visible-tail) instead of O(body).
+   Used by `layout` for the auto-scrolled tail-pinned bubble where
+   the user only sees the bottom of the message. See A3 in
+   autoresearch."
   ([message ^long bubble-w settings] (project-message message bubble-w settings nil))
-  ([message ^long bubble-w settings {:keys [conversation-id detail-expansions]}]
+  ([message ^long bubble-w settings {:keys [conversation-id detail-expansions tail-lines]}]
    (let [show-timestamps? (boolean (get settings :show-timestamps false))
          strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))]
      (cond
@@ -264,9 +271,10 @@
                (:ir message) (:traces message) bubble-w settings
                (:confidence message)
                (= :cancelled (:status message))
-               {:conversation-id      conversation-id
-                :conversation-turn-id (turn-identity message)
-                :detail-expansions   detail-expansions})]
+               (cond-> {:conversation-id      conversation-id
+                        :conversation-turn-id (turn-identity message)
+                        :detail-expansions   detail-expansions}
+                 tail-lines (assoc :tail-lines tail-lines)))]
          (-> message
            (assoc :text text :prewrapped-lines lines :line-meta line-meta)
            strip-ts))
@@ -281,9 +289,10 @@
              {:keys [text lines line-meta]}
              (render/format-answer-markdown-data
                ir bubble-w
-               {:conversation-id      conversation-id
-                :conversation-turn-id (turn-identity message)
-                :detail-expansions   detail-expansions})]
+               (cond-> {:conversation-id      conversation-id
+                        :conversation-turn-id (turn-identity message)
+                        :detail-expansions   detail-expansions}
+                 tail-lines (assoc :tail-lines tail-lines)))]
          (-> message
            (assoc :text text :prewrapped-lines lines :line-meta line-meta)
            strip-ts))
@@ -409,9 +418,24 @@
                            :text text
                            :prewrapped-lines lines
                            :line-meta line-meta))
-                       (project-message m bubble-w settings
-                         {:conversation-id conversation-id
-                          :detail-expansions detail-expansions}))
+                       ;; Tail-pinned bubble fast path: when the user
+                       ;; is at auto-bottom (scroll == nil) and this is
+                       ;; the last message, only the bottom inner-h
+                       ;; lines of it are visible. Render only the
+                       ;; last 2*inner-h lines via `ir->lines-tail`
+                       ;; (back-walks blocks; output is byte-identical
+                       ;; to (take-last N (full-walk))). Once the user
+                       ;; scrolls, scroll becomes a number and we fall
+                       ;; back to full render so they can see the
+                       ;; whole bubble. See A3 / A4 in autoresearch.
+                       (let [tail-pinned? (and (nil? scroll)
+                                            (= i (long (dec n))))
+                             tail-n       (when tail-pinned?
+                                            (long (* 2 inner-h)))]
+                         (project-message m bubble-w settings
+                           (cond-> {:conversation-id conversation-id
+                                    :detail-expansions detail-expansions}
+                             tail-n (assoc :tail-lines tail-n)))))
                   pm (with-turn-separator pm messages settings i)
                   real-h (long (render/bubble-height pm bubble-w))]
               ;; Pin the real height in the sticky cache for the
