@@ -688,7 +688,26 @@
     ;; regions, which is the correct fallback - the previous frame
     ;; matches what's actually still on the user's screen up to this
     ;; instant.
-    (let [screen-cells (capture-screen-cells screen cols rows)
+    ;; capture-screen-cells walks cols×rows of the back buffer and
+    ;; allocates a 2D string vec. On a 200×50 terminal that's 10000
+    ;; .getBackCharacter calls + ~10000 string allocations per frame.
+    ;; The cells are ONLY consumed by the mouse-selection clipboard
+    ;; copy path - we read `(:screen-cells (:layout db))` to extract
+    ;; the text under the user's drag. When no selection is active,
+    ;; nothing reads them. Skip the capture in that case.
+    ;;
+    ;; Safety: when a fresh selection starts (mouse press), the next
+    ;; full render is dispatched (the input handler bumps
+    ;; render-version on every mouse event); :mouse-selection becomes
+    ;; non-nil in db, so we DO capture this frame. Selection content
+    ;; uses these cells. The only edge case is a press+release within
+    ;; the SAME render frame, which can't happen because each event
+    ;; bumps version and the render loop processes one version at a
+    ;; time. See autoresearch A11.
+    (let [need-cells?  (or (:mouse-selection db)
+                         (boolean (get-in db [:search :active?])))
+          screen-cells (when need-cells?
+                         (capture-screen-cells screen cols rows))
           viewport     {:viewport-top text-top
                         :eff-scroll   (:eff-scroll layout)}]
       (when-let [sel (:mouse-selection db)]
