@@ -750,6 +750,20 @@
                           :progress-extra progress-extra}
                          {:conversation-id   (get-in db [:conversation :id])
                           :detail-expansions (:detail-expansions db)})
+        ;; In-conversation search consumes its pending scroll target
+        ;; here — the layout's `:offsets` vec gives the Y of any
+        ;; message-idx in O(1). One-shot: clear pending so subsequent
+        ;; frames don't re-scroll.
+        _              (when-let [target (:scroll-to-message-pending db)]
+                         (let [offsets (:offsets layout)
+                               total-h (long (:total-h layout))
+                               max-s   (max 0 (- total-h inner-h))]
+                           (when (and (vector? offsets)
+                                   (< target (count offsets)))
+                             (state/dispatch [:set-scroll
+                                              (max 0 (min max-s
+                                                       (long (nth offsets target))))]))
+                           (state/dispatch [:scroll-to-message-resolved])))
         live-idx       (live-loading-idx messages loading?)
         live-entry     (first (filter #(= live-idx (:idx %)) (:visible layout)))
         old-entry      (first (filter #(= live-idx (:idx %)) (:visible previous-layout)))]
@@ -1964,6 +1978,62 @@
 
                                    :switch-conversation
                                    (show-conversations!)
+
+                                   :search-in-conversation
+                                   ;; In-conversation full-text search.
+                                   ;; Walks `(:messages @app-db)`, projects each
+                                   ;; bubble's `:ir` to plain text via
+                                   ;; `vis/search-text`, finds case-insensitive
+                                   ;; substring matches, presents the hit list
+                                   ;; for the user to pick. Picked hit dispatches
+                                   ;; `:scroll-to-message` so the painter scrolls
+                                   ;; that bubble into view.
+                                   (let [initial (or args "")
+                                         query (or (with-dialog-lock
+                                                     #(dlg/text-input-dialog! screen
+                                                        "Find in conversation" "Query"
+                                                        :initial initial
+                                                        :body "Substring match (case-insensitive). Esc to cancel."))
+                                                 "")]
+                                     (when-not (str/blank? query)
+                                       (let [needle  (str/lower-case query)
+                                             messages (vec (or (:messages @state/app-db) []))
+                                             hits (vec
+                                                    (keep-indexed
+                                                      (fn [idx m]
+                                                        (let [haystack (or (vis/search-text (:ir m)) "")
+                                                              h-lower  (str/lower-case haystack)
+                                                              pos      (.indexOf ^String h-lower ^String needle)]
+                                                          (when (>= pos 0)
+                                                            (let [start (max 0 (- pos 24))
+                                                                  end   (min (count haystack) (+ pos (count needle) 48))
+                                                                  pre   (if (pos? start) "…" "")
+                                                                  suf   (if (< end (count haystack)) "…" "")
+                                                                  snip  (str pre (subs haystack start end) suf)]
+                                                              {:msg-idx idx
+                                                               :role    (or (:role m) :assistant)
+                                                               :preview (str/replace snip #"\s+" " ")}))))
+                                                      messages))]
+                                         (cond
+                                           (empty? hits)
+                                           (vis/notify! (str "No matches for: " query)
+                                             :level :warn :ttl-ms copy-success-ttl-ms)
+
+                                           :else
+                                           (let [pick-options (mapv (fn [h]
+                                                                      {:label (format "#%d %-9s %s"
+                                                                                (inc (:msg-idx h))
+                                                                                (name (:role h))
+                                                                                (:preview h))
+                                                                       :msg-idx (:msg-idx h)})
+                                                                hits)
+                                                 picked (with-dialog-lock
+                                                          #(dlg/select-dialog! screen
+                                                             (str (count hits) " match" (when (not= 1 (count hits)) "es")
+                                                               " for \"" query "\"")
+                                                             pick-options))]
+                                             (when-let [target (:msg-idx picked)]
+                                               (state/dispatch [:scroll-to-message target])))))))
 
                                    :providers
                                    (when-let [c (with-dialog-lock
