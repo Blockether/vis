@@ -23,7 +23,7 @@
 ;; Messages are immutable once added to app-db (`update :messages
 ;; conj` only ever appends, the loading placeholder is replaced as a
 ;; whole map by `:message-received`), so identity-hash-code on the
-;; `:answer` / `:trace` / `:text` slot is a valid stand-in for
+;; `:answer` / `:traces` / `:text` slot is a valid stand-in for
 ;; content.
 ;;
 ;; Eviction is proper LRU via `LinkedHashMap` in access-order mode:
@@ -3215,14 +3215,19 @@
                           (mapcat
                             (fn [thinking-text]
                               (when (and (string? thinking-text) (not (str/blank? thinking-text)))
-                                (or (seq (markdown->entries thinking-text fill-w :thinking
-                                           {:conversation-id      conversation-id
-                                            :conversation-turn-id conversation-turn-id
-                                            :detail-expansions   detail-expansions
-                                            :iteration-number    iteration-number
-                                            :section             :thinking}))
-                                  (mapv #(line-entry (str thinking-marker %))
-                                    (wrap-text thinking-text fill-w))))))
+                                ;; Thinking text comes from the LLM as plain markdown; lift to
+                                ;; canonical IR via `vis/text->ir`, then walker over it in
+                                ;; `:thinking` mode (uses the iter-header-bg / italic marker set).
+                                (let [ir (vis/text->ir thinking-text)]
+                                  (or (seq (ir-tui/ir->entries ir fill-w
+                                             {:mode                 :thinking
+                                              :conversation-id      conversation-id
+                                              :conversation-turn-id conversation-turn-id
+                                              :detail-expansions   detail-expansions
+                                              :iteration-number    iteration-number
+                                              :section             :thinking}))
+                                    (mapv #(line-entry (str thinking-marker %))
+                                      (wrap-text thinking-text fill-w)))))))
                           texts)]
             (when (seq entries)
               ;; When live-preview? is true, `live-preview-thinking-text`

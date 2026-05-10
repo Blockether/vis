@@ -943,7 +943,7 @@
 (defn- restore-editor-only
   "Repopulate the editor without touching `:messages`. Used when
    a turn was cancelled AFTER iterations produced visible work -
-   we keep the cancelled bubble (with its `:trace`) in the
+   we keep the cancelled bubble (with its `:traces`) in the
    transcript so the user can see what the agent did, AND we
    refill the input box with the original prompt so they can
    tweak/resubmit without retyping. The conversation-turn row,
@@ -1244,7 +1244,7 @@
                     response (-> (chat/assistant-message answer-ir)
                                (cond-> conversation-turn-id                (assoc :conversation-turn-id conversation-turn-id)
                                  (seq trace)
-                                 (assoc :trace trace :ir answer-ir)
+                                 (assoc :traces trace :ir answer-ir)
                                  (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                                  model      (assoc :model model)
                                  iteration-count (assoc :iteration-count iteration-count)

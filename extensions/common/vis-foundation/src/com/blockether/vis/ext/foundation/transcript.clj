@@ -747,10 +747,12 @@
 
 (defn- prompt-report-heading
   [data report-title]
-  (let [{:keys [id channel provider model created-at]} (:conversation data)
+  ;; Per PLAN §2.9 + §5.1: header NEVER prints the conversation UUID.
+  ;; Title is the user-facing identifier; UUID stays programmatic-only
+  ;; (introspection callers read `:id` directly from the data map).
+  (let [{:keys [channel provider model created-at]} (:conversation data)
         conv-title (get-in data [:conversation :title])]
-    (str "# " report-title " - conversation `" id "`\n\n"
-      "- **Title:** " (or conv-title "-") "\n"
+    (str "# " report-title (when conv-title (str " - " conv-title)) "\n\n"
       "- **Channel:** " (or (some-> channel name) "-") "\n"
       "- **Provider/model:** " (or (some-> provider name) "-") "/" (or model "-") "\n"
       "- **Created:** " (or created-at "-") "\n\n")))
@@ -863,11 +865,14 @@
 
 (defn- render-turn-block
   [include-prompts?
-   {:keys [id user-request status prior-outcome provider model
+   {:keys [id position user-request status prior-outcome provider model
            iteration-count failure-count
            iterations tokens cost-usd answer]}]
+  ;; Per PLAN §2.9 + §5.1: render `position` (int), never `:id` (uuid).
+  ;; UUID stays in introspection responses for programmatic callers,
+  ;; never in user/LLM-facing surfaces.
   (str
-    "### Turn `" id "`\n"
+    "### Turn " (or position "?") "\n"
     "- **User request:** " (one-line user-request) "\n"
     "- **Status:** " (or (some-> status name) "-")
     (when prior-outcome (str " (" (name prior-outcome) ")")) "\n"
@@ -892,7 +897,7 @@
 
 (defn- render-header [{:keys [conversation totals]}]
   (str
-    "# Diagnostic report - conversation `" (:id conversation) "`\n"
+    "# Diagnostic report" (when-let [t (:title conversation)] (str " - " t)) "\n"
     "\n"
     "- **Title:** "    (or (:title    conversation) "-") "\n"
     "- **Channel:** "  (or (some-> (:channel conversation) name) "-") "\n"
@@ -916,7 +921,7 @@
 
 (defn- render-dialog-md
   [{:keys [conversation dialog]}]
-  (str "# Dialog - conversation `" (:id conversation) "`\n\n"
+  (str "# Dialog" (when-let [t (:title conversation)] (str " - " t)) "\n\n"
     (if (seq dialog)
       (apply str (map render-dialog-message dialog))
       "_No dialog messages._\n")))

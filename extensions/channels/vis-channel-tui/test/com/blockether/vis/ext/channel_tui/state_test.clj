@@ -682,7 +682,7 @@
           ;; reports its status so the painter dims it.
           (expect (= :assistant (:role cancelled-bubble)))
           (expect (= :cancelled (:status cancelled-bubble)))
-          (expect (= fake-trace (:trace cancelled-bubble)))
+          (expect (= fake-trace (:traces cancelled-bubble)))
           (expect (= "Cancelled by user." (:text cancelled-bubble)))
           ;; And the editor is refilled for easy retry.
           (expect (= text (input/input->text (:input restored-db))))
