@@ -142,6 +142,7 @@ CREATE TABLE conversation_turn_state (
   status                       TEXT NOT NULL
                                CHECK (status IN ('running', 'done', 'error', 'interrupted')),
   metadata                     TEXT,        -- JSON-encoded object/string
+  answer                       BLOB,        -- Nippy-frozen IR `[:ir & nodes]`. NULL while running.
   -- Per-turn final outcome, derived at turn end. Lets the next turn's
   -- handover digest say "previous turn complete | cancelled | error"
   -- without scanning every iteration. Set by the iteration
@@ -519,10 +520,6 @@ CREATE TABLE extension_aggregate (
 
   metadata                    TEXT,            -- JSON-encoded object/string
   content                     BLOB,            -- Nippy-encoded extension-owned payload
-  scope_key                   TEXT NOT NULL CHECK (trim(scope_key) <> ''),
-                                -- Runtime-normalized singleton key for upsert.
-                                -- Examples: global, conversation-soul:<id>,
-                                -- iteration:<id>, block:<iteration-id>:<index>.
 
   conversation_soul_id        TEXT
                               REFERENCES conversation_soul(id) ON DELETE CASCADE,
@@ -538,6 +535,27 @@ CREATE TABLE extension_aggregate (
   iteration_block_id          TEXT CHECK (
                                 iteration_block_id IS NULL OR trim(iteration_block_id) <> ''
                               ),
+
+  -- Singleton dedupe key for upsert. Generated from FK scope columns
+  -- because SQLite treats NULLs in UNIQUE as distinct, which would
+  -- otherwise defeat ON CONFLICT against the FK columns directly.
+  scope_key                   TEXT GENERATED ALWAYS AS (
+                                CASE
+                                  WHEN iteration_block_id IS NOT NULL
+                                    THEN 'block-id:' || iteration_block_id
+                                  WHEN iteration_id IS NOT NULL AND iteration_block_index IS NOT NULL
+                                    THEN 'block:' || iteration_id || ':' || iteration_block_index
+                                  WHEN iteration_id IS NOT NULL
+                                    THEN 'iteration:' || iteration_id
+                                  WHEN conversation_turn_state_id IS NOT NULL
+                                    THEN 'turn-state:' || conversation_turn_state_id
+                                  WHEN conversation_state_id IS NOT NULL
+                                    THEN 'conversation-state:' || conversation_state_id
+                                  WHEN conversation_soul_id IS NOT NULL
+                                    THEN 'conversation-soul:' || conversation_soul_id
+                                  ELSE 'global'
+                                END
+                              ) STORED NOT NULL,
 
   created_at                  INTEGER NOT NULL,
   updated_at                  INTEGER NOT NULL CHECK (updated_at >= created_at),

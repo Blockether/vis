@@ -901,8 +901,7 @@
                :set    (cond-> {:status (normalize-status (or status :done))
                                 :metadata (->json
                                             (merge (<-json (:metadata state))
-                                              (cond-> {:answer          (or answer "")
-                                                       :iteration-count (or iteration-count 0)
+                                              (cond-> {:iteration-count (or iteration-count 0)
                                                        :duration-ms     (or duration-ms 0)}
                                                 (:input tokens)     (assoc :input-tokens     (long (:input tokens)))
                                                 (:output tokens)    (assoc :output-tokens    (long (:output tokens)))
@@ -913,6 +912,7 @@
                                                 (:model cost)       (assoc :model            (str (:model cost))))))}
                          (:model cost)    (assoc :llm_root_model (str (:model cost)))
                          (:provider cost) (assoc :llm_root_provider (name (->kw (:provider cost))))
+                         (some? answer)   (assoc :answer (->blob answer))
                          prior-outcome    (assoc :prior_outcome (name prior-outcome)))
                :where  [:= :id (:id state)]})))))))
 
@@ -1151,7 +1151,7 @@
              :status                (->kw-back (:status row))
              :created-at            (->date (:soul_created_at row))}
       (:title row)              (assoc :name (:title row))
-      (:answer state-meta)           (assoc :answer (:answer state-meta))
+      (:answer row)             (assoc :answer (<-blob (:answer row)))
       (:iteration-count state-meta)  (assoc :iteration-count (:iteration-count state-meta))
       (:duration-ms state-meta)      (assoc :duration-ms (:duration-ms state-meta))
       provider                  (assoc :provider (->kw-back provider))
@@ -1168,6 +1168,7 @@
   {:select [:qs.id :qs.conversation_state_id :qs.position :qs.title :qs.user_request
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
             :qst.status :qst.metadata [:qst.metadata :state_metadata]
+            :qst.answer
             :qst.llm_root_provider :qst.llm_root_model]
    :from   [[:conversation_turn_soul :qs]]
    :join   [[:conversation_turn_state :qst] [:= :qst.conversation_turn_soul_id :qs.id]]
@@ -1477,20 +1478,22 @@
          []))
      [])))
 
-(defn db-turn-history [db-info conversation-id]
+(defn db-turn-history
+  "Per-turn history rows for a conversation. `:answer` is canonical
+   `[:ir & nodes]` IR (or nil). Channels render via their registered
+   `:channel/messages-renderer-fn` - persistence stays flavor-free."
+  [db-info conversation-id]
   (let [turns (db-list-conversation-turns db-info conversation-id)]
     (mapv (fn [idx turn]
             (let [turn-ref        (:id turn)
-                  iteration-count (count (db-list-conversation-turn-iterations db-info turn-ref))
-                  answer-raw      (or (:answer turn) "")
-                  answer-preview  (subs answer-raw 0 (min (count answer-raw) 160))]
-              {:turn-pos             idx
-               :conversation-turn-id (:id turn)
-               :created-at           (:created-at turn)
-               :user-request         (:user-request turn)
-               :status               (:status turn)
-               :iteration-count      iteration-count
-               :answer-preview       answer-preview}))
+                  iteration-count (count (db-list-conversation-turn-iterations db-info turn-ref))]
+              (cond-> {:turn-pos             idx
+                       :conversation-turn-id (:id turn)
+                       :created-at           (:created-at turn)
+                       :user-request         (:user-request turn)
+                       :status               (:status turn)
+                       :iteration-count      iteration-count}
+                (:answer turn) (assoc :answer (:answer turn)))))
       (range)
       turns)))
 
@@ -1507,20 +1510,6 @@
       (edn/read-string s)
       (catch Throwable _ s))))
 
-(defn- extension-scope-key
-  [{:keys [scope-key conversation-soul-id conversation-state-id
-           conversation-turn-state-id iteration-id iteration-block-index
-           iteration-block-id]}]
-  (cond
-    (seq (str scope-key)) scope-key
-    iteration-block-id (str "block-id:" iteration-block-id)
-    (and iteration-id (some? iteration-block-index)) (str "block:" iteration-id ":" iteration-block-index)
-    iteration-id (str "iteration:" iteration-id)
-    conversation-turn-state-id (str "turn-state:" conversation-turn-state-id)
-    conversation-state-id (str "conversation-state:" conversation-state-id)
-    conversation-soul-id (str "conversation-soul:" conversation-soul-id)
-    :else "global"))
-
 (defn- extension-aggregate-sql-row
   [opts id now]
   (let [row {:id                          id
@@ -1529,7 +1518,6 @@
              :kind                        (->edn-text (:kind opts))
              :metadata                    (->json (:metadata opts))
              :content                     (->blob (:content opts))
-             :scope_key                   (extension-scope-key opts)
              :conversation_soul_id        (some-> (:conversation-soul-id opts) ->ref)
              :conversation_state_id       (some-> (:conversation-state-id opts) ->ref)
              :conversation_turn_state_id  (some-> (:conversation-turn-state-id opts) ->ref)
@@ -1572,7 +1560,6 @@
        :aggregate-key aggregate-key
        :key           aggregate-key
        :kind          (<-edn-text (:kind row))
-       :scope-key     (:scope_key row)
        :scope         scope
        :metadata      (<-json (:metadata row))
        :content       (<-blob (:content row))
@@ -1586,7 +1573,6 @@
     (:extension-id opts)               (conj [:= :extension_id (str (:extension-id opts))])
     (contains? opts :aggregate-key)    (conj [:= :aggregate_key (->edn-text (:aggregate-key opts))])
     (contains? opts :kind)             (conj [:= :kind (->edn-text (:kind opts))])
-    (:scope-key opts)                  (conj [:= :scope_key (:scope-key opts)])
     (:conversation-soul-id opts)       (conj [:= :conversation_soul_id (->ref (:conversation-soul-id opts))])
     (:conversation-state-id opts)      (conj [:= :conversation_state_id (->ref (:conversation-state-id opts))])
     (:conversation-turn-state-id opts) (conj [:= :conversation_turn_state_id (->ref (:conversation-turn-state-id opts))])
@@ -1650,7 +1636,24 @@
                         [:= :extension_id (:extension_id row)]
                         [:= :aggregate_key (:aggregate_key row)]
                         [:= :kind (:kind row)]
-                        [:= :scope_key (:scope_key row)]]})))))))
+                        (if (:conversation_soul_id row)
+                          [:= :conversation_soul_id (:conversation_soul_id row)]
+                          [:is :conversation_soul_id nil])
+                        (if (:conversation_state_id row)
+                          [:= :conversation_state_id (:conversation_state_id row)]
+                          [:is :conversation_state_id nil])
+                        (if (:conversation_turn_state_id row)
+                          [:= :conversation_turn_state_id (:conversation_turn_state_id row)]
+                          [:is :conversation_turn_state_id nil])
+                        (if (:iteration_id row)
+                          [:= :iteration_id (:iteration_id row)]
+                          [:is :iteration_id nil])
+                        (if (:iteration_block_index row)
+                          [:= :iteration_block_index (:iteration_block_index row)]
+                          [:is :iteration_block_index nil])
+                        (if (:iteration_block_id row)
+                          [:= :iteration_block_id (:iteration_block_id row)]
+                          [:is :iteration_block_id nil])]})))))))
 
 (defn db-get-extension-aggregate
   [db-info opts]

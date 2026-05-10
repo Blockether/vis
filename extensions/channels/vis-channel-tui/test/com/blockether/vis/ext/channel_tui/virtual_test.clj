@@ -71,13 +71,10 @@
                               "read 20 lines")
                     :kind (if (= op :v/preview) :preview :tool)
                     :detail {:op op
-                             :op-class (case op
-                                         (:v/cat :z/locators) :op/read
-                                         :v/rg :op/search
-                                         :v/preview :op/preview
-                                         :v/patch :op/edit
-                                         :v/bash :op/shell
-                                         :op/meta)
+                             :op/tag (case op
+                                       (:v/cat :z/locators :v/rg :v/preview) :op.tag/observation
+                                       (:v/patch :v/bash) :op.tag/action
+                                       :op.tag/observation)
                              :presentation-kind (case op
                                                   (:v/cat :z/locators) :tool/read
                                                   :v/rg :tool/search

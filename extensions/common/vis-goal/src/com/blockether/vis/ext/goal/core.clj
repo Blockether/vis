@@ -4,11 +4,11 @@
    Stored as ONE singleton row per conversation soul in the
    `extension_aggregate` sidecar table:
 
-     extension_id   = \"com.blockether.vis.ext.goal.core\"
-     aggregate_key  = \"goal\"
-     kind           = \"goal-state\"
-     scope_key      = \"conversation-soul:<soul-id>\"   (one per soul)
-     content        = Nippy blob `{:objective :status :done-reason
+     extension_id          = \"com.blockether.vis.ext.goal.core\"
+     aggregate_key         = \"goal\"
+     kind                  = \"goal-state\"
+     conversation_soul_id  = <soul-id>                  (one per soul)
+     content               = Nippy blob `{:objective :status :done-reason
                                    :started-at-ms :paused-at-ms
                                    :total-paused-ms :set-by}`
 
@@ -70,8 +70,7 @@
   {:extension-id          EXTENSION_ID
    :aggregate-key         AGGREGATE_KEY
    :kind                  KIND
-   :conversation-soul-id  conv-id
-   :scope-key             (str "conversation-soul:" conv-id)})
+   :conversation-soul-id  conv-id})
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
@@ -300,9 +299,9 @@
 ;; iteration loop / TUI / slash dispatcher call our public Clojure
 ;; fns directly. We register the extension for two reasons:
 ;;
-;;   1. The extension_aggregate FK / scope_key contract requires a
-;;      registered extension id; using an unregistered id silently
-;;      stays out of `vis extensions list` output.
+;;   1. The extension_aggregate FK contract requires a registered
+;;      extension id; using an unregistered id silently stays out of
+;;      `vis extensions list` output.
 ;;   2. Future evolution (model-facing helpers gated behind a
 ;;      `[features] goals = true` flag) gets a natural home.
 ;; =============================================================================

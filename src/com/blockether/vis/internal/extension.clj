@@ -2348,102 +2348,100 @@
               cleared cleared)]
         with-reflinks))))
 
-(def op-classes
-  "Closed set of operation classes a tool can declare. The classification
-   names a USER-VISIBLE EFFECT, deliberately divorced from any rendering
-   concern (color, glyph, layout). Channels that want to color tools by
-   class look the class up themselves; the engine never carries
-   presentation in the tool envelope.
+(def op-tags
+  "Closed set of operation tags a tool can declare. The two values
+   map to the observation/action half of the OODA loop — see
+   PLAN.md §2.1. Renamed from `op-classes`; the prior 8-value
+   granular enum collapses into these two:
 
-     :op/read    pure observation: file/dir/source content out, no mutation.
-     :op/search  read-with-query semantics (regex, locator search). Logically a read.
-     :op/edit    in-place file mutation (patch, write).
-     :op/create  brings new path(s) into existence (mkdir, touch).
-     :op/delete  removes path(s) from the filesystem.
-     :op/move    relocates / copies path(s) (move, copy).
-     :op/shell   shells out (bash). Effect is undefined at the engine
-                 level; treat as side-effecting.
-     :op/meta    everything else: env queries, dry-run checks, registry
-                 introspection. Default class for unannotated tools."
-  #{:op/read :op/search :op/edit :op/create :op/delete :op/move :op/shell :op/meta})
+     :op.tag/observation   reads state without changing it — cat,
+                           ls, glob, exists?, locators, rg, env
+                           queries, registry lookups, AND post-action
+                           verification (./verify.sh, patch-check,
+                           parse-check). Verification distinguishes
+                           via ::op/success? on the envelope, not a
+                           separate tag.
 
-(def side-effect-op-classes
-  "Subset of `op-classes` whose calls cannot be observed in the
-   write-then-read SCI loop without an intervening journal step.
-   Iterations that combine any of these with `(answer ...)` are
-   rejected by `loop/code-entries-preflight`."
-  #{:op/edit :op/create :op/delete :op/move :op/shell})
+     :op.tag/action        mutates state — patch, write, append,
+                           mkdir, touch, delete, move, copy.
 
-(def ^:private op-keyword->class
-  "Canonical op-keyword -> op-class table. Tool envelopes carry an
+   Channels that want to color tools by tag look it up themselves;
+   the engine never carries presentation in the tool envelope."
+  #{:op.tag/observation :op.tag/action})
+
+(def ^:private op-keyword->tag
+  "Canonical op-keyword -> op-tag table. Tool envelopes carry an
    `:info :op` keyword (e.g. `:v/patch`); this is the engine-owned
-   classification of those op-keywords. Extensions register through
-   `register-op-class!` if they need additional entries; the table here
-   covers the in-tree foundation + lang-clojure tools."
+   classification. Extensions register through `register-op-tag!`
+   if they need additional entries; the table here covers the
+   in-tree foundation + lang-clojure tools.
+
+   Tag mapping per PLAN.md §2.11. Eight old granular values
+   (:op/read, :op/search, :op/edit, :op/create, :op/delete,
+   :op/move, :op/shell, :op/meta) collapsed into two."
   (atom
     {;; foundation editing (alias `v`)
-     :v/cat              :op/read
-     :v/ls               :op/read
-     :v/glob             :op/read
-     :v/exists?          :op/read
-     :v/rg               :op/search
-     :v/patch            :op/edit
-     :v/patch-check      :op/meta
-     :v/write            :op/edit
-     :v/append           :op/edit
-     :v/create-dirs      :op/create
-     :v/delete           :op/delete
-     :v/delete-if-exists :op/delete
-     :v/move             :op/move
-     :v/copy             :op/move
-     :v/bash             :op/shell
+     :v/cat              :op.tag/observation
+     :v/ls               :op.tag/observation
+     :v/glob             :op.tag/observation
+     :v/exists?          :op.tag/observation
+     :v/rg               :op.tag/observation
+     :v/patch            :op.tag/action
+     :v/patch-check      :op.tag/observation
+     :v/write            :op.tag/action
+     :v/append           :op.tag/action
+     :v/create-dirs      :op.tag/action
+     :v/delete           :op.tag/action
+     :v/delete-if-exists :op.tag/action
+     :v/move             :op.tag/action
+     :v/copy             :op.tag/action
+     ;; :v/bash classified at call site by its wrapper (read-only
+     ;; commands like `ls`/`cat`/`pwd` -> :observation; everything
+     ;; else -> :action). No registration-table entry; the bash
+     ;; wrapper overrides the safe :observation default.
      ;; lang-clojure (alias `z`)
-     :z/locators           :op/read
-     :z/symbols            :op/read
-     :z/locator-for-symbol :op/read
-     :z/patch              :op/edit
-     :z/patch-check        :op/meta
-     :z/repair-range       :op/edit
-     :z/repair-locator     :op/edit
-     :z/repair-file        :op/edit
+     :z/locators           :op.tag/observation
+     :z/symbols            :op.tag/observation
+     :z/locator-for-symbol :op.tag/observation
+     :z/patch              :op.tag/action
+     :z/patch-check        :op.tag/observation
+     :z/repair-range       :op.tag/action
+     :z/repair-locator     :op.tag/action
+     :z/repair-file        :op.tag/action
      ;; clojure.core mutators reachable through SCI sandbox
-     :spit                 :op/edit}))
+     :spit                 :op.tag/action}))
 
-(defn register-op-class!
-  "Register or override the op-class for `op-keyword` (e.g. `:my-ext/foo`).
-   `class` MUST be a member of `op-classes`. Idempotent."
-  [op-keyword class]
-  (when-not (contains? op-classes class)
+(defn register-op-tag!
+  "Register or override the op-tag for `op-keyword` (e.g. `:my-ext/foo`).
+   `tag` MUST be a member of `op-tags`. Idempotent."
+  [op-keyword tag]
+  (when-not (contains? op-tags tag)
     (anomaly/incorrect!
-      (str "register-op-class!: unknown class " (pr-str class)
-        "; must be one of " op-classes)
-      {:type :extension/unknown-op-class :class class :allowed op-classes}))
-  (swap! op-keyword->class assoc op-keyword class)
+      (str "register-op-tag!: unknown tag " (pr-str tag)
+        "; must be one of " op-tags)
+      {:type :extension/unknown-op-tag :tag tag :allowed op-tags}))
+  (swap! op-keyword->tag assoc op-keyword tag)
   op-keyword)
 
-(defn op-class-of
-  "Return the `:op/...` class for `op-keyword`. Defaults to `:op/meta`
-   for unknown ops so unannotated tools stay observable in the same
-   iteration as `(answer ...)` (read-only-by-default — the safer side
-   if the engine cannot prove side-effects)."
+(defn op-tag
+  "Return the `:op.tag/...` value for `op-keyword`. Defaults to
+   `:op.tag/observation` when the symbol is unregistered — the
+   safest classification (state observation, no side effect).
+   Renamed from `op-class-of`; old default `:op/meta` retired."
   [op-keyword]
-  (get @op-keyword->class op-keyword :op/meta))
-
-(defn side-effect-op?
-  "True when `op-keyword`'s class is in `side-effect-op-classes`."
-  [op-keyword]
-  (contains? side-effect-op-classes (op-class-of op-keyword)))
+  (get @op-keyword->tag op-keyword :op.tag/observation))
 
 (defn op-presentation
-  "Engine-owned metadata for a tool's `:op` keyword. Returned shape is
-   intentionally minimal — `{:op-class :op/...}` only. Tool wrappers
-   merge this into their `:info` map so downstream consumers (channels,
-   the iteration-loop preflight, telemetry) read one canonical key.
+  "Engine-owned metadata for a tool's `:op` keyword. Returned shape
+   is intentionally minimal — `{:op/tag :op.tag/...}` only. Tool
+   wrappers merge this into their `:info` map so downstream
+   consumers (channels, the iteration-loop preflight, telemetry)
+   read one canonical key.
 
    Presentation (color, glyph, layout) is NOT in here on purpose:
    it is a channel concern and lives under the channel that cares."
   [op]
-  {:op-class (op-class-of op)})
+  {:op/tag (op-tag op)})
 
 (defn registered-extensions-summary
   "Pure data view of the docs registry: returns

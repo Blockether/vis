@@ -100,7 +100,7 @@
           result  (extension/success
                     {:result {:hits [] :truncated-by :end-of-results}
                      :info {:op :any
-                            :op-class :op/search
+                            :op/tag :op.tag/observation
                             :color-role :tool-color/search
                             :spec {:any ["alpha" "beta"] :paths ["src"]}
                             :paths ["src"]
@@ -112,7 +112,7 @@
                               :result result
                               :stdout "" :stderr "" :execution-time-ms 5}))
       (let [detail (-> ((:get-timeline tracker)) first :result-details first)]
-        (is (= :op/search (:op-class detail)))
+        (is (= :op.tag/observation (:op/tag detail)))
         (is (= {:any ["alpha" "beta"] :paths ["src"]} (:spec detail)))
         (is (= ["src"] (:paths detail)))
         (is (= 0 (:hit-count detail)))))))

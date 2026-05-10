@@ -1,0 +1,151 @@
+[:ir
+ {}
+ [:h {:level 2} "Szczera ocena z/ — co testowałem, co działa, co nie"]
+ [:h {:level 3} "✅ Działa solidnie"]
+ [:p
+  {}
+  [:c {} "z/locators"]
+  " — główny koń roboczy. Z "
+  [:c {} ":source-contains"]
+  " i "
+  [:c {} ":symbol"]
+  " \n   znajduje nodes wiarygodnie. Znalazł "
+  [:c {} "send!"]
+  " w 5 miejscach, "
+  [:c {} "create!"]
+  " bez problemu."]
+ [:p
+  {}
+  [:c {} "z/symbols"]
+  " — zwraca wszystkie tokeny/symbole w pliku. Czytelny output z "
+  [:c {} ":span"]
+  ", "
+  [:c {} ":tag"]
+  ", "
+  [:c {} ":value"]
+  "."]
+ [:p
+  {}
+  [:c {} "z/patch-check"]
+  " — z parseowalnym formularzem działa idealnie. \n   "
+  [:c
+   {}
+   "(z/patch-check [{:path \"...\" :search \"(:refer-clojure :exclude [symbol])\" :replace \"...\"}])"]
+  " → "
+  [:c {} "{:valid? true, :matches 1}"]
+  "."]
+ [:p
+  {}
+  [:c {} "z/repair-range"]
+  " — naprawił zakres, "
+  [:c {} "{:changed? true, :parseable-after? true}"]
+  ". Parinfer pod maską."]
+ [:p
+  {}
+  [:c {} "z/diagnostics"]
+  " i "
+  [:c {} "z/clean-ns-plan"]
+  " — działają (zwróciły puste na czystym pliku, co jest poprawne)."]
+ [:h {:level 3} "❌ Zepsute / bezużyteczne"]
+ [:table
+  {}
+  [:tr {} [:th {} "Funkcja"] [:th {} "Problem"]]
+  [:tr
+   {}
+   [:td {} [:c {} "z/locator-for-symbol"]]
+   [:td
+    {}
+    "Zwraca 7x "
+    [:c {} "nil"]
+    " dla "
+    [:c {} "send!"]
+    " i "
+    [:c {} "create!"]
+    ". Zero diagnostyki błędu."]]
+  [:tr
+   {}
+   [:td {} [:c {} "z/locator-for-ref"]]
+   [:td
+    {}
+    "Arity error — "
+    [:c {} "Wrong number of args (2)"]
+    ". SCI alias nie zgadza się z implementacją."]]
+  [:tr
+   {}
+   [:td {} [:c {} "z/xref-analyze!"]]
+   [:td
+    {}
+    [:c
+     {}
+     "IllegalArgumentException: find not supported on type: String"]
+    ". Przyjmuję string path, w środku się wywala."]]
+  [:tr
+   {}
+   [:td {} [:c {} "z/who-calls"]]
+   [:td
+    {}
+    "To samo — "
+    [:c {} "find not supported on type: Symbol"]
+    "."]]
+  [:tr
+   {}
+   [:td {} [:c {} "z/context-for"]]
+   [:td
+    {}
+    "Nie error, ale "
+    [:c {} "{:definition nil, :callers [], :callees []}"]
+    " na publicznym symbolu. Bezużyteczne."]]
+  [:tr
+   {}
+   [:td {} [:c {} "z/calls-who"]]
+   [:td {} "Pusta tablica. Zero analizy."]]]
+ [:h {:level 3} "⚠️ Dziwne"]
+ [:p
+  {}
+  [:c {} "z/patch-check"]
+  " z "
+  [:c {} "(def send! lp/send!)"]
+  " rzucił parse error na "
+  [:em {} "samym pliku"]
+  " ("
+  [:c {} "Unmatched delimiter: ) at line 61, column 57"]
+  " — koniec ns-form). \n   Ten sam plik bez problemu przeszedł przez "
+  [:c {} "z/locators"]
+  " i inny "
+  [:c {} "z/patch-check"]
+  ". \n   Rewrite-clj ma problemy z niektórymi ścieżkami kodu."]
+ [:h {:level 3} "🎯 Podsumowanie"]
+ [:p
+  {}
+  [:strong {} "Structured navigation + patching = dobry i użyteczny."]]
+ [:p
+  {}
+  "Lokatory z "
+  [:c {} ":source-contains"]
+  " i "
+  [:c {} ":symbol"]
+  " są moim głównym sposobem na znalezienie \n   celu. Patch z parseowalnym formularzem jest wiarygodny. "
+  [:c {} "patch-check"]
+  " jako dry-run to \n   must-have i działa."]
+ [:p {} [:strong {} "Xref / semantic analysis = martwy kod."]]
+ [:p
+  {}
+  "Półtora xref API rzuca wyjątki. "
+  [:c {} "locator-for-symbol"]
+  " zwraca same nile. \n   Warstwa semantyczna nie istnieje w praktyce. Na razie ignoruję ją i polegam na "
+  [:c {} "v/rg"]
+  " + "
+  [:c {} "z/locators"]
+  " do nawigacji po kodzie."]
+ [:p
+  {}
+  [:strong {} "Moja obiekcja:"]
+  " Promowanie "
+  [:c {} "z/locator-for-symbol"]
+  " i "
+  [:c {} "z/who-calls"]
+  " w docs/AGENTS.md jako \n   primary discovery path jest wprowadzające w błąd — one nie działają. \n   Docs powinien kierować do "
+  [:c {} "z/locators {:source-contains ...}"]
+  " i "
+  [:c {} "z/symbols"]
+  " jako primary, i oznaczyć xref API jako eksperymentalne/niedziałające."]]
