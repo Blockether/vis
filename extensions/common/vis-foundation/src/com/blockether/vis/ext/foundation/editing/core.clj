@@ -43,7 +43,6 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.markdown :as md]
    [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import
    (java.io File InputStream Reader Writer)
@@ -998,6 +997,16 @@
         "\n...<+" (- (count s) journal-render-chars) " chars>")
       s)))
 
+;; Inline markdown string-builder helpers (replaced the v/ DSL).
+(defn- md-code       ^String [s] (str "`" s "`"))
+(defn- md-code-block ^String [lang body] (str "```" (or lang "") "\n" body "\n```"))
+(defn- md-p          ^String [& parts]
+  (str/join " " (filter some? (map str parts))))
+(defn- md-join       ^String [& parts]
+  (str/join "\n\n" (filter some? (map str parts))))
+(defn- md-ul         ^String [items]
+  (str/join "\n" (map #(str "- " %) (filter some? items))))
+
 (defn- render-edn-block
   ([value]
    (render-edn-block :channel value))
@@ -1005,7 +1014,7 @@
    (let [text (bounded-render-text (pr-str value))]
      (case surface
        :journal text
-       (md/code-block "edn" text)))))
+       (md-code-block "edn" text)))))
 
 (defn- tree-entry-line
   [depth {:keys [name path type size] :as entry}]
@@ -1085,9 +1094,9 @@
   [result]
   (let [{:keys [path lines]} result
         body (numbered-line-block (inc (:offset result)) (vec lines))]
-    (md/join
-      (md/p "Read" (md/code path) "—" (count lines) "line(s).")
-      (md/code-block "text" (bounded-render-text body)))))
+    (md-join
+      (md-p "Read" (md-code path) "—" (count lines) "line(s).")
+      (md-code-block "text" (bounded-render-text body)))))
 
 (defn- journal-render-ls
   [result]
@@ -1097,7 +1106,7 @@
 
 (defn- channel-render-ls
   [result]
-  (md/p "Directory tree of" (md/code (:path result)) "-"
+  (md-p "Directory tree of" (md-code (:path result)) "-"
     (count (:children result)) "top-level entries."))
 
 (defn- journal-render-rg
@@ -1118,11 +1127,11 @@
 (defn- channel-render-rg
   [result]
   (let [hits (or (:hits result) [])]
-    (md/join
-      (md/p "Searched —" (count hits) "hit(s), truncated-by"
-        (md/code (name (or (:truncated-by result) :none))) ".")
+    (md-join
+      (md-p "Searched —" (count hits) "hit(s), truncated-by"
+        (md-code (name (or (:truncated-by result) :none))) ".")
       (when (seq hits)
-        (md/code-block "text"
+        (md-code-block "text"
           (bounded-render-text
             (str/join "\n"
               (map (fn [{:keys [path line text]}]
@@ -1142,9 +1151,9 @@
   ;; renderers. Show the per-file paths; full diff is recoverable via
   ;; (get-in tool-result [:info :files]) when the model binds the result.
   (let [files (if (sequential? result) result [result])]
-    (md/join
-      (md/p "Patched" (count files) "file(s).")
-      (md/ul (map (fn [{:keys [path]}] (md/code path)) files)))))
+    (md-join
+      (md-p "Patched" (count files) "file(s).")
+      (md-ul (map (fn [{:keys [path]}] (md-code path)) files)))))
 
 (defn- journal-render-patch-check
   [result]
@@ -1160,7 +1169,7 @@
 
 (defn- channel-render-create-dirs
   [result]
-  (md/p "Ensured dir" (md/code result) "."))
+  (md-p "Ensured dir" (md-code result) "."))
 
 (defn- journal-render-glob
   [result]
@@ -1175,10 +1184,10 @@
 (defn- channel-render-glob
   [result]
   (let [matches (vec (or result []))]
-    (md/join
-      (md/p "Glob —" (count matches) "match(es).")
+    (md-join
+      (md-p "Glob —" (count matches) "match(es).")
       (when (seq matches)
-        (md/code-block "text" (bounded-render-text (str/join "\n" matches)))))))
+        (md-code-block "text" (bounded-render-text (str/join "\n" matches)))))))
 
 (defn- journal-render-copy
   [result]
@@ -1186,7 +1195,7 @@
 
 (defn- channel-render-copy
   [result]
-  (md/p "Copied to" (md/code result) "."))
+  (md-p "Copied to" (md-code result) "."))
 
 (defn- journal-render-move
   [result]
@@ -1194,7 +1203,7 @@
 
 (defn- channel-render-move
   [result]
-  (md/p "Moved to" (md/code result) "."))
+  (md-p "Moved to" (md-code result) "."))
 
 (defn- journal-render-delete
   [result]
@@ -1202,7 +1211,7 @@
 
 (defn- channel-render-delete
   [result]
-  (md/p "Deleted." (md/code (pr-str result))))
+  (md-p "Deleted." (md-code (pr-str result))))
 
 (defn- journal-render-delete-if-exists
   [result]
@@ -1212,8 +1221,8 @@
 (defn- channel-render-delete-if-exists
   [result]
   (if result
-    (md/p "Deleted.")
-    (md/p "Already absent.")))
+    (md-p "Deleted.")
+    (md-p "Already absent.")))
 
 (defn- journal-render-exists?
   [result]
@@ -1221,7 +1230,7 @@
 
 (defn- channel-render-exists?
   [result]
-  (md/p "Exists?" (md/code (pr-str result))))
+  (md-p "Exists?" (md-code (pr-str result))))
 
 (defn- journal-render-bash
   [result]
@@ -1243,23 +1252,23 @@
   (let [{:keys [command cwd exit timed-out? timeout-ms duration-ms stdout stderr
                 stdout-truncated? stderr-truncated? warnings]} result
         warning-text (when (seq warnings)
-                       (md/join "warnings:"
-                         (md/ul (map :message warnings))))
+                       (md-join "warnings:"
+                         (md-ul (map :message warnings))))
         out (cond-> []
               (seq warning-text)
               (conj warning-text)
               (not (str/blank? stdout))
-              (conj (md/join "stdout:" (md/code-block "text" (bounded-render-text stdout))))
+              (conj (md-join "stdout:" (md-code-block "text" (bounded-render-text stdout))))
               (not (str/blank? stderr))
-              (conj (md/join "stderr:" (md/code-block "text" (bounded-render-text stderr)))))]
-    (md/join
-      (md/p "Ran bash in" (md/code cwd) "- exit" (md/code exit) "," duration-ms "ms"
+              (conj (md-join "stderr:" (md-code-block "text" (bounded-render-text stderr)))))]
+    (md-join
+      (md-p "Ran bash in" (md-code cwd) "- exit" (md-code exit) "," duration-ms "ms"
         (when timed-out? (str ", timed out after " timeout-ms "ms"))
         (when (or stdout-truncated? stderr-truncated?) ", output truncated")
         (when (seq warnings) (str ", " (count warnings) " warning(s)"))
         ".")
-      (md/p "Command:" (md/code command))
-      (when (seq out) (apply md/join out)))))
+      (md-p "Command:" (md-code command))
+      (when (seq out) (apply md-join out)))))
 
 ;; =============================================================================
 ;; Symbol declarations

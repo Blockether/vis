@@ -16,6 +16,7 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.internal.external-opener :as opener]
+            [com.blockether.vis.internal.skills :as skills]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna SGR Symbols TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType
@@ -205,10 +206,38 @@
   [commands]
   (filterv #(not= false (:palette? %)) commands))
 
+(defn- skill-commands
+  "Return slash-command maps for every accessible skill.
+   Shape mirrors `dlg/palette-commands` so the existing slash matcher
+   (`command-suggest/exact-command` / `suggestions`) handles them
+   uniformly. The `:skill? true` marker is what the Enter handler
+   uses to dispatch `:send-skill-message` instead of `run-command!`."
+  []
+  (try
+    (->> (skills/list-summaries)
+      (mapv (fn [{:keys [name description]}]
+              {:id     (keyword name)
+               :label  (str "/" name)
+               :doc    description
+               :skill? true
+               :args   [{:name "request" :kind :positional :required false}]
+               ;; `:run-fn` is required by the extension-cmd filter
+               ;; in `extension-commands`; skill commands route via
+               ;; the Enter-handler's `:skill?` branch instead, so
+               ;; `identity` is a harmless placeholder.
+               :run-fn identity}))
+      (sort-by :label)
+      vec)
+    (catch Throwable _ [])))
+
 (defn- menu-commands
+  "All slash commands shown in the TUI overlay: built-in palette,
+   extension-contributed palette commands, plus one entry per
+   accessible skill (`/<skill-name>`)."
   [screen]
   (vec (concat dlg/palette-commands
-         (palette-extra-commands (extension-commands screen)))))
+         (palette-extra-commands (extension-commands screen))
+         (skill-commands))))
 
 (defn- slash-command-for-input
   [screen input-state]
@@ -2028,8 +2057,23 @@
                        ;; (`slash-title-hints`) which advertises only
                        ;; `↑↓/wheel select` and `Tab complete`.
                        (do (if-let [cmd (slash-command-for-input screen state)]
-                             (do (run-command! cmd (:slash/args cmd))
-                               (state/dispatch [:reset-input]))
+                             (if (:skill? cmd)
+                               (let [skill-name (name (:id cmd))
+                                     skill      (skills/lookup skill-name)]
+                                 (if (:found? skill)
+                                   (let [user-args    (str/trim (or (:slash/args cmd) ""))
+                                         display-text (str "/" skill-name
+                                                        (when (seq user-args) (str " " user-args)))]
+                                     (state/dispatch [:send-skill-message
+                                                      skill-name
+                                                      (:body skill)
+                                                      user-args
+                                                      display-text])
+                                     (state/dispatch [:reset-input]))
+                                   (vis/notify! (str "Skill not found: " skill-name)
+                                     :level :warn :ttl-ms 3000)))
+                               (do (run-command! cmd (:slash/args cmd))
+                                 (state/dispatch [:reset-input])))
                              (submit-input! @state/app-db state))
                          (recur))
 

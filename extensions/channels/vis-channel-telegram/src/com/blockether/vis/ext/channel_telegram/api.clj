@@ -49,120 +49,6 @@
                 :throw   false})]
     (parse-body resp)))
 
-(def ^:private mdv2-specials
-  #{\\ \_ \* \[ \] \( \) \~ \` \> \# \+ \- \= \| \{ \} \. \!})
-
-(defn escape-markdown-v2
-  "Escape Telegram MarkdownV2 special characters in plain text segments."
-  [^String text]
-  (let [len (.length text)]
-    (loop [i  (int 0)
-           sb (StringBuilder. (+ len 16))]
-      (if (>= i len)
-        (.toString sb)
-        (let [ch (.charAt text i)]
-          (when (contains? mdv2-specials ch)
-            (.append sb \\))
-          (.append sb ch)
-          (recur (inc i) sb))))))
-
-(defn- escape-html
-  [text]
-  (-> (str text)
-    (str/replace "&" "&amp;")
-    (str/replace "<" "&lt;")
-    (str/replace ">" "&gt;")
-    (str/replace "\"" "&quot;")))
-
-(defn- markdown-table-separator? [line]
-  (let [cells (->> (str/split (str/trim (str/replace line #"^\||\|$" "")) #"\|")
-                (map str/trim)
-                (remove str/blank?))]
-    (and (seq cells)
-      (every? #(re-matches #":?-{3,}:?" %) cells))))
-
-(defn- markdown-table-line? [line]
-  (str/includes? line "|"))
-
-(defn- table-cells [line]
-  (->> (str/split (str/trim (str/replace line #"^\||\|$" "")) #"\|")
-    (mapv str/trim)))
-
-(defn- pad-right [s width]
-  (let [s (str s)]
-    (str s (apply str (repeat (max 0 (- width (count s))) " ")))))
-
-(defn- markdown-table->text [lines]
-  (let [rows   (mapv table-cells (remove markdown-table-separator? lines))
-        cols   (apply max 0 (map count rows))
-        rows   (mapv #(into [] (take cols (concat % (repeat "")))) rows)
-        widths (mapv (fn [idx]
-                       (apply max 1 (map #(count (nth % idx "")) rows)))
-                 (range cols))
-        fmt-row (fn [row]
-                  (str/join "  "
-                    (map-indexed (fn [idx cell]
-                                   (pad-right cell (nth widths idx)))
-                      row)))
-        sep     (str/join "  " (map #(apply str (repeat % "─")) widths))]
-    (str/join "\n"
-      (concat
-        (when-let [header (first rows)] [(fmt-row header) sep])
-        (map fmt-row (rest rows))))))
-
-(defn- html-inline [text]
-  (let [parts (str/split (str text) #"`" -1)]
-    (apply str
-      (map-indexed
-        (fn [idx part]
-          (if (odd? idx)
-            (str "<code>" (escape-html part) "</code>")
-            (-> (escape-html part)
-              (str/replace #"\[([^\]\n]+)\]\((https?://[^\s)]+)\)" "<a href=\"$2\">$1</a>")
-              (str/replace #"\*\*([^*\n]+)\*\*" "<b>$1</b>")
-              (str/replace #"(?<!\*)\*([^*\n]+)\*(?!\*)" "<i>$1</i>")
-              (str/replace #"_([^_\n]+)_" "<i>$1</i>"))))
-        parts))))
-
-(defn- convert-md-to-html
-  "Best-effort Telegram HTML rendering for common LLM Markdown.
-   Telegram has no headings or tables, so headings become bold lines and
-   Markdown tables become aligned <pre> blocks."
-  [text]
-  (let [lines (str/split-lines (or text ""))]
-    (loop [remaining lines
-           out       []]
-      (if-not (seq remaining)
-        (str/join "\n" out)
-        (let [line      (first remaining)
-              next-line (second remaining)]
-          (cond
-            (str/starts-with? line "```")
-            (let [[code-lines rest-lines] (split-with #(not (str/starts-with? % "```")) (rest remaining))
-                  rest-lines              (if (seq rest-lines) (rest rest-lines) rest-lines)]
-              (recur rest-lines
-                (conj out (str "<pre>" (escape-html (str/join "\n" code-lines)) "</pre>"))))
-
-            (and (markdown-table-line? line) (markdown-table-separator? (or next-line "")))
-            (let [[table-lines rest-lines] (split-with markdown-table-line? remaining)]
-              (recur rest-lines
-                (conj out (str "<pre>" (escape-html (markdown-table->text table-lines)) "</pre>"))))
-
-            (re-matches #"\s*#{1,6}\s+.+" line)
-            (recur (rest remaining)
-              (conj out (str "<b>" (escape-html (str/replace line #"^\s*#{1,6}\s+" "")) "</b>")))
-
-            (re-matches #"\s*(-{3,}|_{3,}|\*{3,})\s*" line)
-            (recur (rest remaining) (conj out "────────"))
-
-            (str/starts-with? (str/triml line) ">")
-            (recur (rest remaining)
-              (conj out (str "<blockquote>" (html-inline (str/trim (str/replace line #"^\s*>\s?" ""))) "</blockquote>")))
-
-            :else
-            (recur (rest remaining)
-              (conj out (html-inline line)))))))))
-
 (defn- chunk-text
   "Split text into <=4000-char pieces along paragraph/line boundaries so
    HTML tags stay intact across chunks. Telegram's hard limit is 4096."
@@ -180,28 +66,77 @@
           (recur (subs remaining cut-at)
             (conj chunks (subs remaining 0 cut-at))))))))
 
+(defn post-message!
+  "Post a single message and return the parsed Telegram response
+   (`:ok :result :description ...`).
+
+   Does NOT chunk over 4096 chars — callers that need chunking go
+   through `send-message!`.
+
+   `text` defaults to Telegram-HTML; pass `:plain? true` for raw."
+  ([token chat-id text]
+   (post-message! token chat-id text nil))
+  ([token chat-id text {:keys [reply-markup plain?]}]
+   (let [payload (cond-> {"chat_id" chat-id
+                          "text"    text}
+                   (not plain?) (assoc "parse_mode" "HTML")
+                   reply-markup (assoc "reply_markup" reply-markup))]
+     (post-json! token "/sendMessage" payload))))
+
+(defn post-draft-message!
+  "Post a streaming draft message via Bot API 9.3+ `sendMessageDraft`.
+   Used by the live-bubble — draft is purpose-built for streaming:
+
+     - no notification fires while the draft is being edited;
+     - the final message has no `(edited)` tag (draft converts to a
+       real message via the final sendMessage / editMessageText);
+     - higher update frequency tolerated than editMessageText.
+
+   Returns the parsed Telegram resp; caller reads `:result.message_id`
+   to edit later through `edit-message!`.
+
+   Bot API floor: 9.5 (March 2026) opened the method to all bots.
+   Vis targets cloud Telegram so the floor is always met."
+  ([token chat-id text]
+   (post-draft-message! token chat-id text nil))
+  ([token chat-id text {:keys [reply-markup plain?]}]
+   (let [payload (cond-> {"chat_id" chat-id
+                          "text"    text}
+                   (not plain?) (assoc "parse_mode" "HTML")
+                   reply-markup (assoc "reply_markup" reply-markup))]
+     (post-json! token "/sendMessageDraft" payload))))
+
 (defn send-message!
-  "Send a text reply using Telegram HTML parse mode.
-   Falls back to plain text if Telegram rejects the payload.
-   Auto-splits at 4096 chars.
+  "Send a text reply.
+
+   The `text` arg is now expected to be either:
+   - pre-rendered Telegram-HTML (default) — send with parse_mode=HTML;
+   - plain text when `:plain?` opt is true — send without parse_mode.
+
+   Caller is responsible for rendering. Channel registers a
+   `:channel/messages-renderer-fn` that bot.clj calls before this fn.
+   Auto-splits at 4096 chars. Falls back to plain text if Telegram
+   rejects the HTML payload (defect-#10 last-resort safety net).
 
    `opts` supports:
    - `:reply-markup` - Telegram reply_markup map, e.g. inline keyboard;
-   - `:html?` - send `text` as Telegram HTML without Markdown conversion."
+   - `:plain?`       - skip parse_mode; ship `text` raw."
   ([token chat-id text]
    (send-message! token chat-id text nil))
-  ([token chat-id text {:keys [reply-markup html?]}]
-   (doseq [raw-chunk (chunk-text (or text ""))]
-     (let [html-chunk (if html? raw-chunk (convert-md-to-html raw-chunk))
-           payload (cond-> {"chat_id"    chat-id
-                            "text"       html-chunk
-                            "parse_mode" "HTML"}
+  ([token chat-id text {:keys [reply-markup plain?]}]
+   (doseq [chunk (chunk-text (or text ""))]
+     (let [payload (cond-> {"chat_id" chat-id
+                            "text"    chunk}
+                     (not plain?) (assoc "parse_mode" "HTML")
                      reply-markup (assoc "reply_markup" reply-markup))
            resp    (post-json! token "/sendMessage" payload)]
-       (when-not (:ok resp)
+       (when (and (not plain?) (not (:ok resp)))
+         ;; HTML rejected — fall back to plain text so the message at
+         ;; least lands. Strips formatting visually but never drops the
+         ;; payload silently.
          (post-json! token "/sendMessage"
            (cond-> {"chat_id" chat-id
-                    "text" raw-chunk}
+                    "text"    chunk}
              reply-markup (assoc "reply_markup" reply-markup))))))))
 
 (defn set-my-commands!
@@ -218,6 +153,35 @@
       (throw (ex-info (str "Telegram setMyCommands failed: " (:description resp))
                {:body resp})))
     resp))
+
+(defn edit-message!
+  "Edit a previously-sent text message. Returns the parsed Telegram
+   response map; caller checks `:ok`.
+
+   `text` is expected to be pre-rendered Telegram-HTML (default) or
+   plain text when `:plain?` is true. `:reply-markup` keeps / changes
+   the inline keyboard; pass `{:inline_keyboard []}` to drop it.
+
+   On HTTP 400 with description `message is not modified`, returns
+   the response without retry (caller swallows). On HTTP 429, the
+   response carries `:parameters {:retry_after N}` for caller backoff."
+  ([token chat-id message-id text]
+   (edit-message! token chat-id message-id text nil))
+  ([token chat-id message-id text {:keys [reply-markup plain?]}]
+   (let [payload (cond-> {"chat_id"    chat-id
+                          "message_id" message-id
+                          "text"       text}
+                   (not plain?) (assoc "parse_mode" "HTML")
+                   reply-markup (assoc "reply_markup" reply-markup))]
+     (post-json! token "/editMessageText" payload))))
+
+(defn delete-message!
+  "Delete a message. Best-effort — swallows errors."
+  [token chat-id message-id]
+  (try
+    (post-json! token "/deleteMessage"
+      {"chat_id" chat-id "message_id" message-id})
+    (catch Exception _ nil)))
 
 (defn answer-callback-query!
   "Acknowledge a Telegram inline-keyboard callback. Best-effort."

@@ -113,6 +113,12 @@
 ;; and benefit from REPL redefinition.
 (s/def :channel/main-fn ifn?)
 
+;; Optional. (fn [input opts] -> renderer-output) called by the channel's
+;; emit chokepoint to convert the answer-IR (or legacy string) into the
+;; channel-flavored output. Telegram registers an :html walker; TUI
+;; registers a :markdown walker. Output type is channel-defined.
+(s/def :channel/messages-renderer-fn ifn?)
+
 ;; Channel-owned nested commands, e.g. `vis channels telegram approve`.
 ;; This keeps channel subcommands inside the channel descriptor instead of
 ;; extension namespaces registering global command-registry entries directly.
@@ -122,7 +128,8 @@
 
 (s/def ::channel
   (s/keys :req [:channel/id :channel/cmd :channel/doc :channel/main-fn]
-    :opt [:channel/usage :channel/owns-tty? :channel/subcommands]))
+    :opt [:channel/usage :channel/owns-tty? :channel/subcommands
+          :channel/messages-renderer-fn]))
 
 (defn channel
   "Build and validate a channel descriptor map."
