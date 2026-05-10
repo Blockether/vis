@@ -32,8 +32,30 @@
    on `:vis.presentation/kind` or call `present` to get Markdown back."
   (:require
    [clojure.pprint :as pp]
-   [clojure.string :as str]
-   [com.blockether.vis.internal.markdown :as md]))
+   [clojure.string :as str]))
+
+;; Inline markdown string-builder helpers (replaced the v/ DSL).
+;; These produce raw markdown for tool-result presentation; channels
+;; then run them through their own renderer-fn.
+(defn- md-bold       ^String [s]      (str "**" s "**"))
+(defn- md-italic     ^String [s]      (str "*" s "*"))
+(defn- md-code       ^String [s]      (str "`" s "`"))
+(defn- md-code-block
+  (^String [body]      (str "```\n" body "\n```"))
+  (^String [lang body] (str "```" (or lang "") "\n" body "\n```")))
+(defn- md-summary    ^String [s]      (str "<summary>" s "</summary>"))
+(defn- md-details
+  ^String [& parts]
+  (let [strs  (filter some? (map str parts))
+        {sums true bodies false} (group-by #(and (str/starts-with? % "<summary>")
+                                              (str/ends-with? % "</summary>")) strs)
+        sum   (first sums)
+        body  (when (seq bodies) (str/join "\n\n" bodies))]
+    (cond
+      (and sum body) (str "<details>\n" sum "\n\n" body "\n\n</details>")
+      sum            (str "<details>\n" sum "\n\n</details>")
+      body           (str "<details>\n" body "\n\n</details>")
+      :else          "<details>\n\n</details>")))
 
 (set! *warn-on-reflection* true)
 
@@ -180,7 +202,7 @@
 
 (defn- as-markdown-fence
   ^String [lang body]
-  (md/code-block (or lang "text") (str body)))
+  (md-code-block (or lang "text") (str body)))
 
 (defn- pretty-args
   ^String [args]
@@ -216,20 +238,20 @@
                                          (str/join "\n\n"))
                     :else (->str body))
         body-text (str/trim body-text)
-        sum (md/summary (or summary "Details"))]
+        sum (md-summary (or summary "Details"))]
     (cond
       ;; A "collapsed" view in pure markdown still shows summary + body
       ;; collapsed under <details>. Channels that own real toggle state
       ;; (TUI) own the actual show/hide; the markdown shape preserves
       ;; both halves so static exports stay faithful.
       (str/blank? body-text)
-      (md/details (md/summary (or summary "Details")))
+      (md-details (md-summary (or summary "Details")))
 
       collapsed?
-      (md/details sum body-text)
+      (md-details sum body-text)
 
       :else
-      (md/details sum body-text))))
+      (md-details sum body-text))))
 
 (defn tool-call->md
   "Render a `:vis.presentation/tool-call` block.
@@ -245,17 +267,17 @@
   [{:keys [op tool label args result stdout stderr error duration-ms
            status rendering-kind info ref]}]
   (let [op-str (format-op (or op tool))
-        head-bits (cond-> [(md/bold "TOOL")
-                           (md/code op-str)]
+        head-bits (cond-> [(md-bold "TOOL")
+                           (md-code op-str)]
                     status (conj (str " / " (format-status status)))
                     duration-ms (conj (str " / " (format-duration-ms duration-ms)))
-                    ref (conj (str " / " (md/code (str ref)))))
+                    ref (conj (str " / " (md-code (str ref)))))
         head (str/join "" head-bits)
-        sub (when (non-blank? label) (md/italic label))
+        sub (when (non-blank? label) (md-italic label))
         args-block (when (some? args)
                      (let [s (pretty-args args)]
                        (when (non-blank? s)
-                         (md/details (md/summary "args")
+                         (md-details (md-summary "args")
                            (as-markdown-fence "edn" (str/trim s))))))
         result-block (cond
                        (nil? result) nil
@@ -264,25 +286,25 @@
                          nil
                          ;; Result text is already markdown by convention
                          ;; (extension render-fns return markdown).
-                         (md/details (md/summary "result")
+                         (md-details (md-summary "result")
                            (str/trim result)))
                        :else
-                       (md/details (md/summary "result")
+                       (md-details (md-summary "result")
                          (as-markdown-fence "edn" (pr-str result))))
         stdout-block (when (non-blank? stdout)
-                       (md/details (md/summary "stdout")
+                       (md-details (md-summary "stdout")
                          (as-markdown-fence "text" (str/trim stdout))))
         stderr-block (when (non-blank? stderr)
-                       (md/details (md/summary "stderr")
+                       (md-details (md-summary "stderr")
                          (as-markdown-fence "text" (str/trim stderr))))
         error-block (when error
                       (let [text (cond
                                    (string? error) error
                                    (map? error) (or (:message error) (pr-str error))
                                    :else (str error))]
-                        (str (md/bold "Error: ") (md/code (preview text 240)))))
+                        (str (md-bold "Error: ") (md-code (preview text 240)))))
         kind-line (when rendering-kind
-                    (md/italic (str "rendering-kind: " (kw-name rendering-kind))))]
+                    (md-italic (str "rendering-kind: " (kw-name rendering-kind))))]
     (->> [head
           sub
           kind-line
@@ -292,7 +314,7 @@
           stderr-block
           error-block
           (when info
-            (md/details (md/summary "info")
+            (md-details (md-summary "info")
               (as-markdown-fence "edn"
                 (with-out-str (pp/pprint info)))))]
       (remove nil?)
@@ -307,9 +329,9 @@
   [opts]
   (let [{:keys [op label body args result error rendering-kind]} opts
         op-str (format-op (or op (:tool opts)))
-        head (str (md/bold "SYSTEM") " " (md/code op-str)
+        head (str (md-bold "SYSTEM") " " (md-code op-str)
                (when (:status opts) (str " / " (format-status (:status opts)))))
-        sub (when (non-blank? label) (md/italic label))
+        sub (when (non-blank? label) (md-italic label))
         body-text (when body
                     (let [s (->str body)]
                       (when (non-blank? s)
@@ -317,17 +339,17 @@
         args-block (when (some? args)
                      (let [s (pretty-args args)]
                        (when (non-blank? s)
-                         (md/details (md/summary "args")
+                         (md-details (md-summary "args")
                            (as-markdown-fence "edn" (str/trim s))))))
         result-block (when (and result (not (str/blank? (->str result))))
-                       (md/details (md/summary "result")
+                       (md-details (md-summary "result")
                          (if (string? result)
                            (str/trim result)
                            (as-markdown-fence "edn" (pr-str result)))))
         error-block (when error
-                      (str (md/bold "Error: ") (md/code (preview (->str error) 240))))
+                      (str (md-bold "Error: ") (md-code (preview (->str error) 240))))
         kind-line (when rendering-kind
-                    (md/italic (str "rendering-kind: " (kw-name rendering-kind))))]
+                    (md-italic (str "rendering-kind: " (kw-name rendering-kind))))]
     (->> [head sub kind-line body-text args-block result-block error-block]
       (remove nil?)
       (remove str/blank?)
@@ -340,24 +362,24 @@
    recommended action."
   [{:keys [message type reason received-type raw-preview advice
            iteration provider model classification status]}]
-  (let [head (str (md/bold "PROVIDER ERROR")
-               (when classification (str " / " (md/code (kw-name classification))))
+  (let [head (str (md-bold "PROVIDER ERROR")
+               (when classification (str " / " (md-code (kw-name classification))))
                (when iteration (str " / iteration " iteration)))
         meta-bits (cond-> []
-                    provider (conj (str "provider: " (md/code (kw-name provider))))
-                    model (conj (str "model: " (md/code (str model))))
-                    type (conj (str "type: " (md/code (kw-name type))))
-                    reason (conj (str "reason: " (md/code (kw-name reason))))
-                    received-type (conj (str "received: " (md/code (str received-type))))
-                    status (conj (str "status: " (md/code (format-status status)))))
+                    provider (conj (str "provider: " (md-code (kw-name provider))))
+                    model (conj (str "model: " (md-code (str model))))
+                    type (conj (str "type: " (md-code (kw-name type))))
+                    reason (conj (str "reason: " (md-code (kw-name reason))))
+                    received-type (conj (str "received: " (md-code (str received-type))))
+                    status (conj (str "status: " (md-code (format-status status)))))
         meta-line (when (seq meta-bits) (str/join " / " meta-bits))
         msg (when (non-blank? message)
-              (str (md/bold "Message:") " " (->str message)))
+              (str (md-bold "Message:") " " (->str message)))
         raw (when (non-blank? raw-preview)
-              (md/details (md/summary "raw")
+              (md-details (md-summary "raw")
                 (as-markdown-fence "text" (str/trim (str raw-preview)))))
         adv (when (non-blank? advice)
-              (str (md/bold "Advice:") " " (->str advice)))]
+              (str (md-bold "Advice:") " " (->str advice)))]
     (->> [head meta-line msg raw adv]
       (remove nil?)
       (remove str/blank?)
@@ -370,13 +392,13 @@
    collapsed details block carries the pre-rendered ASCII diagram."
   [{:keys [source rendered-lines diagram-type]}]
   (let [src (str/trim (->str source))
-        fence (md/code-block "mermaid" src)
+        fence (md-code-block "mermaid" src)
         ascii (when (seq rendered-lines)
-                (md/details (md/summary
+                (md-details (md-summary
                               (str "Mermaid diagram"
                                 (when diagram-type
                                   (str " (" (name diagram-type) ")"))))
-                  (md/code-block "text"
+                  (md-code-block "text"
                     (str/join "\n" (mapv ->str rendered-lines)))))]
     (->> [fence ascii]
       (remove nil?)

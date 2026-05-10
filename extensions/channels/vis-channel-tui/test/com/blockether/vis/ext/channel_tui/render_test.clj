@@ -5,7 +5,6 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.channel-tui.theme :as t]
-   [com.blockether.vis.ext.foundation.markdown :as md]
    [com.blockether.vis.internal.format :as fmt]
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]])
@@ -13,6 +12,32 @@
    [java.util.concurrent CountDownLatch]))
 
 ;; ─── from render_test.clj ───
+
+;; Inline markdown string-builder helpers (formerly the v/ DSL).
+(defn- md-bold       ^String [s] (str "**" s "**"))
+(defn- md-code       ^String [s] (str "`" s "`"))
+(defn- md-code-block
+  (^String [body]      (str "```\n" body "\n```"))
+  (^String [lang body] (str "```" (or lang "") "\n" body "\n```")))
+(defn- md-h          ^String [n & parts]
+  (str (apply str (repeat (max 1 (min 6 n)) "#")) " "
+    (str/join " " (map str parts))))
+(defn- md-summary    ^String [s] (str "<summary>" s "</summary>"))
+(defn- md-details    ^String [& parts]
+  (let [strs  (filter some? (map str parts))
+        {sums true bodies false} (group-by #(and (str/starts-with? % "<summary>")
+                                              (str/ends-with? % "</summary>")) strs)
+        sum   (first sums)
+        body  (when (seq bodies) (str/join "\n\n" bodies))]
+    (cond
+      (and sum body) (str "<details>\n" sum "\n\n" body "\n\n</details>")
+      sum            (str "<details>\n" sum "\n\n</details>")
+      body           (str "<details>\n" body "\n\n</details>")
+      :else          "<details>\n\n</details>")))
+(defn- md-ul         ^String [items]
+  (str/join "\n" (map #(str "- " %) (filter some? items))))
+(defn- md-join       ^String [& parts]
+  (str/join "\n\n" (filter some? (map str parts))))
 
 (def ^:private md->lines @#'render/markdown->lines)
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
@@ -295,7 +320,7 @@
 
 (defdescribe markdown-fenced-code-language-test
   (it "syntax-colors clojure fences produced by v/code-block"
-    (let [lines      (md->lines (md/code-block "clojure" "(def x {:a 1})") 80)
+    (let [lines      (md->lines (md-code-block "clojure" "(def x {:a 1})") 80)
           code-lines (filter #(= p/MARKER_MD_CODE (marker-of %)) lines)
           bodies     (map body-of code-lines)]
       (expect (some #(str/includes? % "\u001b[") bodies))
@@ -308,7 +333,7 @@
                        "-old\n"
                        "+new\n"
                        " context")
-          lines      (md->lines (md/code-block "diff" diff-text) 80)
+          lines      (md->lines (md-code-block "diff" diff-text) 80)
           code-lines (filter #(= p/MARKER_MD_CODE (marker-of %)) lines)
           bodies     (map body-of code-lines)]
       (expect (some #(str/includes? % "\u001b[91m-old\u001b[0m") bodies))
@@ -317,7 +342,7 @@
       (expect (some #(= " context" %) bodies))))
 
   (it "leaves unqualified plain fences uncolored"
-    (let [lines  (md->lines (md/code-block "plain text") 80)
+    (let [lines  (md->lines (md-code-block "plain text") 80)
           bodies (map body-of (filter #(= p/MARKER_MD_CODE (marker-of %)) lines))]
       (expect (not-any? #(str/includes? % "\u001b[") bodies))
       (expect (some #(= "plain text" %) bodies)))))
@@ -1275,7 +1300,7 @@
 ;; <details> / <summary> rendering
 ;;
 ;; Pre-fix the TUI markdown pipeline had no branch for HTML block tags,
-;; so the lines emitted by `(md/details (md/summary ...) body)` rendered
+;; so the lines emitted by `(md-details (md-summary ...) body)` rendered
 ;; literally as `<details>`, `<summary>Click</summary>`, `</details>`
 ;; in the chat bubble - three rows of raw HTML the user can't act on.
 ;; The renderer now drops the framing tags and paints the summary as
@@ -1419,7 +1444,7 @@ body
         (expect (str/includes? line "Logs"))
         (expect (str/includes? line p/INLINE_BOLD_OFF)))))
 
-  (describe "full `(md/details (md/summary ...) body)` shape round-trips"
+  (describe "full `(md-details (md-summary ...) body)` shape round-trips"
     ;; Mirrors the actual emit shape `vis-foundation/markdown.clj`
     ;; produces. Pre-fix the user saw three rows of raw HTML; post-fix
     ;; only the disclosure label + body remain.
@@ -1616,7 +1641,7 @@ body
           (expect (str/includes? (strip-sentinels (nth bullets 1)) "screen.clj"))
           (expect (str/includes? (strip-sentinels (nth bullets 1)) "viewer dialog"))))
 
-      (it "keeps whitespace-only md/join separators inside one bullet item"
+      (it "keeps whitespace-only md-join separators inside one bullet item"
         (let [src (str "- [provider.clj:756](provider.clj#L756)\n"
                     "  \n"
                     "   \n"
@@ -1742,8 +1767,8 @@ body
     ;; from being silently folded into the last bullet. The two
     ;; tests below were originally written under the older `fold
     ;; everything until you hit a heading/fence` policy; updated
-    ;; here to match the new behaviour. The `eeaf9651` md/join
-    ;; regression test below STILL passes because md/join chunks
+    ;; here to match the new behaviour. The `eeaf9651` md-join
+    ;; regression test below STILL passes because md-join chunks
     ;; never start with an alphanumeric character (always a space,
     ;; backtick, `*`, or punctuation).
     (it "heading after a fragmented bullet doesn't get sucked into it"
@@ -1932,12 +1957,12 @@ body
       (expect (not (str/includes? bodies ":rendering-kind:vis/silent"))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
-;; md/join inline-bold inside a bullet - the `Let / me / dig / deeper`
+;; md-join inline-bold inside a bullet - the `Let / me / dig / deeper`
 ;; regression
 ;;
 ;; Faithful reconstruction of the FIRST `(answer ...)` block in conversation
 ;; eeaf9651-06c7-4dda-9e97-877fcef06337, turn 363de6c6-..., position 1.
-;; The agent built a bullet's body via `md/join`, which inserts `\n\n`
+;; The agent built a bullet's body via `md-join`, which inserts `\n\n`
 ;; between every part. With the naive bullet-coalesce that earlier
 ;; treated every `**...**`-starting line as a structural break, the
 ;; bullet rendered as ONE bullet header + a ladder of one-word
@@ -1964,7 +1989,7 @@ body
 ;;
 ;; The fix in `coalesce-loose-list-items`:
 ;;   - Pure `**span**` lines (no trailing prose after the closing `**`)
-;;     stay CONTINUATIONS of the bullet - they're an md/join artefact,
+;;     stay CONTINUATIONS of the bullet - they're an md-join artefact,
 ;;     the bold text is meant to flow inline inside the sentence.
 ;;   - `**Label:** value` lines (bold prefix + trailing content) STILL
 ;;     close the list - those are real top-level summary paragraphs.
@@ -1975,43 +2000,43 @@ body
 ;; ─────────────────────────────────────────────────────────────────────────
 
 (defdescribe md-join-bullet-inline-regression-test
-  (describe "md/join-built bullets render as flowing prose, not a paragraph ladder"
+  (describe "md-join-built bullets render as flowing prose, not a paragraph ladder"
     (it "reconstruct: turn-1 bullet from conversation eeaf9651-..."
-      (let [;; ── exact md/join shape used by the live answer ─────────────
+      (let [;; ── exact md-join shape used by the live answer ─────────────
             first-bullet
-            (md/join (md/bold "Turn 1 - \"system prompt copy\" prune:")
+            (md-join (md-bold "Turn 1 - \"system prompt copy\" prune:")
               " 38 failures across iterations 2-7. Iter 2+4: wrong file paths ("
-              (md/code "src/com/blockether/vis/tui")
+              (md-code "src/com/blockether/vis/tui")
               ", "
-              (md/code "db.clj")
+              (md-code "db.clj")
               " not found). Iter 7: catastrophic "
-              (md/bold "reader boundary split")
+              (md-bold "reader boundary split")
               " - a multi-line form got fragmented into bare symbols ("
-              (md/code "Let")
+              (md-code "Let")
               ", "
-              (md/code "me")
+              (md-code "me")
               ", "
-              (md/code "dig")
+              (md-code "dig")
               ", "
-              (md/code "deeper")
+              (md-code "deeper")
               ", "
-              (md/code "what")
+              (md-code "what")
               ", etc.) - 28 unresolved-symbol errors in a single iteration. The agent was in a loop emitting prose as code tokens.")
 
             second-bullet
-            (md/join (md/bold "Turn 3+ - footer % left removal:")
+            (md-join (md-bold "Turn 3+ - footer % left removal:")
               " 2 failed "
-              (md/code "z/patch")
+              (md-code "z/patch")
               " calls (f3, f4) due to "
-              (md/code "\"Unmatched delimiter: ]\"")
+              (md-code "\"Unmatched delimiter: ]\"")
               " at line 148 - the file was left in a broken state by a prior "
-              (md/code "v/edit")
+              (md-code "v/edit")
               " that created a duplicate binding line. Had to be recovered with targeted "
-              (md/code "v/edit")
+              (md-code "v/edit")
               " strikes in a follow-up turn.")
 
-            doc (md/join (md/h3 "Root Cause Analysis")
-                  (md/ul [first-bullet second-bullet]))
+            doc (md-join (md-h 3 "Root Cause Analysis")
+                  (md-ul [first-bullet second-bullet]))
             bullets (bullet-bodies doc 80)]
 
         ;; Two source bullets ⇒ exactly two rendered bullet items
@@ -2077,7 +2102,7 @@ body
     (it "top-level **Label:** value paragraphs still close the list"
       ;; Counter-test for the relaxed rule. Even though `**Loop clean:**`
       ;; starts with `**`, it has trailing content (` true`) - that's
-      ;; a real top-level paragraph, not an md/join artefact.
+      ;; a real top-level paragraph, not an md-join artefact.
       (let [src (str "- last bullet - paragraph about inspector\n"
                   "\n"
                   "**Loop clean:** true\n"
