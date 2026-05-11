@@ -455,15 +455,18 @@
   ;; Strict gate: `(answer ...)` MUST be the only top-level form in
   ;; its iteration. Pi / Codex / SWE-bench style observe-then-answer
   ;; split. Mirrors hard rule documented in CORE_SYSTEM_PROMPT.
-  (it "rejects answer + sibling top-level form (any kind)"
+  (it "rejects answer + illegal sibling top-level form"
     (doseq [code ["(v/cat \"a\")\n(answer [:ir [:p \"ok\"]])"
-                  "(conversation-title \"X\")\n(answer [:ir [:p \"ok\"]])"
                   "(def x 1)\n(answer [:ir [:p \"ok\"]])"
                   "(v/rg {:all [\"foo\"]})\n(answer [:ir [:p \"ok\"]])"]]
       (let [violation (#'loop/answer-alone-preflight-violation (entries-of code))]
         (expect (some? violation))
         (expect (= 2 (:total-forms violation)))
         (expect (string? (#'loop/answer-alone-preflight-error-message violation))))))
+
+  (it "allows sibling top-level conversation-title as the sole meta exception"
+    (expect (nil? (#'loop/answer-alone-preflight-violation
+                   (entries-of "(conversation-title \"X\")\n(answer [:ir [:p \"ok\"]])")))))
 
   (it "accepts a sole `(answer ...)` form"
     (expect (nil? (#'loop/answer-alone-preflight-violation

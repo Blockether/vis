@@ -1,9 +1,17 @@
 (ns com.blockether.vis.ext.foundation.core-test
   (:require
+   [clojure.edn :as edn]
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.core :as foundation]
    [lazytest.core :refer [defdescribe expect it]]))
+
+(defn- foundation-manifest-file []
+  (let [repo-root-file (io/file "extensions/common/vis-foundation/resources/META-INF/vis-extension/vis.edn")]
+    (if (.exists repo-root-file)
+      repo-root-file
+      (io/file "resources/META-INF/vis-extension/vis.edn"))))
 
 (defdescribe vis-foundation-aggregator-test
   (it "registers the unified v/ alias"
@@ -41,6 +49,14 @@
     (let [doc (:ext/doc foundation/vis-extension)]
       (expect (str/includes? doc "markdown answer builders"))
       (expect (str/includes? doc "file-link"))))
+
+  (it "ships manifest docs with current envelope syntax only"
+    (let [manifest (edn/read-string {:readers {} :default (fn [_ form] form)}
+                     (slurp (foundation-manifest-file)))
+          readme   (get-in manifest ['v :docs "README.md" :content])]
+      (expect (str/includes? readme "[:op/result :lines]"))
+      (expect (not (str/includes? readme "[:result :lines]")))
+      (expect (not (str/includes? readme "v/preview")))))
 
   (it "defers doctor and reproduction command namespaces until command execution"
     (let [commands (into {} (map (juxt :cmd/name identity) (:ext/cli foundation/vis-extension)))

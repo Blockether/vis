@@ -1,11 +1,19 @@
 (ns com.blockether.vis.ext.lang-clojure.core-test
   (:require
    [babashka.fs :as fs]
+   [clojure.edn :as edn]
+   [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.lang-clojure.core :as clj-ext]
    [lazytest.core :refer [defdescribe expect it]]
    [sci.core :as sci]))
+
+(defn- clj-manifest-file []
+  (let [repo-root-file (io/file "extensions/languages/clojure/resources/META-INF/vis-extension/vis.edn")]
+    (if (.exists repo-root-file)
+      repo-root-file
+      (io/file "resources/META-INF/vis-extension/vis.edn"))))
 
 (defn- private-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.lang-clojure.core" name))))
@@ -100,3 +108,11 @@
                 (eval* "(z/root-string (z/edit-> (z/of-string \"(a b)\") z/down (z/replace (quote x))))")))
       (expect (= "(x b)"
                 (eval* "(z/root-string (z/edit->> (z/of-string \"(a b)\") (#(z/down %)) (#(z/replace % (quote x)))))"))))))
+
+(it "ships manifest docs with current envelope syntax only"
+  (let [manifest (edn/read-string {:readers {} :default (fn [_ form] form)}
+                   (slurp (clj-manifest-file)))
+        readme   (get-in manifest ['clj :docs "README.md" :content])]
+    (expect (str/includes? readme ":op/result :files"))
+    (expect (not (str/includes? readme "[:result]")))
+    (expect (not (str/includes? readme "[:info :files]")))))

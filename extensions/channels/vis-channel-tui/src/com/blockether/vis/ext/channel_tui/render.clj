@@ -953,6 +953,7 @@
 (def ^:private code-ok-marker   p/MARKER_CODE_OK)
 (def ^:private code-err-marker  p/MARKER_CODE_ERR)
 (def ^:private err-result-marker p/MARKER_ERR_RESULT)
+(def ^:private code-status-marker p/MARKER_CODE_STATUS)
 (def ^:private duration-marker  p/MARKER_DURATION)
 (def ^:private iteration-hdr-marker  p/MARKER_ITERATION_HDR)
 (def ^:private stdout-sep-marker p/MARKER_STDOUT_SEP)
@@ -984,12 +985,6 @@
 
 (def ^:private tool-output-indent-cols
   (p/display-width tool-output-indent))
-
-(def ^:private code-block-inset
-  "Left margin for markdown fenced code blocks.  The code chip sits
-   `code-block-inset` cols inside the normal text `x`, giving it a
-   visual left gutter that separates it from surrounding prose."
-  2)
 
 (def ^:private output-indentable-markers
   #{stdout-marker stderr-marker stdout-sep-marker stdout-pad-marker code-err-pad-marker})
@@ -1812,6 +1807,29 @@
                         (p/set-colors! g t/code-error-fg t/code-err-bg)
                         (p/put-str! g (+ x ci) y (subs raw ci))))
 
+              ;; ── Code status line (✓/✗/↻ timing) - skip in copy, style by glyph ──
+                    (str/starts-with? line code-status-marker)
+                    (let [raw (subs line 1)]
+                      (cond
+                        (str/includes? raw "\u2713")
+                        (do (p/set-colors! g t/code-block-fg t/code-ok-bg)
+                          (p/fill-rect! g fbx y iw 1)
+                          (paint-ansi-line! g x y raw t/code-block-fg t/code-ok-bg)
+                          (when-let [ci (str/index-of raw "\u2713")]
+                            (p/set-colors! g t/code-success-fg t/code-ok-bg)
+                            (p/put-str! g (+ x ci) y (subs raw ci))))
+                        (str/includes? raw "\u2717")
+                        (do (p/set-colors! g t/code-block-fg t/code-err-bg)
+                          (p/fill-rect! g fbx y iw 1)
+                          (paint-ansi-line! g x y raw t/code-block-fg t/code-err-bg)
+                          (when-let [ci (str/index-of raw "\u2717")]
+                            (p/set-colors! g t/code-error-fg t/code-err-bg)
+                            (p/put-str! g (+ x ci) y (subs raw ci))))
+                        :else
+                        (do (p/set-colors! g t/code-block-fg t/code-block-bg)
+                          (p/fill-rect! g fbx y iw 1)
+                          (paint-ansi-line! g x y raw t/code-block-fg t/code-block-bg))))
+
               ;; ── Code (running, no status yet) - neutral bg ──
                     (str/starts-with? line code-marker)
                     (do (p/set-colors! g t/code-block-fg t/code-block-bg)
@@ -1982,11 +2000,10 @@
                             nil))))
 
                     (str/starts-with? line md-code-marker)
-                    (let [cx (+ x code-block-inset)
-                          cw (max 1 (- iw code-block-inset))]
+                    (do
                       (p/set-colors! g t/code-block-fg t/code-block-bg)
-                      (p/fill-rect! g cx y cw 1)
-                      (paint-ansi-line! g cx y (subs line 1) t/code-block-fg t/code-block-bg))
+                      (p/fill-rect! g x y iw 1)
+                      (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
 
               ;; Bullet items: same inline-span treatment as plain text.
               ;; `- **bold** thing` should bold the word.
@@ -2134,12 +2151,11 @@
               ;; Clojure/EDN fences can carry zprint ANSI syntax color;
               ;; the painter translates ANSI foreground codes to Lanterna.
                     (str/starts-with? line th-md-code-marker)
-                    (let [cx (+ x code-block-inset)
-                          cw (max 1 (- iw code-block-inset))]
+                    (do
                       (p/set-colors! g t/code-result-fg t/code-block-bg)
-                      (p/fill-rect! g cx y cw 1)
+                      (p/fill-rect! g x y iw 1)
                       (p/styled g [p/ITALIC]
-                        (paint-ansi-line! g cx y (subs line 1) t/code-result-fg t/code-block-bg)))
+                        (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
 
                     (str/starts-with? line th-md-bullet-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -3035,10 +3051,7 @@
                                 (str (if success? "✓" "✗")
                                   (when duration-str (str " " duration-str)))
                                 (str "↻ " running-str))
-                status-line   (let [s-marker (cond
-                                               (not has-status?) code-marker
-                                               success?          code-ok-marker
-                                               :else             code-err-marker)
+                status-line   (let [s-marker code-status-marker
                                     pl       (max 0 (- fill-w (count status-text) 1))]
                                 (line-entry (str s-marker (repeat-str \space pl) status-text " ")))
                 c-marker      (cond

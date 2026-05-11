@@ -208,6 +208,10 @@
         (str (subs s 0 180) "...")
         s))))
 
+(defn- form-key
+  [form]
+  (some-> form str str/trim not-empty))
+
 (defn- verification-form?
   [form]
   (let [s (some-> form str str/lower-case)]
@@ -228,6 +232,7 @@
                 (fn [block-idx block]
                   (let [block-num (inc block-idx)
                         block-form (or (:code block) (:form block))
+                        block-form-key (form-key block-form)
                         block-tool (or (some-> block :result :symbol) (form-tool block-form))
                         block-msg (error-message (:error block))
                         block-failure (when block-msg
@@ -237,6 +242,7 @@
                                           :block block-num
                                           :tool block-tool
                                           :form (short-form block-form)
+                                          :form-key block-form-key
                                           :message block-msg}])
                         journal-failures
                         (keep-indexed
@@ -250,6 +256,7 @@
                                  :journal (inc journal-idx)
                                  :tool (or (form-tool form) block-tool)
                                  :form (short-form form)
+                                 :form-key (form-key form)
                                  :message (error-message (:error entry))})))
                           (:journal block))]
                     (concat block-failure journal-failures)))
@@ -260,7 +267,13 @@
 
 (defn proof-events
   "Extract successful later proof events from previous iterations.
-   Public for regression tests."
+   Public for regression tests.
+
+   Tool calls usually surface success through `:journal` sink entries.
+   Bare forms like `(conversation-title ...)` or `(def x ...)` often do not,
+   so a later clean block evaluation also counts as a proof event. Block-level
+   proofs close only by exact form match; journal proofs keep the broader
+   same-tool / verification closure semantics."
   [ctx]
   (->> (previous-iteration-entries ctx)
     (mapcat (fn [{:keys [iteration blocks]}]
@@ -268,7 +281,16 @@
                 (fn [block-idx block]
                   (let [block-num (inc block-idx)
                         block-form (or (:code block) (:form block))
+                        block-form-key (form-key block-form)
                         block-tool (or (some-> block :result :symbol) (form-tool block-form))
+                        block-proof (when (and (nil? (:error block)) block-form-key)
+                                      [{:iteration iteration
+                                        :block block-num
+                                        :tool block-tool
+                                        :form (short-form block-form)
+                                        :form-key block-form-key
+                                        :verification? (verification-form? block-form)
+                                        :source :block}])
                         journal-proofs
                         (keep-indexed
                           (fn [journal-idx entry]
@@ -280,9 +302,11 @@
                                  :journal (inc journal-idx)
                                  :tool tool
                                  :form (short-form form)
-                                 :verification? (verification-form? form)})))
+                                 :form-key (form-key form)
+                                 :verification? (verification-form? form)
+                                 :source :journal})))
                           (:journal block))]
-                    journal-proofs))
+                    (concat block-proof journal-proofs)))
                 (range)
                 (or blocks []))))
     vec))
@@ -293,7 +317,10 @@
     (number? (:iteration proof))
     (< (long (:iteration failure)) (long (:iteration proof)))
     (or (:verification? proof)
-      (and (:tool failure)
+      (and (:form-key failure)
+        (= (:form-key failure) (:form-key proof)))
+      (and (= :journal (:source proof))
+        (:tool failure)
         (= (:tool failure) (:tool proof))))))
 
 (defn open-error-obligations
@@ -320,8 +347,10 @@
 (defn unresolved-error-answer-guard-check
   "Hard answer validator. Reject a candidate answer while any previous failure
    obligation remains open. A later successful verification command closes all
-   prior failures; a later successful same-tool call closes that tool's prior
-   failure. Same-iteration proof does not count because the model could not
+   prior failures; a later successful same-tool journal call closes that tool's
+   prior failure; a later successful bare-form re-evaluation (for example
+   `(conversation-title ...)` or `(def x ...)`) closes the exact same earlier
+   failed form. Same-iteration proof does not count because the model could not
    observe the failure before composing the answer."
   [ctx]
   (let [open (open-error-obligations ctx)]

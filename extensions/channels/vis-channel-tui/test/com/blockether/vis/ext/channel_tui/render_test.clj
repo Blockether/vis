@@ -55,7 +55,7 @@
       (expect (not-any? #(str/includes? % "ITERATION 1") lines))
       (expect (not-any? #(str/includes? % "CODE 1") lines))
       (expect (= p/MARKER_CODE (marker-of code-line)))
-      (expect (= p/MARKER_CODE (marker-of status-line)))))
+      (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))))
 
   (it "puts success status on its own bottom line and keeps bottom padding"
     ;; Layout (post header-band removal):
@@ -76,7 +76,7 @@
           bodies (mapv (comp strip-ansi body-of) lines)
           status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
       (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
-      (expect (= p/MARKER_CODE_OK (marker-of status-line)))
+      (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))
       (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
       ;; Result rows carry both a leading line-marker and an inline
       ;; result-text format sentinel (U+206E), so `body-of` alone
@@ -1693,6 +1693,58 @@
       ;; activation is exercised by the answer-side painter tests.
       (expect (some #(str/includes? (or (:text %) "") "SIEMA") @puts))
       (expect (some #(str/includes? (or (:text %) "") "quoted text") @puts))))
+
+  (it "draws markdown fenced code at the normal text left edge"
+    (let [fills   (atom [])
+          puts    (atom [])
+          active  (atom #{})
+          fg      (atom nil)
+          bg      (atom nil)
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [c] (reset! fg c) this)
+                     (setBackgroundColor [c] (reset! bg c) this)
+                     (putString [col row text]
+                       (swap! puts conj {:col col :row row :text text :fg @fg :bg @bg})
+                       this)
+                     (fillRectangle [pos size _ch]
+                       (swap! fills conj {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
+                                          :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
+                                          :w   (.getColumns ^com.googlecode.lanterna.TerminalSize size)
+                                          :h   (.getRows ^com.googlecode.lanterna.TerminalSize size)
+                                          :fg  @fg
+                                          :bg  @bg})
+                       this)
+                     (setCharacter [_ _ _] this))
+          rendered (render/format-answer-markdown-data
+                     (vis/text->ir "```clojure\n(+ 1 2)\n```") 50 nil)
+          left    2
+          width   50
+          text-x  (+ left 2)
+          _height (render/draw-chat-bubble! graphics
+                    {:role :assistant
+                     :text ""
+                     :prewrapped-lines (:lines rendered)
+                     :line-meta (:line-meta rendered)}
+                    4 left width {:viewport-h 40})
+          code-put  (first (filter #(str/includes? (:text %) "(+ 1 2)") @puts))
+          code-fill (first (filter #(and (= t/code-block-bg (:bg %))
+                                      (= (:row code-put) (:row %)))
+                             @fills))]
+      (expect (= text-x (:col code-put)))
+      (expect (= text-x (:col code-fill)))))
 
   (it "leaves only the final gap after the user bubble fill"
     (let [fills    (atom [])

@@ -64,8 +64,8 @@
   (it "strips Vis render markers and ANSI escapes from copied text"
     (expect (= "(def x 1)\nplain ok"
               (selection/selected-text
-                [(str "\u2061\u001B[32m(def\u001B[0m x 1)\uE000   ")
-                 (str "\u206Eplain \u241B[31mok\u241B[0m\uE110\uE111  ")]
+                ["\u2061\u001B[32m(def\u001B[0m x 1)\uE000   "
+                 "\u206Eplain \u241B[31mok\u241B[0m\uE110\uE111  "]
                 {:anchor (selection/point 0 0)
                  :focus  (selection/point 40 1)})))))
 

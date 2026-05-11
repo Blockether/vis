@@ -15,7 +15,9 @@
    [com.blockether.vis.internal.external-opener :as opener]
    [com.blockether.vis.ext.channel-tui.state :as state]
    [lazytest.core :refer [defdescribe it expect]])
-  (:import [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
+  (:import [com.googlecode.lanterna TerminalPosition]
+           [com.googlecode.lanterna.input MouseAction MouseActionType]
+           [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
 
 (def ^:private parse-args
   (deref #'screen/parse-args))
@@ -28,6 +30,12 @@
 
 (def ^:private partial-live-frame?
   (deref #'screen/partial-live-frame?))
+
+(def ^:private mouse-wheel-delta
+  (deref #'screen/mouse-wheel-delta))
+
+(def ^:private coalesce-wheel-input
+  (deref #'screen/coalesce-wheel-input))
 
 (def ^:private header-hover-only-change?
   (deref #'screen/header-hover-only-change?))
@@ -163,6 +171,42 @@
       (expect (not (header-hover-only-change? base bumped nil body-region)))
       (expect (not (header-hover-only-change? base (assoc bumped :input {:lines ["typed"]})
                      nil header-region))))))
+
+(defdescribe wheel-coalescing-test
+  (it "classifies wheel actions to signed deltas"
+    (let [up   (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 10 4))
+          down (MouseAction. MouseActionType/SCROLL_DOWN 1 (TerminalPosition. 10 4))
+          click (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 10 4))]
+      (expect (= -1 (mouse-wheel-delta up)))
+      (expect (= 1 (mouse-wheel-delta down)))
+      (expect (nil? (mouse-wheel-delta click)))))
+
+  (it "coalesces wheel floods and preserves first non-wheel key"
+    (let [first-wheel (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 3 7))
+          second-wheel (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 3 7))
+          non-wheel (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 3 7))
+          queue (atom [second-wheel non-wheel])
+          poll-next (fn []
+                      (let [v @queue]
+                        (when-let [k (first v)]
+                          (swap! queue subvec 1)
+                          k)))
+          {:keys [wheel-delta next-key]} (coalesce-wheel-input first-wheel poll-next)]
+      (expect (= -2 wheel-delta))
+      (expect (= non-wheel next-key))
+      (expect (empty? @queue))))
+
+  (it "drops net-zero wheel jitter (up then down)"
+    (let [first-wheel (MouseAction. MouseActionType/SCROLL_UP 1 (TerminalPosition. 1 1))
+          second-wheel (MouseAction. MouseActionType/SCROLL_DOWN 1 (TerminalPosition. 1 1))
+          queue (atom [second-wheel])
+          poll-next (fn []
+                      (let [v @queue]
+                        (when-let [k (first v)]
+                          (swap! queue subvec 1)
+                          k)))
+          {:keys [wheel-delta]} (coalesce-wheel-input first-wheel poll-next)]
+      (expect (nil? wheel-delta)))))
 
 (defdescribe extension-command-test
   (it "hides direct-only extension commands from Ctrl+K palette"
