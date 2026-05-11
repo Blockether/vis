@@ -1348,7 +1348,8 @@
                                     :workspace         workspace
                                     :display-text      display-text})]
                       (if (:error result)
-                        (dispatch [:message-received workspace-id (vis/format-error (:error result))
+                        (dispatch [:message-received workspace-id
+                                   (vis/text->ir (vis/format-error (:error result)))
                                    {:client-turn-id client-turn-id}])
                         (do
                           (dispatch [:message-received workspace-id (:answer result)
@@ -1366,9 +1367,11 @@
                     ;; renderer dims the result based on `:status
                     ;; :cancelled`, so we attach it explicitly here.
                       (if (vis/cancellation? t)
-                        (dispatch [:message-received workspace-id "Cancelled by user."
+                        (dispatch [:message-received workspace-id
+                                   [:ir {} [:p {} [:span {} "Cancelled by user."]]]
                                    {:status :cancelled
                                     :client-turn-id client-turn-id}])
-                        (dispatch [:message-received workspace-id (vis/format-error (or (ex-message t) (str t)))
+                        (dispatch [:message-received workspace-id
+                                   (vis/text->ir (vis/format-error (or (ex-message t) (str t))))
                                    {:client-turn-id client-turn-id}]))))))]
       (vis/cancellation-set-future! token fut))))

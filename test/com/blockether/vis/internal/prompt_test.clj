@@ -76,14 +76,13 @@
   ;; form centered on the OODA loop. These tests pin the new shape
   ;; against accidental regressions back to prose-heavy explanations.
 
-  (it "is bounded at <= 90 lines"
-    ;; PLAN §6.4 originally said 70; bumped to 90 after the
-    ;; hallucination-guard + investigation-triggers section landed
-    ;; (the failure-mode coverage was worth the 12 lines).
+  (it "is bounded at <= 100 lines"
+    ;; PLAN §6.4 originally said 70; bumped as hard-loop recovery and
+    ;; tool-envelope traps were promoted into the core contract.
     (let [p prompt/CORE_SYSTEM_PROMPT
           n (count (str/split-lines p))]
-      (expect (<= n 90)
-        (str "prompt grew to " n " lines; cap is 90"))))
+      (expect (<= n 100)
+        (str "prompt grew to " n " lines; cap is 100"))))
 
   (it "states the OUTPUT contract before LOOP"
     ;; Regression: conversation 185fbc4f had GLM-5.1 fabricate a
@@ -128,7 +127,10 @@
       ;; BINDINGS still mentions escape hatches (PLAN §6.4 BINDINGS spec).
       (expect (str/includes? p "`*1`"))
       (expect (str/includes? p "`*e`"))
-      (expect (str/includes? p "durable"))))
+      (expect (str/includes? p "durable"))
+      ;; Regression: convo ac0da8ae used [:result :lines] and `(get-in vector)`.
+      (expect (str/includes? p "[:op/result ...]"))
+      (expect (str/includes? p "do not `(get-in vector)`"))))
 
   (it "SYSTEM VARS section names hierarchy prefix + 11-var registry"
     (let [p prompt/CORE_SYSTEM_PROMPT]
@@ -157,6 +159,13 @@
       (expect (str/includes? p ":block"))
       ;; PLAN §6.3: agent reads :hint first.
       (expect (str/includes? p "Read :hint first"))))
+
+  (it "names answer-alone recovery and tool-envelope traps"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "rerun rejected sibling forms"))
+      (expect (str/includes? p "Tool envelopes store payload"))
+      (expect (str/includes? p "`:op/result`"))
+      (expect (str/includes? p "never use `[:result ...]`"))))
 
   (it "CODE section embeds the editing/aesthetics rules (abstract; tool-specifics live in extensions)"
     ;; Concrete tool choices (z/patch vs v/patch, HoneySQL vs raw

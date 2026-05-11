@@ -1000,7 +1000,7 @@
    "thinking_text" "thinking"
    "comments_text" "comments"
    "user_request"  "prompt"
-   "expr"          "expr"})
+   "expression"    "expression"})
 
 (defn- cli-conversations-search!
   "`vis conversations search <query>` handler. Runs an FTS5 search

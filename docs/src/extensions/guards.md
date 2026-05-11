@@ -148,5 +148,5 @@ answer-validation hooks:
 | `:foundation/conversation-title` | `:turn.iteration/start` | title blank / refresh-flagged / stale (periodic) |
 | `:foundation/context-pressure` | `:turn.iteration/start` | input tokens > ~50% of model's context window |
 | `:foundation/blind-answer` | `:turn.iteration/start` | iter 1 + investigation-style request + zero prior observation |
-| `:foundation/unresolved-errors-before-answer` | `:turn.answer/validate` | open failure obligations remain (block/journal errors not closed by later proof) |
+| `:foundation/unresolved-errors-before-answer` | `:turn.answer/validate` | open failure obligations remain (block/journal errors not closed by later proof). For answer-alone preflight failures, rerun the rejected sibling forms without `(answer ...)`, observe success, then answer alone. |
 | `:foundation/action-request-needs-evidence` | `:turn.answer/validate` | action request (`fix/implement/run/...`) but no prior tool/code evidence in this turn and answer is not blocked/partial |

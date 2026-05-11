@@ -9,23 +9,27 @@
 --          │    └─ conversation_turn_state (one run/retry of the turn)
 --          │         └─ conversation_turn_iteration (one LLM round-trip)
 --          │              │
---          │              ├─ .blocks BLOB
---          │              │    Nippy-encoded vec of per-block maps:
---          │              │    {:idx :code :comment :role
---          │              │     :op/symbol :op/tag :op/result :op/success?
---          │              │     :op/error :op/stdout :op/stderr :op/metadata
---          │              │     :duration-ms :timeout? :repaired?}
---          │              │
---          │              └─ expression_state (var versions only)
+--          │              └─ code_blocks BLOB
+--          │                   Nippy-encoded vec of per-code-block maps.
+--          │                   Block shape is `{:idx :code :comment :role
+--          │                   :result :error :stdout :stderr :duration-ms
+--          │                   :timeout? :repaired?}`. When the top-level
+--          │                   form is a Vis tool call, `:result` is the flat
+--          │                   tool envelope `{:op/symbol :op/tag :op/result
+--          │                   :op/success? :op/error :op/stdout :op/stderr
+--          │                   :op/metadata}`. Raw SCI forms store their plain
+--          │                   value in `:result`.
 --          │
 --          └─ expression_soul (branch-local var identities, kind='var')
+--               ├─ expression_state (var versions; each row points at the
+--               │                    iteration that produced it)
 --               └─ expression_dependency (var dep graph, soul-level)
 --
 -- Naming convention:
 --   *_soul   = immutable identity, branch-local
 --   *_state  = mutable snapshot; retry/fork = new state row
 --   parent_table_child = nested concept (conversation_turn_iteration
---                        = an conversation_turn_iteration nested under a conversation_turn)
+--                        = a conversation_turn_iteration nested under a conversation_turn)
 --
 -- Position columns (1-based int) live alongside UUID PKs at every
 -- level. UUIDs are the join key; position is the public/agent-
@@ -35,9 +39,9 @@
 --   user request
 --     -> conversation_turn_soul + conversation_turn_state
 --     -> conversation_turn_iteration(s)
---          each conversation_turn_iteration writes its full block log inline into
---          .blocks plus one expression_soul + expression_state
---          row per `(def ...)` it executed
+--          each conversation_turn_iteration writes its full code-block log inline into
+--          .code_blocks plus one expression_soul + expression_state
+--          row per named var `(def ...)` / `(defn ...)` it executed
 --     -> conversation_turn_state done/error
 --     -> next turn (or branch/fork to new conversation_state)
 --
@@ -149,9 +153,6 @@ CREATE TABLE conversation_turn_state (
   version                      INTEGER NOT NULL CHECK (version >= 0),
   llm_root_provider            TEXT,    -- provider id (e.g. 'openai', 'github-copilot')
   llm_root_model               TEXT,
-  prompt_enrichment            TEXT,
-  subtitle                     TEXT,
-  run_label                    TEXT,
   status                       TEXT NOT NULL
                                CHECK (status IN ('running', 'done', 'error', 'interrupted')),
   metadata                     TEXT,        -- JSON-encoded object/string
@@ -197,8 +198,8 @@ CREATE TABLE conversation_turn_iteration (
                                   ),       -- total duration across all traced attempts
   llm_thinking                    TEXT,
   llm_error                       TEXT,
-  llm_returned_empty_blocks  INTEGER NOT NULL DEFAULT 0
-                                  CHECK (llm_returned_empty_blocks IN (0, 1)),
+  llm_returned_empty_code_blocks  INTEGER NOT NULL DEFAULT 0
+                                  CHECK (llm_returned_empty_code_blocks IN (0, 1)),
 
   -- Raw-response diagnostics for provider / extraction forensics.
   -- Full raw text is persisted so investigations can query the DB
@@ -211,7 +212,7 @@ CREATE TABLE conversation_turn_iteration (
                                   ),
   llm_raw_response_sha256         TEXT,
   llm_executable_code             TEXT,
-  llm_executable_blocks           TEXT,    -- JSON vec of executable fenced blocks selected by svar: [{:lang :source} ...]
+  llm_executable_code_blocks      TEXT,    -- JSON vec of executable fenced blocks selected by svar: [{:lang :source} ...]
 
   -- svar canonical assistant message persisted so preserved-thinking
   -- replay survives a vis restart. JSON-encoded
@@ -253,8 +254,12 @@ CREATE TABLE conversation_turn_iteration (
   --   [{:idx N
   --     :code              "(some-code)"
   --     :comment           ";; leading comment" | absent
-  --     :result            <Nippy-frozen value> | absent
-  --     :error             "ERROR string" | absent
+  --     :result            <Nippy-frozen form value> | absent
+  --                        Tool calls store the full flat op envelope here,
+  --                        and the tool payload then lives under
+  --                        `[:result :op/result]` after thaw/read.
+  --                        Raw SCI forms store their plain result value here.
+  --     :error             structured error map | absent
   --     :stdout            non-blank | absent
   --     :stderr            non-blank | absent
   --     :duration-ms       N
@@ -270,7 +275,7 @@ CREATE TABLE conversation_turn_iteration (
   -- first-class (expression_soul kind='var') because var-history is
   -- the keystone of the data model - versioned, branched,
   -- dependency-graphed.
-  blocks                          BLOB,
+  code_blocks                     BLOB,
 
   -- Index of the form that called `(answer ...)` when the conversation_turn_iteration
   -- produced a final answer. Channels render the answer text below;
@@ -337,7 +342,7 @@ END;
 --              pin literals without another schema migration.
 --
 -- Per-call rows were removed. Per-call data now lives in the
--- Nippy-encoded `conversation_turn_iteration.blocks` BLOB; nothing else queried call rows
+-- Nippy-encoded `conversation_turn_iteration.code_blocks` BLOB; nothing else queried call rows
 -- by id, so the indirection added cost without value.
 --
 -- state_mode:
@@ -444,7 +449,7 @@ CREATE TABLE expression_state (
   version             INTEGER NOT NULL CHECK (version >= 0),
 
   success             INTEGER NOT NULL DEFAULT 1 CHECK (success IN (0, 1)),
-  expr                TEXT CHECK (expr IS NULL OR trim(expr) <> ''), -- expected to be valid Clojure expression text
+  expression          TEXT CHECK (expression IS NULL OR trim(expression) <> ''), -- expected to be valid Clojure expression text
   result              BLOB,               -- Nippy-encoded result bytes
   error               BLOB,               -- Nippy-encoded error bytes
   stdout              TEXT,
@@ -520,7 +525,7 @@ END;
 -- extension_id is filled by runtime extension helpers from the registered
 -- extension identity. Extension callers should not supply or spoof it.
 --
--- conversation_turn_iteration_block_id is a logical block id for future first-class block rows. Current block payloads still live in conversation_turn_iteration.blocks BLOB, so
+-- conversation_turn_iteration_block_id is a logical block id for future first-class block rows. Current block payloads still live in conversation_turn_iteration.code_blocks BLOB, so
 -- conversation_turn_iteration_block_id is intentionally not a foreign key yet. Use
 -- conversation_turn_iteration_block_index with conversation_turn_iteration_id for current block-scoped state.
 -- =============================================================================
@@ -703,7 +708,7 @@ CREATE INDEX idx_log_expression_state
   WHERE expression_state_id IS NOT NULL;
 
 -- =============================================================================
--- FTS5 - full-text search over user requests + expression state expr snapshots.
+-- FTS5 - full-text search over user requests + expression state expression snapshots.
 -- =============================================================================
 CREATE VIRTUAL TABLE search USING fts5(
   owner_table  UNINDEXED,
@@ -734,15 +739,15 @@ END;
 -- Expression state indexing
 CREATE TRIGGER trg_expression_state_ai AFTER INSERT ON expression_state BEGIN
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'expression_state', new.id, 'expr', new.expr
-    WHERE new.expr IS NOT NULL AND new.expr <> '';
+    SELECT 'expression_state', new.id, 'expression', new.expression
+    WHERE new.expression IS NOT NULL AND new.expression <> '';
 END;
 
 CREATE TRIGGER trg_expression_state_au AFTER UPDATE ON expression_state BEGIN
   DELETE FROM search WHERE owner_table='expression_state' AND owner_id=old.id;
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'expression_state', new.id, 'expr', new.expr
-    WHERE new.expr IS NOT NULL AND new.expr <> '';
+    SELECT 'expression_state', new.id, 'expression', new.expression
+    WHERE new.expression IS NOT NULL AND new.expression <> '';
 END;
 
 CREATE TRIGGER trg_expression_state_ad AFTER DELETE ON expression_state BEGIN

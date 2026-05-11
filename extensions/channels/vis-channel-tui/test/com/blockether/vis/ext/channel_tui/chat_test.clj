@@ -39,6 +39,17 @@
         (expect (= :ir (first ir)))
         (expect (str/includes? text "Siema!")))))
 
+  (it "rebuild-history rejects persisted non-IR answers"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-conversation-turns
+                  (fn [_db _cid]
+                    [{:id :turn-bad
+                      :user-request "siema"
+                      :answer "not ir"}])
+                  vis/db-list-conversation-turn-iterations
+                  (fn [_db _turn-id] [])]
+      (expect (= [] ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")))))
+
   (it "render-answer throws on raw-string input (strict IR contract)"
     (expect
       (try ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer))
@@ -97,4 +108,11 @@
           (expect (= ir (:answer result)))
           (expect (= 1 (:iteration-count result)))
           (expect (= :deep (:reasoning-default @seen)))
-          (expect (= {:text {:verbosity "high"}} (:extra-body @seen))))))))
+          (expect (= {:text {:verbosity "high"}} (:extra-body @seen)))))))
+
+  (it "returns canonical IR when cancellation is raised as an exception"
+    (with-redefs [vis/send! (fn [& _] (throw (InterruptedException. "cancel")))
+                  vis/cancellation? (fn [_] true)]
+      (let [result (chat/turn! {:id "c1"} "hello")]
+        (expect (= :cancelled (:status result)))
+        (expect (= :ir (first (:answer result))))))))

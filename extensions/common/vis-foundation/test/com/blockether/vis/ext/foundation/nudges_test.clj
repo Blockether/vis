@@ -61,13 +61,11 @@
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 50000 :context-limit 0})))))
 
 (defdescribe hooks-registration-test
-  (it "foundation ships answer/title/context/blind-answer/evidence hooks"
+  (it "foundation ships title/context/blind-answer iteration-start hooks"
     (let [ids (set (map :id nudges/hooks))]
-      (expect (= #{:foundation/conversation-title
-                   :foundation/context-pressure
-                   :foundation/blind-answer
-                   :foundation/unresolved-errors-before-answer
-                   :foundation/action-request-needs-evidence}
+      (expect (= #{:vis.foundation/conversation-title
+                   :vis.foundation/context-pressure
+                   :vis.foundation/blind-answer}
                 ids))))
 
   (it "every hook declares the four required keys (:id :doc :phase :fn)"
@@ -79,14 +77,14 @@
       (expect (fn? (:fn h)))))
 
   (it "title hook adapts title-nudge into the {:hint :importance} shape"
-    (let [h (some #(when (= :foundation/conversation-title (:id %)) %) nudges/hooks)
+    (let [h (some #(when (= :vis.foundation/conversation-title (:id %)) %) nudges/hooks)
           hit ((:fn h) {:conversation-title nil :title-refresh? false :iteration 1})]
       (expect (string? (:hint hit)))
       (expect (= :low (:importance hit)))))
 
   (it "hooks return nil when their underlying condition is absent"
-    (let [title-h    (some #(when (= :foundation/conversation-title (:id %)) %) nudges/hooks)
-          pressure-h (some #(when (= :foundation/context-pressure (:id %)) %) nudges/hooks)]
+    (let [title-h    (some #(when (= :vis.foundation/conversation-title (:id %)) %) nudges/hooks)
+          pressure-h (some #(when (= :vis.foundation/context-pressure (:id %)) %) nudges/hooks)]
       (expect (nil? ((:fn title-h)    {:conversation-title "Set" :title-refresh? false :iteration 1})))
       (expect (nil? ((:fn pressure-h) {:input-tokens 100 :context-limit 200000}))))))
 
@@ -136,7 +134,8 @@
                                                      :error {:message "z/patch failed"}}]}]]})]
       (expect (= true (:reject hit)))
       (expect (str/includes? (:message hit) "z/patch failed"))
-      (expect (str/includes? (:hint hit) "Do not answer yet"))))
+      (expect (str/includes? (:hint hit) "Do not answer yet"))
+      (expect (str/includes? (:hint hit) "rerun those forms without `(answer ...)`"))))
 
   (it "rejects final answer when a previous journal sink entry failed"
     (let [hit (nudges/unresolved-error-answer-guard-check

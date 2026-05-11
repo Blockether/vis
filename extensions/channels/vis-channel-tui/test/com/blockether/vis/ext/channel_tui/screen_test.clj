@@ -37,6 +37,12 @@
 (def ^:private coalesce-wheel-input
   (deref #'screen/coalesce-wheel-input))
 
+(def ^:private coalesce-drag-input
+  (deref #'screen/coalesce-drag-input))
+
+(def ^:private coalesced-drag-scroll-amount
+  (deref #'screen/coalesced-drag-scroll-amount))
+
 (def ^:private header-hover-only-change?
   (deref #'screen/header-hover-only-change?))
 
@@ -207,6 +213,30 @@
                           k)))
           {:keys [wheel-delta]} (coalesce-wheel-input first-wheel poll-next)]
       (expect (nil? wheel-delta)))))
+
+(defdescribe drag-coalescing-test
+  (it "coalesces drag bursts and keeps last drag event + first non-drag"
+    (let [d1 (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 5))
+          d2 (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 6))
+          d3 (MouseAction. MouseActionType/DRAG 1 (TerminalPosition. 5 7))
+          click (MouseAction. MouseActionType/CLICK_DOWN 1 (TerminalPosition. 5 7))
+          queue (atom [d2 d3 click])
+          poll-next (fn []
+                      (let [v @queue]
+                        (when-let [k (first v)]
+                          (swap! queue subvec 1)
+                          k)))
+          {:keys [key drag-events next-key]} (coalesce-drag-input d1 poll-next)]
+      (expect (= 3 drag-events))
+      (expect (= d3 key))
+      (expect (= click next-key))
+      (expect (empty? @queue))))
+
+  (it "scales drag auto-scroll amount with a bounded coalesce factor"
+    (expect (= 4 (coalesced-drag-scroll-amount 4 1)))
+    (expect (= 12 (coalesced-drag-scroll-amount 4 3)))
+    ;; bounded by drag-autoscroll-max-coalesce-factor (= 8)
+    (expect (= 32 (coalesced-drag-scroll-amount 4 99)))))
 
 (defdescribe extension-command-test
   (it "hides direct-only extension commands from Ctrl+K palette"

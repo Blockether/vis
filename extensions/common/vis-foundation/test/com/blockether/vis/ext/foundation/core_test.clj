@@ -55,7 +55,8 @@
                      (slurp (foundation-manifest-file)))
           readme   (get-in manifest ['v :docs "README.md" :content])]
       (expect (str/includes? readme "[:op/result :lines]"))
-      (expect (not (str/includes? readme "[:result :lines]")))
+      (expect (str/includes? readme "Never use [:result :lines]"))
+      (expect (not (str/includes? readme "[:info :files]")))
       (expect (not (str/includes? readme "v/preview")))))
 
   (it "defers doctor and reproduction command namespaces until command execution"
