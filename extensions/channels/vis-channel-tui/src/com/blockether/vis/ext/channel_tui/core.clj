@@ -166,3 +166,9 @@
                       :channel/messages-renderer-fn #'render-for-tui}]}))
 
 (vis/register-extension! tui-extension)
+
+;; Built-in TUI hook contributions (model/provider footer segment).
+;; Loaded by side-effect: requires the ns which registers its own
+;; vis-extension envelope. Kept separate from this ns so the hook
+;; surface is reviewable in isolation.
+(require 'com.blockether.vis.ext.channel-tui.builtin-hooks)
