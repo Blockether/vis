@@ -3429,10 +3429,20 @@
                               (concat
                                 (or history-summary [])
                                 (mapcat iter-entry-fn visible-iterations))))
+         ;; Top margin invariant: the spinner row always has ONE blank
+         ;; line above it inside the bubble, regardless of whether any
+         ;; iterations have been recorded yet. Without this the iter-0
+         ;; "Vis is calling the provider" state sits flush against the
+         ;; bubble's top border while every subsequent state (iter≥1,
+         ;; where trace-entries naturally end with a blank) gets a row
+         ;; of breathing room — a visible jump the moment the first
+         ;; iteration lands. Keeping the blank in both branches makes
+         ;; the bubble height transition smooth and the spinner
+         ;; vertically anchored.
          entries          (if (seq trace-entries)
                             (conj (conj trace-entries (line-entry ""))
                               (line-entry spinner-line))
-                            [(line-entry spinner-line)])]
+                            [(line-entry "") (line-entry spinner-line)])]
      (entries->payload entries))))
 
 (defn progress->text
