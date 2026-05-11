@@ -45,7 +45,7 @@ re-listing it.
 | `src/com/blockether/vis/internal/markdown.clj` | Conversation -> Markdown exporter. Single host helper for projecting a persisted conversation (every turn: user prompt + final answer + optional metadata) into a paste-friendly Markdown string. Surface: `conversation->markdown`. Lives in the runtime so every channel (TUI, Telegram, CLI agent, third-party) ships a `Copy as Markdown` / `Export conversation` affordance through the same projection. |
 | `src/com/blockether/vis/internal/persistance.clj` | Storage facade: `db-create-connection!`, every `db-store-*` / `db-list-*` / `db-update-*`, backend self-registration (`register-backend!`). |
 | `src/com/blockether/vis/internal/progress.clj` | Streaming progress tracker. |
-| `src/com/blockether/vis/internal/prompt.clj` | `assemble-system-prompt` (single source of truth), `build-iteration-context`, `CORE_SYSTEM_PROMPT`. |
+| `src/com/blockether/vis/internal/prompt.clj` | `assemble-system-prompt` (single source of truth), `build-system-prompt`, `build-iteration-context`. |
 | `src/com/blockether/vis/internal/registry.clj` | Channel + CLI command + provider registries. |
 
 ## Classpath plug-ins

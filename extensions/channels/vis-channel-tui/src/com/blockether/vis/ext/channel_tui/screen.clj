@@ -1247,22 +1247,6 @@
         {:seen #{} :out []})
       :out)))
 
-(defn- register-conversation-shutdown-hook!
-  "Register a JVM shutdown hook that prints the TUI resume command for
-   the active conversation. TUI-local: the printed string is a
-   `vis channels tui ...` sub-command, so this hook lives next to the
-   only consumer instead of in vis-runtime or vis-cli."
-  []
-  (let [hook (Thread. (fn []
-                        (when-let [conversation-id (current-conversation-id)]
-                          (let [^java.io.PrintStream out vis/original-stdout]
-                            (.println out "")
-                            (.println out (str "  vis channels tui --conversation-id " conversation-id))
-                            (.println out "")
-                            (.flush out)))))]
-    (.addShutdownHook (Runtime/getRuntime) hook)
-    hook))
-
 (defn- register-shutdown-hook!
   "Thin wrapper over `Runtime/addShutdownHook` so call-sites read as
    plain Clojure instead of a `(Thread. ^Runnable (fn [] ...))` casting
@@ -1520,7 +1504,6 @@
                        (chat/make-conversation config))
                      (chat/make-conversation config)))]
              (vreset! title-listener-cleanup (init-visible-conversation! {:id id :history history}))
-             (register-conversation-shutdown-hook!)
              ;; Kick off background pre-warm of the LRU. Walks the
              ;; history bottom-up calling project + bubble-height,
              ;; so by the time the user scrolls UP the cache is

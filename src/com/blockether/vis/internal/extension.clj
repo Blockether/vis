@@ -62,24 +62,23 @@
 ;;
 ;; The old `::info` map (which lived inside an outer wrapper of
 ;; {:success? :result :info :error}) is REPLACED by a flat
-;; envelope. Every metadata field lives under the `op/*`
-;; namespace; `:result` (the actual SCI eval value) stays as a
-;; plain unkeyed entry per PLAN §2.3 and is NOT in the spec
-;; (its shape is `any?`).
+;; envelope. Payload and metadata fields live under the `op/*`
+;; namespace. The canonical payload key is `:op/result`; there is no
+;; outer plain `:result` key in an envelope.
 ;;
 ;; Old shape (deleted):
 ;;   {:success? bool :result <v>
 ;;    :info {:op kw :started-at-ms ... :duration-ms ...}
 ;;    :error {:type :message :trace [<frames>]}}
 ;;
-;; New shape (this PR):
-;;   {:result <v>                 ; outer, plain key, NOT in spec
-;;    :op/symbol  :v/cat
-;;    :op/tag     :op.tag/observation
+;; New shape:
+;;   {:op/result   <v>
+;;    :op/symbol   :v/cat
+;;    :op/tag      :op.tag/observation
 ;;    :op/success? true
-;;    :op/error   nil
-;;    :op/stdout  ""
-;;    :op/stderr  ""
+;;    :op/error    nil
+;;    :op/stdout   ""
+;;    :op/stderr   ""
 ;;    :op/metadata {:paths [...] :duration-ms 5 ...}}
 ;; ============================================================
 
@@ -143,23 +142,19 @@
 ;; ---- the envelope ----
 (s/def :op/envelope
   (s/and
-    (s/keys :opt-un [:op/symbol :op/tag :op/result :op/success? :op/error
-                     :op/stdout :op/stderr :op/metadata])
+    (s/keys :opt [:op/symbol :op/tag :op/result :op/success? :op/error
+                  :op/stdout :op/stderr :op/metadata])
     ;; Distinguishing-marker requirement: a real envelope MUST carry
-    ;; at least one canonical op/* key. Without this gate, plain maps
-    ;; (e.g. user data, results from non-envelope code) would all
-    ;; validate as envelopes since every key is :opt-un. Renderers
-    ;; that special-case envelopes would then mis-categorise plain
-    ;; data — see env_test.clj/build-bindings rendering bug. The
-    ;; canonical marker is the boolean `:op/success?` field that
-    ;; every `extension/success`/`extension/failure` constructor sets.
+    ;; the canonical boolean `:op/success?` field. Without this gate,
+    ;; plain maps (e.g. user data, results from non-envelope code)
+    ;; would validate as envelopes because every field is optional.
+    ;; Renderers that special-case envelopes would then mis-categorise
+    ;; plain data — see env_test.clj/build-bindings rendering bug.
     #(contains? % :op/success?)
     (fn [{:op/keys [success? error]}]
       (if success?
         (nil? error)
         (or (nil? success?) (some? error))))))
-
-(s/def ::result any?)                     ; raw SCI eval value, outside the envelope
 
 ;; ---------------------------------------------------------------------------
 ;; Sink-entry shape (one entry per tool-symbol call inside a top-level form)
@@ -374,7 +369,7 @@
   "Internal builder used by both `success` and `failure`. Accepts
    only the canonical shape:
 
-     :result   raw SCI eval value (outside the envelope spec)
+     :result   raw SCI eval value; stored under `:op/result`
      :op       op symbol e.g. :v/cat (nil for raw user code)
      :metadata free-form aux map: :tool, :extension, :source,
                :paths, :hit-count, :command, :started-at-ms,
@@ -2621,7 +2616,7 @@
                            queries, registry lookups, AND post-action
                            verification (./verify.sh, patch-check,
                            parse-check). Verification distinguishes
-                           via ::op/success? on the envelope, not a
+                           via :op/success? on the envelope, not a
                            separate tag.
 
      :op.tag/action        mutates state — patch, write, append,

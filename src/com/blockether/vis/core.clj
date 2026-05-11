@@ -452,8 +452,6 @@
 (def safe-pr-str                prompt/safe-pr-str)
 (def truncated-pr-str           prompt/truncated-pr-str)
 (def assemble-initial-messages  prompt/assemble-initial-messages)
-(def CORE_SYSTEM_PROMPT         prompt/CORE_SYSTEM_PROMPT)
-
 ;; =============================================================================
 ;; Channel event bus
 ;; =============================================================================

@@ -167,10 +167,10 @@
 
 (defn- rebalance-inline-sentinel-wraps
   "When a markdown inline span crosses a visual wrap boundary, repeat its
-   zero-width sentinels on each physical row. Otherwise a long inline command
-   like `vis channels tui --conversation-id ...` starts with code styling on
-   row 1, then every continuation paints as plain prose until the final row's
-   CODE_OFF. Added sentinels are zero-width, so wrapping width is unchanged."
+   zero-width sentinels on each physical row. Otherwise a long inline code span
+   starts with code styling on row 1, then every continuation paints as plain
+   prose until the final row's CODE_OFF. Added sentinels are zero-width, so
+   wrapping width is unchanged."
   [lines]
   (loop [remaining (seq lines)
          active    []

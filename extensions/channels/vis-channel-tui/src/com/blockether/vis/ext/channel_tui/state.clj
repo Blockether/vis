@@ -323,7 +323,10 @@
     (update :theme-name normalize-theme-name)
     (update :reasoning-level normalize-reasoning-level)
     (update :openai-codex-verbosity normalize-codex-verbosity)
-    (update :show-thinking boolean)
+    ;; Provider reasoning/thinking is forensic data, not chat UI. Keep it
+    ;; hidden even if an old config persisted `:show-thinking true`; the
+    ;; transcript/reproduction surfaces still retain it for debugging.
+    (assoc :show-thinking false)
     (update :show-iterations boolean)
     (update :show-timestamps boolean)
     (update :differentiate-turns boolean)
@@ -340,9 +343,9 @@
          themes are declared through `:ext/theme` and surfaced in Settings.
 
      show-thinking / show-iterations  - high-signal content controls.
-         Thinking defaults OFF so provider chain-of-thought is not shown
-         as assistant prose. Users can opt in from Settings when they
-         want debugging/reasoning traces.
+         Thinking is forced OFF so provider chain-of-thought is not shown
+         as assistant prose. Forensics still keep reasoning in the DB /
+         reproduction surfaces; chat UI only shows code/results/answers.
 
      reasoning-level - base model thinking depth for reasoning-capable
          models. Default `:balanced`; users can cycle it via

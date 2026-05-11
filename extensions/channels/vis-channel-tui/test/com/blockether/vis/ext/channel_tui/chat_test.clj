@@ -3,6 +3,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.history-restore :as history-restore]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe rebuild-history-test)
@@ -52,6 +53,60 @@
         (expect (= 2 (count history)))
         (expect (= :ir (first ir)))
         (expect (str/includes? (vis/render ir :markdown) "Stopped after 20 iterations")))))
+
+  (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
+    ;; `(def x (v/cat ...))` persists the live var value as
+    ;; `{:vis/ref :expr}` (not safely serializable), but the tool call's
+    ;; channel-rendered text is durable and should be shown on resume.
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-conversation-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "read file"
+                      :answer [:ir {}]}])
+                  vis/db-list-conversation-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1}])
+                  vis/db-list-iteration-blocks
+                  (fn [_db _iteration-id]
+                    [{:code "(def prompt-lines (v/cat \"src/foo.clj\"))"
+                      :result {:vis/ref :expr}
+                      :channel [{:position 0
+                                 :form "(v/cat \"src/foo.clj\")"
+                                 :success? true
+                                 :result "Read `src/foo.clj` — 10 line(s)."}]}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            trace   (-> history second :traces first)
+            rendered (first (:results trace))]
+        (expect (str/includes? rendered "Read `src/foo.clj`"))
+        (expect (not (str/includes? rendered "<runtime value"))))))
+
+  (it "rebuild-history shows restored def values when the def form returned a runtime var"
+    ;; `(def derived (subvec ...))` returns a SCI Var at the form level, so
+    ;; the iteration block stores `{:vis/ref :expr}`. The actual value is
+    ;; persisted separately as expression state; resume should use that before
+    ;; falling back to the runtime-ref placeholder.
+    (with-redefs [vis/db-info (fn [] :db)
+                  history-restore/restored-var-values
+                  (fn [_db _cid]
+                    {"prompt-slice" ["alpha" "beta"]})
+                  vis/db-list-conversation-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "derive"
+                      :answer [:ir {}]}])
+                  vis/db-list-conversation-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1}])
+                  vis/db-list-iteration-blocks
+                  (fn [_db _iteration-id]
+                    [{:code "(def prompt-slice (subvec xs 0 2))"
+                      :result {:vis/ref :expr}}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            rendered (-> history second :traces first :results first)]
+        (expect (str/includes? rendered "alpha"))
+        (expect (str/includes? rendered "beta"))
+        (expect (not (str/includes? rendered "<runtime value"))))))
 
   (it "render-answer throws on raw-string input (strict IR contract)"
     (expect

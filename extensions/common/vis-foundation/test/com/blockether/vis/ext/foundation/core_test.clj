@@ -38,6 +38,11 @@
       (expect (str/includes? prompt "v/file-link"))
       (expect (str/includes? prompt "v/join"))))
 
+  (it "answer-IR prompt forbids Markdown answers and Markdown-to-IR rendering"
+    (let [prompt ((:ext/prompt foundation/vis-extension) {})]
+      (expect (str/includes? prompt "Do not emit Markdown/text strings"))
+      (expect (str/includes? prompt "Do not render Markdown as IR"))))
+
   (it "contributes environment info through the dedicated hook"
     (expect (fn? (:ext/environment-info-fn foundation/vis-extension))))
 

@@ -248,8 +248,8 @@
       (expect (str/includes? out "(+ 3 4)"))
       (expect (not (str/includes? out "i1.1")))))
 
-  (it "strips <bindings>, <active_skills>, <system_nudge[s]> echoes too"
-    (doseq [tag ["bindings" "active_skills" "system_nudges" "system_nudge"]]
+  (it "strips <bindings>, <active_skills>, <system_vars>, <system_nudge[s]> echoes too"
+    (doseq [tag ["bindings" "active_skills" "system_vars" "system_var" "system_nudges" "system_nudge"]]
       (let [raw (str "<" tag ">junk</" tag ">\n```clojure\n(+ 1 2)\n```\n")
             out (#'loop/strip-vis-engine-xml-echo raw)]
         (expect (not (str/includes? out (str "<" tag ">"))))
@@ -454,7 +454,7 @@
 (defdescribe answer-alone-preflight-test
   ;; Strict gate: `(answer ...)` MUST be the only top-level form in
   ;; its iteration. Pi / Codex / SWE-bench style observe-then-answer
-  ;; split. Mirrors hard rule documented in CORE_SYSTEM_PROMPT.
+  ;; split. Mirrors hard rule documented in the built system prompt.
   (it "rejects answer + illegal sibling top-level form"
     (doseq [code ["(v/cat \"a\")\n(answer [:ir [:p \"ok\"]])"
                   "(def x 1)\n(answer [:ir [:p \"ok\"]])"

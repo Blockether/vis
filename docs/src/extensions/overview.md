@@ -233,7 +233,7 @@ turn start:
 `loop-core/assemble-system-prompt` is the **single function** that
 builds the complete system message. It:
 
-1. Builds the core system prompt (`CORE_SYSTEM_PROMPT` + optional
+1. Builds the core system prompt (`build-system-prompt` + optional
    caller instructions)
 2. Collects environment-info sections from active extensions and wraps
    them in `<environment-info>`
