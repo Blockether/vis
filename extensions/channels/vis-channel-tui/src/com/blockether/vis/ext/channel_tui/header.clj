@@ -541,7 +541,7 @@
     (loop [row (inc content-row)
            specs (seq contrib-specs)]
       (when specs
-        (let [{:keys [id spec]} (first specs)
+        (let [{:keys [spec]} (first specs)
               h (long (:height spec))
               draw! (:draw! spec)]
           (when (pos? h)

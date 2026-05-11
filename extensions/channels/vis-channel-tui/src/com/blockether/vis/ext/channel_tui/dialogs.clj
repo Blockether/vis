@@ -1092,6 +1092,40 @@
     :label "Mouse selection auto-copy"
     :description "Drag-select visible text; copied automatically on mouse release"}])
 
+(defn- contributor-hook?
+  "True when `hook-id` is a TUI contributor recognised by header /
+   footer (matches `*/header-row` or `*/footer-segment`)."
+  [hook-id]
+  (let [n (some-> hook-id name)]
+    (or (= "header-row" n)
+      (= "footer-segment" n)
+      (= :tui/header-row hook-id)
+      (= :tui/footer-segment hook-id))))
+
+(defn- contributor-rows
+  "Settings-dialog rows for the registered TUI contributor hooks.
+   Each row is a `:set-toggle` against `:contributors-disabled`.
+   When no extensions have registered TUI contributors, returns nil
+   so the section stays hidden — don't show an empty band."
+  []
+  (let [hooks (->> (vis/channel-hooks-for :tui)
+                (filter #(contributor-hook? (:hook-id %)))
+                (sort-by #(str (:hook-id %))))]
+    (when (seq hooks)
+      (vec
+        (cons {:type :section :label "Header / Footer Contributors"}
+          (for [{:keys [hook-id]} hooks]
+            {:key (keyword (str "contrib::" (str hook-id)))
+             :type :set-toggle
+             :set-key :contributors-disabled
+             :item-id hook-id
+             :label (str hook-id)
+             :description (str "Toggle this extension's contribution to the TUI "
+                            (cond
+                              (= "header-row" (name hook-id)) "header subtitle row"
+                              (= "footer-segment" (name hook-id)) "footer"
+                              :else "chrome"))}))))))
+
 (defn- settings-content-width
   [cols]
   (default-content-width cols))
@@ -1340,6 +1374,7 @@
          :channels
          (concat [{:type :section :label "Terminal UI"}]
            (settings-ui-options)
+           (or (contributor-rows) [])
            (when (seq channel-rows)
              (concat [{:type :section :label "Channel Settings"}]
                (settings-extension-groups channel-rows))))
@@ -1355,11 +1390,16 @@
     "unset"))
 
 (defn- settings-option-label
-  [{:keys [key label type choices]
+  [{:keys [key label type choices set-key item-id]
     env-name :name} values]
   (case type
     :choice (str label ": " (clojure.core/name (or (get values key) (first choices))))
     :env-var (str label ": " (extension-env-status-label (:source (vis/extension-env-status env-name))))
+    :set-toggle
+    ;; set-toggle: row is "enabled" iff item-id is NOT in the disabled
+    ;; set. Inverted because the underlying setting is a HIDE list.
+    (let [disabled? (boolean (some-> (get values set-key) (contains? item-id)))]
+      (str label " (" (if disabled? "hidden" "shown") ")"))
     label))
 
 (defn- cycle-choice
@@ -1369,10 +1409,17 @@
     (nth choices (mod (inc (if (neg? idx) 0 idx)) (count choices)))))
 
 (defn- apply-settings-option
-  [values {:keys [key type choices]}]
+  [values {:keys [key type choices set-key item-id]}]
   (case type
     :choice (update values key #(cycle-choice choices %))
     :toggle (update values key not)
+    :set-toggle
+    (update values set-key
+      (fn [s]
+        (let [s (or s #{})]
+          (if (contains? s item-id)
+            (disj s item-id)
+            (conj s item-id)))))
     values))
 
 (defn- notify-settings-change!
@@ -1385,7 +1432,7 @@
 
 (defn- settings-selectable?
   [{:keys [type]}]
-  (contains? #{:toggle :choice :action :env-var} type))
+  (contains? #{:toggle :choice :action :env-var :set-toggle} type))
 
 (defn- first-selectable-index
   [rows]
