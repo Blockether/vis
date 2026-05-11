@@ -906,10 +906,27 @@
                                    (>= (- now-ms (long last-frame-ms))
                                      spinner-tick-ms))
                         same-size? (and (= last-cols cols) (= last-rows rows))
+                        ;; The slash-command suggestions popup is
+                        ;; drawn JUST ABOVE the input box, which
+                        ;; overlaps the bottom of the messages area
+                        ;; that `render-live-bubble-frame!` repaints.
+                        ;; Partial-live painting overdraws the popup
+                        ;; — the user sees a flicker every spinner
+                        ;; tick. Force the full-frame path while
+                        ;; slash suggestions are visible so the
+                        ;; suggestions get re-painted on top.
+                        slash-suggestions-visible?
+                        (boolean
+                          (and (not (get-in db [:input :empty?] false))
+                            (let [text (input/input->text (:input db))]
+                              (and (string? text)
+                                (clojure.string/starts-with?
+                                  (clojure.string/triml text) "/")))))
                         partial-live? (and loading?
                                         same-size?
                                         last-layout
                                         (not (:mouse-selection db))
+                                        (not slash-suggestions-visible?)
                                         (or animate?
                                           (live-progress-only-change? last-db db)))]
                     (if (and (not (:shutdown? db))

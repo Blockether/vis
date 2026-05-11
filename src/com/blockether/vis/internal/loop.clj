@@ -2745,9 +2745,13 @@
 ;; Iteration loop + run-turn! (inlined from former base)
 ;; -----------------------------------------------------------------------------
 
-;; Defined in environment lifecycle section. `iteration-loop` calls it at turn
-;; start after computing active extensions; sorting would require moving the
-;; environment-install helpers above the loop engine.
+;; Forward reference: defined in the environment lifecycle section
+;; ~1500 lines below. Removing this declare requires extracting
+;; `sync-active-extension-symbols!` + its 3 helpers (`extension-
+;; aliases`, `extension-namespace-bindings`, `require-extension-
+;; alias!`) into a separate ns (e.g. `internal/extension_environment.clj`).
+;; Tracked as the proper file-split task (sister of
+;; `extension-info` declare in extension.clj). See AGENTS.md S2.
 (declare sync-active-extension-symbols!)
 
 (def ^:private FRESH_ITER_CARRY
