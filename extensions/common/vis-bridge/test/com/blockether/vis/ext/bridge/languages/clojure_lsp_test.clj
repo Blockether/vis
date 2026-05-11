@@ -1,6 +1,6 @@
-(ns com.blockether.vis.ext.bridge.extract-clojure-lsp-test
+(ns com.blockether.vis.ext.bridge.languages.clojure-lsp-test
   (:require
-   [com.blockether.vis.ext.bridge.extract-clojure-lsp :as lsp]
+   [com.blockether.vis.ext.bridge.languages.clojure-lsp :as lsp]
    [com.blockether.vis.ext.bridge.schema :as schema]
    [lazytest.core :refer [defdescribe expect it]]))
 

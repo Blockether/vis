@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.bridge.extract-clojure-basic
+(ns com.blockether.vis.ext.bridge.languages.clojure-basic
   "Small Clojure fallback extractor using edamame.
 
    This is deliberately syntax-only. Prefer `extract-clojure-lsp` whenever the

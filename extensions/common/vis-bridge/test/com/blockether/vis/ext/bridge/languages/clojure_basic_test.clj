@@ -1,6 +1,6 @@
-(ns com.blockether.vis.ext.bridge.extract-clojure-basic-test
+(ns com.blockether.vis.ext.bridge.languages.clojure-basic-test
   (:require
-   [com.blockether.vis.ext.bridge.extract-clojure-basic :as basic]
+   [com.blockether.vis.ext.bridge.languages.clojure-basic :as basic]
    [com.blockether.vis.ext.bridge.schema :as schema]
    [lazytest.core :refer [defdescribe expect it]]))
 

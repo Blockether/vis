@@ -4,9 +4,10 @@
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.bridge.doctor :as doctor]
-   [com.blockether.vis.ext.bridge.extract-clojure-basic :as basic]
-   [com.blockether.vis.ext.bridge.extract-clojure-lsp :as clj-lsp]
-   [com.blockether.vis.ext.bridge.extract-markdown :as md]))
+   [com.blockether.vis.ext.bridge.fill :as fill]
+   [com.blockether.vis.ext.bridge.languages.clojure-basic :as basic]
+   [com.blockether.vis.ext.bridge.languages.clojure-lsp :as clj-lsp]
+   [com.blockether.vis.ext.bridge.languages.markdown :as md]))
 
 (defn- slurp-path [path]
   (slurp (io/file (str path))))
@@ -50,6 +51,24 @@
                 {:type :bridge/unknown-backend
                  :backend backend}))))))
 
+(defn aggregate-rows
+  "Convert a normalized Bridge extraction result to extension aggregate rows.
+   Pure. Does not write storage. Use this to inspect the fill mapping before
+   calling `bridge/fill!`."
+  ([result] (aggregate-rows result nil))
+  ([result opts]
+   (fill/rows-for-result result opts)))
+
+(defn- fill-result*
+  [env result & [opts]]
+  (fill/fill! env result opts))
+
+(defn- inject-env-before-fn
+  [env f args]
+  {:env env
+   :fn f
+   :args (vec (cons env args))})
+
 (defn- render-summary [result]
   (let [{:keys [stats]} result]
     (str "Bridge extraction: "
@@ -65,6 +84,16 @@
     (pr-str (update result :nodes #(take 20 %)))
     "\n```"))
 
+(defn- render-rows-summary [rows]
+  (str "Bridge aggregate rows: " (count rows)
+    ", kinds=" (pr-str (frequencies (map :kind rows)))))
+
+(defn- render-fill-summary [stats]
+  (str "Bridge fill: rows=" (:rows stats)
+    ", nodes=" (:nodes stats)
+    ", edges=" (:edges stats)
+    ", indexes=" (:indexes stats)))
+
 (def bridge-symbols
   [(vis/symbol #'extract-markdown
      {:journal-render-fn render-summary
@@ -75,14 +104,23 @@
       :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
    (vis/symbol #'extract-clojure
      {:journal-render-fn render-summary
-      :channel-render-fn render-channel})])
+      :channel-render-fn render-channel})
+   (vis/symbol #'aggregate-rows
+     {:journal-render-fn render-rows-summary
+      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
+   (vis/symbol 'fill! fill-result*
+     {:doc "Persist a normalized Bridge extraction result through extension aggregates. Must run from bridge/ SCI context."
+      :arglists '([result] [result opts])
+      :before-fn inject-env-before-fn
+      :journal-render-fn render-fill-summary
+      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})])
 
 (defn- prompt [_env]
   (str (vis/render-prompt
          {:ext/doc "Bridge codebase graph tools"
           :ext/ns-alias {:alias 'bridge}
           :ext/symbols bridge-symbols})
-    "\nBridge v1 extracts Markdown via CommonMark and Clojure via external clojure-lsp when available. Results are normalized facts: :nodes, :edges, :diagnostics, :stats."))
+    "\nBridge v1 keeps extraction separate from filling: language extractors emit normalized facts; bridge/aggregate-rows previews storage rows; bridge/fill! writes extension aggregates."))
 
 (def vis-extension
   (vis/extension

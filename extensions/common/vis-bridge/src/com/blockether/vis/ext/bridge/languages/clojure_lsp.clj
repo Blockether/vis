@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.bridge.extract-clojure-lsp
+(ns com.blockether.vis.ext.bridge.languages.clojure-lsp
   "Clojure extractor backed by external `clojure-lsp dump`.
 
    The external process path avoids classpath/protocol clashes in the Vis JVM

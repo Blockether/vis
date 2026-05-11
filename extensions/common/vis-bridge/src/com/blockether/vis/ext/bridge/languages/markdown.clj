@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.bridge.extract-markdown
+(ns com.blockether.vis.ext.bridge.languages.markdown
   "CommonMark-backed Markdown extractor for Bridge.
 
    Produces a PageIndex-style document tree as Bridge nodes/edges:
