@@ -3,7 +3,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation.environment.core :as env-core]
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
    (java.nio.file Files)
@@ -76,12 +76,12 @@
           branch "feature/ws"]
       (try
         (init-repo-on-branch! root branch)
-        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
           (let [git (:git (env-core/refresh!))]
             (expect (= branch (:branch git)))
             (expect (= (.getCanonicalPath root) (:root git)))))
         (finally
-          (binding [workspace-context/*workspace-root* nil]
+          (binding [workspace/*workspace-root* nil]
             (env-core/refresh!))
           (cleanup root)))))
 

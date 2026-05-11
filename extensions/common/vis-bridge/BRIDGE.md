@@ -386,7 +386,7 @@ test/com/blockether/vis/ext/bridge/
 
 ### Phase 1: Discover
 
-1. Walk Vis' active workspace root, enumerate files. Bridge resolves relative paths through `com.blockether.vis.internal.workspace-context/cwd`, the same dynamic workspace binding used by Foundation tools.
+1. Walk Vis' active workspace root, enumerate files. Bridge resolves relative paths through `com.blockether.vis.internal.workspace/cwd`, the same dynamic workspace binding used by Foundation tools.
 2. Apply `.bridgeignore` + built-in skip patterns.
 3. Compute content hashes.
 4. Compare against index aggregates; partition into `:unchanged`, `:stale`, `:new`, `:deleted`.

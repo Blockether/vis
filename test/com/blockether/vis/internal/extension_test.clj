@@ -22,7 +22,7 @@
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as ext]
    [com.blockether.vis.internal.registry :as registry]
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private base-channel
@@ -70,7 +70,7 @@
 
 (defdescribe wrap-extension-workspace-test
   (it "binds env workspace root around sandbox symbol calls"
-    (let [sym-entry (ext/symbol 'root (fn [] (ext/success {:result workspace-context/*workspace-root* :op :test/root}))
+    (let [sym-entry (ext/symbol 'root (fn [] (ext/success {:result workspace/*workspace-root* :op :test/root}))
                       {:doc "Return bound workspace root."
                        :arglists '([])
 
@@ -82,7 +82,7 @@
                                     :ext/ns-alias {:ns 'test.workspace-root :alias 't}
                                     :ext/symbols [sym-entry]})
           wrapped   (ext/wrap-extension extension {:workspace/root "."})]
-      (expect (= (workspace-context/workspace-root ".")
+      (expect (= (workspace/workspace-root ".")
                 (:op/result ((get wrapped 'root))))))))
 
 (defdescribe source-rewrite-test

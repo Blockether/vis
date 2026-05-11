@@ -9,7 +9,7 @@
             [com.blockether.vis.ext.channel-tui.theme :as tui-theme]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
-            [com.blockether.vis.internal.workspace-context :as workspace-context]))
+            [com.blockether.vis.internal.workspace :as workspace]))
 
 ;;; ── Framework ──────────────────────────────────────────────────────────────
 
@@ -1115,7 +1115,7 @@
     (let [visible-text (input/expand-paste-placeholders text (:pastes db))
           workspace-id (current-workspace-id db)
           workspace    (active-workspace db)
-          agent-text   (binding [workspace-context/*workspace-root* (workspace-context/workspace-root workspace)]
+          agent-text   (binding [workspace/*workspace-root* (workspace/workspace-root workspace)]
                          (input/expand-file-mentions visible-text))
           token        (vis/cancellation-token)
           extra-body   (turn-extra-body db)

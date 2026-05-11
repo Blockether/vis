@@ -22,7 +22,7 @@
    shells out and never throws; errors land in the returned result map."
   (:require [babashka.process :as process]
             [clojure.string :as str]
-            [com.blockether.vis.internal.workspace-context :as workspace-context])
+            [com.blockether.vis.internal.workspace :as workspace])
   (:import (java.io File)
            (java.nio.file Path Paths)))
 
@@ -69,7 +69,7 @@
   "Normalized absolute explicit workspace cwd as a Path. Indirected
    so tests can redefine it."
   ^Path []
-  (.normalize (.toAbsolutePath (.toPath (workspace-context/cwd)))))
+  (.normalize (.toAbsolutePath (.toPath (workspace/cwd)))))
 
 (defn- path-of
   ^Path [^String first-segment & more-segments]

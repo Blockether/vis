@@ -10,7 +10,7 @@
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.workspace-context :as workspace-context]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]])
   (:import (java.nio.file Paths)))
 
@@ -68,7 +68,7 @@
     (let [root (.toFile (java.nio.file.Files/createTempDirectory "vis-opener-ws" (make-array java.nio.file.attribute.FileAttribute 0)))]
       (try
         (spit (java.io.File. root "from-workspace.txt") "ok")
-        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
           (let [out (opener/safe-target "from-workspace.txt")]
             (expect (= :rel (:scheme out)))
             (expect (= (.getCanonicalPath (java.io.File. root "from-workspace.txt")) (:target out)))))

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.git-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.git :as git]
-            [com.blockether.vis.internal.workspace-context :as workspace-context]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe count-status-sets-test
@@ -15,7 +15,7 @@
                      (into-array java.nio.file.attribute.FileAttribute []))
                  .toFile)]
       (try
-        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
           (expect (= (.getCanonicalPath root)
                     (.getCanonicalPath (git/cwd-file)))))
         (finally

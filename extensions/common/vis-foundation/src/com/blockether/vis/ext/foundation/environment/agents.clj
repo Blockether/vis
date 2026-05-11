@@ -21,7 +21,7 @@
    model isn't bound by rules it can't see, but the user/agent
    knows something is broken. See plan §1 Q10."
   (:require
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -34,7 +34,7 @@
 (defn- repo-cwd ^java.io.File []
   ;; Treat the active workspace root as the repo root. Falls back to
   ;; process cwd when no workspace is bound; never mutates JVM cwd.
-  (workspace-context/cwd))
+  (workspace/cwd))
 
 (defn- read-bytes-safely
   "Read up to `(inc MAX_BYTES)` bytes from `path`. Returns
@@ -159,7 +159,7 @@
 (defn- canonical-cwd ^String []
   (try (.getCanonicalPath ^java.io.File (repo-cwd))
     (catch Throwable _
-      (or workspace-context/*workspace-root*
+      (or workspace/*workspace-root*
         (System/getProperty "user.dir")))))
 
 (defn current
