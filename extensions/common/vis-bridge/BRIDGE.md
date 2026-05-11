@@ -334,10 +334,11 @@ extensions/common/vis-bridge/
 │           └── vis.edn                          ← manifest
 └── src/com/blockether/vis/ext/bridge/
     ├── core.clj                                 ← extension registration, SCI symbols
-    ├── extract.clj                              ← extraction pipeline coordinator
-    ├── extract_clojure.clj                      ← Clojure-specific AST extractor
-    ├── extract_markdown.clj                     ← Markdown heading/section extractor
-    ├── store.clj                                ← graph CRUD via ext-put!/ext-list (nodes, edges, index)
+    ├── schema.clj                               ← normalized extraction fact schema
+    ├── fill.clj                                 ← facts → aggregate rows / ext-put!
+    ├── languages/
+    │   ├── clojure.clj                          ← Clojure extractor via external clojure-lsp
+    │   └── markdown.clj                         ← CommonMark heading/section extractor
     ├── query.clj                                ← in-memory graph traversal (neighbors, blast-radius, path)
     ├── relevance.clj                            ← meaningfulness filtering
     └── summary.clj                              ← LLM summary generation (optional)
@@ -348,9 +349,11 @@ Test namespace:
 ```
 test/com/blockether/vis/ext/bridge/
 ├── core_test.clj
-├── extract_clojure_test.clj
-├── extract_markdown_test.clj
-├── store_test.clj
+├── schema_test.clj
+├── fill_test.clj
+├── languages/
+│   ├── clojure_test.clj
+│   └── markdown_test.clj
 ├── query_test.clj
 └── relevance_test.clj
 ```
@@ -395,26 +398,21 @@ test/com/blockether/vis/ext/bridge/
 
 For each `:full-extract` file, dispatch to language-specific extractor:
 
-**Clojure extractor** (`extract_clojure.clj`):
-- Parse with `edamale` (already in Vis).
-- Walk top-level forms:
-  - `ns` → extract `:require`, `:import` → `namespace` node + `imports` edges
-  - `defn` / `defn-` → `def` / `defn-private` node with arglists, docstring
-  - `defmacro` → `def` node with `:macro true` in metadata
-  - `defprotocol` → `protocol` node, child `def` nodes for methods
-  - `defrecord` → `record` node, `implements` edges to protocols
-  - `deftype` → `type` node
-  - `defmulti` / `defmethod` → `multimethod` node
-  - `def` (data vars) → `var` node
-- Walk function bodies for call sites:
-  - Symbol in call position → resolve against namespace imports → `calls` edge
-  - Symbol in reference position → `refers` edge
-- Emit `(node, edge)` tuples.
+**Clojure extractor** (`languages/clojure.clj`):
+- Run external `clojure-lsp dump --raw`.
+- Convert namespace definitions to `:module` nodes.
+- Convert var definitions to `:symbol` nodes.
+- Put function/macro/protocol/record/var detail in `:metadata {:symbol-kind ...}`.
+- Convert namespace usages / dep-graph entries to `:imports` edges.
+- Convert var usages to `:uses` edges.
+- Emit normalized facts only; no storage writes.
 
-**Markdown extractor** (`extract_markdown.clj`):
-- Parse headings → `heading` nodes
-- Sections between headings → `section` nodes
-- Symbol references in backticks → `documents` edges to matching nodes (best-effort)
+**Markdown extractor** (`languages/markdown.clj`):
+- Parse CommonMark headings.
+- Emit `:file` + `:doc-section` nodes.
+- Keep fenced code blocks as doc-section payload metadata, not graph nodes.
+- Inline-code references become `:mentions` edges.
+- Markdown links become `:links-to` edges.
 
 ### Phase 4: Build
 

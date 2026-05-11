@@ -11,7 +11,7 @@
 
      - the active-extensions list every iteration consults
      - the system-prompt block rendered from `:ext/symbols`
-     - the per-iteration nudge composers
+     - the per-iteration `:ext/guards` checks
      - the parse-error rescue chain
      - the `(v/extensions)` / `(v/extension-doc id name)`
        catalog the agent reads to discover its own surface
@@ -412,7 +412,7 @@
 (defn envelope-success?
   "True when `envelope` is an `:op/envelope` and `:op/success?` is
    true. Use this instead of raw `(:op/success? e)` in renderers and
-   nudges — it (a) reads as English and (b) returns false for non-
+   guards — it (a) reads as English and (b) returns false for non-
    envelopes (defensive against shape drift)."
   [envelope]
   (and (tool-result? envelope) (true? (:op/success? envelope))))
@@ -681,43 +681,25 @@
 ;; `:ext/prompt` fragment.
 (s/def :ext/environment-info-fn fn?)
 
-;; Optional per-iteration nudge composer.
-;; Return value is checked at runtime because specs cannot validate a fn's
-;; output from the extension map alone. Valid returns:
-;;   nil
-;;   "nudge text"
-;;   {:importance :low|:normal|:high|:critical :text "nudge text"}
-;;   sequential coll of the above (each element validated independently;
-;;   `nil` entries are dropped)
-;; `:message` or `:body` are accepted aliases for `:text`.
 ;; ----------------------------------------------------------------------------
-;; Guards: the single mechanism for MODEL-FACING <system_nudges>. A guard is
-;; a named check that runs at a declared lifecycle scope; its `:check-fn`
-;; receives the standard `nudge-ctx` and returns either nil (guard passes
-;; silently) or a map `{:hint <string> :importance <kw>?}` describing what
-;; the model should do next. The host wraps each non-nil result in a
-;; `<system_nudge>` block. The user never sees them.
+;; Guards: the single mechanism for MODEL-FACING <system_nudge> entries
+;; appended to each iteration's prompt. A guard is a named check that runs
+;; at a declared lifecycle scope; its `:check-fn` receives the standard
+;; `nudge-ctx` and returns either nil (guard passes silently) or a map
+;; `{:hint <string> :importance <kw>?}` describing what the model should
+;; do next. The host wraps each non-nil result in a `<system_nudge>`
+;; block. The user never sees them.
 ;;
-;; History: a freeform `:ext/nudge-fn` hook existed previously (one fn per
-;; extension returning 0+ nudges). It was retired in favour of guards —
-;; same model-facing surface, but each emitter is declarative, named,
-;; individually toggleable, and scope-aware.
-;;
-;; Why a separate hook from `:ext/nudge-fn`:
-;;   1. Guards are declarative — the registry can enumerate them by id,
-;;      surface them in diagnostics, let the user toggle individual
-;;      guards via settings.
-;;   2. One extension can ship many independent guards as a flat list
-;;      instead of multiplexing inside one nudge-fn.
-;;   3. Guards make the contract explicit: every guard has an id, doc,
-;;      and scope, so the failure surface is reviewable.
+;; Every guard declares :id, :doc, :scope, :check-fn — the contract is
+;; explicit and the failure surface reviewable. One extension can ship
+;; many independent guards as a flat vector.
 ;;
 ;; Scope determines WHEN the host invokes the check-fn:
 ;;   :iteration  every iteration (most common; e.g. blind-answer detector)
-;;   :turn       only the first iteration of each turn (e.g. title nudges)
+;;   :turn       only the first iteration of each turn (e.g. title checks)
 ;;   :session    only the first iteration of the first turn (one-time onboarding)
 ;;
-;; Guards do NOT block evaluation. They append a system_nudge to the
+;; Guards do NOT block evaluation. They append a <system_nudge> to the
 ;; iteration's prompt; the model decides whether to amend. For hard
 ;; preflight rejection, use the existing preflight gates in loop.clj.
 ;; ----------------------------------------------------------------------------
@@ -880,7 +862,7 @@
 ;; Authors who don't ship checks just omit the field.
 ;;
 ;; Naming follows the `:ext/<surface>-fn` convention already used for
-;; `:ext/activation-fn`, `:ext/nudge-fn`, `:ext/on-parse-error-fn` - ONE fn,
+;; `:ext/activation-fn`, `:ext/on-parse-error-fn` - ONE fn,
 ;; called by the host, returns data.
 ;;
 ;; Per-message expectations (host coerces missing/invalid):
