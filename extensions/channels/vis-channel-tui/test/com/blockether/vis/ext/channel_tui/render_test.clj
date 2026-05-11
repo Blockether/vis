@@ -1409,46 +1409,58 @@
 ;; ─────────────────────────────────────────────────────────────────────────
 
 (defdescribe details-with-markdown-body-test
-  ;; `format-answer-markdown-data` requires canonical answer-IR; the
-  ;; markdown-to-IR lift lives in `vis/text->ir`. Tests must lift their
-  ;; markdown source explicitly — the entry point no longer accepts a
-  ;; raw string. Without the lift the renderer throws
-  ;; `answer must be canonical [:ir ...]`.
-  (it "<details> with markdown body renders the body as markdown when expanded"
-    (let [src (str "<details>\n<summary>Plan</summary>\n\n"
-                "## Step 1\n\n"
-                "- alpha\n- beta\n\n"
-                "Then **bold** word.\n\n"
-                "</details>")
-          payload (render/format-answer-markdown-data (vis/text->ir src) 80
-                    {:conversation-id "cid"
-                     :detail-expansions {["cid" "answer:details:d1"] true}})
-          lines (:lines payload)]
-      (expect (some #(= p/MARKER_MD_H2 (marker-of %)) lines))
-      (expect (some #(and (= p/MARKER_MD_BULLET (marker-of %))
-                       (str/includes? % "alpha")) lines))
-      (expect (some #(and (= p/MARKER_MD_BULLET (marker-of %))
-                       (str/includes? % "beta")) lines))
-      (let [text (:text payload)]
+  ;; `format-answer-markdown-data` requires canonical answer-IR.
+  ;; `vis/text->ir` does NOT lift inline `<details>`/`<summary>` HTML
+  ;; into structured `[:details ...]` IR (commonmark treats them as
+  ;; inline HTML and folds them into the surrounding paragraph). The
+  ;; lift happens upstream of these tests, so the tests construct
+  ;; canonical details IR directly.
+  (let [body-ir [:details {:open? true}
+                 [:summary {} [:span {} "Plan"]]
+                 [:h {:level 2} [:span {} "Step 1"]]
+                 [:ul {}
+                  [:li {} [:p {} [:span {} "alpha"]]]
+                  [:li {} [:p {} [:span {} "beta"]]]]
+                 [:p {}
+                  [:span {} "Then "]
+                  [:strong {} [:span {} "bold"]]
+                  [:span {} " word."]]]]
+    (it "<details> with markdown body renders the body as markdown when expanded"
+      ;; Inside an expanded `:details` block, the renderer emits inner
+      ;; block rows on plain answer-text bands rather than the
+      ;; standalone `MARKER_MD_H2` / `MARKER_MD_BULLET` lanes. Inline
+      ;; styling is encoded with per-character PUA sentinels (U+E110..),
+      ;; so the visible text only matches after stripping them.
+      (let [payload (render/format-answer-markdown-data [:ir {} body-ir] 80
+                      {:conversation-id "cid"
+                       :detail-expansions {["cid" "answer:details:d1"] true}})
+            visible (mapv strip-sentinels (:lines payload))
+            text    (:text payload)]
+        (expect (some #(str/includes? % "Step 1") visible))
+        (expect (some #(str/includes? % "alpha") visible))
+        (expect (some #(str/includes? % "beta") visible))
         (expect (str/includes? text p/INLINE_BOLD_ON))
         (expect (str/includes? text p/INLINE_BOLD_OFF))
-        (expect (not (str/includes? text "**bold**"))))))
+        (expect (not (str/includes? text "**bold**")))))
 
-  (it "collapsed <details> hides body but keeps summary visible"
-    (let [src (str "<details>\n<summary>Plan</summary>\n\n"
-                "- alpha\n- beta\n\n"
-                "</details>")
-          payload (render/format-answer-markdown-data (vis/text->ir src) 80
-                    {:conversation-id "cid"
-                     :detail-expansions {["cid" "answer:details:d1"] false}})
-          lines (:lines payload)
-          summary-line (first (filter #(and (= p/MARKER_MD_SUMMARY (marker-of %))
-                                         (str/includes? % "Plan"))
-                                lines))]
-      (expect (some? summary-line))
-      (expect (str/includes? summary-line "▸"))
-      (expect (not-any? #(str/includes? % "alpha") lines))
-      (expect (not-any? #(str/includes? % "beta") lines)))))
+    (it "collapsed <details> hides body but keeps summary visible"
+      (let [collapsed-ir [:ir {}
+                          [:details {:open? false}
+                           [:summary {} [:span {} "Plan"]]
+                           [:ul {}
+                            [:li {} [:p {} [:span {} "alpha"]]]
+                            [:li {} [:p {} [:span {} "beta"]]]]]]
+            payload (render/format-answer-markdown-data collapsed-ir 80
+                      {:conversation-id "cid"
+                       :detail-expansions {["cid" "answer:details:d1"] false}})
+            lines (:lines payload)
+            summary-line (first (filter #(and (= p/MARKER_MD_SUMMARY (marker-of %))
+                                           (str/includes? % "Plan"))
+                                  lines))]
+        (expect (some? summary-line))
+        (expect (str/includes? summary-line "▸"))
+        (expect (not-any? #(str/includes? % "alpha") lines))
+        (expect (not-any? #(str/includes? % "beta") lines))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Provider-error / system-call / tool-call presentation contract - these
