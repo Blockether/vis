@@ -2642,79 +2642,92 @@
    the engine never carries presentation in the tool envelope."
   #{:op.tag/observation :op.tag/action})
 
-(def ^:private op-keyword->tag
-  "Canonical op-keyword -> op-tag table. Tool envelopes carry an
-   `:info :op` keyword (e.g. `:v/patch`); this is the engine-owned
-   classification. Extensions register through `register-op-tag!`
-   if they need additional entries; the table here covers the
-   in-tree foundation + lang-clojure tools.
+(def ^:private op-keyword->meta
+  "Canonical op-keyword -> op-metadata table. Each value is a map:
 
-   Tag mapping per PLAN.md §2.11. Eight old granular values
-   (:op/read, :op/search, :op/edit, :op/create, :op/delete,
-   :op/move, :op/shell, :op/meta) collapsed into two."
+     {:tag              :op.tag/observation | :op.tag/action  (required)
+      :badge            \"EDIT\" \"READ\" ...                  (optional)
+      :self-describing? true | false                          (optional)}
+
+   `:badge` is the short uppercase category label channels paint on
+   tool-result summary rows. `:self-describing?` true means the tool's
+   body output is its own summary (shell stdout, search hits, file
+   listings) so channels SHOULD skip the redundant badge row.
+
+   Each extension owns its own ops: register through `register-op!`.
+   The engine ships defaults for foundation (`v/...`) + lang-clojure
+   (`z/...`) here so the in-tree tools work without extra wiring."
   (atom
     {;; foundation editing (alias `v`)
-     :v/cat              :op.tag/observation
-     :v/ls               :op.tag/observation
-     :v/glob             :op.tag/observation
-     :v/exists?          :op.tag/observation
-     :v/rg               :op.tag/observation
-     :v/patch            :op.tag/action
-     :v/patch-check      :op.tag/observation
-     :v/write            :op.tag/action
-     :v/append           :op.tag/action
-     :v/create-dirs      :op.tag/action
-     :v/delete           :op.tag/action
-     :v/delete-if-exists :op.tag/action
-     :v/move             :op.tag/action
-     :v/copy             :op.tag/action
-     ;; :v/bash classified at call site by its wrapper (read-only
-     ;; commands like `ls`/`cat`/`pwd` -> :observation; everything
-     ;; else -> :action). No registration-table entry; the bash
-     ;; wrapper overrides the safe :observation default.
+     :v/cat              {:tag :op.tag/observation :badge "READ"}
+     :v/preview          {:tag :op.tag/observation :badge "PREVIEW"}
+     :v/ls               {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
+     :v/glob             {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
+     :v/exists?          {:tag :op.tag/observation :badge "META"}
+     :v/rg               {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
+     :v/grep             {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
+     :v/patch            {:tag :op.tag/action      :badge "EDIT"}
+     :v/patch-check      {:tag :op.tag/observation :badge "EDIT"}
+     :v/edit             {:tag :op.tag/action      :badge "EDIT"}
+     :v/write            {:tag :op.tag/action      :badge "EDIT"}
+     :v/append           {:tag :op.tag/action      :badge "EDIT"}
+     :v/create-dirs      {:tag :op.tag/action      :badge "CREATE"}
+     :v/delete           {:tag :op.tag/action      :badge "DELETE"}
+     :v/delete-if-exists {:tag :op.tag/action      :badge "DELETE"}
+     :v/move             {:tag :op.tag/action      :badge "MOVE"}
+     :v/copy             {:tag :op.tag/action      :badge "CREATE"}
+     :v/bash             {:tag :op.tag/action      :badge "BASH" :self-describing? true}
      ;; lang-clojure (alias `z`)
-     :z/locators           :op.tag/observation
-     :z/symbols            :op.tag/observation
-     :z/locator-for-symbol :op.tag/observation
-     :z/patch              :op.tag/action
-     :z/patch-check        :op.tag/observation
-     :z/repair-range       :op.tag/action
-     :z/repair-locator     :op.tag/action
-     :z/repair-file        :op.tag/action
+     :z/locators           {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
+     :z/symbols            {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
+     :z/locator-for-symbol {:tag :op.tag/observation :badge "SEARCH"}
+     :z/patch              {:tag :op.tag/action      :badge "EDIT"}
+     :z/patch-check        {:tag :op.tag/observation :badge "EDIT"}
+     :z/repair-range       {:tag :op.tag/action      :badge "EDIT"}
+     :z/repair-locator     {:tag :op.tag/action      :badge "EDIT"}
+     :z/repair-file        {:tag :op.tag/action      :badge "EDIT"}
      ;; clojure.core mutators reachable through SCI sandbox
-     :spit                 :op.tag/action}))
+     :spit                 {:tag :op.tag/action      :badge "EDIT"}}))
+
+(defn register-op!
+  "Register or override op metadata for `op-keyword`. `meta` is a map
+   with required `:tag` (member of `op-tags`) and optional `:badge`
+   (string) + `:self-describing?` (boolean). Idempotent."
+  [op-keyword meta]
+  (when-not (contains? op-tags (:tag meta))
+    (anomaly/incorrect!
+      (str "register-op!: unknown tag " (pr-str (:tag meta))
+        "; must be one of " op-tags)
+      {:type :extension/unknown-op-tag :tag (:tag meta) :allowed op-tags}))
+  (swap! op-keyword->meta assoc op-keyword meta)
+  op-keyword)
 
 (defn register-op-tag!
-  "Register or override the op-tag for `op-keyword` (e.g. `:my-ext/foo`).
-   `tag` MUST be a member of `op-tags`. Idempotent."
+  "Back-compat shim. Prefer `register-op!`."
   [op-keyword tag]
-  (when-not (contains? op-tags tag)
-    (anomaly/incorrect!
-      (str "register-op-tag!: unknown tag " (pr-str tag)
-        "; must be one of " op-tags)
-      {:type :extension/unknown-op-tag :tag tag :allowed op-tags}))
-  (swap! op-keyword->tag assoc op-keyword tag)
-  op-keyword)
+  (register-op! op-keyword {:tag tag}))
 
 (defn op-tag
   "Return the `:op.tag/...` value for `op-keyword`. Defaults to
-   `:op.tag/observation` when the symbol is unregistered — the
-   safest classification (state observation, no side effect).
-   Renamed from `op-class-of`; old default `:op/meta` retired."
+   `:op.tag/observation` for unregistered ops."
   [op-keyword]
-  (get @op-keyword->tag op-keyword :op.tag/observation))
+  (get-in @op-keyword->meta [op-keyword :tag] :op.tag/observation))
 
 (defn op-presentation
-  "Engine-owned metadata for a tool's `:op` keyword. Returned shape
-   is intentionally minimal — `{:op/tag :op.tag/...}` only. Tool
-   wrappers merge this into their `:info` map so downstream
-   consumers (channels, the iteration-loop preflight, telemetry)
-   read one canonical key.
+  "Engine-owned metadata for a tool's `:op` keyword:
+   `{:op/tag ... :op/badge ... :op/self-describing? ...}`. Tool
+   wrappers merge this into their `:info`/`:metadata` map so channels
+   read one canonical key without owning per-symbol tables.
 
-   Presentation (color, glyph, layout) is NOT in here on purpose:
-   it is a channel concern and lives under the channel that cares."
+   `:op/badge` and `:op/self-describing?` are the only presentation
+   hints carried here; color / glyph / layout remain pure channel
+   concerns and live under the channel that cares."
   [op]
-  {:op/tag (op-tag op)})
+  (let [m (get @op-keyword->meta op :op.tag/observation)
+        m (if (map? m) m {:tag m})]
+    (cond-> {:op/tag (:tag m :op.tag/observation)}
+      (:badge m)            (assoc :op/badge (:badge m))
+      (:self-describing? m) (assoc :op/self-describing? true))))
 
 (defn registered-extensions-summary
   "Pure data view of the docs registry: returns
