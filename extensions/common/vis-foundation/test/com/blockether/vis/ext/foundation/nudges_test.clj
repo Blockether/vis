@@ -86,3 +86,35 @@
                                 :input-tokens 1
                                 :context-limit 200000})]
       (expect (every? some? out)))))
+
+(defdescribe blind-answer-guard-test
+  (it "fires on iter 1 + investigation verb + no prior blocks"
+    (doseq [req ["Why is the footer not showing?"
+                 "Investigate the SCI sandbox setup"
+                 "Fix the broken test"
+                 "Check the conversation persistence"
+                 "Find where v/cat is defined"
+                 "Show me the loop preflight code"
+                 "Debug iteration cancel"]]
+      (let [hit (nudges/blind-answer-guard-check
+                  {:iteration 1 :user-request req :previous-blocks nil})]
+        (expect (some? hit))
+        (expect (= :high (:importance hit)))
+        (expect (string? (:text hit))))))
+
+  (it "stays silent on trivial chat"
+    (doseq [req ["hey" "thx" "siema" "Hi!" "ok" "yes"]]
+      (expect (nil? (nudges/blind-answer-guard-check
+                      {:iteration 1 :user-request req :previous-blocks nil})))))
+
+  (it "stays silent on iteration 2+ even with investigation verbs"
+    (expect (nil? (nudges/blind-answer-guard-check
+                    {:iteration 2
+                     :user-request "Why is X broken?"
+                     :previous-blocks nil}))))
+
+  (it "stays silent when previous-blocks is non-empty (model already observed)"
+    (expect (nil? (nudges/blind-answer-guard-check
+                    {:iteration 1
+                     :user-request "Why is X broken?"
+                     :previous-blocks [{:code "(v/cat \"x\")" :result {}}]})))))

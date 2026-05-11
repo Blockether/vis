@@ -130,6 +130,7 @@ Examples:
      :ext/kind           "foundation"
      :ext/environment-info-fn environment/environment-info
      :ext/nudge-fn       nudges/nudge-fn
+     :ext/iteration-guards nudges/iteration-guards
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols
                                 (editing/available-editing-symbols)
