@@ -12,14 +12,17 @@
     (expect (true? (md/supports-path? "README.md")))
     (expect (false? (md/supports-path? "src/core.clj"))))
 
-  (it "extracts file, section, link, mention, and code-block facts"
+  (it "extracts file, doc-section, link, mention, and code-block payload facts"
     (let [result (md/extract-file "README.md" sample-md)
           nodes (:nodes result)
-          edges (:edges result)]
+          edges (:edges result)
+          extractor-section (first (filter #(= "doc:README.md#extractors" (:qualified-name %)) nodes))]
       (expect (schema/valid-extract-result? result))
-      (expect (= 4 (count nodes)))
+      (expect (= 3 (count nodes)))
+      (expect (= #{:file :doc-section} (set (map :kind nodes))))
       (expect (some #(= "doc:README.md#bridge" (:qualified-name %)) nodes))
-      (expect (some #(= :code-block (:kind %)) nodes))
+      (expect (= 1 (get-in result [:stats :code-block-count])))
+      (expect (= "clojure" (-> extractor-section :metadata :code-blocks first :language)))
       (expect (some #(and (= :links-to (:edge-kind %))
                        (= "docs/src/SUMMARY.md" (:target %)))
                 edges))

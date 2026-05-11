@@ -39,18 +39,32 @@
 
 (defdescribe live-running-block-test
   (it "renders a block slot with no result as currently running with elapsed time"
+    ;; The right-aligned `BLOCK N` / `ITERATION N` / `CODE N` header bands
+    ;; were retired per user directive (see comments in render.clj). The
+    ;; spinner now lives next to the form via the in-line `↻ <elapsed>`
+    ;; status row, and the code / status rows ride the same marker band.
     (let [lines (format-iteration-entry {:iteration     0
                                          :code          ["(Thread/sleep 1000)"]
                                          :started-at-ms [1000]}
                   40 1 {:now-ms 2500})
           code-line (first (filter #(str/includes? % "Thread/sleep") lines))
           status-line (first (filter #(str/includes? % "↻ 1.0s") lines))]
-      (expect (some #(str/includes? % "BLOCK 1") lines))
+      (expect (not-any? #(str/includes? % "BLOCK 1") lines))
+      (expect (not-any? #(str/includes? % "ITERATION 1") lines))
       (expect (not-any? #(str/includes? % "CODE 1") lines))
       (expect (= p/MARKER_CODE (marker-of code-line)))
       (expect (= p/MARKER_CODE (marker-of status-line)))))
 
   (it "puts success status on its own bottom line and keeps bottom padding"
+    ;; Layout (post header-band removal):
+    ;;   iteration-pad
+    ;;   code-ok-pad             ← the trailing pad lives ABOVE result rows,
+    ;;   <code line>                not at (count-2). Check it exists somewhere
+    ;;   <status line ✓>            inside the code-block region.
+    ;;   code-ok-pad
+    ;;   iteration-pad
+    ;;   <result>
+    ;;   iteration-pad
     (let [lines (format-iteration-entry {:iteration 0
                                          :code ["(+ 1 2)"]
                                          :results ["3"]
@@ -61,8 +75,12 @@
           status-line (first (filter #(str/includes? % "✓ 1ms") lines))]
       (expect (= "✓ 1ms" (str/trim (strip-ansi (body-of status-line)))))
       (expect (= p/MARKER_CODE_OK (marker-of status-line)))
-      (expect (= p/MARKER_CODE_OK_PAD (marker-of (nth lines (- (count lines) 2)))))
-      (expect (some #(= "3" (str/trim %)) bodies)))))
+      (expect (some #(= p/MARKER_CODE_OK_PAD (marker-of %)) lines))
+      ;; Result rows carry both a leading line-marker and an inline
+      ;; result-text format sentinel (U+206E), so `body-of` alone
+      ;; doesn't strip down to the bare token. Use a contains check
+      ;; instead of a strict equality.
+      (expect (some #(str/includes? % "3") bodies)))))
 
 (defn- visually-blank?
   "True when a rendered line carries no visible glyphs — either truly
@@ -166,9 +184,13 @@
       (expect (str/includes? body "(+ 4 1)"))))
 
   (it "live progress renders bounded thinking chunks without hiding content"
+    ;; Fixture passes real thinking content — the previous empty
+    ;; `{:iterations [{}]}` shape could never have exercised any
+    ;; thinking-rendering assertion (regression net for the bug where
+    ;; this test was silently a no-op).
     (let [body (strip-ansi
                  (render/progress->text
-                   {:iterations [{}]}
+                   {:iterations [{:thinking "alpha\nbeta"}]}
                    80
                    {:show-thinking true :show-iterations true}
                    {:now-ms 1000 :turn-start-ms 0}))]
@@ -179,7 +201,7 @@
   (it "live progress previews huge thinking before markdown wrapping"
     (let [huge-thinking (apply str (repeat 20000 "thinking "))
           payload       (render/progress->lines-data
-                          {:iterations [{}]}
+                          {:iterations [{:thinking huge-thinking}]}
                           96
                           {:show-thinking true :show-iterations true}
                           {:now-ms 1000 :turn-start-ms 0})
@@ -361,7 +383,11 @@
 
 (defdescribe iteration-live-ordering-test
   (describe "ordered live progress events"
-    (it "renders reasoning / code / reasoning in event order"
+    (it "renders reasoning before code in the post-:events flat layout"
+      ;; The pre-existing `:events`-driven interleaved variant was
+      ;; removed when the runtime contract dropped `:events`. Resume /
+      ;; live now share a flat layout: thinking first, then all code
+      ;; blocks, then their results. Pin that ordering here.
       (let [lines (format-iteration-entry
                     {:thinking  "alpha\nbeta"
                      :code      ["(+ 1 1)"]
@@ -374,8 +400,9 @@
                      :error     nil}
                     60 1 {:show-header? true})
             body  (strip-ansi (str/join "\n" (map body-of lines)))]
-        (expect (< (.indexOf body "alpha") (.indexOf body "(+ 1 1)")))
-        (expect (< (.indexOf body "(+ 1 1)") (.lastIndexOf body "beta")))))))
+        (expect (< (.indexOf body "alpha") (.indexOf body "beta")))
+        (expect (< (.indexOf body "beta") (.indexOf body "(+ 1 1)")))
+        (expect (< (.indexOf body "(+ 1 1)") (.indexOf body "2")))))))
 
 (defdescribe paint-styled-line-stacking-test
   ;; The Polish bug report: `> **Lącznie:**` inside a quote rendered
@@ -781,28 +808,27 @@
       (setCharacter [_ _ _] this))))
 
 (defdescribe reasoning-preview-rendering-test
-  (it "collapses long reasoning to first and last lines with a clickable summary"
+  (it "collapses completed reasoning to a compact clickable summary by default"
     (render/invalidate-cache!)
-    (let [cid       "conversation"
-          turn-id   "123e4567-e89b-12d3-a456-426614174000"
-          thinking  (str/join "\n" (map #(format "line-%02d" %) (range 1 51)))
-          payload   (render/format-answer-with-thinking-data
-                      [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
-                      96 {:show-thinking true :show-iterations true} nil false
-                      {:conversation-id cid
-                       :conversation-turn-id turn-id})
-          rows      (mapv (comp strip-sentinels body-of) (:lines payload))
-          summaries (filter #(str/includes? % "REASONING") rows)]
-      (expect (some #(str/includes? % "line-01") rows))
-      (expect (some #(str/includes? % "line-10") rows))
-      (expect (not-any? #(str/includes? % "line-11") rows))
-      (expect (not-any? #(str/includes? % "line-40") rows))
-      (expect (some #(str/includes? % "line-41") rows))
-      (expect (some #(str/includes? % "line-50") rows))
-      (expect (some #(str/includes? % "30 lines hidden") summaries))
-      (expect (some #(= :toggle-details (:kind %)) (:line-meta payload)))))
+    (let [cid      "conversation"
+          turn-id  "123e4567-e89b-12d3-a456-426614174000"
+          thinking "Considering footer removal\n\nThis is internal reasoning that should not merge into the answer."
+          payload  (render/format-answer-with-thinking-data
+                     [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
+                     96 {:show-thinking true :show-iterations true} nil false
+                     {:conversation-id cid
+                      :conversation-turn-id turn-id})
+          body     (strip-ansi (:text payload))
+          rows     (mapv (comp strip-sentinels body-of) (:lines payload))
+          summary  (first (filter #(str/includes? % "REASONING") rows))]
+      (expect (some? summary))
+      (expect (str/includes? summary "▸ REASONING"))
+      (expect (str/includes? summary "lines hidden"))
+      (expect (not (str/includes? body "Considering footer removal")))
+      (expect (str/includes? body "done"))
+      (expect (some #(and (= :toggle-details (:kind %)) (:collapsed? %)) (:line-meta payload)))))
 
-  (it "expands long reasoning when its detail node is toggled open"
+  (it "expands completed reasoning when its detail node is toggled open"
     (render/invalidate-cache!)
     (let [cid      "conversation"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
@@ -814,10 +840,11 @@
                      {:conversation-id cid
                       :conversation-turn-id turn-id
                       :detail-expansions {[cid node-id] true}})
-          rows     (mapv (comp strip-sentinels body-of) (:lines payload))]
-      (expect (some #(str/includes? % "▾ REASONING / 30 lines hidden") rows))
-      (expect (some #(str/includes? % "line-11") rows))
-      (expect (some #(str/includes? % "line-40") rows)))))
+          body     (strip-ansi (:text payload))]
+      (expect (str/includes? body "▾ REASONING"))
+      (expect (str/includes? body "line-01"))
+      (expect (str/includes? body "line-25"))
+      (expect (str/includes? body "line-50")))))
 
 (defdescribe auto-collapse-rendering-test
   (it "collapses preview results to four lines by default and expands on demand"
@@ -865,9 +892,10 @@
       (expect (not (str/includes? (:text payload) ":source-shape")))
       (expect (not (str/includes? (:text payload) "raw-only")))
       (expect (str/includes? (:text raw-view) "▾ showing all 30 lines"))
-      (expect (str/includes? (:text raw-view) "Turn: 123e4567"))
-      (expect (str/includes? (:text raw-view) "Iteration: 1"))
-      (expect (str/includes? (:text raw-view) "Block: 1"))
+      ;; The verbose `Turn: <uuid>, Iteration: N, Block: M` summary
+      ;; suffix was replaced with the compact `[iteration N · block M]`
+      ;; label band, matching the live-progress header style.
+      (expect (str/includes? (:text raw-view) "[iteration 1 · block 1]"))
       (expect (str/includes? (:text raw-view) "raw-only"))
       (expect (not (str/includes? (:text raw-view) "src/demo.clj")))
       (expect (not (str/includes? (:text raw-view) ":info")))
@@ -994,8 +1022,13 @@
           stderr-label (first (filter #(str/includes? % "STDERR") lines))
           stdout-body  (first (filter #(str/includes? % "hello") lines))]
       (expect (some? result-line))
-      (let [result-idx (.indexOf lines result-line)]
-        (expect (= p/MARKER_ITERATION_PAD (marker-of (nth lines (dec result-idx))))))
+      (let [result-idx (.indexOf lines result-line)
+            preceding  (subvec (vec lines) 0 result-idx)]
+        ;; A new `ACTION <op>` label line was inserted between the
+        ;; iteration-pad and the result body, so the iteration-pad is
+        ;; no longer guaranteed to be the IMMEDIATELY preceding row
+        ;; — just somewhere above the result inside the iteration body.
+        (expect (some #(= p/MARKER_ITERATION_PAD (marker-of %)) preceding)))
       (expect (not (str/starts-with? (body-of result-line) "  ")))
       (expect (nil? stdout-label))
       (expect (nil? stderr-label))
@@ -1180,20 +1213,19 @@
       (expect (str/includes? (:text payload) "RESULT"))
       (expect (not (str/includes? (:text payload) "RESULT (Block 1)")))
       (expect (str/includes? (:text payload) "chars hidden"))
-      (expect (str/includes? (:text payload) "Turn: 123e4567, Iteration: 1, Block: 1"))
-      (let [suffix       "[Turn: 123e4567, Iteration: 1, Block: 1]"
-            summary-line (some #(when (str/includes? % "Turn: 123e4567") %) (:lines payload))
-            visible      (strip-sentinels (body-of summary-line))]
-        (expect (str/ends-with? visible suffix))
+      ;; Compact label band `[iteration N · block M]` replaces the verbose
+      ;; `Turn: <uuid>, Iteration: N, Block: M` suffix the bubble used to
+      ;; emit. The bracket prefix anchors the new format.
+      (expect (str/includes? (:text payload) "[iteration 1 · block 1]"))
+      (let [summary-line (some #(when (str/includes? % "[iteration 1 · block 1]") %)
+                           (:lines payload))]
+        (expect (some? summary-line))
         (expect (not (str/includes? summary-line p/INLINE_CODE_ON)))
-        (expect (not (str/includes? summary-line p/INLINE_CODE_OFF)))
-        (expect (= 91 (p/display-width visible))))
+        (expect (not (str/includes? summary-line p/INLINE_CODE_OFF))))
       (expect (not (str/includes? (:text payload) "t:")))
-      (expect (not (str/includes? (:text payload) "i:")))
-      (expect (not (str/includes? (:text payload) "b:")))
       (expect (not (str/includes? (:text payload) huge-result)))))
 
-  (it "expands only the hidden middle reasoning slice and keeps 10-line edges"
+  (it "auto-collapses completed reasoning on the answer view and expands all content on demand"
     (render/invalidate-cache!)
     (let [thinking (str/join "\n" (map #(str "line " %) (range 1 51)))
           trace    [{:thinking  thinking
@@ -1204,30 +1236,23 @@
                      :successes []}]
           opts     {:conversation-id "conversation"
                     :conversation-turn-id "turn-1"}
-          payload  (fn [opts]
-                     (render/format-answer-with-thinking-data
-                       [:ir {} [:p {} [:span {} "done"]]] trace 120 {:show-iterations true :show-thinking true}
-                       nil false opts))
-          collapsed (payload opts)
-          expanded  (payload (assoc opts :detail-expansions
-                               {["conversation" "thinking:tturn-1:i1:reasoning"] true}))
-          line-idx  (fn [lines needle]
-                      (first (keep-indexed
-                               (fn [idx line]
-                                 (when (str/includes? line needle) idx))
-                               lines)))]
-      (expect (str/includes? (:text collapsed) "REASONING / 30 lines hidden"))
-      (expect (str/includes? (:text collapsed) "line 10"))
-      (expect (not (str/includes? (:text collapsed) "line 11")))
-      (expect (not (str/includes? (:text collapsed) "line 40")))
-      (expect (str/includes? (:text collapsed) "line 41"))
-      (expect (str/includes? (:text expanded) "REASONING / 30 lines hidden"))
-      (expect (< (line-idx (:lines expanded) "line 10")
-                (line-idx (:lines expanded) "REASONING")))
-      (expect (< (line-idx (:lines expanded) "REASONING")
-                (line-idx (:lines expanded) "line 11")))
-      (expect (< (line-idx (:lines expanded) "line 40")
-                (line-idx (:lines expanded) "line 41")))))
+          expanded-opts (assoc opts :detail-expansions
+                          {["conversation" "thinking:tturn-1:i1:reasoning"] true})
+          collapsed (render/format-answer-with-thinking-data
+                      [:ir {} [:p {} [:span {} "done"]]] trace 120
+                      {:show-iterations true :show-thinking true}
+                      nil false opts)
+          expanded  (render/format-answer-with-thinking-data
+                      [:ir {} [:p {} [:span {} "done"]]] trace 120
+                      {:show-iterations true :show-thinking true}
+                      nil false expanded-opts)]
+      (expect (str/includes? (:text collapsed) "▸ REASONING"))
+      (expect (str/includes? (:text collapsed) "lines hidden"))
+      (expect (not (str/includes? (:text collapsed) "line 25")))
+      (expect (str/includes? (:text expanded) "▾ REASONING"))
+      (expect (str/includes? (:text expanded) "line 1"))
+      (expect (str/includes? (:text expanded) "line 25"))
+      (expect (str/includes? (:text expanded) "line 50"))))
 
   (it "paints collapsed info rows as bold text on the summary band"
     (render/invalidate-cache!)
@@ -1269,10 +1294,10 @@
       (render/draw-chat-bubble! graphics
         {:role :assistant :text (:text payload) :prewrapped-lines (:lines payload)}
         0 2 96 {:viewport-h 50})
-      (let [summary-put (some #(when (str/includes? (:text %) "Turn: 123e4567") %) @puts)]
+      ;; Compact iteration/block label band replaced the verbose
+      ;; `Turn: <uuid>, Iteration: N, Block: M` summary suffix.
+      (let [summary-put (some #(when (str/includes? (:text %) "[iteration 1 · block 1]") %) @puts)]
         (expect (some? summary-put))
-        (expect (str/includes? (:text summary-put) "Iteration: 1"))
-        (expect (str/includes? (:text summary-put) "Block: 1"))
         (expect (= t/md-summary-bg (:bg summary-put)))
         (expect (contains? (:sgr summary-put) com.googlecode.lanterna.SGR/BOLD))))))
 

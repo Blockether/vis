@@ -5,8 +5,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.bridge.doctor :as doctor]
    [com.blockether.vis.ext.bridge.fill :as fill]
-   [com.blockether.vis.ext.bridge.languages.clojure-basic :as basic]
-   [com.blockether.vis.ext.bridge.languages.clojure-lsp :as clj-lsp]
+   [com.blockether.vis.ext.bridge.languages.clojure :as clj]
    [com.blockether.vis.ext.bridge.languages.markdown :as md]))
 
 (defn- slurp-path [path]
@@ -22,34 +21,20 @@
   "Return external clojure-lsp availability used by Bridge's Clojure extractor."
   ([] (clojure-lsp-status nil))
   ([opts]
-   (clj-lsp/executable-status opts)))
+   (clj/executable-status opts)))
 
 (defn extract-clojure
   "Extract Bridge Clojure facts for a project.
 
-   Options:
-   - `:project-root` root path, default `.`
-   - `:backend` `:clojure-lsp` (default when available) or `:basic`
-   - `:path` source file path for `:basic` backend
-   - `:content` optional source text for `:basic` backend
+   Options flow to `com.blockether.vis.ext.bridge.languages.clojure/extract-project`:
+   `:project-root`, `:command`, `:analysis`, `:output`, `:timeout-ms`, or
+   test seam `:dump`.
 
-   External clojure-lsp is preferred. Basic edamame extraction is syntax-only."
+   Requires external clojure-lsp. Check `(bridge/clojure-lsp-status)` or
+   `vis extensions doctor` when this fails."
   ([] (extract-clojure nil))
   ([opts]
-   (let [opts (or opts {})
-         backend (or (:backend opts)
-                   (when (clj-lsp/available? opts) :clojure-lsp)
-                   :basic)]
-     (case backend
-       :clojure-lsp (clj-lsp/extract-project opts)
-       :basic (let [path (or (:path opts)
-                           (throw (ex-info ":basic Clojure extraction requires :path"
-                                    {:type :bridge/missing-path})))
-                    content (or (:content opts) (slurp-path path))]
-                (basic/extract-file path content))
-       (throw (ex-info "Unknown Bridge Clojure extractor backend"
-                {:type :bridge/unknown-backend
-                 :backend backend}))))))
+   (clj/extract-project opts)))
 
 (defn aggregate-rows
   "Convert a normalized Bridge extraction result to extension aggregate rows.

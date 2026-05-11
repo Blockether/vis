@@ -2,7 +2,8 @@
   "CommonMark-backed Markdown extractor for Bridge.
 
    Produces a PageIndex-style document tree as Bridge nodes/edges:
-   file -> heading/section -> nested sections -> code blocks / links / mentions."
+   file -> doc-section -> nested doc-sections. Code blocks stay section
+   payload metadata; links and inline-code mentions become edges."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.ext.bridge.schema :as schema])
@@ -146,43 +147,26 @@
                 (reduce (fn [a c] (walk c a)) acc' (children-seq n))))]
       (walk doc []))))
 
-(defn- code-block-nodes-and-edges
+(defn- code-blocks
   [path sections doc]
   (let [file-qname (str "doc:" path)]
     (loop [blocks (children-seq doc)
            idx 0
-           nodes []
-           edges []]
+           out []]
       (if-let [^Node n (first blocks)]
         (if (instance? FencedCodeBlock n)
           (let [line (start-line n)
-                section (nearest-section sections line)
-                parent (:qualified-name section file-qname)
-                qname (str parent "/code:" idx)
-                lang (some-> (.getInfo ^FencedCodeBlock n) str/trim not-empty)]
+                section (nearest-section sections line)]
             (recur (rest blocks) (inc idx)
-              (conj nodes
-                (schema/node
-                  {:kind :code-block
-                   :language "markdown"
-                   :name (str "code" idx)
-                   :qualified-name qname
-                   :path path
-                   :line-start line
-                   :line-end (end-line n)
-                   :metadata {:fence-language lang
-                              :text (.getLiteral ^FencedCodeBlock n)}}))
-              (conj edges
-                (schema/edge
-                  {:edge-kind :contains
-                   :source parent
-                   :target qname
-                   :path path
-                   :language "markdown"
-                   :line line
-                   :resolved? true}))))
-          (recur (rest blocks) idx nodes edges))
-        {:nodes nodes :edges edges}))))
+              (conj out
+                {:index idx
+                 :section (or (:qualified-name section) file-qname)
+                 :language (some-> (.getInfo ^FencedCodeBlock n) str/trim not-empty)
+                 :line-start line
+                 :line-end (end-line n)
+                 :text (.getLiteral ^FencedCodeBlock n)})))
+          (recur (rest blocks) idx out))
+        out))))
 
 (defn extract-file
   "Extract normalized Bridge facts from Markdown `content` at `path`."
@@ -210,7 +194,7 @@
                         stack' (vec (take-while #(< (:level %) level) stack))
                         parent (or (:qualified-name (peek stack')) file-qname)
                         section (schema/node
-                                  {:kind :section
+                                  {:kind :doc-section
                                    :language "markdown"
                                    :name title
                                    :qualified-name qname
@@ -235,10 +219,16 @@
           {:seen {} :stack [] :sections [] :edges []}
           (map vector (range) headings end-lines))
         sections (:sections sections+stack)
-        code-facts (code-block-nodes-and-edges path sections doc)
-        nodes (into [file-node] (concat sections (:nodes code-facts)))
+        code-blocks (code-blocks path sections doc)
+        code-blocks-by-section (group-by :section code-blocks)
+        sections (mapv (fn [section]
+                         (cond-> section
+                           (seq (get code-blocks-by-section (:qualified-name section)))
+                           (update :metadata assoc :code-blocks
+                             (vec (get code-blocks-by-section (:qualified-name section))))))
+                   sections)
+        nodes (into [file-node] sections)
         edges (vec (concat (:edges sections+stack)
-                     (:edges code-facts)
                      (link-edges path sections doc)
                      (mention-edges path sections doc)))]
     (schema/extract-result
@@ -249,4 +239,5 @@
                :path path
                :node-count (count nodes)
                :edge-count (count edges)
-               :heading-count (count sections)}})))
+               :heading-count (count sections)
+               :code-block-count (count code-blocks)}})))

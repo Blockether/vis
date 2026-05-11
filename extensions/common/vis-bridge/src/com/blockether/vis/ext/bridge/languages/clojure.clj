@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.bridge.languages.clojure-lsp
+(ns com.blockether.vis.ext.bridge.languages.clojure
   "Clojure extractor backed by external `clojure-lsp dump`.
 
    The external process path avoids classpath/protocol clashes in the Vis JVM
@@ -82,18 +82,18 @@
   (when (and (:to x) (:name x))
     (str (:to x) "/" (:name x))))
 
-(defn- var-kind [x]
+(defn- symbol-kind [x]
   (let [defined-by (str (:defined-by x))]
     (cond
-      (str/ends-with? defined-by "/defn") :function
-      (str/ends-with? defined-by "/defmacro") :macro
-      (str/ends-with? defined-by "/defprotocol") :protocol
-      (str/ends-with? defined-by "/defrecord") :record
-      :else :var)))
+      (str/ends-with? defined-by "/defn") "function"
+      (str/ends-with? defined-by "/defmacro") "macro"
+      (str/ends-with? defined-by "/defprotocol") "protocol"
+      (str/ends-with? defined-by "/defrecord") "record"
+      :else "var")))
 
 (defn- namespace-node [project-root x]
   (schema/node
-    {:kind :namespace
+    {:kind :module
      :language "clojure"
      :name (str (:name x))
      :qualified-name (ns-qname x)
@@ -104,7 +104,7 @@
 
 (defn- var-node [project-root x]
   (schema/node
-    {:kind (var-kind x)
+    {:kind :symbol
      :language "clojure"
      :name (str (:name x))
      :qualified-name (var-qname x)
@@ -112,11 +112,12 @@
      :line-start (:row x)
      :line-end (or (:end-row x) (:row x))
      :visibility (if (:private x) :private :public)
-     :metadata (select-keys x [:defined-by :fixed-arities :varargs-min-arity :test :macro :deprecated])}))
+     :metadata (assoc (select-keys x [:defined-by :fixed-arities :varargs-min-arity :test :macro :deprecated])
+                 :symbol-kind (symbol-kind x))}))
 
 (defn- requires-edge [project-root x]
   (schema/edge
-    {:edge-kind :requires
+    {:edge-kind :imports
      :source (str (:from x))
      :target (str (:name x))
      :path (uri->path project-root (:uri x))
@@ -140,7 +141,7 @@
 
 (defn- dep-edge [ns-name dep-name dep-count]
   (schema/edge
-    {:edge-kind :requires
+    {:edge-kind :imports
      :source (str ns-name)
      :target (str dep-name)
      :path "<clojure-lsp-dep-graph>"

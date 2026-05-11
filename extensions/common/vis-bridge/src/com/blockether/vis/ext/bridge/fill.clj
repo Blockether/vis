@@ -40,7 +40,7 @@
            :kind (name kind)
            :name name}
     visibility (assoc :visibility (name visibility))
-    (map? metadata) (merge (select-keys metadata [:relevance :layer]))))
+    (map? metadata) (merge (select-keys metadata [:symbol-kind :doc-kind :relevance :layer]))))
 
 (defn- edge-metadata [{:keys [path language edge-kind source target resolved? metadata]}]
   (cond-> {:path path
@@ -49,7 +49,7 @@
            :target target}
     language (assoc :language language)
     (some? resolved?) (assoc :resolved? resolved?)
-    (map? metadata) (merge (select-keys metadata [:source :syntax :backend]))))
+    (map? metadata) (merge (select-keys metadata [:syntax :backend :relevance]))))
 
 (defn node-row
   "Map one normalized Bridge node to an extension aggregate row."
