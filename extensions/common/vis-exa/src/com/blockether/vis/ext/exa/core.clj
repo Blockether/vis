@@ -505,7 +505,7 @@
   (cond-> {:query query}
     (kw-get opts :tokens-num :tokensNum) (assoc :tokensNum (kw-get opts :tokens-num :tokensNum))))
 
-(def ^:private tool-result-spec ::extension/tool-result)
+(def ^:private tool-result-spec :op/envelope)
 
 (defn web-search
   "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Tool result; payload under :result."
