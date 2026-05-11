@@ -477,14 +477,25 @@
 ;; `:ext/channel-hooks` vec:
 ;;
 ;;   {:channel-id :tui
-;;    :hook-id    :tui/footer-segment    ;; or :*/footer-segment
+;;    :hook-id    :*/footer-segment       ;; any keyword whose `name` is
+;;                                        ;; "footer-segment"; the namespace
+;;                                        ;; identifies the owner. Or use the
+;;                                        ;; literal `:tui/footer-segment`.
 ;;    :render-fn  (fn [db now-ms]
-;;                  -> {:ir       [:ir {?:fg-role} & blocks]
-;;                      :region   :left|:center|:right       ;; default :left
-;;                      :priority N                          ;; default 3
-;;                      :row      0|1                        ;; default 0
-;;                      :join-left? bool                     ;; default false
-;;                     } | nil)}
+;;                  -> seg-map | [seg-map seg-map ...] | nil)}
+;;
+;; Each seg-map:
+;;   {:ir         [:ir {?:fg-role} & blocks]    ;; required
+;;    :region     :left|:center|:right          ;; default :left
+;;    :priority   N                             ;; default 3
+;;    :row        0|1                           ;; default 0
+;;    :join-left? bool                          ;; default false
+;;    :fg-role    :default|:muted|:warn|...     ;; default :default
+;;    :bold?      bool                          ;; default false}
+;;
+;; Render-fn may return ONE seg-map or a VECTOR of seg-maps so a
+;; single hook can contribute multiple related segments
+;; (e.g. "model-display" + "(Ctrl+T)" hint side-by-side).
 ;;
 ;; The render-fn returns CANONICAL IR + layout hints; the TUI walks
 ;; the IR to a plain styled string and packs it into the segment
@@ -513,14 +524,39 @@
         strs  (ir-tui/lines->sentinel-strings lines)]
     (str/join " " (remove str/blank? strs))))
 
+(defn- footer-hook?
+  "True when `hook-id` is recognised as a footer-segment contributor."
+  [hook-id]
+  (let [n (some-> hook-id name)]
+    (or (= "footer-segment" n)
+      (= :tui/footer-segment hook-id))))
+
+(defn- seg->packed
+  "Convert one extension seg-map into the internal segment shape.
+   Returns nil for invalid / out-of-row entries."
+  [seg ^long row]
+  (when (and (map? seg)
+          (= row (long (or (:row seg) 0)))
+          (vector? (:ir seg))
+          (= :ir (first (:ir seg))))
+    (let [text (ir->footer-text (:ir seg))]
+      (when (and (string? text) (not (str/blank? text)))
+        {:text       text
+         :fg         (fg-role->color (or (:fg-role seg) :default))
+         :bold?      (boolean (:bold? seg))
+         :region     (or (:region seg) :left)
+         :priority   (long (or (:priority seg) 3))
+         :join-left? (boolean (:join-left? seg))}))))
+
 (defn- extension-footer-segments
   "Vector of segments contributed by extensions for footer row `row`
    (0 = top footer row, 1 = limits row).
 
+   Each hook's render-fn may return a single seg-map OR a vec of
+   seg-maps (so one hook can contribute multiple related segments).
    Hook crashes never propagate — a misbehaving extension just loses
    its segment that frame. Settings can disable hooks via
-   `:contributors-disabled` (see contributor-disabled? in header.clj
-   for the same gate; we re-implement it locally to avoid coupling)."
+   `:contributors-disabled`."
   [db now-ms ^long row]
   (let [disabled (let [s (get-in db [:settings :contributors-disabled])]
                    (when (set? s) s))]
@@ -528,21 +564,15 @@
       (for [{:keys [hook-id render-fn]} (lp/channel-hooks-for :tui)
             :when (and (ifn? render-fn)
                     (not (and disabled (contains? disabled hook-id)))
-                    (or (= :tui/footer-segment hook-id)
-                      (= "footer-segment" (name hook-id))))
-            :let [seg (try (render-fn db now-ms) (catch Throwable _ nil))]
-            :when (and (map? seg)
-                    (= row (long (or (:row seg) 0)))
-                    (vector? (:ir seg))
-                    (= :ir (first (:ir seg))))
-            :let [text (ir->footer-text (:ir seg))]
-            :when (and (string? text) (not (str/blank? text)))]
-        {:text       text
-         :fg         (fg-role->color (or (:fg-role seg) :default))
-         :bold?      (boolean (:bold? seg))
-         :region     (or (:region seg) :left)
-         :priority   (long (or (:priority seg) 3))
-         :join-left? (boolean (:join-left? seg))}))))
+                    (footer-hook? hook-id))
+            :let [out (try (render-fn db now-ms) (catch Throwable _ nil))
+                  segs (cond (sequential? out) out
+                         (map? out)        [out]
+                         :else             nil)]
+            seg segs
+            :let [packed (seg->packed seg row)]
+            :when packed]
+        packed))))
 
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 
