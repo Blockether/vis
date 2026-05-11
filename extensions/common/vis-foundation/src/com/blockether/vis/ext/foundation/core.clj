@@ -31,7 +31,8 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
    [com.blockether.vis.ext.foundation.environment.core :as environment]
-   [com.blockether.vis.ext.foundation.introspection :as introspection]))
+   [com.blockether.vis.ext.foundation.introspection :as introspection]
+   [com.blockether.vis.ext.foundation.nudges :as nudges]))
 
 (def ^:private answer-ir-prompt
   "Answers use IR (Hiccup-EDN). Always emit (answer [:ir & nodes]).
@@ -128,6 +129,7 @@ Examples:
      :ext/ns-alias       {:ns 'vis.ext.v :alias 'v}
      :ext/kind           "foundation"
      :ext/environment-info-fn environment/environment-info
+     :ext/nudge-fn       nudges/nudge-fn
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols
                                 (editing/available-editing-symbols)
