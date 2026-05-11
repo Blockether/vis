@@ -45,10 +45,10 @@ Two conditional rules apply on top of the spec:
 | `:ext/namespace`         | ✓              | -                    | Fully qualified symbol, e.g. `'com.blockether.vis.ext.foundation.editing.core`, `'com.acme.ext.git`. Also the dedup key in the global registry. |
 | `:ext/doc`               | ✓              | -                    | Extension-level description. |
 | `:ext/kind`              | conditional     | auto                 | Top-level *kind* of surface this extension contributes - used for prompt rendering AND as the section heading in `vis extensions list`. **Required when `:ext/symbols` is non-empty.** Auto-derived for the categorical cases when not set: extensions contributing `:ext/providers` get `"providers"`, `:ext/channels` get `"channels"`, `:ext/persistance` get `"persistance"`. Explicit `:ext/kind` always wins. |
-| `:ext/activation-fn`     | ✗              | `(constantly true)`  | `(fn [env] -> bool)` - when falsy, all symbols are unbound and `:ext/guards` are skipped. |
+| `:ext/activation-fn`     | ✗              | `(constantly true)`  | `(fn [env] -> bool)` - when falsy, all symbols are unbound and `:ext/hooks` are skipped. |
 | `:ext/prompt`            | ✗              | -                    | Optional extra string or `(fn [env] -> string)` appended as an extension prompt block. Strings are normalized to `(constantly s)`. |
 | `:ext/environment-info-fn` | ✗            | -                    | `(fn [env] -> string\|seq\|map\|nil)` - live environment-info contribution rendered inside the system prompt's `<environment-info>` block. Use for cwd/repo/runtime facts; any active extension can add a sibling section. |
-| `:ext/guards`            | ✗              | `[]`                 | Vector of `::guard` declarations. Each entry has `:id` (keyword), `:doc` (non-blank string), `:scope` (`:iteration`\|`:turn`\|`:session`), `:check-fn` (`(fn [ctx] -> nil\|{:hint string :importance :low\|:normal\|:high\|:critical})`). Each non-nil hit renders as `<system_nudge importance="...">` in the next iteration's prompt. See [Guards](guards.md). |
+| `:ext/hooks`             | ✗              | `[]`                 | Vector of lifecycle hook declarations. Each entry has `:id` (keyword), `:doc` (non-blank string), `:phase` (`:session/start`\|`:turn/start`\|`:turn.iteration/start`\|`:turn.iteration/stop`\|`:turn.answer/validate`\|`:turn/stop`), `:fn`. Pre-phase hits may return `{:hint string :importance :low\|:normal\|:high\|:critical}`; each non-nil hit renders as `<system_nudge importance="...">` in the next iteration's prompt. `:turn.answer/validate` returns nil to accept or `{:reject true :message ... :hint ...}` to reject. Post-phase returns are ignored. See [Lifecycle hooks and system nudges](guards.md). |
 | `:ext/rendering-kinds`   | ✗              | `{}`                 | `{kind-keyword render-fn}` - semantic renderers for preview/result data. A render fn receives `{:surface :rendering-kind :value ...}` plus optional `:tool-result`, and returns Markdown/plain text. Use this when tools return data with a rendering kind and many surfaces should render it consistently. |
 | `:ext/fenced-renderers`  | ✗              | `[]`                 | Vector of Markdown fenced-code renderers. Each entry is `{:renderer/id kw :renderer/langs #{"lang" ...} :renderer/render-fn fn}`. A render fn receives `{:surface :lang :source :source-lines :width ...}` and returns `{:lines ["..."]}` or nil to fall back to the default fenced-code renderer. |
 | `:ext/on-parse-error-fn` | ✗              | -                    | `(fn [{:code :error :environment}] -> string\|nil)` - catch-all source rewriter for SCI/edamame parse errors. Fires only when no symbol-level `:on-parse-error-fn` produced a rewrite. See [Symbol Decorators](hooks.md). |
@@ -415,14 +415,14 @@ Called internally by `extension`; safe to call standalone.
        (when-let [root (:docs/root env)]
          (str "docs.root: " root)))
      :ext/activation-fn (fn [env] (seq (list-docs (:db-info env))))
-     :ext/guards        [{:id       :docs/searches-failing
-                          :doc      "Warn when a long turn keeps producing search errors."
-                          :scope    :iteration
-                          :check-fn (fn [{:keys [iteration previous-blocks]}]
-                                      (when (and (> iteration 5)
-                                              (some :error previous-blocks))
-                                        {:hint       "Document searches are failing."
-                                         :importance :high}))}]
+     :ext/hooks         [{:id    :docs/searches-failing
+                          :doc   "Warn when a long turn keeps producing search errors."
+                          :phase :turn.iteration/start
+                          :fn    (fn [{:keys [iteration previous-blocks]}]
+                                   (when (and (> iteration 5)
+                                           (some :error previous-blocks))
+                                     {:hint       "Document searches are failing."
+                                      :importance :high}))}]
      :ext/symbols       [search-sym max-results-sym]
      :ext/classes       {'java.time.LocalDate java.time.LocalDate}
      :ext/imports       {'LocalDate 'java.time.LocalDate}}))

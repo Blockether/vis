@@ -618,8 +618,8 @@
    wrapped in `<system_nudges>`. All entries come from `:ext/hooks`
    on active extensions; core owns no built-in hook policy. Each hook
    declares its lifecycle `:phase` (`:session/start`, `:turn/start`,
-   `:turn.iteration/start`; legacy aliases accepted) and a `:fn` that
-   receives the `nudge-ctx` (the per-iteration ctx below) and returns
+   `:turn.iteration/start`) and a `:fn` that receives the `nudge-ctx`
+   (the per-iteration ctx below) and returns
    either nil (silent) or `{:hint :importance?}`.
 
    `nudge-ctx` fields (passed to every hook `:fn`):
@@ -703,7 +703,7 @@
         turn-pos     (long (or (some-> environment :current-turn-position-atom deref) 1))
         first-turn?  (= 1 turn-pos)
         phase-active? (fn [phase]
-                        (case (extension/normalize-hook-phase phase)
+                        (case phase
                           :turn.iteration/start true
                           :turn/start           first-iter?
                           :session/start        (and first-iter? first-turn?)
@@ -714,13 +714,13 @@
                          (for [{:keys [id phase fn]} (or (:ext/hooks ext) [])
                                :when (phase-active? phase)
                                :let [hit (try (call-extension-callback ext fn
-                                                (assoc nudge-ctx :phase (extension/normalize-hook-phase phase)))
+                                                (assoc nudge-ctx :phase phase))
                                            (catch Throwable t
                                              (tel/log! {:level :warn
                                                         :id ::hook-threw
                                                         :data {:ext (:ext/namespace ext)
                                                                :hook id
-                                                               :phase (extension/normalize-hook-phase phase)
+                                                               :phase phase
                                                                :error (ex-message t)}})
                                              nil))]
                                :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]
@@ -799,7 +799,10 @@ LOOP:
   Investigation triggers (verbs that REQUIRE tool calls before answering):
     why, how, what, where, which, fix, check, find, look, inspect,
     investigate, reproduce, diagnose, verify, trace, debug, show me,
-    search for, grep, locate, count, explain.
+    search for, grep, locate, count, explain. Do not count substrings
+    inside tool/symbol names like `z/patch-check`. Explicit
+    planning-only / opinion-only / design-only requests may answer
+    directly when the user asks for judgment, not runtime/file facts.
 
   HALLUCINATION GUARD: answering an investigation request from memory,
   without observing the actual file / runtime / journal, is a hard

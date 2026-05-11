@@ -20,6 +20,7 @@
    [com.blockether.vis.internal.extension :as extension]
 
    [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [rewrite-clj.node :as node]
    [rewrite-clj.parser :as parser]
    [rewrite-clj.zip :as z])
   (:import
@@ -106,13 +107,19 @@
        :absolute  nil
        :kind      kind})))
 
+(defn- op->tool-sym
+  [op]
+  (some-> op name symbol))
+
 (defn- tool-success
   [{:keys [op path kind result info]}]
   (let [t (now-ms)]
     (extension/success
       {:result   result
        :op       op
-       :metadata (merge {:target         (path->target path kind)
+       :metadata (merge {:tool           {:sym (op->tool-sym op)}
+                         :extension      {:namespace 'com.blockether.vis.ext.lang-clojure.core}
+                         :target         (path->target path kind)
                          :started-at-ms  t
                          :finished-at-ms t
                          :duration-ms    0}
@@ -157,7 +164,9 @@
       {:result (extension/failure
                  {:result   nil
                   :op       op
-                  :metadata {:target         (path->target path :file)
+                  :metadata {:tool           {:sym (op->tool-sym op)}
+                             :extension      {:namespace 'com.blockether.vis.ext.lang-clojure.core}
+                             :target         (path->target path :file)
                              :started-at-ms  t
                              :finished-at-ms t
                              :duration-ms    0
@@ -180,6 +189,16 @@
                 :role role
                 :source source}
                t)))))
+
+(defn source
+  "Parse exact Clojure/EDN source into a rewrite-clj node. Use inside z/patch :replace when formatting, comments, reader macros, or multi-form source bytes matter. Example: (z/patch (assoc row :replace (z/source \"(def x 1)\")))."
+  [s]
+  (parse-source-node "source" s))
+
+(defn lit
+  "Coerce a Clojure value into a rewrite-clj node. Use inside z/patch :replace when you mean data, not source text. Symbols stay symbols; strings become string literals. Example: (z/patch (assoc row :replace (z/lit \"actual string literal\")))."
+  [x]
+  (node/coerce x))
 
 (defn- locator-row?
   [x]
@@ -232,6 +251,9 @@
   (cond
     (string? search)
     {:value (parse-locator-source ":search" search)}
+
+    (node/node? search)
+    {:value (node/sexpr search)}
 
     (locator-row? search)
     {:value (:value search)
@@ -446,17 +468,53 @@
 
 (defn- patch-file-result
   [plans]
-  (let [files (mapv (fn [{:keys [path before after]}]
-                      {:path path
-                       :changed? (not= before after)
-                       :before before
-                       :after after
-                       :lines-before (count (str/split-lines before))
-                       :lines-after (count (str/split-lines after))})
-                plans)]
-    {:files files
-     :total-files (count files)
-     :total-changes (count (filter :changed? files))}))
+  (letfn [(prefix-count [a b]
+            (loop [i 0]
+              (if (and (< i (count a))
+                    (< i (count b))
+                    (= (nth a i) (nth b i)))
+                (recur (inc i))
+                i)))
+          (suffix-count [a b prefix]
+            (loop [i 0]
+              (if (and (< (+ prefix i) (count a))
+                    (< (+ prefix i) (count b))
+                    (= (nth a (- (count a) i 1))
+                      (nth b (- (count b) i 1))))
+                (recur (inc i))
+                i)))
+          (hunk [before after]
+            (let [before-lines (vec (str/split-lines before))
+                  after-lines  (vec (str/split-lines after))
+                  prefix       (prefix-count before-lines after-lines)
+                  suffix       (suffix-count before-lines after-lines prefix)
+                  before-end   (- (count before-lines) suffix)
+                  after-end    (- (count after-lines) suffix)
+                  ctx          2
+                  ctx-start    (max 0 (- prefix ctx))]
+              (when (not= before after)
+                {:start-line     (inc ctx-start)
+                 :context-before (subvec before-lines ctx-start prefix)
+                 :removed        (subvec before-lines prefix before-end)
+                 :added          (subvec after-lines prefix after-end)
+                 :context-after  (subvec after-lines after-end
+                                   (min (count after-lines) (+ after-end ctx)))
+                 :removed-count  (- before-end prefix)
+                 :added-count    (- after-end prefix)})))]
+    (let [files (mapv (fn [{:keys [path before after]}]
+                        (cond-> {:path path
+                                 :changed? (not= before after)
+                                 :before before
+                                 :after after
+                                 :lines-before (count (str/split-lines before))
+                                 :lines-after (count (str/split-lines after))}
+                          (not= before after) (assoc :hunks [(hunk before after)])))
+                  plans)]
+      {:files files
+       :preflight {:checked? true
+                   :message "z/patch validates every edit matches exactly once before any write"}
+       :total-files (count files)
+       :total-changes (count (filter :changed? files))})))
 
 (defn- patch-file
   "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator row/span or locator form/source snippet and must match exactly once before any write. Tool result envelope returns the changed file diffs in :op/result."
@@ -493,29 +551,42 @@
 
 (defn- journal-render-patch-result
   [result]
-  (let [files (patch-result-files result)
+  (let [files   (patch-result-files result)
         changed (count (filter :changed? files))]
-    (str "z/patch — " changed "/" (count files) " file(s) changed"
+    (str "z/patch — " changed "/" (count files) " file(s) changed; preflight exact-match OK"
       (when (seq files)
         (str "\n"
           (str/join "\n"
-            (map (fn [{:keys [path changed? lines-before lines-after]}]
-                   (str "- " path " " (if changed? "changed" "unchanged")
-                     " lines " lines-before "→" lines-after))
+            (map (fn [{:keys [path changed? lines-before lines-after hunks]}]
+                   (let [{:keys [start-line removed-count added-count]} (first hunks)]
+                     (str "- " path " " (if changed? "changed" "unchanged")
+                       " lines " lines-before "→" lines-after
+                       (when changed?
+                         (str " hunk@" start-line " -" removed-count " +" added-count)))))
               (take 8 files))))))))
 
 (defn- channel-render-patch-result
   [result]
-  (let [files (patch-result-files result)]
-    (str "Patched " (count files) " Clojure file(s).\n\n"
-      (str/join "\n\n"
-        (map (fn [{:keys [path changed? before after]}]
-               (str "### `" path "` — " (if changed? "changed" "unchanged") "\n\n"
-                 "```diff\n"
-                 "--- before\n" (preview-text before) "\n"
-                 "+++ after\n" (preview-text after) "\n"
-                 "```"))
-          (take 4 files))))))
+  (letfn [(render-lines [{:keys [context-before removed added context-after]}]
+            (str/join "\n"
+              (concat
+                (map #(str " " %) context-before)
+                (map #(str "-" %) removed)
+                (map #(str "+" %) added)
+                (map #(str " " %) context-after))))
+          (render-file [{:keys [path changed? hunks]}]
+            (if-not changed?
+              (str "### `" path "` — unchanged")
+              (let [{:keys [start-line] :as hunk} (first hunks)]
+                (str "### `" path "` — changed\n\n"
+                  "```diff\n"
+                  "@@ line " start-line " @@\n"
+                  (preview-text (render-lines hunk))
+                  "\n```"))))]
+    (let [files (patch-result-files result)]
+      (str "Patched " (count files)
+        " Clojure file(s). z/patch preflight validated exact matches before writing.\n\n"
+        (str/join "\n\n" (map render-file (take 6 files)))))))
 
 ;; =============================================================================
 ;; Locator discovery
@@ -697,7 +768,9 @@
    (let [out (locators-file path (assoc (or opts {}) :depth :top))]
      (assoc out
        :op/symbol :z/forms
-       :op/metadata (assoc (:op/metadata out) :op :z/forms)))))
+       :op/metadata (assoc (:op/metadata out)
+                      :op :z/forms
+                      :tool {:sym 'forms})))))
 
 (defn- symbols-file
   "List symbol zipper locator rows in a Clojure/EDN file. Defaults to 50 rows; pass opts like {:name 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
@@ -730,6 +803,7 @@
       :op/result (first (:op/result out))
       :op/metadata (assoc (:op/metadata out)
                      :op :z/locator-for-symbol
+                     :tool {:sym 'locator-for-symbol}
                      :symbol sym))))
 
 (defn- locator-label
@@ -780,9 +854,28 @@
   [result]
   (str "z/inspect — " (pr-str result)))
 
+(defn- render-node
+  [result]
+  (if (node/node? result)
+    (str "rewrite-clj node\n"
+      ":source " (pr-str (node/string result)) "\n"
+      ":sexpr  " (pr-str (try (node/sexpr result)
+                           (catch Throwable _ :not-sexpr-able))))
+    (str "rewrite-clj node — " (pr-str result))))
+
 ;; =============================================================================
 ;; Symbol declarations
 ;; =============================================================================
+
+(def source-symbol
+  (vis/symbol #'source
+    {:journal-render-fn render-node
+     :channel-render-fn render-node}))
+
+(def lit-symbol
+  (vis/symbol #'lit
+    {:journal-render-fn render-node
+     :channel-render-fn render-node}))
 
 (def patch-check-symbol
   (vis/symbol #'patch-check-tool
@@ -846,14 +939,4 @@
      :channel-render-fn render-inspect}))
 
 (def z-prompt
-  "`z/` Clojure/EDN zipper patching and structural reading.
-  Preferred for Clojure/EDN files: parses forms, preserves whitespace/comments,
-  and refuses non-Clojure files. Same map shape as v/patch.
-
-  First read: (z/forms path) for top-level semantic rows. Rows include :path, :index, :span, :kind, :name, :digest, :source-preview, plus full :source/:value for back-compat.
-  Deep read: (z/locators path {:depth :all :limit 50}) or focused (z/symbols path {:name 'foo}), (z/locator-for-symbol path 'foo).
-  Patch: add :replace to a chosen row and call (z/patch row), or (z/patch {:path p :search row :replace source}). Span rows are safest; string :search is parsed and must match once.
-  Dry-run: (z/patch-check edits). Repair parse damage with z/repair-range, z/repair-locator, z/repair-file. Inspect raw rewrite-clj zlocs with z/inspect before trusting journal output. Full rewrite-clj.zip API is under z/, including z/subedit->.
-
-Examples: (z/patch (assoc row :replace \"(def x 2)\"))
-          (z/forms \"src/foo.clj\" {:kind :defn :name 'foo})")
+  "`z/` Clojure/EDN zipper patching and structural reading.\n  Preferred for Clojure/EDN files: parse forms, preserve whitespace/comments,\n  refuse non-Clojure files. Same map shape as v/patch.\n\n  Playbooks:\n  1. Top-level binding: (z/forms p {:kind :defn :name 'foo}) -> pick row by :digest/:span -> (z/patch (assoc row :replace '(defn foo [x] ...))).\n  2. Nested call/symbol: (z/locators p {:depth :all :source-contains \"swap!\"}) or (z/symbols p {:name 'old}) -> patch chosen span row with symbol/form data.\n  3. Docs/comments: find def row with z/forms; for docstrings/comments/formatting replace whole def via (z/source \"...\"). Data forms lose comments; z/source preserves bytes.\n  4. Namespace/require: find ns row with (z/forms p {:kind :ns}); patch the ns form. Use data for simple require changes; z/source when preserving require layout/comments.\n  5. Batch/recovery: z/patch itself preflights exact-match uniqueness before writing, applies rows bottom-up when possible, and returns a diff summary. Use z/patch-check only for dry-run/no-write inspection.\n\n  Rules: span rows beat lossy sexpr/string search. Prefer data replacements: 'new-sym, '(def x 1), {:a 1}. Use z/source only for exact bytes; z/lit for string literals.\n  Deep read: z/locators, z/symbols, z/locator-for-symbol. Inspect raw zlocs with z/inspect. Repair parse damage with z/repair-*. Full rewrite-clj.zip API under z/, including z/subedit->.\n\nExamples: (z/patch (assoc row :replace 'new-sym))\n          (z/patch (assoc row :replace '(def x 1)))\n          (z/patch (assoc row :replace (z/source \"(def x 2)\")))\n          (z/forms \"src/foo.clj\" {:kind :defn :name 'foo})")

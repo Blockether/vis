@@ -1,7 +1,7 @@
 # Environment Map
 
 Every callback an extension receives - `:ext/activation-fn`, optional
-`:ext/prompt`, `:ext/environment-info-fn`, `:ext/guards`, and the symbol hooks (`:before-fn`,
+`:ext/prompt`, `:ext/environment-info-fn`, `:ext/hooks`, and the symbol hooks (`:before-fn`,
 `:after-fn`, `:on-error-fn`) - operates on the **environment**. This
 is the runtime map that represents one live conversation context.
 
@@ -21,7 +21,7 @@ These keys exist on every environment for its entire lifetime:
 | `:sandbox-ns` | `SCI ns` | The `'sandbox` namespace object. Used internally by `eval-string+`. |
 | `:initial-ns-keys` | `set of symbols` | Symbols in the sandbox at creation time (tools, helpers, builtins). Distinguishes user vars from infrastructure. |
 | `:bindings-atom` | `atom` | Cached `<bindings>` render. Shape: `{:index string, :revision int, :current-revision int}`. The rendered string is compact pseudo-source (`(def ^{:v 3 :s :l :t :map :n 12} foo ...)`, `(defn ^{:v 2 :s :l} f [x] ...)`). Bump via `bump-bindings!` after mutating sandbox bindings. |
-| `:extensions` | `atom of vector` | All registered extensions. Managed by `register-extension!` (replaces by `:ext/namespace`). Read by the iteration loop for nudges. |
+| `:extensions` | `atom of vector` | All registered extensions. Managed by `register-extension!` (replaces by `:ext/namespace`). Read by the iteration loop for lifecycle hooks and nudges. |
 | `:state-atom` | `atom` | Internal: `{:custom-bindings {sym val}, :environment <self-ref>, :conversation-id uuid}`. Extensions should not poke this. |
 | `:depth-atom` | `atom of int` | Sub-RLM recursion depth. 0 for top-level turns. |
 

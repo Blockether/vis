@@ -40,6 +40,22 @@
     :provider/on-selected-fn (fn [_ctx] nil)
     :provider/prompt-fn (fn [_ctx] "provider prompt")))
 
+(defdescribe hook-phase-test
+  (it "accepts canonical namespaced hook phases"
+    (doseq [phase [:session/start :turn/start :turn.iteration/start :turn.iteration/stop :turn.answer/validate :turn/stop]]
+      (expect (ext/hook-phase? phase))))
+
+  (it "validates extension hooks that use namespaced phases"
+    (let [hook (fn [_] nil)
+          extension (ext/extension {:ext/namespace 'test.namespaced-hook-phase
+                                    :ext/doc "Hook phase fixture."
+                                    :ext/kind "fixture"
+                                    :ext/hooks [{:id :test/hook
+                                                 :doc "Fixture hook."
+                                                 :phase :turn.iteration/start
+                                                 :fn hook}]})]
+      (expect (= :turn.iteration/start (-> extension :ext/hooks first :phase))))))
+
 (defdescribe wrap-extension-workspace-test
   (it "binds env workspace root around sandbox symbol calls"
     (let [sym-entry (ext/symbol 'root (fn [] workspace-context/*workspace-root*)

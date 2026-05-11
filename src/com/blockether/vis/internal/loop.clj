@@ -1635,12 +1635,61 @@
       :code-hash code-hash
       :original-total-blocks parsed-total-blocks})))
 
+(defn- answer-validation-rejection-message
+  [{:keys [id]} hit]
+  (let [message (some-> (:message hit) str str/trim not-empty)
+        hint    (some-> (:hint hit) str str/trim not-empty)]
+    (str "Answer validation hook " id " rejected the final answer."
+      (when message (str " " message))
+      (when hint (str " Recovery: " hint)))))
+
+(defn- answer-validation-hook-error-message
+  [ext id ^Throwable t]
+  (tel/log! {:level :warn
+             :id ::answer-validation-hook-threw
+             :data {:ext (:ext/namespace ext)
+                    :hook id
+                    :phase :turn.answer/validate
+                    :error (ex-message t)}})
+  nil)
+
+(defn- answer-validation-extensions
+  [environment active-extensions]
+  (or (seq active-extensions)
+    (some-> (:extensions environment) deref seq)))
+
 (defn final-answer-gate-error
-  "Final answers are no longer blocked by extra workflow state."
+  "Run hard final-answer validation hooks. Returns nil when the candidate
+   answer is accepted, otherwise a string error surfaced as the rejected
+   answer form's validation error. `active-extensions` is passed by the
+   turn loop so activation is computed once per turn; direct callers may
+   omit it and provide `:extensions` on the environment."
   ([environment iteration blocks]
-   (final-answer-gate-error environment iteration blocks nil))
-  ([_environment _iteration _blocks _answer-value]
-   nil))
+   (final-answer-gate-error environment iteration blocks nil nil))
+  ([environment iteration blocks answer-value]
+   (final-answer-gate-error environment iteration blocks answer-value nil))
+  ([environment iteration blocks answer-value active-extensions]
+   (final-answer-gate-error environment iteration blocks answer-value active-extensions nil))
+  ([environment iteration blocks answer-value active-extensions extra-ctx]
+   (let [ctx (merge {:environment environment
+                     :phase :turn.answer/validate
+                     :iteration iteration
+                     :blocks blocks
+                     :answer answer-value}
+               extra-ctx)]
+     (some (fn [ext]
+             (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
+                     (when (= :turn.answer/validate phase)
+                       (binding [extension/*current-extension* ext
+                                 extension/*current-symbol* nil]
+                         (try
+                           (let [hit (hook-fn ctx)]
+                             (when (and (map? hit) (:reject hit))
+                               (answer-validation-rejection-message hook hit)))
+                           (catch Throwable t
+                             (answer-validation-hook-error-message ext id t))))))
+               (or (:ext/hooks ext) [])))
+       (answer-validation-extensions environment active-extensions)))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -1928,7 +1977,7 @@
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
-  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body]}]]
+  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body active-extensions answer-validation-context]}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
@@ -2240,7 +2289,7 @@
               own-form-error  (when-not position-bad?
                                 (answer-form-error block-results form-idx))
               gate-error      (when (and (not position-bad?) (nil? own-form-error))
-                                (final-answer-gate-error environment iteration-position blocks value))
+                                (final-answer-gate-error environment iteration-position blocks value active-extensions answer-validation-context))
               validation-error (cond
                                  position-bad?
                                  (answer-position-error-message form-idx total-forms)
@@ -3071,10 +3120,9 @@
                         (atom {:index nil :revision -1 :current-revision 0}))
         ;; `:on-chunk` is a per-reasoning-chunk streaming hook fired
         ;; from svar's stream callback. It fires dozens of times per
-        ;; iteration, not at lifecycle boundaries. The retired
-        ;; `:ext/on-{turn,iteration}-{start,end}-fn` lifecycle bus
-        ;; was deleted (no production extension used it; guards plus
-        ;; on-chunk cover every use case in tree).
+        ;; iteration, not at lifecycle boundaries. Lifecycle callbacks
+        ;; now use namespaced `:ext/hooks` phases; on-chunk stays the
+        ;; high-frequency streaming-only surface.
         on-chunk             (:on-chunk hooks)
         emit-hook! (fn [hook-fn payload log-message]
                      ;; Single-fn caller-hook helper, used by
@@ -3084,25 +3132,24 @@
                          (catch Exception e
                            (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
         ;; Post-phase `:ext/hooks` invocation. Walks every active
-        ;; extension's hooks vector, filters by canonical :phase, calls :fn
+        ;; extension's hooks vector, filters by namespaced :phase, calls :fn
         ;; with the post-eval ctx. Return value is IGNORED — these are
         ;; side-effect-only telemetry / logging / external-resource hooks.
         ;; Pre-phase hooks fire from prompt/build-iteration-context.
         emit-post-hooks! (fn [target-phase ctx]
-                           (let [target-phase* (extension/normalize-hook-phase target-phase)]
-                             (doseq [ext (or active-exts [])
-                                     {:keys [id phase] hook-fn :fn} (or (:ext/hooks ext) [])
-                                     :when (= (extension/normalize-hook-phase phase) target-phase*)]
-                               (binding [extension/*current-extension* ext
-                                         extension/*current-symbol* nil]
-                                 (try (hook-fn (assoc ctx :phase target-phase*))
-                                   (catch Throwable t
-                                     (tel/log! {:level :warn
-                                                :id ::hook-threw
-                                                :data {:ext (:ext/namespace ext)
-                                                       :hook id
-                                                       :phase target-phase*
-                                                       :error (ex-message t)}})))))))
+                           (doseq [ext (or active-exts [])
+                                   {:keys [id phase] hook-fn :fn} (or (:ext/hooks ext) [])
+                                   :when (= phase target-phase)]
+                             (binding [extension/*current-extension* ext
+                                       extension/*current-symbol* nil]
+                               (try (hook-fn (assoc ctx :phase target-phase))
+                                 (catch Throwable t
+                                   (tel/log! {:level :warn
+                                              :id ::hook-threw
+                                              :data {:ext (:ext/namespace ext)
+                                                     :hook id
+                                                     :phase target-phase
+                                                     :error (ex-message t)}}))))))
         ;; Metadata persisted on each iteration row - reuses the
         ;; precomputed `active-exts` (no second activation pass).
         ;;
@@ -3290,9 +3337,9 @@
                       reasoning-level (copilot-claude-safe-reasoning-level
                                         resolved-model user-request raw-reasoning-level
                                         {:allow-copilot-claude-deep? allow-copilot-claude-deep?})
-                      _ (log-stage! :iteration-start iteration {:message-count (count messages)
-                                                                :reasoning reasoning-level
-                                                                :requested-reasoning raw-reasoning-level})
+                      _ (log-stage! :turn.iteration/start iteration {:message-count (count messages)
+                                                                     :reasoning reasoning-level
+                                                                     :requested-reasoning raw-reasoning-level})
                       pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
                       iteration-context (prompt/build-iteration-context environment
                                           {:blocks-by-iteration journal-iters
@@ -3358,6 +3405,10 @@
                                           :routing effective-routing
                                           :resolved-model resolved-model
                                           :on-chunk on-chunk
+                                          :active-extensions active-exts
+                                          :answer-validation-context
+                                          {:previous-iterations journal-iters
+                                           :previous-blocks (vec (mapcat (comp :blocks second) journal-iters))}
                                           :extra-body (assoc (or extra-body {})
                                                         :copilot-initiator
                                                         (copilot-initiator-for-iteration iteration))})
@@ -3540,7 +3591,7 @@
                         (do (log-stage! :final iteration
                               {:answer (truncate (answer-str (:answer final-result)) 200)
                                :iteration-count (inc iteration)})
-                          (log-stage! :iteration-end iteration
+                          (log-stage! :turn.iteration/stop iteration
                             {:blocks (count blocks) :errors (count (filter :error blocks))
                              :times (mapv :execution-time-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
@@ -3581,11 +3632,11 @@
                         :else
                         (if (empty? blocks)
                           (do (log-stage! :empty iteration {})
-                            (log-stage! :iteration-end iteration {:blocks 0 :errors 0 :times []})
+                            (log-stage! :turn.iteration/stop iteration {:blocks 0 :errors 0 :times []})
                             (recur (merge loop-state
                                      {:iteration (inc iteration) :trace (conj trace trace-entry)})))
 
-                          (do (log-stage! :iteration-end iteration
+                          (do (log-stage! :turn.iteration/stop iteration
                                 {:blocks (count blocks) :errors (count (filter :error blocks))
                                  :times (mapv :execution-time-ms blocks)})
                           ;; Non-terminal iteration-final chunk: per-form
@@ -4004,7 +4055,7 @@
       ;; :answer nil here meant the web bubble rendered blank even though
       ;; we had diagnostic text ready.
       (do
-        (log-stage! :turn-end 0
+        (log-stage! :turn/stop 0
           {:duration-ms duration-ms :iteration-count iteration-count :status status})
         (let [fallback-answer (:result answer answer)]
           (try
@@ -4029,7 +4080,7 @@
             (some? locals) (assoc :locals locals))))
       ;; success path
       (do
-        (log-stage! :turn-end 0
+        (log-stage! :turn/stop 0
           {:duration-ms duration-ms :iteration-count iteration-count
            :cost (str (:total-cost cost-with-model))})
         (try
@@ -4107,7 +4158,7 @@
                *concurrency*      merged-concurrency]
        (tel/with-ctx+ {:db-info db-info
                        :conversation-soul-id (:conversation-id environment)}
-         (log-stage! :turn-start 0
+         (log-stage! :turn/start 0
            {:model root-model
             :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router environment))))))
             :user-request user-request})
