@@ -1,0 +1,8 @@
+{bridge
+ {:nses [com.blockether.vis.ext.bridge.core]
+  :docs
+  {"README.md"
+   {:created-at #inst "2026-05-11T00:00:00.000-00:00"
+    :description "Bridge codebase knowledge graph extension: CommonMark docs extraction and Clojure graph extraction via external clojure-lsp."
+    :content
+    "# vis-bridge\n\nPkg: `com.blockether/vis-bridge`. Src: `extensions/common/vis-bridge/`.\n\nSingle alias: `bridge/`.\n\n## v1 extraction\n\n```clojure\n(bridge/clojure-lsp-status)\n(bridge/extract-markdown \"docs/src/SUMMARY.md\")\n(bridge/extract-clojure {:project-root \".\"})\n```\n\nBridge v1 uses CommonMark for Markdown section trees and external `clojure-lsp dump` for Clojure semantic analysis. Tree-sitter is deliberately not a v1 dependency.\n"}}}}

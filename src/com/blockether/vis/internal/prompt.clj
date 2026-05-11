@@ -675,27 +675,51 @@
                    :context-limit ctx-limit
                    :input-tokens input-tokens
                    :title-refresh? (boolean title-refresh?)
-                   :conversation-title conversation-title}
-        all-nudges (into []
-                     (mapcat
+                   :conversation-title conversation-title
+                   ;; Raw current-turn user request — guards inspect it
+                   ;; for investigation verbs / blind-answer prevention.
+                   :user-request current-user-content}
+        ;; Two sources of system_nudge entries:
+        ;;   1. `:ext/nudge-fn`         — freeform, one fn per ext, returns 0+ nudges.
+        ;;   2. `:ext/iteration-guards` — structured per-guard list, each
+        ;;      check-fn returns nil (silent) or `{:hint :importance}`.
+        ;; Both feed the same nudge ctx and merge into one `<system_nudges>` block.
+        nudge-fn-nudges (mapcat
+                          (fn [ext]
+                            (when-let [nudge-fn (:ext/nudge-fn ext)]
+                              (try
+                                (let [result (call-extension-callback ext nudge-fn nudge-ctx)]
+                                  (if (extension/system-nudge-result? result)
+                                    (->> (extension/coerce-system-nudge-result result)
+                                      (map #(normalize-system-nudge :normal %)))
+                                    (do
+                                      (tel/log! {:level :warn
+                                                 :id ::invalid-extension-nudge
+                                                 :data {:ext (:ext/namespace ext)
+                                                        :explain (extension/explain-system-nudge-result result)}}
+                                        "Extension nudge-fn returned invalid nudge; skipping")
+                                      nil)))
+                                (catch Throwable t
+                                  (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
+                                  nil))))
+                          (or active-extensions []))
+        guard-nudges (mapcat
                        (fn [ext]
-                         (when-let [nudge-fn (:ext/nudge-fn ext)]
-                           (try
-                             (let [result (call-extension-callback ext nudge-fn nudge-ctx)]
-                               (if (extension/system-nudge-result? result)
-                                 (->> (extension/coerce-system-nudge-result result)
-                                   (map #(normalize-system-nudge :normal %)))
-                                 (do
-                                   (tel/log! {:level :warn
-                                              :id ::invalid-extension-nudge
-                                              :data {:ext (:ext/namespace ext)
-                                                     :explain (extension/explain-system-nudge-result result)}}
-                                     "Extension nudge-fn returned invalid nudge; skipping")
-                                   nil)))
-                             (catch Throwable t
-                               (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
-                               nil)))))
-                     (or active-extensions []))
+                         (for [{:keys [id check-fn]} (or (:ext/iteration-guards ext) [])
+                               :let [hit (try (call-extension-callback ext check-fn nudge-ctx)
+                                           (catch Throwable t
+                                             (tel/log! {:level :warn
+                                                        :id ::iteration-guard-threw
+                                                        :data {:ext (:ext/namespace ext)
+                                                               :guard id
+                                                               :error (ex-message t)}})
+                                             nil))]
+                               :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]
+                           (normalize-system-nudge
+                             (or (:importance hit) :normal)
+                             (:hint hit))))
+                       (or active-extensions []))
+        all-nudges (into [] (concat nudge-fn-nudges guard-nudges))
         nudges-block (system-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [active-skills-block recent-block bindings-block nudges-block])]
@@ -756,19 +780,27 @@ OUTPUT:
   Narrate inside fences with ;; comments.
 
 LOOP:
-  λ engage(request).
-    classify(request) -> strategy in #{:answer :ooda :architect}
-    ⊢ :answer    -> trivial chat | no_tools | no_loop
-    ⊢ :ooda      -> DEFAULT for any 'investigate', 'fix', 'why',
-                    'check', 'find', 'add', 'refactor', 'debug'.
-                    observe(tools) -> act -> verify -> next.
-                    bug -> reproduce(first) | ¬ repro -> ¬ diagnosis.
-    ⊢ :architect -> ONLY when request is genuinely ambiguous AND
-                    no observation can resolve it. question(one) ->
-                    explore_codebase > assume_more. Default ans first.
-  declare(strategy) at turn open.
-  bias: investigate > ask. Tool calls before questions.
-  AT MOST ONE clarifying question per turn; default answer suggested.
+  Two reply shapes, never mixed:
+    (a) trivial chat — single iteration with one `(answer ...)` form.
+        Only legitimate for: greetings ('hi', 'thx'), acks, social.
+    (b) work — observe (tool calls) -> read <journal> next iteration
+        -> observe more OR `(answer ...)` ALONE in its own iteration.
+  Default shape: (b). Reach for (a) only when the user request is
+  unambiguously trivial. Bias: investigate > ask.
+
+  Investigation triggers (verbs that REQUIRE tool calls before answering):
+    why, how, what, where, which, fix, check, find, look, inspect,
+    investigate, reproduce, diagnose, verify, trace, debug, show me,
+    search for, grep, locate, count, explain.
+
+  HALLUCINATION GUARD: answering an investigation request from memory,
+  without observing the actual file / runtime / journal, is a hard
+  failure. If you don't know, call a tool. If a tool fails, read its
+  `:op/error :hint` and retry. If genuinely ambiguous (truly no
+  observation can resolve), ask exactly ONE clarifying question —
+  always offer a default answer the user can accept silently.
+
+  Bug work: reproduce first. ¬ repro -> ¬ diagnosis -> ¬ fix.
 
 ITERATION (⊢ :ooda only):
   emit forms -> engine evals -> <journal> populated -> <bindings> updated

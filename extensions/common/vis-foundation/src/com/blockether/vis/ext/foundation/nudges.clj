@@ -114,3 +114,51 @@
    anything to say this iteration - the host accepts that as a no-op."
   [ctx]
   (into [] (remove nil?) [(title-nudge ctx) (context-pressure-nudge ctx)]))
+
+;; ----------------------------------------------------------------------------
+;; Iteration guards (`:ext/iteration-guards`) — structured per-iteration
+;; checks that emit MODEL-FACING system_nudges. Different from
+;; `nudge-fn`: a guard is named, declarative, and toggleable.
+;; ----------------------------------------------------------------------------
+
+(def ^:private investigation-verb-regex
+  ;; Stems of verbs that strongly imply "answer requires runtime/file
+  ;; observation". Match whole-word, case-insensitive. Conservative
+  ;; list: false positives are fine (model just receives a hint it
+  ;; can ignore), false negatives let real blind-answers slip.
+  #"(?i)\b(investigate|investigating|debug|debugging|why|fix|fixing|check|checking|find|finding|look(?:up|s)?|inspect|inspecting|reproduce|reproducing|diagnose|diagnosing|verify|verifying|trace|tracing|where|which|what does|how does|show me|search for|grep|locate|count)\b")
+
+(defn- looks-like-investigation?
+  [user-request]
+  (let [s (some-> user-request str str/trim)]
+    (and s
+      (>= (count s) 8)        ;; "hey" / "thx" / "siema" stay below
+      (boolean (re-find investigation-verb-regex s)))))
+
+(defn blind-answer-guard-check
+  "Fires on iteration 1 when the user request looks like an
+   investigation but the model is about to answer without any tool
+   observation. Returns nil (silent) or `{:hint :importance}`.
+
+   Soft: the nudge only TELLS the model to investigate; preflight
+   does NOT reject the answer. If the model still answers blindly,
+   that's its call — the failure mode is at least surfaced."
+  [{:keys [iteration user-request previous-blocks]}]
+  (when (and (= 1 (long (or iteration 1)))
+          (looks-like-investigation? user-request)
+          (empty? previous-blocks))
+    {:importance :high
+     :text (str "The user request looks like an investigation (verbs like "
+             "'why', 'fix', 'check', 'find', 'debug', 'show me' …). "
+             "You MUST call at least one tool (v/cat, v/rg, z/locators, "
+             "v/bash …) to observe the actual state before composing "
+             "`(answer …)`. Answering from memory on an investigation "
+             "request is a hallucination. If the request is truly "
+             "trivial chat (greeting, ack), ignore this nudge.")}))
+
+(def iteration-guards
+  "`:ext/iteration-guards` vector for vis-foundation. Each entry has
+   `:id`, `:doc`, and `:check-fn`."
+  [{:id      :foundation/blind-answer
+    :doc     "Warn when iteration 1 is about to answer an investigation-style request without any tool calls."
+    :check-fn blind-answer-guard-check}])

@@ -1,0 +1,124 @@
+(ns com.blockether.vis.ext.bridge.schema
+  "Normalized Bridge extraction facts.
+
+   Extractors return this language-neutral IR instead of raw ASTs. Storage and
+   query layers can then treat Clojure, Markdown, and future tree-sitter-backed
+   languages uniformly."
+  (:require
+   [clojure.spec.alpha :as s]
+   [clojure.string :as str]))
+
+(def graph-kinds
+  #{:project :directory :file :namespace :var :function :macro :protocol :record
+    :type :class :method :field :heading :section :code-block :doc-section})
+
+(def edge-kinds
+  #{:contains :requires :uses :calls :mentions :links-to :documents :inherits
+    :implements})
+
+(defn non-blank-string? [x]
+  (and (string? x) (not (str/blank? x))))
+
+(s/def ::kind graph-kinds)
+(s/def ::edge-kind edge-kinds)
+(s/def ::language non-blank-string?)
+(s/def ::name non-blank-string?)
+(s/def ::qualified-name non-blank-string?)
+(s/def ::path non-blank-string?)
+(s/def ::line-start pos-int?)
+(s/def ::line-end pos-int?)
+(s/def ::column-start pos-int?)
+(s/def ::column-end pos-int?)
+(s/def ::visibility #{:public :private :unknown})
+(s/def ::metadata map?)
+
+(s/def ::node
+  (s/keys :req-un [::kind ::language ::name ::qualified-name ::path]
+    :opt-un [::line-start ::line-end ::column-start ::column-end
+             ::visibility ::metadata]))
+
+(s/def ::source non-blank-string?)
+(s/def ::target non-blank-string?)
+(s/def ::resolved? boolean?)
+(s/def ::confidence number?)
+(s/def ::line pos-int?)
+(s/def ::column pos-int?)
+
+(s/def ::edge
+  (s/keys :req-un [::edge-kind ::source ::target ::path]
+    :opt-un [::language ::line ::column ::resolved? ::confidence ::metadata]))
+
+(s/def ::severity #{:info :warn :error})
+(s/def ::message non-blank-string?)
+(s/def ::diagnostic
+  (s/keys :req-un [::severity ::message]
+    :opt-un [::path ::line ::column ::metadata]))
+
+(s/def ::nodes (s/coll-of ::node :kind vector?))
+(s/def ::edges (s/coll-of ::edge :kind vector?))
+(s/def ::diagnostics (s/coll-of ::diagnostic :kind vector?))
+(s/def ::stats map?)
+
+(s/def ::extract-result
+  (s/keys :req-un [::nodes ::edges ::diagnostics ::stats]))
+
+(defn valid-extract-result? [x]
+  (s/valid? ::extract-result x))
+
+(defn explain-extract-result [x]
+  (s/explain-data ::extract-result x))
+
+(defn assert-extract-result!
+  "Return `x` when it satisfies Bridge's extractor result schema; throw with
+   explain data otherwise."
+  [x]
+  (when-not (valid-extract-result? x)
+    (throw (ex-info "Invalid Bridge extract result"
+             {:type :bridge.schema/invalid-extract-result
+              :explain (explain-extract-result x)})))
+  x)
+
+(defn node
+  "Construct a normalized Bridge node."
+  [{:keys [kind language name qualified-name path] :as m}]
+  (assert-extract-result!
+    {:nodes [(merge {:kind kind
+                     :language language
+                     :name name
+                     :qualified-name qualified-name
+                     :path path
+                     :visibility :unknown
+                     :metadata {}}
+               (dissoc m :kind :language :name :qualified-name :path))]
+     :edges []
+     :diagnostics []
+     :stats {}})
+  (merge {:kind kind
+          :language language
+          :name name
+          :qualified-name qualified-name
+          :path path
+          :visibility :unknown
+          :metadata {}}
+    (dissoc m :kind :language :name :qualified-name :path)))
+
+(defn edge
+  "Construct a normalized Bridge edge."
+  [{:keys [edge-kind source target path] :as m}]
+  (merge {:edge-kind edge-kind
+          :source source
+          :target target
+          :path path
+          :resolved? false
+          :confidence 1.0
+          :metadata {}}
+    (dissoc m :edge-kind :source :target :path)))
+
+(defn extract-result
+  "Construct and validate a normalized extractor result."
+  [{:keys [nodes edges diagnostics stats]}]
+  (assert-extract-result!
+    {:nodes (vec nodes)
+     :edges (vec edges)
+     :diagnostics (vec diagnostics)
+     :stats (or stats {})}))
