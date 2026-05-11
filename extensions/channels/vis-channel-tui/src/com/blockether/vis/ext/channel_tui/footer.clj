@@ -381,15 +381,12 @@
   [db _now-ms]
   (let [{:keys [settings]} db
         info       (chosen-model-info)
-        model      (:name info)
         provider   (:provider info)
-        ;; Show the provider/model lineage in the footer so the user
-        ;; never has to guess which backend is on the wire. Falls
-        ;; back to plain model name when the resolver did not
-        ;; surface a provider id (e.g. legacy router shape).
-        model-display (if (and provider model)
-                        (str (name provider) "/" model)
-                        model)
+        ;; Past life: `model` + `model-display` strings were also
+        ;; destructured here for a footer label that no longer exists.
+        ;; Resurrect via `(let [model (:name info) ...] ...)` if a
+        ;; future renderer needs them. `provider` stays — used by
+        ;; `codex-provider?` below.
         reasoning? (reasoning-effort-configurable? info)
         reasoning-level (or (:reasoning-level settings) default-reasoning-level)
         codex-provider? (= :openai-codex provider)

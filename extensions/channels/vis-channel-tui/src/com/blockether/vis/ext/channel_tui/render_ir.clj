@@ -283,7 +283,7 @@
    shape (see autoresearch B2 discard)."
   [children width opts]
   (if-let [limit (:max-lines opts)]
-    (let [cap (long (* 3 (long (long limit)) 1/2))]   ; 1.5*limit
+    (let [cap (long (* 3 (long limit) 1/2))]   ; 1.5*limit
       (reduce (fn [acc child]
                 (let [acc' (into acc (block->lines child width opts))]
                   (if (>= (count acc') cap)
