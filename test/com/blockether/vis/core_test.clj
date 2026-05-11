@@ -57,13 +57,6 @@
       (expect (= "Read a file." (:ext.symbol/doc s)))
       (expect (= '([path]) (:ext.symbol/arglists s)))))
 
-  (it "extension/symbol carries optional :result-spec"
-    (let [s (vis/symbol 'cat (fn [& _] nil)
-              {:doc "Read a file."
-               :arglists '([path])
-               :result-spec ::ext/tool-result})]
-      (expect (= ::ext/tool-result (:ext.symbol/result-spec s)))))
-
   (it "extension/symbol carries optional :on-parse-error-fn"
     (let [hook (fn [_] "repaired")
           s    (vis/symbol 'cat (fn [& _] nil)
@@ -91,16 +84,11 @@
       (expect (= {} (:ext/imports e)))
       (expect (= [] (:ext/settings e))))))
 
-(defdescribe invoke-symbol-wrapper-result-spec-test
-  ;; PLAN §2.1: tool-result envelope spec is now :op/envelope
-  ;; (was ::ext/tool-result, retired in Phase 4). All `:tool` /
-  ;; `:extension` / `:source` blobs live under `:op/metadata` on
-  ;; the flat envelope (was `:info` on the old wrapped shape).
-  (it "rejects a function result that violates :result-spec"
+(defdescribe invoke-symbol-wrapper-envelope-test
+  (it "rejects any function symbol result that is not an op envelope"
     (let [sym (vis/symbol 'bad (fn [& _] :not-a-tool-result)
                 {:doc "bad"
-                 :arglists '([])
-                 :result-spec :op/envelope})
+                 :arglists '([])})
           ext (vis/extension {:ext/namespace 'com.acme.ext.bad
                               :ext/doc "bad"
                               :ext/kind "filesystem"
@@ -110,12 +98,11 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(vis/invoke-symbol-wrapper ext sym [] {})))))
 
-  (it "accepts a function result that satisfies :result-spec and stamps extension metadata"
+  (it "accepts an op envelope and stamps extension metadata"
     (let [sym (vis/symbol 'good (fn [& _]
                                   (ext/success {:result true :op :demo}))
                 {:doc "good"
-                 :arglists '([])
-                 :result-spec :op/envelope})
+                 :arglists '([])})
           ext (vis/extension {:ext/namespace 'com.acme.ext.good
                               :ext/doc "good"
                               :ext/kind "filesystem"
@@ -1127,7 +1114,8 @@
                  :ext/kind      "activation-test"
                  :ext/activation-fn (fn [_] @active?)
                  :ext/ns-alias  {:ns 'test.activation.ns :alias 'act}
-                 :ext/symbols   [(vis/symbol 'active-fn (constantly :active)
+                 :ext/symbols   [(vis/symbol 'active-fn
+                                   (constantly (ext/success {:result :active :op :test/active-fn}))
                                    {:doc "active" :arglists '([])})]})]
       (vis/install-extension! env ext)
       (expect (contains? (set (map :ext/namespace @(:extensions env)))
@@ -1139,8 +1127,10 @@
       (expect (contains? (ns-keys-in-sci (:sci-ctx env) 'test.activation.ns)
                 'active-fn))
       (expect (= :active
-                (:val (sci/eval-string+ (:sci-ctx env) "(act/active-fn)"
-                        {:ns (:sandbox-ns env)}))))
+                (-> (sci/eval-string+ (:sci-ctx env) "(act/active-fn)"
+                      {:ns (:sandbox-ns env)})
+                  :val
+                  :op/result)))
       (reset! active? false)
       (vis/sync-active-extension-symbols! env)
       (expect (not (contains? (ns-keys-in-sci (:sci-ctx env) 'test.activation.ns)

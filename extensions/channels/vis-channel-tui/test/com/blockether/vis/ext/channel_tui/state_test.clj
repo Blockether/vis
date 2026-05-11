@@ -6,6 +6,11 @@
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
             [lazytest.core :refer [defdescribe expect it]]))
 
+(defdescribe default-settings-test
+  (it "keeps provider reasoning hidden unless the user opts in"
+    (expect (false? (:show-thinking state/default-settings)))
+    (expect (true? (:show-iterations state/default-settings)))))
+
 (defdescribe detail-toggle-test
   (it "does not cold-clear render and height caches on disclosure click"
     (let [render-invalidations (atom 0)

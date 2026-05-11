@@ -37,14 +37,12 @@
 (def ^:private cat-symbol
   (ext/symbol 'cat mock-cat-tool
     {:doc "Mock cat" :arglists '([p])
-     :result-spec :op/envelope
      :journal-render-fn (fn [r] (str "JOURNAL cat " (:path r)))
      :channel-render-fn (fn [r] (str "CHANNEL cat " (:path r)))}))
 
 (def ^:private rg-symbol
   (ext/symbol 'rg mock-rg-tool
     {:doc "Mock rg" :arglists '([n])
-     :result-spec :op/envelope
      :journal-render-fn (fn [r] (str "JOURNAL rg " (-> r :hits first :text)))
      :channel-render-fn (fn [r] (str "CHANNEL rg " (-> r :hits first :text)))}))
 

@@ -32,8 +32,8 @@
         s     (str line)]
     (cond
       (<= (count s) width) s
-      (= width 1)          "..."
-      :else                (str (subs s 0 (dec width)) "..."))))
+      (<= width 3)         (subs "..." 0 width)
+      :else                (str (subs s 0 (- width 3)) "..."))))
 
 (defn- clip-lines
   [width lines]
@@ -44,14 +44,49 @@
 (defn- clean-label
   [s]
   (let [s (-> (str s)
+            (str/replace #"(?i)<br\s*/?>" "\n")
+            (str/replace #"&nbsp;" " ")
+            (str/replace #"&amp;" "&")
+            (str/replace #"&lt;" "<")
+            (str/replace #"&gt;" ">")
             str/trim
             (str/replace #"^\"|\"$" "")
             (str/replace #"^'|'$" ""))]
     (if (str/blank? s) "?" s)))
 
+(defn- wrap-words
+  [width text]
+  (let [words (str/split (str/trim (str text)) #"\s+")]
+    (loop [words words line "" out []]
+      (if-let [word (first words)]
+        (let [candidate (if (str/blank? line) word (str line " " word))]
+          (cond
+            (<= (count candidate) width)
+            (recur (rest words) candidate out)
+
+            (str/blank? line)
+            (recur (rest words) "" (conj out (clip-line width word)))
+
+            :else
+            (recur words "" (conj out line))))
+        (cond-> out
+          (not (str/blank? line)) (conj line))))))
+
+(defn- label-lines
+  [s]
+  (let [lines (->> (str/split-lines (clean-label s))
+                (mapcat #(wrap-words max-label-width %))
+                (remove str/blank?)
+                vec)]
+    (if (seq lines) lines ["?"])))
+
+(defn- single-line-label
+  [s]
+  (str/join " / " (label-lines s)))
+
 (defn- bounded-label
   [s]
-  (clip-line max-label-width (clean-label s)))
+  (clip-line max-label-width (single-line-label s)))
 
 (defn- strip-comment
   [line]
@@ -134,7 +169,7 @@
                         (shape-body tail "[" "]")   [:rect (shape-body tail "[" "]")]
                         :else                         [:rect nil])]
     {:id (str id)
-     :label (bounded-label (or label id))
+     :label (clean-label (or label id))
      :shape shape
      :explicit-label? (boolean label)}))
 
@@ -368,32 +403,6 @@
    "xychart" :xychart
    "xychart-beta" :xychart})
 
-(def ^:private diagram-type-label
-  {:architecture "architecture"
-   :block "block"
-   :c4 "C4"
-   :class "class"
-   :er "ER"
-   :flowchart "flowchart"
-   :gantt "gantt"
-   :gitgraph "gitGraph"
-   :ishikawa "ishikawa"
-   :journey "journey"
-   :kanban "kanban"
-   :mindmap "mindmap"
-   :packet "packet"
-   :pie "pie"
-   :quadrant "quadrant"
-   :radar "radar"
-   :requirement "requirement"
-   :sankey "sankey"
-   :sequence "sequence"
-   :state "state"
-   :timeline "timeline"
-   :tree "treeView"
-   :treemap "treemap"
-   :xychart "xyChart"})
-
 (defn- source-body-lines
   [source]
   (vec (rest (content-lines source))))
@@ -574,12 +583,13 @@
 
 (defn- node-size
   [{:keys [label shape]}]
-  (let [label (bounded-label label)
-        w (+ (count label) (case shape
-                             :diamond 6
-                             :circle 6
-                             4))]
-    {:w (max 7 w) :h 3}))
+  (let [lines (label-lines label)
+        inner-w (apply max 1 (map count lines))
+        w (+ inner-w (case shape
+                       :diamond 6
+                       :circle 6
+                       4))]
+    {:w (max 7 w) :h (+ 2 (count lines))}))
 
 (defn- rank-flow-nodes
   [{:keys [nodes order edges]}]
@@ -650,45 +660,46 @@
     vec))
 
 (defn- box-lines
-  [{:keys [label shape] :as node}]
+  [{:keys [shape] :as node}]
   (let [{:keys [w]} (node-size node)
-        label (bounded-label label)
-        pad-total (max 0 (- w 2 (count label)))
-        left (quot pad-total 2)
-        right (- pad-total left)]
+        lines (label-lines (:label node))
+        body (mapv (fn [line]
+                     (let [pad-total (max 0 (- w 2 (count line)))
+                           left (quot pad-total 2)
+                           right (- pad-total left)]
+                       (str "│" (repeat-str \space left) line (repeat-str \space right) "│")))
+               lines)]
     (case shape
-      :diamond [(str "╱" (repeat-str \─ (- w 2)) "╲")
-                (str "│" (repeat-str \space left) label (repeat-str \space right) "│")
-                (str "╲" (repeat-str \─ (- w 2)) "╱")]
-      :circle  [(str "╭" (repeat-str \─ (- w 2)) "╮")
-                (str "│" (repeat-str \space left) label (repeat-str \space right) "│")
-                (str "╰" (repeat-str \─ (- w 2)) "╯")]
-      :round   [(str "╭" (repeat-str \─ (- w 2)) "╮")
-                (str "│" (repeat-str \space left) label (repeat-str \space right) "│")
-                (str "╰" (repeat-str \─ (- w 2)) "╯")]
-      [(str "┌" (repeat-str \─ (- w 2)) "┐")
-       (str "│" (repeat-str \space left) label (repeat-str \space right) "│")
-       (str "└" (repeat-str \─ (- w 2)) "┘")])))
+      :diamond (into [(str "╱" (repeat-str \─ (- w 2)) "╲")]
+                 (conj body (str "╲" (repeat-str \─ (- w 2)) "╱")))
+      :circle  (into [(str "╭" (repeat-str \─ (- w 2)) "╮")]
+                 (conj body (str "╰" (repeat-str \─ (- w 2)) "╯")))
+      :round   (into [(str "╭" (repeat-str \─ (- w 2)) "╮")]
+                 (conj body (str "╰" (repeat-str \─ (- w 2)) "╯")))
+      (into [(str "┌" (repeat-str \─ (- w 2)) "┐")]
+        (conj body (str "└" (repeat-str \─ (- w 2)) "┘"))))))
 
 (defn- flow-positions-lr
   [ast groups width]
   (let [nodes (:nodes ast)
+        sizes (into {} (map (fn [[id node]] [id (node-size node)]) nodes))
         col-widths (mapv (fn [{:keys [ids]}]
-                           (apply max 7 (map #(:w (node-size (get nodes %))) ids)))
+                           (apply max 7 (map #(:w (get sizes %)) ids)))
                      groups)
         gaps (max 1 (dec (count col-widths)))
         used (reduce + col-widths)
         h-gap (max 6 (quot (max 0 (- (long width) used 8)) gaps))
-        v-gap 6
+        row-step (+ 3 (apply max 3 (map :h (vals sizes))))
         col-x (reductions + 2 (map #(+ % h-gap) col-widths))]
     (into {}
       (mapcat (fn [col {:keys [ids]}]
                 (map-indexed
                   (fn [row id]
-                    [id {:x (nth col-x col)
-                         :y (+ 1 (* row v-gap))
-                         :w (:w (node-size (get nodes id)))
-                         :h 3}])
+                    (let [{:keys [w h]} (get sizes id)]
+                      [id {:x (nth col-x col)
+                           :y (+ 1 (* row row-step))
+                           :w w
+                           :h h}]))
                   ids))
         (range)
         groups))))
@@ -696,27 +707,29 @@
 (defn- flow-positions-td
   [ast groups width]
   (let [nodes (:nodes ast)
+        sizes (into {} (map (fn [[id node]] [id (node-size node)]) nodes))
         max-cols (apply max 1 (map #(count (:ids %)) groups))
         col-widths (mapv (fn [idx]
                            (apply max 7
                              (for [{:keys [ids]} groups
                                    :let [id (nth ids idx nil)]
                                    :when id]
-                               (:w (node-size (get nodes id))))))
+                               (:w (get sizes id)))))
                      (range max-cols))
         gaps (max 1 (dec (count col-widths)))
         used (reduce + col-widths)
         h-gap (max 5 (quot (max 0 (- (long width) used 8)) gaps))
-        v-gap 5
+        row-step (+ 3 (apply max 3 (map :h (vals sizes))))
         col-x (vec (reductions + 2 (map #(+ % h-gap) col-widths)))]
     (into {}
       (mapcat (fn [rank {:keys [ids]}]
                 (map-indexed
                   (fn [col id]
-                    [id {:x (nth col-x col)
-                         :y (+ 1 (* rank v-gap))
-                         :w (:w (node-size (get nodes id)))
-                         :h 3}])
+                    (let [{:keys [w h]} (get sizes id)]
+                      [id {:x (nth col-x col)
+                           :y (+ 1 (* rank row-step))
+                           :w w
+                           :h h}]))
                   ids))
         (range)
         groups))))
@@ -747,8 +760,8 @@
    (let [a (get positions source-id)
          b (get positions target-id)]
      (when (and a b)
-       (let [ay (+ (:y a) 1)
-             by (+ (:y b) 1)
+       (let [ay (+ (:y a) (quot (:h a) 2))
+             by (+ (:y b) (quot (:h b) 2))
              ax (+ (:x a) (:w a))
              bx (dec (:x b))
              ch (case style :dotted \╌ :thick \═ \─)
@@ -803,13 +816,13 @@
 
 (defn- render-flow-edge-list
   [{:keys [nodes edges warnings]}]
-  (cond-> (into ["Mermaid (flowchart)"]
+  (cond-> (into []
             (map (fn [{:keys [source-id target-id label directed?]}]
-                   (str "• " (get-in nodes [source-id :label] source-id)
+                   (str "• " (single-line-label (get-in nodes [source-id :label] source-id))
                      " " (if directed? "──" "──")
-                     (when label (str label "──"))
+                     (when label (str (single-line-label label) "──"))
                      (if directed? "▶ " "─ ")
-                     (get-in nodes [target-id :label] target-id)))
+                     (single-line-label (get-in nodes [target-id :label] target-id))))
               edges))
     (seq warnings) (conj (str "Warnings: " (count warnings)))))
 
@@ -865,7 +878,7 @@
           (draw-edge-td! canvas positions edge true)))
       (doseq [id (:order ast)]
         (draw-node! canvas (get positions id) (get-in ast [:nodes id])))
-      (into ["Mermaid (flowchart)"] (canvas-lines canvas)))))
+      (canvas-lines canvas))))
 
 (defn- sequence-layout
   [{:keys [participants order events] :as ast}]
@@ -900,14 +913,9 @@
 (defn- render-sequence-layout
   [{:keys [labels events] :as layout}]
   (if (seq events)
-    (into ["Mermaid (sequence)"
-           (str "Participants: " (str/join " | " labels))]
+    (into [(str "Participants: " (str/join " | " labels))]
       (map #(render-sequence-event layout %) events))
-    ["Mermaid (sequence)" "No renderable messages found."]))
-
-(defn- diagram-heading
-  [ast]
-  (str "Mermaid (" (get diagram-type-label (:diagram/type ast) (name (:diagram/type ast))) ")"))
+    ["No renderable messages found."]))
 
 (defn- title-lines
   [{:keys [title]}]
@@ -931,7 +939,7 @@
 (defn- render-structured-layout
   [{:keys [ast width]}]
   (let [{:keys [diagram/type items warnings]} ast
-        base (cond-> [(diagram-heading ast)]
+        base (cond-> []
                (:title ast) (into (title-lines ast)))]
     (cond->
       (into base

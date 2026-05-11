@@ -35,6 +35,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.render :as ir]))
 
 (set! *warn-on-reflection* true)
@@ -307,30 +308,42 @@
     (wrap-runs runs width prefix-runs)))
 
 (defn- code-block->lines
-  "Code block: never wrap, never escape; preserve raw text. Runs carry
-   `:code` style. Empty lines render as a blank line.
+  "Code block: never wrap, never escape. For languages with an
+   extension-owned fenced renderer (for example Mermaid), render the
+   block first and show the renderer's terminal-safe lines. Otherwise
+   fall back to the raw source text. Runs carry `:code` style. Empty
+   lines render as a blank line.
 
    Every fenced block also gets one blank `:code` row above and below
    its content. Those rows are semantic *inside-code* padding: the
    bubble painter fills them with the code-block background, giving
    the chip the same breathing room as tool-call code/result zones."
-  [node _width {:keys [code-fence?] :as _opts}]
-  (let [src   (raw-body node)
-        attrs (node-attrs node)
-        lang  (:lang attrs)
-        pad   {:runs []}
-        body  (mapv (fn [line]
-                      {:runs (if (= "" line)
-                               []
-                               [{:text  line
-                                 :style #{:code}
-                                 :node  node}])})
-                (str/split-lines (or src "")))
-        body  (if (str/ends-with? (or src "") "\n")
-                (conj body {:runs []})
-                body)
-        body  (vec (concat [pad] body [pad]))]
-    (if code-fence?
+  [node width {:keys [code-fence?] :as _opts}]
+  (let [src      (raw-body node)
+        attrs    (node-attrs node)
+        lang     (:lang attrs)
+        rendered (extension/render-fenced-block
+                   {:surface :tui
+                    :lang    lang
+                    :source  src
+                    :width   width
+                    :node    node})
+        content  (if rendered
+                   (str/join "\n" (:lines rendered))
+                   (or src ""))
+        pad      {:runs []}
+        body     (mapv (fn [line]
+                         {:runs (if (= "" line)
+                                  []
+                                  [{:text  line
+                                    :style #{:code}
+                                    :node  node}])})
+                   (str/split-lines content))
+        body     (if (str/ends-with? content "\n")
+                   (conj body {:runs []})
+                   body)
+        body     (vec (concat [pad] body [pad]))]
+    (if (and code-fence? (nil? rendered))
       (let [open  {:runs [{:text (str "```" (or lang "")) :style #{:dim :code} :node node}]}
             close {:runs [{:text "```" :style #{:dim :code} :node node}]}]
         (into [open] (conj body close)))

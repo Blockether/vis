@@ -520,11 +520,7 @@
                        (let [last?          (= i (long (dec n)))
                              max-scroll     (max 0 (- est-tot inner-h))
                              bottom-locked? (and last? (= eff-1 max-scroll))
-                             ;; Bubble's top in viewport coords (negative
-                             ;; if the bubble extends above the viewport).
-                             bubble-top     (- (long (nth est-off i)) eff-1)
-                             window-start   (when (and last? (not bottom-locked?))
-                                              (long (max 0 (- bubble-top))))
+                             window-start   nil
                              window-num     (when window-start
                                               (long (* 2 inner-h)))
                              window-total-h (when window-start

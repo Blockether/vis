@@ -186,51 +186,147 @@
       previous-iterations)
     [{:iteration nil :blocks previous-blocks}]))
 
-(defn previous-error-summaries
-  "Return compact summaries for the latest previous iteration's block/journal
-   errors visible to the answer-validation hook. Public for regression tests."
+(def ^:private call-head-regex
+  #"\(\s*([A-Za-z0-9_.*+!?'<>:=/-]+)")
+
+(defn- form-tool
+  [form]
+  (when-let [head (some->> form str (re-find call-head-regex) second)]
+    (let [[ns-part name-part] (str/split head #"/" 2)]
+      (if name-part
+        (keyword ns-part name-part)
+        (keyword ns-part)))))
+
+(defn- short-form
+  [form]
+  (let [s (some-> form str str/trim)]
+    (when (seq s)
+      (if (< 180 (count s))
+        (str (subs s 0 180) "...")
+        s))))
+
+(defn- verification-form?
+  [form]
+  (let [s (some-> form str str/lower-case)]
+    (boolean
+      (and s
+        (or (str/includes? s "./verify.sh")
+          (str/includes? s "clojure -m:test")
+          (str/includes? s "clj -m:test")
+          (str/includes? s "lazytest"))))))
+
+(defn failure-obligations
+  "Extract first-class failure obligations from previous iterations.
+   Public for regression tests."
   [ctx]
-  (->> (when-let [latest (last (vec (previous-iteration-entries ctx)))]
-         [latest])
+  (->> (previous-iteration-entries ctx)
     (mapcat (fn [{:keys [iteration blocks]}]
-              (map-indexed
-                (fn [idx block]
-                  (let [block-msg (error-message (:error block))
-                        journal-msgs (keep (fn [entry]
-                                             (when (false? (:success? entry))
-                                               (error-message (:error entry))))
-                                       (:journal block))]
-                    (concat
-                      (when block-msg
-                        [{:iteration iteration
-                          :block (inc idx)
-                          :message block-msg}])
-                      (map (fn [msg]
-                             {:iteration iteration
-                              :block (inc idx)
-                              :message msg})
-                        journal-msgs))))
+              (mapcat
+                (fn [block-idx block]
+                  (let [block-num (inc block-idx)
+                        block-form (or (:code block) (:form block))
+                        block-tool (or (some-> block :result :symbol) (form-tool block-form))
+                        block-msg (error-message (:error block))
+                        block-failure (when block-msg
+                                        [{:id (str "iter/" iteration "/block/" block-num)
+                                          :kind :failure/block
+                                          :iteration iteration
+                                          :block block-num
+                                          :tool block-tool
+                                          :form (short-form block-form)
+                                          :message block-msg}])
+                        journal-failures
+                        (keep-indexed
+                          (fn [journal-idx entry]
+                            (when (false? (:success? entry))
+                              (let [form (or (:form entry) block-form)]
+                                {:id (str "iter/" iteration "/block/" block-num "/journal/" (inc journal-idx))
+                                 :kind :failure/journal
+                                 :iteration iteration
+                                 :block block-num
+                                 :journal (inc journal-idx)
+                                 :tool (or (form-tool form) block-tool)
+                                 :form (short-form form)
+                                 :message (error-message (:error entry))})))
+                          (:journal block))]
+                    (concat block-failure journal-failures)))
+                (range)
                 (or blocks []))))
-    (apply concat)
     (remove #(str/blank? (:message %)))
     vec))
 
-(defn unresolved-error-answer-guard-check
-  "Hard answer validator. Reject a candidate answer while the latest previous
-   iteration in this turn still contains errors. The rejection becomes a
-   validation error on the `(answer ...)` block, so the next loop sees the
-   journal failure and can fix it instead of claiming success."
+(defn proof-events
+  "Extract successful later proof events from previous iterations.
+   Public for regression tests."
   [ctx]
-  (let [errors (previous-error-summaries ctx)]
-    (when (seq errors)
-      (let [preview (str/join "; "
-                      (map (fn [{:keys [iteration block message]}]
-                             (str "iteration " (or iteration "?")
-                               "/block " (or block "?") ": " message))
-                        (take 3 errors)))]
+  (->> (previous-iteration-entries ctx)
+    (mapcat (fn [{:keys [iteration blocks]}]
+              (mapcat
+                (fn [block-idx block]
+                  (let [block-num (inc block-idx)
+                        block-form (or (:code block) (:form block))
+                        block-tool (or (some-> block :result :symbol) (form-tool block-form))
+                        journal-proofs
+                        (keep-indexed
+                          (fn [journal-idx entry]
+                            (when (true? (:success? entry))
+                              (let [form (or (:form entry) block-form)
+                                    tool (or (form-tool form) block-tool)]
+                                {:iteration iteration
+                                 :block block-num
+                                 :journal (inc journal-idx)
+                                 :tool tool
+                                 :form (short-form form)
+                                 :verification? (verification-form? form)})))
+                          (:journal block))]
+                    journal-proofs))
+                (range)
+                (or blocks []))))
+    vec))
+
+(defn- later-proof-closes?
+  [failure proof]
+  (and (number? (:iteration failure))
+    (number? (:iteration proof))
+    (< (long (:iteration failure)) (long (:iteration proof)))
+    (or (:verification? proof)
+      (and (:tool failure)
+        (= (:tool failure) (:tool proof))))))
+
+(defn open-error-obligations
+  "Return failure obligations not closed by a later proof event.
+   A proof must occur in a later iteration, because the model cannot observe
+   same-iteration failures before composing a final answer."
+  [ctx]
+  (let [failures (failure-obligations ctx)
+        proofs (proof-events ctx)]
+    (->> failures
+      (remove (fn [failure]
+                (some #(later-proof-closes? failure %) proofs)))
+      vec)))
+
+(defn- obligation-summary
+  [{:keys [iteration block journal tool form message]}]
+  (str "iteration " (or iteration "?")
+    "/block " (or block "?")
+    (when journal (str "/journal " journal))
+    (when tool (str " " tool))
+    (when form (str " `" form "`"))
+    ": " message))
+
+(defn unresolved-error-answer-guard-check
+  "Hard answer validator. Reject a candidate answer while any previous failure
+   obligation remains open. A later successful verification command closes all
+   prior failures; a later successful same-tool call closes that tool's prior
+   failure. Same-iteration proof does not count because the model could not
+   observe the failure before composing the answer."
+  [ctx]
+  (let [open (open-error-obligations ctx)]
+    (when (seq open)
+      (let [preview (str/join "; " (map obligation-summary (take 3 open)))]
         {:reject true
-         :message (str "The latest previous iteration still has errors in the journal: " preview)
-         :hint "Do not answer yet. Read the latest journal error, fix or explicitly explain the failed step, rerun needed verification, then answer only after a clean follow-up iteration."}))))
+         :message (str "Open failure obligations remain in the journal: " preview)
+         :hint "Do not answer yet. Read the failed journal entry, fix or explicitly prove/acknowledge it, then run a later proof step (for example ./verify.sh --quick or a successful same-tool retry) before answering."}))))
 
 (def hooks
   "`:ext/hooks` vector for vis-foundation. Each entry conforms to the
