@@ -3422,7 +3422,8 @@
                                           :on-chunk on-chunk
                                           :active-extensions active-exts
                                           :answer-validation-context
-                                          {:previous-iterations journal-iters
+                                          {:user-request user-request
+                                           :previous-iterations journal-iters
                                            :previous-blocks (vec (mapcat (comp :blocks second) journal-iters))}
                                           :extra-body (assoc (or extra-body {})
                                                         :copilot-initiator

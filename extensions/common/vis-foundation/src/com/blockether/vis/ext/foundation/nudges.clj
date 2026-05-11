@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.foundation.nudges
   "Built-in `<system_nudge>` policy for vis-foundation, expressed as
-   `:ext/hooks` declarations. Three hooks ship here today:
+   `:ext/hooks` declarations. Five hooks ship here today:
 
      1. `:foundation/conversation-title` (importance :low)
         Reminds the model to keep `CONVERSATION_TITLE` current. Fires
@@ -24,10 +24,13 @@
         request is a hallucination.
 
      4. `:foundation/unresolved-errors-before-answer`
-        Hard answer validator. Rejects final `(answer ...)` when the
-        latest previous iteration in the same turn contains block or
-        journal errors, so the model must read/fix the journal before
-        claiming completion.
+        Hard answer validator. Rejects final `(answer ...)` while
+        previous block/journal errors have no later proof.
+
+     5. `:foundation/action-request-needs-evidence`
+        Hard answer validator. Rejects final `(answer ...)` for fix/run/
+        implement/change requests when this turn contains no tool/code
+        evidence, unless the answer clearly says blocked/partial.
 
    Keeping policy in an extension (not core hardcoded built-ins)
    means these go through the same `:ext/hooks` protocol any
@@ -328,6 +331,55 @@
          :message (str "Open failure obligations remain in the journal: " preview)
          :hint "Do not answer yet. Read the failed journal entry, fix or explicitly prove/acknowledge it, then run a later proof step (for example ./verify.sh --quick or a successful same-tool retry) before answering."}))))
 
+(def ^:private action-request-regex
+  #"(?i)\b(fix|implement|patch|change|add|remove|delete|create|edit|update|verify|run|commit|push|do it|make it)\b")
+
+(def ^:private blocked-answer-regex
+  #"(?i)\b(blocked|cannot|can't|unable|need input|needs input|partial|not done|failed)\b")
+
+(defn- action-request?
+  [user-request]
+  (let [s (some-> user-request str str/trim)]
+    (boolean (and (seq s)
+               (not (re-find planning-only-regex s))
+               (re-find action-request-regex s)))))
+
+(defn- answer-blocked-or-partial?
+  [answer]
+  (boolean (when-some [s (some-> answer pr-str)]
+             (re-find blocked-answer-regex s))))
+
+(defn- answer-form?
+  [form]
+  (boolean (some-> form str str/trim (str/starts-with? "(answer"))))
+
+(defn- successful-work-event?
+  [block]
+  (let [form (or (:code block) (:form block))]
+    (and (seq (str form))
+      (not (answer-form? form))
+      (or (and (contains? block :error) (nil? (:error block)))
+        (some true? (map :success? (:journal block)))))))
+
+(defn- turn-has-work-evidence?
+  [ctx]
+  (boolean
+    (some successful-work-event?
+      (mapcat :blocks (previous-iteration-entries ctx)))))
+
+(defn action-request-needs-evidence-check
+  "Hard answer validator. Mutating/action requests must have at least one
+   previous tool/code evidence event in this turn before a final answer claims
+   completion. Blocked/partial failure reports are allowed so the model can
+   truthfully stop when no useful recovery exists."
+  [{:keys [user-request answer] :as ctx}]
+  (when (and (action-request? user-request)
+          (not (turn-has-work-evidence? ctx))
+          (not (answer-blocked-or-partial? answer)))
+    {:reject true
+     :message "User asked for action, but this turn contains no observed tool/code work before the final answer."
+     :hint "Do the requested work or inspection first. If you are blocked, answer explicitly as blocked/partial instead of claiming completion."}))
+
 (def hooks
   "`:ext/hooks` vector for vis-foundation. Each entry conforms to the
    `::hook` spec in `com.blockether.vis.internal.extension`."
@@ -346,4 +398,8 @@
    {:id    :foundation/unresolved-errors-before-answer
     :doc   "Reject final answers while the latest previous iteration in this turn contains block or journal errors."
     :phase :turn.answer/validate
-    :fn    unresolved-error-answer-guard-check}])
+    :fn    unresolved-error-answer-guard-check}
+   {:id    :foundation/action-request-needs-evidence
+    :doc   "Reject final answers for action requests when this turn has no prior tool/code evidence."
+    :phase :turn.answer/validate
+    :fn    action-request-needs-evidence-check}])

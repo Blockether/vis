@@ -61,12 +61,13 @@
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 50000 :context-limit 0})))))
 
 (defdescribe hooks-registration-test
-  (it "foundation ships answer/title/context/blind-answer hooks"
+  (it "foundation ships answer/title/context/blind-answer/evidence hooks"
     (let [ids (set (map :id nudges/hooks))]
       (expect (= #{:foundation/conversation-title
                    :foundation/context-pressure
                    :foundation/blind-answer
-                   :foundation/unresolved-errors-before-answer}
+                   :foundation/unresolved-errors-before-answer
+                   :foundation/action-request-needs-evidence}
                 ids))))
 
   (it "every hook declares the four required keys (:id :doc :phase :fn)"
@@ -155,3 +156,35 @@
                                                          :journal [{:success? true
                                                                     :form "(v/bash \"./verify.sh --quick\")"
                                                                     :error nil}]}]}]]})))))
+
+(defdescribe action-request-needs-evidence-test
+  (it "allows conceptual answer-only requests"
+    (expect (nil? (nudges/action-request-needs-evidence-check
+                    {:user-request "Explain the tradeoff briefly."
+                     :answer [:ir [:p "It depends."]]}))))
+
+  (it "rejects action requests with no turn evidence"
+    (let [hit (nudges/action-request-needs-evidence-check
+                {:user-request "Fix it now."
+                 :answer [:ir [:p "Fixed."]]})]
+      (expect (= true (:reject hit)))
+      (expect (str/includes? (:message hit) "no observed tool/code work"))))
+
+  (it "rejects short do-it followups with no turn evidence"
+    (expect (= true (:reject (nudges/action-request-needs-evidence-check
+                               {:user-request "do it"
+                                :answer [:ir [:p "Done."]]})))))
+
+  (it "allows action requests after successful prior work evidence"
+    (expect (nil? (nudges/action-request-needs-evidence-check
+                    {:user-request "Fix it now."
+                     :answer [:ir [:p "Done."]]
+                     :previous-iterations [[1 {:blocks [{:code "(v/cat \"src/x.clj\")"
+                                                         :error nil
+                                                         :journal [{:success? true
+                                                                    :form "(v/cat \"src/x.clj\")"}]}]}]]}))))
+
+  (it "allows blocked or partial answers with no evidence"
+    (expect (nil? (nudges/action-request-needs-evidence-check
+                    {:user-request "Fix it now."
+                     :answer [:ir [:p "Blocked: I need the file path."]]})))))
