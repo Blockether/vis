@@ -41,7 +41,6 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.lifecycle :as lifecycle]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
@@ -3027,31 +3026,16 @@
                            :cost cost}))
         bindings-atom (or (:bindings-atom environment)
                         (atom {:index nil :revision -1 :current-revision 0}))
-        ;; `:on-chunk` is a streaming-token hook (per-reasoning-chunk
-        ;; from svar's stream callback); it lives outside the
-        ;; lifecycle bus on purpose - it fires dozens of times per
-        ;; iteration, not once at a boundary. The four lifecycle
-        ;; phases (turn-start / iteration-start / iteration-end /
-        ;; turn-end) compose per-call hooks + every active extension
-        ;; via `lifecycle/compose-listeners`; broadcasts go through
-        ;; `lifecycle/emit!`, which catches per-listener exceptions
-        ;; so a misbehaving extension can't take the loop down or
-        ;; starve siblings.
+        ;; `:on-chunk` is a per-reasoning-chunk streaming hook fired
+        ;; from svar's stream callback. It fires dozens of times per
+        ;; iteration, not at lifecycle boundaries. The retired
+        ;; `:ext/on-{turn,iteration}-{start,end}-fn` lifecycle bus
+        ;; was deleted (no production extension used it; guards plus
+        ;; on-chunk cover every use case in tree).
         on-chunk             (:on-chunk hooks)
-        lifecycle-listeners  (lifecycle/compose-listeners hooks active-exts)
-        ;; Per-turn payload skeleton - phase + iteration extras get
-        ;; merged on at every emit site.
-        turn-base-payload    {:conversation-id (:conversation-id environment)
-                              :conversation-turn-id        conversation-turn-id
-                              :user-request    user-request
-                              :model           effective-model
-                              :provider        (:provider resolved-model)
-                              :environment     environment}
         emit-hook! (fn [hook-fn payload log-message]
-                     ;; Legacy single-fn caller hook helper. Still used
-                     ;; by `on-chunk` (which is not a lifecycle phase
-                     ;; and stays a single fn). Lifecycle phases go
-                     ;; through `lifecycle/emit!`.
+                     ;; Single-fn caller-hook helper, used by
+                     ;; on-chunk only.
                      (when hook-fn
                        (try (hook-fn payload)
                          (catch Exception e
@@ -3173,11 +3157,6 @@
                          :data  {:error (ex-message t)}
                          :msg   "Cross-turn journal seed failed; first iteration starts with an empty <journal>"})
               nil))]
-      ;; Lifecycle :turn-start - fired once now that every SYSTEM_*
-      ;; sandbox var is bound and BEFORE the first iteration kicks
-      ;; off. Listeners can stamp the conversation log, start a
-      ;; per-turn timer, etc. Failures are isolated by the bus.
-      (lifecycle/emit! lifecycle-listeners :turn-start turn-base-payload)
       (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :iteration-loop})]
         (loop [loop-state (merge {:iteration 0 :messages initial-messages
                                   :trace [] :consecutive-errors 0 :restarts 0}
@@ -3192,18 +3171,6 @@
               (do (log-stage! :error iteration {:reason :cancelled})
                 (let [result (merge {:answer nil :status :cancelled :status-id (status->id :cancelled)
                                      :trace trace :iteration-count iteration} (finalize-cost))]
-                  ;; Lifecycle :turn-end with :cancelled status (replaces
-                  ;; the retired `:on-cancel` slot - listeners distinguish
-                  ;; via `:status`).
-                  (lifecycle/emit! lifecycle-listeners :turn-end
-                    (merge turn-base-payload
-                      {:status          :cancelled
-                       :iteration       iteration
-                       :iteration-count iteration
-                       :tokens          (:tokens  result)
-                       :cost-usd        (:cost    result)
-                       :answer          nil
-                       :error           nil}))
                   result))
 
               ;; Hard iteration cap. Soft nudge (CONVERGENCE_NUDGE_AT)
@@ -3229,15 +3196,6 @@
                                      :trace trace
                                      :iteration-count iteration}
                                (finalize-cost))]
-                  (lifecycle/emit! lifecycle-listeners :turn-end
-                    (merge turn-base-payload
-                      {:status          :cancelled
-                       :iteration       iteration
-                       :iteration-count iteration
-                       :tokens          (:tokens result)
-                       :cost-usd        (:cost   result)
-                       :answer          reason
-                       :error           nil}))
                   result))
 
               :else
@@ -3262,17 +3220,6 @@
                         result       (merge {:answer fallback
                                              :status :error :status-id (status->id :error)
                                              :trace trace :iteration-count iteration} (finalize-cost))]
-                    (lifecycle/emit! lifecycle-listeners :turn-end
-                      (merge turn-base-payload
-                        {:status          :error
-                         :iteration       iteration
-                         :iteration-count iteration
-                         :tokens          (:tokens result)
-                         :cost-usd        (:cost   result)
-                         :answer          fallback
-                         :error           {:message "max-consecutive-errors exceeded"
-                                           :consecutive-errors consecutive-errors
-                                           :restarts restarts}}))
                     result))
 
                 (let [raw-reasoning-level (when has-reasoning?
@@ -3283,16 +3230,6 @@
                       _ (log-stage! :iteration-start iteration {:message-count (count messages)
                                                                 :reasoning reasoning-level
                                                                 :requested-reasoning raw-reasoning-level})
-                      ;; Lifecycle :iteration-start - fired BEFORE
-                      ;; svar/ask-code! is invoked. Listeners can
-                      ;; stamp a per-iteration timer or pre-flight
-                      ;; the upcoming LLM round-trip.
-                      _ (lifecycle/emit! lifecycle-listeners :iteration-start
-                          (merge turn-base-payload
-                            {:iteration iteration
-                             :consecutive-errors consecutive-errors
-                             :restarts restarts
-                             :reasoning-level reasoning-level}))
                       pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
                       iteration-context (prompt/build-iteration-context environment
                                           {:blocks-by-iteration journal-iters
@@ -3397,17 +3334,6 @@
                                              :status-id (status->id :cancelled)
                                              :trace trace :iteration-count iteration}
                                        (finalize-cost))]
-                          ;; Lifecycle :turn-end with :cancelled status
-                          ;; (in-flight cancel during svar call).
-                          (lifecycle/emit! lifecycle-listeners :turn-end
-                            (merge turn-base-payload
-                              {:status          :cancelled
-                               :iteration       iteration
-                               :iteration-count iteration
-                               :tokens          (:tokens result)
-                               :cost-usd        (:cost   result)
-                               :answer          nil
-                               :error           nil}))
                           result))
                       (let [error-feedback (iteration-error-feedback iteration iteration-error-data user-request)
                             trace-entry {:iteration iteration :error iteration-error-data :final? false}
@@ -3437,23 +3363,6 @@
                            :error     iteration-error-data
                            :done?     true}
                           "on-chunk (iteration error)")
-                        ;; Lifecycle :iteration-end (error path).
-                        ;; Replaces the retired `:on-iteration` slot.
-                        ;; The :status keyword (:error here) is the
-                        ;; discriminator listeners switch on.
-                        (lifecycle/emit! lifecycle-listeners :iteration-end
-                          (let [tc (iteration-token-cost (:api-usage iteration-result))]
-                            (merge turn-base-payload
-                              {:iteration       iteration
-                               :iteration-id    err-iteration-id
-                               :status          :error
-                               :thinking        empty-reasoning
-                               :blocks          nil
-                               :final-result    nil
-                               :error           iteration-error-data
-                               :duration-ms     0
-                               :tokens          (:tokens   tc)
-                               :cost-usd        (:cost-usd tc)})))
                         (if (::fatal-iteration-error iteration-result)
                           (let [trace' (conj trace trace-entry)
                                 errors-block (recent-errors-block trace' 3)
@@ -3465,15 +3374,6 @@
                                                :trace trace'
                                                :iteration-count (inc iteration)}
                                          (finalize-cost))]
-                            (lifecycle/emit! lifecycle-listeners :turn-end
-                              (merge turn-base-payload
-                                {:status          :error
-                                 :iteration       iteration
-                                 :iteration-count (inc iteration)
-                                 :tokens          (:tokens result)
-                                 :cost-usd        (:cost result)
-                                 :answer          fallback
-                                 :error           iteration-error-data}))
                             result)
                           (recur (assoc loop-state
                                    :iteration (inc iteration)
@@ -3553,27 +3453,6 @@
                                                   :cost-usd (:cost-usd tc)))))
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                           _ (update-iteration-id! environment iteration-id (long (or iteration 0)))
-                          ;; Lifecycle :iteration-end (success path).
-                          ;; The :status keyword distinguishes :final
-                          ;; (the model emitted (answer ...)),
-                          ;; :empty (no blocks at all), :success
-                          ;; (forms ran but no terminal answer yet).
-                          _ (lifecycle/emit! lifecycle-listeners :iteration-end
-                              (let [iter-status (cond final-result :final
-                                                  (empty? blocks)  :empty
-                                                  :else            :success)
-                                    tc (iteration-token-cost (:api-usage iteration-result))]
-                                (merge turn-base-payload
-                                  {:iteration       iteration
-                                   :iteration-id    iteration-id
-                                   :status          iter-status
-                                   :thinking        thinking
-                                   :blocks          blocks
-                                   :final-result    final-result
-                                   :error           nil
-                                   :duration-ms     (or (:duration-ms iteration-result) 0)
-                                   :tokens          (:tokens   tc)
-                                   :cost-usd        (:cost-usd tc)})))
                           trace-entry {:iteration iteration :thinking thinking
                                        :blocks blocks :final? (boolean final-result)}]
                       (cond
@@ -3608,16 +3487,6 @@
                           (let [result (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                                :iteration-count (inc iteration)}
                                          (finalize-cost))]
-                            ;; Lifecycle :turn-end (successful answer).
-                            (lifecycle/emit! lifecycle-listeners :turn-end
-                              (merge turn-base-payload
-                                {:status          :final
-                                 :iteration       iteration
-                                 :iteration-count (inc iteration)
-                                 :tokens          (:tokens result)
-                                 :cost-usd        (:cost   result)
-                                 :answer          (:answer final-result)
-                                 :error           nil}))
                             (auto-archive-hot-symbols! environment)
                             result))
 

@@ -4,6 +4,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.ext.bridge.core :as bridge]
+   [com.blockether.vis.ext.bridge.languages.schema :as schema]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- manifest-file []
@@ -21,6 +22,56 @@
   (it "exports a valid extension surface"
     (expect (= 'com.blockether.vis.ext.bridge.core (:ext/namespace bridge/vis-extension)))
     (expect (= {:ns 'vis.ext.bridge :alias 'bridge} (:ext/ns-alias bridge/vis-extension)))
-    (expect (= '[extract-markdown clojure-lsp-status extract-clojure aggregate-rows fill!]
+    (expect (= '[extract extract-file extract-markdown clojure-lsp-status extract-clojure
+                 aggregate-rows fill! extract-and-fill!]
               (mapv :ext.symbol/sym (:ext/symbols bridge/vis-extension))))
     (expect (fn? (:ext/doctor-check-fn bridge/vis-extension)))))
+
+(defdescribe bridge-generic-extract-test
+  (it "extracts one Markdown file through the generic entrypoint"
+    (let [result (bridge/extract {:path "README.md"
+                                  :language "markdown"
+                                  :content "# Title\n\nSee `demo.core/run`."})]
+      (expect (= "markdown" (get-in result [:stats :language])))
+      (expect (= #{:file :doc-section} (set (map :kind (:nodes result))))))))
+
+(def sample-result
+  (schema/extract-result
+    {:nodes [(schema/node
+               {:kind :symbol
+                :language "clojure"
+                :name "run"
+                :qualified-name "demo.core/run"
+                :path "src/demo/core.clj"})]
+     :edges [(schema/edge
+               {:edge-kind :calls
+                :source "demo.core/run"
+                :target "demo.core/parse"
+                :path "src/demo/core.clj"
+                :language "clojure"})]
+     :diagnostics []
+     :stats {:language "clojure" :path "src/demo/core.clj"}}))
+
+(defdescribe bridge-fill-shape-test
+  (it "maps normalized facts to aggregate rows consistently"
+    (let [rows (bridge/aggregate-rows sample-result)
+          by-kind (group-by :kind rows)]
+      (expect (= #{:bridge/node :bridge/edge :bridge/index} (set (keys by-kind))))
+      (expect (= "node:demo.core/run" (:key (first (:bridge/node by-kind)))))
+      (expect (= "edge:demo.core/run::calls::demo.core/parse" (:key (first (:bridge/edge by-kind)))))
+      (expect (= {:path "src/demo/core.clj"
+                  :language "clojure"
+                  :kind "symbol"
+                  :name "run"
+                  :visibility "unknown"}
+                (:metadata (first (:bridge/node by-kind)))))))
+
+  (it "can override index path explicitly"
+    (let [idx (first (filter #(= :bridge/index (:kind %))
+                       (bridge/aggregate-rows sample-result {:path "override.clj"})))]
+      (expect (= "idx:override.clj" (:key idx)))
+      (expect (= "override.clj" (get-in idx [:metadata :path])))))
+
+  (it "reports result paths and language for replacement policy"
+    (expect (= ["src/demo/core.clj"] (bridge/result-paths sample-result)))
+    (expect (= "clojure" (bridge/result-language sample-result)))))

@@ -333,15 +333,13 @@ extensions/common/vis-bridge/
 │       └── vis-extension/
 │           └── vis.edn                          ← manifest
 └── src/com/blockether/vis/ext/bridge/
-    ├── core.clj                                 ← extension registration, SCI symbols
-    ├── schema.clj                               ← normalized extraction fact schema
-    ├── fill.clj                                 ← facts → aggregate rows / ext-put!
-    ├── languages/
-    │   ├── clojure.clj                          ← Clojure extractor via external clojure-lsp
-    │   └── markdown.clj                         ← CommonMark heading/section extractor
-    ├── query.clj                                ← in-memory graph traversal (neighbors, blast-radius, path)
-    ├── relevance.clj                            ← meaningfulness filtering
-    └── summary.clj                              ← LLM summary generation (optional)
+    ├── core.clj                                 ← extension registration, SCI symbols, extract/fill/reindex
+    ├── doctor.clj                               ← doctor checks (CommonMark + clojure-lsp)
+    └── languages/
+        ├── schema.clj                           ← normalized fact + aggregate-row schema
+        ├── registry.clj                         ← language dispatch
+        ├── clojure.clj                          ← Clojure extractor via external clojure-lsp
+        └── markdown.clj                         ← CommonMark heading/section extractor
 ```
 
 Test namespace:
@@ -349,13 +347,12 @@ Test namespace:
 ```
 test/com/blockether/vis/ext/bridge/
 ├── core_test.clj
-├── schema_test.clj
-├── fill_test.clj
-├── languages/
-│   ├── clojure_test.clj
-│   └── markdown_test.clj
-├── query_test.clj
-└── relevance_test.clj
+├── doctor_test.clj
+└── languages/
+    ├── schema_test.clj
+    ├── registry_test.clj
+    ├── clojure_test.clj
+    └── markdown_test.clj
 ```
 
 ---

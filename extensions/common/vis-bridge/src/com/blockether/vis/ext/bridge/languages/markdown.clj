@@ -6,7 +6,7 @@
    payload metadata; links and inline-code mentions become edges."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.ext.bridge.schema :as schema])
+   [com.blockether.vis.ext.bridge.languages.schema :as schema])
   (:import
    (org.commonmark.ext.gfm.strikethrough StrikethroughExtension)
    (org.commonmark.ext.gfm.tables TablesExtension)
@@ -170,74 +170,75 @@
 
 (defn extract-file
   "Extract normalized Bridge facts from Markdown `content` at `path`."
-  [path content]
-  (let [path (str path)
-        content (or content "")
-        doc (.parse parser content)
-        headings (heading-blocks doc)
-        end-lines (section-end-lines content headings)
-        file-qname (str "doc:" path)
-        file-node (schema/node
-                    {:kind :file
-                     :language "markdown"
-                     :name path
-                     :qualified-name file-qname
-                     :path path
-                     :line-start 1
-                     :line-end (max 1 (count (str/split-lines content)))})
-        sections+stack
-        (reduce (fn [{:keys [seen stack sections edges]} [idx ^Heading h end-line]]
-                  (let [title (visible-text h)
-                        [seen' slug] (unique-slug seen title)
-                        qname (str file-qname "#" slug)
-                        level (.getLevel h)
-                        stack' (vec (take-while #(< (:level %) level) stack))
-                        parent (or (:qualified-name (peek stack')) file-qname)
-                        section (schema/node
-                                  {:kind :doc-section
-                                   :language "markdown"
-                                   :name title
-                                   :qualified-name qname
-                                   :path path
-                                   :line-start (start-line h)
-                                   :line-end end-line
-                                   :metadata {:level level
-                                              :slug slug
-                                              :index idx}})
-                        contains-edge (schema/edge
-                                        {:edge-kind :contains
-                                         :source parent
-                                         :target qname
-                                         :path path
-                                         :language "markdown"
-                                         :line (start-line h)
-                                         :resolved? true})]
-                    {:seen seen'
-                     :stack (conj stack' {:level level :qualified-name qname})
-                     :sections (conj sections section)
-                     :edges (conj edges contains-edge)}))
-          {:seen {} :stack [] :sections [] :edges []}
-          (map vector (range) headings end-lines))
-        sections (:sections sections+stack)
-        code-blocks (code-blocks path sections doc)
-        code-blocks-by-section (group-by :section code-blocks)
-        sections (mapv (fn [section]
-                         (cond-> section
-                           (seq (get code-blocks-by-section (:qualified-name section)))
-                           (update :metadata assoc :code-blocks
-                             (vec (get code-blocks-by-section (:qualified-name section))))))
-                   sections)
-        nodes (into [file-node] sections)
-        edges (vec (concat (:edges sections+stack)
-                     (link-edges path sections doc)
-                     (mention-edges path sections doc)))]
-    (schema/extract-result
-      {:nodes nodes
-       :edges edges
-       :diagnostics []
-       :stats {:language "markdown"
-               :path path
-               :node-count (count nodes)
-               :edge-count (count edges)
-               :heading-count (count sections)
-               :code-block-count (count code-blocks)}})))
+  ([path content] (extract-file path content nil))
+  ([path content _opts]
+   (let [path (str path)
+         content (or content "")
+         doc (.parse parser content)
+         headings (heading-blocks doc)
+         end-lines (section-end-lines content headings)
+         file-qname (str "doc:" path)
+         file-node (schema/node
+                     {:kind :file
+                      :language "markdown"
+                      :name path
+                      :qualified-name file-qname
+                      :path path
+                      :line-start 1
+                      :line-end (max 1 (count (str/split-lines content)))})
+         sections+stack
+         (reduce (fn [{:keys [seen stack sections edges]} [idx ^Heading h end-line]]
+                   (let [title (visible-text h)
+                         [seen' slug] (unique-slug seen title)
+                         qname (str file-qname "#" slug)
+                         level (.getLevel h)
+                         stack' (vec (take-while #(< (:level %) level) stack))
+                         parent (or (:qualified-name (peek stack')) file-qname)
+                         section (schema/node
+                                   {:kind :doc-section
+                                    :language "markdown"
+                                    :name title
+                                    :qualified-name qname
+                                    :path path
+                                    :line-start (start-line h)
+                                    :line-end end-line
+                                    :metadata {:level level
+                                               :slug slug
+                                               :index idx}})
+                         contains-edge (schema/edge
+                                         {:edge-kind :contains
+                                          :source parent
+                                          :target qname
+                                          :path path
+                                          :language "markdown"
+                                          :line (start-line h)
+                                          :resolved? true})]
+                     {:seen seen'
+                      :stack (conj stack' {:level level :qualified-name qname})
+                      :sections (conj sections section)
+                      :edges (conj edges contains-edge)}))
+           {:seen {} :stack [] :sections [] :edges []}
+           (map vector (range) headings end-lines))
+         sections (:sections sections+stack)
+         code-blocks (code-blocks path sections doc)
+         code-blocks-by-section (group-by :section code-blocks)
+         sections (mapv (fn [section]
+                          (cond-> section
+                            (seq (get code-blocks-by-section (:qualified-name section)))
+                            (update :metadata assoc :code-blocks
+                              (vec (get code-blocks-by-section (:qualified-name section))))))
+                    sections)
+         nodes (into [file-node] sections)
+         edges (vec (concat (:edges sections+stack)
+                      (link-edges path sections doc)
+                      (mention-edges path sections doc)))]
+     (schema/extract-result
+       {:nodes nodes
+        :edges edges
+        :diagnostics []
+        :stats {:language "markdown"
+                :path path
+                :node-count (count nodes)
+                :edge-count (count edges)
+                :heading-count (count sections)
+                :code-block-count (count code-blocks)}}))))

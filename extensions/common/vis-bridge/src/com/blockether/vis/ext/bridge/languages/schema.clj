@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.bridge.schema
+(ns com.blockether.vis.ext.bridge.languages.schema
   "Normalized Bridge extraction facts.
 
    Extractors return this language-neutral IR instead of raw ASTs. Storage and
@@ -65,6 +65,21 @@
 (s/def ::extract-result
   (s/keys :req-un [::nodes ::edges ::diagnostics ::stats]))
 
+;; Extension aggregate row schema. This lives beside the extraction schema so
+;; the extractor→fill contract is one stable, inspectable surface.
+(def aggregate-kinds #{:bridge/node :bridge/edge :bridge/index :bridge/summary})
+
+(defn aggregate-row? [row]
+  (and (map? row)
+    (non-blank-string? (:key row))
+    (contains? aggregate-kinds (:kind row))
+    (= :global (:scope row))
+    (map? (:metadata row))
+    (map? (:content row))))
+
+(s/def ::aggregate-row aggregate-row?)
+(s/def ::aggregate-rows (s/coll-of ::aggregate-row :kind vector?))
+
 (defn valid-extract-result? [x]
   (s/valid? ::extract-result x))
 
@@ -116,6 +131,22 @@
           :confidence 1.0
           :metadata {}}
     (dissoc m :edge-kind :source :target :path)))
+
+(defn valid-aggregate-rows? [x]
+  (s/valid? ::aggregate-rows x))
+
+(defn explain-aggregate-rows [x]
+  (s/explain-data ::aggregate-rows x))
+
+(defn assert-aggregate-rows!
+  "Return `rows` when they satisfy Bridge's aggregate row schema; throw with
+   explain data otherwise."
+  [rows]
+  (when-not (valid-aggregate-rows? rows)
+    (throw (ex-info "Invalid Bridge aggregate rows"
+             {:type :bridge.schema/invalid-aggregate-rows
+              :explain (explain-aggregate-rows rows)})))
+  rows)
 
 (defn extract-result
   "Construct and validate a normalized extractor result."

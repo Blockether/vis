@@ -4,18 +4,12 @@
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.bridge.doctor :as doctor]
-   [com.blockether.vis.ext.bridge.fill :as fill]
    [com.blockether.vis.ext.bridge.languages.clojure :as clj]
-   [com.blockether.vis.ext.bridge.languages.markdown :as md]))
+   [com.blockether.vis.ext.bridge.languages.registry :as languages]
+   [com.blockether.vis.ext.bridge.languages.schema :as schema]))
 
 (defn- slurp-path [path]
   (slurp (io/file (str path))))
-
-(defn extract-markdown
-  "Extract Bridge Markdown facts from `path` using CommonMark. Returns normalized
-   `{:nodes :edges :diagnostics :stats}` data; does not write to storage."
-  [path]
-  (md/extract-file (str path) (slurp-path path)))
 
 (defn clojure-lsp-status
   "Return external clojure-lsp availability used by Bridge's Clojure extractor."
@@ -23,30 +17,233 @@
   ([opts]
    (clj/executable-status opts)))
 
+(defn extract-file
+  "Extract Bridge facts for one source/document file. Dispatches by path unless
+   `:language` is supplied. Does not write storage."
+  ([path] (extract-file path nil))
+  ([path opts]
+   (let [opts (or opts {})]
+     (languages/extract-file (str path) (or (:content opts) (slurp-path path)) opts))))
+
+(defn extract
+  "Generic Bridge extraction entry point.
+
+   Shapes:
+   - (bridge/extract {:path 'README.md'}) one-file extraction.
+   - (bridge/extract {:paths ['README.md' 'docs/foo.md']}) many-file extraction.
+   - (bridge/extract {:language 'clojure' :project-root '.'}) project extraction.
+   - (bridge/extract) defaults to Clojure project extraction for v1.
+
+   Extraction returns normalized facts only: `:nodes`, `:edges`,
+   `:diagnostics`, `:stats`. Use `bridge/fill!` or
+   `bridge/extract-and-fill!` to persist."
+  ([] (extract nil))
+  ([opts]
+   (let [opts (or opts {})]
+     (cond
+       (:path opts)
+       (extract-file (:path opts) opts)
+
+       (seq (:paths opts))
+       (let [results (mapv #(extract-file % (dissoc opts :paths)) (:paths opts))]
+         (schema/extract-result
+           {:nodes (vec (mapcat :nodes results))
+            :edges (vec (mapcat :edges results))
+            :diagnostics (vec (mapcat :diagnostics results))
+            :stats {:language (some-> (:language opts) name)
+                    :paths (vec (map str (:paths opts)))
+                    :result-count (count results)
+                    :node-count (reduce + (map #(count (:nodes %)) results))
+                    :edge-count (reduce + (map #(count (:edges %)) results))}}))
+
+       :else
+       (languages/extract-project opts)))))
+
+(defn extract-markdown
+  "Extract Bridge Markdown facts from `path` using CommonMark. Kept as a
+   convenience wrapper over generic `bridge/extract`."
+  [path]
+  (extract {:path path :language "markdown"}))
+
 (defn extract-clojure
-  "Extract Bridge Clojure facts for a project.
-
-   Options flow to `com.blockether.vis.ext.bridge.languages.clojure/extract-project`:
-   `:project-root`, `:command`, `:analysis`, `:output`, `:timeout-ms`, or
-   test seam `:dump`.
-
-   Requires external clojure-lsp. Check `(bridge/clojure-lsp-status)` or
-   `vis extensions doctor` when this fails."
+  "Extract Bridge Clojure facts for a project. Kept as a convenience wrapper
+   over generic `bridge/extract`."
   ([] (extract-clojure nil))
   ([opts]
-   (clj/extract-project opts)))
+   (extract (assoc (or opts {}) :language "clojure"))))
+
+(defn edge-key
+  "Stable aggregate key for a Bridge edge. One row per source/kind/target."
+  [{:keys [source edge-kind target]}]
+  (str "edge:" source "::" (name edge-kind) "::" target))
+
+(defn node-key [{:keys [qualified-name]}]
+  (str "node:" qualified-name))
+
+(defn index-key [path]
+  (str "idx:" path))
+
+(defn result-paths
+  "All source paths represented by an extraction result."
+  [result]
+  (->> (concat (map :path (:nodes result))
+         (map :path (:edges result))
+         [(get-in result [:stats :path])])
+    (remove nil?)
+    (remove #(= "<clojure-lsp-dep-graph>" %))
+    distinct
+    vec))
+
+(defn result-language [result]
+  (or (get-in result [:stats :language])
+    (some :language (:nodes result))
+    (some :language (:edges result))))
+
+(defn- node-metadata [{node-kind :kind node-name :name
+                       :keys [path language visibility metadata]}]
+  (cond-> {:path path
+           :language language
+           :kind (name node-kind)
+           :name node-name}
+    visibility (assoc :visibility (name visibility))
+    (map? metadata) (merge (select-keys metadata [:symbol-kind :doc-kind :relevance :layer]))))
+
+(defn- edge-metadata [{:keys [path language edge-kind source target resolved? metadata]}]
+  (cond-> {:path path
+           :edge-kind (name edge-kind)
+           :source source
+           :target target}
+    language (assoc :language language)
+    (some? resolved?) (assoc :resolved? resolved?)
+    (map? metadata) (merge (select-keys metadata [:syntax :backend :relevance]))))
+
+(defn node-row
+  "Map one normalized Bridge node to an extension aggregate row."
+  [node]
+  {:key (node-key node)
+   :kind :bridge/node
+   :scope :global
+   :metadata (node-metadata node)
+   :content node})
+
+(defn edge-row
+  "Map one normalized Bridge edge to an extension aggregate row."
+  [edge]
+  {:key (edge-key edge)
+   :kind :bridge/edge
+   :scope :global
+   :metadata (edge-metadata edge)
+   :content edge})
+
+(defn index-row
+  "Build the per-path index aggregate row for an extraction result."
+  [path result]
+  {:key (index-key path)
+   :kind :bridge/index
+   :scope :global
+   :metadata {:path path
+              :language (result-language result)}
+   :content {:path path
+             :language (result-language result)
+             :node-count (count (:nodes result))
+             :edge-count (count (:edges result))
+             :stats (:stats result)}})
 
 (defn aggregate-rows
   "Convert a normalized Bridge extraction result to extension aggregate rows.
    Pure. Does not write storage. Use this to inspect the fill mapping before
    calling `bridge/fill!`."
   ([result] (aggregate-rows result nil))
-  ([result opts]
-   (fill/rows-for-result result opts)))
+  ([result {:keys [path paths index?] :or {index? true}}]
+   (schema/assert-extract-result! result)
+   (let [index-paths (cond
+                       path [path]
+                       (seq paths) paths
+                       (= false index?) []
+                       :else (result-paths result))
+         rows (vec (concat
+                     (map node-row (:nodes result))
+                     (map edge-row (:edges result))
+                     (map #(index-row % result) index-paths)))]
+     (schema/assert-aggregate-rows! rows))))
+
+(defn delete-path!
+  "Delete all Bridge aggregate rows for one source path."
+  [env path]
+  (reduce +
+    (map (fn [kind]
+           (vis/ext-delete! env {:kind kind :metadata {:path path}}))
+      [:bridge/node :bridge/edge :bridge/index :bridge/summary])))
+
+(defn delete-language!
+  "Delete Bridge rows for one language."
+  [env language]
+  (reduce +
+    (map (fn [kind]
+           (vis/ext-delete! env {:kind kind :metadata {:language language}}))
+      [:bridge/node :bridge/edge :bridge/index :bridge/summary])))
+
+(defn clear!
+  "Delete all Bridge aggregate rows for this extension."
+  [env]
+  (reduce +
+    (map (fn [kind] (vis/ext-delete! env {:kind kind}))
+      [:bridge/node :bridge/edge :bridge/index :bridge/summary])))
+
+(defn- apply-replace!
+  [env result {:keys [replace path paths language]}]
+  (case replace
+    nil 0
+    false 0
+    :none 0
+    :path (reduce + (map #(delete-path! env %) (or (seq paths) (seq (cond-> (result-paths result) path (conj path))) [])))
+    :language (if-let [lang (or language (result-language result))]
+                (delete-language! env lang)
+                (throw (ex-info "Bridge fill :replace :language requires a language"
+                         {:type :bridge.fill/missing-language})))
+    :all (clear! env)
+    (throw (ex-info "Unknown Bridge fill replace mode"
+             {:type :bridge.fill/unknown-replace-mode
+              :replace replace}))))
+
+(defn- fill-with-env!
+  [env result opts]
+  (let [opts (or opts {})
+        rows (aggregate-rows result opts)
+        deleted (apply-replace! env result opts)]
+    (doseq [row rows]
+      (vis/ext-put! env row))
+    {:rows (count rows)
+     :deleted deleted
+     :nodes (count (:nodes result))
+     :edges (count (:edges result))
+     :indexes (count (filter #(= :bridge/index (:kind %)) rows))}))
+
+(defn- default-replace-mode
+  [result opts]
+  (or (:replace opts)
+    (cond
+      (:path opts) :path
+      (seq (:paths opts)) :path
+      (get-in result [:stats :path]) :path
+      (get-in result [:stats :project-root]) :language
+      (result-language result) :language
+      :else false)))
 
 (defn- fill-result*
   [env result & [opts]]
-  (fill/fill! env result opts))
+  (let [opts (or opts {})]
+    (fill-with-env! env result
+      (assoc opts :replace (default-replace-mode result opts)))))
+
+(defn- extract-and-fill*
+  [env & [opts]]
+  (let [opts (or opts {})
+        result (extract opts)
+        fill-stats (fill-with-env! env result
+                     (assoc opts :replace (default-replace-mode result opts)))]
+    {:extract (:stats result)
+     :fill fill-stats}))
 
 (defn- inject-env-before-fn
   [env f args]
@@ -75,12 +272,23 @@
 
 (defn- render-fill-summary [stats]
   (str "Bridge fill: rows=" (:rows stats)
+    ", deleted=" (:deleted stats)
     ", nodes=" (:nodes stats)
     ", edges=" (:edges stats)
     ", indexes=" (:indexes stats)))
 
+(defn- render-extract-and-fill-summary [stats]
+  (str "Bridge extract+fill: extract=" (pr-str (:extract stats))
+    ", fill=" (pr-str (:fill stats))))
+
 (def bridge-symbols
-  [(vis/symbol #'extract-markdown
+  [(vis/symbol #'extract
+     {:journal-render-fn render-summary
+      :channel-render-fn render-channel})
+   (vis/symbol #'extract-file
+     {:journal-render-fn render-summary
+      :channel-render-fn render-channel})
+   (vis/symbol #'extract-markdown
      {:journal-render-fn render-summary
       :channel-render-fn render-channel})
    (vis/symbol #'clojure-lsp-status
@@ -94,10 +302,16 @@
      {:journal-render-fn render-rows-summary
       :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
    (vis/symbol 'fill! fill-result*
-     {:doc "Persist a normalized Bridge extraction result through extension aggregates. Must run from bridge/ SCI context."
+     {:doc "Persist a normalized Bridge extraction result through extension aggregates. Defaults to replacing path rows for file results and language rows for project results."
       :arglists '([result] [result opts])
       :before-fn inject-env-before-fn
       :journal-render-fn render-fill-summary
+      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
+   (vis/symbol 'extract-and-fill! extract-and-fill*
+     {:doc "Extract Bridge facts and persist them. `(bridge/extract-and-fill! {:path ...})` reindexes one file; `(bridge/extract-and-fill! {:language \"clojure\"})` refreshes that language."
+      :arglists '([] [opts])
+      :before-fn inject-env-before-fn
+      :journal-render-fn render-extract-and-fill-summary
       :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})])
 
 (defn- prompt [_env]
@@ -105,7 +319,7 @@
          {:ext/doc "Bridge codebase graph tools"
           :ext/ns-alias {:alias 'bridge}
           :ext/symbols bridge-symbols})
-    "\nBridge v1 keeps extraction separate from filling: language extractors emit normalized facts; bridge/aggregate-rows previews storage rows; bridge/fill! writes extension aggregates."))
+    "\nBridge v1 contract: language extractors emit stable normalized facts; bridge/fill! maps them to aggregate rows. Use bridge/extract for facts, bridge/aggregate-rows for preview, bridge/fill! to persist, or bridge/extract-and-fill! for reindexing."))
 
 (def vis-extension
   (vis/extension
