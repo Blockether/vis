@@ -1486,7 +1486,14 @@
         lines     (clip-lines-preserving-markers raw-lines content-w)
         line-meta (or (:line-meta message)
                     (vec (repeat (count lines) nil)))
-        bubble-h  (count lines)
+        ;; Mid-window walker support: when `:lines-window {:start :total-h}`
+        ;; is set on the message (by virtual/layout for genuine mid-scroll),
+        ;; `lines` is only rows [start, start+count) of the full bubble.
+        ;; Total height comes from `:total-h`; the painter loop translates
+        ;; logical row `i` to lines-vec index via `(- i lines-offset)`.
+        lines-window (:lines-window message)
+        lines-offset (long (or (:start lines-window) 0))
+        bubble-h  (long (or (:total-h lines-window) (count lines)))
         bx        left
         ;; No bg fill on plain assistant text - we sit on terminal-bg.
         ;; `:warning` and user messages each get a tinted block so
@@ -1655,8 +1662,20 @@
                                 :else (recur (inc i)))))]
         (loop [i i-start]
           (when (< i i-end)
-            (let [line (nth lines i)
-                  meta (nth line-meta i nil)]
+            ;; Mid-window walker support: when `:lines-window` is
+            ;; set, `lines` is only rows [start, start+count) of the
+            ;; full bubble. Out-of-window rows render blank — the
+            ;; bubble's allotted band stays clear for those rows,
+            ;; matching what the user expects when scrolled past the
+            ;; rendered window. `lines-offset` is bound at the top
+            ;; of `draw-chat-bubble!` from `:lines-window :start` (or
+            ;; 0 when no window). See virtual/layout's mid-scroll
+            ;; wireup for `:window-start` / `:window-num`.
+            (let [lines-idx (- i lines-offset)
+                  noop-row? (or (neg? lines-idx) (>= lines-idx (count lines)))
+                  line      (when-not noop-row? (nth lines lines-idx))
+                  meta      (when-not noop-row? (nth line-meta lines-idx nil))]
+              (when-not noop-row?
               (p/clear-styles! g)
               (let [in-answer? (> i (long answer-start))
                 ;; Two coordinate systems per content row:
@@ -2152,7 +2171,7 @@
               (when user?
                 (p/clear-styles! g)
                 (p/set-colors! g role-fg bg-color)
-                (p/put-str! g bx (+ btop i) "│"))
+                (p/put-str! g bx (+ btop i) "│")))
               (recur (inc i))))))
 
       ;; Below-content footer row: optional right-aligned meta.
