@@ -387,6 +387,35 @@
     (expect (nil? (#'loop/block-result-error-summary {:error nil :journal []})))
     (expect (nil? (#'loop/block-result-error-summary {})))))
 
+(defdescribe answer-alone-preflight-test
+  ;; Strict gate: `(answer ...)` MUST be the only top-level form in
+  ;; its iteration. Pi / Codex / SWE-bench style observe-then-answer
+  ;; split. Mirrors hard rule documented in CORE_SYSTEM_PROMPT.
+  (it "rejects answer + sibling top-level form (any kind)"
+    (doseq [code ["(v/cat \"a\")\n(answer [:ir [:p \"ok\"]])"
+                  "(conversation-title \"X\")\n(answer [:ir [:p \"ok\"]])"
+                  "(def x 1)\n(answer [:ir [:p \"ok\"]])"
+                  "(v/rg {:all [\"foo\"]})\n(answer [:ir [:p \"ok\"]])"]]
+      (let [violation (#'loop/answer-alone-preflight-violation (entries-of code))]
+        (expect (some? violation))
+        (expect (= 2 (:total-forms violation)))
+        (expect (string? (#'loop/answer-alone-preflight-error-message violation))))))
+
+  (it "accepts a sole `(answer ...)` form"
+    (expect (nil? (#'loop/answer-alone-preflight-violation
+                   (entries-of "(answer [:ir [:p \"hi\"]])")))))
+
+  (it "accepts an answer-free iteration (any kind of work)"
+    (expect (nil? (#'loop/answer-alone-preflight-violation
+                   (entries-of "(v/cat \"a\")\n(v/cat \"b\")"))))
+    (expect (nil? (#'loop/answer-alone-preflight-violation
+                   (entries-of "(z/patch [{:path \"a\" :search \"x\" :replace \"y\"}])")))))
+
+  (it "allows answer-wrapping inline expressions inside the single form"
+    ;; ONE top-level form, even when it's wrapping inlined values.
+    (expect (nil? (#'loop/answer-alone-preflight-violation
+                   (entries-of "(answer [:ir [:p (str \"hi \" 1)]])"))))))
+
 (defdescribe answer-with-mutation-preflight-test
   (it "rejects (z/patch ...) + (answer ...) in the same iteration (regression: convo 73f3d325 turn 5)"
     ;; Reduced repro: the model wrote z/patch (which failed with

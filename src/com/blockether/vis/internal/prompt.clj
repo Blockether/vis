@@ -373,10 +373,16 @@
         visible-blocks (vec (or blocks []))
         block-lines (vec (mapcat (fn [[k blk]]
                                    (let [comment-text (some-> (:comment blk) str/trim)
+                                         ;; `:comment` is captured by `split-top-level-forms`
+                                         ;; as the verbatim source slice between forms
+                                         ;; (already includes `;;` prefixes / `#_(...)`
+                                         ;; discards). Render as-is; DO NOT prepend
+                                         ;; another `;; ` or we get `;; ;;` doubling
+                                         ;; (conversation d2763464 regression).
                                          comment-line (when (and comment-text
                                                               (not (str/blank? comment-text)))
                                                         (str "  i" iteration-position "." (inc k)
-                                                          "  ;; "
+                                                          "  "
                                                           (truncate comment-text 400)))]
                                      (cond-> []
                                        comment-line (conj comment-line)
@@ -766,9 +772,21 @@ LOOP:
 
 ITERATION (⊢ :ooda only):
   emit forms -> engine evals -> <journal> populated -> <bindings> updated
-   -> observe -> emit more ∨ (answer \"...\")
+   -> observe -> emit more ∨ (answer ...)
   Only way to learn a value: evaluate it. Never narrate results.
   Engine populates one row per top-level form + sub-row per tool call.
+
+ANSWER (HARD RULE, preflight-enforced):
+  (answer ...) is its OWN iteration. ONE top-level form, NOTHING else.
+  No `(def ...)`, no `(v/...)`, no `(z/...)`, no `(conversation-title ...)`,
+  no `(do ...)` wrapper hiding tool calls. Just `(answer [:ir ...])`.
+  Workflow:
+    iteration N      -> emit observation/action forms; engine evals
+    iteration N+1    -> read <journal>; emit MORE work OR `(answer ...)` alone
+    iteration N+2    -> ONLY `(answer [:ir ...])`; turn closes.
+  Violation -> engine rejects iteration before any eval and forces
+  you to loop. The journal will show the preflight error; read it,
+  drop the answer, finish the work, then answer alone next round.
 
 JOURNAL:
   Engine writes; you read. Carries code, result preview, ::op/tag,
