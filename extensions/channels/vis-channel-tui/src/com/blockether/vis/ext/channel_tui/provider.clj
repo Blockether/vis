@@ -11,6 +11,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
             [com.blockether.vis.ext.channel-tui.input :as input]
+            [com.blockether.vis.ext.channel-tui.limits-fmt :as lfmt]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.ext.provider-anthropic :as anthropic]
@@ -516,14 +517,26 @@
         suffix         (if (<= model-count 1)
                          "(1 model)"
                          (str "(+" (dec model-count) " models)"))
+        ;; Dynamic per-account rows (e.g. `:zai-coding-5h`, `:codex-7d`)
+        ;; come from `[:dynamic :limits]`; they're what the footer shows
+        ;; and what the user actually cares about. Static `:rpm`/`:tpm`
+        ;; are svar catalog defaults (`{:rpm 500 :tpm 2000000}`), the
+        ;; same for every provider - useful as a fallback only when no
+        ;; dynamic rows are reported. Sharing `lfmt/dynamic-summary`
+        ;; with footer.clj keeps both surfaces in sync.
+        dynamic-text   (when-not loading-limits?
+                         (lfmt/dynamic-summary limits))
         limit-summary  (->> [(when loading-status?
                                "checking auth")
                              (when loading-limits?
                                "checking limits")
-                             (when-let [rpm (get-in limits [:static :rpm])]
-                               (str "catalog RPM " rpm))
-                             (when-let [tpm (get-in limits [:static :tpm])]
-                               (str "catalog TPM " tpm))]
+                             dynamic-text
+                             (when-not dynamic-text
+                               (when-let [rpm (get-in limits [:static :rpm])]
+                                 (str "catalog RPM " rpm)))
+                             (when-not dynamic-text
+                               (when-let [tpm (get-in limits [:static :tpm])]
+                                 (str "catalog TPM " tpm)))]
                          (remove nil?)
                          (str/join " / "))
         ;; Layout line 1:  "① Label" ... "host  ●"
