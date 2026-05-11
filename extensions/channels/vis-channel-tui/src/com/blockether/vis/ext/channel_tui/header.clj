@@ -327,6 +327,12 @@
     (str copy-affordance " " id-short)
     ""))
 
+(def ^:dynamic *register-click-regions?*
+  "Bind false for header-only hover repaints. Geometry did not change,
+   so the previous full frame's published click regions remain valid and
+   the repaint must not mutate the staged click-region buffer."
+  true)
+
 (defn- markdown-copy-block-text [id-short]
   (if id-short markdown-copy-label ""))
 
@@ -449,13 +455,14 @@
                       :inactive-bg t/terminal-bg})]
         (doseq [[idx {:keys [id left width]}] (map-indexed vector layout)
                 :when (pos? (long width))]
-          (cr/register!
-            {:bounds       {:row tabs-row :col left :width width}
-             :kind         :workspace-tab
-             :index        idx
-             :workspace-id id
-             :text         id
-             :enabled?     true}))))
+          (when *register-click-regions?*
+            (cr/register!
+              {:bounds       {:row tabs-row :col left :width width}
+               :kind         :workspace-tab
+               :index        idx
+               :workspace-id id
+               :text         id
+               :enabled?     true})))))
 
     (draw-rule! g separator-row cols)
 
@@ -522,7 +529,7 @@
             (p/enable! g p/BOLD))
           (p/put-str! g md-copy-col content-row md-copy-text)
           (p/clear-styles! g)
-          (when full-uuid
+          (when (and *register-click-regions?* full-uuid)
             (cr/register!
               {:bounds   {:row content-row :col action-col :width id-copy-w}
                :kind     :copy-id

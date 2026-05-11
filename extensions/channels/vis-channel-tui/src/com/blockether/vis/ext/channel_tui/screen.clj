@@ -752,10 +752,45 @@
     (= (dissoc previous-db :progress :render-version :layout)
       (dissoc db :progress :render-version :layout))))
 
+(def ^:private header-hover-kinds
+  #{:copy-id :copy-as-markdown :workspace-tab})
+
+(defn- header-hover-region?
+  [region]
+  (contains? header-hover-kinds (:kind region)))
+
+(defn- header-hover-only-change?
+  "True when a render bump only exists to repaint header hover chrome.
+
+   Header affordances (`⧉ <id>` and `⧉ Transcript`) live outside the
+   transcript body. Repainting the whole scrollback when the mouse enters
+   or leaves those cells makes the body visibly flash. Body link hovers
+   still take the full path for now, because their highlight row lives
+   inside the virtualized transcript."
+  [previous-db db previous-hover current-hover]
+  (and previous-db
+    (= (dissoc previous-db :render-version :layout)
+      (dissoc db :render-version :layout))
+    (or (header-hover-region? current-hover)
+      (and (nil? current-hover) (header-hover-region? previous-hover)))))
+
 (defn- live-loading-idx
   [messages loading?]
   (when (and loading? (seq messages) (= :assistant (:role (peek messages))))
     (long (dec (count messages)))))
+
+(defn- render-header-hover-frame!
+  "Cheap repaint for header-only hover changes.
+
+   Do not begin/commit click regions here: geometry did not change, and
+   the previous full frame's published regions remain authoritative.
+   Bind header registration off so header-only redraws do not fill the
+   staging buffer."
+  [^TerminalScreen screen cols _rows db]
+  (let [g (.newTextGraphics screen)]
+    (binding [header/*register-click-regions?* false]
+      (header/draw-header! g db 0 cols))
+    (.refresh screen Screen$RefreshType/DELTA)))
 
 (defn- render-scrollbar!
   [g cols text-top inner-h total-h eff-scroll]
@@ -908,16 +943,16 @@
    `draw-lock`."
   [^TerminalScreen screen]
   (loop [last-v -1 last-cols -1 last-rows -1 last-frame-ms 0
-         last-db nil last-layout nil]
+         last-db nil last-layout nil last-hover nil]
     (let [db @state/app-db]
       (when-not (:shutdown? db)
         (let [version (long (or (:render-version db) 0))
               ;; tryLock so a dialog session (which holds the lock for
               ;; seconds) doesn't pin us. Time out fast and re-poll.
               got-lock? (.tryLock draw-lock 50 TimeUnit/MILLISECONDS)
-              [rendered? new-cols new-rows new-frame-ms rendered-db rendered-layout]
+              [rendered? new-cols new-rows new-frame-ms rendered-db rendered-layout rendered-hover]
               (if-not got-lock?
-                [false last-cols last-rows last-frame-ms last-db last-layout]
+                [false last-cols last-rows last-frame-ms last-db last-layout last-hover]
                 (try
                   ;; Re-read AFTER acquiring the lock - dialog state
                   ;; could have flipped while we were waiting.
@@ -945,6 +980,11 @@
                           (let [text (input/input->text (:input db))]
                             (and (string? text)
                               (str/starts-with? (str/triml text) "/"))))
+                        current-hover (cr/hovered)
+                        header-hover-only? (and same-size?
+                                             last-layout
+                                             (not animate?)
+                                             (header-hover-only-change? last-db db last-hover current-hover))
                         partial-live? (and loading?
                                         same-size?
                                         last-layout
@@ -958,14 +998,23 @@
                             (not= last-cols cols)
                             (not= last-rows rows)
                             animate?))
-                      (let [layout (if partial-live?
-                                     (render-live-bubble-frame! screen cols rows db now-ms last-layout)
-                                     (render-frame! screen cols rows db now-ms))]
+                      (let [[layout publish-layout?]
+                            (cond
+                              header-hover-only?
+                              (do (render-header-hover-frame! screen cols rows db)
+                                [last-layout false])
+
+                              partial-live?
+                              [(render-live-bubble-frame! screen cols rows db now-ms last-layout) true]
+
+                              :else
+                              [(render-frame! screen cols rows db now-ms) true])]
                         ;; Publish layout back to app-db without
                         ;; bumping the version (see no-render-bump-events).
-                        (state/dispatch [:set-layout layout])
-                        [true cols rows now-ms db layout])
-                      [false cols rows last-frame-ms last-db last-layout]))
+                        (when publish-layout?
+                          (state/dispatch [:set-layout layout]))
+                        [true cols rows now-ms db layout current-hover])
+                      [false cols rows last-frame-ms last-db last-layout last-hover]))
                   (catch Throwable t
                     ;; Drawing must never crash the thread - a stray
                     ;; resize race or null cell will recover next frame.
@@ -973,7 +1022,7 @@
                                :id    ::render-frame-failed
                                :data  (throwable-log-data t)
                                :msg   (str "render frame failed: " (or (ex-message t) (str t)))})
-                    [false last-cols last-rows last-frame-ms last-db last-layout])
+                    [false last-cols last-rows last-frame-ms last-db last-layout last-hover])
                   (finally (.unlock draw-lock))))]
           (when-not rendered?
             ;; Park until the next dispatch wakes us, or until the
@@ -993,7 +1042,8 @@
             (long (or new-rows last-rows))
             (long new-frame-ms)
             rendered-db
-            rendered-layout))))))
+            rendered-layout
+            rendered-hover))))))
 
 (defn- start-render-thread!
   "Spawn the render thread. Daemon so the JVM can still exit even if a
