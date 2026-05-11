@@ -2827,13 +2827,32 @@
           (let [lines (wrap-text raw-text max-w)]
             (maybe-collapse-block (assoc opts :lines lines :raw-text raw-text))))))))
 
+(defn- strip-paint-markers-line
+  "Return user-visible text for a prewrapped internal painter line.
+   The TUI painter consumes these markers from `:lines`; `:text` is
+   used by copy/debug/projection paths and must never expose PUA or
+   bidi-control glyphs to the user."
+  [line]
+  (let [s (str (or line ""))
+        s (if (and (pos? (count s))
+                (let [c (.charAt ^String s 0)]
+                  (or (= (int Character/FORMAT) (int (Character/getType c)))
+                    (and (>= (int c) 0xE000) (<= (int c) 0xE0FF)))))
+            (subs s 1)
+            s)]
+    (->> s
+      (remove (fn [c]
+                (let [i (int c)]
+                  (<= 0xE110 i 0xE2FF))))
+      (apply str))))
+
 (defn- entries->payload
   [entries]
   (let [lines     (mapv :line entries)
         line-meta (mapv :meta entries)]
     {:lines     lines
      :line-meta line-meta
-     :text      (str/join "\n" lines)}))
+     :text      (str/join "\n" (map strip-paint-markers-line lines))}))
 
 ;;; ── Inline markdown tokenizer (mid-line bold / italic / strike / code) ──
 ;;
@@ -3571,12 +3590,16 @@
                                        (when answer-top-margin [answer-top-margin])
                                        cancel-rows
                                        [(line-entry "")]))
-        answer-block            (cond-> []
-                                  answer-top-margin                 (conj answer-top-margin)
-                                  fa-hdr                            (conj fa-hdr)
-                                  :always                           (conj ans-pad)
-                                  :always                           (into ans-entries)
-                                  :always                           (conj ans-pad))
+        answer-block            (if has-trace?
+                                  (cond-> []
+                                    answer-top-margin (conj answer-top-margin)
+                                    fa-hdr            (conj fa-hdr)
+                                    :always           (conj ans-pad)
+                                    :always           (into ans-entries)
+                                    :always           (conj ans-pad))
+                                  (cond-> []
+                                    fa-hdr  (conj fa-hdr)
+                                    :always (into ans-entries)))
         trailer                 (if cancelled? cancel-block answer-block)
         entries                 (if has-trace?
                                   (vec (concat trace-entries trailer))

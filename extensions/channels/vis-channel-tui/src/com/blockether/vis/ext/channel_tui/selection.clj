@@ -207,9 +207,13 @@
     (sequential? row) (mapv #(str (or % " ")) row)
     :else []))
 
-(defn- trim-trailing-spaces
+(defn- clean-copied-line
   [s]
-  (str/replace s #" +$" ""))
+  (-> (or s "")
+    (str/replace #"(?:\u001B|\u241B)\[[0-?]*[ -/]*[@-~]" "")
+    (str/replace #"[\u200B-\u200D\u2060-\u206F\uFEFF\uE000-\uE02C\uE110-\uE119]" "")
+    (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
+    (str/replace #" +$" "")))
 
 (defn selected-text
   "Extract selected visible text from `screen-cells`.
@@ -231,5 +235,5 @@
               (let [cells (row-cells (nth rows row []))
                     from  (min (count cells) (long col))
                     to    (min (count cells) (+ from (long width)))]
-                (trim-trailing-spaces (apply str (subvec cells from to))))))
+                (clean-copied-line (apply str (subvec cells from to))))))
        (str/join "\n")))))

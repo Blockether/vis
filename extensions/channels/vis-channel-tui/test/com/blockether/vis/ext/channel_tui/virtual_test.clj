@@ -377,7 +377,7 @@
         ;; The cache must now contain at least one real height.
         (expect (pos? (virtual/height-cache-size)))))
 
-    (it "windowed scroll slices do not poison the full-height cache"
+    (it "mid-scroll last-bubble paints use full projection instead of broken window slices"
       (virtual/invalidate-heights!)
       (render/invalidate-cache!)
       (let [long-answer (str/join "\n" (map #(str "line " %) (range 1 180)))
@@ -392,7 +392,8 @@
             mid-again   (virtual/layout msgs bubble-w settings (max 0 (- max-s 6)) inner-h {})
             last-visible (last (:visible mid))]
         (expect (pos? max-s))
-        (expect (some? (-> last-visible :projected :lines-window)))
+        (expect (nil? (-> last-visible :projected :lines-window)))
+        (expect (pos? (count (-> last-visible :projected :prewrapped-lines))))
         (expect (= total (:total-h mid)))
         (expect (= total (:total-h mid-again)))))
 

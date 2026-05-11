@@ -505,8 +505,6 @@
   (cond-> {:query query}
     (kw-get opts :tokens-num :tokensNum) (assoc :tokensNum (kw-get opts :tokens-num :tokensNum))))
 
-(def ^:private tool-result-spec :op/envelope)
-
 (defn web-search
   "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Tool result; payload under :op/result."
   ([query] (web-search query {}))
@@ -553,14 +551,12 @@
 
 (def web-search-symbol
   (vis/symbol #'web-search
-    {:result-spec tool-result-spec
-     :journal-render-fn journal-render-exa
+    {:journal-render-fn journal-render-exa
      :channel-render-fn channel-render-exa}))
 
 (def code-context-symbol
   (vis/symbol #'code-context
-    {:result-spec tool-result-spec
-     :journal-render-fn journal-render-exa
+    {:journal-render-fn journal-render-exa
      :channel-render-fn channel-render-exa}))
 
 (def exa-symbols

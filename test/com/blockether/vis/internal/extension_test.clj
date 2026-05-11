@@ -18,6 +18,7 @@
      6. Symbol-level parse rescue is part of the validated builder surface.
      7. Extension info includes cached source markers."
   (:require
+   [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as ext]
    [com.blockether.vis.internal.registry :as registry]
@@ -45,6 +46,17 @@
     (doseq [phase [:session/start :turn/start :turn.iteration/start :turn.iteration/stop :turn.answer/validate :turn/stop]]
       (expect (ext/hook-phase? phase))))
 
+  (it "specs pre-phase nudge returns and answer-validation rejects"
+    (expect (s/valid? ::ext/system-nudge-hit {:hint "Focus now."}))
+    (expect (s/valid? ::ext/system-nudge-hit {:hint "Focus now." :importance :high}))
+    (expect (not (s/valid? ::ext/system-nudge-hit {:hint ""})))
+    (expect (s/valid? ::ext/answer-validation-reject
+              {:reject true
+               :message "Answer lacks proof."
+               :hint "Run verification."}))
+    (expect (not (s/valid? ::ext/answer-validation-reject
+                   {:reject false :message "ignored"}))))
+
   (it "validates extension hooks that use namespaced phases"
     (let [hook (fn [_] nil)
           extension (ext/extension {:ext/namespace 'test.namespaced-hook-phase
@@ -58,7 +70,7 @@
 
 (defdescribe wrap-extension-workspace-test
   (it "binds env workspace root around sandbox symbol calls"
-    (let [sym-entry (ext/symbol 'root (fn [] workspace-context/*workspace-root*)
+    (let [sym-entry (ext/symbol 'root (fn [] (ext/success {:result workspace-context/*workspace-root* :op :test/root}))
                       {:doc "Return bound workspace root."
                        :arglists '([])
 
@@ -71,7 +83,7 @@
                                     :ext/symbols [sym-entry]})
           wrapped   (ext/wrap-extension extension {:workspace/root "."})]
       (expect (= (workspace-context/workspace-root ".")
-                ((get wrapped 'root)))))))
+                (:op/result ((get wrapped 'root))))))))
 
 (defdescribe source-rewrite-test
   (it "symbol carries optional :source-rewrite-fn"
@@ -135,7 +147,7 @@
 (defdescribe invoke-symbol-wrapper-log-level-test
   (it "logs normal invoke lifecycle at debug level"
     (let [levels (atom [])
-          sym-entry (ext/symbol 'ping (fn [] :pong)
+          sym-entry (ext/symbol 'ping (fn [] (ext/success {:result :pong :op :test/ping}))
                       {:doc "Ping." :arglists '([])
                        :journal-render-fn (fn [_] "")
                        :channel-render-fn (fn [_ _] "")})
@@ -146,7 +158,7 @@
                                     :ext/symbols [sym-entry]})]
       (with-redefs-fn {#'ext/log-hook! (fn [level & _] (swap! levels conj level))}
         (fn []
-          (expect (= :pong (#'ext/invoke-symbol-wrapper extension sym-entry [] {})))
+          (expect (= :pong (:op/result (#'ext/invoke-symbol-wrapper extension sym-entry [] {}))))
           (expect (= [:debug :debug :debug] @levels))))))
 
   (it "binds current extension context while invoking symbols"
@@ -154,7 +166,7 @@
           sym-entry (ext/symbol 'whoami
                       (fn []
                         (reset! seen (ext/current-extension-id))
-                        :done)
+                        (ext/success {:result :done :op :test/whoami}))
                       {:doc "Record current extension." :arglists '([])
                        :journal-render-fn (fn [_] "")
                        :channel-render-fn (fn [_ _] "")})
@@ -163,7 +175,7 @@
                                     :ext/kind "fixture"
                                     :ext/ns-alias {:ns 'test.current-extension :alias 'tce}
                                     :ext/symbols [sym-entry]})]
-      (expect (= :done (#'ext/invoke-symbol-wrapper extension sym-entry [] {})))
+      (expect (= :done (:op/result (#'ext/invoke-symbol-wrapper extension sym-entry [] {}))))
       (expect (= "test.current-extension" @seen))))
 
   (it "records tool-start before the symbol function returns"
@@ -173,7 +185,7 @@
                       (fn []
                         (expect (realized? started))
                         (deliver can-return true)
-                        :done)
+                        (ext/success {:result :done :op :test/slow-tool}))
                       {:doc "Slow tool." :arglists '([])
                        :journal-render-fn (fn [_] "")
                        :channel-render-fn (fn [_ _] "")})
@@ -183,7 +195,7 @@
                                     :ext/ns-alias {:ns 'test.tool-start :alias 'tts}
                                     :ext/symbols [sym-entry]})]
       (binding [ext/*tool-event-sink* #(deliver started %)]
-        (expect (= :done (#'ext/invoke-symbol-wrapper extension sym-entry [] {}))))
+        (expect (= :done (:op/result (#'ext/invoke-symbol-wrapper extension sym-entry [] {})))))
       (expect (= true (deref can-return 1000 false)))
       (expect (= :tool-start (:phase @started)))
       (expect (= :tts/slow-tool (:op @started)))

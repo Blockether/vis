@@ -26,6 +26,9 @@
 (def ^:private live-progress-only-change?
   (deref #'screen/live-progress-only-change?))
 
+(def ^:private partial-live-frame?
+  (deref #'screen/partial-live-frame?))
+
 (def ^:private header-hover-only-change?
   (deref #'screen/header-hover-only-change?))
 
@@ -130,6 +133,19 @@
       (expect (not (live-progress-only-change? base
                      (assoc base :input {:lines ["typed"]}
                        :progress {:iterations [:new]}))))))
+
+  (it "does not use partial live repaint for scroll changes during streaming"
+    (let [base {:loading? true
+                :messages-scroll nil
+                :messages [{:role :user :text "old"}
+                           {:role :assistant :text "live"}]
+                :input {:lines [""]}
+                :progress {:iterations []}
+                :render-version 1
+                :layout {:total-h 100}}
+          scrolled (assoc base :messages-scroll 20 :render-version 2)]
+      (expect (false? (live-progress-only-change? base scrolled)))
+      (expect (false? (boolean (partial-live-frame? base scrolled true {:total-h 100} false))))))
 
   (it "classifies header hover bumps as header-only repaints"
     (let [base {:loading? false

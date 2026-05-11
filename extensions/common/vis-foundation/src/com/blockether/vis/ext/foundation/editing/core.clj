@@ -111,8 +111,6 @@
     (.mkdirs parent))
   f)
 
-(def ^:private tool-result-spec :op/envelope)
-
 (defn- now-ms []
   (System/currentTimeMillis))
 
@@ -1285,7 +1283,6 @@
   (vis/symbol #'cat-tool
     {:sym 'cat
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-cat
      :channel-render-fn channel-render-cat
      :on-error-fn (tool-failure-on-error :v/cat :file nil)}))
@@ -1294,7 +1291,6 @@
   (vis/symbol #'ls-tool
     {:sym 'ls
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-ls
      :channel-render-fn channel-render-ls
      :on-error-fn (tool-failure-on-error :v/ls :dir nil)}))
@@ -1303,7 +1299,6 @@
   (vis/symbol #'rg-tool
     {:sym 'rg
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-rg
      :channel-render-fn channel-render-rg
      :on-error-fn (tool-failure-on-error :v/rg :dir nil)}))
@@ -1312,7 +1307,6 @@
   (vis/symbol #'patch-tool
     {:sym 'patch
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-patch
      :channel-render-fn channel-render-patch
      :on-error-fn (tool-failure-on-error :v/patch :file nil)}))
@@ -1321,7 +1315,6 @@
   (vis/symbol #'patch-check-tool
     {:sym 'patch-check
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-patch-check
      :channel-render-fn channel-render-patch-check
      :on-error-fn (tool-failure-on-error :v/patch-check :file nil)}))
@@ -1330,7 +1323,6 @@
   (vis/symbol #'create-dirs-tool
     {:sym 'create-dirs
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-create-dirs
      :channel-render-fn channel-render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
@@ -1339,7 +1331,6 @@
   (vis/symbol #'glob-tool
     {:sym 'glob
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-glob
      :channel-render-fn channel-render-glob
      :on-error-fn (tool-failure-on-error :v/glob :dir nil)}))
@@ -1348,7 +1339,6 @@
   (vis/symbol #'copy-tool
     {:sym 'copy
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-copy
      :channel-render-fn channel-render-copy
      :on-error-fn (tool-failure-on-error :v/copy :path nil)}))
@@ -1357,7 +1347,6 @@
   (vis/symbol #'move-tool
     {:sym 'move
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-move
      :channel-render-fn channel-render-move
      :on-error-fn (tool-failure-on-error :v/move :path nil)}))
@@ -1366,7 +1355,6 @@
   (vis/symbol #'delete-tool
     {:sym 'delete
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-delete
      :channel-render-fn channel-render-delete
      :on-error-fn (tool-failure-on-error :v/delete :path nil)}))
@@ -1375,7 +1363,6 @@
   (vis/symbol #'delete-if-exists-tool
     {:sym 'delete-if-exists
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-delete-if-exists
      :channel-render-fn channel-render-delete-if-exists
      :on-error-fn (tool-failure-on-error :v/delete-if-exists :path nil)}))
@@ -1384,7 +1371,6 @@
   (vis/symbol #'exists-tool
     {:sym 'exists?
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-exists?
      :channel-render-fn channel-render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
@@ -1393,7 +1379,6 @@
   (vis/symbol #'bash-tool
     {:sym 'bash
 
-     :result-spec tool-result-spec
      :journal-render-fn journal-render-bash
      :channel-render-fn channel-render-bash
      :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))

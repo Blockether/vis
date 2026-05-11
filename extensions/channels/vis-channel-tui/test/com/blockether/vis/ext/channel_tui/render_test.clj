@@ -6,6 +6,7 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.channel-tui.theme :as t]
+   [com.blockether.vis.ext.mermaid.core]
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -113,14 +114,15 @@
                              (fn [i ln]
                                (when (str/includes? (strip-ansi ln) needle) i))
                              (:lines p))))]
-    (it "answer with NO trace has outside margin plus inside top padding"
-      (let [p   (render/format-answer-with-thinking-data*
-                  ans [] 80 settings nil false nil)
-            idx (index-of p "hello")
-            ln  (:lines p)]
-        (expect (= 2 idx))
-        (expect (= "" (first ln)))
-        (expect (visually-blank? (second ln)))))
+    (it "answer with NO trace renders directly without internal answer padding"
+      (let [p    (render/format-answer-with-thinking-data*
+                   ans [] 80 settings nil false nil)
+            idx  (index-of p "hello")
+            ln   (:lines p)
+            pad? (fn [line]
+                   (str/starts-with? line p/MARKER_ANSWER_PAD))]
+        (expect (= 0 idx))
+        (expect (not-any? pad? ln))))
 
     (it "answer with code-bearing trace reuses trace pad as outside margin"
       (let [p   (render/format-answer-with-thinking-data*
@@ -1422,16 +1424,18 @@
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
             payload (render/format-answer-with-thinking-data
                       nil trace 96 {:show-iterations true} nil false opts)
+            lines   (:lines payload)
             text    (:text payload)]
-        ;; The body row carries inline-bold sentinels so the painter
-        ;; styles "important" as bold instead of leaving the literal
-        ;; `**important**` text on the row.
-        (expect (str/includes? text p/INLINE_BOLD_ON))
-        (expect (str/includes? text p/INLINE_BOLD_OFF))
-        (expect (str/includes? text p/INLINE_ITALIC_ON))
-        (expect (str/includes? text p/INLINE_ITALIC_OFF))
+        ;; Painter lines carry inline-bold sentinels so the painter
+        ;; styles "important" as bold; user-facing :text strips those
+        ;; private PUA controls.
+        (expect (some #(str/includes? % p/INLINE_BOLD_ON) lines))
+        (expect (some #(str/includes? % p/INLINE_BOLD_OFF) lines))
+        (expect (some #(str/includes? % p/INLINE_ITALIC_ON) lines))
+        (expect (some #(str/includes? % p/INLINE_ITALIC_OFF) lines))
         (expect (str/includes? text "important"))
         (expect (str/includes? text "subtle"))
+        (expect (not (str/includes? text p/INLINE_BOLD_ON)))
         (expect (not (str/includes? text "**important**")))
         (expect (not (str/includes? text "*subtle*")))))
 
@@ -1460,6 +1464,18 @@
 ;; The TUI must route ` ```mermaid ` fences through the extension and
 ;; paint the rendered ASCII rows on the code-block band.
 ;; ─────────────────────────────────────────────────────────────────────────
+
+(defdescribe mermaid-fenced-rendering-test
+  (it "renders mermaid code blocks through the fenced renderer, not as raw source"
+    (let [source  "flowchart LR\nA[Start] --> B[Done]\n"
+          payload (render/format-answer-markdown-data
+                    [:ir {} [:code {:lang "mermaid"} source]]
+                    80)
+          visible (mapv (comp strip-sentinels body-of) (:lines payload))]
+      (expect (not-any? #(str/includes? % "Mermaid (flowchart)") visible))
+      (expect (some #(str/includes? % "Start") visible))
+      (expect (not-any? #(str/includes? % "flowchart LR") visible))
+      (expect (not-any? #(str/includes? % "A[Start] --> B[Done]") visible)))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Details with Markdown body - markdown inside <details> renders fully.
@@ -1494,13 +1510,14 @@
       (let [payload (render/format-answer-markdown-data [:ir {} body-ir] 80
                       {:conversation-id "cid"
                        :detail-expansions {["cid" "answer:details:d1"] true}})
-            visible (mapv strip-sentinels (:lines payload))
+            lines   (:lines payload)
+            visible (mapv strip-sentinels lines)
             text    (:text payload)]
         (expect (some #(str/includes? % "Step 1") visible))
         (expect (some #(str/includes? % "alpha") visible))
         (expect (some #(str/includes? % "beta") visible))
-        (expect (str/includes? text p/INLINE_BOLD_ON))
-        (expect (str/includes? text p/INLINE_BOLD_OFF))
+        (expect (some #(str/includes? % p/INLINE_BOLD_ON) lines))
+        (expect (not (str/includes? text p/INLINE_BOLD_ON)))
         (expect (not (str/includes? text "**bold**")))))
 
     (it "collapsed <details> hides body but keeps summary visible"

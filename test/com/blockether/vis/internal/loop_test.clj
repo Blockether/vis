@@ -64,7 +64,19 @@
                 @calls))
       (expect (string? err))
       (expect (str/includes? err "Answer rejected by fixture hook"))
-      (expect (str/includes? err "Observe first")))))
+      (expect (str/includes? err "Observe first"))))
+
+  (it "ignores invalid answer-validation reject shapes"
+    (let [ext {:ext/namespace 'test.answer-validation-invalid
+               :ext/hooks [{:id :test/bad-reject
+                            :doc "Invalid reject fixture."
+                            :phase :turn.answer/validate
+                            :fn (fn [_] {:reject false :message "not a reject"})}]}]
+      (expect (nil? (loop/final-answer-gate-error
+                      {:extensions (atom [ext])}
+                      1
+                      []
+                      [:ir [:p "done"]]))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Preserved-thinking replay (R3 hybrid shape) regression tests.

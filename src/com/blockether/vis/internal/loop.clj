@@ -1653,6 +1653,17 @@
                     :error (ex-message t)}})
   nil)
 
+(defn- answer-validation-invalid-return-message
+  [ext id hit]
+  (tel/log! {:level :warn
+             :id ::answer-validation-hook-invalid-return
+             :data {:ext (:ext/namespace ext)
+                    :hook id
+                    :phase :turn.answer/validate
+                    :returned hit
+                    :explain (s/explain-data ::extension/answer-validation-reject hit)}})
+  nil)
+
 (defn- answer-validation-extensions
   [environment active-extensions]
   (or (seq active-extensions)
@@ -1684,8 +1695,12 @@
                                  extension/*current-symbol* nil]
                          (try
                            (let [hit (hook-fn ctx)]
-                             (when (and (map? hit) (:reject hit))
-                               (answer-validation-rejection-message hook hit)))
+                             (cond
+                               (s/valid? ::extension/answer-validation-reject hit)
+                               (answer-validation-rejection-message hook hit)
+
+                               (and (map? hit) (:reject hit))
+                               (answer-validation-invalid-return-message ext id hit)))
                            (catch Throwable t
                              (answer-validation-hook-error-message ext id t))))))
                (or (:ext/hooks ext) [])))

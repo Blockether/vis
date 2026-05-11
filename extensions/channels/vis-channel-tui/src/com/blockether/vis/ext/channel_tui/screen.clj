@@ -753,6 +753,16 @@
     (= (dissoc previous-db :progress :render-version :layout)
       (dissoc db :progress :render-version :layout))))
 
+(defn- partial-live-frame?
+  "True when the render loop may use the live-bubble-only repaint path."
+  [previous-db db same-size? last-layout slash-suggestions-visible?]
+  (and (:loading? db)
+    same-size?
+    last-layout
+    (not (:mouse-selection db))
+    (not slash-suggestions-visible?)
+    (live-progress-only-change? previous-db db)))
+
 (def ^:private header-hover-kinds
   #{:copy-id :copy-as-markdown :workspace-tab})
 
@@ -987,13 +997,7 @@
                                              last-layout
                                              (not animate?)
                                              (header-hover-only-change? last-db db last-hover current-hover))
-                        partial-live? (and loading?
-                                        same-size?
-                                        last-layout
-                                        (not (:mouse-selection db))
-                                        (not slash-suggestions-visible?)
-                                        (or animate?
-                                          (live-progress-only-change? last-db db)))]
+                        partial-live? (partial-live-frame? last-db db same-size? last-layout slash-suggestions-visible?)]
                     (if (and (not (:shutdown? db))
                           (not (:dialog-open? db))
                           (or (not= last-v version)
