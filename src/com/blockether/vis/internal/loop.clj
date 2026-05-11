@@ -627,34 +627,32 @@
                              :error nil})
                           (catch Throwable e
                             (reset! thrown e)
-                            ;; Per PLAN §2.6 + §7.3.6: route the Throwable
-                            ;; through `extension/ex->op-error` to produce a
-                            ;; structured :op/error map (with :message :trace
-                            ;; :hint? :block?). SCI parses the whole `code`
-                            ;; string at once, so its :line/:column are
-                            ;; already block-global — no form-row translation
-                            ;; needed at this site.
-                            ;;
-                            ;; Legacy `:error` string is preserved alongside
-                            ;; for downstream readers that haven't migrated
-                            ;; to the structured shape yet (§7.3.1 sweep).
+                            ;; Per PLAN §2.1 + §2.6 + §7.3.5: :error is
+                            ;; the STRUCTURED :op/error map
+                            ;; ({:message :trace :hint? :block?}) — no
+                            ;; legacy string fallback. SCI parses the
+                            ;; whole `code` at once so its :line/:column
+                            ;; in ex-data are already block-global; no
+                            ;; form-row translation needed at this site.
                             {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
-                             :journal  @journal-sink
-                             :channel  @channel-sink
-                             :error    (str (.getSimpleName (class e)) ": " (or (ex-message e) (str e)))
-                             :op-error (try (extension/ex->op-error e {:block-source code})
-                                         (catch Throwable _ nil))}))))
+                             :journal @journal-sink
+                             :channel @channel-sink
+                             :error   (try (extension/ex->op-error e {:block-source code})
+                                        (catch Throwable _
+                                          {:message (or (ex-message e)
+                                                      (.getName (class e)))}))}))))
         timeout-ms (long *eval-timeout-ms*)
         execution-result (try
                            (deref exec-future timeout-ms nil)
                            (catch Throwable e
                              (reset! thrown e)
                              {:result nil :stdout "" :stderr ""
-                              :journal  @journal-sink
-                              :channel  @channel-sink
-                              :error    (str (.getSimpleName (class e)) ": " (ex-message e))
-                              :op-error (try (extension/ex->op-error e {:block-source code})
-                                          (catch Throwable _ nil))}))]
+                              :journal @journal-sink
+                              :channel @channel-sink
+                              :error   (try (extension/ex->op-error e {:block-source code})
+                                         (catch Throwable _
+                                           {:message (or (ex-message e)
+                                                       (.getName (class e)))}))}))]
     (.close stdout-writer)
     (.close stderr-writer)
     ;; Park `*1`/`*2`/`*3`/`*e` after each top-level form. Push only when
@@ -669,14 +667,18 @@
         (env/push-eval-result! env (:result execution-result))
 
         :else
+        ;; :error is now structured ({:message ...}); fall back to
+        ;; :message string when constructing the synthetic ex-info.
         (env/push-eval-error! env (or @thrown
-                                    (ex-info (or (:error execution-result) "eval error") {})))))
+                                    (ex-info (or (:message (:error execution-result))
+                                               "eval error") {})))))
     (if (nil? execution-result)
       (do (.cancel ^java.util.concurrent.Future exec-future true)
         {:result nil :stdout "" :stderr ""
-         :journal     @journal-sink
-         :channel     @channel-sink
-         :error (str "Timeout (" (/ timeout-ms 1000) "s)") :timeout? true})
+         :journal @journal-sink
+         :channel @channel-sink
+         :error   {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
+         :timeout? true})
       execution-result)))
 
 (defn- run-with-timing [sci-ctx code sandbox-ns timeout-ms start-time tool-event-fn env]
@@ -796,7 +798,12 @@
     (let [start-time (System/currentTimeMillis)
           lint-error (detect-common-mistakes code)]
       (if lint-error
-        {:result nil :stdout "" :stderr "" :error lint-error
+        ;; Per PLAN §2.1 + §7.3.5: :error is the structured
+        ;; :op/error map. Wrap engine-internal string errors
+        ;; (lint, parse) into the same shape with :phase :preflight.
+        {:result nil :stdout "" :stderr ""
+         :error  {:message lint-error
+                  :block   {:source code :phase :preflight}}
          :execution-time-ms 0 :timeout? false}
         (let [parse-error (parse-clojure-syntax code)]
           (if parse-error
@@ -815,7 +822,9 @@
                   true     (assoc :original-code code
                              :original-error parse-error)
                   eval-ok? (assoc :repaired? true)))
-              {:result nil :stdout "" :stderr "" :error parse-error
+              {:result nil :stdout "" :stderr ""
+               :error {:message parse-error
+                       :block   {:source code :phase :edamame/parse}}
                :execution-time-ms 0 :timeout? false})
             (let [rewritten-code (try-extension-source-rewrite environment code)
                   eval-code      (or rewritten-code code)
@@ -831,8 +840,11 @@
                   ;; Each candidate is re-evaluated; first that
                   ;; succeeds wins. A failed restitch falls through
                   ;; to the hint-enrichment path below.
-                  restitched     (when (and (not initial-ok?) (string? (:error initial-exec)))
-                                   (when-let [sym (some-> ^String (:error initial-exec)
+                  ;; :error is now structured; pull :message for the
+                  ;; prose-as-symbol detector.
+                  initial-error-msg (some-> initial-exec :error :message)
+                  restitched     (when (and (not initial-ok?) (string? initial-error-msg))
+                                   (when-let [sym (some-> ^String initial-error-msg
                                                     (->> (re-find #"Unable to resolve symbol: (\S+)"))
                                                     second)]
                                      (when-let [candidates (parse-diagnose/try-answer-string-restitch
@@ -849,10 +861,16 @@
                   ;; Eval-time prose-as-symbol HINT for the surfaced
                   ;; error - only relevant when restitch did NOT
                   ;; recover. Pure advisory; never rewrites source.
-                  enriched-error (when (and (not eval-ok?) (string? (:error exec)))
+                  exec-error-msg (some-> exec :error :message)
+                  enriched-error (when (and (not eval-ok?) (string? exec-error-msg))
                                    (when-let [hint (parse-diagnose/unresolved-symbol-hint
-                                                     (:error exec) eval-code)]
-                                     (str (:error exec) hint)))]
+                                                     exec-error-msg eval-code)]
+                                     ;; Build a fresh structured error
+                                     ;; that adds the hint per PLAN §2.1
+                                     ;; ({:message :hint? :trace? :block?}).
+                                     (-> (or (:error exec) {})
+                                       (assoc :message exec-error-msg
+                                         :hint hint))))]
               (when eval-ok?
                 (attach-doc-meta! environment
                   (or (:candidate restitched) eval-code) doc))
@@ -1187,9 +1205,13 @@
    for the answer-after-error gate. Picks the block-level `:error`
    first; falls back to the first `:journal` sink-entry whose
    `:success?` is false (lifted tool-failure). Returns nil when the
-   form ran cleanly."
+   form ran cleanly.
+
+   Per PLAN §2.1 + §7.3.5: `:error` is the structured `:op/error` map
+   (`{:message :trace? :hint? :block?}`). This fn extracts `:message`
+   for the answer-after-error gate's terse one-line display."
   [result]
-  (or (:error result)
+  (or (some-> (:error result) :message)
     (some (fn [j]
             (when (false? (:success? j))
               (or (some-> (:error j) :message)
@@ -2032,7 +2054,6 @@
                                           :journal           (:journal result*)
                                           :channel           (:channel result*)
                                           :error             (:error result*)
-                                          :op-error          (:op-error result*)
                                           :stdout            (:stdout result*)
                                           :stderr            (:stderr result*)
                                           :execution-time-ms (:execution-time-ms result*)
@@ -2055,7 +2076,6 @@
                                     :stdout (:stdout result)
                                     :stderr (:stderr result)
                                     :error (:error result)
-                                    :op-error (:op-error result)
                                     :execution-time-ms (:execution-time-ms result)
                                     :info (:info result)
                                     :role (:role result)
@@ -2132,7 +2152,6 @@
                                :comment           (get block-comments form-idx)
                                :result            (:result b)
                                :error             (:error b)
-                               :op-error          (:op-error b)
                                :stdout            (:stdout b)
                                :stderr            (:stderr b)
                                :execution-time-ms (:execution-time-ms b)
@@ -2289,11 +2308,15 @@
 (defn- format-block-error
   "Render one failed code block from an iteration trace. These are not
    provider failures, but they are exactly the feedback the model needs
-   after repeated parse/eval failures."
+   after repeated parse/eval failures.
+
+   Per PLAN §2.1 + §7.3.5: `:error` is the structured `:op/error`
+   map; pull `:message` for terse one-line display."
   [iteration block]
   (let [pos  (or (:idx block) (:id block))
         code (some-> (:code block) str str/trim)
-        err  (some-> (:error block) str)]
+        err  (or (some-> block :error :message)
+               (some-> block :error str))]
     (str "- Iteration " (inc (long (or iteration 0)))
       (when (some? pos) (str ", form " (inc (long pos))))
       " failed: " err

@@ -106,8 +106,8 @@
           locators    (locators-fn path {:limit 100})
           symbols     (symbols-fn path {:limit 100})
           old-row     (first (filter #(= 'old-sym (:value %)) (:result locators)))]
-      (expect (true? (:success? locators)))
-      (expect (true? (:success? symbols)))
+      (expect (true? (:op/success? locators)))
+      (expect (true? (:op/success? symbols)))
       (expect (= {:kind :clojure/locators} (:presentation locators)))
       (expect (= {:kind :clojure/locators} (:presentation symbols)))
       (expect (every? #(= path (:path %)) (:result locators)))
@@ -147,7 +147,7 @@
     (let [path       (write-temp! "patch/locator-for-symbol.clj" "(ns demo)\n(defn f [] target-sym)\n")
           locator-fn (:ext.symbol/fn patch/locator-for-symbol-symbol)
           out        (locator-fn path 'target-sym)]
-      (expect (true? (:success? out)))
+      (expect (true? (:op/success? out)))
       (expect (= :z/locator-for-symbol (get-in out [:info :op])))
       (expect (= 'target-sym (get-in out [:result :value])))))
 
@@ -216,7 +216,7 @@
     (let [path     (write-temp! "patch/tool.clj" "(ns demo)\n(def z 1)\n")
           patch-fn (:ext.symbol/fn patch/patch-symbol)
           out      (patch-fn {:path path :search "(def z 1)" :replace "(def z 3)"})]
-      (expect (true? (:success? out)))
+      (expect (true? (:op/success? out)))
       (expect (= :z/patch (get-in out [:info :op])))
       (expect (= [{:path path}] (:result out)))
       (expect (= "(ns demo)\n(def z 1)\n"

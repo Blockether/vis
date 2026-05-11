@@ -1754,32 +1754,73 @@ tokens present (`λ engage`, `:answer`, `:ooda`, `:architect`,
 `:op.tag/observation`, `:op.tag/action`, JOURNAL, BINDINGS,
 SYSTEM VARS).
 
-#### 7.3.5 Wider blob-format alignment (§ 2.12 + § 2.1 cross-ref)
+#### 7.3.5 Blob-format alignment — LOCKED (single structured :error)
 
-The persistence `prepare-blocks-blob` writes `:role` (good — done
-in Phase 4). It does NOT yet write the new envelope's `:op/*`
-fields directly; today the envelope is stored under `:result`
-verbatim (Nippy frozen). After Phase 4 a block looks like:
+**Rule: ONE `:error` slot, ALWAYS structured.** No legacy string
+fallback, no `:op-error` sibling. Per PLAN §2.1 every error
+that reaches the block / envelope is the structured map.
+
+**Live block shape (one per per-form eval):**
 
 ```clojure
-{:idx 0
- :code "(v/cat \"foo\")"
- :role :tool
- :result <serialized envelope = {:op/result … :op/symbol … :op/tag … :op/success? …}>
- :error <fallback string for non-envelope errors>
- :stdout <string>
- :stderr <string>
+{:idx        0
+ :code       "(v/cat \"foo\")"
+ :role       :tool                ; PLAN §1.3 4-value enum
+ :result     <serialized envelope-or-raw-value>
+ :error      <structured ::op/error map OR nil>  ; PLAN §2.1 + §2.6
+ :stdout     <string>
+ :stderr     <string>
  :duration-ms 5
- :timeout? false
- :repaired? false}
+ :timeout?   false
+ :repaired?  false}
 ```
 
-That works but reads awkwardly: `:error` lives at block-level AND
-inside `:result :op/error`. Pick one. PLAN.md preference: keep
-block-level `:error` for non-envelope failures (raw user code
-without a tool), and let envelope errors flow through
-`:result :op/error`. Document this in § 2.12 if it's not already
-explicit.
+**`:error` shape (always, when non-nil)** per PLAN §2.1:
+
+```clojure
+{:message "<required, non-blank>"
+ :trace   "<optional preformatted babashka-style string>"
+ :hint    "<optional recovery hint>"
+ :block   {:source "<source>" :phase :sci/runtime :row 3 :col 9 :opened-loc? {...}}}
+```
+
+**Populated by** `extension/ex->op-error` (PLAN §2.6) at every
+SCI eval failure site in `loop.clj/run-sci-code` (both the
+inner SCI-throw catch and the outer future-deref catch).
+Non-engine engine-internal failures (preflight lint, parse
+failures) wrap themselves into the same shape with
+`:phase :preflight` or `:phase :edamame/parse`.
+
+**Reader migration (PLAN §2.1 + §7.3.5):**
+
+Any code reading `:error` MUST treat it as a map. Common
+patterns:
+
+- Pull terse display string: `(some-> block :error :message)`
+- Render full context: `(extension/render-error-context (:block (:error block)) opts)`
+- Surface hint to agent: `(some-> block :error :hint)`
+- Persistence stores the map directly via Nippy `freeze-safe`
+  (no `(str ...)` cast — maps are first-class Nippy values).
+
+**No fallback, no legacy string.** Code that previously did
+`(str (:error x))` to coerce to display text now does
+`(some-> x :error :message)` and gets nil-safe propagation
+for the success path.
+
+**The block-level `:error` is NOT a replica of the envelope's
+`:op/error`.**
+
+- For raw SCI code (no tool wrapper), there is NO envelope; the
+  block-level `:error` is the only error record.
+- For tool calls that produced a tool-result envelope, the
+  envelope's `:op/error` (inside `:result`) carries the
+  tool-specific structured error. The block's `:error` may
+  duplicate it (when the engine caught the throw before the
+  tool wrapper) or be nil (when the tool wrapper caught and
+  built its own envelope-level error).
+
+Both fields share the EXACT same shape (PLAN §2.1 `:op/error`
+spec); renderers walk them identically.
 
 #### 7.3.6 Phase 4 leftover: `ex->op-error` integration
 
