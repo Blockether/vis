@@ -36,6 +36,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.click-regions :as cr]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]))
 
 ;; -- Channel-hook conventions consumed by this namespace --------------
@@ -44,8 +45,21 @@
 ;; `:ext/channel-hooks` vec. The TUI consumes the following hook ids:
 ;;
 ;;   {:channel-id :tui
-;;    :hook-id    :tui/header-row
-;;    :render-fn  (fn [db cols] -> {:height long :draw! (fn [g row])} | nil)}
+;;    :hook-id    :tui/header-row             ;; or :*/header-row
+;;    :render-fn  (fn [db cols] -> ir | nil)}
+;;
+;; The render-fn returns CANONICAL IR (`[:ir {?:align ?:fg-role ...} &
+;; blocks]`) — channel-agnostic data, NOT a paint thunk. The TUI
+;; walks the IR via `ir-tui/ir->lines` and paints the resulting
+;; styled lines into rows; other channels (Telegram, web) translate
+;; the same IR to their own surface (markdown, HTML, etc.).
+;;
+;; Optional render hints carried on the IR root attrs map:
+;;   :align    one of #{:left :center :right} — default :center
+;;   :fg-role  one of #{:default :muted :warn :error :success}
+;;             — maps to the channel's palette; default :default
+;;
+;; Channels are free to ignore unknown hint keys.
 ;;
 ;; Same declarative pattern as `:goal/slash` (slash commands) and
 ;; `:voice/foo` (voice indicator). No `requiring-resolve` into
@@ -113,32 +127,112 @@
   (let [disabled (get-in db [:settings :contributors-disabled])]
     (and (set? disabled) (contains? disabled hook-id))))
 
+(defn- ir-root?
+  "Lightweight check: shape returned by render-fn is canonical IR.
+   Does NOT validate inner blocks; just confirms the envelope so
+   we know to walk it. Bad inner shape will be caught by ir-tui."
+  [x]
+  (and (vector? x) (= :ir (first x)) (>= (count x) 1)))
+
+(defn- fg-role->color
+  "Map an extension-declared `:fg-role` keyword to a TUI theme color.
+   Channels are free to interpret the same role differently; the role
+   is the channel-agnostic intent (`:warn` = warning, `:muted` = de-
+   emphasised). Unknown roles fall back to `:default` (`footer-fg`)."
+  [role]
+  (case role
+    :muted   t/footer-fg-muted
+    :warn    t/footer-warning-fg
+    :error   t/footer-error-fg
+    :success t/footer-fg-strong
+    t/footer-fg))
+
+(defn- align-x
+  "Compute the starting column for a line of `line-w` cells inside a
+   `cols`-wide band, given the alignment hint. `:center` is the
+   default; `:left` pins to `edge-pad`; `:right` pins to the right."
+  ^long [align ^long line-w ^long cols]
+  (let [edge-pad 1]
+    (case align
+      :left  (long edge-pad)
+      :right (long (max edge-pad (- cols edge-pad line-w)))
+      ;; default = :center
+      (long (max edge-pad (quot (- cols line-w) 2))))))
+
+(defn- ir->header-row-spec
+  "Convert canonical IR (returned by a header-row hook) into the
+   internal row spec `{:height :draw!}` used by `draw-header!`.
+
+   - Walks the IR via `ir-tui/ir->lines` to get styled lines.
+   - Reads optional `:align` and `:fg-role` from the IR root attrs.
+   - Returns nil when the IR walks to zero lines.
+
+   The :draw! closure paints each line via `paint-styled-line!`,
+   honouring inline sentinels (bold/italic/code/strike) emitted by
+   the IR walker."
+  [ir ^long cols]
+  (let [attrs   (when (and (>= (count ir) 2) (map? (nth ir 1))) (nth ir 1))
+        align   (or (:align   attrs) :center)
+        fg-role (or (:fg-role attrs) :default)
+        ;; Subtract a 1-col edge pad on each side; tighter wrap than
+        ;; the cols arg the painter receives.
+        wrap-w  (max 1 (- cols 2))
+        ;; ir-tui returns vec of `{:runs [{:text :style}...]}`. We
+        ;; convert to sentinel-prefixed plain strings via the
+        ;; existing adapter so paint-styled-line! can render bold /
+        ;; italic / code spans the same way every other styled line
+        ;; in the TUI does.
+        lines    (ir-tui/ir->lines ir wrap-w)
+        line-strs (when (seq lines) (ir-tui/lines->sentinel-strings lines))]
+    (when (seq line-strs)
+      (let [fg (fg-role->color fg-role)]
+        {:height (count line-strs)
+         :draw!
+         (fn [^com.googlecode.lanterna.graphics.TextGraphics g ^long row-top]
+           (loop [i 0 lines (seq line-strs)]
+             (when lines
+               (let [^String line (first lines)
+                     visible-w    (long (p/display-width line))
+                     x            (align-x align visible-w cols)
+                     y            (+ row-top (long i))]
+                 (p/clear-styles! g)
+                 (p/set-colors! g fg t/terminal-bg)
+                 ;; italic by default for header subtitle rows -
+                 ;; that's the established visual style for this
+                 ;; band; extensions can override by emitting their
+                 ;; own ITALIC sentinels via [:em ...] inside the IR.
+                 (p/enable! g p/ITALIC)
+                 (p/paint-styled-line! g x y line
+                   fg t/terminal-bg t/code-block-fg t/code-block-bg)
+                 (p/clear-styles! g)
+                 (recur (inc i) (next lines))))))}))))
+
 (defn- header-row-specs
-  "Query every extension's `:tui/header-row` hook, run its `:render-fn`,
-   collect the non-nil row specs. The hook contract:
+  "Query every extension's `*/header-row` hook, run its `:render-fn`,
+   collect the resulting row specs.
 
-     :render-fn  (fn [db cols] -> {:height long :draw! (fn [g row])} | nil)
+   Hook contract: `:render-fn` returns canonical IR (or nil to skip
+   this frame). The IR is walked + converted to a row spec here.
 
-   Render-fns may return nil to skip drawing this frame (e.g. the
-   goal contributor returns nil when no goal is set). Settings can
-   disable a hook by id via `:contributors-disabled` set.
-
-   Hook crashes never propagate — a misbehaving extension can't
-   take down the render thread; it just loses its row that frame."
+   Settings can disable a hook by id via `:contributors-disabled`.
+   Hook crashes never propagate — misbehaving extensions just lose
+   their row that frame."
   [db cols]
   (vec
     (for [{:keys [hook-id render-fn]} (vis/channel-hooks-for :tui)
           :when (and (ifn? render-fn)
                   (not (contributor-disabled? db hook-id))
-                  ;; Only consume hooks whose id is namespaced under
-                  ;; `:tui/header-row` or has the literal id. Lets
-                  ;; extensions use richer id keywords (e.g.
-                  ;; `:goal/header-row`) without conflicting with
-                  ;; other tui channel-hook surfaces.
+                  ;; Consume hooks whose id is `:tui/header-row` or
+                  ;; whose name ends in `header-row` (e.g.
+                  ;; `:goal/header-row`). Lets each extension scope
+                  ;; its hook id under its own namespace without
+                  ;; conflicting with other tui channel-hook surfaces.
                   (or (= :tui/header-row hook-id)
                     (= "header-row" (name hook-id))))
-          :let [spec (try (render-fn db cols)
-                       (catch Throwable _ nil))]
+          :let [ir   (try (render-fn db cols) (catch Throwable _ nil))
+                spec (when (ir-root? ir)
+                       (try (ir->header-row-spec ir cols)
+                         (catch Throwable _ nil)))]
           :when (and spec (pos? (long (or (:height spec) 0))))]
       {:id hook-id :spec spec})))
 

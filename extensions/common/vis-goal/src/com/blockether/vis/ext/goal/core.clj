@@ -655,63 +655,44 @@
         (swap! goal-tui-cache assoc conv-id [now g])
         g))))
 
-(def ^:private tui-paint-deps
-  ;; Resolve channel-tui's theme + primitive vars once and capture
-  ;; their VALUES. Avoids the per-frame requiring-resolve hashmap
-  ;; lookup and lets us call the primitives as ordinary functions.
-  ;; Returns nil when channel-tui isn't on the classpath — the
-  ;; render-fn checks and short-circuits.
-  (delay
-    (try
-      (let [resolve! #(some-> (requiring-resolve %) deref)]
-        (when-let [set-colors (resolve! 'com.blockether.vis.ext.channel-tui.primitives/set-colors!)]
-          {:fg-active    (resolve! 'com.blockether.vis.ext.channel-tui.theme/footer-fg)
-           :fg-paused    (resolve! 'com.blockether.vis.ext.channel-tui.theme/footer-warning-fg)
-           :fg-done      (resolve! 'com.blockether.vis.ext.channel-tui.theme/footer-fg-muted)
-           :bg           (resolve! 'com.blockether.vis.ext.channel-tui.theme/terminal-bg)
-           :set-colors   set-colors
-           :put-str      (resolve! 'com.blockether.vis.ext.channel-tui.primitives/put-str!)
-           :enable       (resolve! 'com.blockether.vis.ext.channel-tui.primitives/enable!)
-           :clear-styles (resolve! 'com.blockether.vis.ext.channel-tui.primitives/clear-styles!)
-           :italic       (resolve! 'com.blockether.vis.ext.channel-tui.primitives/ITALIC)}))
-      (catch Throwable _ nil))))
+(defn- goal-status->fg-role
+  "Map a goal status to a channel-agnostic foreground role keyword.
+   Channels translate the role to their own palette:
+     :paused  → warn-yellow / yellow chip / etc.
+     :done    → muted text
+     other    → default text"
+  [status]
+  (case status
+    :paused :warn
+    :done   :muted
+    :default))
 
 (defn- goal-row-render
-  "Header row contributor for the goal subtitle. Called twice per frame
-   (height-layout + draw). Returns a row spec or nil.
+  "Header row contributor for the goal subtitle. Returns CANONICAL IR
+   (`[:ir {?:align ?:fg-role} & blocks]`) — channel-agnostic data.
+   Each channel translates IR to its surface (TUI: paints styled
+   line; Telegram: emits markdown; web: renders HTML).
 
-   Render shape: one row, centered italic summary, color-coded by status:
-     :paused  → warn-yellow
-     :done    → muted (so historical outcomes don't compete with new content)
-     active   → footer-fg (subtitle weight)"
-  [db ^long cols]
+   Returns nil when no goal is set (the row contributes zero rows).
+
+   Render hints carried on the IR root attrs:
+     :align    :center  — subtitle row is centered in the band.
+     :fg-role  :warn / :muted / :default — status-driven color cue."
+  [db _cols]
   (when-let [conv-id (some-> db :conversation :id)]
     (when-let [goal (cached-goal-for-conv conv-id)]
       (when (some? (:status goal))
-        (let [summary (goal-pure/format-goal-summary goal (System/currentTimeMillis))
-              deps    @tui-paint-deps]
-          (when (and (string? summary) (not (str/blank? summary)) deps)
-            (let [edge-pad 1
-                  max-w (max 0 (- cols (* 2 edge-pad)))
-                  text  (if (<= (count summary) max-w)
-                          summary
-                          (str (subs summary 0 (max 0 (dec max-w))) "..."))
-                  w     (long (count text))
-                  col   (max edge-pad (quot (- cols w) 2))
-                  {:keys [fg-active fg-paused fg-done bg
-                          set-colors put-str enable clear-styles italic]} deps
-                  fg    (case (:status goal)
-                          :paused fg-paused
-                          :done   fg-done
-                          fg-active)]
-              {:height 1
-               :draw!
-               (fn [g row]
-                 (clear-styles g)
-                 (set-colors g fg bg)
-                 (enable g italic)
-                 (put-str g (long col) (long row) text)
-                 (clear-styles g))})))))))
+        (let [summary (goal-pure/format-goal-summary goal
+                        (System/currentTimeMillis))]
+          (when (and (string? summary) (not (str/blank? summary)))
+            ;; Wrap the summary in `:em` so the IR walker emits
+            ;; the italic inline-style sentinel; the channel
+            ;; renders it accordingly. The outer `:p` is the
+            ;; canonical block wrapper.
+            [:ir {:align   :center
+                  :fg-role (goal-status->fg-role (:status goal))}
+             [:p {}
+              [:em {} [:span {} summary]]]]))))))
 
 (defn- goal-tui-commands
   "Returns the list of TUI slash commands the goal extension contributes.
@@ -770,13 +751,21 @@
       ;; Header subtitle row contributor. Channel-tui consumes any
       ;; hook whose `:hook-id` ends in "header-row" (or equals
       ;; `:tui/header-row` exactly) and calls its `:render-fn` per
-      ;; frame with `(db cols) -> {:height :draw!} | nil`. Pure
-      ;; declarative — no `requiring-resolve` into channel-tui from
-      ;; here, no hard-coded extension lookups from channel-tui to
-      ;; here. See header.clj's `header-row-specs` for the contract.
-      ;; Other channels (Telegram, future web) can declare their own
-      ;; equivalent hooks (`:telegram/preamble`, etc.) without
-      ;; touching this extension or each other.
+      ;; frame with `(db cols) -> ir | nil`.
+      ;;
+      ;; The render-fn returns CANONICAL IR — channel-agnostic data.
+      ;; Channel-tui walks the IR via the styled-line walker; other
+      ;; channels (Telegram, future web) translate the same IR to
+      ;; their own surface (markdown, HTML, ...). Optional render
+      ;; hints carried as IR root attrs:
+      ;;   :align    :left|:center|:right
+      ;;   :fg-role  :default|:muted|:warn|:error|:success
+      ;;
+      ;; Pure declarative — no `requiring-resolve` into channel-tui
+      ;; from here, no hard-coded extension lookups from channel-tui
+      ;; to here. See header.clj's `header-row-specs` for the
+      ;; contract. Other channels declare their own hooks
+      ;; (`:telegram/preamble`, etc.) without touching this extension.
       {:channel-id :tui
        :hook-id    :goal/header-row
        :render-fn  #'goal-row-render}]}))

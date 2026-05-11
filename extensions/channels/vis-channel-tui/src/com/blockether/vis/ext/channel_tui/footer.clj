@@ -37,6 +37,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as lp]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
+            [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.git :as git])
@@ -470,6 +471,79 @@
                    :region :left :priority 1}))
       (build-usage-segments db))))
 
+;;; ── Extension footer segments (channel-hooks) ─────────────────────────────
+;;
+;; Extensions contribute footer segments by adding entries to their
+;; `:ext/channel-hooks` vec:
+;;
+;;   {:channel-id :tui
+;;    :hook-id    :tui/footer-segment    ;; or :*/footer-segment
+;;    :render-fn  (fn [db now-ms]
+;;                  -> {:ir       [:ir {?:fg-role} & blocks]
+;;                      :region   :left|:center|:right       ;; default :left
+;;                      :priority N                          ;; default 3
+;;                      :row      0|1                        ;; default 0
+;;                      :join-left? bool                     ;; default false
+;;                     } | nil)}
+;;
+;; The render-fn returns CANONICAL IR + layout hints; the TUI walks
+;; the IR to a plain styled string and packs it into the segment
+;; vec built-ins also feed. Other channels translate the same IR
+;; differently (Telegram: emit as inline markdown; web: HTML span).
+;;
+;; `:fg-role` is a channel-agnostic intent keyword (`:warn`,
+;; `:muted`, `:default`, `:success`, `:error`); each channel maps
+;; it to its palette. Unknown roles fall back to `:default`.
+
+(defn- fg-role->color
+  [role]
+  (case role
+    :muted   t/footer-fg-muted
+    :warn    t/footer-warning-fg
+    :error   t/footer-error-fg
+    :success t/footer-fg-strong
+    t/footer-fg))
+
+(defn- ir->footer-text
+  "Walk IR to a single sentinel-prefixed string for the footer
+   packer. Footer is one row; we join multi-line IR output with a
+   space so a misbehaving multi-block IR still fits."
+  ^String [ir]
+  (let [lines (ir-tui/ir->lines ir 1024)
+        strs  (ir-tui/lines->sentinel-strings lines)]
+    (str/join " " (remove str/blank? strs))))
+
+(defn- extension-footer-segments
+  "Vector of segments contributed by extensions for footer row `row`
+   (0 = top footer row, 1 = limits row).
+
+   Hook crashes never propagate — a misbehaving extension just loses
+   its segment that frame. Settings can disable hooks via
+   `:contributors-disabled` (see contributor-disabled? in header.clj
+   for the same gate; we re-implement it locally to avoid coupling)."
+  [db now-ms ^long row]
+  (let [disabled (let [s (get-in db [:settings :contributors-disabled])]
+                   (when (set? s) s))]
+    (vec
+      (for [{:keys [hook-id render-fn]} (lp/channel-hooks-for :tui)
+            :when (and (ifn? render-fn)
+                    (not (and disabled (contains? disabled hook-id)))
+                    (or (= :tui/footer-segment hook-id)
+                      (= "footer-segment" (name hook-id))))
+            :let [seg (try (render-fn db now-ms) (catch Throwable _ nil))]
+            :when (and (map? seg)
+                    (= row (long (or (:row seg) 0)))
+                    (vector? (:ir seg))
+                    (= :ir (first (:ir seg))))
+            :let [text (ir->footer-text (:ir seg))]
+            :when (and (string? text) (not (str/blank? text)))]
+        {:text       text
+         :fg         (fg-role->color (or (:fg-role seg) :default))
+         :bold?      (boolean (:bold? seg))
+         :region     (or (:region seg) :left)
+         :priority   (long (or (:priority seg) 3))
+         :join-left? (boolean (:join-left? seg))}))))
+
 ;;; ── Width fitting ──────────────────────────────────────────────────────────
 
 (def ^:private sep "  /  ")
@@ -562,8 +636,15 @@
     (map-indexed vector spans)))
 
 (defn- draw-footer-row!
-  [g db row cols now-ms build-fn]
-  (let [[segs separator] (shrink-to-fit (build-fn db now-ms) cols)
+  [g db row cols now-ms build-fn row-idx]
+  ;; Extension-contributed segments are appended AFTER built-ins so
+  ;; they sort to the back of their region; existing built-ins keep
+  ;; their visual position. shrink-to-fit drops by `:priority` so
+  ;; extensions can opt in to early-drop with a high :priority.
+  (let [built-in (build-fn db now-ms)
+        ext-segs (extension-footer-segments db now-ms (long row-idx))
+        all-segs (into (vec built-in) ext-segs)
+        [segs separator] (shrink-to-fit all-segs cols)
         l        (region-spans segs :left)
         c        (region-spans segs :center)
         r        (region-spans segs :right)
@@ -591,8 +672,8 @@
   (p/clear-styles! g)
   (p/set-colors! g t/footer-fg t/terminal-bg)
   (p/fill-rect! g 0 footer-row cols 2)
-  (draw-footer-row! g db footer-row cols now-ms build-segments)
-  (draw-footer-row! g db (inc footer-row) cols now-ms build-limits-segments)
+  (draw-footer-row! g db footer-row cols now-ms build-segments 0)
+  (draw-footer-row! g db (inc footer-row) cols now-ms build-limits-segments 1)
 
   ;; Restore neutral state for whatever paints next.
   (p/clear-styles! g)
