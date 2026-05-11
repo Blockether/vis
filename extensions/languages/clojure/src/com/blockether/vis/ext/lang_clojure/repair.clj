@@ -325,21 +325,21 @@
 
 (def repair-range-symbol
   (vis/symbol #'repair-range
-    {:result-spec ::extension/tool-result
+    {:result-spec :op/envelope
      :journal-render-fn journal-render-repair
      :channel-render-fn channel-render-repair
      :on-error-fn (tool-failure-on-error :z/repair-range)}))
 
 (def repair-locator-symbol
   (vis/symbol #'repair-locator
-    {:result-spec ::extension/tool-result
+    {:result-spec :op/envelope
      :journal-render-fn journal-render-repair
      :channel-render-fn channel-render-repair
      :on-error-fn (tool-failure-on-error :z/repair-locator)}))
 
 (def repair-file-symbol
   (vis/symbol #'repair-file
-    {:result-spec ::extension/tool-result
+    {:result-spec :op/envelope
      :journal-render-fn journal-render-repair
      :channel-render-fn channel-render-repair
      :on-error-fn (tool-failure-on-error :z/repair-file)}))
