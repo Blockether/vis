@@ -13,3 +13,13 @@ Example:
 (def file (v/cat "src/foo.clj"))
 (subvec (get-in file [:op/result :lines]) 40 80)
 ```
+
+Anti-patterns that caused conversation `ac0da8ae` failures:
+
+```clojure
+(get-in file [:result :lines]) ; wrong: nil path
+(subvec (get-in file [:result :lines]) 40 80) ; nil -> subvec crash
+(get-in lines) ; wrong: get-in needs a key path; slice bound vectors directly
+```
+
+Recovery rule: if an answer-alone preflight rejects an iteration, rerun the rejected observation forms without `(answer ...)`, observe success, then answer in a separate answer-only iteration.

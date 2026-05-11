@@ -124,7 +124,7 @@
                         ;; thawed Nippy IR `[:ir & nodes]` (see
                         ;; conversation_turn_state.answer in V1 schema). NULL
                         ;; on running / never-finished turns → lift to empty IR.
-                        answer    (or (:answer q) empty-ir)
+                        answer-ir (or (:answer q) empty-ir)
                         model     (:model q)
                         tokens    (cond-> {}
                                     (:input-tokens q)     (assoc :input (:input-tokens q))
@@ -149,8 +149,12 @@
                         last-iteration-id (some-> (last turn-iterations) :id)
                         ;; Empty IR is `[:ir {}]` (count 2 — just root tag
                         ;; + attrs); a real answer adds at least one block.
-                        produced-answer? (and (vector? answer) (= :ir (first answer))
-                                           (> (count answer) 2))
+                        produced-answer? (do
+                                           (when-not (and (vector? answer-ir) (= :ir (first answer-ir)))
+                                             (throw (ex-info "Persisted answer must be canonical [:ir ...]"
+                                                      {:turn-id (:id q)
+                                                       :got-type (some-> answer-ir class .getName)})))
+                                           (> (count answer-ir) 2))
                         trace (into []
                                 (map (fn [it]
                                        (let [all-exprs   (vec (vis/db-list-iteration-blocks d (:id it)))
@@ -241,9 +245,9 @@
                         ;; the same way live cancellations render -
                         ;; on bare terminal-bg, no bubble-wide fill.
                         cancelled? (= :cancelled (:prior-outcome q))
-                        assistant-message (cond-> (assistant-message answer (or (:created-at q) (java.util.Date.)))
+                        assistant-message (cond-> (assistant-message answer-ir (or (:created-at q) (java.util.Date.)))
                                             true       (assoc :conversation-turn-id (:id q))
-                                            (seq trace) (assoc :traces trace :ir answer)
+                                            (seq trace) (assoc :traces trace :ir answer-ir)
                                             model  (assoc :model model)
                                             iteration-count (assoc :iteration-count iteration-count)
                                             duration-ms (assoc :duration-ms duration-ms)
@@ -289,7 +293,7 @@
 
 (defn turn!
   "Send a user request through the shared conversations cache. Blocking.
-   Returns `{:answer str}` or `{:error str}`.
+   Returns `{:answer [:ir ...]}` or `{:error str}`.
 
    `opts` may contain:
      :on-chunk          - fn receiving phased chunks `{:phase :iteration ...}`. Phases:
@@ -353,7 +357,9 @@
      (catch Exception e
        (if (vis/cancellation? e)
          (do (.interrupt (Thread/currentThread))
-           {:answer "Cancelled by user." :iteration-count 0 :status :cancelled})
+           {:answer [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+            :iteration-count 0
+            :status :cancelled})
          (do
            ;; Log EVERYTHING. Stripping a stack trace at the channel
            ;; boundary is how a `[SQLITE_CANTOPEN]` ends up untriagable

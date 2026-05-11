@@ -11,7 +11,7 @@
    Tables (V1__schema.sql):
      conversation_soul, conversation_state,
      conversation_turn_soul, conversation_turn_state,
-     iteration,
+     conversation_turn_iteration,
      expression_soul, expression_state, expression_dependency,
      extension_aggregate,
      log
@@ -98,7 +98,7 @@
 
    Used as the write-side hook for the rich text fields the bubble
    layer carries as IR (or markdown strings lifted via `text->ir`):
-   answer, thinking, per-block comments. Search hits land back on
+   answer, thinking, per-code-block comments. Search hits land back on
    `(owner_table, owner_id)` which the caller translates to the
    right BLOB row."
   [tx-info owner-table owner-id field v]
@@ -957,7 +957,7 @@
 (defn- runtime-object?
   "True when `v` is a runtime-only object (function, SCI var, SCI internal)
    that cannot be meaningfully serialized as data. These get a :vis/ref marker
-   so the system knows to re-eval from the `expr` column to reconstruct them."
+   so the system knows to re-eval from the `expression` column to reconstruct them."
   [v]
   (or (fn? v)
     (instance? clojure.lang.Var v)
@@ -994,7 +994,7 @@
      :else                            v)))
 
 ;; =============================================================================
-;; Iteration - iteration table
+;; Iteration - conversation_turn_iteration table
 ;; =============================================================================
 
 (defn- normalize-role
@@ -1038,7 +1038,7 @@
 (defn db-store-iteration!
   "Store one iteration row + per-`(def ...)` expression_soul/expression_state
    rows. The iteration's full code-block log is written inline as a
-   Nippy blob in `iteration.blocks` (no per-call rows; see V1 schema
+   Nippy blob in `iteration.code_blocks` (no per-call rows; see V1 schema
    migration banner). Returns the iteration UUID."
   [db-info {:keys [conversation-turn-id blocks thinking answer answer-form-idx duration-ms vars error metadata
                    llm-messages llm-provider llm-model llm-raw-response llm-executable-code
@@ -1080,7 +1080,7 @@
                           1)
               raw-response-s (some-> llm-raw-response str)]
           ;; 1. Iteration row - includes the full block log inline as
-          ;;    `iteration.blocks BLOB` (Nippy-encoded vec). Per-form
+          ;;    `iteration.code_blocks BLOB` (Nippy-encoded vec). Per-form
           ;;    observations live here; expression_soul/expression_state
           ;;    are only for named vars.
           (let [blocks-vec (prepare-blocks-blob conversation-turn-soul-id-s position blocks)]
@@ -1098,12 +1098,12 @@
                                  :llm_thinking         (str/trim (or thinking ""))
                                  :llm_full_duration_ms (or duration-ms 0)
                                  :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
-                                 :llm_returned_empty_blocks (if (empty? blocks) 1 0)
+                                 :llm_returned_empty_code_blocks (if (empty? blocks) 1 0)
                                  :metadata             (when metadata (->json metadata))
-                                 :blocks               (->blob blocks-vec)
+                                 :code_blocks          (->blob blocks-vec)
                                  :llm_executable_code (some-> llm-executable-code str)
-                                 :llm_executable_blocks (when (some? llm-executable-blocks)
-                                                          (->json (vec llm-executable-blocks)))
+                                 :llm_executable_code_blocks (when (some? llm-executable-blocks)
+                                                               (->json (vec llm-executable-blocks)))
                                  :llm_assistant_message (when (some? llm-assistant-message)
                                                           (->json llm-assistant-message))
                                  :created_at           now
@@ -1172,7 +1172,7 @@
                                :conversation_turn_iteration_id       iteration-id-s
                                :version            (inc max-ver)
                                :success            1
-                               :expr               code
+                               :expression         code
                                :result             (->blob (freeze-safe value))
                                :metadata           (->json (cond-> {}
                                                              time-ms  (assoc :time-ms time-ms)
@@ -1278,15 +1278,15 @@
     (assoc :llm-raw-response-sha256 (:llm_raw_response_sha256 row))
     (some? (:llm_executable_code row))
     (assoc :llm-executable-code (:llm_executable_code row))
-    (some? (:llm_executable_blocks row))
-    (assoc :llm-executable-blocks (<-json (:llm_executable_blocks row)))
+    (some? (:llm_executable_code_blocks row))
+    (assoc :llm-executable-blocks (<-json (:llm_executable_code_blocks row)))
     ;; Canonical assistant message svar emitted on this iteration; rehydrated
     ;; on resume so preserved-thinking replay survives a vis restart.
     (some? (:llm_assistant_message row))
     (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
     (some? (:answer_form_idx row))      (assoc :answer-form-idx   (:answer_form_idx row))
-    (some? (:llm_returned_empty_blocks row))
-    (assoc :returned-empty-blocks? (= 1 (long (:llm_returned_empty_blocks row))))
+    (some? (:llm_returned_empty_code_blocks row))
+    (assoc :returned-empty-blocks? (= 1 (long (:llm_returned_empty_code_blocks row))))
     ;; Token / cost columns - ALWAYS present on the read side, with
     ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
     ;; is NULL. Callers can assume `(:input-tokens it)` is a long
@@ -1323,7 +1323,7 @@
                :code    (:expr r)
                :version (:version r)})
         (query! db-info
-          {:select [:es.name [:est.result :result] [:est.expr :expr] :est.version]
+          {:select [:es.name [:est.result :result] [:est.expression :expr] :est.version]
            :from   [[:expression_state :est]]
            :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
            :where  [:and
@@ -1337,17 +1337,17 @@
    Each entry carries :idx + :code (and optionally :comment :result
    :error :stdout :stderr :duration-ms :timeout? :repaired?).
 
-   Source: the Nippy-encoded `iteration.blocks` BLOB. Per-form calls are
+   Source: the Nippy-encoded `iteration.code_blocks` BLOB. Per-form calls are
    read directly from that blob; expression_soul/expression_state are
    reserved for named vars."
   [db-info iteration-id]
   (if (and (ds db-info) iteration-id)
     (let [iteration-id-s (->ref iteration-id)
           row            (query-one! db-info
-                           {:select [:blocks]
+                           {:select [:code_blocks]
                             :from   :conversation_turn_iteration
                             :where  [:= :id iteration-id-s]})
-          decoded        (<-blob (:blocks row))]
+          decoded        (<-blob (:code_blocks row))]
       (vec (or decoded [])))
     []))
 
@@ -1366,7 +1366,7 @@
                     :conversation-turn-id   (->uuid (:conversation_turn_soul_id r))
                     :created-at (->date (:created_at r))}]))
            (query! db-info
-             {:select [:es.name :est.result :est.expr :est.version :est.created_at
+             {:select [:es.name :est.result [:est.expression :expr] :est.version :est.created_at
                        :qst.conversation_turn_soul_id]
               :from   [[:expression_soul :es]]
               :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]
@@ -1436,7 +1436,7 @@
          (mapv row->bindings-entry
            (query! db-info
              (cond-> {:select [:es.name :es.conversation_state_id
-                               :est.version :est.result :est.expr :est.created_at
+                               :est.version :est.result [:est.expression :expr] :est.created_at
                                [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
                                [:it.position :iteration_position]
                                :qst.conversation_turn_soul_id]
@@ -1470,7 +1470,7 @@
                    :created-at (->date (:created_at r))
                    :info (row->var-info r)}))
           (query! db-info
-            {:select [:est.version :est.result :est.expr :est.created_at
+            {:select [:est.version :est.result [:est.expression :expr] :est.created_at
                       [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
                       [:it.position :iteration_position]
                       :es.conversation_state_id
@@ -1510,7 +1510,7 @@
                       :info  (row->var-info r)}))
              (query! db-info
                (cond-> {:select [:es.name :es.conversation_state_id
-                                 :est.version :est.result :est.expr :est.created_at
+                                 :est.version :est.result [:est.expression :expr] :est.created_at
                                  [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
                                  [:it.position :iteration_position]
                                  :qst.conversation_turn_soul_id]
@@ -1725,7 +1725,7 @@
 
      {:owner-table  String   ; e.g. \"conversation_turn_state\" / \"conversation_turn_iteration\"
       :owner-id     String   ; UUID into that table
-      :field        String   ; \"answer_text\" | \"thinking_text\" | \"comments_text\" | \"user_request\" | \"expr\"
+      :field        String   ; \"answer_text\" | \"thinking_text\" | \"comments_text\" | \"user_request\" | \"expression\"
       :snippet      String   ; FTS5 snippet with `[match]` markers around hit terms
       :rank         double}  ; FTS5 rank (lower = better match)
 
@@ -1855,7 +1855,7 @@
         ;; 1. All var souls with latest state
         (let [rows (query! db-info
                      {:select [:es.id :es.name :es.kind :es.state_mode
-                               :est.version :est.expr :est.result :est.success
+                               :est.version [:est.expression :expr] :est.result :est.success
                                :est.created_at]
                       :from   [[:expression_soul :es]]
                       :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]]

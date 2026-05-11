@@ -118,6 +118,8 @@
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
                         editing/editing-symbols)]
       (expect (string/includes? editing/editing-prompt "[:op/result :lines]"))
+      (expect (string/includes? editing/editing-prompt "Never use [:result :lines]"))
+      (expect (string/includes? editing/editing-prompt "`(get-in vector)` is an arity error"))
       (expect (string/includes? editing/editing-prompt "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :op/result :hits)"))
       (expect (string/includes? editing/editing-prompt "[:op/result :stdout]"))
       (expect (string/includes? (:ext.symbol/doc bash-symbol) ":op/result :stdout"))
