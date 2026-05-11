@@ -439,9 +439,87 @@ The aggregate KV schema gives us:
 - **Typed queries** via `:kind` filter (`:bridge/node`, `:bridge/edge`, etc.)
 - **Ownership** via runtime-filled `extension_id`
 
-Traversal queries (callers, blast-radius) load edge aggregates and
-filter/traverse in memory. For Vis's codebase size (~500 nodes), this
-is fast and simple.
+#### 7.2.1 Required: metadata JSON filtering
+
+Bridge needs one enhancement to the extension aggregate query layer
+that does not exist today: **metadata JSON field filtering**.
+
+Current `ext-list` / `ext-delete!` support filtering by `:id`, `:key`,
+`:kind`, and scope FK columns. They do NOT support filtering by fields
+inside the `metadata` JSON column.
+
+Bridge needs this because:
+
+| Bridge query | Required metadata filter |
+|---|---|
+| Edges from source X | `:metadata {:source "..."}` |
+| Edges to target Y | `:metadata {:target "..."}` |
+| Nodes in file F | `:metadata {:file-path "..."}` |
+| Delete nodes for file | `:metadata {:file-path "..."}` |
+| Nodes of kind "def" | `:metadata {:kind "def"}` |
+
+**Implementation**: add one clause to `extension-aggregate-clauses` in
+`persistance_sqlite/core.clj`, thread it through `extension_aggregate.clj`,
+and add a metadata JSON index:
+
+```clojure
+;; In extension-aggregate-clauses (persistance_sqlite/core.clj)
+;; Add to the cond-> vector, after existing clauses:
+(when-let [meta-filter (:metadata opts)]
+  (into []
+    (for [[k v] meta-filter]
+      [:= [:json_extract :metadata (str "$." (name k))] (str v)])))
+```
+
+And in V1 schema:
+
+```sql
+-- Support metadata JSON filtering for extensions (Bridge, etc.)
+CREATE INDEX idx_extension_aggregate_metadata
+  ON extension_aggregate(extension_id, kind, json_extract(metadata, '$.kind'));
+```
+
+Then expose `:metadata` in the `normalize-query` path of
+`extension_aggregate.clj` so it reaches the clauses:
+
+```clojure
+;; ext-list / ext-delete! accept :metadata map
+(vis/ext-list env {:kind :bridge/edge :metadata {:source "com.blockether.vis.core/run"}})
+```
+
+This is a **small, general-purpose enhancement** that benefits any
+extension wanting structured queries over its metadata. Zero schema
+changes. The `metadata` column is already JSON.
+
+**Without this**: Bridge must load ALL `:bridge/edge` rows, deserialize
+Nippy content, and filter in memory for every traversal query. This
+works at ~500 nodes but defeats the purpose of structured storage.
+
+**With this**: Bridge queries become indexed JSON lookups. No full-scan
+overhead. Scales cleanly to 10K+ nodes.
+
+#### 7.2.2 Design: searchable fields in metadata, not content
+
+Bridge puts **searchable fields** in `metadata` (JSON, queryable) and
+**full data** in `content` (Nippy blob, opaque but fast to deserialize).
+
+```clojure
+{:key    "edge:src::calls::tgt"
+ :kind   :bridge/edge
+ :scope  :global
+ :metadata {:edge-kind "calls"       ;; searchable via json_extract
+            :source    "core/run"     ;; searchable
+            :target    "lc/iterate!"   ;; searchable
+            :file-path "src/core.clj"} ;; searchable
+ :content  {:source    "core/run"     ;; full data, Nipy-encoded
+            :target    "lc/iterate!"
+            :kind      "calls"
+            :weight    1.0
+            :metadata  {:call-sites [147]}}}
+```
+
+Rule: if Bridge needs to filter on it, it goes in `metadata`.
+If it's payload data, it goes in `content`. Some fields appear in both.
 
 ### 7.3 Environment info
 
