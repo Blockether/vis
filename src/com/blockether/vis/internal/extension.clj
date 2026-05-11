@@ -758,7 +758,7 @@
 ;; ----------------------------------------------------------------------------
 (s/def :ext.guard/id keyword?)
 (s/def :ext.guard/check-fn fn?)
-(s/def :ext.guard/doc string?)
+(s/def :ext.guard/doc non-blank-string?)
 (s/def ::iteration-guard
   (s/keys :req-un [:ext.guard/id :ext.guard/check-fn]
     :opt-un [:ext.guard/doc]))
