@@ -442,7 +442,15 @@
       []
       (vec
         (for [{:keys [idx top height projected]} (:visible layout)
-              :let [message       (nth messages idx nil)
+              :let [;; Use the PROJECTED message, not the raw one from
+                    ;; `messages`. For the live streaming bubble the raw
+                    ;; message has `:ir` = pending placeholder ("Sending
+                    ;; request to provider...") while `projected` has
+                    ;; `:text` set by virtual/layout's loading branch
+                    ;; with the actual streamed content. Falling back to
+                    ;; the raw message would render the placeholder IR
+                    ;; on copy, which is the bug fixed here.
+                    message       (or projected (nth messages idx nil))
                     text          (copyable-bubble-text message)
                     sep-pad       (if (:turn-separator? projected) 2 0)
                     bubble-top    (+ top-limit (long top) sep-pad)
@@ -829,6 +837,23 @@
         live-idx       (live-loading-idx messages loading?)
         live-entry     (first (filter #(= live-idx (:idx %)) (:visible layout)))
         old-entry      (first (filter #(= live-idx (:idx %)) (:visible previous-layout)))]
+    ;; Diagnostic: capture per-tick geometry so we can see whether
+    ;; iteration 2/3 actually reach the painter. Fires only when
+    ;; the bubble's height changed since the last frame (keeps log
+    ;; tight — spinner ticks without content change skip).
+    (when (and live-entry
+            (not= (long (or (:height old-entry) -1))
+              (long (:height live-entry))))
+      (tel/log! {:level :info :id ::live-bubble-tick
+                 :data  {:iteration-count (count (or (:iterations progress) []))
+                         :total-h         (long (:total-h layout))
+                         :inner-h         inner-h
+                         :eff-scroll      (long (:eff-scroll layout))
+                         :live-top        (long (:top live-entry))
+                         :live-h          (long (:height live-entry))
+                         :old-top         (some-> old-entry :top long)
+                         :old-h           (some-> old-entry :height long)
+                         :messages-scroll messages-scroll}}))
     (when live-entry
       (let [clip (.newTextGraphics g
                    (TerminalPosition. 0 text-top)
