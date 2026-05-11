@@ -2,7 +2,6 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
-            [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe rebuild-history-test)

@@ -60,32 +60,33 @@
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 0 :context-limit 200000})))
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 50000 :context-limit 0})))))
 
-(defdescribe guards-registration-test
-  (it "foundation ships three guards: title, context-pressure, blind-answer"
-    (let [ids (set (map :id nudges/guards))]
+(defdescribe hooks-registration-test
+  (it "foundation ships three hooks: title, context-pressure, blind-answer"
+    (let [ids (set (map :id nudges/hooks))]
       (expect (= #{:foundation/conversation-title
                    :foundation/context-pressure
                    :foundation/blind-answer}
                 ids))))
 
-  (it "every guard declares the four required keys"
-    (doseq [g nudges/guards]
-      (expect (keyword? (:id g)))
-      (expect (string? (:doc g)))
-      (expect (contains? #{:iteration :turn :session} (:scope g)))
-      (expect (fn? (:check-fn g)))))
+  (it "every hook declares the four required keys (:id :doc :phase :fn)"
+    (doseq [h nudges/hooks]
+      (expect (keyword? (:id h)))
+      (expect (string? (:doc h)))
+      (expect (contains? #{:session-start :turn-start :iteration-start :iteration-end :turn-end}
+                (:phase h)))
+      (expect (fn? (:fn h)))))
 
-  (it "title guard adapts title-nudge into the {:hint :importance} shape"
-    (let [g (some #(when (= :foundation/conversation-title (:id %)) %) nudges/guards)
-          hit ((:check-fn g) {:conversation-title nil :title-refresh? false :iteration 1})]
+  (it "title hook adapts title-nudge into the {:hint :importance} shape"
+    (let [h (some #(when (= :foundation/conversation-title (:id %)) %) nudges/hooks)
+          hit ((:fn h) {:conversation-title nil :title-refresh? false :iteration 1})]
       (expect (string? (:hint hit)))
       (expect (= :low (:importance hit)))))
 
-  (it "guards return nil when their underlying condition is absent"
-    (let [title-g    (some #(when (= :foundation/conversation-title (:id %)) %) nudges/guards)
-          pressure-g (some #(when (= :foundation/context-pressure (:id %)) %) nudges/guards)]
-      (expect (nil? ((:check-fn title-g)    {:conversation-title "Set" :title-refresh? false :iteration 1})))
-      (expect (nil? ((:check-fn pressure-g) {:input-tokens 100 :context-limit 200000}))))))
+  (it "hooks return nil when their underlying condition is absent"
+    (let [title-h    (some #(when (= :foundation/conversation-title (:id %)) %) nudges/hooks)
+          pressure-h (some #(when (= :foundation/context-pressure (:id %)) %) nudges/hooks)]
+      (expect (nil? ((:fn title-h)    {:conversation-title "Set" :title-refresh? false :iteration 1})))
+      (expect (nil? ((:fn pressure-h) {:input-tokens 100 :context-limit 200000}))))))
 
 (defdescribe blind-answer-guard-test
   (it "fires on iter 1 + investigation verb + no prior blocks"

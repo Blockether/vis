@@ -14,7 +14,6 @@
    [com.blockether.vis.ext.channel-tui.selection :as selection]
    [com.blockether.vis.internal.external-opener :as opener]
    [com.blockether.vis.ext.channel-tui.state :as state]
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe it expect]])
   (:import [com.googlecode.lanterna.terminal.ansi UnixLikeTerminal$CtrlCBehaviour]))
 
@@ -56,12 +55,6 @@
 
 (def ^:private bubble-selectable-ranges
   (deref #'screen/bubble-selectable-ranges))
-
-(def ^:private bubble-copy-regions
-  (deref #'screen/bubble-copy-regions))
-
-(def ^:private bubble-copy-hit
-  (deref #'screen/bubble-copy-hit))
 
 (def ^:private input-selectable-ranges
   (deref #'screen/input-selectable-ranges))

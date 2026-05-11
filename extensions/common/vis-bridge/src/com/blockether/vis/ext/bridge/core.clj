@@ -6,10 +6,31 @@
    [com.blockether.vis.ext.bridge.doctor :as doctor]
    [com.blockether.vis.ext.bridge.languages.clojure :as clj]
    [com.blockether.vis.ext.bridge.languages.registry :as languages]
-   [com.blockether.vis.ext.bridge.languages.schema :as schema]))
+   [com.blockether.vis.ext.bridge.languages.schema :as schema]
+   [com.blockether.vis.internal.workspace-context :as workspace-context])
+  (:import
+   (java.security MessageDigest)))
+
+(defn workspace-file
+  "Resolve `path` against Vis' active workspace root, not JVM user.dir.
+   Extension invocation binds workspace-context/*workspace-root* from
+   Foundation/workspace env; outside a workspace this falls back to process cwd."
+  [path]
+  (let [file (io/file (str path))]
+    (if (.isAbsolute file)
+      file
+      (io/file (workspace-context/cwd) (str path)))))
 
 (defn- slurp-path [path]
-  (slurp (io/file (str path))))
+  (slurp (workspace-file path)))
+
+(defn content-sha256
+  "Return SHA-256 hex digest for text content. Used by Bridge index rows for
+   incremental backfill/change detection."
+  [content]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
+                 (.getBytes (str content) "UTF-8"))]
+    (apply str (map #(format "%02x" (bit-and 0xff %)) digest))))
 
 (defn clojure-lsp-status
   "Return external clojure-lsp availability used by Bridge's Clojure extractor."
@@ -22,8 +43,10 @@
    `:language` is supplied. Does not write storage."
   ([path] (extract-file path nil))
   ([path opts]
-   (let [opts (or opts {})]
-     (languages/extract-file (str path) (or (:content opts) (slurp-path path)) opts))))
+   (let [opts (or opts {})
+         content (or (:content opts) (slurp-path path))
+         result (languages/extract-file (str path) content opts)]
+     (assoc-in result [:stats :hash-sha256] (content-sha256 content)))))
 
 (defn extract
   "Generic Bridge extraction entry point.
@@ -52,6 +75,11 @@
             :diagnostics (vec (mapcat :diagnostics results))
             :stats {:language (some-> (:language opts) name)
                     :paths (vec (map str (:paths opts)))
+                    :path-hashes (into {}
+                                   (map (fn [result]
+                                          [(get-in result [:stats :path])
+                                           (get-in result [:stats :hash-sha256])])
+                                     results))
                     :result-count (count results)
                     :node-count (reduce + (map #(count (:nodes %)) results))
                     :edge-count (reduce + (map #(count (:edges %)) results))}}))
@@ -141,13 +169,21 @@
   {:key (index-key path)
    :kind :bridge/index
    :scope :global
-   :metadata {:path path
-              :language (result-language result)}
-   :content {:path path
-             :language (result-language result)
-             :node-count (count (:nodes result))
-             :edge-count (count (:edges result))
-             :stats (:stats result)}})
+   :metadata (cond-> {:path path
+                      :language (result-language result)}
+               (or (get-in result [:stats :path-hashes path])
+                 (get-in result [:stats :hash-sha256]))
+               (assoc :hash-sha256 (or (get-in result [:stats :path-hashes path])
+                                     (get-in result [:stats :hash-sha256]))))
+   :content (cond-> {:path path
+                     :language (result-language result)
+                     :node-count (count (:nodes result))
+                     :edge-count (count (:edges result))
+                     :stats (:stats result)}
+              (or (get-in result [:stats :path-hashes path])
+                (get-in result [:stats :hash-sha256]))
+              (assoc :hash-sha256 (or (get-in result [:stats :path-hashes path])
+                                    (get-in result [:stats :hash-sha256]))))})
 
 (defn aggregate-rows
   "Convert a normalized Bridge extraction result to extension aggregate rows.
@@ -219,6 +255,55 @@
      :edges (count (:edges result))
      :indexes (count (filter #(= :bridge/index (:kind %)) rows))}))
 
+(defn indexed-path-state
+  "Return current hash/index state for `path` using Bridge index rows.
+   Requires extension context because it reads via `vis/ext-get`."
+  [env path]
+  (let [path (str path)
+        content (slurp-path path)
+        current-hash (content-sha256 content)
+        row (vis/ext-get env {:kind :bridge/index :metadata {:path path}})
+        indexed-hash (or (get-in row [:content :hash-sha256])
+                       (get-in row [:metadata :hash-sha256]))]
+    {:path path
+     :hash-sha256 current-hash
+     :indexed-hash indexed-hash
+     :indexed? (some? row)
+     :changed? (not= current-hash indexed-hash)
+     :reason (cond
+               (nil? row) :new
+               (nil? indexed-hash) :missing-index-hash
+               (not= current-hash indexed-hash) :changed
+               :else :unchanged)}))
+
+(defn stale-paths
+  "Return path-state rows for paths whose current SHA differs from Bridge's
+   index aggregate. This is the pure backfill decision seam around ext-get."
+  [env paths]
+  (vec (filter :changed? (map #(indexed-path-state env %) paths))))
+
+(defn- backfill-with-env!
+  [env opts]
+  (let [opts (or opts {})
+        paths (vec (map str (or (:paths opts) (when-let [path (:path opts)] [path]))))]
+    (when-not (seq paths)
+      (throw (ex-info "Bridge backfill requires :path or :paths"
+               {:type :bridge.backfill/missing-paths})))
+    (let [stale (stale-paths env paths)
+          results (mapv (fn [{:keys [path]}]
+                          (let [result (extract-file path opts)
+                                fill-stats (fill-with-env! env result
+                                             (assoc opts :replace :path :path path))]
+                            {:path path
+                             :extract (:stats result)
+                             :fill fill-stats}))
+                    stale)]
+      {:requested (count paths)
+       :stale (count stale)
+       :skipped (- (count paths) (count stale))
+       :paths (mapv :path stale)
+       :results results})))
+
 (defn- default-replace-mode
   [result opts]
   (or (:replace opts)
@@ -281,6 +366,11 @@
   (str "Bridge extract+fill: extract=" (pr-str (:extract stats))
     ", fill=" (pr-str (:fill stats))))
 
+(defn- render-backfill-summary [stats]
+  (str "Bridge backfill: requested=" (:requested stats)
+    ", stale=" (:stale stats)
+    ", skipped=" (:skipped stats)))
+
 (def bridge-symbols
   [(vis/symbol #'extract
      {:journal-render-fn render-summary
@@ -312,6 +402,12 @@
       :arglists '([] [opts])
       :before-fn inject-env-before-fn
       :journal-render-fn render-extract-and-fill-summary
+      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
+   (vis/symbol 'backfill! backfill-with-env!
+     {:doc "Incrementally reindex only changed files from `:path` or `:paths`. Uses SHA-256 hashes stored in Bridge index rows."
+      :arglists '([opts])
+      :before-fn inject-env-before-fn
+      :journal-render-fn render-backfill-summary
       :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})])
 
 (defn- prompt [_env]
@@ -319,7 +415,7 @@
          {:ext/doc "Bridge codebase graph tools"
           :ext/ns-alias {:alias 'bridge}
           :ext/symbols bridge-symbols})
-    "\nBridge v1 contract: language extractors emit stable normalized facts; bridge/fill! maps them to aggregate rows. Use bridge/extract for facts, bridge/aggregate-rows for preview, bridge/fill! to persist, or bridge/extract-and-fill! for reindexing."))
+    "\nBridge v1 contract: language extractors emit stable normalized facts; bridge/fill! maps them to aggregate rows. Use bridge/extract for facts, bridge/aggregate-rows for preview, bridge/fill! to persist, bridge/extract-and-fill! for forced reindexing, or bridge/backfill! to reindex only changed paths."))
 
 (def vis-extension
   (vis/extension

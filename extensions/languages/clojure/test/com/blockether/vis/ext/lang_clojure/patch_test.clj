@@ -19,17 +19,20 @@
     (str f)))
 
 (defdescribe zpatch-surface-test
-  (it "exposes only z/patch-shaped guidance"
+  (it "exposes z/patch-shaped guidance and semantic reading tools"
     (expect (str/includes? patch/z-prompt "`z/` Clojure/EDN zipper patching"))
-    (expect (str/includes? patch/z-prompt "(z/patch {:path p :search locator :replace replacement})"))
     (expect (str/includes? patch/z-prompt "Same map shape as v/patch"))
+    (expect (str/includes? patch/z-prompt "z/forms"))
     (expect (str/includes? patch/z-prompt "z/locators"))
     (expect (str/includes? patch/z-prompt "z/symbols"))
     (expect (str/includes? patch/z-prompt "z/locator-for-symbol"))
+    (expect (str/includes? patch/z-prompt "z/inspect"))
     (expect (str/includes? patch/z-prompt "z/subedit->"))
     (expect (not (str/includes? patch/z-prompt "z/zedit")))
-    (expect (< (count patch/z-prompt) 1000))
+    (expect (< (count patch/z-prompt) 1200))
     (expect (= 'patch (:ext.symbol/sym patch/patch-symbol)))
+    (expect (= 'forms (:ext.symbol/sym patch/forms-symbol)))
+    (expect (= 'inspect (:ext.symbol/sym patch/inspect-symbol)))
     (expect (str/includes? (:ext.symbol/doc patch/patch-symbol)
               "Same input shape as v/patch"))))
 
@@ -99,78 +102,85 @@
                  {:path path :search "(def b 2)" :replace "(def b 20)"}])
       (expect (= "(ns demo)\n(def a 10)\n(def b 20)\n" (slurp path)))))
 
-  (it "z/locators and z/symbols return bounded agent-usable zipper locator rows"
-    (let [path        (write-temp! "patch/locators.clj" "(ns demo)\n(defn f [] old-sym :k \"s\")\n")
+  (it "z/forms, z/locators, and z/symbols return semantic agent-usable locator rows"
+    (let [path        (write-temp! "patch/locators.clj" "(ns demo)\n(defn f \"doc\" [] old-sym :k \"s\")\n")
+          forms-fn    (:ext.symbol/fn patch/forms-symbol)
           locators-fn (:ext.symbol/fn patch/locators-symbol)
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
-          locators    (locators-fn path {:limit 100})
+          forms       (forms-fn path {:limit 100})
+          locators    (locators-fn path {:depth :all :limit 100})
           symbols     (symbols-fn path {:limit 100})
-          old-row     (first (filter #(= 'old-sym (:value %)) (:result locators)))]
+          form-row    (first (filter #(= 'f (:name %)) (:op/result forms)))
+          old-row     (first (filter #(= 'old-sym (:value %)) (:op/result locators)))]
+      (expect (true? (:op/success? forms)))
       (expect (true? (:op/success? locators)))
       (expect (true? (:op/success? symbols)))
-      (expect (= {:kind :clojure/locators} (:presentation locators)))
-      (expect (= {:kind :clojure/locators} (:presentation symbols)))
-      (expect (every? #(= path (:path %)) (:result locators)))
-      (expect (every? #(integer? (:index %)) (:result locators)))
-      (expect (every? #(= #{:path :index :tag :value :locator :source :span}
-                         (set (keys %)))
-                (:result locators)))
+      (expect (every? #(= path (:path %)) (:op/result forms)))
+      (expect (every? #(integer? (:index %)) (:op/result forms)))
+      (expect (= :defn (:kind form-row)))
+      (expect (= 'f (:name form-row)))
+      (expect (= true (:doc? form-row)))
+      (expect (str/includes? (:digest form-row) "defn f"))
+      (expect (contains? form-row :source-preview))
+      ;; Back-compat patch handles stay available.
+      (expect (every? #(every? (set (keys %)) [:path :index :tag :value :locator :source :span :kind :digest :source-preview])
+                (:op/result forms)))
       (expect (= {:path path
                   :tag :token
+                  :kind :symbol
+                  :name nil
                   :value 'old-sym
                   :locator "old-sym"
                   :source "old-sym"
-                  :span [[2 12] [2 19]]}
-                (dissoc old-row :index)))
-      (expect (every? #(symbol? (:value %)) (:result symbols)))
-      (expect (every? #(= path (:path %)) (:result symbols)))
-      (expect (some #(= 'old-sym (:value %)) (:result symbols)))))
+                  :span [[2 18] [2 25]]}
+                (select-keys old-row [:path :tag :kind :name :value :locator :source :span])))
+      (expect (every? #(symbol? (:value %)) (:op/result symbols)))
+      (expect (every? #(= path (:path %)) (:op/result symbols)))
+      (expect (some #(= 'old-sym (:value %)) (:op/result symbols)))))
 
-  (it "z/locators defaults to 10 rows and supports focused symbol/source lookup"
+  (it "z/locators defaults to top-level rows and supports focused lookup"
     (let [path          (write-temp! "patch/locators-focused.clj"
                           (str "(ns demo)\n"
                             (str/join "\n" (map #(str "(def sym" % " " % ")") (range 20)))
                             "\n(defn needle [] target-sym)\n"))
           locators-fn   (:ext.symbol/fn patch/locators-symbol)
+          forms-fn      (:ext.symbol/fn patch/forms-symbol)
           symbols-fn    (:ext.symbol/fn patch/symbols-symbol)
           by-default    (locators-fn path)
+          by-kind       (forms-fn path {:kind :defn})
+          by-name       (forms-fn path {:name 'needle})
           by-symbol     (locators-fn path {:symbol 'target-sym})
           by-source     (locators-fn path {:source-contains "needle" :limit 20})
           symbol-filter (symbols-fn path {:name 'target-sym})]
-      (expect (= 10 (count (:result by-default))))
-      (expect (true? (get-in by-default [:info :truncated?])))
-      (expect (= ['target-sym] (mapv :value (:result by-symbol))))
-      (expect (some #(str/includes? (:source %) "needle") (:result by-source)))
-      (expect (= ['target-sym] (mapv :value (:result symbol-filter))))))
+      (expect (= 22 (count (:op/result by-default))))
+      (expect (false? (get-in by-default [:op/metadata :truncated?])))
+      (expect (= [:defn] (mapv :kind (:op/result by-kind))))
+      (expect (= ['needle] (mapv :name (:op/result by-name))))
+      (expect (= ['target-sym] (mapv :value (:op/result by-symbol))))
+      (expect (some #(str/includes? (:source %) "needle") (:op/result by-source)))
+      (expect (= ['target-sym] (mapv :value (:op/result symbol-filter))))))
 
   (it "z/locator-for-symbol returns one symbol row without dumping the namespace"
     (let [path       (write-temp! "patch/locator-for-symbol.clj" "(ns demo)\n(defn f [] target-sym)\n")
           locator-fn (:ext.symbol/fn patch/locator-for-symbol-symbol)
           out        (locator-fn path 'target-sym)]
       (expect (true? (:op/success? out)))
-      (expect (= :z/locator-for-symbol (get-in out [:info :op])))
-      (expect (= 'target-sym (get-in out [:result :value])))))
+      (expect (= :z/locator-for-symbol (:op/symbol out)))
+      (expect (= :z/locator-for-symbol (get-in out [:op/metadata :op])))
+      (expect (= 'target-sym (get-in out [:op/result :value])))))
 
-  (it "renders one locator as a compact patch-oriented hint"
-    (let [render-fn (private-fn "render-locators-result")
-          out (render-fn {:tool-result {:success? true
-                                        :result [{:path "src/demo.clj"
-                                                  :tag :list
-                                                  :locator "(defn f [] :ok)"
-                                                  :source "(defn f []\n  :ok)"
-                                                  :span [[1 1] [2 6]]}]}})]
-      (expect (str/includes? out "Patch hint"))
-      (expect (str/includes? out "(z/patch"))
-      (expect (str/includes? out "src/demo.clj"))
-      (expect (not (str/includes? out " <- "))))
-    (let [render-fn (private-fn "render-locators-kind")
-          out       (render-fn {:value [{:path "src/demo.clj"
-                                         :tag :list
-                                         :locator "(defn f [] :ok)"
-                                         :source "(defn f []\n  :ok)"
-                                         :span [[1 1] [2 6]]}]})]
-      (expect (str/includes? out "Found 1 zipper locator"))
-      (expect (str/includes? out "Patch hint"))))
+  (it "renders locators through the canonical Vis renderers with compact semantic summaries"
+    (let [tool-fn (:ext.symbol/fn patch/forms-symbol)
+          path    (write-temp! "patch/render.clj" "(ns demo)\n(defn f [] :ok)\n")
+          out     (tool-fn path {:kind :defn})
+          journal (vis/journal-render-tool-result out)
+          channel (vis/channel-render-tool-result out)]
+      (expect (str/includes? journal "1 zipper locator"))
+      (expect (str/includes? journal "defn f"))
+      (expect (str/includes? journal "(defn f"))
+      (expect (not (str/includes? journal "\n  :ok")))
+      (expect (str/includes? channel "Patch by adding :replace"))
+      (expect (str/includes? channel path)))))
 
   (it "accepts locator rows from z/symbols as span-specific search locators"
     (let [path        (write-temp! "patch/locator-row.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")

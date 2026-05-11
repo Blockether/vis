@@ -80,6 +80,28 @@
 (s/def ::aggregate-row aggregate-row?)
 (s/def ::aggregate-rows (s/coll-of ::aggregate-row :kind vector?))
 
+(def requirements
+  "Bridge v1 contract as data. This is the small DSL every extractor/fill path
+   must satisfy before rows are written. Additive metadata is allowed; graph
+   kinds, edge kinds, row kinds, and required keys are intentionally stable."
+  {:version 1
+   :facts {:node {:required [:kind :language :name :qualified-name :path]
+                  :kinds graph-kinds
+                  :metadata "language-specific details only; do not grow :kind enum"}
+           :edge {:required [:edge-kind :source :target :path]
+                  :kinds edge-kinds
+                  :metadata "relationship-specific details only"}
+           :result {:required [:nodes :edges :diagnostics :stats]}}
+   :rows {:required [:key :kind :scope :metadata :content]
+          :kinds aggregate-kinds
+          :scope :global
+          :metadata-query-keys #{:path :language :kind :edge-kind :source :target
+                                 :hash-sha256}}
+   :incremental {:unit :path
+                 :hash :sha256
+                 :index-kind :bridge/index
+                 :replace-modes #{:path :language :all :none}}})
+
 (defn valid-extract-result? [x]
   (s/valid? ::extract-result x))
 

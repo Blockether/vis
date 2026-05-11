@@ -57,7 +57,7 @@
      :iteration-count n-iters
      :timestamp       #inst "2026-04-30T00:00:00"}))
 
-(defn- incident-9a55-shaped-message
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} incident-9a55-shaped-message
   "Sanitized render fixture matching the bad 9a55 incident shape: 304 tool
    forms, ~100 previews, duplicated refs in source shape, two huge locator
    dumps, and one answer bubble. Payload text is synthetic; operation mix and
@@ -376,6 +376,41 @@
         (virtual/layout msgs bubble-w settings nil 5 {})
         ;; The cache must now contain at least one real height.
         (expect (pos? (virtual/height-cache-size)))))
+
+    (it "windowed scroll slices do not poison the full-height cache"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [long-answer (str/join "\n" (map #(str "line " %) (range 1 180)))
+            msgs        [(user-msg "prompt")
+                         (plain-assistant-msg long-answer)]
+            inner-h     20
+            bottom      (virtual/layout msgs bubble-w settings nil inner-h {})
+            total       (:total-h bottom)
+            max-s       (max 0 (- total inner-h))
+            mid-scroll  (max 0 (- max-s 3))
+            mid         (virtual/layout msgs bubble-w settings mid-scroll inner-h {})
+            mid-again   (virtual/layout msgs bubble-w settings (max 0 (- max-s 6)) inner-h {})
+            last-visible (last (:visible mid))]
+        (expect (pos? max-s))
+        (expect (some? (-> last-visible :projected :lines-window)))
+        (expect (= total (:total-h mid)))
+        (expect (= total (:total-h mid-again)))))
+
+    (it "mid-scroll trace assistants render the trace instead of an empty answer-IR window"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [msgs       [(user-msg "prompt")
+                        (trace-assistant-msg 12 6 "done")]
+            inner-h    20
+            bottom     (virtual/layout msgs bubble-w settings nil inner-h {})
+            max-s      (max 0 (- (:total-h bottom) inner-h))
+            mid-scroll (quot max-s 2)
+            mid        (virtual/layout msgs bubble-w settings mid-scroll inner-h {})
+            trace-row  (some #(when (-> % :projected :traces) %) (:visible mid))]
+        (expect (pos? max-s))
+        (expect (some? trace-row))
+        (expect (nil? (-> trace-row :projected :lines-window)))
+        (expect (pos? (count (-> trace-row :projected :prewrapped-lines))))))
 
     (it "detail toggles do not create a second height-cache universe"
       (virtual/invalidate-heights!)

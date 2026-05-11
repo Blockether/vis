@@ -22,12 +22,12 @@
                            activated this turn via `(load-skill ...)`.
           <system_nudges>  zero or more `<system_nudge importance=\"...\">`
                            entries, contributed entirely by extensions
-                           via `:ext/guards`. Core owns the rendering
+                           via `:ext/hooks`. Core owns the rendering
                            and the per-iteration ctx (model, context
                            limit, input-token estimate, title state,
                            user request); extensions own the policy
                            (title cadence, context-pressure, blind-
-                           answer detector, future custom guards).
+                           answer detector, future custom hooks).
         The current user goal arrives separately as
         `<user_turn_request_main_goal>`, not inside the trailer.
 
@@ -51,7 +51,7 @@
      is just the cached system prompt + the current
      <user_turn_request_main_goal>. Coding turns surface
      observable journal entries, active-skill bodies, bindings
-     entries, and extension guard hints through the XML-tagged
+     entries, and extension hook hints through the XML-tagged
      blocks above. Prior LLM-only reasoning reaches the model
      through preserved-thinking assistant messages echoed in the
      messages array (svar's canonical `:assistant-message`); the
@@ -615,13 +615,14 @@
      <bindings>   - `(def ...)` bindings in the SCI env.
 
    Plus zero or more tagged `<system_nudge importance=\"...\">` entries
-   wrapped in `<system_nudges>`. All entries come from `:ext/guards`
-   on active extensions; core owns no built-in guard policy. Each guard
-   declares its lifecycle `:scope` (#{:iteration :turn :session}) and a
-   `:check-fn` that receives the `nudge-ctx` (the per-iteration ctx
-   below) and returns either nil (silent) or `{:hint :importance?}`.
+   wrapped in `<system_nudges>`. All entries come from `:ext/hooks`
+   on active extensions; core owns no built-in hook policy. Each hook
+   declares its lifecycle `:phase` (`:session/start`, `:turn/start`,
+   `:turn.iteration/start`; legacy aliases accepted) and a `:fn` that
+   receives the `nudge-ctx` (the per-iteration ctx below) and returns
+   either nil (silent) or `{:hint :importance?}`.
 
-   `nudge-ctx` fields (passed to every guard `:check-fn`):
+   `nudge-ctx` fields (passed to every hook `:fn`):
      :environment        full environment map
      :iteration          1-based current iteration position
      :previous-blocks    last iteration's executed blocks (or nil)
@@ -635,7 +636,7 @@
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Computed once
         per turn; threaded through every iteration. Each extension's
-        :ext/guards vector is consulted (scope-filtered to the current
+        :ext/hooks vector is consulted (phase-filtered to the current
         iteration / turn / session position).
 
    Optional:
@@ -686,36 +687,40 @@
                    :input-tokens input-tokens
                    :title-refresh? (boolean title-refresh?)
                    :conversation-title conversation-title
-                   ;; Raw current-turn user request — guards inspect it
+                   ;; Raw current-turn user request — hooks inspect it
                    ;; for investigation verbs / blind-answer prevention.
                    :user-request current-user-content}
-        ;; <system_nudges> are populated by `:ext/guards` only — the single
-        ;; mechanism for model-facing hints. Each guard declares :scope
-        ;; (#{:iteration :turn :session}); the host invokes :check-fn only
-        ;; when scope matches the current lifecycle position. Returns nil
-        ;; (silent) or `{:hint :importance}`.
+        ;; <system_nudges> are populated by PRE-phase `:ext/hooks` — the
+        ;; single mechanism for model-facing advisory hints. Each hook
+        ;; declares :phase; the host invokes :fn only when the phase
+        ;; matches the current lifecycle position. Pre-phase fns return
+        ;; nil (silent) or `{:hint :importance?}`.
+        ;;
+        ;; Post-phase hooks (:turn.iteration/stop, :turn/stop) are NOT invoked
+        ;; here; they fire from internal/loop.clj after eval completes.
         iter-pos     (long (or iteration 0))
         first-iter?  (zero? iter-pos)
         turn-pos     (long (or (some-> environment :current-turn-position-atom deref) 1))
         first-turn?  (= 1 turn-pos)
-        scope-active? (fn [scope]
-                        (case scope
-                          :iteration true
-                          :turn      first-iter?
-                          :session   (and first-iter? first-turn?)
+        phase-active? (fn [phase]
+                        (case (extension/normalize-hook-phase phase)
+                          :turn.iteration/start true
+                          :turn/start           first-iter?
+                          :session/start        (and first-iter? first-turn?)
                           false))
         all-nudges (into []
                      (mapcat
                        (fn [ext]
-                         (for [{:keys [id scope check-fn]} (or (:ext/guards ext) [])
-                               :when (scope-active? scope)
-                               :let [hit (try (call-extension-callback ext check-fn nudge-ctx)
+                         (for [{:keys [id phase fn]} (or (:ext/hooks ext) [])
+                               :when (phase-active? phase)
+                               :let [hit (try (call-extension-callback ext fn
+                                                (assoc nudge-ctx :phase (extension/normalize-hook-phase phase)))
                                            (catch Throwable t
                                              (tel/log! {:level :warn
-                                                        :id ::guard-threw
+                                                        :id ::hook-threw
                                                         :data {:ext (:ext/namespace ext)
-                                                               :guard id
-                                                               :scope scope
+                                                               :hook id
+                                                               :phase (extension/normalize-hook-phase phase)
                                                                :error (ex-message t)}})
                                              nil))]
                                :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]

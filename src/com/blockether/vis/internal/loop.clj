@@ -912,6 +912,28 @@
 ;; Error normalization
 ;; ---------------------------------------------------------------------------
 
+(defn- op-error
+  "Coerce engine/model error values into the canonical structured :op/error map.
+
+   Iteration blocks require `:error` to be nil or a map. Preflight gates and
+   answer validators naturally produce strings; wrap them before persistence so
+   a useful model-facing error does not become `:vis/invalid-iteration-block`."
+  ([err] (op-error err nil))
+  ([err {:keys [code phase]}]
+   (cond
+     (nil? err) nil
+     (map? err) err
+     (instance? Throwable err)
+     (try (extension/ex->op-error err
+            (cond-> {}
+              code (assoc :block-source code)))
+       (catch Throwable _
+         {:message (or (ex-message err) (.getName (class err)))}))
+     :else
+     (cond-> {:message (str err)}
+       code (assoc :block {:source code
+                           :phase  (or phase :preflight)})))))
+
 (def ^:private INFRASTRUCTURE_ERROR_TYPES
   ;; These are provider/runtime failures, not model strategy failures.
   ;; svar already performs its own transport retry/fallback policy before
@@ -1713,7 +1735,13 @@
    this spec enforces the outer block-level eval info for every
    regular top-level form."
   [blocks]
-  (let [blocks (vec (or blocks []))]
+  (let [blocks (mapv (fn [block]
+                       (cond-> block
+                         (contains? block :error)
+                         (update :error op-error
+                           {:code (:code block)
+                            :phase (get-in block [:info :op])})))
+                 (or blocks []))]
     (doseq [block blocks]
       (when-not (s/valid? ::iteration-block block)
         (throw (ex-info "Invalid iteration block"
@@ -2025,15 +2053,21 @@
                            (let [iteration-id (form-ref idx)
                                  raw-result (cond
                                               preflight-error
-                                              {:result nil :error preflight-error
+                                              {:result nil
+                                               :error (op-error preflight-error
+                                                        {:code expr :phase :vis/preflight})
                                                :stdout "" :stderr "" :execution-time-ms 0
                                                :op :vis/guard}
                                               answer-preflight-error
-                                              {:result nil :error answer-preflight-error
+                                              {:result nil
+                                               :error (op-error answer-preflight-error
+                                                        {:code expr :phase :vis/preflight})
                                                :stdout "" :stderr "" :execution-time-ms 0
                                                :op :vis/guard}
                                               parse-error
-                                              {:result nil :error (str "Parse error: " parse-error)
+                                              {:result nil
+                                               :error (op-error (str "Parse error: " parse-error)
+                                                        {:code expr :phase :edamame/parse})
                                                :stdout "" :stderr "" :execution-time-ms 0
                                                :op :edamame/parse}
                                               ;; Answer-after-error gate: any prior form
@@ -2046,20 +2080,24 @@
                                                   (try (edamame/parse-string (str expr) edamame-opts)
                                                     (catch Throwable _ nil))))
                                               {:result nil
-                                               :error  (str "Answer-after-error gate: form "
-                                                         (inc idx) " of " total-blocks
-                                                         " contains an `(answer ...)` call, but "
-                                                         "a prior form in this iteration errored: "
-                                                         (truncate (str @prior-error-atom) 280)
-                                                         ". Recovery: drop the (answer ...) so the host loops; "
-                                                         "the next iteration's <journal> carries the error "
-                                                         "and you can observe + repair before answering.")
+                                               :error  (op-error
+                                                         (str "Answer-after-error gate: form "
+                                                           (inc idx) " of " total-blocks
+                                                           " contains an `(answer ...)` call, but "
+                                                           "a prior form in this iteration errored: "
+                                                           (truncate (str @prior-error-atom) 280)
+                                                           ". Recovery: drop the (answer ...) so the host loops; "
+                                                           "the next iteration's <journal> carries the error "
+                                                           "and you can observe + repair before answering.")
+                                                         {:code expr :phase :vis/guard})
                                                :stdout "" :stderr "" :execution-time-ms 0
                                                :op :vis/guard}
 
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
-                                                {:result nil :error err :stdout "" :stderr "" :execution-time-ms 0
+                                                {:result nil
+                                                 :error (op-error err {:code expr :phase :vis/guard})
+                                                 :stdout "" :stderr "" :execution-time-ms 0
                                                  :op :vis/guard}
                                                 (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
                                                                       (fn [tool-event]
@@ -2159,7 +2197,7 @@
                                     :channel (:channel result)
                                     :stdout (:stdout result)
                                     :stderr (:stderr result)
-                                    :error (:error result)
+                                    :error (op-error (:error result) {:code code :phase (:op result)})
                                     :execution-time-ms (:execution-time-ms result)
                                     :info (:info result)
                                     :role (:role result)
@@ -2217,7 +2255,10 @@
                             (and validation-error form-idx
                               (< form-idx (count blocks))
                               (nil? (get-in blocks [form-idx :error])))
-                            (assoc-in [form-idx :error] validation-error))
+                            (assoc-in [form-idx :error]
+                              (op-error validation-error
+                                {:code (get code-blocks form-idx)
+                                 :phase :vis/final-answer-validation})))
               ;; Re-emit a `:phase :form-result` chunk for the
               ;; answer-bearing form when the validator attached an
               ;; error post-hoc. The original `:form-result` chunk
@@ -2251,7 +2292,9 @@
              :blocks (or (seq blocks*)
                        [{:id 0 :code "(final-answer-validation)"
                          :result nil :stdout "" :stderr ""
-                         :error validation-error}])
+                         :error (op-error validation-error
+                                  {:code "(final-answer-validation)"
+                                   :phase :vis/final-answer-validation})}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
              :llm-messages messages :llm-provider provider :llm-model model-name
@@ -3040,6 +3083,26 @@
                        (try (hook-fn payload)
                          (catch Exception e
                            (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
+        ;; Post-phase `:ext/hooks` invocation. Walks every active
+        ;; extension's hooks vector, filters by canonical :phase, calls :fn
+        ;; with the post-eval ctx. Return value is IGNORED — these are
+        ;; side-effect-only telemetry / logging / external-resource hooks.
+        ;; Pre-phase hooks fire from prompt/build-iteration-context.
+        emit-post-hooks! (fn [target-phase ctx]
+                           (let [target-phase* (extension/normalize-hook-phase target-phase)]
+                             (doseq [ext (or active-exts [])
+                                     {:keys [id phase] hook-fn :fn} (or (:ext/hooks ext) [])
+                                     :when (= (extension/normalize-hook-phase phase) target-phase*)]
+                               (binding [extension/*current-extension* ext
+                                         extension/*current-symbol* nil]
+                                 (try (hook-fn (assoc ctx :phase target-phase*))
+                                   (catch Throwable t
+                                     (tel/log! {:level :warn
+                                                :id ::hook-threw
+                                                :data {:ext (:ext/namespace ext)
+                                                       :hook id
+                                                       :phase target-phase*
+                                                       :error (ex-message t)}})))))))
         ;; Metadata persisted on each iteration row - reuses the
         ;; precomputed `active-exts` (no second activation pass).
         ;;
@@ -3351,6 +3414,15 @@
                                                         :cost-usd (:cost-usd tc)))))]
                         (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                         (update-iteration-id! environment err-iteration-id (long (or iteration 0)))
+                        ;; Post-phase :turn.iteration/stop hook (error path).
+                        (emit-post-hooks! :turn.iteration/stop
+                          {:iteration       (inc (long (or iteration 0)))
+                           :iteration-id    err-iteration-id
+                           :status          :error
+                           :thinking        empty-reasoning
+                           :blocks          nil
+                           :error           iteration-error-data
+                           :duration-ms     0})
                       ;; Live error chunk - `:phase :iteration-error`
                       ;; signals the iteration aborted before any
                       ;; forms could run. No per-form chunks fired
@@ -3454,7 +3526,15 @@
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                           _ (update-iteration-id! environment iteration-id (long (or iteration 0)))
                           trace-entry {:iteration iteration :thinking thinking
-                                       :blocks blocks :final? (boolean final-result)}]
+                                       :blocks blocks :final? (boolean final-result)}
+                          _ (emit-post-hooks! :turn.iteration/stop
+                              {:iteration       (inc (long (or iteration 0)))
+                               :iteration-id    iteration-id
+                               :status          (if final-result :final :continue)
+                               :thinking        thinking
+                               :blocks          blocks
+                               :error           nil
+                               :duration-ms     (or (:duration-ms iteration-result) 0)})]
                       (cond
                         final-result
                         (do (log-stage! :final iteration
@@ -3487,6 +3567,14 @@
                           (let [result (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                                :iteration-count (inc iteration)}
                                          (finalize-cost))]
+                            (emit-post-hooks! :turn/stop
+                              {:status          :final
+                               :iteration       (long (or iteration 0))
+                               :iteration-count (inc iteration)
+                               :tokens          (:tokens result)
+                               :cost-usd        (:cost result)
+                               :answer          (:answer final-result)
+                               :error           nil})
                             (auto-archive-hot-symbols! environment)
                             result))
 

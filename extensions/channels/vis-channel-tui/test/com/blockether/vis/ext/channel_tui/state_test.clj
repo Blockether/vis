@@ -1,11 +1,9 @@
 (ns com.blockether.vis.ext.channel-tui.state-test
-  (:require [clojure.string :as str]
-            [com.blockether.vis.core :as vis]
+  (:require [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.input :as input]
             [com.blockether.vis.ext.channel-tui.render :as render]
             [com.blockether.vis.ext.channel-tui.state :as state]
             [com.blockether.vis.ext.channel-tui.virtual :as virtual]
-            [com.blockether.vis.internal.workspace-context :as workspace-context]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe detail-toggle-test

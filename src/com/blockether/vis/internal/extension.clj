@@ -11,7 +11,7 @@
 
      - the active-extensions list every iteration consults
      - the system-prompt block rendered from `:ext/symbols`
-     - the per-iteration `:ext/guards` checks
+     - the per-iteration `:ext/hooks` checks
      - the parse-error rescue chain
      - the `(v/extensions)` / `(v/extension-doc id name)`
        catalog the agent reads to discover its own surface
@@ -682,38 +682,79 @@
 (s/def :ext/environment-info-fn fn?)
 
 ;; ----------------------------------------------------------------------------
-;; Guards: the single mechanism for MODEL-FACING <system_nudge> entries
-;; appended to each iteration's prompt. A guard is a named check that runs
-;; at a declared lifecycle scope; its `:check-fn` receives the standard
-;; `nudge-ctx` and returns either nil (guard passes silently) or a map
-;; `{:hint <string> :importance <kw>?}` describing what the model should
-;; do next. The host wraps each non-nil result in a `<system_nudge>`
-;; block. The user never sees them.
+;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
+;; A hook is a named callback that fires at a declared `:phase`; its `:fn`
+;; receives a phase-shaped context map and either returns a model-facing hint
+;; (pre-phases) or runs a side effect (post-phases).
 ;;
-;; Every guard declares :id, :doc, :scope, :check-fn — the contract is
-;; explicit and the failure surface reviewable. One extension can ship
-;; many independent guards as a flat vector.
+;; Canonical phase keywords are namespaced by lifecycle level:
+;;   :session/start        — first iteration of the first turn, BEFORE eval.
+;;                           fn returns nil | {:hint :importance?}; hint flows
+;;                           into <system_nudges>.
+;;   :turn/start           — first iteration of each turn, BEFORE eval. Same
+;;                           return contract as :session/start.
+;;   :turn.iteration/start — every iteration, BEFORE eval. Same return contract.
+;;   :turn.iteration/stop  — every iteration, AFTER eval. ctx includes the
+;;                           iteration result (status, blocks, error,
+;;                           duration-ms, tokens, cost). Return is IGNORED;
+;;                           use for telemetry, logging, side effects.
+;;   :turn/stop            — after the turn closes (answer, cancel, or error).
+;;                           ctx includes the final result. Return ignored.
 ;;
-;; Scope determines WHEN the host invokes the check-fn:
-;;   :iteration  every iteration (most common; e.g. blind-answer detector)
-;;   :turn       only the first iteration of each turn (e.g. title checks)
-;;   :session    only the first iteration of the first turn (one-time onboarding)
+;; Legacy phase keywords are still accepted and normalized at dispatch:
+;;   :session-start -> :session/start
+;;   :turn-start -> :turn/start
+;;   :iteration-start -> :turn.iteration/start
+;;   :iteration-end -> :turn.iteration/stop
+;;   :turn-end -> :turn/stop
 ;;
-;; Guards do NOT block evaluation. They append a <system_nudge> to the
-;; iteration's prompt; the model decides whether to amend. For hard
-;; preflight rejection, use the existing preflight gates in loop.clj.
+;; Every hook declares :id, :doc, :phase, :fn — the contract is explicit
+;; and the failure surface reviewable. One extension can ship many
+;; independent hooks as a flat vector. Exceptions thrown inside :fn are
+;; caught + logged via Telemere; a misbehaving hook never blocks the
+;; loop or starves siblings.
+;;
+;; Hooks do NOT block evaluation. Pre-phase hooks emit advisory <system_nudge>
+;; entries; post-phase hooks side-effect only. For HARD preflight rejection
+;; (e.g. answer-alone gate), use the preflight gates in loop.clj.
 ;; ----------------------------------------------------------------------------
-(s/def :ext.guard/id keyword?)
-(s/def :ext.guard/doc non-blank-string?)
-(s/def :ext.guard/scope #{:iteration :turn :session})
-(s/def :ext.guard/check-fn fn?)
-(s/def ::guard
-  (s/keys :req-un [:ext.guard/id
-                   :ext.guard/doc
-                   :ext.guard/scope
-                   :ext.guard/check-fn]))
-(s/def :ext/guards
-  (s/coll-of ::guard :kind vector?))
+(def canonical-hook-phases
+  "Canonical namespaced lifecycle phases accepted by `:ext/hooks`."
+  #{:session/start
+    :turn/start
+    :turn.iteration/start
+    :turn.iteration/stop
+    :turn/stop})
+
+(def legacy-hook-phase-aliases
+  "Compatibility aliases for pre-namespaced hook phases."
+  {:session-start :session/start
+   :turn-start :turn/start
+   :iteration-start :turn.iteration/start
+   :iteration-end :turn.iteration/stop
+   :turn-end :turn/stop})
+
+(def accepted-hook-phases
+  "All accepted hook phases: canonical namespaced phases plus legacy aliases."
+  (into canonical-hook-phases (keys legacy-hook-phase-aliases)))
+
+(defn normalize-hook-phase
+  "Return the canonical namespaced hook phase for `phase`.
+   Unknown phases pass through so spec/explain can report the original value."
+  [phase]
+  (get legacy-hook-phase-aliases phase phase))
+
+(defn hook-phase?
+  "True when `phase` is a canonical hook phase or legacy alias."
+  [phase]
+  (contains? accepted-hook-phases phase))
+
+(s/def :ext.hook/id keyword?)
+(s/def :ext.hook/doc non-blank-string?)
+(s/def :ext.hook/phase (s/and keyword? hook-phase?))
+(s/def :ext.hook/fn fn?)
+(s/def ::hook (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]))
+(s/def :ext/hooks (s/coll-of ::hook :kind vector?))
 
 ;; Optional source-code rewriter for SCI/edamame parse errors.
 (s/def :ext/on-parse-error-fn fn?)
@@ -919,7 +960,7 @@
             :ext/symbols :ext/classes :ext/imports
             :ext/ns-alias :ext/prompt :ext/environment-info-fn
             :ext/on-parse-error-fn :ext/source-rewrite-fn :ext/fenced-renderers
-            :ext/guards
+            :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
@@ -2636,9 +2677,11 @@
      :v/copy             {:tag :op.tag/action}
      :v/bash             {:tag :op.tag/action :self-describing? true}
      ;; lang-clojure (alias `z`)
+     :z/forms              {:tag :op.tag/observation :self-describing? true}
      :z/locators           {:tag :op.tag/observation :self-describing? true}
      :z/symbols            {:tag :op.tag/observation :self-describing? true}
      :z/locator-for-symbol {:tag :op.tag/observation}
+     :z/inspect            {:tag :op.tag/observation}
      :z/patch              {:tag :op.tag/action}
      :z/patch-check        {:tag :op.tag/observation}
      :z/repair-range       {:tag :op.tag/action}

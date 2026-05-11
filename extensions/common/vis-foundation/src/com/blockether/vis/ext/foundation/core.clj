@@ -129,7 +129,7 @@ Examples:
      :ext/ns-alias       {:ns 'vis.ext.v :alias 'v}
      :ext/kind           "foundation"
      :ext/environment-info-fn environment/environment-info
-     :ext/guards         nudges/guards
+     :ext/hooks          nudges/hooks
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols
                                 (editing/available-editing-symbols)
