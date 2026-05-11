@@ -62,4 +62,17 @@
                           {:kind :cache/search-result
                            :scope :global})))
           (expect (= "test.aggregate.extension" (:extension-id @seen)))
-          (expect (= :cache/search-result (:kind @seen))))))))
+          (expect (= :cache/search-result (:kind @seen)))))))
+
+  (it "passes metadata filter through to the persistance layer"
+    (let [seen (atom nil)]
+      (with-redefs [persistance/db-list-extension-aggregates (fn [_db opts]
+                                                               (reset! seen opts)
+                                                               [])]
+        (binding [extension/*current-extension* fixture-extension]
+          (expect (= [] (aggregate/ext-list {:db-info ::db}
+                          {:kind :bridge/edge
+                           :scope :global
+                           :metadata {:source "core/run"}})))
+          (expect (= "core/run" (get-in @seen [:metadata :source])))
+          (expect (= :bridge/edge (:kind @seen))))))))

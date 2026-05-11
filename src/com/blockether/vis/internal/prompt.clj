@@ -21,8 +21,12 @@
           <active_skills>  full SKILL.md bodies for skills the model
                            activated this turn via `(load-skill ...)`.
           <system_nudges>  zero or more `<system_nudge importance=\"...\">`
-                           entries, including extension-contributed
-                           ones via `:ext/nudge-fn`.
+                           entries, contributed entirely by extensions
+                           via `:ext/nudge-fn`. Core owns the rendering
+                           and the per-iteration ctx (model, context
+                           limit, input-token estimate, title state);
+                           extensions own the policy (title cadence,
+                           context-pressure, future custom nudges).
         The current user goal arrives separately as
         `<user_turn_request_main_goal>`, not inside the trailer.
 
@@ -147,13 +151,6 @@
    tool outputs; the model sees a compact index, not the full sandbox heap."
   12000)
 
-(def ^:const CONTEXT_PRESSURE_THRESHOLD
-  "Fraction of the model's effective input-token budget at which the
-   loop fires a context-pressure nudge. 60% leaves headroom for the
-   current iteration's own thinking + tool calls + answer payload
-   without forcing the model to firefight an overflow."
-  0.60)
-
 ;; =============================================================================
 ;; Generic helpers
 ;; =============================================================================
@@ -265,16 +262,15 @@
   (extension/journal-render-tool-result v))
 
 (defn- format-sink-error-text
-  "Render a sink failure entry's `:error` map via the same
+  "Render a sink failure entry's `:op/error` map via the same
    default-journal-error-text path the engine uses for whole-form
-   failures, but synthesizing a tiny tool-result envelope so the
-   formatter sees a compatible shape."
+   failures, but synthesizing a tiny `:op/envelope` so the formatter
+   sees the new flat shape (PLAN §2.1)."
   [entry]
   (extension/default-journal-error-text
-    {:success? false
-     :result   nil
-     :info     {:op (when-let [f (:form entry)] f)}
-     :error    (:error entry)}))
+    {:op/success? false
+     :op/symbol   (when-let [f (:form entry)] (keyword f))
+     :op/error    (:error entry)}))
 
 (defn- format-sink-sub-row
   "One `iN.K.M` sub-row per :journal sink entry. Success entries surface
@@ -528,44 +524,6 @@
 ;; Iteration context - provider context block inserted before current user goal
 ;; =============================================================================
 
-(def ^:const TITLE_REFRESH_NUDGE_PERIOD
-  "Iteration cadence at which the loop re-nudges the model to refresh
-   `CONVERSATION_TITLE`. Independent of the always-on nudge fired
-   when the title is blank. 12 lands in the middle of the
-   user-requested 10-20 range - frequent enough that the title stays
-   current as the conversation drifts, infrequent enough that a
-   settled conversation isn't pestered every turn."
-  12)
-
-(defn- title-nudge
-  "Built-in title nudge that fires when:
-     1. `CONVERSATION_TITLE` is currently empty, OR
-     2. caller requests a turn-boundary refresh check, OR
-     3. `iteration` is a positive multiple of
-        `TITLE_REFRESH_NUDGE_PERIOD` (cadence reminder inside a long turn).
-   Returns nil otherwise."
-  [environment iteration refresh?]
-  (let [title (some-> (:conversation-title-atom environment) deref str str/trim)
-        blank? (or (nil? title) (str/blank? title))]
-    (cond
-      blank?
-      (str "CONVERSATION_TITLE is currently empty. "
-        "Set it via `(conversation-title \"...\")` (3-7-word noun phrase, "
-        "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
-        "the conversation is discoverable in the sidebar.")
-
-      refresh?
-      (str "Current CONVERSATION_TITLE is \"" title "\". "
-        "If this turn changes the conversation focus, refresh the title via "
-        "`(conversation-title \"...\")`.")
-
-      (and (integer? iteration)
-        (pos? iteration)
-        (zero? (mod iteration TITLE_REFRESH_NUDGE_PERIOD)))
-      (str "You're " iteration " iterations into this turn. "
-        "If the conversation's focus has shifted from \"" title "\", "
-        "refresh the title via `(conversation-title \"...\")`."))))
-
 (defn- prompt-block
   [tag body]
   (when (and (string? body) (not (str/blank? body)))
@@ -650,12 +608,14 @@
      <bindings>   - `(def ...)` bindings in the SCI env.
 
    Plus zero or more tagged `<system_nudge importance=\"...\">` entries
-   wrapped in `<system_nudges>`. Built-ins:
-     - title nudge (importance low; fires on blank title or every
-       TITLE_REFRESH_NUDGE_PERIOD iterations)
-     - context-pressure nudge (importance high).
-   Active extensions can append more via `:ext/nudge-fn` by returning
-   either a string or `{:importance :low|:normal|:high|:critical :text ...}`.
+   wrapped in `<system_nudges>`. All nudges come from active extensions
+   via `:ext/nudge-fn`; core owns no built-in nudge policy. Nudge fns
+   receive an enriched ctx including the resolved `:model`,
+   `:context-limit`, the estimated `:input-tokens` for the assembled
+   prompt-so-far, `:title-refresh?` (turn-boundary hint), and
+   `:conversation-title` (current value or nil). They may return a
+   single nudge (string or `{:importance :low|:normal|:high|:critical
+   :text "..."}`), nil, or a sequential coll of such nudges.
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Computed once
@@ -692,43 +652,44 @@
                                 (- budget-after-pinned (long bindings-tokens))))
         recent-block (format-journal-block model blocks-by-iteration journal-budget)
         last-iteration-blocks (some-> blocks-by-iteration last second)
-        title-line (title-nudge environment iteration title-refresh?)
-        ;; Token-budget probe. Estimate the size of the assembled
-        ;; prompt that would be sent to the LLM; fire the
-        ;; context-pressure nudge when it crosses
-        ;; `CONTEXT_PRESSURE_THRESHOLD`.
+        ;; Token-budget probe. Extensions (e.g. vis-foundation's
+        ;; context-pressure nudge) read `:input-tokens` from the ctx
+        ;; and compare against `:context-limit` to decide whether to
+        ;; nudge the model toward convergence. Core just measures and
+        ;; passes the value; policy lives in extensions.
         prompt-text (str/join "\n\n"
                       (keep identity
                         [system-prompt current-user-content active-skills-block recent-block bindings-block]))
-        _used-tokens (count-prompt-tokens model prompt-text)
-        ext-nudges (when (seq active-extensions)
-                     (let [iter-position (if (some? iteration)
-                                           (inc (long iteration))
-                                           1)
-                           ctx {:environment environment
-                                :iteration iter-position
-                                :previous-blocks last-iteration-blocks}]
-                       (into []
-                         (keep (fn [ext]
-                                 (when-let [nudge-fn (:ext/nudge-fn ext)]
-                                   (try
-                                     (let [result (call-extension-callback ext nudge-fn ctx)]
-                                       (if (extension/system-nudge-result? result)
-                                         (normalize-system-nudge :normal result)
-                                         (do
-                                           (tel/log! {:level :warn
-                                                      :id ::invalid-extension-nudge
-                                                      :data {:ext (:ext/namespace ext)
-                                                             :explain (extension/explain-system-nudge-result result)}}
-                                             "Extension nudge-fn returned invalid nudge; skipping")
-                                           nil)))
-                                     (catch Throwable t
-                                       (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
-                                       nil)))))
-                         active-extensions)))
-        all-nudges (cond-> []
-                     title-line       (conj (normalize-system-nudge :low title-line))
-                     (seq ext-nudges) (into ext-nudges))
+        input-tokens (or (count-prompt-tokens model prompt-text) 0)
+        conversation-title (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
+        nudge-ctx {:environment environment
+                   :iteration (if (some? iteration) (inc (long iteration)) 1)
+                   :previous-blocks last-iteration-blocks
+                   :model model
+                   :context-limit ctx-limit
+                   :input-tokens input-tokens
+                   :title-refresh? (boolean title-refresh?)
+                   :conversation-title conversation-title}
+        all-nudges (into []
+                     (mapcat
+                       (fn [ext]
+                         (when-let [nudge-fn (:ext/nudge-fn ext)]
+                           (try
+                             (let [result (call-extension-callback ext nudge-fn nudge-ctx)]
+                               (if (extension/system-nudge-result? result)
+                                 (->> (extension/coerce-system-nudge-result result)
+                                   (map #(normalize-system-nudge :normal %)))
+                                 (do
+                                   (tel/log! {:level :warn
+                                              :id ::invalid-extension-nudge
+                                              :data {:ext (:ext/namespace ext)
+                                                     :explain (extension/explain-system-nudge-result result)}}
+                                     "Extension nudge-fn returned invalid nudge; skipping")
+                                   nil)))
+                             (catch Throwable t
+                               (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
+                               nil)))))
+                     (or active-extensions []))
         nudges-block (system-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [active-skills-block recent-block bindings-block nudges-block])]

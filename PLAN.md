@@ -1667,6 +1667,32 @@ commit `66080eab` (Phase 2 schema rename).
 - `(ext/ex->op-error sci-ex {:block-source "..." :form-row 3})` → `:row` translated form-local→block-global; `:phase :sci/analysis` derived from ex-data
 - `verify.sh --quick` PASS (format + lint) at every commit boundary
 
+### 7.3 Shipped (continued)
+
+All of §7.3.1–§7.3.7 landed in subsequent commits (see `git log
+main` between `66080eab` and HEAD):
+
+- ✅ §7.3.7 form-bounds extension (rows+cols) — `b39df73a`
+- ✅ §7.3.6 `ex->op-error` wired into `run-sci-code` — `b39df73a`
+- ✅ §7.3.1 reader sweep (per-site classified) — `ea6f0ae8`, `7f6f71a4`, `8c05eaff`
+- ✅ §7.3.3 §5 regression tests (no-UUID, coord translation, render context) — `e534ee9e`, `c57ead46`
+- ✅ §7.3.2 renderer updates (`[turn N · iteration N · block N · …]` header, `render-error-context` helper, TUI `detail-id-suffix` reads `:turn-position`) — `f3081121`, `7f6f71a4`
+- ✅ §7.3.4 system prompt rewrite (~120 → ~60 lines, OODA-centered, 3 strategies, fixture updated) — `20092154`, `8109be68`
+- ✅ §7.3.5 blob-format alignment (single structured `:error`, no fallback) — `ea6f0ae8`
+
+Additional follow-on commits (TUI bug fixes + envelope migration
+debt) landed beyond the original PLAN scope:
+
+- scrollbar jumping + scroll empty-spaces fix (content-keyed height cache) — `b56b9ddf`
+- live reasoning untruncated + iteration headers always shown — `8515ff38`
+- slash-suggestions flicker + render_ir boxing — `19ec3b0d`
+- spec leak `::extension/info` → `map?` in `::block-info` — `0eb196df`
+- elide `(conversation-title …)` same path as `(answer …)` — `5ffffdba`
+- 5 extension callers migrated `::extension/tool-result` → `:op/envelope` — `8c05eaff`
+- TUI dotted block-header (lowercase, no abbreviations) — `7f6f71a4`
+- dead `markdown->inline` tests + `render_ir.clj` transient correctness — `df64236c`
+- TUI :raw result mode (pretty-print, no ANSI) — `db49c868`
+
 ### 7.3 Pending (PLAN-driven, NOT yet shipped)
 
 Ordered by dependency. Each item names the PLAN section that
@@ -1890,3 +1916,9 @@ Coordinate any further TUI work with the clanker.
    documentation).
 
 Each step independently committable. None depend on the next.
+
+### 7.6 Status: ALL PLAN STEPS COMPLETE ✅
+
+PLAN §1–§6 fully implemented. §7.3.1–§7.3.7 all shipped.
+Remaining work (test fixture migration to new envelope shape)
+is post-PLAN debt, tracked separately from this design doc.

@@ -106,23 +106,9 @@
       (let [ctx (fresh-ctx)]
         (expect (string? (eval-in ctx "(zp/zprint-str {:a 1})")))))
 
-    (it "`lt/` -> lazytest.core"
-      (let [ctx (fresh-ctx)]
-        ;; lazytest is wired in via a hand-rolled binding map, not
-        ;; `sci/copy-ns`, so the alias resolves to a raw fn object,
-        ;; not a sci `Var`. That's expected; we just probe that the
-        ;; symbol resolves at all (a regression that drops
-        ;; `lt -> lazytest.core` from `:ns-aliases` would throw
-        ;; "Unable to resolve symbol" here).
-        (expect (fn? (eval-in ctx "lt/expect-fn")))
-        (expect (fn? (eval-in ctx "lt/throws?")))))
-
-    (it "`test/` -> clojure.test (re-routed through lazytest)"
-      (let [ctx (fresh-ctx)]
-        ;; clojure.test/is is mapped onto lazytest's expect-fn so
-        ;; model-authored test code uses one assertion engine.
-        ;; Same alias-resolution probe as `lt/` above.
-        (expect (fn? (eval-in ctx "test/is")))))
+    ;; The `lt/` -> lazytest.core and `test/` -> clojure.test
+    ;; aliases were retired. Sandbox no longer ships an in-process
+    ;; assertion runner; tests live in JVM test files only.
 
     (it "`c+/` -> clojure+.core"
       (let [ctx (fresh-ctx)]

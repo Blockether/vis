@@ -92,11 +92,15 @@
       (expect (= [] (:ext/settings e))))))
 
 (defdescribe invoke-symbol-wrapper-result-spec-test
+  ;; PLAN §2.1: tool-result envelope spec is now :op/envelope
+  ;; (was ::ext/tool-result, retired in Phase 4). All `:tool` /
+  ;; `:extension` / `:source` blobs live under `:op/metadata` on
+  ;; the flat envelope (was `:info` on the old wrapped shape).
   (it "rejects a function result that violates :result-spec"
     (let [sym (vis/symbol 'bad (fn [& _] :not-a-tool-result)
                 {:doc "bad"
                  :arglists '([])
-                 :result-spec ::ext/tool-result})
+                 :result-spec :op/envelope})
           ext (vis/extension {:ext/namespace 'com.acme.ext.bad
                               :ext/doc "bad"
                               :ext/kind "filesystem"
@@ -106,13 +110,12 @@
       (expect (throws? clojure.lang.ExceptionInfo
                 #(vis/invoke-symbol-wrapper ext sym [] {})))))
 
-  (it "accepts a function result that satisfies :result-spec and stamps extension info"
+  (it "accepts a function result that satisfies :result-spec and stamps extension metadata"
     (let [sym (vis/symbol 'good (fn [& _]
-                                  (ext/success {:result true
-                                                :info {:op :demo}}))
+                                  (ext/success {:result true :op :demo}))
                 {:doc "good"
                  :arglists '([])
-                 :result-spec ::ext/tool-result})
+                 :result-spec :op/envelope})
           ext (vis/extension {:ext/namespace 'com.acme.ext.good
                               :ext/doc "good"
                               :ext/kind "filesystem"
@@ -125,11 +128,12 @@
                               :ext/symbols [sym]})
           out (vis/invoke-symbol-wrapper ext sym [] {})]
       (expect (map? out))
-      (expect (= 'good (get-in out [:info :tool :sym])))
-      (expect (= "g/good" (get-in out [:info :tool :call])))
-      (expect (= 'com.acme.ext.good (get-in out [:info :extension :namespace])))
-      (expect (= "Acme" (get-in out [:info :extension :author])))
-      (expect (= [] (get-in out [:info :source :paths]))))))
+      ;; PLAN §2.1: envelope tool/extension/source blobs are under :op/metadata.
+      (expect (= 'good (get-in out [:op/metadata :tool :sym])))
+      (expect (= "g/good" (get-in out [:op/metadata :tool :call])))
+      (expect (= 'com.acme.ext.good (get-in out [:op/metadata :extension :namespace])))
+      (expect (= "Acme" (get-in out [:op/metadata :extension :author])))
+      (expect (= [] (get-in out [:op/metadata :source :paths]))))))
 
 (defdescribe extension-settings-declaration-test
   (it "extension/extension accepts extension-owned setting declarations"
@@ -318,15 +322,14 @@
 
 (defdescribe extension-runtime-composition-test
 
-  (it "assembles ONLY the author-supplied :ext/prompt under the alias header"
-    ;; New contract (see
-    ;; `com.blockether.vis.internal.vis/render-extension-prompt-block`):
-    ;; the runtime no longer auto-canonicalizes `:ext/symbols` into prompt
-    ;; lines. Whatever lands in the prompt is whatever `:ext/prompt`
-    ;; returns - plus the namespace-alias header. Sandbox bindings remain
-    ;; callable from `:code` whether advertised or not. Authors who want
-    ;; the old auto-render behavior call `vis/render-prompt` from inside
-    ;; their own `:ext/prompt` fn (covered by `render-prompt-test`).
+  (it "assembles the author-supplied :ext/prompt inside <extensions> WITHOUT auto-rendering symbols"
+    ;; Runtime contract: the engine wraps every active extension's
+    ;; `:ext/prompt` fragment in <extensions>...</extensions>. The
+    ;; engine NEVER auto-canonicalizes `:ext/symbols` into prompt
+    ;; lines — whatever the author put in `:ext/prompt` is what
+    ;; lands in the system prompt. Authors who want auto-render
+    ;; call `vis/render-prompt` from inside their own `:ext/prompt`
+    ;; fn (covered by `render-prompt-test`).
     (let [environment {:extensions (atom [(vis/extension
                                             {:ext/namespace 'com.acme.ext.fs
                                              :ext/doc       "Filesystem tools"
@@ -337,13 +340,14 @@
           active-exts   (vis/active-extensions environment)
           system-prompt (vis/assemble-system-prompt environment
                           {:active-extensions active-exts})]
-      ;; MINIMAL assembly: extension `<extensions>` blocks are
-      ;; suppressed entirely. Header, :ext/prompt body, and old
-      ;; auto-render output are all absent. Sandbox bindings remain
-      ;; callable from `:code` whether advertised or not.
-      (expect (not (str/includes? system-prompt "<extensions>")))
+      ;; The author-supplied :ext/prompt body lands inside the
+      ;; <extensions> block.
+      (expect (str/includes? system-prompt "<extensions>"))
+      (expect (str/includes? system-prompt "RULES:\n- Discover paths first."))
+      ;; The auto-rendering of :ext/symbols + alias header that the
+      ;; old runtime did is GONE. Authors must opt in via
+      ;; vis/render-prompt inside their :ext/prompt fn.
       (expect (not (str/includes? system-prompt "[namespace: v -> vis.ext.tools]")))
-      (expect (not (str/includes? system-prompt "RULES:\n- Discover paths first.")))
       (expect (not (str/includes? system-prompt "Filesystem tools (use v/ prefix)")))
       (expect (not (str/includes? system-prompt "- (v/cat path)")))
       (expect (not (str/includes? system-prompt "- v/max-retries"))))))
@@ -841,6 +845,9 @@
           (expect (= [true true] (:successes entry)))))))
 
   (it ":form-start exposes currently-running code before a result lands"
+    ;; The `:events` interleaving log was retired (see
+    ;; progress.clj docstring). Tracker carries `:code`,
+    ;; `:started-at-ms`, `:successes`, `:durations` directly.
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-start :iteration 0 :form-idx 0
                  :form-of 2 :code "(Thread/sleep 1000)"
@@ -848,32 +855,29 @@
       (let [entry (first (get-timeline))]
         (expect (= ["(Thread/sleep 1000)"] (:code entry)))
         (expect (= [1000] (:started-at-ms entry)))
-        (expect (= [{:type :form-result :form-idx 0}] (:events entry)))
         (expect (empty? (:successes entry))))
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
                  :code "(Thread/sleep 1000)" :result nil :stdout "" :stderr ""
                  :execution-time-ms 1000 :error nil})
       (let [entry (first (get-timeline))]
         (expect (= [true] (:successes entry)))
-        (expect (= [1000] (:durations entry)))
-        (expect (= [{:type :form-result :form-idx 0}] (:events entry))))))
+        (expect (= [1000] (:durations entry))))))
 
-  (it ":vis/silent results no longer elide live slots (always-show)"
-    ;; Regression: `:vis/silent` was a sentinel host primitives
-    ;; returned to make the TUI hide the source form. The whole
-    ;; mechanism has been removed; the form survives in the live
-    ;; trace and the result keyword is just another value.
+  (it "every form survives in the live trace; no special silent-elision"
+    ;; Regression guard: there is NO :silent / :vis/silent sentinel
+    ;; mechanism. Every form's slot lives until iteration-final
+    ;; (where (answer ...) and (conversation-title ...) get elided
+    ;; by name, not by value sentinel).
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (on-chunk {:phase :form-start :iteration 0 :form-idx 0
-                 :form-of 1 :code "(conversation-title \"x\")"
+                 :form-of 1 :code "(some-fn \"x\")"
                  :started-at-ms 1000})
-      (expect (= ["(conversation-title \"x\")"] (:code (first (get-timeline)))))
+      (expect (= ["(some-fn \"x\")"] (:code (first (get-timeline)))))
       (on-chunk {:phase :form-result :iteration 0 :form-idx 0
-                 :code "(conversation-title \"x\")" :result :vis/silent
+                 :code "(some-fn \"x\")" :result "x"
                  :stdout "" :stderr "" :execution-time-ms 1 :error nil})
       (let [entry (first (get-timeline))]
-        (expect (= ["(conversation-title \"x\")"] (:code entry)))
-        (expect (= 1 (count (:events entry))))
+        (expect (= ["(some-fn \"x\")"] (:code entry)))
         (expect (= 1 (count (:started-at-ms entry)))))))
 
   (it "out-of-order :form-result chunks pad with nil"
@@ -893,7 +897,10 @@
       (on-chunk {:phase :reasoning :iteration 0 :thinking "thinking..."})
       (expect (= "thinking..." (:thinking (first (get-timeline)))))))
 
-  (it "reasoning live-render events trim boundary whitespace"
+  (it "reasoning chunks accumulate full content in :thinking (no per-event log)"
+    ;; The `:events` interleaving log was retired; only the final
+    ;; `:thinking` string remains in the entry. Streamed reasoning
+    ;; arrives as accumulated snapshots; tracker assigns the latest.
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
       (doseq [thinking ["The contract APIs failed in iteration"
                         "The contract APIs failed in iteration "
@@ -901,43 +908,16 @@
                         "The contract APIs failed in iteration 1 - lines "
                         "The contract APIs failed in iteration 1 - lines 100-169"]]
         (on-chunk {:phase :reasoning :iteration 0 :thinking thinking}))
-      (let [entry         (first (get-timeline))
-            reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
-        (expect (= "The contract APIs failed in iteration 1 - lines 100-169"
-                  (:thinking entry)))
-        (expect (= (:thinking entry) reconstructed))))
-    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
-      (doseq [thinking [" " " a"]]
-        (on-chunk {:phase :reasoning :iteration 0 :thinking thinking}))
-      (let [entry         (first (get-timeline))
-            reconstructed (apply str (map :thinking (filter #(= :thinking (:type %)) (:events entry))))]
-        (expect (= "a" (:thinking entry)))
-        (expect (= (:thinking entry) reconstructed)))))
+      (expect (= "The contract APIs failed in iteration 1 - lines 100-169"
+                (:thinking (first (get-timeline)))))))
 
-  (it "reasoning / code / reasoning builds ordered :events for live rendering"
-    (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
-      (on-chunk {:phase :reasoning :iteration 0 :thinking "alpha"})
-      (on-chunk {:phase :form-result :iteration 0 :form-idx 0
-                 :code "(+ 1 1)" :result 2 :stdout "" :stderr ""
-                 :execution-time-ms 1 :error nil})
-      ;; svar streams accumulated reasoning, not deltas. Tracker must
-      ;; split the second segment relative to the prior snapshot.
-      (on-chunk {:phase :reasoning :iteration 0 :thinking "alpha\nbeta"})
-      (let [entry (first (get-timeline))]
-        (expect (= [{:type :thinking :thinking "alpha"}
-                    {:type :form-result :form-idx 0}
-                    {:type :thinking :thinking "\nbeta"}]
-                  (:events entry))))))
-
-  (it "long streamed reasoning is stored as bounded render events"
+  (it "long streamed reasoning lands intact in :thinking"
+    ;; The `:events` interleaving log was retired; the renderer
+    ;; reads `:thinking` directly per iteration entry.
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)
           long-thinking (apply str (repeat 9000 "x"))]
       (on-chunk {:phase :reasoning :iteration 0 :thinking long-thinking})
-      (let [entry           (first (get-timeline))
-            thinking-events (filterv #(= :thinking (:type %)) (:events entry))]
-        (expect (= long-thinking (:thinking entry)))
-        (expect (< 1 (count thinking-events)))
-        (expect (= long-thinking (apply str (map :thinking thinking-events)))))))
+      (expect (= long-thinking (:thinking (first (get-timeline)))))))
 
   (it ":form-result with :error formats the error string into :results"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
@@ -991,13 +971,7 @@
                  :answer-form-idx 2
                  :done? true})
       (let [entry (first (get-timeline))]
-        (expect (= ["(def checks {})" "checks"] (:code entry)))
-        ;; Live renderer drives off :events. If these indices are not
-        ;; remapped after slot elision, it renders an out-of-bounds
-        ;; phantom code block as `""` until the conversation is reopened.
-        (expect (= [{:type :form-result :form-idx 0}
-                    {:type :form-result :form-idx 1}]
-                  (:events entry))))))
+        (expect (= ["(def checks {})" "checks"] (:code entry))))))
 
   (it ":iteration-final without :final keeps every slot (non-terminal iter)"
     (let [{:keys [on-chunk get-timeline]} (vis/make-progress-tracker)]
@@ -1044,12 +1018,6 @@
         (expect (= [true false true] (:successes entry)))
         (expect (re-find #"ERROR:" (nth (:results entry) 1)))
         (expect (re-find #"ONLY top-level form" (nth (:results entry) 1)))
-        ;; Re-emit updates the existing event in place; no duplicate
-        ;; code block lands in the ordered live trace.
-        (expect (= [{:type :form-result :form-idx 0}
-                    {:type :form-result :form-idx 1}
-                    {:type :form-result :form-idx 2}]
-                  (:events entry)))
         ;; Sibling slots untouched.
         (expect (= "1" (str (nth (:results entry) 0))))
         (expect (= "2" (str (nth (:results entry) 2)))))))
@@ -1275,12 +1243,16 @@
 
 (defdescribe markdown-fence-guard-test
   (it "rejects raw markdown fence tokens before SCI eval can blow the stack"
+    ;; Per PLAN §2.1 + §7.3.5: :error is the structured :op/error
+    ;; map (`{:message :trace? :hint? :block?}`). Pull :message for
+    ;; the substring assertion.
     (let [environment (vis/create-sci-context nil)
           execute-code-var (resolve 'com.blockether.vis.internal.loop/execute-code)
-          result ((deref execute-code-var) environment "``````clojure")]
-      (expect (string? (:error result)))
-      (expect (re-find #"Markdown fence" (:error result)))
-      (expect (not (re-find #"StackOverflowError" (:error result))))
+          result ((deref execute-code-var) environment "``````clojure")
+          err-msg (some-> result :error :message)]
+      (expect (string? err-msg))
+      (expect (re-find #"Markdown fence" err-msg))
+      (expect (not (re-find #"StackOverflowError" err-msg)))
       (expect (= 0 (:execution-time-ms result))))))
 
 (defdescribe comment-glue-test
@@ -1668,9 +1640,11 @@
       (expect (re-find #" ...<\+\d+ chars>$" out))))
 
   (it "does not clip when input fits within max-chars"
+    ;; Regex `#"..."` matched ANY three characters (not literal '...')
+    ;; — the assertion was always-false. Fix: `#"\.\.\."`.
     (let [out (vis/safe-pr-str {:hello "world"} {:max-chars 1000})]
       (expect (= "{:hello \"world\"}" out))
-      (expect (not (re-find #"..." out)))))
+      (expect (not (re-find #"\.\.\." out)))))
 
   (it "never materializes more than print-length elements during pr"
     ;; If pr-str were applied to the full value first, this test would
