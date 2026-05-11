@@ -2112,7 +2112,15 @@
                              ;; envelope on success and error -
                              ;; consumers branch on `:error nil?`,
                              ;; not on shape.
-                             (when on-chunk
+                             ;;
+                             ;; Preflight rejections are MODEL-FACING
+                             ;; only: they teach the model to correct
+                             ;; its next iteration, but the user does
+                             ;; not need to see the synthetic error
+                             ;; box. Suppress the live chunk when the
+                             ;; result came from a preflight gate
+                             ;; (mirrors `suppress-form-start?`).
+                             (when (and on-chunk (not preflight-error))
                                (on-chunk {:phase             :form-result
                                           :iteration         iteration-position
                                           :form-idx          idx
@@ -2136,6 +2144,13 @@
           code-blocks (mapv :block executed)
           block-results (mapv :result executed)
           block-comments (mapv :form-comment executed)
+          ;; Preflight gate → synthetic block carries `:vis/preflight? true`
+          ;; so channels can suppress the model-facing-only error box. Keep
+          ;; the block in the persisted/journal stream so the model still
+          ;; reads the failure on its next iteration.
+          preflight-by-idx (zipmap (range) (map (fn [{:keys [preflight-error]}]
+                                                  (boolean preflight-error))
+                                             code-entries))
           blocks (validate-iteration-blocks!
                    (mapv (fn [idx code result form-comment]
                            (cond-> {:id idx
@@ -2151,7 +2166,8 @@
                                     :role (:role result)
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)}
-                             form-comment (assoc :comment form-comment)))
+                             form-comment (assoc :comment form-comment)
+                             (get preflight-by-idx idx) (assoc :vis/preflight? true)))
                      (range) code-blocks block-results block-comments))]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
