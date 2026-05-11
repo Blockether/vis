@@ -252,33 +252,6 @@
                :ext/environment-info-fn f})]
       (expect (identical? f (:ext/environment-info-fn e))))))
 
-(defdescribe system-nudge-result-spec-test
-  (it "spec-checks extension nudge return values"
-    (expect (ext/system-nudge-result? nil))
-    (expect (ext/system-nudge-result? "plain nudge"))
-    (expect (ext/system-nudge-result? {:importance :high :text "important"}))
-    (expect (not (ext/system-nudge-result? {:importance :critical :message "stop"})))
-    (expect (not (ext/system-nudge-result? {:importance :critical :body "stop"})))
-    (expect (not (ext/system-nudge-result? "")))
-    (expect (not (ext/system-nudge-result? {:importance :urgent :text "bad level"})))
-    (expect (not (ext/system-nudge-result? {:importance :high :text ""})))
-    (expect (not (ext/system-nudge-result? {:importance :high :text "ok" :extra true})))
-    ;; Coll-of-nudges form: an extension may emit zero or more nudges
-    ;; in one call. Empty colls are valid no-ops. Nested colls or
-    ;; bad elements still fail.
-    (expect (ext/system-nudge-result? []))
-    (expect (ext/system-nudge-result? ["plain" {:importance :high :text "ok"}]))
-    (expect (ext/system-nudge-result? ["plain" nil {:importance :low :text "ok"}]))
-    (expect (not (ext/system-nudge-result? [""])))
-    (expect (not (ext/system-nudge-result? [{:importance :urgent :text "bad"}]))))
-
-  (it "coerces a validated result into a seq of non-nil single nudges"
-    (expect (= () (ext/coerce-system-nudge-result nil)))
-    (expect (= ["plain"] (vec (ext/coerce-system-nudge-result "plain"))))
-    (expect (= [{:importance :high :text "x"}]
-              (vec (ext/coerce-system-nudge-result {:importance :high :text "x"}))))
-    (expect (= ["a" "b"] (vec (ext/coerce-system-nudge-result ["a" nil "b"]))))))
-
 (defdescribe owner-field-test
   (it "accepts :ext/owner as a non-blank string and round-trips it"
     (let [e (ext/extension

@@ -1,6 +1,6 @@
-(ns com.blockether.vis.ext.bridge.languages.clojure-lsp-test
+(ns com.blockether.vis.ext.bridge.languages.clojure-test
   (:require
-   [com.blockether.vis.ext.bridge.languages.clojure-lsp :as lsp]
+   [com.blockether.vis.ext.bridge.languages.clojure :as clj]
    [com.blockether.vis.ext.bridge.schema :as schema]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -19,17 +19,17 @@
    :dep-graph
    {'demo.core {:dependencies {'clojure.string 1}}}})
 
-(defdescribe clojure-lsp-extractor-test
+(defdescribe clojure-extractor-test
   (it "reports executable status shape without throwing"
-    (let [status (lsp/executable-status {:command "definitely-not-clojure-lsp-bridge-test"})]
+    (let [status (clj/executable-status {:command "definitely-not-clojure-lsp-bridge-test"})]
       (expect (false? (:available? status)))
       (expect (= "definitely-not-clojure-lsp-bridge-test" (:command status)))))
 
   (it "converts clojure-lsp dump data into normalized Bridge facts"
-    (let [result (lsp/extract-project {:project-root "/repo" :dump sample-dump})]
+    (let [result (clj/extract-project {:project-root "/repo" :dump sample-dump})]
       (expect (schema/valid-extract-result? result))
       (expect (some #(= "demo.core/run" (:qualified-name %)) (:nodes result)))
-      (expect (some #(and (= :requires (:edge-kind %))
+      (expect (some #(and (= :imports (:edge-kind %))
                        (= "clojure.string" (:target %)))
                 (:edges result)))
       (expect (= :clojure-lsp/external-cli (get-in result [:stats :backend]))))))

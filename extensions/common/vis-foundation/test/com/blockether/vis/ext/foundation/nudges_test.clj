@@ -60,32 +60,32 @@
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 0 :context-limit 200000})))
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 50000 :context-limit 0})))))
 
-(defdescribe nudge-fn-test
-  (it "returns a vector (sequential coll) so the host can flatten it"
-    (let [out (nudges/nudge-fn {:conversation-title "Stable"
-                                :title-refresh? false
-                                :iteration 1
-                                :input-tokens 100
-                                :context-limit 200000})]
-      (expect (vector? out))
-      (expect (= [] out))))
+(defdescribe guards-registration-test
+  (it "foundation ships three guards: title, context-pressure, blind-answer"
+    (let [ids (set (map :id nudges/guards))]
+      (expect (= #{:foundation/conversation-title
+                   :foundation/context-pressure
+                   :foundation/blind-answer}
+                ids))))
 
-  (it "emits both nudges when both conditions hold (blank title + context pressure)"
-    (let [out (nudges/nudge-fn {:conversation-title nil
-                                :title-refresh? false
-                                :iteration 5
-                                :input-tokens 150000
-                                :context-limit 200000})]
-      (expect (= 2 (count out)))
-      (expect (= #{:low :high} (set (map :importance out))))))
+  (it "every guard declares the four required keys"
+    (doseq [g nudges/guards]
+      (expect (keyword? (:id g)))
+      (expect (string? (:doc g)))
+      (expect (contains? #{:iteration :turn :session} (:scope g)))
+      (expect (fn? (:check-fn g)))))
 
-  (it "drops nil entries"
-    (let [out (nudges/nudge-fn {:conversation-title "Set"
-                                :title-refresh? false
-                                :iteration 1
-                                :input-tokens 1
-                                :context-limit 200000})]
-      (expect (every? some? out)))))
+  (it "title guard adapts title-nudge into the {:hint :importance} shape"
+    (let [g (some #(when (= :foundation/conversation-title (:id %)) %) nudges/guards)
+          hit ((:check-fn g) {:conversation-title nil :title-refresh? false :iteration 1})]
+      (expect (string? (:hint hit)))
+      (expect (= :low (:importance hit)))))
+
+  (it "guards return nil when their underlying condition is absent"
+    (let [title-g    (some #(when (= :foundation/conversation-title (:id %)) %) nudges/guards)
+          pressure-g (some #(when (= :foundation/context-pressure (:id %)) %) nudges/guards)]
+      (expect (nil? ((:check-fn title-g)    {:conversation-title "Set" :title-refresh? false :iteration 1})))
+      (expect (nil? ((:check-fn pressure-g) {:input-tokens 100 :context-limit 200000}))))))
 
 (defdescribe blind-answer-guard-test
   (it "fires on iter 1 + investigation verb + no prior blocks"
