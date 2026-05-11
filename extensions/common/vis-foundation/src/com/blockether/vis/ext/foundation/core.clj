@@ -35,39 +35,9 @@
    [com.blockether.vis.ext.foundation.nudges :as nudges]))
 
 (def ^:private answer-ir-prompt
-  "Answers use IR (Hiccup-EDN). Always emit (answer [:ir & nodes]).
-Do not emit Markdown/text strings in `(answer ...)`. Do not render Markdown as IR; build IR nodes directly. Channels render IR to Markdown/HTML/plain at their boundary.
-
-Block tags: :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li :quote
-            :table :tr :th :td
-Inline tags: :strong :em :c (inline code) :a{:href} :img{:src :alt}
-             :kbd :mark :sup :sub
-
-Bare strings are text nodes. Attrs map is optional. :li content is
-either all blocks or all inlines (not mixed).
-
-For pure-code answers: [:ir [:code {:lang \"clojure\"} \"...\"]].
-
-Examples:
-
-(answer
- [:ir
-  [:p \"Recurses on the rest until the empty case.\"]
-  [:p \"Complexity: \" [:c \"O(n)\"] \".\"]])
-
-(answer
- [:ir
-  [:code {:lang \"clojure\"}
-   \"(defn reverse-list [xs] (reduce conj '() xs))\"]])
-
-(answer
- [:ir
-  [:h {:level 2} \"Comparison\"]
-  [:table
-   [:tr [:th \"Approach\"]   [:th \"Big-O\"]]
-   [:tr [:td \"reduce\"]     [:td [:c \"O(n)\"]]]
-   [:tr [:td \"loop+recur\"] [:td [:c \"O(n)\"]]]]
-  [:p \"Both are linear; \" [:strong \"reduce\"] \" is more idiomatic.\"]])")
+  "Answer IR grammar lives in the core system prompt.
+Always emit `(answer [:ir ...])`. Do not emit Markdown/text strings in `(answer ...)`.
+Do not render Markdown as IR; build IR nodes directly. Channels render IR at their boundary.")
 
 (defn- combined-prompt
   "Stitch the per-area prompt fragments together. The environment

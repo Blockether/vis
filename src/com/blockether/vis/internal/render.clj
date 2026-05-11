@@ -1084,11 +1084,11 @@
                       (if (= 1 turn-count) "" "s") "_\n\n")))))
 
 (defn- render-export-turn [opts turn]
-  (let [user-text (or (:user turn) (:prompt turn) "")
+  (let [user-text (or (:user-request turn) (:user turn) (:prompt turn) "")
         answer    (:answer turn)
         ast       (->ast answer)
         rendered  (render ast (:flavor opts))]
-    (str "## You\n\n" user-text "\n\n## Assistant\n\n" rendered "\n")))
+    (str "## You\n" user-text "\n\n## Assistant\n" rendered "\n")))
 
 (defn conversation->markdown
   "Project a full conversation as a Markdown document on top of the IR

@@ -484,7 +484,16 @@
       (expect (not-any? #(contains? (:projected %) :turn-separator?) visible)))))
 
 (defdescribe project-message-test
-  (describe "user messages strip timestamps and render markdown" (it "keeps :timestamp when :show-timestamps true" (let [pm (project-message (user-msg "hi") bubble-w (assoc settings :show-timestamps true))] (expect (some? (:timestamp pm))))))
+  (describe "user messages strip timestamps and render markdown"
+    (it "keeps :timestamp when :show-timestamps true"
+      (let [pm (project-message (user-msg "hi") bubble-w (assoc settings :show-timestamps true))]
+        (expect (some? (:timestamp pm)))))
+
+    (it "does not prepend answer-margin blank rows inside user prompt blocks"
+      (let [pm (project-message (user-msg "> siema") bubble-w settings)]
+        (expect (= 1 (count (:prewrapped-lines pm))))
+        (expect (not= "" (first (:prewrapped-lines pm))))
+        (expect (str/includes? (first (:prewrapped-lines pm)) "siema")))))
 
   (describe "plain assistant messages run through markdown formatting"
     (it "produces a non-empty :text"

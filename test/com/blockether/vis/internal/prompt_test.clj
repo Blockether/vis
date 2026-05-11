@@ -1,7 +1,6 @@
 (ns com.blockether.vis.internal.prompt-test
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.skills :as skills]
    [lazytest.core :refer [defdescribe expect it]]))
@@ -81,6 +80,7 @@
       (expect (str/includes? p "TURN:"))
       (expect (str/includes? p "ITERATIONS:"))
       (expect (str/includes? p "JOURNAL:"))
+      (expect (str/includes? p "IR FORMS:"))
       (expect (str/includes? p "ANSWER:"))
       (expect (str/includes? p "SURFACES:"))
       (expect (str/includes? p "CODE:"))
@@ -88,36 +88,40 @@
       (expect (not (str/includes? p "DEFS RENDER")))
       (expect (not (str/includes? p "BATCHING")))))
 
-  (it "renders only the interesting SYSTEM vars"
-    (let [p (prompt/build-system-prompt {})
-          visible ["CONVERSATION_TITLE"
-                   "TURN_POSITION"
-                   "TURN_ID"
-                   "TURN_ITERATION_ID"
-                   "TURN_ITERATION_POSITION"
-                   "CONVERSATION_STATE_ID"]
-          hidden ["TURN_ACTIVE_EXTENSIONS"
-                  "TURN_ACCESSIBLE_SKILLS"
-                  "TURN_CONVERSATION_STATE_ID"
-                  "TURN_SYSTEM_PROMPT"
-                  "CONVERSATION_PREVIOUS_ANSWER"]]
-      (expect (str/includes? p "SYSTEM vars are live uppercase SCI bindings"))
-      (doseq [var-name visible]
-        (expect (str/includes? p var-name)))
-      (doseq [var-name hidden]
-        (expect (not (str/includes? p var-name))))))
+  (it "keeps dynamic engine values out of the cached system prompt"
+    (let [p (prompt/build-system-prompt {})]
+      (expect (str/includes? p "Dynamic engine state is supplied in user-role <current_turn_context>"))
+      (expect (str/includes? p "Dynamic ids/positions never appear as changing values"))
+      (expect (str/includes? p "engine_turn_id"))
+      (expect (str/includes? p "engine_iteration_position"))
+      (doseq [legacy ["<system_vars>"
+                      "TURN_ITERATION_ID is the last persisted iteration UUID"
+                      "{{SYSTEM_VARS_REGISTRY}}"]]
+        (expect (not (str/includes? p legacy))))))
 
   (it "explains turns, iterations, journal, and answer timing"
     (let [p (prompt/build-system-prompt {})]
       (expect (str/includes? p "One user request = one turn"))
       (expect (str/includes? p "One model reply + engine eval = one iteration"))
-      (expect (str/includes? p "TURN_ITERATION_ID is the last persisted iteration UUID"))
+      (expect (str/includes? p "current_engine_iteration_id is the logical id"))
       (expect (str/includes? p "<journal> row labels iN are 1-based"))
       (expect (str/includes? p "iN.K.M = tool event inside iN.K"))
       (expect (str/includes? p "read :hint first"))
       (expect (str/includes? p "After mutation, verify in a later iteration"))
       (expect (str/includes? p "Final answer iteration is only"))
-      (expect (str/includes? p "runtime > source > docs > assumption")))))
+      (expect (str/includes? p "runtime > source > docs > assumption"))))
+
+  (it "documents core Answer IR forms and examples"
+    (let [p (prompt/build-system-prompt {})]
+      (expect (str/includes? p "Root: [:ir block*]"))
+      (expect (str/includes? p "Blocks: :p :h{:level 1-6} :code{:lang}"))
+      (expect (str/includes? p ":details{:open?} :summary"))
+      (expect (str/includes? p "Inlines: :span{:preserve-ws? :nowrap?} :br"))
+      (expect (str/includes? p ":img{:src :alt} :kbd :mark :sup :sub"))
+      (expect (str/includes? p "Raw text tags preserving whitespace: :code, :c, :kbd"))
+      (expect (str/includes? p "(answer [:ir [:p \"Done.\"]])"))
+      (expect (str/includes? p "(answer [:ir [:details {:open? false}"))
+      (expect (str/includes? p "Build this data directly; do not generate Markdown and convert it")))))
 
 (defdescribe initial-messages-test
   (it "renders previous-turn context without current-objective pinning"
@@ -133,51 +137,35 @@
       (expect (str/includes? content "<user_turn_request_main_goal>"))
       (expect (not (str/includes? content "<current_objective>"))))))
 
-(defdescribe system-vars-values-rendering-test
-  (it "embeds only interesting live SYSTEM-var values in the per-iteration trailer"
-    (let [{:keys [sci-ctx initial-ns-keys]} (env/create-sci-context nil)
-          environment {:sci-ctx sci-ctx
-                       :initial-ns-keys initial-ns-keys
-                       :conversation-title-atom (atom "Template vars")}
-          _ (doseq [[sym value] {'TURN_ID "turn-123"
-                                 'TURN_POSITION 7
-                                 'TURN_ITERATION_ID "iter-123"
-                                 'TURN_ITERATION_POSITION 3
-                                 'CONVERSATION_STATE_ID "state-123"
-                                 'CONVERSATION_TITLE "Template vars"
-                                 'TURN_ACTIVE_EXTENSIONS "hidden"
-                                 'TURN_ACCESSIBLE_SKILLS "hidden"
-                                 'TURN_SYSTEM_PROMPT "hidden"
-                                 'CONVERSATION_PREVIOUS_ANSWER "hidden"
-                                 'TURN_CONVERSATION_STATE_ID "hidden"}]
-              (env/bind-and-bump! environment sym value))
+(defdescribe current-turn-context-rendering-test
+  (it "embeds dynamic engine ids and positions in the per-iteration user trailer"
+    (let [environment {:conversation-id "conversation-123"
+                       :conversation-title-atom (atom "Template vars")
+                       :current-conversation-turn-id-atom (atom "turn-12345678")
+                       :current-turn-position-atom (atom 7)
+                       :current-iteration-id-atom (atom "iter-previous")}
           out (prompt/build-iteration-context
                 environment
                 {:active-extensions []
                  :model "test-model"
                  :context-limit 4096
                  :iteration 2
+                 :max-iterations 20
                  :current-user-content "check vars"})]
-      (expect (str/includes? out "<system_vars>"))
-      (doseq [var-name ["CONVERSATION_TITLE"
-                        "TURN_POSITION"
-                        "TURN_ID"
-                        "TURN_ITERATION_ID"
-                        "TURN_ITERATION_POSITION"
-                        "CONVERSATION_STATE_ID"]]
-        (expect (str/includes? out (str "<system_var name=\"" var-name "\">"))))
-      (doseq [var-name ["TURN_ACTIVE_EXTENSIONS"
-                        "TURN_ACCESSIBLE_SKILLS"
-                        "TURN_CONVERSATION_STATE_ID"
-                        "TURN_SYSTEM_PROMPT"
-                        "CONVERSATION_PREVIOUS_ANSWER"]]
-        (expect (not (str/includes? out var-name))))
-      (expect (str/includes? out "&quot;turn-123&quot;"))
-      (expect (str/includes? out "<system_var name=\"TURN_ITERATION_POSITION\">3</system_var>"))
-      (expect (str/includes? out "&quot;Template vars&quot;")))))
+      (expect (str/includes? out "<current_turn_context>"))
+      (expect (str/includes? out "engine_state_machine: idle -> receive_user_turn"))
+      (expect (str/includes? out "engine_turn_id: turn-12345678"))
+      (expect (str/includes? out "engine_turn_position: 7"))
+      (expect (str/includes? out "current_engine_iteration_id: turn/turn-123/iteration/3"))
+      (expect (str/includes? out "engine_iteration_position: 3"))
+      (expect (str/includes? out "engine_iteration_max: 20"))
+      (expect (str/includes? out "previous_persisted_iteration_id: iter-previous"))
+      (expect (str/includes? out "previous_persisted_iteration_position: 2"))
+      (expect (not (str/includes? out "<system_vars>")))
+      (expect (not (str/includes? out "<system_var"))))))
 
 (defdescribe hook-nudge-rendering-test
-  (it "renders a system nudge from the canonical namespaced iteration-start phase"
+  (it "renders a current engine nudge from the canonical namespaced iteration-start phase"
     (let [out (prompt/build-iteration-context
                 {:conversation-title-atom (atom "Hook phases")}
                 {:active-extensions [{:ext/namespace 'test.hook-phases
@@ -191,8 +179,8 @@
                  :context-limit 4096
                  :iteration 0
                  :current-user-content "debug this"})]
-      (expect (str/includes? out "<system_nudges>"))
-      (expect (str/includes? out "<system_nudge importance=\"high\">"))
+      (expect (str/includes? out "<current_engine_start_nudges>"))
+      (expect (str/includes? out "<current_engine_start_nudge importance=\"high\">"))
       (expect (str/includes? out "phase=:turn.iteration/start"))))
 
   (it "renders turn-start and session-start nudges only at their boundaries"
@@ -226,7 +214,9 @@
       (expect (str/includes? first-out "session"))
       (expect (str/includes? first-out "turn"))
       (expect (= [] @later-hits))
-      (expect (nil? later-out)))))
+      (expect (str/includes? later-out "<current_turn_context>"))
+      (expect (not (str/includes? later-out "session")))
+      (expect (not (str/includes? later-out "turn</current_engine_start_nudge>"))))))
 
 (defdescribe journal-rendering-test
   (it "renders every block in <journal> (no silent elision)"

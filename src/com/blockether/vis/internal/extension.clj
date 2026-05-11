@@ -681,7 +681,7 @@
 ;; Canonical phase keywords are namespaced by lifecycle level:
 ;;   :session/start        — first iteration of the first turn, BEFORE eval.
 ;;                           fn returns nil | {:hint :importance?}; hint flows
-;;                           into <system_nudges>.
+;;                           into <current_engine_start_nudges>.
 ;;   :turn/start           — first iteration of each turn, BEFORE eval. Same
 ;;                           return contract as :session/start.
 ;;   :turn.iteration/start — every iteration, BEFORE eval. Same return contract.
@@ -704,7 +704,7 @@
 ;; caught + logged via Telemere; a misbehaving hook never blocks the
 ;; loop or starves siblings.
 ;;
-;; Hooks do NOT block evaluation. Pre-phase hooks emit advisory <system_nudge>
+;; Hooks do NOT block evaluation. Pre-phase hooks emit advisory <current_engine_start_nudge>
 ;; entries; post-phase hooks side-effect only. For HARD preflight rejection
 ;; (e.g. answer-alone gate), use the preflight gates in loop.clj.
 ;; ----------------------------------------------------------------------------
