@@ -1599,7 +1599,7 @@
       (expect (some #(str/includes? (:text %) "↑100 (cached 70) ↓20")
                 @puts))))
 
-  (it "renders the optional turn separator above the You label"
+  (it "renders the optional turn separator at compact height"
     (let [puts    (atom [])
           fills   (atom [])
           fg      (atom nil)
@@ -1631,13 +1631,13 @@
           height   (render/draw-chat-bubble! graphics
                      {:role :user :text "hello" :turn-separator? true}
                      4 2 30 {:viewport-h 40})]
-      (expect (= 7 height))
+      (expect (= 5 height))
       (expect (some #(and (= 4 (:row %))
                        (str/includes? (:text %) "──")
                        (= t/turn-separator-bg (:bg %)))
                 @puts))
       (expect (not-any? #(= 5 (:row %)) @puts))
-      (expect (some #(and (= 6 (:row %))
+      (expect (some #(and (= 4 (:row %))
                        (= "You" (:text %))
                        (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                 @puts))))
@@ -1744,7 +1744,9 @@
                                       (= (:row code-put) (:row %)))
                              @fills))]
       (expect (= text-x (:col code-put)))
-      (expect (= text-x (:col code-fill)))))
+      (do
+        (expect (= left (:col code-fill)))
+        (expect (= width (:w code-fill))))))
 
   (it "leaves only the final gap after the user bubble fill"
     (let [fills    (atom [])

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.file-picker-test
   (:require [clojure.java.io :as io]
             [com.blockether.vis.internal.file-picker :as picker]
-            [com.blockether.vis.internal.workspace-context :as workspace-context]
+            [com.blockether.vis.internal.workspace :as workspace]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (def ^:private sample-entries
@@ -114,7 +114,7 @@
       (try
         (.mkdirs nested)
         (spit file "workspace")
-        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
           (expect (= ["nested/only-here.txt"]
                     (mapv :path (picker/collect-file-picker-entries)))))
         (finally

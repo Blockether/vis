@@ -36,6 +36,14 @@
   (git! root "add" "README.md")
   (git! root "commit" "-m" "init"))
 
+(defdescribe workspace-root-test
+  (it "canonicalizes workspace roots and falls back to process cwd"
+    (let [cwd (.getCanonicalPath (io/file (System/getProperty "user.dir")))]
+      (expect (= cwd (.getCanonicalPath (workspace/cwd))))
+      (expect (= cwd (workspace/workspace-root {:workspace/root "."})))
+      (binding [workspace/*workspace-root* cwd]
+        (expect (= cwd (.getCanonicalPath (workspace/cwd))))))))
+
 (defdescribe workspace-manager-test
   (it "creates a real git worktree under Vis runtime state"
     (let [repo     (temp-dir "vis-workspace-repo-")

@@ -61,6 +61,24 @@
    chokepoints; lift to `empty-ir` instead."
   [:ir {}])
 
+(defn- canonical-ir?
+  [x]
+  (and (vector? x) (= :ir (first x))))
+
+(defn- answer->ir
+  "Normalize a turn result answer into canonical IR for the TUI boundary.
+
+   The normal `vis/send!` success path already returns `[:ir ...]`, but
+   terminal paths such as cancellation / iteration-cap fallbacks can carry
+   human-readable strings. The channel must still hand `assistant-message`
+   canonical IR, never raw text."
+  [answer fallback-text]
+  (cond
+    (canonical-ir? answer) answer
+    (some? answer)         (vis/text->ir (if (string? answer) answer (pr-str answer)))
+    (seq fallback-text)    (vis/text->ir fallback-text)
+    :else                  empty-ir))
+
 (defn render-answer
   "Render canonical answer-IR (`[:ir & nodes]`) to the markdown string
    the TUI bubble renderer expects.
@@ -120,11 +138,10 @@
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
-                        ;; `:answer` from `db-list-conversation-turns` is the
-                        ;; thawed Nippy IR `[:ir & nodes]` (see
-                        ;; conversation_turn_state.answer in V1 schema). NULL
-                        ;; on running / never-finished turns → lift to empty IR.
-                        answer-ir (or (:answer q) empty-ir)
+                        ;; Modern rows store Nippy-thawed canonical IR;
+                        ;; legacy terminal paths may have persisted a string
+                        ;; (for example iteration-cap text). Normalize both.
+                        answer-ir (answer->ir (:answer q) nil)
                         model     (:model q)
                         tokens    (cond-> {}
                                     (:input-tokens q)     (assoc :input (:input-tokens q))
@@ -149,12 +166,7 @@
                         last-iteration-id (some-> (last turn-iterations) :id)
                         ;; Empty IR is `[:ir {}]` (count 2 — just root tag
                         ;; + attrs); a real answer adds at least one block.
-                        produced-answer? (do
-                                           (when-not (and (vector? answer-ir) (= :ir (first answer-ir)))
-                                             (throw (ex-info "Persisted answer must be canonical [:ir ...]"
-                                                      {:turn-id (:id q)
-                                                       :got-type (some-> answer-ir class .getName)})))
-                                           (> (count answer-ir) 2))
+                        produced-answer? (and (canonical-ir? (:answer q)) (> (count (:answer q)) 2))
                         trace (into []
                                 (map (fn [it]
                                        (let [all-exprs   (vec (vis/db-list-iteration-blocks d (:id it)))
@@ -324,14 +336,12 @@
                        (seq workspace)   (merge workspace))
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
-           ;; `(:answer result)` from `vis/send!` is canonical IR
-           ;; (`[:ir & nodes]`). Synthetic placeholders for cancelled /
-           ;; empty turns are lifted into IR here so `render-answer` /
-           ;; the channel chokepoint never see raw strings.
-           answer (or (:answer result)
-                    (cond
-                      cancelled? [:ir {} [:p {} [:span {} "Cancelled by user."]]]
-                      :else      [:ir {} [:p {} [:span {} "[empty response]"]]]))
+           ;; `(:answer result)` from `vis/send!` is normally canonical IR
+           ;; (`[:ir & nodes]`), but cancellation/iteration-cap terminal paths
+           ;; may carry raw status text. Normalize here so `render-answer` /
+           ;; `assistant-message` never see raw strings.
+           answer (answer->ir (:answer result)
+                    (if cancelled? "Cancelled by user." "[empty response]"))
            model  (or (get-in result [:cost :model]) (get result :model))
            tokens (:tokens result)
            cost   (:cost result)

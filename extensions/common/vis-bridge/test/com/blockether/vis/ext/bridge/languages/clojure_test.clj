@@ -3,7 +3,7 @@
    [clojure.java.io :as io]
    [com.blockether.vis.ext.bridge.languages.clojure :as clj]
    [com.blockether.vis.ext.bridge.languages.schema :as schema]
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def sample-dump
@@ -51,7 +51,7 @@
                                     :var-definitions []
                                     :var-usages []}}
                     :dep-graph {'demo.core {:dependencies {}}}}]
-          (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+          (binding [workspace/*workspace-root* (.getCanonicalPath root)]
             (let [result (clj/extract-project {:dump dump})]
               (expect (= (.getCanonicalPath root) (get-in result [:stats :project-root])))
               (expect (= "src/demo/core.clj" (:path (first (:nodes result))))))))

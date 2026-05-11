@@ -15,10 +15,8 @@
     ;; share `chat/render-answer`, which dispatches via the
     ;; `:channel/messages-renderer-fn` registered by `channel-tui.core`.
     ;;
-    ;; STRICT: the V1 schema persists answers as Nippy-frozen canonical
-    ;; IR `[:ir & nodes]`; `db-list-conversation-turns` thaws them on
-    ;; read. The resume path receives IR by contract — strings here
-    ;; would be a programmer bug and must throw.
+    ;; Normal persisted answers are Nippy-frozen canonical IR; the
+    ;; legacy/string terminal-answer fallback is covered below.
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-conversation-turns
                   (fn [_db _cid]
@@ -39,16 +37,21 @@
         (expect (= :ir (first ir)))
         (expect (str/includes? text "Siema!")))))
 
-  (it "rebuild-history rejects persisted non-IR answers"
+  (it "rebuild-history coerces legacy persisted string answers"
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-conversation-turns
                   (fn [_db _cid]
-                    [{:id :turn-bad
+                    [{:id :turn-legacy
                       :user-request "siema"
-                      :answer "not ir"}])
+                      :answer "Stopped after 20 iterations without `(answer ...)`."}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id] [])]
-      (expect (= [] ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")))))
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            assistant (second history)
+            ir (:ir assistant)]
+        (expect (= 2 (count history)))
+        (expect (= :ir (first ir)))
+        (expect (str/includes? (vis/render ir :markdown) "Stopped after 20 iterations")))))
 
   (it "render-answer throws on raw-string input (strict IR contract)"
     (expect
@@ -115,4 +118,14 @@
                   vis/cancellation? (fn [_] true)]
       (let [result (chat/turn! {:id "c1"} "hello")]
         (expect (= :cancelled (:status result)))
-        (expect (= :ir (first (:answer result))))))))
+        (expect (= :ir (first (:answer result)))))))
+
+  (it "coerces raw cancellation text into canonical IR"
+    (with-redefs [vis/send! (fn [& _]
+                              {:status :cancelled
+                               :answer "Stopped after 32 iterations without `(answer ...)`."})]
+      (let [result (chat/turn! {:id "c1"} "hello")]
+        (expect (= :cancelled (:status result)))
+        (expect (= :ir (first (:answer result))))
+        (expect (str/includes? (vis/render (:answer result) :markdown)
+                  "Stopped after 32 iterations"))))))

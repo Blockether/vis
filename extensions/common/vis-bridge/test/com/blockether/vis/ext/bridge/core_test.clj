@@ -5,7 +5,7 @@
    [clojure.string :as str]
    [com.blockether.vis.ext.bridge.core :as bridge]
    [com.blockether.vis.ext.bridge.languages.schema :as schema]
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- manifest-file []
@@ -43,7 +43,7 @@
           file (io/file root "README.md")]
       (try
         (spit file "# Workspace\n")
-        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+        (binding [workspace/*workspace-root* (.getCanonicalPath root)]
           (let [result (bridge/extract {:path "README.md" :language "markdown"})]
             (expect (= "README.md" (get-in result [:stats :path])))
             (expect (= (bridge/content-sha256 "# Workspace\n")

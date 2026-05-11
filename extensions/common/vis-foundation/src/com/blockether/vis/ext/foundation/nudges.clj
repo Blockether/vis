@@ -23,6 +23,11 @@
         Warns the model that answering from memory on an investigation
         request is a hallucination.
 
+     4. `:vis.foundation/action-request-needs-evidence`
+        (hard `:turn.answer/validate` guard)
+        Rejects completion claims for action requests that have no
+        prior observed work in the current turn.
+
    Keeping policy in an extension (not core hardcoded built-ins)
    means these go through the same `:ext/hooks` protocol any
    third-party extension uses, can be swapped per channel/config,
@@ -160,14 +165,6 @@
              "request is a hallucination. If the request is truly "
              "trivial chat (greeting, ack), ignore this nudge.")}))
 
-(defn- error-message
-  [err]
-  (cond
-    (nil? err) nil
-    (string? err) err
-    (map? err) (or (:message err) (:msg err) (pr-str err))
-    :else (str err)))
-
 (defn- previous-iteration-entries
   [{:keys [previous-iterations previous-blocks]}]
   (if (seq previous-iterations)
@@ -179,177 +176,6 @@
               :blocks (:blocks entry)}))
       previous-iterations)
     [{:iteration nil :blocks previous-blocks}]))
-
-(def ^:private call-head-regex
-  #"\(\s*([A-Za-z0-9_.*+!?'<>:=/-]+)")
-
-(defn- form-tool
-  [form]
-  (when-let [head (some->> form str (re-find call-head-regex) second)]
-    (let [[ns-part name-part] (str/split head #"/" 2)]
-      (if name-part
-        (keyword ns-part name-part)
-        (keyword ns-part)))))
-
-(defn- short-form
-  [form]
-  (let [s (some-> form str str/trim)]
-    (when (seq s)
-      (if (< 180 (count s))
-        (str (subs s 0 180) "...")
-        s))))
-
-(defn- form-key
-  [form]
-  (some-> form str str/trim not-empty))
-
-(defn- verification-form?
-  [form]
-  (let [s (some-> form str str/lower-case)]
-    (boolean
-      (and s
-        (or (str/includes? s "./verify.sh")
-          (str/includes? s "clojure -m:test")
-          (str/includes? s "clj -m:test")
-          (str/includes? s "lazytest"))))))
-
-(defn failure-obligations
-  "Extract first-class failure obligations from previous iterations.
-   Public for regression tests."
-  [ctx]
-  (->> (previous-iteration-entries ctx)
-    (mapcat (fn [{:keys [iteration blocks]}]
-              (mapcat
-                (fn [block-idx block]
-                  (let [block-num (inc block-idx)
-                        block-form (or (:code block) (:form block))
-                        block-form-key (form-key block-form)
-                        block-tool (or (some-> block :result :symbol) (form-tool block-form))
-                        block-msg (error-message (:error block))
-                        block-failure (when block-msg
-                                        [{:id (str "iter/" iteration "/block/" block-num)
-                                          :kind :failure/block
-                                          :iteration iteration
-                                          :block block-num
-                                          :tool block-tool
-                                          :form (short-form block-form)
-                                          :form-key block-form-key
-                                          :message block-msg}])
-                        journal-failures
-                        (keep-indexed
-                          (fn [journal-idx entry]
-                            (when (false? (:success? entry))
-                              (let [form (or (:form entry) block-form)]
-                                {:id (str "iter/" iteration "/block/" block-num "/journal/" (inc journal-idx))
-                                 :kind :failure/journal
-                                 :iteration iteration
-                                 :block block-num
-                                 :journal (inc journal-idx)
-                                 :tool (or (form-tool form) block-tool)
-                                 :form (short-form form)
-                                 :form-key (form-key form)
-                                 :message (error-message (:error entry))})))
-                          (:journal block))]
-                    (concat block-failure journal-failures)))
-                (range)
-                (or blocks []))))
-    (remove #(str/blank? (:message %)))
-    vec))
-
-(defn proof-events
-  "Extract successful later proof events from previous iterations.
-   Public for regression tests.
-
-   Tool calls usually surface success through `:journal` sink entries.
-   Bare forms like `(conversation-title ...)` or `(def x ...)` often do not,
-   so a later clean block evaluation also counts as a proof event. Block-level
-   proofs close only by exact form match; journal proofs keep the broader
-   same-tool / verification closure semantics."
-  [ctx]
-  (->> (previous-iteration-entries ctx)
-    (mapcat (fn [{:keys [iteration blocks]}]
-              (mapcat
-                (fn [block-idx block]
-                  (let [block-num (inc block-idx)
-                        block-form (or (:code block) (:form block))
-                        block-form-key (form-key block-form)
-                        block-tool (or (some-> block :result :symbol) (form-tool block-form))
-                        block-proof (when (and (nil? (:error block)) block-form-key)
-                                      [{:iteration iteration
-                                        :block block-num
-                                        :tool block-tool
-                                        :form (short-form block-form)
-                                        :form-key block-form-key
-                                        :verification? (verification-form? block-form)
-                                        :source :block}])
-                        journal-proofs
-                        (keep-indexed
-                          (fn [journal-idx entry]
-                            (when (true? (:success? entry))
-                              (let [form (or (:form entry) block-form)
-                                    tool (or (form-tool form) block-tool)]
-                                {:iteration iteration
-                                 :block block-num
-                                 :journal (inc journal-idx)
-                                 :tool tool
-                                 :form (short-form form)
-                                 :form-key (form-key form)
-                                 :verification? (verification-form? form)
-                                 :source :journal})))
-                          (:journal block))]
-                    (concat block-proof journal-proofs)))
-                (range)
-                (or blocks []))))
-    vec))
-
-(defn- later-proof-closes?
-  [failure proof]
-  (and (number? (:iteration failure))
-    (number? (:iteration proof))
-    (< (long (:iteration failure)) (long (:iteration proof)))
-    (or (:verification? proof)
-      (and (:form-key failure)
-        (= (:form-key failure) (:form-key proof)))
-      (and (= :journal (:source proof))
-        (:tool failure)
-        (= (:tool failure) (:tool proof))))))
-
-(defn open-error-obligations
-  "Return failure obligations not closed by a later proof event.
-   A proof must occur in a later iteration, because the model cannot observe
-   same-iteration failures before composing a final answer."
-  [ctx]
-  (let [failures (failure-obligations ctx)
-        proofs (proof-events ctx)]
-    (->> failures
-      (remove (fn [failure]
-                (some #(later-proof-closes? failure %) proofs)))
-      vec)))
-
-(defn- obligation-summary
-  [{:keys [iteration block journal tool form message]}]
-  (str "iteration " (or iteration "?")
-    "/block " (or block "?")
-    (when journal (str "/journal " journal))
-    (when tool (str " " tool))
-    (when form (str " `" form "`"))
-    ": " message))
-
-(defn unresolved-error-answer-guard-check
-  "Hard answer validator. Reject a candidate answer while any previous failure
-   obligation remains open. A later successful verification command closes all
-   prior failures; a later successful same-tool journal call closes that tool's
-   prior failure; a later successful bare-form re-evaluation (for example
-   `(conversation-title ...)` or `(def x ...)`) closes the exact same earlier
-   failed form. Same-iteration proof does not count because the model could not
-   observe the failure before composing the answer."
-  [ctx]
-  (let [open (open-error-obligations ctx)]
-    (when (seq open)
-      (let [preview (str/join "; " (map obligation-summary (take 3 open)))]
-        {:reject true
-         :message (str "Open failure obligations remain in the journal: " preview)
-         :hint "Do not answer yet. Read the failed journal entry. If answer-alone preflight rejected sibling forms, rerun those forms without `(answer ...)` and observe success. Otherwise fix or explicitly prove/acknowledge the failure, then run a later proof step (for example ./verify.sh --quick or a successful same-tool retry) before answering."}))))
 
 (def ^:private action-request-regex
   #"(?i)\b(fix|implement|patch|change|add|remove|delete|create|edit|update|verify|run|commit|push)\b")
@@ -423,4 +249,8 @@
    {:id    :vis.foundation/blind-answer
     :doc   "Warn when iteration 1 is about to answer an investigation-style request without any tool calls."
     :phase :turn.iteration/start
-    :fn    blind-answer-guard-check}])
+    :fn    blind-answer-guard-check}
+   {:id    :vis.foundation/action-request-needs-evidence
+    :doc   "Reject action-request completion claims with no prior observed tool/code evidence in the turn."
+    :phase :turn.answer/validate
+    :fn    action-request-needs-evidence-check}])

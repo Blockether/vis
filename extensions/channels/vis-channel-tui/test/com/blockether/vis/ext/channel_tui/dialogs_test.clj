@@ -5,7 +5,7 @@
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.external-opener :as opener]
-            [com.blockether.vis.internal.workspace-context :as workspace-context])
+            [com.blockether.vis.internal.workspace :as workspace])
   (:import [com.googlecode.lanterna TerminalPosition TerminalSize]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen]
@@ -142,9 +142,9 @@
     (let [seen-root (promise)
           open-picker-item! (var-get #'dlg/open-picker-item!)]
       (with-redefs [opener/open! (fn [path]
-                                   (deliver seen-root workspace-context/*workspace-root*)
+                                   (deliver seen-root workspace/*workspace-root*)
                                    {:status :ok :target path})]
-        (binding [workspace-context/*workspace-root* "/tmp/vis-dialog-ws"]
+        (binding [workspace/*workspace-root* "/tmp/vis-dialog-ws"]
           @(open-picker-item! {:path "deps.edn"}))
         (is (= "/tmp/vis-dialog-ws" (deref seen-root 1000 ::timeout)))))))
 

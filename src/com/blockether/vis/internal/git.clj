@@ -5,7 +5,7 @@
    own JGit calls. It reports small, renderable facts about the current
    repository: whether a git workspace exists, repo/branch identity,
    dirty counts, and ahead/behind counts for the configured upstream."
-  (:require [com.blockether.vis.internal.workspace-context :as workspace-context])
+  (:require [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.io File]
            [org.eclipse.jgit.api Git Status]
            [org.eclipse.jgit.lib BranchTrackingStatus Repository]
@@ -21,7 +21,7 @@
 (defn cwd-file
   "Canonical current working directory as a File. Indirected for tests."
   ^File []
-  (.getCanonicalFile (workspace-context/cwd)))
+  (.getCanonicalFile (workspace/cwd)))
 
 (defn open-repository
   "Open the git repository containing `start`, or nil when `start` is

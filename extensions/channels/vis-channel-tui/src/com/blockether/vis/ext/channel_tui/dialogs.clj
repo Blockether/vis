@@ -8,7 +8,7 @@
             [com.blockether.vis.internal.theme :as shared-theme]
             [com.blockether.vis.internal.external-opener :as opener]
             [com.blockether.vis.internal.file-picker :as picker]
-            [com.blockether.vis.internal.workspace-context :as workspace-context])
+            [com.blockether.vis.internal.workspace :as workspace])
   (:import [com.googlecode.lanterna Symbols TerminalPosition]
            [com.googlecode.lanterna.input KeyStroke KeyType MouseAction MouseActionType]
            [com.googlecode.lanterna.screen TerminalScreen Screen$RefreshType]
@@ -567,10 +567,10 @@
 
 (defn- open-picker-item!
   ([item]
-   (open-picker-item! item workspace-context/*workspace-root*))
+   (open-picker-item! item workspace/*workspace-root*))
   ([{:keys [path]} workspace-root]
    (vis/worker-future "vis-tui-open-picker-item"
-     #(binding [workspace-context/*workspace-root* workspace-root]
+     #(binding [workspace/*workspace-root* workspace-root]
         (try
           (opener/open! path)
           (catch Throwable t
@@ -669,7 +669,7 @@
    the selected relative path, Esc cancels. `Alt+I` toggles ignored files;
    `Alt+S` cycles sort mode; `Alt+O` opens the selection externally."
   [^TerminalScreen screen]
-  (let [workspace-root   workspace-context/*workspace-root*
+  (let [workspace-root   workspace/*workspace-root*
         entries          (picker/collect-file-picker-entries)
         query            (atom "")
         include-ignored? (atom false)
