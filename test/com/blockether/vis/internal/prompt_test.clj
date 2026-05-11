@@ -190,6 +190,40 @@
       (expect (not (str/includes? p "GENERATE one OR MORE")))
       (expect (not (str/includes? p "AUTOMATICALLY populates"))))))
 
+(defdescribe current-objective-test
+  (it "derives objective from current user request by default"
+    (expect
+      (= {:source :user-request
+          :confidence :high
+          :user-request "Explain the design"
+          :text "Explain the design"}
+        (prompt/derive-current-objective
+          {:initial-user-content "Explain the design"}))))
+
+  (it "binds short followups to previous user request"
+    (expect
+      (= {:source :previous-user-request
+          :confidence :high
+          :user-request "do it"
+          :text "Patch TUI header spacing"}
+        (prompt/derive-current-objective
+          {:initial-user-content "do it"
+           :previous-turn-context {:user-request "Patch TUI header spacing"
+                                   :answer "I can do that."}}))))
+
+  (it "renders <current_objective> in initial user message"
+    (let [messages (prompt/assemble-initial-messages
+                     {:system-prompt "SYS"
+                      :initial-user-content "do it"
+                      :previous-turn-context {:user-request "Patch TUI header spacing"
+                                              :answer "I can do that."}})
+          user-msg (some #(when (= "user" (:role %)) %) messages)
+          content (:content user-msg)]
+      (expect (str/includes? content "<current_objective>"))
+      (expect (str/includes? content "source: previous-user-request"))
+      (expect (str/includes? content "objective: Patch TUI header spacing"))
+      (expect (str/includes? content "<user_turn_request_main_goal>")))))
+
 (defdescribe hook-nudge-rendering-test
   (it "renders a system nudge from the canonical namespaced iteration-start phase"
     (let [out (prompt/build-iteration-context

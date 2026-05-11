@@ -297,6 +297,16 @@
   [lines max-width]
   (mapv #(clip-line-preserving-marker % max-width) lines))
 
+(defn- clipped-lines
+  "Memoized clipping for prewrapped painter lines. Large trace bubbles can
+   carry hundreds of rows plus occasional huge raw tool-output rows; scrolling
+   must not re-clip every off-screen row on each frame."
+  [raw-lines content-w]
+  (cached* [::clipped-lines
+            (System/identityHashCode raw-lines)
+            (long content-w)]
+    #(clip-lines-preserving-markers raw-lines content-w)))
+
 (defn wrap-text*
   "Uncached implementation. Prefer `wrap-text` everywhere except inside
    `wrap-text` itself."
@@ -975,6 +985,12 @@
 (def ^:private tool-output-indent-cols
   (p/display-width tool-output-indent))
 
+(def ^:private code-block-inset
+  "Left margin for markdown fenced code blocks.  The code chip sits
+   `code-block-inset` cols inside the normal text `x`, giving it a
+   visual left gutter that separates it from surrounding prose."
+  2)
+
 (def ^:private output-indentable-markers
   #{stdout-marker stderr-marker stdout-sep-marker stdout-pad-marker code-err-pad-marker})
 
@@ -1530,7 +1546,7 @@
         ;; that bypass projection (rare).
         raw-lines (or (:prewrapped-lines message)
                     (wrap-text text content-w))
-        lines     (clip-lines-preserving-markers raw-lines content-w)
+        lines     (clipped-lines raw-lines content-w)
         line-meta (or (:line-meta message)
                     (vec (repeat (count lines) nil)))
         ;; Mid-window walker support: when `:lines-window {:start :total-h}`
@@ -1966,9 +1982,11 @@
                             nil))))
 
                     (str/starts-with? line md-code-marker)
-                    (do (p/set-colors! g t/code-block-fg t/code-block-bg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
+                    (let [cx (+ x code-block-inset)
+                          cw (max 1 (- iw code-block-inset))]
+                      (p/set-colors! g t/code-block-fg t/code-block-bg)
+                      (p/fill-rect! g cx y cw 1)
+                      (paint-ansi-line! g cx y (subs line 1) t/code-block-fg t/code-block-bg))
 
               ;; Bullet items: same inline-span treatment as plain text.
               ;; `- **bold** thing` should bold the word.
@@ -2116,10 +2134,12 @@
               ;; Clojure/EDN fences can carry zprint ANSI syntax color;
               ;; the painter translates ANSI foreground codes to Lanterna.
                     (str/starts-with? line th-md-code-marker)
-                    (do (p/set-colors! g t/code-result-fg t/code-block-bg)
-                      (p/fill-rect! g fbx y iw 1)
+                    (let [cx (+ x code-block-inset)
+                          cw (max 1 (- iw code-block-inset))]
+                      (p/set-colors! g t/code-result-fg t/code-block-bg)
+                      (p/fill-rect! g cx y cw 1)
                       (p/styled g [p/ITALIC]
-                        (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
+                        (paint-ansi-line! g cx y (subs line 1) t/code-result-fg t/code-block-bg)))
 
                     (str/starts-with? line th-md-bullet-marker)
                     (do (p/set-colors! g t/dialog-hint t/iteration-header-bg)
@@ -2267,9 +2287,13 @@
         content-w  (max 1 (- bubble-w (* 2 h-pad)))
         ;; Same contract: virtual.clj projection populates
         ;; `:prewrapped-lines` via the IR walker for every visible
-        ;; bubble; `wrap-text` is the bare-string fallback.
-        lines      (or prewrapped-lines
+        ;; bubble; `wrap-text` is the bare-string fallback. Route
+        ;; through `clipped-lines` here too: height calculation happens
+        ;; during pre-warm/layout, so it warms the exact clipped vector
+        ;; draw-chat-bubble! will need while scrolling.
+        raw-lines  (or prewrapped-lines
                      (wrap-text text content-w))
+        lines      (clipped-lines raw-lines content-w)
         top-pad    (if (= role :user) 1 0)
         bottom-pad (if (= role :user) 1 0)
         cancelled? (= :cancelled status)
@@ -3597,9 +3621,10 @@
                                     :always           (conj ans-pad)
                                     :always           (into ans-entries)
                                     :always           (conj ans-pad))
-                                  (cond-> []
-                                    fa-hdr  (conj fa-hdr)
-                                    :always (into ans-entries)))
+                                  (-> [(line-entry "")]
+                                    (cond->
+                                      fa-hdr  (conj fa-hdr)
+                                      :always (into ans-entries))))
         trailer                 (if cancelled? cancel-block answer-block)
         entries                 (if has-trace?
                                   (vec (concat trace-entries trailer))
@@ -3645,9 +3670,15 @@
   [answer bubble-w opts]
   (assert-canonical-ir! answer)
   (let [content-w (max 10 (- bubble-w 4))
-        entries   (if (ir-non-empty? answer)
-                    (vec (ir-tui/ir->entries answer content-w opts))
-                    [])]
+        raw-entries (if (ir-non-empty? answer)
+                      (vec (ir-tui/ir->entries answer content-w opts))
+                      [])
+        ;; Always prepend a blank margin row so the first line of
+        ;; answer content is never flush against the top of the bubble
+        ;; or the bottom of a preceding user message.  The blank row
+        ;; carries no marker (empty string) so it paints on the
+        ;; bubble background.
+        entries (into [{:line "" :meta nil}] raw-entries)]
     (entries->payload entries)))
 
 (defn format-answer-markdown*

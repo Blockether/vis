@@ -170,10 +170,17 @@
       (expect (= true (:reject hit)))
       (expect (str/includes? (:message hit) "no observed tool/code work"))))
 
-  (it "rejects short do-it followups with no turn evidence"
+  (it "rejects short do-it followups with no turn evidence when objective is bound"
     (expect (= true (:reject (nudges/action-request-needs-evidence-check
                                {:user-request "do it"
+                                :current-objective {:source :previous-user-request
+                                                    :text "Patch render spacing."}
                                 :answer [:ir [:p "Done."]]})))))
+
+  (it "does not treat bare do-it as an action request when no objective is bound"
+    (expect (nil? (nudges/action-request-needs-evidence-check
+                    {:user-request "do it"
+                     :answer [:ir [:p "Done."]]}))))
 
   (it "allows action requests after successful prior work evidence"
     (expect (nil? (nudges/action-request-needs-evidence-check

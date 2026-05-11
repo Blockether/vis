@@ -1,4 +1,10 @@
-# Symbol Decorators
+# Symbol Decorators (Symbol-Level Hooks)
+
+This page is about **symbol-level hooks** (`:before-fn`, `:after-fn`,
+`:on-error-fn`, `:on-parse-error-fn`) on `:ext/symbols`.
+
+For **lifecycle hooks** (`:ext/hooks`, including hard answer guards),
+see [Lifecycle Hooks (Nudges + Hard Guard Hooks)](guards.md).
 
 Three of the four hooks on a symbol are **decorators** around the
 target fn - same pattern as Ring middleware, Pedestal interceptors,
