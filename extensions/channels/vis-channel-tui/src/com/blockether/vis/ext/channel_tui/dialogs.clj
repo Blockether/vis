@@ -2012,14 +2012,16 @@
 
    Whole-conversation Markdown copy lives in the header as an icon,
    not in Ctrl+K."
+  ;; In-conversation search lives in the upper bar (above messages),
+  ;; not in the command palette — keystroke F3 / Shift+F3 /
+  ;; in-place input field. Removing it from this menu avoids two
+  ;; entry points for the same action.
   [{:id :new-conversation    :label "New Conversation"}
    {:id :new-tab             :label "New Tab"}
    {:id :worktree            :label "New Worktree"
     :args [{:name "branch" :kind :positional :required false}]}
    {:id :fork-conversation   :label "Fork Conversation"}
    {:id :switch-conversation :label "Switch Conversation"}
-   {:id :search-in-conversation :label "Search in Conversation"
-    :args [{:name "query" :kind :positional :required false}]}
    {:id :providers           :label "Configure Providers"}
    {:id :settings            :label "Settings"}])
 

@@ -1391,13 +1391,10 @@
     nil))
 
 (defn- meta->color-role
-  "Resolve a color role from a meta map carrying `:op/tag` and/or a
-   legacy `:color-role`. Prefers explicit `:color-role` for
-   backcompat with any leftover emitter; falls back to the engine
-   tag."
+  "Resolve a color role from a meta map carrying `:op/tag`. Single
+   source of truth: the engine-derived tag (PLAN §2.1, 2-value enum)."
   [m]
-  (or (:color-role m)
-    (op-tag->color-role (:op/tag m))))
+  (op-tag->color-role (:op/tag m)))
 
 (defn- paint-preview-switcher!
   [g x y fbx iw abs-row meta bg fg inactive-fg base-styles]
@@ -2367,21 +2364,24 @@
 
 (defn- detail-id-suffix
   ;; User-facing badge displayed at the right edge of disclosure rows.
-  ;; Per PLAN §2.9 + §5.1: render positions (ints), never UUIDs. The
-  ;; legacy `:conversation-turn-id` arg is accepted for backwards
-  ;; compat with callers that haven't been migrated to pass
-  ;; `:turn-position`, but we DO NOT render it — the Turn segment is
-  ;; simply omitted when only the UUID is available. Eventually all
-  ;; callers should pass `:turn-position` and the legacy arg goes away.
-  ^String [{:keys [turn-position iteration-number block-number details-path]}]
+  ;; Per PLAN §2.8 + §2.9 + §2.10 + §5.1:
+  ;;   - Render positions (ints), never UUIDs.
+  ;;   - Format: `[turn 7 · iteration 3 · block 0 · tool · z/patch]`
+  ;;   - Lowercase level words, dot separator (·) per PLAN §2.10.
+  ;;   - Optional :role and :op-symbol segments after the positions.
+  ;;   - No abbreviations: "iteration" not "iter".
+  ^String [{:keys [turn-position iteration-number block-number
+                   role op-symbol details-path]}]
   (let [parts (cond-> []
-                (some? turn-position) (conj (str "Turn: " turn-position))
-                iteration-number      (conj (str "Iteration: " iteration-number))
-                block-number          (conj (str "Block: " block-number))
-                (seq details-path)    (conj (str "Details: " (str/join "." details-path))))]
+                (some? turn-position) (conj (str "turn " turn-position))
+                iteration-number      (conj (str "iteration " iteration-number))
+                block-number          (conj (str "block " block-number))
+                role                  (conj (name role))
+                op-symbol             (conj (str op-symbol))
+                (seq details-path)    (conj (str "details " (str/join "." details-path))))]
     (if (seq parts)
-      (str "[" (str/join ", " parts) "]")
-      "[Details]")))
+      (str "[" (str/join " · " parts) "]")
+      "[details]")))
 
 (defn- ellipsize-cols
   ^String [s max-w]
