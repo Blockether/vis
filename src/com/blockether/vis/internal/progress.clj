@@ -249,15 +249,30 @@
                              (normalize-thinking-text (:thinking entry)))
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
-          ;; Elide only the answer-bearing form (if present) so its
-          ;; `(answer "...")` source doesn't double-render above the
-          ;; answer text. Duplicate final chunks must not elide again
-          ;; after indices have shifted; keep the already-elided entry
+          ;; Elide forms that are visual noise:
+          ;;   (a) `(answer ...)` — the answer text already renders
+          ;;       below; the call source is redundant.
+          ;;   (b) `(conversation-title ...)` — the title is shown
+          ;;       in the channel chrome (header bar); the call
+          ;;       source is redundant.
+          ;; Duplicate final chunks must not elide again after
+          ;; indices have shifted; keep the already-elided entry
           ;; stable.
           answer-idx   (when-not duplicate-final?
-                         (when (:final chunk) (:answer-form-idx chunk)))]
-      (if (some? answer-idx)
-        (elide-form-slots base #{answer-idx})
+                         (when (:final chunk) (:answer-form-idx chunk)))
+          title-idxs   (when-not duplicate-final?
+                         (->> (or (:code base) [])
+                           (keep-indexed
+                             (fn [idx code]
+                               (when (and (string? code)
+                                       (re-find #"^\s*\(conversation-title\b"
+                                         code))
+                                 idx)))
+                           set))
+          elide-set    (cond-> (or title-idxs #{})
+                         (some? answer-idx) (conj answer-idx))]
+      (if (seq elide-set)
+        (elide-form-slots base elide-set)
         base))
 
     :iteration-error
