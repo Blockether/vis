@@ -615,7 +615,7 @@
    prompt-so-far, `:title-refresh?` (turn-boundary hint), and
    `:conversation-title` (current value or nil). They may return a
    single nudge (string or `{:importance :low|:normal|:high|:critical
-   :text "..."}`), nil, or a sequential coll of such nudges.
+   :text ...}`), nil, or a sequential coll of such nudges.
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Computed once

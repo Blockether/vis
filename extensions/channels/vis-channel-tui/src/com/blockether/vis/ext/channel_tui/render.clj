@@ -2493,36 +2493,47 @@
           :else nil)
         in))))
 
+(def ^:private op-symbol->badge-label
+  "Map raw `:op` symbol (e.g. 'v/cat, 'v/patch, 'v/bash) to the visible
+   badge category. After PLAN §2.11 collapsed `:op/tag` to a 2-value
+   OODA enum, badge granularity moved to per-symbol mapping."
+  {'v/cat       "READ"
+   'v/preview   "PREVIEW"
+   'v/rg        "SEARCH"
+   'v/grep      "SEARCH"
+   'v/glob      "SEARCH"
+   'v/ls        "SEARCH"
+   'v/patch     "EDIT"
+   'v/edit      "EDIT"
+   'z/patch     "EDIT"
+   'v/create-dirs "CREATE"
+   'v/copy      "CREATE"
+   'v/move      "MOVE"
+   'v/delete    "DELETE"
+   'v/delete-if-exists "DELETE"
+   'v/bash      "BASH"
+   'v/exists?   "META"})
+
 (defn- tool-detail-badge
   [detail]
   (when (map? detail)
     (let [op      (:op detail)
-          cls     (:op/tag detail)
-          op-name (when-not (and (= :op/search cls) (#{:all :any} op))
-                    (some-> op name))
-          label   (case cls
-                    :op/read "READ"
-                    :op/search "SEARCH"
-                    :op/preview "PREVIEW"
-                    :op/edit "EDIT"
-                    :op/create "CREATE"
-                    :op/delete "DELETE"
-                    :op/move "MOVE"
-                    :op/shell "BASH"
-                    :op/meta "META"
-                    nil)]
+          op-sym  (cond (symbol? op) op (keyword? op) (symbol (subs (str op) 1)) :else nil)
+          label   (get op-symbol->badge-label op-sym)
+          search? (= label "SEARCH")
+          op-name (when-not (and search? (#{:all :any} op))
+                    (some-> op name))]
       (when label
         (str label
-          (or (when (= :op/search cls)
-                (search-spec-summary detail))
+          (or (when search? (search-spec-summary detail))
             (when op-name (str " " op-name))))))))
 
 (defn- self-describing-tool-result?
+  "Shell/search ops whose body is its own summary. Skip badge row."
   [detail]
-  ;; Both observation (search-style) and action (shell-style) ops
-  ;; can emit substantial output; treat both as candidates for the
-  ;; output-collapsing path. Tag pivot per PLAN.md §2.1.
-  (contains? #{:op.tag/observation :op.tag/action} (:op/tag detail)))
+  (when-let [op (some-> detail :op)]
+    (contains? '#{v/bash v/rg v/grep v/glob v/ls}
+      (symbol (subs (str op) (if (keyword? op) 1 0))))))
 
 (defn- preview-switcher-entry
   [{:keys [marker active-mode conversation-id node-id max-w summary-left summary-suffix
@@ -2874,15 +2885,14 @@
   [{:keys [thinking code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines live-preview?]
-       :or   {show-header? true preview-default-lines 4 live-preview? false}}]]
-  (let [fill-w      (max 1 (dec code-width))
+       :or   {show-header? false preview-default-lines 4 live-preview? false}}]]
+  ;; Iteration / block header labels removed per user directive. The
+  ;; `show-header?` argument is retained as a no-op for callers; we
+  ;; never paint the right-aligned ITERATION N band any more.
+  (let [_ show-header?
+        fill-w      (max 1 (dec code-width))
         line-entry  (fn [line] {:line line :meta nil})
-        label       (label-text "iteration" iteration-number)
-        pad-len     (max 0 (- fill-w (count label) 1))
-        header-line (str (repeat-str \space pad-len) label " ")
-        header      (if show-header?
-                      [(line-entry (str iteration-hdr-marker header-line))]
-                      [])
+        header      []
         thinking-lines
         (fn [thinking-text-or-texts]
           ;; Per user direction: do NOT truncate reasoning while it's
@@ -2971,9 +2981,12 @@
                 is-error?     (and has-status? (not success?))
                 duration-ms   (when durations (get durations idx))
                 duration-str  (vis/format-duration duration-ms)
-                expr-label    (label-text "block" block-number)
-                expr-hdr      (let [pl (max 0 (- fill-w (count expr-label) 1))]
-                                (str (repeat-str \space pl) expr-label " "))
+                ;; BLOCK N header removed per user directive (also gated
+                ;; on `show-header?` which is now always false). Keep
+                ;; `expr-hdr` defined as empty so the existing `(when
+                ;; show-header? ...)` branch is dead but type-safe.
+                _expr-num     block-number
+                expr-hdr      ""
                 running-start (when started-at-ms (get started-at-ms idx))
                 running-ms    (when (and running-start now-ms)
                                 (max 0 (- (long now-ms) (long running-start))))
@@ -3320,12 +3333,11 @@
          content-w        (max 10 (- bubble-w 4))
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
-         ;; Iteration headers (the right-aligned ITERATION N band)
-         ;; always show — they are the visual separator between
-         ;; iterations. The deprecated `:show-iteration-headers`
-         ;; toggle was retired (see state.clj/default-settings
-         ;; doc); the gate it controlled is now hardcoded true.
-         show-iteration-headers?  true
+         ;; Iteration / block headers (ITERATION N, BLOCK N) are
+         ;; removed entirely per user directive. The visual separator
+         ;; between iterations is the trailing newline + per-block
+         ;; status row; no right-aligned label band is painted.
+         show-iteration-headers?  false
          static-limit     (max 1 (long (get settings :progress/live-iteration-limit 24)))
          preview-default-lines (get settings :preview/default-lines 4)
          {:keys [now-ms turn-start-ms cancelling? conversation-id
