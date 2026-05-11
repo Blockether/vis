@@ -1524,7 +1524,7 @@
         ;; bare text like \"Cancelled by user.\" reads naturally.
         cancelled? (= :cancelled status)
         turn-separator? (boolean (:turn-separator? message))
-        top-sep-h (if turn-separator? 2 0)
+        top-sep-h 0 ;; screen.clj sep-pad already handles turn-separator spacing
         label     (if user? "You" "Vis")
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the

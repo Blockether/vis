@@ -1,36 +1,27 @@
 (ns com.blockether.vis.ext.foundation.nudges
   "Built-in `<system_nudge>` policy for vis-foundation, expressed as
-   `:ext/hooks` declarations. Five hooks ship here today:
+   `:ext/hooks` declarations. Active hooks ship here today:
 
-     1. `:foundation/conversation-title` (importance :low)
+     1. `:vis.foundation/conversation-title` (importance :low)
         Reminds the model to keep `CONVERSATION_TITLE` current. Fires
         when the title is blank, at every `TITLE_REFRESH_NUDGE_PERIOD`
         iterations inside a long turn, or on turn boundaries (the
         host passes `:title-refresh?`).
 
-     2. `:foundation/context-pressure` (importance :high)
+     2. `:vis.foundation/context-pressure` (importance :high)
         Fires when the estimated input tokens for the assembled
         prompt-so-far cross `CONTEXT_PRESSURE_THRESHOLD * context-limit`.
         Default 0.50 - with the uniform 200k Vis ceiling, that means
         the hook engages at ~100k input tokens, which matches z.ai's
         empirically reported GLM sweet spot of 95k-100k input tokens.
 
-     3. `:foundation/blind-answer` (importance :high)
+     3. `:vis.foundation/blind-answer` (importance :high)
         Fires on iteration 1 when the user request contains
         investigation verbs (why / fix / check / find / debug / ...)
         and no prior tool calls have run. Ignores explicit planning-only
         requests and symbol-name occurrences like `z/patch-check`.
         Warns the model that answering from memory on an investigation
         request is a hallucination.
-
-     4. `:foundation/unresolved-errors-before-answer`
-        Hard answer validator. Rejects final `(answer ...)` while
-        previous block/journal errors have no later proof.
-
-     5. `:foundation/action-request-needs-evidence`
-        Hard answer validator. Rejects final `(answer ...)` for fix/run/
-        implement/change requests when this turn contains no tool/code
-        evidence, unless the answer clearly says blocked/partial.
 
    Keeping policy in an extension (not core hardcoded built-ins)
    means these go through the same `:ext/hooks` protocol any
@@ -358,7 +349,7 @@
       (let [preview (str/join "; " (map obligation-summary (take 3 open)))]
         {:reject true
          :message (str "Open failure obligations remain in the journal: " preview)
-         :hint "Do not answer yet. Read the failed journal entry, fix or explicitly prove/acknowledge it, then run a later proof step (for example ./verify.sh --quick or a successful same-tool retry) before answering."}))))
+         :hint "Do not answer yet. Read the failed journal entry. If answer-alone preflight rejected sibling forms, rerun those forms without `(answer ...)` and observe success. Otherwise fix or explicitly prove/acknowledge the failure, then run a later proof step (for example ./verify.sh --quick or a successful same-tool retry) before answering."}))))
 
 (def ^:private action-request-regex
   #"(?i)\b(fix|implement|patch|change|add|remove|delete|create|edit|update|verify|run|commit|push)\b")
@@ -421,23 +412,15 @@
 (def hooks
   "`:ext/hooks` vector for vis-foundation. Each entry conforms to the
    `::hook` spec in `com.blockether.vis.internal.extension`."
-  [{:id    :foundation/conversation-title
+  [{:id    :vis.foundation/conversation-title
     :doc   "Nudge the model to set / refresh the conversation title when it's blank, refresh-flagged, or stale."
     :phase :turn.iteration/start
     :fn    (fn [ctx] (nudge->hook-hit (title-nudge ctx)))}
-   {:id    :foundation/context-pressure
+   {:id    :vis.foundation/context-pressure
     :doc   "Warn when assembled input tokens cross ~50% of the model's context window."
     :phase :turn.iteration/start
     :fn    (fn [ctx] (nudge->hook-hit (context-pressure-nudge ctx)))}
-   {:id    :foundation/blind-answer
+   {:id    :vis.foundation/blind-answer
     :doc   "Warn when iteration 1 is about to answer an investigation-style request without any tool calls."
     :phase :turn.iteration/start
-    :fn    blind-answer-guard-check}
-   {:id    :foundation/unresolved-errors-before-answer
-    :doc   "Reject final answers while the latest previous iteration in this turn contains block or journal errors."
-    :phase :turn.answer/validate
-    :fn    unresolved-error-answer-guard-check}
-   {:id    :foundation/action-request-needs-evidence
-    :doc   "Reject final answers for action requests when this turn has no prior tool/code evidence."
-    :phase :turn.answer/validate
-    :fn    action-request-needs-evidence-check}])
+    :fn    blind-answer-guard-check}])

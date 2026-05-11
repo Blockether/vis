@@ -124,6 +124,10 @@
     (input-empty? input) hint-idle-empty
     :else               hint-idle-typed))
 
+(def ^:private drag-autoscroll-max-coalesce-factor
+  "Upper bound for per-loop drag auto-scroll amplification."
+  8)
+
 (defn- mouse-wheel-delta
   "Return wheel direction as -1 / +1 for a MouseAction, else nil."
   [key]
@@ -133,6 +137,11 @@
         (= atype MouseActionType/SCROLL_UP) -1
         (= atype MouseActionType/SCROLL_DOWN) 1
         :else nil))))
+
+(defn- drag-action?
+  [key]
+  (and (instance? MouseAction key)
+    (= MouseActionType/DRAG (.getActionType ^MouseAction key))))
 
 (defn- coalesce-wheel-input
   "Collapse one run of consecutive wheel events into a single delta.
@@ -158,18 +167,56 @@
          :wheel-delta (when-not (zero? acc) acc)}))
     {:key key}))
 
-(defn- read-chat-input!
-  "Read one chat-loop input event, coalescing wheel floods.
+(defn- coalesce-drag-input
+  "Collapse consecutive DRAG events into one terminal event.
 
-   Uses `pending-key` as a one-event stash when the wheel-drain loop
-   consumes one non-wheel event that belongs to the next iteration."
+   Keeps the LAST drag event (latest cursor position) and returns how
+   many drag events were merged so selection auto-scroll can scale one
+   dispatch instead of flooding the reducer/render loop."
+  [key poll-next]
+  (if (drag-action? key)
+    (loop [last-key key
+           n 1]
+      (if-let [next-key (poll-next)]
+        (if (drag-action? next-key)
+          (recur next-key (inc n))
+          {:key last-key
+           :drag-events n
+           :next-key next-key})
+        {:key last-key
+         :drag-events n}))
+    {:key key
+     :drag-events 1}))
+
+(defn- coalesced-drag-scroll-amount
+  [amount drag-events]
+  (let [amount      (long (or amount 0))
+        drag-events (long (or drag-events 1))
+        factor      (long (max 1 (min drag-autoscroll-max-coalesce-factor
+                                   drag-events)))]
+    (long (* amount factor))))
+
+(defn- read-chat-input!
+  "Read one chat-loop input event, coalescing wheel and drag floods.
+
+   Uses `pending-key` as a one-event stash when drain loops consume one
+   non-coalescible event that belongs to the next iteration."
   [^TerminalScreen screen pending-key]
   (let [first-key (or @pending-key (.pollInput screen))
-        {:keys [key wheel-delta next-key]}
+        {:keys [key wheel-delta next-key] :as wheel-pass}
         (coalesce-wheel-input first-key #(.pollInput screen))]
-    (vreset! pending-key next-key)
-    {:key key
-     :wheel-delta wheel-delta}))
+    (if wheel-delta
+      (do
+        (vreset! pending-key next-key)
+        {:key key
+         :wheel-delta wheel-delta
+         :drag-events 1})
+      (let [{:keys [key drag-events next-key]}
+            (coalesce-drag-input (:key wheel-pass) #(.pollInput screen))]
+        (vreset! pending-key next-key)
+        {:key key
+         :wheel-delta nil
+         :drag-events drag-events}))))
 
 (defn- throwable-log-data
   [^Throwable t]
@@ -1674,7 +1721,7 @@
                    total-h (or total-h 0)
                    inner-h (or inner-h 0)
                    messages-top (or messages-top 0)
-                   {:keys [key wheel-delta]} (read-chat-input! screen pending-input-key)]
+                   {:keys [key wheel-delta drag-events]} (read-chat-input! screen pending-input-key)]
                (cond
                  (:shutdown? db) nil
 
@@ -1899,10 +1946,11 @@
                                                     :bottom (+ bar-top inner-h)
                                                     :edge-size 6
                                                     :max-step 6})]
-                           (case direction
-                             :up   (state/dispatch [:scroll-up amount total-h inner-h])
-                             :down (state/dispatch [:scroll-down amount total-h inner-h])
-                             nil)))
+                           (let [amount (coalesced-drag-scroll-amount amount drag-events)]
+                             (case direction
+                               :up   (state/dispatch [:scroll-up amount total-h inner-h])
+                               :down (state/dispatch [:scroll-down amount total-h inner-h])
+                               nil))))
                        (recur))
 
                      ;; CLICK_RELEASE - ends a drag, and serves as

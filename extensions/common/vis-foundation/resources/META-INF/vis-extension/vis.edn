@@ -19,6 +19,8 @@ Normal source installs keep the Vis checkout at `~/.vis/sourcecode`. When an age
 ```clojure
 (def file (v/cat path)) ; whole file -> [:op/result :lines]
 (subvec (get-in file [:op/result :lines]) 40 120)
+;; Never use [:result :lines]; that is nil. If you already bound the
+;; lines vector, call subvec on the vector directly, not (get-in vector).
 
 (def hits (v/rg {:all [\"literal\"]})) ; literal search, paths default to [\".\"]
 (-> hits :op/result :hits (subvec 0 12))

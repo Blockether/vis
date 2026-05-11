@@ -114,5 +114,6 @@
                    (slurp (clj-manifest-file)))
         readme   (get-in manifest ['clj :docs "README.md" :content])]
     (expect (str/includes? readme ":op/result :files"))
+    (expect (str/includes? readme "(get-in (z/locators \"src/foo.clj\") [:op/result])"))
     (expect (not (str/includes? readme "[:result]")))
     (expect (not (str/includes? readme "[:info :files]")))))

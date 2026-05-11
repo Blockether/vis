@@ -42,6 +42,10 @@
 (defn- private-core-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.persistance-sqlite.core" name))))
 
+(defn- table-columns [store table]
+  (set (map :name (jdbc/execute! (:datasource store)
+                    [(str "PRAGMA table_info(" table ")")]))))
+
 (def ^:private migration-checksum-mismatch?
   (private-core-fn "migration-checksum-mismatch?"))
 
@@ -691,7 +695,7 @@
 ;; =============================================================================
 
 (defdescribe iteration-block-test
-  (it "writes one iteration row whose :blocks BLOB carries every form"
+  (it "writes one iteration row whose code_blocks BLOB carries every form"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
@@ -701,7 +705,7 @@
                                   :thinking "Computing" :duration-ms 50})
       (expect (= 1 (raw-count s :conversation_turn_iteration)))
       ;; No more kind='call' rows - the call log lives inline in the
-      ;; iteration.blocks Nippy blob.
+      ;; iteration.code_blocks Nippy blob.
       (expect (= 0 (raw-count s :expression_soul)))
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             blocks    (vis/db-list-iteration-blocks s (:id iteration))]
@@ -712,6 +716,18 @@
         (expect (= 2 (:result (first blocks))))
         (expect (= "(* 3 4)" (:code (second blocks))))
         (expect (= 12 (:result (second blocks)))))))
+
+  (it "uses code_blocks as the SQLite column name for the inline log"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
+      (vis/db-store-iteration! s {:conversation-turn-id qid
+                                  :blocks [{:code "(+ 1 1)" :result 2}]
+                                  :duration-ms 5})
+      (expect (contains? (table-columns s "conversation_turn_iteration") "code_blocks"))
+      (expect (not (contains? (table-columns s "conversation_turn_iteration") "blocks")))
+      (expect (some? (:code_blocks (first (raw-query s {:select [:code_blocks]
+                                                        :from :conversation_turn_iteration})))))))
 
   (it "assigns iteration positions from 1 and rejects non-contiguous manual positions"
     (let [s   (h/store)
@@ -729,7 +745,7 @@
                                              :conversation_turn_state_id turn-state-id
                                              :position 4
                                              :status "done"
-                                             :llm_returned_empty_blocks 1
+                                             :llm_returned_empty_code_blocks 1
                                              :created_at 1}]})
                      nil
                      (catch Exception e e))]
@@ -942,6 +958,17 @@
       (expect (= 42 (:value (first vars))))
       (expect (= 0 (:version (first vars))))))
 
+  (it "uses expression as the SQLite column name for var source"
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
+      (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
+                                  :vars [{:name "x" :value 42 :code "(def x 42)"}]})
+      (expect (contains? (table-columns s "expression_state") "expression"))
+      (expect (not (contains? (table-columns s "expression_state") "expr")))
+      (expect (= "(def x 42)" (:expression (first (raw-query s {:select [:expression]
+                                                                :from :expression_state})))))))
+
   (it "reuses soul, increments version"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
@@ -1147,7 +1174,7 @@
                                           :duration-ms 0
                                           :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [iteration (first (raw-query s {:select [:id] :from :conversation_turn_iteration}))
-            estate (first (raw-query s {:select [:iteration_id] :from :expression_state}))]
+            estate (first (raw-query s {:select [[:conversation_turn_iteration_id :iteration_id]] :from :expression_state}))]
         (expect (= (:id iteration) (:iteration_id estate))))))
 
   (it "retry conversation_turn_state.forked_from_conversation_turn_state_id points to previous conversation_turn_state.id"
@@ -1172,7 +1199,7 @@
         (expect (nil? (:parent_state_id (first states))))
         (expect (= (:id (first states)) (:parent_state_id (second states)))))))
 
-  (it "expression_soul holds ONLY var rows; blocks live inline on iteration.blocks"
+  (it "expression_soul holds ONLY var rows; blocks live inline on iteration.code_blocks"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -1182,7 +1209,7 @@
                                           :vars [{:name "x" :value 42 :code "(def x 42)"}]})]
       (let [souls (raw-query s {:select [:kind :state_mode :name] :from :expression_soul})]
         ;; Per-form calls do not land in expression_soul. Only the var
-        ;; soul lands there; the block log lives in the iteration.blocks
+        ;; soul lands there; the block log lives in the iteration.code_blocks
         ;; Nippy blob.
         (expect (= 1 (count souls)))
         (let [{:keys [kind state_mode name]} (first souls)]
