@@ -157,12 +157,17 @@
                                              answer-here? (and produced-answer?
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))
-                                             ;; Only the (answer "...") form is elided when
-                                             ;; resuming. Earlier versions also dropped any
-                                             ;; block tagged `:vis/silent`, but that whole
-                                             ;; mechanism has been removed - every executed
-                                             ;; block now shows up in the resumed trace.
-                                             elide-idxs  (cond-> #{}
+                                             ;; Elide:
+                                             ;; 1. the `(answer "...")` form on the answer iteration
+                                             ;;    (rule b': always last form)
+                                             ;; 2. any block tagged `:vis/preflight?` — those are
+                                             ;;    synthetic gate rejections, model-facing only,
+                                             ;;    never displayed to the user.
+                                             preflight-idxs (into #{}
+                                                              (keep-indexed
+                                                                (fn [i b] (when (:vis/preflight? b) i)))
+                                                              all-exprs)
+                                             elide-idxs  (cond-> preflight-idxs
                                                            answer-here? (conj (dec (count all-exprs))))
                                              exprs       (into []
                                                            (keep-indexed
