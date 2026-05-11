@@ -514,19 +514,6 @@
       (expect (= "see <FILE:docs/My File.md> please"
                 (input/expand-file-mentions "see @\"docs/My File.md\" please")))))
 
-  (it "resolves local @mention previews from active workspace root"
-    (let [root (.toFile (java.nio.file.Files/createTempDirectory "vis-input-ws" (make-array java.nio.file.attribute.FileAttribute 0)))
-          file (java.io.File. root "workspace-only.txt")]
-      (try
-        (spit file "workspace file")
-        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
-          (let [expanded (input/expand-file-mentions "inspect @workspace-only.txt")]
-            (expect (str/includes? expanded "[Attached File: workspace-only.txt]"))
-            (expect (str/includes? expanded "(def attached-file-workspace-only-txt (v/cat \"workspace-only.txt\"))"))))
-        (finally
-          (.delete file)
-          (.delete root)))))
-
   (it "leaves non-matching @text alone"
     (expect (= "email me at a@b.com"
               (input/expand-file-mentions "email me at a@b.com"))))

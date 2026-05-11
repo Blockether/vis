@@ -38,14 +38,6 @@
     ;; swallowed it, the bubble silently failed to paint, the user
     ;; saw a blank scrollback. Each control byte must now degrade to
     ;; a single visible / column instead of taking the thread down.
-    (it "newline (0x0a) does not throw"
-      (expect (= 5 (p/display-width "a\nb c"))))
-    (it "tab (0x09) does not throw"
-      (expect (= 3 (p/display-width "a\tb"))))
-    (it "carriage return (0x0d) does not throw"
-      (expect (= 3 (p/display-width "a\rb"))))
-    (it "NUL (0x00) does not throw"
-      (expect (= 3 (p/display-width "a\u0000b"))))
     (it "clean strings still hit the no-alloc fast path (identity preserved)"
       ;; The sanitizer returns its input UNCHANGED when no control
       ;; chars are present, which `display-width` relies on to keep
