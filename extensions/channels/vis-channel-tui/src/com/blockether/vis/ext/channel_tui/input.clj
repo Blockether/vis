@@ -6,7 +6,7 @@
    `wl-paste` on Wayland, `xclip` / `xsel` on X11."
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [com.blockether.vis.internal.workspace-context :as workspace-context]
+            [com.blockether.vis.internal.workspace :as workspace]
             [taoensso.telemere :as tel])
   (:import [com.googlecode.lanterna TerminalPosition]
            [com.googlecode.lanterna.input
@@ -786,7 +786,7 @@
 (defn- resolve-local-file
   [path]
   (try
-    (let [cwd         (.getCanonicalFile (workspace-context/cwd))
+    (let [cwd         (.getCanonicalFile (workspace/cwd))
           cwd-path    (.getPath cwd)
           prefix      (str cwd-path java.io.File/separator)
           candidate   (.getCanonicalFile (io/file cwd path))

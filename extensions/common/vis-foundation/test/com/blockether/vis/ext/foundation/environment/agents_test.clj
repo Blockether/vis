@@ -5,7 +5,7 @@
    [babashka.fs :as fs]
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation.environment.agents :as agents]
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- write-bytes! [^java.io.File f ^long n ^Character ch]
@@ -94,12 +94,12 @@
   (it "instructions uses active workspace root instead of JVM cwd"
     (with-tmp* (fn [root]
                  (spit (java.io.File. root "AGENTS.md") "# workspace rules\n")
-                 (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+                 (binding [workspace/*workspace-root* (.getCanonicalPath root)]
                    (let [result (:result (agents/reload!))]
                      (expect (:found? result))
                      (expect (= "# workspace rules\n" (:content result)))
                      (expect (str/ends-with? (:path result) "AGENTS.md"))))
-                 (binding [workspace-context/*workspace-root* nil]
+                 (binding [workspace/*workspace-root* nil]
                    (agents/reload!)))))
 
   (it "instructions returns a map even when nothing found"

@@ -9,7 +9,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.ext.bridge.languages.schema :as schema]
-   [com.blockether.vis.internal.workspace-context :as workspace-context])
+   [com.blockether.vis.internal.workspace :as workspace])
   (:import
    (java.io File)
    (java.net URI)))
@@ -73,7 +73,7 @@
   (.getCanonicalFile
     (if project-root
       (io/file project-root)
-      (workspace-context/cwd))))
+      (workspace/cwd))))
 
 (defn- uri->path
   [project-root uri]

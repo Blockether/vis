@@ -7,19 +7,19 @@
    [com.blockether.vis.ext.bridge.languages.clojure :as clj]
    [com.blockether.vis.ext.bridge.languages.registry :as languages]
    [com.blockether.vis.ext.bridge.languages.schema :as schema]
-   [com.blockether.vis.internal.workspace-context :as workspace-context])
+   [com.blockether.vis.internal.workspace :as workspace])
   (:import
    (java.security MessageDigest)))
 
 (defn workspace-file
   "Resolve `path` against Vis' active workspace root, not JVM user.dir.
-   Extension invocation binds workspace-context/*workspace-root* from
+   Extension invocation binds workspace/*workspace-root* from
    Foundation/workspace env; outside a workspace this falls back to process cwd."
   [path]
   (let [file (io/file (str path))]
     (if (.isAbsolute file)
       file
-      (io/file (workspace-context/cwd) (str path)))))
+      (io/file (workspace/cwd) (str path)))))
 
 (defn- slurp-path [path]
   (slurp (workspace-file path)))

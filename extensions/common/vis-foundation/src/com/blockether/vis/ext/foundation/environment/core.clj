@@ -38,7 +38,7 @@
    ;; loader is API-compatible: `list-all`, `reload!`, `lookup`,
    ;; `scan-warnings` all unchanged.
    [com.blockether.vis.internal.skills :as skills]
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
 (set! *warn-on-reflection* true)
@@ -60,9 +60,9 @@
 
 (defn- canonical-cwd ^String []
   (try
-    (.getCanonicalPath (workspace-context/cwd))
+    (.getCanonicalPath (workspace/cwd))
     (catch Throwable _
-      (or workspace-context/*workspace-root*
+      (or workspace/*workspace-root*
         (System/getProperty "user.dir")))))
 
 (defn- compute-snapshot

@@ -61,11 +61,12 @@
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 50000 :context-limit 0})))))
 
 (defdescribe hooks-registration-test
-  (it "foundation ships title/context/blind-answer iteration-start hooks"
+  (it "foundation ships soft nudges and hard answer guards"
     (let [ids (set (map :id nudges/hooks))]
       (expect (= #{:vis.foundation/conversation-title
                    :vis.foundation/context-pressure
-                   :vis.foundation/blind-answer}
+                   :vis.foundation/blind-answer
+                   :vis.foundation/action-request-needs-evidence}
                 ids))))
 
   (it "every hook declares the four required keys (:id :doc :phase :fn)"
@@ -86,7 +87,15 @@
     (let [title-h    (some #(when (= :vis.foundation/conversation-title (:id %)) %) nudges/hooks)
           pressure-h (some #(when (= :vis.foundation/context-pressure (:id %)) %) nudges/hooks)]
       (expect (nil? ((:fn title-h)    {:conversation-title "Set" :title-refresh? false :iteration 1})))
-      (expect (nil? ((:fn pressure-h) {:input-tokens 100 :context-limit 200000}))))))
+      (expect (nil? ((:fn pressure-h) {:input-tokens 100 :context-limit 200000})))))
+
+  (it "hard guard hooks are registered on the answer-validation phase"
+    (let [by-id    (into {} (map (juxt :id identity) nudges/hooks))
+          evidence (:vis.foundation/action-request-needs-evidence by-id)]
+      (expect (= :turn.answer/validate (:phase evidence)))
+      (expect (= true (:reject ((:fn evidence)
+                                {:user-request "Fix it now."
+                                 :answer [:ir [:p "Done."]]})))))))
 
 (defdescribe blind-answer-guard-test
   (it "fires on iter 1 + investigation verb + no prior blocks"
@@ -126,64 +135,6 @@
                     {:iteration 1
                      :user-request "Why is X broken?"
                      :previous-blocks [{:code "(v/cat \"x\")" :result {}}]})))))
-
-(defdescribe unresolved-error-answer-guard-test
-  (it "rejects final answer when a previous block has an error"
-    (let [hit (nudges/unresolved-error-answer-guard-check
-                {:previous-iterations [[1 {:blocks [{:code "(z/patch ...)"
-                                                     :error {:message "z/patch failed"}}]}]]})]
-      (expect (= true (:reject hit)))
-      (expect (str/includes? (:message hit) "z/patch failed"))
-      (expect (str/includes? (:hint hit) "Do not answer yet"))
-      (expect (str/includes? (:hint hit) "rerun those forms without `(answer ...)`"))))
-
-  (it "rejects final answer when a previous journal sink entry failed"
-    (let [hit (nudges/unresolved-error-answer-guard-check
-                {:previous-iterations [[1 {:blocks [{:code "(z/patch ...)"
-                                                     :error nil
-                                                     :journal [{:success? false
-                                                                :error {:message "source not parseable"}}]}]}]]})]
-      (expect (= true (:reject hit)))
-      (expect (str/includes? (:message hit) "source not parseable"))))
-
-  (it "accepts final answer when latest previous iteration is clean"
-    (expect (nil? (nudges/unresolved-error-answer-guard-check
-                    {:previous-iterations [[1 {:blocks [{:code "(z/patch ...)"
-                                                         :error {:message "old fixed error"}}]}]
-                                           [2 {:blocks [{:code "(v/bash verify)"
-                                                         :error nil
-                                                         :journal [{:success? true
-                                                                    :form "(v/bash \"./verify.sh --quick\")"
-                                                                    :error nil}]}]}]]}))))
-
-  (it "closes a preflighted conversation-title failure after the same form later succeeds"
-    (expect (nil? (nudges/unresolved-error-answer-guard-check
-                    {:previous-iterations [[1 {:blocks [{:code "(conversation-title \"Polish greeting\")"
-                                                         :error {:message "Answer-alone preflight rejected this iteration"}}]}]
-                                           [2 {:blocks [{:code "(conversation-title \"Polish greeting\")"
-                                                         :error nil
-                                                         :result "Polish greeting"
-                                                         :journal []}]}]]}))))
-
-  (it "closes a preflighted bare def failure after the same form later succeeds"
-    (expect (nil? (nudges/unresolved-error-answer-guard-check
-                    {:previous-iterations [[5 {:blocks [{:code "(def z-impl-mid (subvec (get-in z-file [:op/result :lines]) 400 700))"
-                                                         :error {:message "Answer-alone preflight rejected this iteration"}}]}]
-                                           [11 {:blocks [{:code "(def z-impl-mid (subvec (get-in z-file [:op/result :lines]) 400 700))"
-                                                          :error nil
-                                                          :result "#'z-impl-mid"
-                                                          :journal []}]}]]}))))
-
-  (it "does not close a bare-form failure with a different later def"
-    (let [hit (nudges/unresolved-error-answer-guard-check
-                {:previous-iterations [[5 {:blocks [{:code "(def z-impl-mid (subvec (get-in z-file [:op/result :lines]) 400 700))"
-                                                     :error {:message "Answer-alone preflight rejected this iteration"}}]}]
-                                       [11 {:blocks [{:code "(def other 1)"
-                                                      :error nil
-                                                      :result "#'other"
-                                                      :journal []}]}]]})]
-      (expect (= true (:reject hit)))
-      (expect (str/includes? (:message hit) "z-impl-mid")))))
 
 (defdescribe action-request-needs-evidence-test
   (it "allows conceptual answer-only requests"

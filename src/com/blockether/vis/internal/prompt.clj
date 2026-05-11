@@ -303,16 +303,20 @@
 (defn- format-block-line
   "One iteration's single top-level form as journal text. Layout:
 
-     iN.K     <code>   -> <form's last-expression value>
-     iN.K.0   <form>   -> <result or error>     (from :journal sink)
-     iN.K.1   <form>   -> <result or error>
-     ...
+     iN.K     <top-level code> -> <top-level return preview or ERROR>
+     iN.K.M   <sink form>      -> <tool/journal result preview or ERROR>
 
-   The iN.K row is the form's directly-returned value (truncated
-   pr-str of the last-expression value, or ERROR on form throw). One
-   iN.K.M sub-row per :journal sink entry surfaces every tool call the
-   form made, regardless of nesting (do, let, deeply-nested calls, def
-   bindings).
+   N = iteration position, K = 1-based top-level form number, M = the
+   :journal sink position emitted while evaluating that top-level form.
+   There are as many iN.K.M sub-rows as tool/journal sink entries; zero
+   sub-rows means the form did not emit a sink entry.
+
+   Important boundary: iN.K is NOT a complete trace of every nested form.
+   It is only the direct return value of the top-level form (truncated
+   pr-str of the last-expression value, or ERROR on form throw). iN.K.M
+   sub-rows are the observable tool/journal events produced inside that
+   form, regardless of nesting (do, let, deeply-nested calls, def bindings).
+   The model must read the sub-rows to see actual tool successes/errors.
 
    When the block-level `:error` is nil but a sink-entry in `:journal`
    reports `:success? false`, the failure is LIFTED into the header
@@ -371,29 +375,28 @@
    not through the journal."
   [iteration-position iteration-data]
   (let [{:keys [blocks answer]} iteration-data
-        visible-blocks (vec (or blocks []))
-        block-lines (vec (mapcat (fn [[k blk]]
-                                   (let [comment-text (some-> (:comment blk) str/trim)
-                                         ;; `:comment` is captured by `split-top-level-forms`
-                                         ;; as the verbatim source slice between forms
-                                         ;; (already includes `;;` prefixes / `#_(...)`
-                                         ;; discards). Render as-is; DO NOT prepend
-                                         ;; another `;; ` or we get `;; ;;` doubling
-                                         ;; (conversation d2763464 regression).
-                                         comment-line (when (and comment-text
-                                                              (not (str/blank? comment-text)))
-                                                        (str "  i" iteration-position "." (inc k)
-                                                          "  "
-                                                          (truncate comment-text 400)))]
-                                     (cond-> []
-                                       comment-line (conj comment-line)
-                                       :always      (conj (format-block-line iteration-position
-                                                            k blk)))))
-                           (map-indexed vector visible-blocks)))
-        answer-text (some-> answer str str/trim)
-        answer-label (str "i" iteration-position ".answer")
-        answer-line (when (and answer-text (not (str/blank? answer-text)))
-                      (str "  " answer-label "  <final-answer> -> "
+        visible-blocks (if (vector? blocks) blocks (vec (or blocks [])))
+        block-lines (persistent!
+                      (reduce-kv
+                        (fn [acc k blk]
+                          (let [comment-text (some-> (:comment blk) str str/trim not-empty)
+                                ;; `:comment` is captured by `split-top-level-forms`
+                                ;; as the verbatim source slice between forms
+                                ;; (already includes `;;` prefixes / `#_(...)`
+                                ;; discards). Render as-is; DO NOT prepend
+                                ;; another `;; ` or we get `;; ;;` doubling
+                                ;; (conversation d2763464 regression).
+                                acc (if comment-text
+                                      (conj! acc (str "  i" iteration-position "." (inc k)
+                                                   "  "
+                                                   (truncate comment-text 400)))
+                                      acc)]
+                            (conj! acc (format-block-line iteration-position k blk))))
+                        (transient [])
+                        visible-blocks))
+        answer-text (some-> answer str str/trim not-empty)
+        answer-line (when answer-text
+                      (str "  i" iteration-position ".answer  <final-answer> -> "
                         (pr-str (truncate answer-text MAX_RESULT_DISPLAY_CHARS))))]
     (cond-> block-lines
       answer-line (conj answer-line))))
@@ -822,10 +825,15 @@
 ;; =============================================================================
 
 (def CORE_SYSTEM_PROMPT
-  "You are Vis. RLM in sandboxed SCI.
-
-NUCLEUS:
-Human ⊗ AI ⊗ REPL
+  "You are Vis, a SCI (Small Clojure Interpreter) RLM agentic harness. Your task is to fulfill the user request.
+Write Clojure code in ```clojure``` markdown fences known as code blocks.
+Context surfaces:
+  - <user_turn_request_main_goal>: current user request; primary objective.
+  - <journal>: previously executed code/results; newest entries at bottom.
+  - <bindings>: compact index of live `(def ...)` vars in the SCI sandbox.
+  - <active_skills>: full loaded skill bodies for this turn.
+  - <system_nudges>: extension hints/guards for this iteration.
+  - system vars: live UPPERCASE SCI bindings; read by name, not XML.
 
 λ operate(x). reproduce -> inspect(runtime) -> change(minimal) -> test(regression) -> verify
 λ style(x). English only | caveman terse > prose | clarity_exception(misread_risk)
@@ -890,6 +898,11 @@ JOURNAL:
   Engine writes; you read. Carries code, result preview, ::op/tag,
   ::op/success?, ::op/error if any. Tool envelopes store payload in
   `:op/result`; never use `[:result ...]` or top-level `:stdout/:content`.
+  Row labels:
+    iN.K   = iteration N, top-level form K -> direct return preview/ERROR.
+    iN.K.M = tool/journal sink M emitted inside iN.K -> real tool result/error.
+  Read sub-rows. Header `iN.K` may only be a wrapper/last value; tool
+  success/failure often lives in `iN.K.M`.
 
 BINDINGS:
   Your defs in the SCI sandbox. Compact shape per entry.
@@ -899,15 +912,25 @@ BINDINGS:
   Turn-scoped. Prefer durable names.
 
 SYSTEM VARS:
-  Engine-managed. UPPERCASE names. You read; never set.
-  Prefix = hierarchy (where the concept lives in the tree).
-    CONVERSATION_*    conversation-level (STATE_ID, TITLE, PREVIOUS_ANSWER)
-    TURN_*            turn-level (ID, POSITION, CONVERSATION_STATE_ID,
-                                  SYSTEM_PROMPT, ACTIVE_EXTENSIONS,
-                                  ACCESSIBLE_SKILLS)
-    TURN_ITERATION_*  iteration-level (ID, POSITION)
-  Full registry: 11 names, see internal/env.clj SYSTEM_VAR_NAMES.
-  Branch identity = STATE_ID (live branch); raw SOUL_IDs retired.
+  Engine-managed live SCI bindings. UPPERCASE names. You read by name;
+  never `(def ...)` them and never expect them inside <journal>/<bindings>.
+  Prefix = hierarchy/lifetime:
+    TURN_* frozen at turn start.
+    TURN_ITERATION_* rebound every iteration.
+    CONVERSATION_* current conversation-state branch, may change in turn.
+  Exact registry (11 names):
+    TURN_ID                         current turn UUID.
+    TURN_POSITION                   1-based turn number in conversation.
+    TURN_CONVERSATION_STATE_ID      state id at turn start.
+    TURN_SYSTEM_PROMPT              assembled system prompt for this turn.
+    TURN_ACTIVE_EXTENSIONS          compact active extension maps.
+    TURN_ACCESSIBLE_SKILLS          compact discoverable skill summaries.
+    TURN_ITERATION_ID               previous persisted iteration UUID; nil before first commit.
+    TURN_ITERATION_POSITION         current 1-based iteration number inside this turn.
+    CONVERSATION_STATE_ID           current live branch/state UUID.
+    CONVERSATION_TITLE              current title; set via `(conversation-title \"...\")`.
+    CONVERSATION_PREVIOUS_ANSWER    previous turn final answer, or \"\" on first turn.
+  Branch identity = CONVERSATION_STATE_ID. Raw SOUL_ID vars and TURN_USER_REQUEST are retired.
 
 OPS:
   Every op carries ::op/tag in #{:op.tag/observation :op.tag/action}.

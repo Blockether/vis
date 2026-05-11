@@ -2002,7 +2002,7 @@
                     (str/starts-with? line md-code-marker)
                     (do
                       (p/set-colors! g t/code-block-fg t/code-block-bg)
-                      (p/fill-rect! g x y iw 1)
+                      (p/fill-rect! g fbx y iw 1)
                       (paint-ansi-line! g x y (subs line 1) t/code-block-fg t/code-block-bg))
 
               ;; Bullet items: same inline-span treatment as plain text.
@@ -2153,7 +2153,7 @@
                     (str/starts-with? line th-md-code-marker)
                     (do
                       (p/set-colors! g t/code-result-fg t/code-block-bg)
-                      (p/fill-rect! g x y iw 1)
+                      (p/fill-rect! g fbx y iw 1)
                       (p/styled g [p/ITALIC]
                         (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg)))
 

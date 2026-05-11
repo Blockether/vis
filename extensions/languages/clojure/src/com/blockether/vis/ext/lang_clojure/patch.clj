@@ -19,7 +19,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.internal.extension :as extension]
 
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
+   [com.blockether.vis.internal.workspace :as workspace]
    [rewrite-clj.node :as node]
    [rewrite-clj.parser :as parser]
    [rewrite-clj.zip :as z])
@@ -35,7 +35,7 @@
   ^File [p]
   ;; Resolve `p` against `(fs/cwd)` and reject any traversal that escapes
   ;; the working directory.
-  (let [cwd        (workspace-context/cwd)
+  (let [cwd        (workspace/cwd)
         resolved   (.toAbsolutePath (fs/path cwd (str p)))
         normalized (.normalize resolved)
         cwd-norm   (.normalize (.toAbsolutePath (fs/path cwd)))]
@@ -86,7 +86,7 @@
   f)
 
 (defn- rel-path [^File f]
-  (let [cwd (.toAbsolutePath (fs/path (workspace-context/cwd)))
+  (let [cwd (.toAbsolutePath (fs/path (workspace/cwd)))
         p   (.toAbsolutePath (.toPath f))]
     (str (.relativize cwd p))))
 

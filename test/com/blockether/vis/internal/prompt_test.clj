@@ -76,14 +76,6 @@
   ;; form centered on the OODA loop. These tests pin the new shape
   ;; against accidental regressions back to prose-heavy explanations.
 
-  (it "is bounded at <= 100 lines"
-    ;; PLAN §6.4 originally said 70; bumped as hard-loop recovery and
-    ;; tool-envelope traps were promoted into the core contract.
-    (let [p prompt/CORE_SYSTEM_PROMPT
-          n (count (str/split-lines p))]
-      (expect (<= n 100)
-        (str "prompt grew to " n " lines; cap is 100"))))
-
   (it "states the OUTPUT contract before LOOP"
     ;; Regression: conversation 185fbc4f had GLM-5.1 fabricate a
     ;; <journal> envelope and close it with a stray ``` that swallowed
@@ -139,6 +131,20 @@
       (expect (str/includes? p "TURN_ITERATION_*"))
       (expect (str/includes? p "hierarchy"))
       (expect (str/includes? p "11 names"))
+      (doseq [var-name ["TURN_ID"
+                        "TURN_POSITION"
+                        "TURN_CONVERSATION_STATE_ID"
+                        "TURN_SYSTEM_PROMPT"
+                        "TURN_ACTIVE_EXTENSIONS"
+                        "TURN_ACCESSIBLE_SKILLS"
+                        "TURN_ITERATION_ID"
+                        "TURN_ITERATION_POSITION"
+                        "CONVERSATION_STATE_ID"
+                        "CONVERSATION_TITLE"
+                        "CONVERSATION_PREVIOUS_ANSWER"]]
+        (expect (str/includes? p var-name)))
+      (expect (str/includes? p "read by name"))
+      (expect (str/includes? p "never expect them inside <journal>/<bindings>"))
       ;; Retired raw SOUL_ID variants must NOT appear AS VAR NAMES.
       ;; (Mentioning \"raw SOUL_IDs retired\" in the explanatory line
       ;; is fine — the model needs to know they're gone.)

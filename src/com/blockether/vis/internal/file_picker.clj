@@ -12,7 +12,7 @@
    reimplement repository walking or git-status logic themselves."
   (:require [clojure.string :as str]
             [com.blockether.vis.internal.git :as git]
-            [com.blockether.vis.internal.workspace-context :as workspace-context])
+            [com.blockether.vis.internal.workspace :as workspace])
   (:import [java.io File]
            [java.nio.file FileVisitResult Files Path SimpleFileVisitor]
            [java.nio.file.attribute BasicFileAttributes]
@@ -30,7 +30,7 @@
 (defn cwd-path
   "Current explicit workspace cwd as a Path. Indirected for tests."
   ^Path []
-  (.toPath (workspace-context/cwd)))
+  (.toPath (workspace/cwd)))
 
 (defn display-path
   "`path` relativized against `root`, normalized to `/` separators."
