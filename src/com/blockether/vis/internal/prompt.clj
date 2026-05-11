@@ -821,8 +821,7 @@ CODE (when :ooda or :architect is sketching):
   code > markdown
   data > control_flow
   pure > stateful
-  z/patch > v/patch > raw_text       ; structural > line > raw text edits
-  HoneySQL > raw SQL
+  structural_editing > line_editing > raw_text
   one change -> verify -> next
 
 TRUTH:

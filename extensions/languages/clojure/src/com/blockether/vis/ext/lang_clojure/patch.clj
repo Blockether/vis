@@ -642,9 +642,17 @@
      :on-error-fn (tool-failure-on-error :z/locator-for-symbol)}))
 
 (def z-prompt
-  "`z/` Clojure/EDN zipper patching:
-  Use (z/patch {:path p :search locator :replace replacement}) or vector of same maps. Same map shape as v/patch. :search is parsed Clojure/EDN and must match once.
-  Dry-run with (z/patch-check edits) when locators may be stale or multi-edit risk is high; returns {:valid? :checks :failures} mirroring v/patch-check.
+  "`z/` Clojure/EDN STRUCTURAL editing (rewrite-clj zipper).
+  THIS IS THE PREFERRED EDITING SURFACE for any Clojure/EDN file: it
+  parses to an AST, operates on forms, preserves whitespace/comments,
+  and refuses to silently corrupt. Reach for line-based or raw-text
+  edits ONLY for non-Clojure files (Markdown, plain text, configs).
+
+  Use (z/patch {:path p :search locator :replace replacement}) or vector of same maps. :search is parsed Clojure/EDN and must match once.
+  Dry-run with (z/patch-check edits) when locators may be stale or multi-edit risk is high; returns {:valid? :checks :failures}.
   Find targets with (z/locator-for-symbol path 'foo), (z/locators path {:symbol 'foo}), (z/locators path {:source-contains <text> :limit 20}), or (z/symbols path {:name 'foo}). Rows include :path/:index/:span and become edits by adding :replace. If a row identifies the target, patch immediately: (z/patch (assoc row :replace \"<new source>\")); do not re-preview unless patch fails. Repair with z/repair-range, z/repair-locator, or z/repair-file. Full rewrite-clj.zip API is under z/, including z/subedit->.
+
+  READING Clojure source: prefer `z/locators` / `z/symbols` over a raw whole-file read when you only need specific forms. Structural slicing > line slicing.
+
 Examples: (z/patch [{:path \"src/foo.clj\" :search \"old-sym\" :replace \"new-sym\"}])
           (z/patch [{:path \"src/foo.clj\" :search \"(def x 1)\" :replace \"(def x 2)\"}])")
