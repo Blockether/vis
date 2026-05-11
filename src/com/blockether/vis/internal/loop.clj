@@ -1618,14 +1618,14 @@
 (s/def ::code string?)
 (s/def ::stdout string?)
 (s/def ::stderr string?)
-(s/def ::error (s/nilable string?))
+(s/def ::error (s/nilable map?))                       ; structured :op/error map
 (s/def ::execution-time-ms nat-int?)
 (s/def ::timeout? (s/nilable boolean?))
 (s/def ::repaired? (s/nilable boolean?))
 (s/def ::comment string?)
 (s/def ::block-info
   (s/and
-    ::extension/info
+    map?
     #(contains? #{:sci/eval :edamame/parse :vis/guard :vis/system :vis/answer} (:op %))
     #(contains? #{:done :error :timeout} (:status %))
     #(pos-int? (:iteration %))
