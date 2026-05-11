@@ -1,10 +1,10 @@
 (ns com.blockether.vis.ext.bridge.doctor
   "Bridge doctor checks."
   (:require
-   [com.blockether.vis.ext.bridge.languages.clojure-lsp :as clj-lsp]))
+   [com.blockether.vis.ext.bridge.languages.clojure :as clj]))
 
 (defn- clojure-lsp-check [_env]
-  (let [{:keys [available? command path version error stderr]} (clj-lsp/executable-status)]
+  (let [{:keys [available? command path version error stderr]} (clj/executable-status)]
     (if available?
       [{:level :info
         :message (str "Bridge clojure-lsp: available at " path
@@ -12,7 +12,7 @@
         :data {:command command :path path :version version}}]
       [{:level :warn
         :message (str "Bridge clojure-lsp: external CLI not found for command `" command "`.")
-        :remediation "Install clojure-lsp and ensure it is on PATH, or set BRIDGE_CLOJURE_LSP_CMD. Bridge will fall back to syntax-only edamame extraction for Clojure."
+        :remediation "Install clojure-lsp and ensure it is on PATH, or set BRIDGE_CLOJURE_LSP_CMD. Bridge Clojure extraction requires this external CLI."
         :data {:command command :error error :stderr stderr}}])))
 
 (defn- commonmark-check [_env]

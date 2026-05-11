@@ -690,58 +690,18 @@
 ;;   sequential coll of the above (each element validated independently;
 ;;   `nil` entries are dropped)
 ;; `:message` or `:body` are accepted aliases for `:text`.
-(def system-nudge-importances #{:low :normal :high :critical})
-
-(defn- system-nudge-map?
-  [x]
-  (and (map? x)
-    (every? #{:importance :text} (keys x))
-    (or (nil? (:importance x))
-      (contains? system-nudge-importances (:importance x)))
-    (non-blank-string? (:text x))))
-
-(defn- single-system-nudge?
-  [x]
-  (or (nil? x)
-    (non-blank-string? x)
-    (system-nudge-map? x)))
-
-(s/def ::system-nudge-result
-  (s/or :one  single-system-nudge?
-    :many (s/and sequential?
-            #(every? single-system-nudge? %))))
-
-(defn system-nudge-result?
-  "True when an extension :ext/nudge-fn return value conforms to the
-   supported nudge contract. Used at runtime after calling the nudge fn.
-   Accepts either a single nudge (nil/string/map) or a sequential coll
-   of single nudges; nil entries inside a coll are dropped downstream."
-  [x]
-  (s/valid? ::system-nudge-result x))
-
-(defn coerce-system-nudge-result
-  "Coerce a validated nudge-fn return value into a (possibly empty) seq of
-   non-nil single nudges. Caller is expected to have validated `x` via
-   `system-nudge-result?` first."
-  [x]
-  (cond
-    (nil? x) ()
-    (sequential? x) (remove nil? x)
-    :else (list x)))
-
-(defn explain-system-nudge-result
-  [x]
-  (s/explain-data ::system-nudge-result x))
-
-(s/def :ext/nudge-fn fn?)
-
 ;; ----------------------------------------------------------------------------
-;; Guards: structured cousins of `:ext/nudge-fn`. A guard is a named check
-;; that runs at a declared lifecycle scope; its `:check-fn` receives the
-;; same `nudge-ctx` and returns either nil (guard passes silently) or a map
-;; `{:hint <string> :importance <kw>?}` describing what the model should do
-;; next. The host wraps each non-nil result in a `<system_nudge>` block, so
-;; guards are MODEL-FACING only — the user never sees them.
+;; Guards: the single mechanism for MODEL-FACING <system_nudges>. A guard is
+;; a named check that runs at a declared lifecycle scope; its `:check-fn`
+;; receives the standard `nudge-ctx` and returns either nil (guard passes
+;; silently) or a map `{:hint <string> :importance <kw>?}` describing what
+;; the model should do next. The host wraps each non-nil result in a
+;; `<system_nudge>` block. The user never sees them.
+;;
+;; History: a freeform `:ext/nudge-fn` hook existed previously (one fn per
+;; extension returning 0+ nudges). It was retired in favour of guards —
+;; same model-facing surface, but each emitter is declarative, named,
+;; individually toggleable, and scope-aware.
 ;;
 ;; Why a separate hook from `:ext/nudge-fn`:
 ;;   1. Guards are declarative — the registry can enumerate them by id,
@@ -993,8 +953,9 @@
     (s/keys :req [:ext/namespace :ext/doc]
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
-            :ext/ns-alias :ext/prompt :ext/environment-info-fn :ext/nudge-fn
+            :ext/ns-alias :ext/prompt :ext/environment-info-fn
             :ext/on-parse-error-fn :ext/source-rewrite-fn :ext/fenced-renderers
+            :ext/guards
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance

@@ -679,14 +679,11 @@
                    ;; Raw current-turn user request — guards inspect it
                    ;; for investigation verbs / blind-answer prevention.
                    :user-request current-user-content}
-        ;; Two sources of system_nudge entries:
-        ;;   1. `:ext/nudge-fn` — freeform, one fn per ext, returns 0+ nudges.
-        ;;   2. `:ext/guards`   — structured per-guard list. Each guard
-        ;;      declares :scope (#{:iteration :turn :session}); the host
-        ;;      invokes :check-fn only when scope matches the current
-        ;;      lifecycle position. Returns nil (silent) or
-        ;;      `{:hint :importance}`.
-        ;; Both feed the same nudge ctx and merge into one `<system_nudges>` block.
+        ;; <system_nudges> are populated by `:ext/guards` only — the single
+        ;; mechanism for model-facing hints. Each guard declares :scope
+        ;; (#{:iteration :turn :session}); the host invokes :check-fn only
+        ;; when scope matches the current lifecycle position. Returns nil
+        ;; (silent) or `{:hint :importance}`.
         iter-pos     (long (or iteration 0))
         first-iter?  (zero? iter-pos)
         turn-pos     (long (or (some-> environment :current-turn-position-atom deref) 1))
@@ -697,26 +694,8 @@
                           :turn      first-iter?
                           :session   (and first-iter? first-turn?)
                           false))
-        nudge-fn-nudges (mapcat
-                          (fn [ext]
-                            (when-let [nudge-fn (:ext/nudge-fn ext)]
-                              (try
-                                (let [result (call-extension-callback ext nudge-fn nudge-ctx)]
-                                  (if (extension/system-nudge-result? result)
-                                    (->> (extension/coerce-system-nudge-result result)
-                                      (map #(normalize-system-nudge :normal %)))
-                                    (do
-                                      (tel/log! {:level :warn
-                                                 :id ::invalid-extension-nudge
-                                                 :data {:ext (:ext/namespace ext)
-                                                        :explain (extension/explain-system-nudge-result result)}}
-                                        "Extension nudge-fn returned invalid nudge; skipping")
-                                      nil)))
-                                (catch Throwable t
-                                  (tel/log! {:level :warn :data {:ext (:ext/namespace ext) :error (ex-message t)}})
-                                  nil))))
-                          (or active-extensions []))
-        guard-nudges (mapcat
+        all-nudges (into []
+                     (mapcat
                        (fn [ext]
                          (for [{:keys [id scope check-fn]} (or (:ext/guards ext) [])
                                :when (scope-active? scope)
@@ -732,9 +711,8 @@
                                :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]
                            (normalize-system-nudge
                              (or (:importance hit) :normal)
-                             (:hint hit))))
-                       (or active-extensions []))
-        all-nudges (into [] (concat nudge-fn-nudges guard-nudges))
+                             (:hint hit)))))
+                     (or active-extensions []))
         nudges-block (system-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
                 [active-skills-block recent-block bindings-block nudges-block])]

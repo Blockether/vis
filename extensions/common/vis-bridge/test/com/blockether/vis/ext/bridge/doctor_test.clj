@@ -1,12 +1,12 @@
 (ns com.blockether.vis.ext.bridge.doctor-test
   (:require
    [com.blockether.vis.ext.bridge.doctor :as doctor]
-   [com.blockether.vis.ext.bridge.languages.clojure-lsp :as lsp]
+   [com.blockether.vis.ext.bridge.languages.clojure :as clj]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe bridge-doctor-test
   (it "returns CommonMark and clojure-lsp readiness messages"
-    (with-redefs-fn {#'lsp/executable-status
+    (with-redefs-fn {#'clj/executable-status
                      (constantly {:available? true
                                   :command "clojure-lsp"
                                   :path "/bin/clojure-lsp"
@@ -17,7 +17,7 @@
          (expect (every? #{:info} (map :level msgs))))))
 
   (it "warns when external clojure-lsp is missing"
-    (with-redefs-fn {#'lsp/executable-status
+    (with-redefs-fn {#'clj/executable-status
                      (constantly {:available? false :command "clojure-lsp"})}
       (fn []
         (let [msgs (doctor/check-fn {})]

@@ -9,12 +9,15 @@
    [clojure.string :as str]))
 
 (def graph-kinds
-  #{:project :directory :file :namespace :var :function :macro :protocol :record
-    :type :class :method :field :heading :section :code-block :doc-section})
+  ;; Keep labels stable and sparse. Language/doc-specific detail belongs in
+  ;; node metadata (`:symbol-kind`, `:doc-kind`, `:route?`, etc.), not in a
+  ;; growing enum that every backend must agree on.
+  #{:project :folder :file :module :symbol :doc-section :external})
 
 (def edge-kinds
-  #{:contains :requires :uses :calls :mentions :links-to :documents :inherits
-    :implements})
+  ;; Same rule for relationships: few graph verbs, details in metadata.
+  #{:contains :imports :calls :uses :mentions :links-to :documents :inherits
+    :implements :tests :configures})
 
 (defn non-blank-string? [x]
   (and (string? x) (not (str/blank? x))))

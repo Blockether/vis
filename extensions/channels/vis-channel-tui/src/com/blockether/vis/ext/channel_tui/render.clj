@@ -2292,7 +2292,6 @@
 
 (def ^:private auto-collapse-line-threshold 12)
 (def ^:private auto-collapse-char-threshold 700)
-(def ^:private thinking-preview-edge-lines 10)
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
    `assoc` round-trips that would change `identityHashCode` but leave
@@ -2724,16 +2723,17 @@
                  (tag-copy-block-body entries node-id
                    (or raw-text (str/join "\n" lines))))))))))
 
-(defn- maybe-preview-thinking-entries
-  "Collapse long reasoning to first/last preview rows with a clickable
-   disclosure row in the middle. Expanded state uses the same
-   detail-expansions map as result/stdout/details popouts."
+(defn- maybe-collapse-thinking-entries
+  "Collapse completed reasoning behind one clickable disclosure row.
+
+   Live streaming stays uncollapsed (handled by `live-preview?` at the
+   call site) so the user can watch work happen. Once the iteration is
+   persisted/finalized, the reasoning becomes compact system context:
+   visible by count, expandable on demand, but no longer glued above the
+   final answer as ordinary assistant prose."
   [{:keys [entries conversation-id detail-expansions conversation-turn-id iteration-number max-w]}]
-  (let [entries (vec entries)
-        n       (count entries)
-        edge    thinking-preview-edge-lines]
-    (if (or (nil? conversation-id)
-          (<= n (* 2 edge)))
+  (let [entries (vec entries)]
+    (if (or (nil? conversation-id) (empty? entries))
       entries
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
@@ -2743,26 +2743,19 @@
                         :kind :reasoning}
             node-id    (detail-node-id detail-ctx)
             expanded?  (detail-expanded? detail-expansions conversation-id node-id false)
-            head       (subvec entries 0 edge)
-            tail       (subvec entries (- n edge) n)
-            hidden     (subvec entries edge (- n edge))
             summary    (detail-summary-entries
                          (assoc detail-ctx
                            :marker th-md-summary-marker
                            :max-w max-w
-                           :summary (if expanded?
-                                      (str "REASONING / " (hidden-size-hint hidden))
-                                      "REASONING")
-                           :hidden-entries hidden
+                           :summary "REASONING"
+                           :hidden-entries entries
                            :collapsed? (not expanded?)
                            :node-id node-id))]
         (vec (concat
-               head
                summary
                (when expanded?
-                 (tag-copy-block-body hidden node-id
-                   (entries->body-text (vec (concat head hidden tail)))))
-               tail))))))
+                 (tag-copy-block-body entries node-id
+                   (entries->body-text entries)))))))))
 
 (defn- maybe-collapse-raw-text-block
   "Render a result/stdout-like block without wrapping huge collapsed
@@ -2864,7 +2857,7 @@
           ;; streaming live. The full reasoning text flows into the
           ;; bubble as it arrives. Post-stream collapse (the ▾ REASONING
           ;; summary toggle) still fires once the iteration completes
-          ;; via `maybe-preview-thinking-entries` below.
+          ;; via `maybe-collapse-thinking-entries` below.
           (let [raw-texts (if (sequential? thinking-text-or-texts)
                             thinking-text-or-texts
                             [thinking-text-or-texts])
@@ -2888,17 +2881,12 @@
                                       (wrap-text thinking-text fill-w)))))))
                           texts)]
             (when (seq entries)
-              ;; When live-preview? is true, `live-preview-thinking-text`
-              ;; above already injected an inline `▸ REASONING / N chars
-              ;; hidden while live` marker into the streaming text, so
-              ;; running `maybe-preview-thinking-entries` on top of it
-              ;; would stack a second `▾ REASONING / N lines hidden`
-              ;; summary on the same content. Skip the post-stream
-              ;; collapse during live preview - the inline trim is the
-              ;; only summary the user should see while streaming.
+              ;; Live reasoning stays visible while it streams; completed
+              ;; reasoning defaults to a compact disclosure so system-like
+              ;; chain-of-thought does not visually merge with the answer.
               (let [preview-entries (if live-preview?
                                       entries
-                                      (maybe-preview-thinking-entries
+                                      (maybe-collapse-thinking-entries
                                         {:entries              entries
                                          :conversation-id      conversation-id
                                          :detail-expansions   detail-expansions

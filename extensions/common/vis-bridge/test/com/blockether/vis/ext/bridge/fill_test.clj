@@ -7,7 +7,7 @@
 (def sample-result
   (schema/extract-result
     {:nodes [(schema/node
-               {:kind :function
+               {:kind :symbol
                 :language "clojure"
                 :name "run"
                 :qualified-name "demo.core/run"
@@ -30,7 +30,7 @@
       (expect (= "edge:demo.core/run::calls::demo.core/parse" (:key (first (:bridge/edge by-kind)))))
       (expect (= {:path "src/demo/core.clj"
                   :language "clojure"
-                  :kind "function"
+                  :kind "symbol"
                   :name "run"
                   :visibility "unknown"}
                 (:metadata (first (:bridge/node by-kind)))))))

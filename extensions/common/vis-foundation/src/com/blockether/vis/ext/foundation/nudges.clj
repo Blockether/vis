@@ -107,20 +107,24 @@
                  "avoid dumping more file contents, diffs, or repeated diagnostics. "
                  "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 
-(defn nudge-fn
-  "Vis-foundation `:ext/nudge-fn` entry point. Composes the title and
-   context-pressure nudges into a sequential coll the host can flatten
-   into `<system_nudges>`. Returns an empty vec when neither nudge has
-   anything to say this iteration - the host accepts that as a no-op."
-  [ctx]
-  (into [] (remove nil?) [(title-nudge ctx) (context-pressure-nudge ctx)]))
-
 ;; ----------------------------------------------------------------------------
 ;; Guards (`:ext/guards`) — structured lifecycle-scoped checks that emit
 ;; MODEL-FACING system_nudges. Each guard declares :id, :doc, :scope
-;; (#{:iteration :turn :session}), and :check-fn. Different from
-;; `:ext/nudge-fn`: a guard is named, declarative, and individually toggleable.
+;; (#{:iteration :turn :session}), and :check-fn.
+;;
+;; All three foundation nudges — title, context-pressure, blind-answer —
+;; ship as guards. The legacy `:ext/nudge-fn` hook was retired; guards
+;; are the single mechanism for model-facing system_nudges.
 ;; ----------------------------------------------------------------------------
+
+;; `title-nudge` and `context-pressure-nudge` are exposed as plain fns so
+;; tests can probe them independently of the guard envelope. Their guard
+;; wrappers below adapt the `{:importance :text}` map they return into the
+;; `{:hint :importance}` shape guards use.
+
+(defn- nudge->guard-hit
+  [n]
+  (when n {:hint (:text n) :importance (:importance n)}))
 
 (def ^:private investigation-verb-regex
   ;; Stems of verbs that strongly imply "answer requires runtime/file
@@ -160,7 +164,15 @@
 (def guards
   "`:ext/guards` vector for vis-foundation. Each entry conforms to the
    `::guard` spec in `com.blockether.vis.internal.extension`."
-  [{:id       :foundation/blind-answer
+  [{:id       :foundation/conversation-title
+    :doc      "Nudge the model to set / refresh the conversation title when it's blank, refresh-flagged, or stale."
+    :scope    :iteration
+    :check-fn (fn [ctx] (nudge->guard-hit (title-nudge ctx)))}
+   {:id       :foundation/context-pressure
+    :doc      "Warn when assembled input tokens cross ~50% of the model's context window."
+    :scope    :iteration
+    :check-fn (fn [ctx] (nudge->guard-hit (context-pressure-nudge ctx)))}
+   {:id       :foundation/blind-answer
     :doc      "Warn when iteration 1 is about to answer an investigation-style request without any tool calls."
     :scope    :iteration
     :check-fn blind-answer-guard-check}])
