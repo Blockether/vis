@@ -3519,14 +3519,29 @@
                                   (str/trim (vis/extract-text answer))
                                   "Cancelled by user.")
         cancel-rows             (mapv line-entry (wrap-text cancel-text (max 1 (- fill-w 2))))
-        cancel-block            (vec (concat [(line-entry "")] cancel-rows [(line-entry "")]))
+        ;; Trace-to-answer top margin invariant. The trace's final
+        ;; iteration already ends with a blank-rendering padding row
+        ;; (`iteration-pad-marker` for code-bearing iterations, the
+        ;; thinking-block bottom pad for thinking-only iterations).
+        ;; Stacking that with the answer's own top `ans-pad` produced
+        ;; TWO blank rows between trace and answer, while a trace-less
+        ;; answer (or a cancelled-by-user trailer) showed ONE. Drop the
+        ;; leading answer pad whenever trace-entries exist so the row
+        ;; count is identical in both shapes. The bottom `ans-pad` is
+        ;; preserved — it's the only thing between the answer text and
+        ;; the bubble's bottom border.
+        has-trace?              (seq trace-entries)
+        cancel-block            (vec (concat
+                                       (when-not has-trace? [(line-entry "")])
+                                       cancel-rows
+                                       [(line-entry "")]))
         answer-block            (cond-> []
-                                  fa-hdr (conj fa-hdr)
-                                  :always (conj ans-pad)
-                                  :always (into ans-entries)
-                                  :always (conj ans-pad))
+                                  fa-hdr                            (conj fa-hdr)
+                                  (and (not fa-hdr) (not has-trace?)) (conj ans-pad)
+                                  :always                           (into ans-entries)
+                                  :always                           (conj ans-pad))
         trailer                 (if cancelled? cancel-block answer-block)
-        entries                 (if (seq trace-entries)
+        entries                 (if has-trace?
                                   (vec (concat trace-entries trailer))
                                   (vec trailer))]
     (entries->payload entries)))
