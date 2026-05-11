@@ -1041,9 +1041,9 @@
    zones keep their own background.
 
    Tool render-fns now return Markdown for result bodies. That Markdown
-   may contain Vis inline-style sentinels (U+E110..U+E117) for spans like
-   `v/preview`. These sentinels are paint directives, not glyphs; consume
-   them here before they hit Lanterna's raw putString path."
+   may contain Vis inline-style sentinels (U+E110..U+E117) for spans.
+   These sentinels are paint directives, not glyphs; consume them here
+   before they hit Lanterna's raw putString path."
   [^TextGraphics g x y ^String line base-fg bg]
   (letfn [(sentinel-chunk? [^String chunk]
             (boolean
@@ -2477,32 +2477,19 @@
       sort
       vec)))
 
-(defn- search-spec-summary
-  [{:keys [spec paths]}]
-  (when (map? spec)
-    (let [needles (or (:all spec) (:any spec))
-          n       (count needles)
-          needle  (some-> needles first str)
-          paths   (or (seq paths) (seq (:paths spec)))
-          in      (when-let [p (first paths)]
-                    (str " in " p (when (next paths) "...")))]
-      (str
-        (cond
-          (= 1 n) (str " “" (ellipsize-cols needle 32) "”")
-          (pos? n) (str " " n " terms")
-          :else nil)
-        in))))
-
 (defn- tool-detail-badge
-  "Render the short summary line painted on tool-result rows. Reads
-   `:op/badge` declared by the owning extension via
-   `extension/register-op!`. The channel never owns per-symbol
-   tables."
+  "Compose the short summary line painted on tool-result rows.
+   Label = OBSERVATION/ACTION (derived from `:op/tag`); suffix =
+   op-name. No per-op badge field anywhere."
   [detail]
-  (when-let [label (some-> detail :op/badge)]
-    (let [op (:op detail)]
-      (str label (or (when (= label "SEARCH") (search-spec-summary detail))
-                   (when (and op (not (#{:all :any} op)))
+  (when-let [tag (some-> detail :op/tag)]
+    (let [label (case tag
+                  :op.tag/observation "OBSERVATION"
+                  :op.tag/action      "ACTION"
+                  nil)
+          op    (:op detail)]
+      (when label
+        (str label (when (and op (not (#{:all :any} op)))
                      (str " " (name op))))))))
 
 (defn- self-describing-tool-result?

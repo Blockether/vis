@@ -617,13 +617,16 @@
 
 (defn- draw-footer-row!
   [g db row cols now-ms build-fn row-idx]
-  ;; Extension-contributed segments are appended AFTER built-ins so
-  ;; they sort to the back of their region; existing built-ins keep
-  ;; their visual position. shrink-to-fit drops by `:priority` so
-  ;; extensions can opt in to early-drop with a high :priority.
+  ;; Extension-contributed segments are PREPENDED before built-ins so
+  ;; primary-identity content (model display, provider label) paints
+  ;; leftmost. Built-in config toggles (reasoning level, verbosity)
+  ;; come after. shrink-to-fit still drops by `:priority`.
+  ;; (Conversation fe6340b0 regression: model was invisible on narrow
+  ;; terminals because it painted to the right of `reasoning:` /
+  ;; `verbosity:` and got clipped.)
   (let [built-in (build-fn db now-ms)
         ext-segs (extension-footer-segments db now-ms (long row-idx))
-        all-segs (into (vec built-in) ext-segs)
+        all-segs (into (vec ext-segs) built-in)
         [segs separator] (shrink-to-fit all-segs cols)
         l        (region-spans segs :left)
         c        (region-spans segs :center)

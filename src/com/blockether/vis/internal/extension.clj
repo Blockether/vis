@@ -2643,56 +2643,53 @@
   #{:op.tag/observation :op.tag/action})
 
 (def ^:private op-keyword->meta
-  "Canonical op-keyword -> op-metadata table. Each value is a map:
+  "Canonical op-keyword -> op-metadata table.
 
      {:tag              :op.tag/observation | :op.tag/action  (required)
-      :badge            \"EDIT\" \"READ\" ...                  (optional)
       :self-describing? true | false                          (optional)}
 
-   `:badge` is the short uppercase category label channels paint on
-   tool-result summary rows. `:self-describing?` true means the tool's
-   body output is its own summary (shell stdout, search hits, file
-   listings) so channels SHOULD skip the redundant badge row.
+   `:self-describing?` true means the tool's body output is its own
+   summary (shell stdout, search hits, file listings) so channels
+   SHOULD skip the redundant badge row.
 
-   Each extension owns its own ops: register through `register-op!`.
-   The engine ships defaults for foundation (`v/...`) + lang-clojure
-   (`z/...`) here so the in-tree tools work without extra wiring."
+   Badge label is derived from `:tag` (`OBSERVATION` / `ACTION`); no
+   per-op badge field. Channels compose `(str tag-label \" \" op-name)`.
+
+   Each extension owns its own ops via `register-op!`."
   (atom
     {;; foundation editing (alias `v`)
-     :v/cat              {:tag :op.tag/observation :badge "READ"}
-     :v/preview          {:tag :op.tag/observation :badge "PREVIEW"}
-     :v/ls               {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
-     :v/glob             {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
-     :v/exists?          {:tag :op.tag/observation :badge "META"}
-     :v/rg               {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
-     :v/grep             {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
-     :v/patch            {:tag :op.tag/action      :badge "EDIT"}
-     :v/patch-check      {:tag :op.tag/observation :badge "EDIT"}
-     :v/edit             {:tag :op.tag/action      :badge "EDIT"}
-     :v/write            {:tag :op.tag/action      :badge "EDIT"}
-     :v/append           {:tag :op.tag/action      :badge "EDIT"}
-     :v/create-dirs      {:tag :op.tag/action      :badge "CREATE"}
-     :v/delete           {:tag :op.tag/action      :badge "DELETE"}
-     :v/delete-if-exists {:tag :op.tag/action      :badge "DELETE"}
-     :v/move             {:tag :op.tag/action      :badge "MOVE"}
-     :v/copy             {:tag :op.tag/action      :badge "CREATE"}
-     :v/bash             {:tag :op.tag/action      :badge "BASH" :self-describing? true}
+     :v/cat              {:tag :op.tag/observation}
+     :v/ls               {:tag :op.tag/observation :self-describing? true}
+     :v/glob             {:tag :op.tag/observation :self-describing? true}
+     :v/exists?          {:tag :op.tag/observation}
+     :v/rg               {:tag :op.tag/observation :self-describing? true}
+     :v/grep             {:tag :op.tag/observation :self-describing? true}
+     :v/patch            {:tag :op.tag/action}
+     :v/patch-check      {:tag :op.tag/observation}
+     :v/write            {:tag :op.tag/action}
+     :v/append           {:tag :op.tag/action}
+     :v/create-dirs      {:tag :op.tag/action}
+     :v/delete           {:tag :op.tag/action}
+     :v/delete-if-exists {:tag :op.tag/action}
+     :v/move             {:tag :op.tag/action}
+     :v/copy             {:tag :op.tag/action}
+     :v/bash             {:tag :op.tag/action :self-describing? true}
      ;; lang-clojure (alias `z`)
-     :z/locators           {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
-     :z/symbols            {:tag :op.tag/observation :badge "SEARCH" :self-describing? true}
-     :z/locator-for-symbol {:tag :op.tag/observation :badge "SEARCH"}
-     :z/patch              {:tag :op.tag/action      :badge "EDIT"}
-     :z/patch-check        {:tag :op.tag/observation :badge "EDIT"}
-     :z/repair-range       {:tag :op.tag/action      :badge "EDIT"}
-     :z/repair-locator     {:tag :op.tag/action      :badge "EDIT"}
-     :z/repair-file        {:tag :op.tag/action      :badge "EDIT"}
+     :z/locators           {:tag :op.tag/observation :self-describing? true}
+     :z/symbols            {:tag :op.tag/observation :self-describing? true}
+     :z/locator-for-symbol {:tag :op.tag/observation}
+     :z/patch              {:tag :op.tag/action}
+     :z/patch-check        {:tag :op.tag/observation}
+     :z/repair-range       {:tag :op.tag/action}
+     :z/repair-locator     {:tag :op.tag/action}
+     :z/repair-file        {:tag :op.tag/action}
      ;; clojure.core mutators reachable through SCI sandbox
-     :spit                 {:tag :op.tag/action      :badge "EDIT"}}))
+     :spit                 {:tag :op.tag/action}}))
 
 (defn register-op!
   "Register or override op metadata for `op-keyword`. `meta` is a map
-   with required `:tag` (member of `op-tags`) and optional `:badge`
-   (string) + `:self-describing?` (boolean). Idempotent."
+   with required `:tag` (member of `op-tags`) and optional
+   `:self-describing?` (boolean). Idempotent."
   [op-keyword meta]
   (when-not (contains? op-tags (:tag meta))
     (anomaly/incorrect!
@@ -2715,18 +2712,15 @@
 
 (defn op-presentation
   "Engine-owned metadata for a tool's `:op` keyword:
-   `{:op/tag ... :op/badge ... :op/self-describing? ...}`. Tool
-   wrappers merge this into their `:info`/`:metadata` map so channels
-   read one canonical key without owning per-symbol tables.
+   `{:op/tag ... :op/self-describing? ...}`. Tool wrappers merge this
+   into their `:info`/`:metadata` so channels read canonical keys.
 
-   `:op/badge` and `:op/self-describing?` are the only presentation
-   hints carried here; color / glyph / layout remain pure channel
-   concerns and live under the channel that cares."
+   Badge LABEL is derived from `:op/tag` by the channel, not stored
+   here. Color / glyph / layout remain pure channel concerns."
   [op]
   (let [m (get @op-keyword->meta op :op.tag/observation)
         m (if (map? m) m {:tag m})]
     (cond-> {:op/tag (:tag m :op.tag/observation)}
-      (:badge m)            (assoc :op/badge (:badge m))
       (:self-describing? m) (assoc :op/self-describing? true))))
 
 (defn registered-extensions-summary
