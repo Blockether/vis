@@ -387,6 +387,31 @@
     (expect (nil? (#'loop/block-result-error-summary {:error nil :journal []})))
     (expect (nil? (#'loop/block-result-error-summary {})))))
 
+(defdescribe iteration-block-validation-test
+  (it "wraps string preflight errors instead of throwing invalid-iteration-block"
+    (let [blocks (#'loop/validate-iteration-blocks!
+                  [{:id 0
+                    :code "(answer \"mixed\")"
+                    :result nil
+                    :stdout ""
+                    :stderr ""
+                    :error "Answer-alone preflight rejected this iteration"
+                    :execution-time-ms 0
+                    :info {:op :vis/guard
+                           :started-at-ms 1
+                           :finished-at-ms 1
+                           :duration-ms 0
+                           :status :error
+                           :iteration 1
+                           :form-position 1
+                           :form-count 1
+                           :ref "turn/aaaaaaaa/iteration/1/block/1"
+                           :timeout? false
+                           :repaired? false}}])]
+      (expect (= "Answer-alone preflight rejected this iteration"
+                (get-in blocks [0 :error :message])))
+      (expect (= :vis/guard (get-in blocks [0 :error :block :phase]))))))
+
 (defdescribe answer-alone-preflight-test
   ;; Strict gate: `(answer ...)` MUST be the only top-level form in
   ;; its iteration. Pi / Codex / SWE-bench style observe-then-answer

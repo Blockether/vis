@@ -5,6 +5,7 @@
    [clojure.string :as str]
    [com.blockether.vis.ext.bridge.core :as bridge]
    [com.blockether.vis.ext.bridge.languages.schema :as schema]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- manifest-file []
@@ -23,7 +24,7 @@
     (expect (= 'com.blockether.vis.ext.bridge.core (:ext/namespace bridge/vis-extension)))
     (expect (= {:ns 'vis.ext.bridge :alias 'bridge} (:ext/ns-alias bridge/vis-extension)))
     (expect (= '[extract extract-file extract-markdown clojure-lsp-status extract-clojure
-                 aggregate-rows fill! extract-and-fill!]
+                 aggregate-rows fill! extract-and-fill! backfill!]
               (mapv :ext.symbol/sym (:ext/symbols bridge/vis-extension))))
     (expect (fn? (:ext/doctor-check-fn bridge/vis-extension)))))
 
@@ -33,7 +34,23 @@
                                   :language "markdown"
                                   :content "# Title\n\nSee `demo.core/run`."})]
       (expect (= "markdown" (get-in result [:stats :language])))
-      (expect (= #{:file :doc-section} (set (map :kind (:nodes result))))))))
+      (expect (= (bridge/content-sha256 "# Title\n\nSee `demo.core/run`.")
+                (get-in result [:stats :hash-sha256])))
+      (expect (= #{:file :doc-section} (set (map :kind (:nodes result)))))))
+
+  (it "reads relative paths from the active Vis workspace root"
+    (let [root (.getCanonicalFile (io/file (str (java.nio.file.Files/createTempDirectory "bridge-workspace-" (make-array java.nio.file.attribute.FileAttribute 0)))))
+          file (io/file root "README.md")]
+      (try
+        (spit file "# Workspace\n")
+        (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+          (let [result (bridge/extract {:path "README.md" :language "markdown"})]
+            (expect (= "README.md" (get-in result [:stats :path])))
+            (expect (= (bridge/content-sha256 "# Workspace\n")
+                      (get-in result [:stats :hash-sha256])))))
+        (finally
+          (io/delete-file file true)
+          (io/delete-file root true))))))
 
 (def sample-result
   (schema/extract-result
@@ -71,6 +88,13 @@
                        (bridge/aggregate-rows sample-result {:path "override.clj"})))]
       (expect (= "idx:override.clj" (:key idx)))
       (expect (= "override.clj" (get-in idx [:metadata :path])))))
+
+  (it "stores path hashes on index rows when extraction stats have them"
+    (let [result (assoc-in sample-result [:stats :hash-sha256] "abc123")
+          idx (first (filter #(= :bridge/index (:kind %))
+                       (bridge/aggregate-rows result)))]
+      (expect (= "abc123" (get-in idx [:metadata :hash-sha256])))
+      (expect (= "abc123" (get-in idx [:content :hash-sha256])))))
 
   (it "reports result paths and language for replacement policy"
     (expect (= ["src/demo/core.clj"] (bridge/result-paths sample-result)))

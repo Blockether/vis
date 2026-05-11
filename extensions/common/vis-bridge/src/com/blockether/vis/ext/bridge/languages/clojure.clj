@@ -8,7 +8,8 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.ext.bridge.languages.schema :as schema])
+   [com.blockether.vis.ext.bridge.languages.schema :as schema]
+   [com.blockether.vis.internal.workspace-context :as workspace-context])
   (:import
    (java.io File)
    (java.net URI)))
@@ -69,7 +70,10 @@
 
 (defn- root-file
   ^File [project-root]
-  (.getCanonicalFile (io/file (or project-root "."))))
+  (.getCanonicalFile
+    (if project-root
+      (io/file project-root)
+      (workspace-context/cwd))))
 
 (defn- uri->path
   [project-root uri]
@@ -221,22 +225,28 @@
    (let [opts (or opts {})
          project-root (:project-root opts)
          dump (or (:dump opts) (dump-project opts))
+         filenames (vec (map str (:filenames opts)))
          file-facts (map #(file-analysis->facts project-root %) (:analysis dump))
          nodes (vec (mapcat :nodes file-facts))
+         ;; Project-wide extraction records dep-graph imports. Single/multi-file
+         ;; extraction should not emit synthetic dep-graph rows because path
+         ;; replacement cannot know which old synthetic rows disappeared.
          edges (vec (concat (mapcat :edges file-facts)
-                      (dep-graph-edges (:dep-graph dump))))]
+                      (when-not (seq filenames)
+                        (dep-graph-edges (:dep-graph dump)))))]
      (schema/extract-result
        {:nodes nodes
         :edges edges
         :diagnostics []
-        :stats {:language "clojure"
-                :project-root (str (.getPath (root-file project-root)))
-                :source-path-count (count (:source-paths dump))
-                :namespace-count (count (:dep-graph dump))
-                :node-count (count nodes)
-                :edge-count (count edges)
-                :paths (vec (map str (:filenames opts)))
-                :backend :clojure-lsp/external-cli}}))))
+        :stats (cond-> {:language "clojure"
+                        :project-root (str (.getPath (root-file project-root)))
+                        :source-path-count (count (:source-paths dump))
+                        :namespace-count (count (:dep-graph dump))
+                        :node-count (count nodes)
+                        :edge-count (count edges)
+                        :paths filenames
+                        :backend :clojure-lsp/external-cli}
+                 (= 1 (count filenames)) (assoc :path (first filenames)))}))))
 
 (defn extract-file
   "Extract normalized Bridge facts for one Clojure source file. Uses

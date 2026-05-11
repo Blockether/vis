@@ -127,19 +127,42 @@
                 :else (first edits))]
     (or (:path edit) ".")))
 
+(defn- error-hint
+  [err]
+  (case (:type (ex-data err))
+    :ext.lang-clojure/patch-search-not-unique
+    "Use z/forms or z/locators to pick one row, then patch with that locator row's :span. Avoid plain :search strings when forms repeat."
+
+    :ext.lang-clojure/invalid-patch-source
+    "Use parseable Clojure/EDN source for :search/:replace, or patch a locator row returned by z/forms/z/locators."
+
+    :ext.lang-clojure/non-clojure-file
+    "Use v/patch or v/write for non-Clojure files; z/ only parses .clj/.cljc/.cljs/.edn."
+
+    :ext.lang-clojure/file-not-found
+    "Check the :path relative to the current Vis workspace before retrying."
+
+    :ext.lang-clojure/path-escape
+    "Use a path inside the current Vis workspace; z/ refuses traversal outside cwd."
+
+    nil))
+
 (defn- tool-failure-on-error
   [op]
   (fn [err _env _f args]
-    (let [path (first-edit-path args)
-          t    (now-ms)]
+    (let [path  (first-edit-path args)
+          t     (now-ms)
+          error (cond-> (extension/normalize-error err)
+                  (error-hint err) (assoc :hint (error-hint err)))]
       {:result (extension/failure
-                 {:result    nil
-                  :op        op
-                  :metadata  {:target         (path->target path :file)
-                              :started-at-ms  t
-                              :finished-at-ms t
-                              :duration-ms    0}
-                  :throwable err})})))
+                 {:result   nil
+                  :op       op
+                  :metadata {:target         (path->target path :file)
+                             :started-at-ms  t
+                             :finished-at-ms t
+                             :duration-ms    0
+                             :exception-data (ex-data err)}
+                  :error    error})})))
 
 ;; =============================================================================
 ;; Zipper patching
@@ -421,23 +444,32 @@
   [edits]
   (-> edits patch-plan vec write-plans!))
 
+(defn- patch-file-result
+  [plans]
+  (let [files (mapv (fn [{:keys [path before after]}]
+                      {:path path
+                       :changed? (not= before after)
+                       :before before
+                       :after after
+                       :lines-before (count (str/split-lines before))
+                       :lines-after (count (str/split-lines after))})
+                plans)]
+    {:files files
+     :total-files (count files)
+     :total-changes (count (filter :changed? files))}))
+
 (defn- patch-file
-  "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator form/source snippet and must match exactly once before any write. Tool result envelope."
+  "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator row/span or locator form/source snippet and must match exactly once before any write. Tool result envelope returns the changed file diffs in :op/result."
   [edits]
-  (let [plans (patch-safe edits)]
+  (let [plans (patch-safe edits)
+        result (patch-file-result plans)]
     (tool-success
       {:op :z/patch
        :path (or (:path (first plans)) ".")
        :kind :file
-       :result (mapv #(select-keys % [:path]) plans)
-       :info {:files (mapv (fn [{:keys [path before after]}]
-                             {:path path
-                              :changed? (not= before after)
-                              :before before
-                              :after after
-                              :lines-before (count (str/split-lines before))
-                              :lines-after (count (str/split-lines after))})
-                       plans)}})))
+       :result result
+       :info {:file-count (:total-files result)
+              :change-count (:total-changes result)}})))
 
 ;; =============================================================================
 ;; Rendering
@@ -453,32 +485,130 @@
         "\n...<+" (- (count s) journal-preview-chars) " chars>")
       s)))
 
+(defn- patch-result-files
+  [result]
+  (vec (or (:files result)
+         (when (sequential? result) result)
+         (when result [result]))))
+
 (defn- journal-render-patch-result
-  [_result]
-  ;; z/patch result is the per-file path map; the diff data lives on :info
-  ;; which renderers no longer see. Single-line confirmation.
-  "z/patch — wrote zipper edit(s) (full diff visible in channel render)")
+  [result]
+  (let [files (patch-result-files result)
+        changed (count (filter :changed? files))]
+    (str "z/patch — " changed "/" (count files) " file(s) changed"
+      (when (seq files)
+        (str "\n"
+          (str/join "\n"
+            (map (fn [{:keys [path changed? lines-before lines-after]}]
+                   (str "- " path " " (if changed? "changed" "unchanged")
+                     " lines " lines-before "→" lines-after))
+              (take 8 files))))))))
 
 (defn- channel-render-patch-result
   [result]
-  (let [files (if (sequential? result) result [result])]
+  (let [files (patch-result-files result)]
     (str "Patched " (count files) " Clojure file(s).\n\n"
-      (str/join "\n" (map (fn [{:keys [path]}] (str "- `" path "`")) files)))))
+      (str/join "\n\n"
+        (map (fn [{:keys [path changed? before after]}]
+               (str "### `" path "` — " (if changed? "changed" "unchanged") "\n\n"
+                 "```diff\n"
+                 "--- before\n" (preview-text before) "\n"
+                 "+++ after\n" (preview-text after) "\n"
+                 "```"))
+          (take 4 files))))))
 
 ;; =============================================================================
 ;; Locator discovery
 ;; =============================================================================
 
+(def ^:private definition-heads
+  '#{def defonce defn defn- defmacro defmulti defmethod defrecord deftype defprotocol definterface definterface+ defstruct})
+
+(defn- compact-source
+  ([s] (compact-source s 180))
+  ([s n]
+   (let [s (-> (str s)
+             (str/replace #"\s+" " ")
+             str/trim)]
+     (if (> (count s) n)
+       (str (subs s 0 n) "…<+" (- (count s) n) " chars>")
+       s))))
+
+(defn- form-head
+  [v]
+  (when (seq? v) (first v)))
+
+(defn- form-kind
+  [v]
+  (let [head (form-head v)]
+    (cond
+      (= 'ns head) :ns
+      (contains? definition-heads head) (keyword (name head))
+      (seq? v) :form
+      (symbol? v) :symbol
+      (keyword? v) :keyword
+      (vector? v) :vector
+      (map? v) :map
+      (set? v) :set
+      :else :literal)))
+
+(defn- form-name
+  [v]
+  (let [head (form-head v)]
+    (cond
+      (= 'ns head) (second v)
+      (contains? definition-heads head) (second v)
+      :else nil)))
+
+(defn- defn-arities
+  [v]
+  (when (and (seq? v) (#{'defn 'defn- 'defmacro} (first v)))
+    (let [body (drop-while #(not (or (vector? %) (seq? %))) (drop 2 v))]
+      (cond
+        (vector? (first body)) #{(count (first body))}
+        (seq? (first body)) (->> body
+                              (filter seq?)
+                              (map first)
+                              (filter vector?)
+                              (map count)
+                              set)
+        :else nil))))
+
+(defn- docstring?
+  [v]
+  (and (seq? v)
+    (contains? definition-heads (first v))
+    (string? (some #(when (string? %) %) (drop 2 v)))))
+
+(defn- form-digest
+  [v source]
+  (let [head (form-head v)
+        name (form-name v)]
+    (cond
+      (= 'ns head) (str "(ns " name " …)")
+      (#{'def 'defonce} head) (str "(" head " " name " …)")
+      (#{'defn 'defn- 'defmacro} head) (str "(" head " " name " " (or (seq (defn-arities v)) "…") " …)")
+      (= 'defmethod head) (str "(defmethod " name " " (nth v 2 nil) " …)")
+      (contains? definition-heads head) (str "(" head " " name " …)")
+      :else (compact-source source))))
+
 (defn- locator-row
   [zloc]
   (when (z/sexpr-able? zloc)
     (try
-      (let [v (z/sexpr zloc)]
-        {:tag     (z/tag zloc)
-         :value   v
-         :locator (pr-str v)
-         :source  (z/string zloc)
-         :span    (z/position-span zloc)})
+      (let [v      (z/sexpr zloc)
+            source (z/string zloc)]
+        (cond-> {:tag            (z/tag zloc)
+                 :kind           (form-kind v)
+                 :name           (form-name v)
+                 :digest         (form-digest v source)
+                 :source-preview (compact-source source)
+                 :value          v
+                 :locator        (pr-str v)
+                 :source         source
+                 :span           (z/position-span zloc)}
+          (seq (defn-arities v)) (assoc :arities (defn-arities v))
+          (docstring? v) (assoc :doc? true)))
       (catch Throwable _ nil))))
 
 (defn- source-locators
@@ -492,6 +622,17 @@
           (conj out row)
           out)))))
 
+(defn- source-top-level-locators
+  [source]
+  (loop [loc (z/of-string source {:track-position? true})
+         out []]
+    (if (or (nil? loc) (z/end? loc))
+      out
+      (recur (z/right loc)
+        (if-let [row (locator-row loc)]
+          (conj out row)
+          out)))))
+
 (defn- with-locator-row-context
   [path rows]
   (mapv (fn [idx row]
@@ -501,28 +642,43 @@
     (range)
     rows))
 
+(defn- filter-match?
+  [expected actual]
+  (cond
+    (nil? expected) true
+    (instance? java.util.regex.Pattern expected) (boolean (re-find expected (str actual)))
+    :else (= expected actual)))
+
 (defn- apply-locator-filters
-  [rows {:keys [symbol source-contains name limit] :or {limit 10}}]
-  (let [sym-filter (or symbol name)
-        rows       (cond->> rows
-                     sym-filter (filter #(= sym-filter (:value %)))
-                     source-contains (filter #(str/includes? (str (:source %)) (str source-contains))))
-        rows       (vec rows)
-        limit      (max 1 (long limit))]
+  [rows {:keys [symbol source-contains name kind limit] :or {limit 50}}]
+  (let [rows  (cond->> rows
+                symbol (filter #(= symbol (:value %)))
+                name (filter #(filter-match? name (or (:name %) (:value %))))
+                kind (filter #(= kind (:kind %)))
+                source-contains (filter #(str/includes? (str (:source %)) (str source-contains))))
+        rows  (vec rows)
+        limit (max 1 (long limit))]
     {:rows (subvec rows 0 (min limit (count rows)))
      :total-count (count rows)
      :limit limit
      :truncated? (> (count rows) limit)}))
 
+(defn- locator-source-rows
+  [source opts]
+  (if (or (= :all (:depth opts)) (:symbol opts))
+    (source-locators source)
+    (source-top-level-locators source)))
+
 (defn- locators-file
-  "List Clojure/EDN zipper locators in a file. Defaults to 10 rows; pass opts like {:symbol 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
+  "List semantic Clojure/EDN zipper locator rows in a file. Defaults to top-level forms (limit 50); pass {:depth :all} for every descendant, {:kind :defn}, {:name 'foo}, {:symbol 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
   ([path] (locators-file path nil))
   ([path opts]
    (ensure-clojure-file-ext! path)
-   (let [f     (ensure-existing-file! (safe-path path))
+   (let [opts  (or opts {})
+         f     (ensure-existing-file! (safe-path path))
          path  (rel-path f)
-         all   (with-locator-row-context path (source-locators (slurp f)))
-         {:keys [rows total-count limit truncated?]} (apply-locator-filters all (or opts {}))]
+         all   (with-locator-row-context path (locator-source-rows (slurp f) opts))
+         {:keys [rows total-count limit truncated?]} (apply-locator-filters all opts)]
      (tool-success
        {:op :z/locators
         :path path
@@ -532,18 +688,28 @@
                :total-count total-count
                :limit limit
                :truncated? truncated?
-               :filters (select-keys (or opts {}) [:symbol :source-contains :limit])}}))))
+               :filters (select-keys opts [:depth :kind :name :symbol :source-contains :limit])}}))))
+
+(defn forms-file
+  "List top-level Clojure/EDN forms as semantic locator rows. Defaults to limit 50; pass filters like {:kind :defn}, {:name 'foo}, {:name #\"^format-\"}, {:source-contains \"swap!\"}. Rows can become z/patch edits by adding :replace."
+  ([path] (forms-file path nil))
+  ([path opts]
+   (let [out (locators-file path (assoc (or opts {}) :depth :top))]
+     (assoc out
+       :op/symbol :z/forms
+       :op/metadata (assoc (:op/metadata out) :op :z/forms)))))
 
 (defn- symbols-file
-  "List symbol zipper locators in a Clojure/EDN file. Defaults to 10 rows; pass opts like {:name 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
+  "List symbol zipper locator rows in a Clojure/EDN file. Defaults to 50 rows; pass opts like {:name 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
   ([path] (symbols-file path nil))
   ([path opts]
    (ensure-clojure-file-ext! path)
-   (let [f     (ensure-existing-file! (safe-path path))
+   (let [opts  (or opts {})
+         f     (ensure-existing-file! (safe-path path))
          path  (rel-path f)
          all   (->> (with-locator-row-context path (source-locators (slurp f)))
                  (filterv #(symbol? (:value %))))
-         {:keys [rows total-count limit truncated?]} (apply-locator-filters all (or opts {}))]
+         {:keys [rows total-count limit truncated?]} (apply-locator-filters all opts)]
      (tool-success
        {:op :z/symbols
         :path path
@@ -553,44 +719,66 @@
                :total-count total-count
                :limit limit
                :truncated? truncated?
-               :filters (select-keys (or opts {}) [:name :symbol :source-contains :limit])}}))))
+               :filters (select-keys opts [:name :symbol :source-contains :limit])}}))))
 
 (defn- locator-for-symbol-file
   "Return the first symbol zipper locator row for `sym` without dumping the whole namespace."
   [path sym]
   (let [out (symbols-file path {:symbol sym :limit 2})]
     (assoc out
-      :result (first (:result out))
-      :info (assoc (:info out)
-              :op :z/locator-for-symbol
-              :symbol sym))))
+      :op/symbol :z/locator-for-symbol
+      :op/result (first (:op/result out))
+      :op/metadata (assoc (:op/metadata out)
+                     :op :z/locator-for-symbol
+                     :symbol sym))))
+
+(defn- locator-label
+  [{:keys [kind name digest source-preview locator]}]
+  (str (or (some-> kind name) "form")
+    (when name (str " " name))
+    " — " (or digest source-preview locator "")))
+
+(defn- render-locator-line
+  [idx {:keys [path span tag] :as row}]
+  (str (inc idx) ". " path " " (pr-str span) " " (or (:kind row) tag) " "
+    (locator-label row)))
 
 (defn- journal-render-locators
   [result]
-  (let [rows (vec (or result []))]
+  (let [rows (vec (if (sequential? result) result (when result [result])))]
     (str (count rows) " zipper locator(s)\n"
-      (str/join "\n"
-        (map-indexed
-          (fn [idx {:keys [path tag locator span]}]
-            (str (inc idx) ". " path " " (pr-str span) " " tag " "
-              (preview-text (or locator ""))))
-          (take 8 rows)))
-      (when (> (count rows) 8)
-        (str "\n… (" (- (count rows) 8) " more; bind result and slice)")))))
+      (str/join "\n" (map-indexed render-locator-line (take 12 rows)))
+      (when (> (count rows) 12)
+        (str "\n… (" (- (count rows) 12) " more; bind result and slice)")))))
 
 (defn- channel-render-locators
   [result]
-  (let [rows (vec (or result []))]
+  (let [rows (vec (if (sequential? result) result (when result [result])))]
     (str "Found " (count rows) " zipper locator(s).\n\n"
       (when (seq rows)
         (str "```text\n"
-          (str/join "\n\n"
-            (map-indexed
-              (fn [idx {:keys [path tag locator source span]}]
-                (str (inc idx) ". " path " " (pr-str span) " " tag "\n"
-                  (preview-text (or source locator ""))))
-              (take 8 rows)))
-          "\n```")))))
+          (str/join "\n"
+            (map-indexed render-locator-line (take 20 rows)))
+          "\n```\n\n"
+          "Patch by adding :replace to the chosen row: `(z/patch (assoc row :replace \"<new source>\"))`.")))))
+
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} inspect-locator
+  "Return a compact, serializable summary for a rewrite-clj zipper loc or a z/ locator row. Use this instead of relying on raw zloc #object printing in journals."
+  [x]
+  (cond
+    (and (map? x) (:span x))
+    (select-keys x [:path :span :tag :kind :name :digest :source-preview :arities :doc?])
+
+    (z/sexpr-able? x)
+    (select-keys (locator-row x) [:span :tag :kind :name :digest :source-preview :arities :doc?])
+
+    :else
+    {:tag (some-> x class .getName)
+     :value-preview (compact-source (pr-str x))}))
+
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} render-inspect
+  [result]
+  (str "z/inspect — " (pr-str result)))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -623,6 +811,15 @@
      :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/locators)}))
 
+(def forms-symbol
+  (vis/symbol #'forms-file
+    {:sym 'forms
+
+     :result-spec :op/envelope
+     :journal-render-fn journal-render-locators
+     :channel-render-fn channel-render-locators
+     :on-error-fn (tool-failure-on-error :z/forms)}))
+
 (def symbols-symbol
   (vis/symbol #'symbols-file
     {:sym 'symbols
@@ -641,18 +838,22 @@
      :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/locator-for-symbol)}))
 
+(def inspect-symbol
+  (vis/symbol #'inspect-locator
+    {:sym 'inspect
+
+     :journal-render-fn render-inspect
+     :channel-render-fn render-inspect}))
+
 (def z-prompt
-  "`z/` Clojure/EDN STRUCTURAL editing (rewrite-clj zipper).
-  THIS IS THE PREFERRED EDITING SURFACE for any Clojure/EDN file: it
-  parses to an AST, operates on forms, preserves whitespace/comments,
-  and refuses to silently corrupt. Reach for line-based or raw-text
-  edits ONLY for non-Clojure files (Markdown, plain text, configs).
+  "`z/` Clojure/EDN zipper patching and structural reading.
+  Preferred for Clojure/EDN files: parses forms, preserves whitespace/comments,
+  and refuses non-Clojure files. Same map shape as v/patch.
 
-  Use (z/patch {:path p :search locator :replace replacement}) or vector of same maps. :search is parsed Clojure/EDN and must match once.
-  Dry-run with (z/patch-check edits) when locators may be stale or multi-edit risk is high; returns {:valid? :checks :failures}.
-  Find targets with (z/locator-for-symbol path 'foo), (z/locators path {:symbol 'foo}), (z/locators path {:source-contains <text> :limit 20}), or (z/symbols path {:name 'foo}). Rows include :path/:index/:span and become edits by adding :replace. If a row identifies the target, patch immediately: (z/patch (assoc row :replace \"<new source>\")); do not re-preview unless patch fails. Repair with z/repair-range, z/repair-locator, or z/repair-file. Full rewrite-clj.zip API is under z/, including z/subedit->.
+  First read: (z/forms path) for top-level semantic rows. Rows include :path, :index, :span, :kind, :name, :digest, :source-preview, plus full :source/:value for back-compat.
+  Deep read: (z/locators path {:depth :all :limit 50}) or focused (z/symbols path {:name 'foo}), (z/locator-for-symbol path 'foo).
+  Patch: add :replace to a chosen row and call (z/patch row), or (z/patch {:path p :search row :replace source}). Span rows are safest; string :search is parsed and must match once.
+  Dry-run: (z/patch-check edits). Repair parse damage with z/repair-range, z/repair-locator, z/repair-file. Inspect raw rewrite-clj zlocs with z/inspect before trusting journal output. Full rewrite-clj.zip API is under z/, including z/subedit->.
 
-  READING Clojure source: prefer `z/locators` / `z/symbols` over a raw whole-file read when you only need specific forms. Structural slicing > line slicing.
-
-Examples: (z/patch [{:path \"src/foo.clj\" :search \"old-sym\" :replace \"new-sym\"}])
-          (z/patch [{:path \"src/foo.clj\" :search \"(def x 1)\" :replace \"(def x 2)\"}])")
+Examples: (z/patch (assoc row :replace \"(def x 2)\"))
+          (z/forms \"src/foo.clj\" {:kind :defn :name 'foo})")

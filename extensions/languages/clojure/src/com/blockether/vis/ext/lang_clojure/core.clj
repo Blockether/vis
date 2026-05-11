@@ -2,7 +2,7 @@
   "Aggregator for the `vis-language-clojure` extension.
 
    Single extension under the `z/` alias:
-     - `z/patch`, `z/locators`, `z/symbols` from Vis, and
+     - `z/patch`, `z/forms`, `z/locators`, `z/symbols` from Vis, and
      - the rewrite-clj zipper API, including SCI-callable macro helpers
        `z/edit->`, `z/edit->>`, `z/subedit->`, `z/subedit->>`.
 
@@ -148,7 +148,7 @@
 
 (defn- clojure-environment-info
   [_environment]
-  "Clojure/EDN workspace detected. Prefer the `z/` alias before raw text edits: use `z/locators`, `z/symbols`, `z/locators-for-symbol`, or `z/locator-for-ref` for rewrite-clj locator rows; use `z/repair-range`, `z/repair-locator`, or `z/repair-file` for parse repair over row/col ranges; use `z/diagnostics`, `z/rename-plan`, or `z/clean-ns-plan` for clojure-lsp dry-run semantic checks; then use `z/patch` for structural Clojure/EDN changes. Locator rows include `:path`, `:index`, `:tag`, `:value`, `:locator`, `:source`, and `:span`; add `:replace` to a row to turn it into a patch edit. Use `v/patch` only for comments/plain text or non-Clojure files.")
+  "Clojure/EDN workspace detected. Prefer the `z/` alias before raw text edits: use `z/forms` first for top-level semantic rows, `z/locators` with `{:depth :all}` for deep zipper rows, `z/symbols`, or `z/locator-for-symbol` for symbol rows; use `z/patch` by adding `:replace` to a chosen span row; use `z/patch-check` before risky batches; use `z/repair-range`, `z/repair-locator`, or `z/repair-file` for parse repair; use `z/diagnostics`, `z/rename-plan`, or `z/clean-ns-plan` for clojure-lsp dry-run semantic checks. Locator rows include `:path`, `:index`, `:span`, `:kind`, `:name`, `:digest`, `:source-preview`, and full `:source`; `:span` rows are safer than lossy sexpr equality. Use `z/inspect` for raw rewrite-clj zlocs. Use `v/patch` only for comments/plain text or non-Clojure files.")
 
 (defn- lazy-lsp-call
   [sym & args]
@@ -199,7 +199,7 @@
 (def clojure-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core
-     :ext/doc       "Clojure/EDN intelligence under the `z/` alias: z/patch zipper edits, z/locators/z/symbols discovery, and rewrite-clj zipper API."
+     :ext/doc       "Clojure/EDN intelligence under the `z/` alias: z/patch zipper edits, z/forms/z/locators/z/symbols discovery, and rewrite-clj zipper API."
      :ext/version   "0.7.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"
@@ -209,7 +209,7 @@
      :ext/activation-fn (fn [_] (clojure-project?))
      :ext/environment-info-fn clojure-environment-info
      :ext/prompt    patch/z-prompt
-     :ext/symbols   (into [patch/patch-symbol patch/patch-check-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol]
+     :ext/symbols   (into [patch/patch-symbol patch/patch-check-symbol patch/forms-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol patch/inspect-symbol]
                       (concat repair/symbols lsp-symbols rewrite-clj-zip-symbols))}))
 
 (vis/register-extension! clojure-extension)

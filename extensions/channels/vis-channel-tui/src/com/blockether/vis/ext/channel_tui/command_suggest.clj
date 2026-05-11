@@ -52,17 +52,24 @@
                 (str "<" n ">"))]
     (if required? token (str "[" token "]"))))
 
+(defn- command-name
+  [cmd]
+  (let [name (command-id->name (:id cmd))]
+    (if (:skill? cmd)
+      (str "skill:" name)
+      name)))
+
 (defn usage
   "Return compact slash-command usage, including extension-provided args."
   [cmd]
-  (let [base (str "/" (command-id->name (:id cmd)))
+  (let [base (str "/" (command-name cmd))
         args (seq (keep arg-token (command-args cmd)))]
     (cond-> base
       args (str " " (str/join " " args)))))
 
 (defn enrich
   [cmd]
-  (let [name (command-id->name (:id cmd))]
+  (let [name (command-name cmd)]
     (assoc cmd
       :slash/name name
       :slash/usage (usage cmd)

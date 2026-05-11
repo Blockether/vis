@@ -361,7 +361,12 @@ test/com/blockether/vis/ext/bridge/
 
 | Symbol | Signature | Description |
 |--------|-----------|-------------|
-| `bridge/index` | `([] [opts])` | Run extraction pipeline on workspace. Opts: `:languages`, `:force?`, `:paths`. Returns stats. |
+| `bridge/extract` | `([] [opts])` | Generic extraction. `:path` for one file, `:paths` for many files, `:language` + `:project-root` for project extract. Relative paths resolve against Vis' active workspace root. Returns normalized facts only. |
+| `bridge/extract-file` | `([path] [path opts])` | One-file extraction dispatched by path/language. Returns normalized facts only. |
+| `bridge/aggregate-rows` | `([facts] [facts opts])` | Pure preview: normalized facts → extension aggregate rows. No writes. |
+| `bridge/fill!` | `([facts] [facts opts])` | Persist facts via extension aggregates. Replacement modes: `:path`, `:language`, `:all`, `:none`. |
+| `bridge/extract-and-fill!` | `([] [opts])` | Extract then fill. `{:path ...}` force-reindexes one file; `{:language ...}` refreshes a language. |
+| `bridge/backfill!` | `([opts])` | Incremental path reindex. Compares current SHA-256 against stored `:bridge/index` hash; extracts/fills only changed paths. |
 | `bridge/index-status` | `([])` | Show index state: file count, node/edge counts, last indexed, stale files. |
 | `bridge/node` | `([qualified-name])` | Get node by qualified name. Returns full node map. |
 | `bridge/neighbors` | `([qualified-name] [qualified-name opts])` | Get adjacent nodes. Opts: `:direction :out/:in/:both`, `:edge-kinds`, `:depth`, `:limit`. |
@@ -381,7 +386,7 @@ test/com/blockether/vis/ext/bridge/
 
 ### Phase 1: Discover
 
-1. Walk workspace root, enumerate files.
+1. Walk Vis' active workspace root, enumerate files. Bridge resolves relative paths through `com.blockether.vis.internal.workspace-context/cwd`, the same dynamic workspace binding used by Foundation tools.
 2. Apply `.bridgeignore` + built-in skip patterns.
 3. Compute content hashes.
 4. Compare against index aggregates; partition into `:unchanged`, `:stale`, `:new`, `:deleted`.
@@ -411,7 +416,22 @@ For each `:full-extract` file, dispatch to language-specific extractor:
 - Inline-code references become `:mentions` edges.
 - Markdown links become `:links-to` edges.
 
-### Phase 4: Build
+### Phase 4: Build / fill
+
+Bridge separates extraction from filling:
+
+```clojure
+(bridge/extract {:path "README.md"})       ;; facts only
+(bridge/aggregate-rows facts)              ;; pure facts -> rows preview
+(bridge/fill! facts {:replace :path})      ;; write extension aggregates
+(bridge/backfill! {:paths changed-paths})  ;; hash-guarded incremental fill
+```
+
+Each `:bridge/index` row stores `:hash-sha256`. Backfill computes current
+SHA-256 for candidate paths, compares it to the index row, and skips unchanged
+files. This is the source-change guard: extraction work happens only for paths
+whose content hash changed or whose index row is missing/stale.
+
 
 1. Delete old nodes/edges for stale/deleted files.
 2. Insert new nodes. Collect generated IDs.

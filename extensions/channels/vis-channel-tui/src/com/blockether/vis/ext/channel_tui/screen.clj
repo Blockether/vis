@@ -217,7 +217,7 @@
     (->> (skills/list-summaries)
       (mapv (fn [{:keys [name description]}]
               {:id     (keyword name)
-               :label  (str "/" name)
+               :label  (str "/skill:" name)
                :doc    description
                :skill? true
                :args   [{:name "request" :kind :positional :required false}]
@@ -233,7 +233,7 @@
 (defn- menu-commands
   "All slash commands shown in the TUI overlay: built-in palette,
    extension-contributed palette commands, plus one entry per
-   accessible skill (`/<skill-name>`)."
+   accessible skill (`/skill:<skill-name>`)."
   [screen]
   (vec (concat dlg/palette-commands
          (palette-extra-commands (extension-commands screen))
@@ -248,7 +248,8 @@
    (slash-suggestions-for-input screen input-state 0))
   ([screen input-state selected-index]
    (slash/suggestions (input/input->text input-state) (menu-commands screen)
-     {:selected-index selected-index})))
+     {:limit Integer/MAX_VALUE
+      :selected-index selected-index})))
 
 (defn- command-argv
   [args]
@@ -689,7 +690,7 @@
     (let [[cx cy] (render/draw-input-box! g input input-top text-rows cols
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)
-      (render/draw-slash-command-suggestions! g slash-suggestions input-top cols)
+      (render/draw-slash-command-suggestions! g slash-suggestions input-top cols slash-command-index)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
     ;; Atomically publish every chrome region painted above. Until
     ;; this swap runs the input thread sees the PREVIOUS frame's
@@ -793,16 +794,16 @@
     (.refresh screen Screen$RefreshType/DELTA)))
 
 (defn- render-scrollbar!
-  [g cols text-top inner-h total-h eff-scroll]
+  [g cols bar-top inner-h track-h total-h eff-scroll]
   (when-let [{:keys [thumb-top-rel thumb-h]}
-             (render/scrollbar-thumb-geometry total-h inner-h eff-scroll)]
+             (render/scrollbar-thumb-geometry total-h inner-h track-h eff-scroll)]
     (let [bar-col (- cols 2)]
-      (doseq [r (range inner-h)]
+      (doseq [r (range track-h)]
         (p/set-colors! g t/border-fg t/terminal-bg)
-        (p/set-char! g bar-col (+ text-top r) Symbols/SINGLE_LINE_VERTICAL))
+        (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
       (doseq [r (range thumb-h)]
         (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-        (p/set-char! g bar-col (+ text-top thumb-top-rel r) \u2588)))))
+        (p/set-char! g bar-col (+ bar-top thumb-top-rel r) \u2588)))))
 
 (defn- render-live-bubble-frame!
   "Fast path for 80ms live ticks. Recompute virtual layout, but only
@@ -917,7 +918,8 @@
                     (current-hint db))]
       (footer/draw-footer! g db footer-row cols now-ms)
       (.setCursorPosition screen (TerminalPosition. cx cy)))
-    (render-scrollbar! g cols text-top inner-h (:total-h layout) (:eff-scroll layout))
+    (render-scrollbar! g cols messages-top inner-h (- messages-bottom messages-top)
+      (:total-h layout) (:eff-scroll layout))
     (.refresh screen Screen$RefreshType/DELTA)
     (merge previous-layout
       {:cols cols :rows rows :total-h (long (:total-h layout)) :inner-h inner-h
@@ -1696,7 +1698,8 @@
                                                    " cols=" cols
                                                    " hit=" hit-kind)}))
                                      (catch Throwable _ nil)))
-                       bar-top   (+ messages-top render/MESSAGE_MARGIN_TOP)
+                       bar-top   messages-top
+                       track-h   (+ inner-h render/MESSAGE_MARGIN_TOP render/MESSAGE_MARGIN_BOTTOM)
                        ;; Single source of truth for thumb geometry
                        ;; lives in `render/scrollbar-thumb-geometry`,
                        ;; so painter and hit-test cannot drift apart.
@@ -1704,7 +1707,7 @@
                        ;; thumb is painted, and every click below is
                        ;; correctly classified as off-thumb.
                        geom      (render/scrollbar-thumb-geometry
-                                   total-h inner-h (:messages-scroll db))
+                                   total-h inner-h track-h (:messages-scroll db))
                        thumb-top (when geom
                                    (+ bar-top (long (:thumb-top-rel geom))))
                        thumb-h   (long (or (:thumb-h geom) 0))
@@ -1721,7 +1724,7 @@
                        transcript-bubble-copy-regions (get-in db [:layout :transcript-bubble-copy-regions])
                        transcript-disclosure-copy-regions (get-in db [:layout :transcript-disclosure-copy-regions])
                        input-selectable-ranges (get-in db [:layout :input-selectable-ranges])
-                       selection-viewport {:viewport-top bar-top
+                       selection-viewport {:viewport-top (+ messages-top render/MESSAGE_MARGIN_TOP)
                                            :eff-scroll   (get-in db [:layout :eff-scroll])}
                        slash-suggestions (slash-suggestions-for-input screen (:input db)
                                            (:slash-command-index db))]
@@ -1778,7 +1781,7 @@
                        (state/dispatch
                          [:scroll-to-y
                           (- my grip)
-                          bar-top inner-h total-h inner-h])
+                          bar-top track-h total-h inner-h])
                        (recur))
 
                      ;; Drag continues to track the cursor's Y as
@@ -1795,7 +1798,7 @@
                      (do (state/dispatch
                            [:scroll-to-y
                             (- my (long @scrollbar-drag-offset))
-                            bar-top inner-h total-h inner-h])
+                            bar-top track-h total-h inner-h])
                        (recur))
 
                      (and selection-copy?
@@ -2070,7 +2073,8 @@
 
                  (and (instance? KeyStroke key)
                    (seq (slash-suggestions-for-input screen (:input db) (:slash-command-index db)))
-                   (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/Tab KeyType/ReverseTab}
+                   (#{KeyType/ArrowUp KeyType/ArrowDown KeyType/PageUp KeyType/PageDown
+                      KeyType/Tab KeyType/ReverseTab}
                     (.getKeyType ^KeyStroke key)))
                  (let [suggestions (slash-suggestions-for-input screen (:input db)
                                      (:slash-command-index db))
@@ -2081,6 +2085,12 @@
 
                      (= ktype KeyType/ArrowDown)
                      (state/dispatch [:move-slash-command-selection 1 (count suggestions)])
+
+                     (= ktype KeyType/PageUp)
+                     (state/dispatch [:move-slash-command-selection -6 (count suggestions)])
+
+                     (= ktype KeyType/PageDown)
+                     (state/dispatch [:move-slash-command-selection 6 (count suggestions)])
 
                      (= ktype KeyType/ReverseTab)
                      (state/dispatch [:move-slash-command-selection -1 (count suggestions)])
@@ -2280,7 +2290,7 @@
                                      skill      (skills/lookup skill-name)]
                                  (if (:found? skill)
                                    (let [user-args    (str/trim (or (:slash/args cmd) ""))
-                                         display-text (str "/" skill-name
+                                         display-text (str "/skill:" skill-name
                                                         (when (seq user-args) (str " " user-args)))]
                                      (state/dispatch [:send-skill-message
                                                       skill-name

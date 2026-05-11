@@ -1125,7 +1125,7 @@
       (vec
         (cons {:type :section :label "Header / Footer Contributors"}
           (for [{:keys [hook-id]} hooks]
-            {:key (keyword (str "contrib::" (str hook-id)))
+            {:key (keyword (str "contrib::" hook-id))
              :type :set-toggle
              :set-key :contributors-disabled
              :item-id hook-id
