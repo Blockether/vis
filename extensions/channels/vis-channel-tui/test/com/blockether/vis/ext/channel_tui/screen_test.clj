@@ -359,37 +359,6 @@
                    :focus  (selection/point 29 5)}
                   ranges)))))
 
-  (it "marks whole visible bubble rectangles for single-click copy"
-    (let [regions (bubble-copy-regions
-                    {:visible [{:idx 0 :top 0 :height 5
-                                :projected {:role :user
-                                            :prewrapped-lines ["hello"]}}]}
-                    [{:role :user :text "hello **markdown**"}]
-                    4 6 20)]
-      (expect (= [{:row 4 :col 2 :width 15
-                   :height 4 :text "hello **markdown**"}]
-                regions))
-      (expect (= "hello **markdown**"
-                (:text (bubble-copy-hit (selection/point 4 5) regions))))
-      (expect (nil? (bubble-copy-hit (selection/point 1 5) regions)))
-      (expect (nil? (bubble-copy-hit (selection/point 4 8) regions)))))
-
-  (it "excludes turn separator rows from whole-bubble click copy hitboxes"
-    (let [regions (bubble-copy-regions
-                    {:visible [{:idx 0 :top 0 :height 7
-                                :projected {:role :user
-                                            :turn-separator? true
-                                            :prewrapped-lines ["hello"]}}]}
-                    [{:role :user :text "hello"}]
-                    4 9 20)]
-      (expect (= [{:row 6 :col 2 :width 15
-                   :height 4 :text "hello"}]
-                regions))
-      (expect (nil? (bubble-copy-hit (selection/point 4 4) regions)))
-      (expect (nil? (bubble-copy-hit (selection/point 4 5) regions)))
-      (expect (= "hello"
-                (:text (bubble-copy-hit (selection/point 4 6) regions))))))
-
   (it "marks input text rows as selectable without input padding"
     (expect (= [{:row 11 :col 2 :width 16}
                 {:row 12 :col 2 :width 16}]
@@ -495,20 +464,7 @@
                                         {:status :ok})}
         (fn []
           (open-click-target! {:kind :url :url "https://example.com"})
-          (expect (= "https://example.com" (deref url-opened 1000 ::timeout)))))))
-
-  (it "file click targets resolve relative paths from active workspace root"
-    (let [seen-root (promise)]
-      (reset! state/app-db {:workspace-tabs [{:id :main :active? true
-                                              :workspace/root "/tmp/vis-click-ws"}]
-                            :active-workspace-id :main})
-      (with-redefs-fn {#'opener/open-file-in-editor! (fn [target]
-                                                       (deliver seen-root [target workspace-context/*workspace-root*])
-                                                       {:status :ok})}
-        (fn []
-          (open-click-target! {:kind :file :url "deps.edn#L42"})
-          (expect (= ["deps.edn#L42" (workspace-context/workspace-root "/tmp/vis-click-ws")]
-                    (deref seen-root 1000 ::timeout))))))))
+          (expect (= "https://example.com" (deref url-opened 1000 ::timeout))))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

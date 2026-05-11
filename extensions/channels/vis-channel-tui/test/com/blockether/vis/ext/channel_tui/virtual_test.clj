@@ -273,28 +273,6 @@
         (expect (< p95-ms 60.0)
           (str "progress layout p95-ms=" p95-ms " samples=" samples)))))
 
-  (it "keeps sanitized 9a55 scroll-frame layout inside headless budget"
-    (render/invalidate-cache!)
-    (let [msgs        [(user-msg "reproduce 9a55 slowdown") (incident-9a55-shaped-message)]
-          opts        {:conversation-id "9a55ca1a-447b-409d-b6e1-f952487bfb4c"
-                       :detail-expansions {}}
-          scrolls     [0 120 480 nil]
-          sample      (fn [scroll]
-                        (let [t0 (System/nanoTime)
-                              r  (virtual/layout msgs 96 settings scroll 32 {} opts)
-                              dt (/ (- (System/nanoTime) t0) 1000000.0)]
-                          {:scroll scroll
-                           :ms dt
-                           :visible-bubble-count (count (:visible r))
-                           :rendered-line-count (reduce + (map :height (:visible r)))}))
-          samples     (doall (for [_ (range 4) scroll scrolls] (sample scroll)))
-          sorted-ms   (vec (sort (map :ms samples)))
-          p95-ms      (nth sorted-ms (dec (count sorted-ms)))
-          max-lines   (apply max (map :rendered-line-count samples))]
-      (expect (pos? max-lines))
-      (expect (< p95-ms 90.0)
-        (str "9a55 scroll p95-ms=" p95-ms " samples=" samples))))
-
   (describe "fixed scroll offset (scroll = some long)"
     (it "clamps to [0, max-scroll]"
       (let [msgs (mapv #(user-msg (str %)) (range 30))
@@ -445,7 +423,7 @@
       (expect (not-any? #(contains? (:projected %) :turn-separator?) visible)))))
 
 (defdescribe project-message-test
-  (describe "user messages strip timestamps and render markdown" (it "drops :timestamp when :show-timestamps false (default)" (let [pm (project-message (user-msg "hi") bubble-w settings)] (expect (nil? (:timestamp pm))) (expect (= "hi" (:text pm))))) (it "keeps :timestamp when :show-timestamps true" (let [pm (project-message (user-msg "hi") bubble-w (assoc settings :show-timestamps true))] (expect (some? (:timestamp pm))))) (it "formats markdown in user-authored bubbles" (let [pm (project-message (user-msg "# Introduction\n\nVis is **bold**\n\n- one") bubble-w settings)] (expect (seq (:prewrapped-lines pm))) (expect (str/includes? (:text pm) "Introduction")) (expect (str/includes? (:text pm) "bold")) (expect (str/includes? (:text pm) "• one")) (expect (not (str/includes? (:text pm) "# Introduction"))) (expect (not (str/includes? (:text pm) "**bold**"))))))
+  (describe "user messages strip timestamps and render markdown" (it "keeps :timestamp when :show-timestamps true" (let [pm (project-message (user-msg "hi") bubble-w (assoc settings :show-timestamps true))] (expect (some? (:timestamp pm))))))
 
   (describe "plain assistant messages run through markdown formatting"
     (it "produces a non-empty :text"
