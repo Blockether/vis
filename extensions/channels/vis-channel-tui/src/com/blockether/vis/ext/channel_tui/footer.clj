@@ -508,12 +508,19 @@
    its segment that frame. Settings can disable hooks via
    `:contributors-disabled`."
   [db now-ms ^long row]
-  (let [disabled (let [s (get-in db [:settings :contributors-disabled])]
+  ;; `:tui.builtin.model/footer-segment` is core identity (provider /
+  ;; model display) and CANNOT be disabled. Even if a settings round-
+  ;; trip placed it into `:contributors-disabled`, the renderer ignores
+  ;; it for this hook so the user never accidentally hides the model
+  ;; label (regression: conversation fe6340b0).
+  (let [undisableable #{:tui.builtin.model/footer-segment}
+        disabled (let [s (get-in db [:settings :contributors-disabled])]
                    (when (set? s) s))]
     (vec
       (for [{:keys [hook-id render-fn]} (lp/channel-hooks-for :tui)
             :when (and (ifn? render-fn)
-                    (not (and disabled (contains? disabled hook-id)))
+                    (or (contains? undisableable hook-id)
+                      (not (and disabled (contains? disabled hook-id))))
                     (footer-hook? hook-id))
             :let [out (try (render-fn db now-ms) (catch Throwable _ nil))
                   segs (cond (sequential? out) out

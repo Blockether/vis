@@ -1102,14 +1102,24 @@
       (= :tui/header-row hook-id)
       (= :tui/footer-segment hook-id))))
 
+(def ^:private undisableable-tui-contributor-hooks
+  "Hooks that paint core identity / cannot be hidden from the user.
+   The Settings dialog hides their toggle rows; the rendering path in
+   footer.clj also bypasses `:contributors-disabled` for them."
+  #{:tui.builtin.model/footer-segment})
+
 (defn- contributor-rows
   "Settings-dialog rows for the registered TUI contributor hooks.
    Each row is a `:set-toggle` against `:contributors-disabled`.
-   When no extensions have registered TUI contributors, returns nil
-   so the section stays hidden — don't show an empty band."
+   Builtin core-identity hooks (see `undisableable-tui-contributor-hooks`)
+   are filtered out so the user can't accidentally hide the model label
+   or other critical chrome.
+   When no extensions have registered toggleable TUI contributors,
+   returns nil so the section stays hidden — don't show an empty band."
   []
   (let [hooks (->> (vis/channel-hooks-for :tui)
                 (filter #(contributor-hook? (:hook-id %)))
+                (remove #(contains? undisableable-tui-contributor-hooks (:hook-id %)))
                 (sort-by #(str (:hook-id %))))]
     (when (seq hooks)
       (vec

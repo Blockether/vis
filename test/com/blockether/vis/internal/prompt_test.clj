@@ -76,11 +76,14 @@
   ;; form centered on the OODA loop. These tests pin the new shape
   ;; against accidental regressions back to prose-heavy explanations.
 
-  (it "is bounded at <= 70 lines per PLAN §6.4"
+  (it "is bounded at <= 90 lines"
+    ;; PLAN §6.4 originally said 70; bumped to 90 after the
+    ;; hallucination-guard + investigation-triggers section landed
+    ;; (the failure-mode coverage was worth the 12 lines).
     (let [p prompt/CORE_SYSTEM_PROMPT
           n (count (str/split-lines p))]
-      (expect (<= n 70)
-        (str "prompt grew to " n " lines; §6.4 caps it at 70"))))
+      (expect (<= n 90)
+        (str "prompt grew to " n " lines; cap is 90"))))
 
   (it "states the OUTPUT contract before LOOP"
     ;; Regression: conversation 185fbc4f had GLM-5.1 fabricate a
@@ -96,14 +99,17 @@
       (expect (str/includes? p "```clojure fences. Nothing outside"))
       (expect (str/includes? p ";; comments"))))
 
-  (it "declares 3 strategies (\":answer\" \":ooda\" \":architect\") with classify-first rule"
+  (it "LOOP section names investigation triggers + hallucination guard"
+    ;; Replaces the classify-first OODA strategy block (now retired).
+    ;; The prompt no longer requires `(intent :X)` ceremony; it teaches
+    ;; the two reply shapes (trivial chat vs work) and names the
+    ;; investigation verbs that REQUIRE tool calls.
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "λ engage"))
-      (expect (str/includes? p ":answer"))
-      (expect (str/includes? p ":ooda"))
-      (expect (str/includes? p ":architect"))
-      (expect (str/includes? p "classify(request) -> strategy"))
-      (expect (str/includes? p "declare(strategy)"))
+      (expect (str/includes? p "trivial chat"))
+      (expect (str/includes? p "Investigation triggers"))
+      (expect (str/includes? p "HALLUCINATION GUARD"))
+      (expect (str/includes? p "investigate"))
+      (expect (str/includes? p "reproduce first"))
       ;; Old grill name must be gone (PLAN §4.5 architect rename).
       (expect (not (str/includes? p ":grill")))))
 
@@ -147,15 +153,19 @@
       ;; PLAN §6.3: agent reads :hint first.
       (expect (str/includes? p "Read :hint first"))))
 
-  (it "CODE section embeds the editing/aesthetics rules per PLAN §6.1"
+  (it "CODE section embeds the editing/aesthetics rules (abstract; tool-specifics live in extensions)"
+    ;; Concrete tool choices (z/patch vs v/patch, HoneySQL vs raw
+    ;; SQL) belong in the active extension `:ext/prompt` fragments,
+    ;; not the core prompt.
     (let [p prompt/CORE_SYSTEM_PROMPT]
       (expect (str/includes? p "code > markdown"))
       (expect (str/includes? p "data > control_flow"))
       (expect (str/includes? p "pure > stateful"))
-      ;; Structural editing hierarchy (z/patch > v/patch > raw text).
-      (expect (str/includes? p "z/patch > v/patch > raw_text"))
-      (expect (str/includes? p "HoneySQL > raw SQL"))
-      (expect (str/includes? p "one change -> verify -> next"))))
+      (expect (str/includes? p "structural_editing > line_editing > raw_text"))
+      (expect (str/includes? p "one change -> verify -> next"))
+      ;; No tool-specific names in the core prompt.
+      (expect (not (str/includes? p "z/patch > v/patch")))
+      (expect (not (str/includes? p "HoneySQL > raw SQL")))))
 
   (it "closes with TRUTH precedence (runtime > source > docs > assumption)"
     (let [p prompt/CORE_SYSTEM_PROMPT]
