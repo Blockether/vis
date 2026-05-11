@@ -180,24 +180,16 @@
 (def ^:private action-request-regex
   #"(?i)\b(fix|implement|patch|change|add|remove|delete|create|edit|update|verify|run|commit|push)\b")
 
-(def ^:private short-followup-action-regex
-  #"(?i)^\s*(do it|do that|please do it|please do that|make it|go ahead|yes|yep|ok|okay|a)\s*[.!?]*\s*$")
-
 (def ^:private blocked-answer-regex
   #"(?i)\b(blocked|cannot|can't|unable|need input|needs input|partial|not done|failed)\b")
 
 (defn- action-request?
-  [{:keys [user-request current-objective]}]
-  (let [s (some-> user-request str str/trim)
-        objective-source (:source current-objective)
-        objective-text (some-> current-objective :text str str/trim not-empty)]
+  [{:keys [user-request]}]
+  (let [s (some-> user-request str str/trim)]
     (boolean
       (and (seq s)
         (not (re-find planning-only-regex s))
-        (or (re-find action-request-regex s)
-          (and (re-find short-followup-action-regex s)
-            (= :previous-user-request objective-source)
-            objective-text))))))
+        (re-find action-request-regex s)))))
 
 (defn- answer-blocked-or-partial?
   [answer]

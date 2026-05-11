@@ -7,7 +7,7 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe default-settings-test
-  (it "keeps provider reasoning hidden unless the user opts in"
+  (it "keeps provider reasoning hidden in chat UI"
     (expect (false? (:show-thinking state/default-settings)))
     (expect (true? (:show-iterations state/default-settings)))))
 
@@ -246,6 +246,12 @@
       (state/init!)
       (expect (= :medium
                 (get-in @state/app-db [:settings :openai-codex-verbosity])))))
+
+  (it "forces persisted show-thinking off"
+    (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:show-thinking true}})]
+      (state/init!)
+      (expect (false?
+                (get-in @state/app-db [:settings :show-thinking])))))
 
   (it "falls back to balanced / low on invalid persisted values"
     (with-redefs [vis/load-config-raw (fn [] {:tui-settings {:reasoning-level :turbo

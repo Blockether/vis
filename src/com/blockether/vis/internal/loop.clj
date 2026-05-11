@@ -1446,7 +1446,7 @@
 ;; burning an entire iteration on a parser-recoverable error.
 ;;
 ;; Repair pass: at the line level, drop every <journal>/<bindings>/<active_skills>
-;; /<system_nudge[s]> opener through its closer. Closer matches `</tag>` (proper),
+;; /<system_vars>/<system_nudge[s]> opener through its closer. Closer matches `</tag>` (proper),
 ;; a bare ``` line (LLM fumble), or another opener (implicit close), or EOF.
 ;; A ```lang line implicitly closes the envelope without itself being dropped
 ;; so a real fence directly after a fabricated envelope still parses cleanly.
@@ -1455,7 +1455,7 @@
 (def ^:private vis-engine-xml-echo-tags
   ;; Vis -> LLM ONLY. The model must never emit these. See
   ;; `com.blockether.vis.internal.prompt` for the renderers that own them.
-  #{"journal" "bindings" "active_skills" "system_nudges" "system_nudge"})
+  #{"journal" "bindings" "active_skills" "system_vars" "system_var" "system_nudges" "system_nudge"})
 
 (defn- vis-engine-xml-open-tag
   "Return the matched tag name (string) when `line` is a Vis-engine XML
@@ -3101,14 +3101,10 @@
                          :provider-prompt-context (provider-prompt-context environment resolved-model)})
         initial-user-content user-request
         previous-turn-ctx (previous-turn-context environment conversation-turn-id)
-        current-objective (prompt/derive-current-objective
-                            {:initial-user-content initial-user-content
-                             :previous-turn-context previous-turn-ctx})
         initial-messages (prompt/assemble-initial-messages
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content
-                            :previous-turn-context previous-turn-ctx
-                            :current-objective current-objective})
+                            :previous-turn-context previous-turn-ctx})
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0
                           :cache-creation-tokens 0})
         accumulate-usage! (fn [api-usage]
@@ -3395,7 +3391,6 @@
                                            :model               (some-> pre-resolved-model :name str)
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
-                                           :current-objective   current-objective
                                            :system-prompt       system-prompt
                                            ;; One low-importance turn-boundary check keeps
                                            ;; titles live across topic shifts. The old
@@ -3456,7 +3451,6 @@
                                           :active-extensions active-exts
                                           :answer-validation-context
                                           {:user-request user-request
-                                           :current-objective current-objective
                                            :previous-iterations journal-iters
                                            :previous-blocks (vec (mapcat (comp :blocks second) journal-iters))}
                                           :extra-body (assoc (or extra-body {})

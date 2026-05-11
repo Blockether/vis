@@ -248,17 +248,17 @@
               {}))))
 
     (testing "settings row activation immediately notifies on-change callbacks and requests modal-background redraw"
-      (let [values  (atom {:show-thinking true})
+      (let [values  (atom {:show-timestamps false})
             changed (atom nil)
             calls   (atom [])]
         (activate-settings-row! nil values {:on-change #(do (reset! changed %)
                                                           (swap! calls conj [:change %]))
                                             :redraw-ui #(swap! calls conj [:redraw @values])}
-          {:key :show-thinking :type :toggle})
-        (is (= {:show-thinking false} @values))
-        (is (= {:show-thinking false} @changed))
-        (is (= [[:change {:show-thinking false}]
-                [:redraw {:show-thinking false}]]
+          {:key :show-timestamps :type :toggle})
+        (is (= {:show-timestamps true} @values))
+        (is (= {:show-timestamps true} @changed))
+        (is (= [[:change {:show-timestamps true}]
+                [:redraw {:show-timestamps true}]]
               @calls))))
 
     (testing "theme picker rows label registered themes"
@@ -286,6 +286,7 @@
               (:choices (first (filter #(= :theme-name (:key %)) (settings-rows :channels))))))
         (is (some #(= :differentiate-turns (:key %)) (settings-rows :channels)))
         (is (some #(= :mouse-selection-copy (:key %)) (settings-rows :channels)))
+        (is (not-any? #(= :show-thinking (:key %)) (settings-rows :channels)))
         (is (some #(= :reasoning-level (:key %)) (settings-rows :providers)))
         (is (not-any? #(= :providers (:id %)) (settings-rows :providers)))
         (is (some #(= :info (:type %)) (settings-rows :extensions)))))
