@@ -917,11 +917,9 @@
                         ;; suggestions get re-painted on top.
                         slash-suggestions-visible?
                         (boolean
-                          (and (not (get-in db [:input :empty?] false))
-                            (let [text (input/input->text (:input db))]
-                              (and (string? text)
-                                (clojure.string/starts-with?
-                                  (clojure.string/triml text) "/")))))
+                          (let [text (input/input->text (:input db))]
+                            (and (string? text)
+                              (str/starts-with? (str/triml text) "/"))))
                         partial-live? (and loading?
                                         same-size?
                                         last-layout

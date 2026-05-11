@@ -192,7 +192,7 @@
            (loop [i 0 lines (seq line-strs)]
              (when lines
                (let [^String line (first lines)
-                     visible-w    (long (p/display-width line))
+                     visible-w    (p/display-width line)
                      x            (align-x align visible-w cols)
                      y            (+ row-top (long i))]
                  (p/clear-styles! g)
