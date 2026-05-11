@@ -61,9 +61,8 @@
       :done?     bool}
 
    The pre-existing `:events` interleaving log was removed: it lived
-   only in memory (never persisted), and resumed bubbles re-rendered
-   without it via the legacy flat layout anyway. One layout path is
-   enough."
+   only in memory (never persisted), and resumed bubbles re-render
+   from this single flat layout. One layout path is enough."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.error :as error]
@@ -130,9 +129,9 @@
    call's render, not just the form's last-expression value.
 
    When `:channel` is empty (plain-value form: `(+ 1 2)`, a `def` whose
-   value isn't a tool-result, etc.) we fall back to the legacy path:
-   render via `channel-render-tool-result` if the result is a tool-result
-   envelope, otherwise bounded `safe-pr-str`."
+   value isn't a tool-result, etc.) the form-level `:result` IS what
+   the model wrote: render via `channel-render-tool-result` when the
+   value is an `:op/envelope`, otherwise bounded `safe-pr-str`."
   [chunk]
   (if (:error chunk)
     (error/format-error (:error chunk))
@@ -146,8 +145,10 @@
           (map (fn [{:keys [success? result error]}]
                  (if success?
                    result
+                   ;; Per PLAN §2.1: build the envelope shape the
+                   ;; default error formatter expects.
                    (extension/default-channel-error-text
-                     {:success? false :result nil :info {} :error error})))
+                     {:op/success? false :op/error error})))
             (sort-by :position channel-entries)))
 
         (extension/tool-result? (:result chunk))
