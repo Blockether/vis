@@ -34,7 +34,7 @@ Vis runs in the JVM. It already has SQLite via `vis-persistance-sqlite`. It alre
 
 It needs:
 
-1. **A graph** — nodes for code entities, edges for relationships — stored in SQLite tables it already owns.
+1. **A graph** — nodes for code entities, edges for relationships — stored in extension aggregates it already has.
 2. **A builder** — one or more language-specific extractors that walk source and emit (node, edge) tuples. Clojure first; others later.
 3. **Query tools** — SCI symbols under `bridge/` that let the agent traverse, search, and extract structural context without flat-file scanning.
 4. **Semantic enrichment** — optional LLM-generated summaries per node (AOCI-style), cached in the graph.
@@ -54,151 +54,227 @@ It needs:
 4. **Incremental, not rebuild.** Content hashes per file. Changed files are re-extracted; unchanged files are left alone. Graph stays warm across sessions.
 5. **Meaningful-only indexing.** Not every file earns a rich graph. Thresholds and filters skip generated files, vendored deps, data files, and boilerplate. The builder emits a *relevance signal* per file; below threshold, the file gets a lightweight stub node (file exists, no children).
 6. **Clojure-native.** First-class Clojure/JVM extraction. Clojure's `edamale` + `rewrite-clj` already in Vis. Other languages via pluggable extractors later.
-7. **SQLite-native.** Graph lives in Vis's existing SQLite connection. No new database engine. HoneySQL for all queries.
+7. **Aggregate-native.** Graph lives in Vis's existing extension aggregate store. No new tables, no DDL, no new database engine.
 
 ---
 
 ## 3. Data Model
 
-### 3.1 Overview
+### 3.1 Storage: Extension Aggregates
 
-Property graph in two core tables: `bridge_node` and `bridge_edge`. One metadata table: `bridge_index`. All in the same SQLite database Vis already uses.
+Bridge stores **everything** through Vis's extension aggregate API:
 
+```clojure
+(vis/ext-create! env row)
+(vis/ext-put!    env row)   ;; upsert by key/kind/scope
+(vis/ext-get     env query)
+(vis/ext-list    env query)
+(vis/ext-delete! env query)
+(vis/ext-swap!   env query f & args)
 ```
-bridge_index        — indexing state (file hashes, extractor versions, timestamps)
-bridge_node         — entities (files, namespaces, defs, protocols, records, ...)
-bridge_edge         — relationships (contains, calls, imports, implements, ...)
-bridge_node_summary — optional LLM-generated semantic summaries per node
+
+Rows are scoped `:global` (the graph is project-wide, not per-conversation).
+Each row is owned by the bridge extension — `:extension-id` is runtime-filled,
+never supplied by caller code.
+
+The aggregate table schema is:
+
+```sql
+-- Already exists, managed by vis-persistance-sqlite
+CREATE TABLE extension_aggregate (
+  id              TEXT PRIMARY KEY,
+  extension_id    TEXT NOT NULL,
+  aggregate_key   TEXT NOT NULL,
+  kind            TEXT NOT NULL,
+  metadata        TEXT,          -- JSON
+  content         BLOB,          -- Nippy-encoded Clojure value
+  -- ... scope FK columns (all NULL for :global scope)
+  UNIQUE (extension_id, aggregate_key, kind, scope_key)
+);
 ```
+
+Bridge maps its graph concepts onto this KV shape:
+
+| Graph concept | `aggregate_key` | `kind` | `content` (Nippy blob) |
+|---------------|-----------------|--------|----------------------|
+| Node | `"node:<qualified-name>"` | `:bridge/node` | Node map (see §3.2) |
+| Edge | `"edge:<src-qname>::<kind>::<tgt-qname>"` | `:bridge/edge` | Edge map (see §3.3) |
+| Index entry | `"idx:<file-path>"` | `:bridge/index` | Index map (see §3.4) |
+| Summary | `"summary:<qualified-name>:<type>"` | `:bridge/summary` | Summary map (see §3.5) |
+
+> **Why this works**: The aggregate UNIQUE constraint on
+> `(extension_id, aggregate_key, kind, scope_key)` gives us dedup for free.
+> `ext-put!` upserts by that tuple. `ext-list` with `:kind` filter gives us
+> typed queries. `aggregate_key` encodes the graph identity (qualified names)
+> so we can list by prefix pattern.
+
+> **Limitation acknowledged**: This is a KV document store, not a relational
+> graph engine. Traversal queries (callers-of, blast-radius) deserialize
+> intermediate results in memory. For a codebase of Vis's size (~500 nodes,
+> ~2000 edges), this is fine — the full graph fits in ~2 MB of Nippy blobs.
+> If we ever hit scale limits, we add a dedicated SQLite table for edges
+> and keep nodes in aggregates (see §3.7).
 
 ### 3.2 Nodes
 
-```sql
-CREATE TABLE bridge_node (
-  id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind            TEXT    NOT NULL,  -- node type discriminator
-  name            TEXT    NOT NULL,  -- short name (symbol, file name)
-  qualified_name  TEXT    NOT NULL,  -- globally unique path-based name
-  file_path       TEXT,              -- source file (NULL for virtual/project-level nodes)
-  line_start      INTEGER,          -- 1-based line where the entity begins
-  line_end        INTEGER,          -- 1-based line where the entity ends
-  signature       TEXT,             -- arglists / type signature / interface signature
-  docstring       TEXT,             -- docstring from source, if present
-  metadata_json   TEXT,             -- extensible JSON blob (decorators, tags, visibility, etc.)
-  content_hash    TEXT,             -- hash of the source span this node was extracted from
-  language        TEXT,             -- "clojure", "java", "markdown", etc.
-  relevance       REAL DEFAULT 1.0, -- 0.0-1.0: how "meaningful" this node is
-  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+Stored via `ext-put!`:
 
-  UNIQUE(qualified_name)
-);
-
-CREATE INDEX idx_node_kind    ON bridge_node(kind);
-CREATE INDEX idx_node_file    ON bridge_node(file_path);
-CREATE INDEX idx_node_name    ON bridge_node(name);
-CREATE INDEX idx_node_lang    ON bridge_node(language);
+```clojure
+(vis/ext-put! env
+  {:key   "node:com.blockether.vis.core/run"  ;; unique aggregate_key per node
+   :kind  :bridge/node
+   :scope :global
+   :metadata {:language  "clojure"
+              :file-path "src/core.clj"
+              :kind      "def"
+              :relevance 1.0}
+   :content {:name           "run"
+             :qualified-name "com.blockether.vis.core/run"
+             :file-path      "src/com/blockether/vis/core.clj"
+             :line-start     142
+             :line-end       168
+             :signature      "([db-info opts])"
+             :docstring      "Run the Vis iteration loop..."
+             :kind           "def"
+             :language       "clojure"
+             :relevance      1.0
+             :content-hash   "sha256:abc..."
+             :metadata       {:private false :macro false}}})
 ```
+
+#### Node `content` map shape
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `:name` | string | Short name (symbol, file name) |
+| `:qualified-name` | string | Globally unique path-based name |
+| `:file-path` | string \| nil | Source file path (nil for virtual/project-level) |
+| `:line-start` | int \| nil | 1-based start line |
+| `:line-end` | int \| nil | 1-based end line |
+| `:signature` | string \| nil | Arglists, type signature, or interface signature |
+| `:docstring` | string \| nil | Docstring from source |
+| `:kind` | string | Node type discriminator |
+| `:language` | string \| nil | "clojure", "java", "markdown", etc. |
+| `:relevance` | float | 0.0–1.0 meaningfulness score |
+| `:content-hash` | string \| nil | SHA-256 of the source span |
+| `:metadata` | map | Extensible: `{:private true}`, `{:macro true}`, etc. |
 
 #### Node kinds
 
 | Kind | Description | Key properties |
 |------|-------------|----------------|
-| `project` | Root node, one per indexed project | `qualified_name` = project name |
-| `directory` | Filesystem directory | `file_path` = dir path |
-| `file` | Source file | `file_path`, `language`, `relevance` |
-| `namespace` | Clojure namespace (or Java package, etc.) | `name` = ns symbol |
-| `def` | `defn`, `def`, `defmacro`, `defmethod`, etc. | `signature` = arglists, `docstring` |
-| `defn-private` | `defn-` / private def | Same as def, `metadata_json` includes `{:private true}` |
-| `protocol` | `defprotocol` | `name`, methods listed in `metadata_json` |
-| `record` | `defrecord` | `name`, fields in `signature` |
-| `type` | `deftype` | `name`, fields in `signature` |
-| `multimethod` | `defmulti` / `defmethod` | `name`, dispatch fn in `signature` |
-| `var` | Clojure var (dynamic, defonce, etc.) | `name` |
-| `class` | Java/interop class | `name`, `signature` = constructors |
-| `interface` | Java interface | `name`, methods in `metadata_json` |
-| `heading` | Markdown heading (for doc graphs) | `name` = heading text, `line_start` |
-| `section` | Markdown section (heading + body) | `name` derived from heading |
+| `project` | Root node, one per indexed project | `:qualified-name` = project name |
+| `directory` | Filesystem directory | `:file-path` = dir path |
+| `file` | Source file | `:file-path`, `:language`, `:relevance` |
+| `namespace` | Clojure namespace (or Java package, etc.) | `:name` = ns symbol |
+| `def` | `defn`, `def`, `defmacro`, `defmethod`, etc. | `:signature` = arglists, `:docstring` |
+| `defn-private` | `defn-` / private def | Same as def, `:metadata` includes `{:private true}` |
+| `protocol` | `defprotocol` | `:name`, methods in `:metadata` |
+| `record` | `defrecord` | `:name`, fields in `:signature` |
+| `type` | `deftype` | `:name`, fields in `:signature` |
+| `multimethod` | `defmulti` / `defmethod` | `:name`, dispatch fn in `:signature` |
+| `var` | Clojure var (dynamic, defonce, etc.) | `:name` |
+| `class` | Java/interop class | `:name`, `:signature` = constructors |
+| `interface` | Java interface | `:name`, methods in `:metadata` |
+| `heading` | Markdown heading (for doc graphs) | `:name` = heading text, `:line-start` |
+| `section` | Markdown section (heading + body) | `:name` derived from heading |
 
-> **Extensibility**: `kind` is a free-form string. Language extractors define their own kinds. The query layer is kind-agnostic — it filters on `kind` when asked, but doesn't hardcode the set.
+> **Extensibility**: `:kind` is a free-form string. Language extractors define
+> their own kinds. The query layer is kind-agnostic.
 
 ### 3.3 Edges
 
-```sql
-CREATE TABLE bridge_edge (
-  id          INTEGER PRIMARY KEY AUTOINCREMENT,
-  source_id   INTEGER NOT NULL REFERENCES bridge_node(id),
-  target_id   INTEGER NOT NULL REFERENCES bridge_node(id),
-  kind        TEXT    NOT NULL,  -- relationship type
-  weight      REAL    DEFAULT 1.0,
-  metadata_json TEXT,           -- extensible JSON blob (call-site line, confidence, etc.)
-  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+Stored via `ext-put!`:
 
-  UNIQUE(source_id, target_id, kind)
-);
-
-CREATE INDEX idx_edge_source ON bridge_edge(source_id);
-CREATE INDEX idx_edge_target ON bridge_edge(target_id);
-CREATE INDEX idx_edge_kind   ON bridge_edge(kind);
+```clojure
+(vis/ext-put! env
+  {:key   "edge:com.blockether.vis.core/run::calls::com.blockether.vis.internal.loop-core/iterate!"
+   :kind  :bridge/edge
+   :scope :global
+   :metadata {:edge-kind "calls"
+              :source    "com.blockether.vis.core/run"
+              :target    "com.blockether.vis.internal.loop-core/iterate!"}
+   :content {:source    "com.blockether.vis.core/run"
+             :target    "com.blockether.vis.internal.loop-core/iterate!"
+             :kind      "calls"
+             :weight    1.0
+             :metadata  {:call-sites [147 153]}}})
 ```
+
+The `aggregate_key` for edges is `"edge:<source-qname>::<edge-kind>::<target-qname>"`.
+This gives us uniqueness per (source, kind, target) and makes listing edges
+for a given source a prefix scan: `(vis/ext-list env {:kind :bridge/edge})`
+then filter by `:source` in content.
+
+#### Edge `content` map shape
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `:source` | string | Qualified name of source node |
+| `:target` | string | Qualified name of target node |
+| `:kind` | string | Relationship type |
+| `:weight` | float | Default 1.0, for ranking |
+| `:metadata` | map | `{:call-sites [147 153]}`, `{:confidence 0.9}`, etc. |
 
 #### Edge kinds
 
 | Kind | Source → Target | Description |
 |------|----------------|-------------|
-| `contains` | parent → child | Structural nesting: project → dir, dir → file, file → namespace, namespace → def, etc. |
-| `calls` | def → def | A calls B. `metadata_json` includes `{:call-sites [line ...]}` |
+| `contains` | parent → child | Structural nesting: project → dir, dir → file, file → ns, ns → def |
+| `calls` | def → def | A calls B. `:metadata` includes `{:call-sites [line ...]}` |
 | `imports` | namespace → namespace | `(:require ...)` / `import`. Cross-ns dependency. |
-| `refers` | def → def | Symbol reference without invocation (var usage, deref, etc.) |
+| `refers` | def → def | Symbol reference without invocation |
 | `implements` | record/type → protocol | Record implements protocol |
 | `extends` | type → type | Inheritance / protocol extension |
-| `exports` | namespace → def | Public surface of a namespace (only `def`s without `^:private`) |
+| `exports` | namespace → def | Public surface (non-private defs) |
 | `documents` | heading/section → def/namespace | Doc heading references code entity |
-| `depends-on` | namespace → namespace | Transitive import dependency (derived, for blast-radius analysis) |
+| `depends-on` | namespace → namespace | Transitive import (derived, for blast-radius) |
 | `tested-by` | def → def | Test function exercises source function |
-| `co-occurs` | def → def | Changed together in git history (optional, later) |
-| `member-of` | def → community | Louvain/structural community membership (optional, later) |
-
-> **Weight**: Default 1.0. Used for ranking and filtering. `calls` edges from hot paths get higher weight. Low-relevance nodes get edges with lower weight.
 
 ### 3.4 Index state
 
-```sql
-CREATE TABLE bridge_index (
-  file_path       TEXT    NOT NULL,
-  language        TEXT    NOT NULL,
-  content_hash    TEXT    NOT NULL,
-  extractor_version TEXT  NOT NULL DEFAULT '1',
-  node_count      INTEGER NOT NULL DEFAULT 0,
-  edge_count      INTEGER NOT NULL DEFAULT 0,
-  relevance       REAL    DEFAULT 1.0,
-  indexed_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+Stored via `ext-put!`:
 
-  UNIQUE(file_path)
-);
+```clojure
+(vis/ext-put! env
+  {:key   "idx:src/core.clj"
+   :kind  :bridge/index
+   :scope :global
+   :content {:file-path     "src/core.clj"
+             :language      "clojure"
+             :content-hash  "sha256:abc..."
+             :extractor-version 1
+             :node-count    12
+             :edge-count    31
+             :relevance     1.0
+             :indexed-at    1715400000000}})
 ```
 
-Tracks which files have been indexed, with what version of the extractor, and what their content hash was. On re-index:
+Tracks which files have been indexed, with what extractor version, and their
+content hash. On re-index:
 - Hash unchanged → skip
 - Hash changed → delete old nodes/edges for this file, re-extract, insert new
 - File deleted → delete old nodes/edges
 
 ### 3.5 Semantic summaries (optional)
 
-```sql
-CREATE TABLE bridge_node_summary (
-  node_id         INTEGER NOT NULL REFERENCES bridge_node(id),
-  summary_type    TEXT    NOT NULL, -- "role", "invariant", "intent", "full"
-  summary         TEXT    NOT NULL,
-  model           TEXT,             -- which LLM generated this
-  content_hash    TEXT,             -- hash of source at generation time
-  created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+Stored via `ext-put!`:
 
-  UNIQUE(node_id, summary_type)
-);
+```clojure
+(vis/ext-put! env
+  {:key   "summary:com.blockether.vis.core/run:role"
+   :kind  :bridge/summary
+   :scope :global
+   :content {:node-id      "com.blockether.vis.core/run"
+             :summary-type :role
+             :summary      "Sole entry point for the Vis iteration loop..."
+             :model        "gpt-4o"
+             :content-hash "sha256:abc..."}})
 ```
 
-AOCI-inspired. Not required for graph operation. When available, the agent can request a node's summary to get architectural intent without reading the full source.
+AOCI-inspired. Not required for graph operation. When available, the agent
+can request a node's summary to get architectural intent without reading
+full source.
 
 ### 3.6 Meaningfulness filtering
 
@@ -207,7 +283,7 @@ Not every file deserves deep indexing. The builder applies a **relevance filter*
 | Signal | Skip? | Relevance |
 |--------|-------|-----------|
 | File in `.git/`, `target/`, `.lsp/`, `.clj-kondo/` | Yes | 0.0 |
-| File matches `.cbmignore` / `.bridgeignore` patterns | Yes | 0.0 |
+| File matches `.bridgeignore` patterns | Yes | 0.0 |
 | File is generated (header comment `Auto-generated`, `DO NOT EDIT`) | Yes | 0.0 |
 | File is binary (images, compiled classes, jars) | Yes | 0.0 |
 | File is a data file (`.json`, `.edn` config without code structure) | Partial | 0.3 |
@@ -216,9 +292,21 @@ Not every file deserves deep indexing. The builder applies a **relevance filter*
 | File is a source file with only imports/requires (thin facade) | No | 0.5 |
 | Markdown / doc file | No | 0.7 |
 
-Files with relevance < 0.2 get a stub `file` node only (no children). Files with relevance ≥ 0.2 get full extraction.
+Files with relevance < 0.2 get a stub `file` node only (no children).
+Files with relevance ≥ 0.2 get full extraction.
 
-The relevance score propagates to child nodes: a `def` inside a relevance-0.5 file inherits 0.5 unless the def itself is especially significant (exported, heavily called, etc.).
+### 3.7 Scale escape hatch
+
+The aggregate KV model works for codebases up to ~5K nodes / ~20K edges.
+Beyond that, in-memory traversal becomes slow and we'd need a dedicated
+relational table for edges with indexed `source` / `target` columns.
+
+**If we hit this**, the migration path is:
+1. Keep nodes in extension aggregates (they're looked up by key, which aggregates handle well).
+2. Add a `bridge_edge` table via the V1 schema migration (DDL exception per AGENTS.md).
+3. Edge traversal becomes indexed SQL JOINs instead of Nippy deserialization.
+
+This is a future decision, not a v1 requirement. Vis's own codebase is ~500 nodes.
 
 ---
 
@@ -237,8 +325,8 @@ extensions/common/vis-bridge/
     ├── extract.clj                              ← extraction pipeline coordinator
     ├── extract_clojure.clj                      ← Clojure-specific AST extractor
     ├── extract_markdown.clj                     ← Markdown heading/section extractor
-    ├── graph.clj                                ← graph CRUD (nodes, edges, traversals)
-    ├── query.clj                                ← query builders (traverse, neighbors, blast-radius)
+    ├── store.clj                                ← graph CRUD via ext-put!/ext-list (nodes, edges, index)
+    ├── query.clj                                ← in-memory graph traversal (neighbors, blast-radius, path)
     ├── relevance.clj                            ← meaningfulness filtering
     └── summary.clj                              ← LLM summary generation (optional)
 ```
@@ -250,7 +338,7 @@ test/com/blockether/vis/ext/bridge/
 ├── core_test.clj
 ├── extract_clojure_test.clj
 ├── extract_markdown_test.clj
-├── graph_test.clj
+├── store_test.clj
 ├── query_test.clj
 └── relevance_test.clj
 ```
@@ -284,7 +372,7 @@ test/com/blockether/vis/ext/bridge/
 1. Walk workspace root, enumerate files.
 2. Apply `.bridgeignore` + built-in skip patterns.
 3. Compute content hashes.
-4. Compare against `bridge_index`; partition into `:unchanged`, `:stale`, `:new`, `:deleted`.
+4. Compare against index aggregates; partition into `:unchanged`, `:stale`, `:new`, `:deleted`.
 
 ### Phase 2: Filter
 
@@ -321,14 +409,14 @@ For each `:full-extract` file, dispatch to language-specific extractor:
 1. Delete old nodes/edges for stale/deleted files.
 2. Insert new nodes. Collect generated IDs.
 3. Insert new edges (resolve target qualified names → IDs).
-4. Update `bridge_index` rows.
-5. All in a single SQLite transaction.
+4. Update index aggregates via `ext-put!`.
+5. All via batched `ext-delete!` + `ext-put!` calls.
 
 ### Phase 5: Enrich (optional, deferred)
 
 1. For nodes without summaries, queue LLM summary generation.
 2. Run asynchronously (not in the agent's critical path).
-3. Store in `bridge_node_summary`.
+3. Store in summary aggregates via `ext-put!`.
 
 ---
 
@@ -342,9 +430,18 @@ Requires `vis-foundation` (for `v/` tools).
 
 ### 7.2 Persistence
 
-Uses the **same SQLite connection** as `vis-persistance-sqlite`. Bridge tables are created by the extension's own migration (run at first `bridge/index` or via the extension's `:ext/activation-fn`).
+Bridge stores **everything** through extension aggregates (`vis/ext-put!`,
+`vis/ext-list`, etc.). No custom SQL tables. No DDL migration.
 
-This respects Vis's inline-schema convention: one V1 schema file that the extension owns.
+The aggregate KV schema gives us:
+- **Dedup** via `UNIQUE (extension_id, aggregate_key, kind, scope_key)`
+- **Upsert** via `ext-put!`
+- **Typed queries** via `:kind` filter (`:bridge/node`, `:bridge/edge`, etc.)
+- **Ownership** via runtime-filled `extension_id`
+
+Traversal queries (callers, blast-radius) load edge aggregates and
+filter/traverse in memory. For Vis's codebase size (~500 nodes), this
+is fast and simple.
 
 ### 7.3 Environment info
 
