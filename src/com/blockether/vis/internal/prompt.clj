@@ -2,13 +2,12 @@
   "Prompt assembly.
 
    Cached system prompt stays small: core RLM rules plus extension,
-   skill, environment, and provider fragments. Per-iteration context
-   carries fresh evidence (<journal>), live bindings, activated skill
-   bodies, compact interesting SYSTEM vars, and extension nudges.
+   skill, environment, and provider fragments. Per-iteration user-role
+   context carries dynamic engine telemetry (<current_turn_context>),
+   fresh evidence (<journal>), live bindings, activated skill bodies,
+   and current engine nudges.
 
-   Prompt-rendered SYSTEM vars are intentionally limited to:
-   CONVERSATION_TITLE, TURN_POSITION, TURN_ID, TURN_ITERATION_ID,
-   TURN_ITERATION_POSITION, CONVERSATION_STATE_ID."
+   Dynamic turn / iteration ids never enter the cached system prompt."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.router :as svar-router]
@@ -16,7 +15,6 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.skills :as skills]
-   [sci.core :as sci]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -499,60 +497,42 @@
   [v]
   (attr-str (if (keyword? v) (name v) v)))
 
-(def ^:private system-var-render-order
-  '[CONVERSATION_TITLE
-    TURN_POSITION
-    TURN_ID
-    TURN_ITERATION_ID
-    TURN_ITERATION_POSITION
-    CONVERSATION_STATE_ID])
+(defn- short-ref
+  [v]
+  (let [s (str v)]
+    (if (> (count s) 8) (subs s 0 8) s)))
 
-(def ^:private system-var-prompt-descriptions
-  {'CONVERSATION_TITLE "current conversation title."
-   'TURN_POSITION "current turn number in this conversation."
-   'TURN_ID "current turn UUID."
-   'TURN_ITERATION_ID "last persisted iteration UUID visible to this prompt; nil before first commit."
-   'TURN_ITERATION_POSITION "last persisted iteration position; 0 before first result."
-   'CONVERSATION_STATE_ID "current live branch/state UUID."})
+(defn- current-engine-iteration-id
+  [turn-id iteration-position]
+  (str "turn/" (short-ref (or turn-id "unknown")) "/iteration/" iteration-position))
 
-(defn- system-var-registry-prompt-text
-  []
-  (str/join "\n"
-    (map (fn [sym]
-           (format "    %-28s %s" (name sym) (get system-var-prompt-descriptions sym "")))
-      system-var-render-order)))
+(defn- current-turn-context-block
+  "Render dynamic engine telemetry into the user-role iteration trailer.
 
-(defn- render-core-system-prompt-template
-  [template]
-  (str/replace template "{{SYSTEM_VARS_REGISTRY}}" (system-var-registry-prompt-text)))
-
-(defn- read-system-var-value
-  [environment sym]
-  (when-let [sci-ctx (:sci-ctx environment)]
-    (try
-      (when-let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
-        (:val (sci/eval-string+ sci-ctx (name sym) {:ns ns-obj})))
-      (catch Throwable _
-        nil))))
-
-(defn- system-var-preview
-  [_sym v]
-  (safe-pr-str v {:max-chars 1200
-                  :print-length 16
-                  :print-level 4}))
-
-(defn- system-vars-block
-  "Render the small prompt-visible SYSTEM-var snapshot."
-  [environment]
-  (when (:sci-ctx environment)
-    (str "<system_vars>\n"
-      (str/join "\n"
-        (map (fn [sym]
-               (str "  <system_var name=\"" (attr-name sym) "\">"
-                 (attr-str (system-var-preview sym (read-system-var-value environment sym)))
-                 "</system_var>"))
-          system-var-render-order))
-      "\n</system_vars>")))
+   These are state facts, not policy. They stay out of the cached system
+   prompt. `current_engine_iteration_id` is a logical engine id for the
+   in-flight iteration; the DB UUID appears only after persistence, so the
+   previous persisted DB id is exposed separately."
+  [environment {:keys [iteration max-iterations engine-state engine-phase]}]
+  (let [iteration-position (inc (long (or iteration 0)))
+        previous-position  (max 0 (dec iteration-position))
+        turn-id            (some-> (:current-conversation-turn-id-atom environment) deref)
+        turn-position      (some-> (:current-turn-position-atom environment) deref)
+        previous-iter-id   (some-> (:current-iteration-id-atom environment) deref)]
+    (prompt-block
+      "current_turn_context"
+      (str "engine_state_machine: idle -> receive_user_turn -> build_turn_context -> model_think -> maybe_tool_call -> observe_tool_result -> decide_next -> finalize_answer -> persist_turn -> idle\n"
+        "engine_state: " (or engine-state "turn.iteration/start") "\n"
+        "engine_phase: " (or engine-phase "model_think") "\n"
+        "conversation_id: " (:conversation-id environment) "\n"
+        "engine_turn_id: " turn-id "\n"
+        "engine_turn_position: " turn-position "\n"
+        "current_engine_iteration_id: " (current-engine-iteration-id turn-id iteration-position) "\n"
+        "engine_iteration_position: " iteration-position "\n"
+        "engine_iteration_max: " (or max-iterations "unknown") "\n"
+        "previous_persisted_iteration_id: " previous-iter-id "\n"
+        "previous_persisted_iteration_position: " previous-position "\n"
+        "prompt_role: user"))))
 
 (defn- format-active-skill
   [{:keys [name source body]}]
@@ -585,18 +565,18 @@
       {:importance (attr-name (or (:importance entry) default-importance))
        :text       text})))
 
-(defn- format-system-nudge
+(defn- format-current-engine-nudge
   [{:keys [importance text]}]
-  (str "<system_nudge importance=\"" importance "\">\n"
+  (str "<current_engine_start_nudge importance=\"" importance "\">\n"
     (attr-str text)
-    "\n</system_nudge>"))
+    "\n</current_engine_start_nudge>"))
 
-(defn- system-nudges-block
+(defn- current-engine-nudges-block
   [nudges]
   (when-let [nudges (seq (keep identity nudges))]
-    (str "<system_nudges>\n"
-      (str/join "\n" (map format-system-nudge nudges))
-      "\n</system_nudges>")))
+    (str "<current_engine_start_nudges>\n"
+      (str/join "\n" (map format-current-engine-nudge nudges))
+      "\n</current_engine_start_nudges>")))
 
 (defn- call-extension-callback
   [ext f & args]
@@ -607,7 +587,10 @@
 (defn build-iteration-context
   "Assemble the per-iteration context block inserted before the current user goal.
 
-   Two slots:
+   Slots:
+     <current_turn_context>
+                   - dynamic engine telemetry for this in-flight iteration.
+                     This is user-role runtime state, not cached system text.
      <journal>     - newest token-budgeted comments + code + result.
                      Budget is capped at 50% of the model context, then
                      reduced by protected/pinned context and <bindings>.
@@ -617,13 +600,13 @@
                      the wire messages array.
      <bindings>   - `(def ...)` bindings in the SCI env.
 
-   Plus zero or more tagged `<system_nudge importance=\"...\">` entries
-   wrapped in `<system_nudges>`. All entries come from `:ext/hooks`
-   on active extensions; core owns no built-in hook policy. Each hook
-   declares its lifecycle `:phase` (`:session/start`, `:turn/start`,
-   `:turn.iteration/start`) and a `:fn` that receives the `nudge-ctx`
-   (the per-iteration ctx below) and returns
-   either nil (silent) or `{:hint :importance?}`.
+   Plus zero or more tagged `<current_engine_start_nudge importance=\"...\">`
+   entries wrapped in `<current_engine_start_nudges>`. All entries come from
+   `:ext/hooks` on active extensions; core owns no built-in hook policy.
+   Each hook declares its lifecycle `:phase` (`:session/start`,
+   `:turn/start`, `:turn.iteration/start`) and a `:fn` that receives the
+   `nudge-ctx` (the per-iteration ctx below) and returns either nil
+   (silent) or `{:hint :importance?}`.
 
    `nudge-ctx` fields (passed to every hook `:fn`):
      :environment        full environment map
@@ -651,15 +634,19 @@
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
                        model system-prompt current-user-content context-limit
-                       title-refresh?]
+                       title-refresh? max-iterations]
                 :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
   (let [ctx-limit (effective-context-limit model context-limit)
-        system-vars-block (system-vars-block environment)
+        current-context-block (current-turn-context-block environment
+                                {:iteration iteration
+                                 :max-iterations max-iterations
+                                 :engine-state :turn.iteration/start
+                                 :engine-phase :model_think})
         active-skills-block (active-skills-block environment)
-        pinned-text (str/join "\n\n" (keep identity [system-prompt current-user-content system-vars-block active-skills-block]))
+        pinned-text (str/join "\n\n" (keep identity [system-prompt current-user-content current-context-block active-skills-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
         budget-after-pinned (max 1 (- ctx-limit (long pinned-tokens)))
         bindings-str (read-bindings-str environment)
@@ -680,7 +667,7 @@
         ;; passes the value; policy lives in extensions.
         prompt-text (str/join "\n\n"
                       (keep identity
-                        [system-prompt current-user-content system-vars-block active-skills-block recent-block bindings-block]))
+                        [system-prompt current-user-content current-context-block active-skills-block recent-block bindings-block]))
         input-tokens (or (count-prompt-tokens model prompt-text) 0)
         conversation-title (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
         nudge-ctx {:environment environment
@@ -694,8 +681,8 @@
                    ;; Raw current-turn user request — hooks inspect it
                    ;; for investigation verbs / blind-answer prevention.
                    :user-request current-user-content}
-        ;; <system_nudges> are populated by PRE-phase `:ext/hooks` — the
-        ;; single mechanism for model-facing advisory hints. Each hook
+        ;; <current_engine_start_nudges> are populated by PRE-phase `:ext/hooks` —
+        ;; the single mechanism for model-facing advisory hints. Each hook
         ;; declares :phase; the host invokes :fn only when the phase
         ;; matches the current lifecycle position. Pre-phase fns return
         ;; nil (silent) or `{:hint :importance?}`.
@@ -732,9 +719,9 @@
                              (or (:importance hit) :normal)
                              (:hint hit)))))
                      (or active-extensions []))
-        nudges-block (system-nudges-block all-nudges)
+        nudges-block (current-engine-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [system-vars-block active-skills-block recent-block bindings-block nudges-block])]
+                [current-context-block active-skills-block recent-block bindings-block nudges-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -763,8 +750,8 @@
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
-   dialog transcript: Vis state flows through SYSTEM vars, <journal>,
-   <bindings>, and DB-backed tools. The current user request is tagged as
+   dialog transcript: Vis state flows through <current_turn_context>,
+   <journal>, <bindings>, and DB-backed tools. The current user request is tagged as
    <user_turn_request_main_goal>.
 
    One full previous-turn context block may be prepended so short follow-ups
@@ -783,10 +770,84 @@
 ;; System prompt
 ;; =============================================================================
 
-(def ^:private core-system-prompt-template "You are Vis: SCI RLM agent. Fulfill the user request.\n\nReply only with ```clojure``` code fences. Fences contain SCI forms. User-visible final content is Answer IR: `(answer [:ir ...])`, never raw Markdown/text. Narrate inside code with ;; comments.\n\nOODA:\n  reproduce -> inspect(runtime) -> change(minimal) -> test(regression) -> verify -> answer\n  runtime > source > docs > assumption\n  English only. Caveman terse unless clarity needs more.\n\nTURN:\n  One user request = one turn. TURN_ID and TURN_POSITION stay fixed for that turn.\n  <user_turn_request_main_goal> is the current goal. <previous_turn_context> is only the immediately previous exchange.\n\nITERATIONS:\n  One model reply + engine eval = one iteration.\n  TURN_ITERATION_ID is the last persisted iteration UUID visible to this prompt; nil before any iteration commits.\n  TURN_ITERATION_POSITION is the last persisted iteration position; 0 before any result. <journal> row labels iN are 1-based.\n  If facts are missing, emit observation/action forms, then read the next iteration's <journal>.\n\nJOURNAL:\n  Engine writes <journal>; you read it. It is observed evidence, newest at bottom.\n  iN.K = iteration N, top-level form K -> direct return preview or ERROR.\n  iN.K.M = tool event inside iN.K -> real tool result/error. Read sub-rows.\n  Tool payloads live under :op/result, never [:result ...]. Errors carry :op/error; read :hint first.\n\nANSWER:\n  Trivial social/no-tool turns may answer immediately.\n  Investigation/action/fix/check requests must observe before answering.\n  After mutation, verify in a later iteration, read <journal>, then answer.\n  Final answer iteration is only `(answer [:ir ...])`, optionally sibling `(conversation-title \"...\")`. No defs, tools, or do wrapper.\n\nSURFACES:\n  <environment-info>, <extensions>, <skills> are cached setup text.\n  <bindings> is the live `(def ...)` index; fetch values by name.\n  <active_skills> contains full loaded skill bodies.\n  <system_nudges> contains extension hints.\n  SYSTEM vars are live uppercase SCI bindings and also in <system_vars>:\n{{SYSTEM_VARS_REGISTRY}}\n\nCODE:\n  code > markdown\n  data > control_flow\n  pure > stateful\n  structural_editing > line_editing > raw_text\n")
+(def ^:private core-system-prompt-template
+  "You are Vis: SCI RLM agent. Fulfill the user request.
+
+Reply only with ```clojure``` code fences. Fences contain SCI forms.
+User-visible final content is Answer IR: `(answer [:ir ...])`, never raw Markdown/text.
+Narrate inside code with ;; comments.
+
+OODA:
+  reproduce -> inspect(runtime) -> change(minimal) -> test(regression) -> verify -> answer
+  runtime > source > docs > assumption
+  English only. Caveman terse unless clarity needs more.
+
+ENGINE:
+  Vis runs: idle -> receive_user_turn -> build_turn_context -> model_think -> maybe_tool_call -> observe_tool_result -> decide_next -> finalize_answer -> persist_turn -> idle.
+  Dynamic engine state is supplied in user-role <current_turn_context>.
+  Treat <current_turn_context> as observed telemetry, not user intent and not policy.
+  Dynamic ids/positions never appear as changing values in this cached system prompt.
+
+TURN:
+  One user request = one turn. engine_turn_id and engine_turn_position stay fixed for that turn.
+  <user_turn_request_main_goal> is the current goal.
+  <previous_turn_context> is only the immediately previous exchange.
+
+ITERATIONS:
+  One model reply + engine eval = one iteration.
+  current_engine_iteration_id is the logical id for this in-flight engine iteration.
+  engine_iteration_position is 1-based inside the current turn.
+  previous_persisted_iteration_id is the DB UUID from the last committed iteration; nil before any iteration commits.
+  <journal> row labels iN are 1-based.
+  If facts are missing, emit observation/action forms, then read the next iteration's <journal>.
+
+JOURNAL:
+  Engine writes <journal>; you read it. It is observed evidence, newest at bottom.
+  iN.K = iteration N, top-level form K -> direct return preview or ERROR.
+  iN.K.M = tool event inside iN.K -> real tool result/error. Read sub-rows.
+  Tool payloads live under :op/result, never [:result ...].
+  Errors carry :op/error; read :hint first.
+
+IR FORMS:
+  Root: [:ir block*]. Build this data directly; do not generate Markdown and convert it.
+  Attrs map after tag is optional in emitted shorthand; canonical IR stores attrs at index 1.
+  Bare strings are inline text shorthand; canonical IR stores text as [:span {} \"text\"].
+  Blocks: :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li :quote
+          :table :tr :th :td :details{:open?} :summary
+  Inlines: :span{:preserve-ws? :nowrap?} :br :strong :em :c :a{:href}
+           :img{:src :alt} :kbd :mark :sup :sub
+  Raw text tags preserving whitespace: :code, :c, :kbd.
+  Lists: :ul/:ol contain :li. A :li contains blocks or one paragraph wrapping inlines.
+  Tables: :table contains :tr; :tr contains :th/:td; cells contain inlines.
+  Details: [:details {:open? true} [:summary \"Title\"] block*].
+  Examples:
+    (answer [:ir [:p \"Done.\"]])
+    (answer [:ir [:p \"Use \" [:c \":op/result\"] \".\"]])
+    (answer [:ir [:code {:lang \"clojure\"} \"(+ 1 2)\"]])
+    (answer [:ir [:details {:open? false} [:summary \"Trace\"] [:p \"Hidden body.\"]]])
+
+ANSWER:
+  Trivial social/no-tool turns may answer immediately.
+  Investigation/action/fix/check requests must observe before answering.
+  After mutation, verify in a later iteration, read <journal>, then answer.
+  Final answer iteration is only `(answer [:ir ...])`, optionally sibling `(conversation-title \"...\")`.
+  No defs, tools, or do wrapper.
+
+SURFACES:
+  <environment-info>, <extensions>, <skills> are cached setup text.
+  <current_turn_context> contains dynamic engine ids, positions, phase, and state.
+  <bindings> is the live `(def ...)` index; fetch values by name.
+  <active_skills> contains full loaded skill bodies.
+  <current_engine_start_nudges> contains current runtime hints.
+
+CODE:
+  code > markdown
+  data > control_flow
+  pure > stateful
+  structural_editing > line_editing > raw_text")
 
 (def ^:private core-system-prompt
-  (render-core-system-prompt-template core-system-prompt-template))
+  core-system-prompt-template)
 
 (defn build-system-prompt
   "Core system prompt: agent rules + optional caller addendum."

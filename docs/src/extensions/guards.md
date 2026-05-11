@@ -13,20 +13,21 @@ Structural/engine invariants (answer-alone form shape,
 answer-with-mutation preflight, etc.) remain core preflight gates in
 `internal/loop.clj`.
 
-## Where system nudges live
+## Where current engine nudges live
 
 Every iteration the host assembles a per-iteration trailer:
 
 ```xml
+<current_turn_context>...</current_turn_context>
 <journal>...</journal>
 <bindings>...</bindings>
-<system_nudges>
-  <system_nudge importance="high">...</system_nudge>
-  <system_nudge importance="low">...</system_nudge>
-</system_nudges>
+<current_engine_start_nudges>
+  <current_engine_start_nudge importance="high">...</current_engine_start_nudge>
+  <current_engine_start_nudge importance="low">...</current_engine_start_nudge>
+</current_engine_start_nudges>
 ```
 
-Inside `<system_nudges>` every entry comes from exactly one pre-phase
+Inside `<current_engine_start_nudges>` every entry comes from exactly one pre-phase
 hook hit: an active extension's `:ext/hooks` entry whose `:fn` returned
 a non-nil `{:hint ...}` map for that phase.
 
@@ -42,7 +43,7 @@ a non-nil `{:hint ...}` map for that phase.
 Pre-phase `:fn` returns either:
 
 - `nil` — hook passes silently for this phase.
-- `{:hint "<string>" :importance :low|:normal|:high|:critical}` — host wraps the hint in `<system_nudge importance="...">`.
+- `{:hint "<string>" :importance :low|:normal|:high|:critical}` — host wraps the hint in `<current_engine_start_nudge importance="...">`.
 
 `:importance` is optional; defaults to `:normal`.
 
@@ -60,9 +61,9 @@ Only namespaced keywords are valid. Old dash phases are removed.
 
 | phase | runtime call site | invoked on | return handling |
 |---|---|---|---|
-| `:session/start` | `prompt/build-iteration-context` | first iteration of first turn | `{:hint ...}` becomes system nudge |
-| `:turn/start` | `prompt/build-iteration-context` | first iteration of each turn | `{:hint ...}` becomes system nudge |
-| `:turn.iteration/start` | `prompt/build-iteration-context` | every iteration before eval | `{:hint ...}` becomes system nudge |
+| `:session/start` | `prompt/build-iteration-context` | first iteration of first turn | `{:hint ...}` becomes current engine nudge |
+| `:turn/start` | `prompt/build-iteration-context` | first iteration of each turn | `{:hint ...}` becomes current engine nudge |
+| `:turn.iteration/start` | `prompt/build-iteration-context` | every iteration before eval | `{:hint ...}` becomes current engine nudge |
 | `:turn.iteration/stop` | `loop/emit-post-hooks!` | every iteration after eval | ignored |
 | `:turn.answer/validate` | `loop/final-answer-gate-error` | when `(answer ...)` produced a candidate final answer | nil accepts; `{:reject true :message ... :hint ...}` rejects |
 | `:turn/stop` | `loop/emit-post-hooks!` | after the turn closes | ignored |

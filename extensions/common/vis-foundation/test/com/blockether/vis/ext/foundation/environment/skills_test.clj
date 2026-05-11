@@ -198,7 +198,6 @@
                  (binding [workspace/*workspace-root* nil]
                    (skills/reload!)))))
 
-
   (it "lookup returns {:found? false :name ...} for unknown name"
     (let [s (skills/lookup "this-skill-does-not-exist-anywhere")]
       (expect (false? (:found? s)))

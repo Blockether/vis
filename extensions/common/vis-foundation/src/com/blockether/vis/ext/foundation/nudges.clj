@@ -1,5 +1,5 @@
 (ns com.blockether.vis.ext.foundation.nudges
-  "Built-in `<system_nudge>` policy for vis-foundation, expressed as
+  "Built-in `<current_engine_start_nudge>` policy for vis-foundation, expressed as
    `:ext/hooks` declarations. Active hooks ship here today:
 
      1. `:vis.foundation/conversation-title` (importance :low)
@@ -114,7 +114,7 @@
 
 ;; ----------------------------------------------------------------------------
 ;; Hooks (`:ext/hooks`) — structured lifecycle-phase callbacks. Pre-phase
-;; hooks (e.g. :turn.iteration/start) emit MODEL-FACING <system_nudge> entries;
+;; hooks (e.g. :turn.iteration/start) emit MODEL-FACING <current_engine_start_nudge> entries;
 ;; post-phase hooks (e.g. :turn.iteration/stop, :turn/stop) are side-effect only.
 ;; ----------------------------------------------------------------------------
 

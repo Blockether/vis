@@ -248,17 +248,17 @@
       (expect (str/includes? out "(+ 3 4)"))
       (expect (not (str/includes? out "i1.1")))))
 
-  (it "strips <bindings>, <active_skills>, <system_vars>, <system_nudge[s]> echoes too"
-    (doseq [tag ["bindings" "active_skills" "system_vars" "system_var" "system_nudges" "system_nudge"]]
+  (it "strips <bindings>, <active_skills>, <current_turn_context>, <current_engine_start_nudge[s]> echoes too"
+    (doseq [tag ["bindings" "active_skills" "current_turn_context" "current_engine_start_nudges" "current_engine_start_nudge"]]
       (let [raw (str "<" tag ">junk</" tag ">\n```clojure\n(+ 1 2)\n```\n")
             out (#'loop/strip-vis-engine-xml-echo raw)]
         (expect (not (str/includes? out (str "<" tag ">"))))
         (expect (str/includes? out "(+ 1 2)")))))
 
-  (it "accepts <tag attr=\"x\"> shape (e.g. <system_nudge importance=\"high\">)"
-    (let [raw "<system_nudge importance=\"high\">commit now</system_nudge>\n```clojure\n(+ 1 1)\n```\n"
+  (it "accepts <tag attr=\"x\"> shape (e.g. <current_engine_start_nudge importance=\"high\">)"
+    (let [raw "<current_engine_start_nudge importance=\"high\">commit now</current_engine_start_nudge>\n```clojure\n(+ 1 1)\n```\n"
           out (#'loop/strip-vis-engine-xml-echo raw)]
-      (expect (not (str/includes? out "<system_nudge")))
+      (expect (not (str/includes? out "<current_engine_start_nudge")))
       (expect (str/includes? out "(+ 1 1)")))))
 
 (defdescribe normalize-ask-result-vis-engine-xml-echo-test

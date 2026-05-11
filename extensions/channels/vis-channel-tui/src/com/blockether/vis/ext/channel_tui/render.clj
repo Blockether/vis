@@ -1524,7 +1524,9 @@
         ;; bare text like \"Cancelled by user.\" reads naturally.
         cancelled? (= :cancelled status)
         turn-separator? (boolean (:turn-separator? message))
-        top-sep-h 0 ;; screen.clj sep-pad already handles turn-separator spacing
+        ;; Turn separators are blank spacer rows only. Do not draw a rule:
+        ;; it reads as `You ───` when the label shares the row.
+        top-sep-h (if turn-separator? 2 0)
         label     (if user? "You" "Vis")
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the
@@ -1598,14 +1600,9 @@
                        (when-not (str/blank? line) line)))
         refs       (extract-link-refs message bubble-w)]
 
-    ;; Row 0: label (bold, role-colored) + optional resources badge +
+    ;; Role label (bold, role-colored) + optional resources badge +
     ;; timestamp. Resources sit in the top-right chrome instead of
     ;; taking one row per link under the answer body.
-    (when turn-separator?
-      (p/clear-styles! g)
-      (p/set-colors! g t/turn-separator-fg t/turn-separator-bg)
-      (p/fill-rect! g bx start-row bubble-w 1)
-      (p/put-str! g bx start-row (repeat-str \─ bubble-w)))
 
     (let [label-row (+ start-row top-sep-h)]
       (p/clear-styles! g)
@@ -3679,6 +3676,19 @@
   ([answer trace bubble-w settings confidence cancelled? opts]
    (:text (format-answer-with-thinking-data answer trace bubble-w settings confidence cancelled? opts))))
 
+(defn- user-prompt-margin-entry?
+  [entry]
+  (let [visible (strip-paint-markers-line (:line entry))]
+    (or (str/blank? visible)
+      (boolean (re-matches #"^\s*│\s*$" visible)))))
+
+(defn- trim-user-prompt-margin-entries
+  [entries]
+  (let [trimmed-leading  (vec (drop-while user-prompt-margin-entry? entries))
+        trimmed-trailing (vec (reverse (drop-while user-prompt-margin-entry?
+                                         (reverse trimmed-leading))))]
+    trimmed-trailing))
+
 (defn format-answer-markdown-data*
   [answer bubble-w opts]
   (assert-canonical-ir! answer)
@@ -3686,12 +3696,14 @@
         raw-entries (if (ir-non-empty? answer)
                       (vec (ir-tui/ir->entries answer content-w opts))
                       [])
-        ;; Always prepend a blank margin row so the first line of
-        ;; answer content is never flush against the top of the bubble
-        ;; or the bottom of a preceding user message.  The blank row
-        ;; carries no marker (empty string) so it paints on the
-        ;; bubble background.
-        entries (into [{:line "" :meta nil}] raw-entries)]
+        ;; Assistant answers keep a blank margin row so the first line of
+        ;; answer content is never flush against the top of the bubble or the
+        ;; bottom of a preceding user message. User prompts already have their
+        ;; own bubble padding; adding an answer margin there creates a visible
+        ;; blank line inside the quoted prompt block.
+        entries (if (= :user (:section opts))
+                  (trim-user-prompt-margin-entries raw-entries)
+                  (into [{:line "" :meta nil}] raw-entries))]
     (entries->payload entries)))
 
 (defn format-answer-markdown*

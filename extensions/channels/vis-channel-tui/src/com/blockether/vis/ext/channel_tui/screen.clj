@@ -2526,6 +2526,18 @@
     (alter-var-root #'*out* (constantly log-w))
     (alter-var-root #'*err* (constantly log-w))))
 
+(defn- print-conversation-id-on-exit!
+  "After the fullscreen TUI releases the terminal, print the conversation id
+   back to the shell so users can resume/copy it from scrollback. During the
+   TUI session the same id is visible in the header; stdout is intentionally
+   quiet until teardown because Lanterna owns the screen."
+  []
+  (when-let [id (current-conversation-id)]
+    (let [^java.io.PrintStream out vis/original-stdout]
+      (.println out "Resume with:")
+      (.println out (str "vis channels tui --conversation-id " id))
+      (.flush out))))
+
 (defn channel-main
   "Channel entry point: full TUI bootstrap. Performs the stdout/stderr
    redirect, runs `vis/init!`, then hands off to `run-chat!`. Errors
@@ -2539,6 +2551,7 @@
   (let [exit-code (atom 0)]
     (try
       (run-chat! (parse-args args))
+      (print-conversation-id-on-exit!)
       (catch Throwable t
         (if (:vis/user-error (ex-data t))
           ;; Caller-facing error: invalid flag value, missing

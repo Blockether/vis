@@ -1446,7 +1446,7 @@
 ;; burning an entire iteration on a parser-recoverable error.
 ;;
 ;; Repair pass: at the line level, drop every <journal>/<bindings>/<active_skills>
-;; /<system_vars>/<system_nudge[s]> opener through its closer. Closer matches `</tag>` (proper),
+;; /<current_turn_context>/<current_engine_start_nudge[s]> opener through its closer. Closer matches `</tag>` (proper),
 ;; a bare ``` line (LLM fumble), or another opener (implicit close), or EOF.
 ;; A ```lang line implicitly closes the envelope without itself being dropped
 ;; so a real fence directly after a fabricated envelope still parses cleanly.
@@ -1455,7 +1455,10 @@
 (def ^:private vis-engine-xml-echo-tags
   ;; Vis -> LLM ONLY. The model must never emit these. See
   ;; `com.blockether.vis.internal.prompt` for the renderers that own them.
-  #{"journal" "bindings" "active_skills" "system_vars" "system_var" "system_nudges" "system_nudge"})
+  #{"journal" "bindings" "active_skills" "current_turn_context"
+    "current_engine_start_nudges" "current_engine_start_nudge"
+    ;; Backward-compatible echo cleanup for older transcripts / model habits.
+    "system_vars" "system_var" "system_nudges" "system_nudge"})
 
 (defn- vis-engine-xml-open-tag
   "Return the matched tag name (string) when `line` is a Vis-engine XML
@@ -3236,7 +3239,9 @@
                                      (:position %)))
                             long)
                           (catch Throwable _ 0))]
-      (env/bind-and-bump! environment 'TURN_POSITION (or turn-position 0)))
+      (env/bind-and-bump! environment 'TURN_POSITION (or turn-position 0))
+      (when-let [a (:current-turn-position-atom environment)]
+        (reset! a (or turn-position 0))))
     (let [conversation-state-id (persistance/db-latest-conversation-state-id
                                   (:db-info environment) (:conversation-id environment))]
       (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID conversation-state-id)
@@ -3392,6 +3397,7 @@
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
                                            :system-prompt       system-prompt
+                                           :max-iterations      MAX_TURN_ITERATIONS
                                            ;; One low-importance turn-boundary check keeps
                                            ;; titles live across topic shifts. The old
                                            ;; iteration-only cadence never fired for a
@@ -4553,6 +4559,7 @@
         current-iteration-atom    (atom 1)
         current-iteration-id-atom (atom nil)
         current-conversation-turn-id-atom (atom nil)
+        current-turn-position-atom (atom nil)
         current-user-request-atom (atom nil)
         ;; Title atom: in-memory cache for the conversation title.
         ;; The DB column on `conversation_state` is the persisted
@@ -4694,6 +4701,7 @@
              :current-iteration-atom current-iteration-atom
              :current-iteration-id-atom current-iteration-id-atom
              :current-conversation-turn-id-atom current-conversation-turn-id-atom
+             :current-turn-position-atom current-turn-position-atom
              :current-user-request-atom current-user-request-atom
              :conversation-title-atom            conversation-title-atom
              :extensions            (atom [])}]
