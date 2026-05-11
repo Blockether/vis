@@ -191,7 +191,7 @@
 (defn- lsp-symbol
   [v]
   (vis/symbol v
-    {:result-spec ::extension/tool-result
+    {:result-spec :op/envelope
      :journal-render-fn journal-render-lsp
      :channel-render-fn channel-render-lsp
      :on-error-fn (tool-failure-on-error (keyword "z" (name (:name (meta v)))))}))

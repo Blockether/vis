@@ -111,7 +111,7 @@
     (.mkdirs parent))
   f)
 
-(def ^:private tool-result-spec ::extension/tool-result)
+(def ^:private tool-result-spec :op/envelope)
 
 (defn- now-ms []
   (System/currentTimeMillis))
