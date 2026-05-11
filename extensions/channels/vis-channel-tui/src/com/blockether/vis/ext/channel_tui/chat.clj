@@ -8,6 +8,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.history-restore :as history-restore]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -133,8 +134,15 @@
    Assistant messages include the code execution trace from all iterations."
   [conversation-id]
   (try
-    (let [d     (vis/db-info)
-          turns (vis/db-list-conversation-turns d conversation-id)]
+    (let [d               (vis/db-info)
+          restored-values (try
+                            (history-restore/restored-var-values d conversation-id)
+                            (catch Throwable e
+                              (t/log! {:level :warn :id ::restore-values-for-history-failed
+                                       :data  (exception->log-data e)
+                                       :msg   (str "Failed to read restored var values for history: " (ex-message e))})
+                              {}))
+          turns           (vis/db-list-conversation-turns d conversation-id)]
       (into []
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
@@ -208,28 +216,34 @@
                                                      (assoc :stdout (:stdout payload))
                                                      (:stderr payload)
                                                      (assoc :stderr (:stderr payload))))))
-                                             result-strs (mapv (fn [{:keys [result error channel]}]
-                                                                 (cond
-                                                                   error (vis/format-error error)
-                                                                   (and (map? result) (= :expr (:vis/ref result)))
-                                                                   "<runtime value; re-evaluate expression to restore>"
-                                                                   (seq channel)
-                                                                   ;; Per-form sink entries: walk each, surface
-                                                                   ;; pre-rendered markdown on success, format the
-                                                                   ;; error map on failure. Same shape as the live
-                                                                   ;; progress path in `internal/progress.clj`. Sort
-                                                                   ;; by :position so racy futures land in canonical
-                                                                   ;; source order.
-                                                                   (str/join "\n\n"
-                                                                     (map (fn [{:keys [success? result error]}]
-                                                                            (if success?
-                                                                              result
-                                                                              (extension/default-channel-error-text
-                                                                                {:success? false :result nil :info {} :error error})))
-                                                                       (sort-by :position channel)))
-                                                                   (extension/tool-result? result)
-                                                                   (extension/channel-render-tool-result result)
-                                                                   :else (pr-str result)))
+                                             result-strs (mapv (fn [{:keys [result error channel code]}]
+                                                                 (let [restored (when (history-restore/runtime-ref? result)
+                                                                                  (history-restore/restored-def-result restored-values code))]
+                                                                   (cond
+                                                                     error (vis/format-error error)
+                                                                     (seq channel)
+                                                                     ;; Per-form sink entries: walk each, surface
+                                                                     ;; pre-rendered markdown on success, format the
+                                                                     ;; error map on failure. Same shape as the live
+                                                                     ;; progress path in `internal/progress.clj`. Sort
+                                                                     ;; by :position so racy futures land in canonical
+                                                                     ;; source order. This must win over `{:vis/ref :expr}`:
+                                                                     ;; `(def x (v/cat ...))` cannot persist the live var value,
+                                                                     ;; but its tool-rendered channel text is durable and should
+                                                                     ;; be shown when resuming history.
+                                                                     (str/join "\n\n"
+                                                                       (map (fn [{:keys [success? result error]}]
+                                                                              (if success?
+                                                                                result
+                                                                                (extension/default-channel-error-text
+                                                                                  {:success? false :result nil :info {} :error error})))
+                                                                         (sort-by :position channel)))
+                                                                     restored restored
+                                                                     (history-restore/runtime-ref? result)
+                                                                     "<runtime value; re-evaluate expression to restore>"
+                                                                     (extension/tool-result? result)
+                                                                     (extension/channel-render-tool-result result)
+                                                                     :else (pr-str result))))
                                                            exprs)
                                              result-details (mapv (fn [expr]
                                                                     (tool-result-detail (:result expr)))

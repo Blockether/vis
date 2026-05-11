@@ -34,6 +34,21 @@
       (expect (string? (get-in out [:op/error :trace])))
       (expect (str/includes? (get-in out [:op/error :trace]) "ExceptionInfo"))))
 
+  (it ":op/envelope spec validates canonical qualified op keys only"
+    (let [out (tr/success {:result {:a 1} :op :demo})]
+      (expect (true? (tr/tool-result? out)))
+      ;; Old/plain wrapper shape is not an op envelope.
+      (expect (not (tr/tool-result? {:success? true
+                                     :result {:a 1}
+                                     :error nil})))
+      ;; Canonical keys are type-checked by :op/envelope, not ignored
+      ;; by an unqualified-key spec.
+      (expect (not (tr/tool-result? {:op/success? true
+                                     :op/error nil
+                                     :op/metadata []})))
+      (expect (not (tr/tool-result? {:op/success? true
+                                     :op/error {:message ""}})))))
+
   (it "invalid envelope throws"
     (expect (throws? clojure.lang.ExceptionInfo
               #(tr/assert-tool-result! {:op/success? true :op/result 1

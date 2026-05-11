@@ -1071,10 +1071,6 @@
     :choices (theme-choice-order)
     :label "Theme"
     :description "Reusable channel theme from com.blockether.vis.internal.theme and extension :ext/theme maps"}
-   {:key :show-thinking
-    :type :toggle
-    :label "Show thinking / reasoning"
-    :description "LLM's chain-of-thought reasoning above each iteration"}
    {:key :show-iterations
     :type :toggle
     :label "Show full execution trace"

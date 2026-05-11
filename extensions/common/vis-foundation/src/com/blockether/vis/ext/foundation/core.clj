@@ -36,6 +36,7 @@
 
 (def ^:private answer-ir-prompt
   "Answers use IR (Hiccup-EDN). Always emit (answer [:ir & nodes]).
+Do not emit Markdown/text strings in `(answer ...)`. Do not render Markdown as IR; build IR nodes directly. Channels render IR to Markdown/HTML/plain at their boundary.
 
 Block tags: :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li :quote
             :table :tr :th :td

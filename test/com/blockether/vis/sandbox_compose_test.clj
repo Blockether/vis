@@ -1,23 +1,9 @@
 (ns com.blockether.vis.sandbox-compose-test
-  "Validates every Clojure pattern advertised in
-   `com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT`'s COMPOSE
-   section against the LIVE SCI sandbox.
+  "Validates the basic Clojure/Sci patterns that the prompt relies on.
 
-   Why this test exists: the COMPOSE block is a contract with the
-   LLM. If we tell the model `(comp str inc inc)` returns the string
-   `9` and the sandbox actually returns something else, the model
-   wastes iterations chasing the lie. Every line in the prompt's
-   COMPOSE section MUST round-trip through this test. When you add
-   a new pattern to the prompt, add the matching case here in the
-   same commit.
-
-   Failure modes this catches:
-     * SCI version drift (a core fn's behavior changed).
-     * Sandbox build regression (a core fn got dropped from the
-       :namespaces map in `env/create-sci-context`).
-     * Patched fn regression (e.g. `str/split` losing the
-       string-delim auto-promotion patch).
-     * Aliases drift (`str/`, `json/`, `c+/` no longer resolving)."
+   This file is not a prompt dump. It is a runtime guard for sandbox
+   basics: defs, fns, threading, collection helpers, JSON/EDN, shape,
+   and other forms the model is allowed to use inside code fences."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.env :as env]
@@ -383,43 +369,37 @@
       (expect (= :fn (sandbox-eval "(shape #(* % %))")))))
 
 ;; -----------------------------------------------------------------------------
-;; Cross-check: every pattern shown in CORE_SYSTEM_PROMPT either appears
-;; verbatim above, or reduces to one that does. If you add a pattern to
-;; the prompt, add the case here. This guard test fails loud if the
-;; prompt drifts away from the test surface.
+;; Cross-check: every required prompt token either appears verbatim above,
+;; or reduces to one that does. If you add a runtime pattern to the prompt,
+;; add the sandbox case here too.
 ;; -----------------------------------------------------------------------------
 
 (def ^:private prompt-required-tokens
-  "Tokens that must appear in CORE_SYSTEM_PROMPT for the prompt to be
-   a meaningful contract. Updated for the PLAN.md §6.1 caveman
-   rewrite (≈60 lines, OODA-centered, 3 strategies). Sister coverage
-   in `prompt_test.clj/core-system-prompt-test`."
+  "Tokens that must appear in the built system prompt for the prompt to be
+   a meaningful contract."
   ["You are Vis"
-   "OUTPUT:"
-   "```clojure fences"
-   "LOOP:"
-   "CURRENT OBJECTIVE"
-   "previous_turn_context"
-   "answer ..."
-   ":ooda"
-   ":architect"
-   "BINDINGS:"
-   "`*1`"
-   "`*e`"
-   "SYSTEM VARS:"
-   "OPS:"
-   ":op.tag/observation"
-   ":op.tag/action"
+   "```clojure``` code fences"
+   "OODA:"
+   "TURN:"
+   "ITERATIONS:"
+   "JOURNAL:"
+   "ANSWER:"
+   "SURFACES:"
+   "TURN_ITERATION_ID"
+   "TURN_ITERATION_POSITION"
+   "CONVERSATION_STATE_ID"
+   "iN.K.M"
+   ":op/result"
+   ":op/error"
    ":hint"
-   "CODE"
+   "CODE:"
    "code > markdown"
-   "TRUTH:"
    "runtime > source > docs > assumption"])
 
 (defdescribe prompt-contract-test
-  (it "every pattern this test asserts is also surfaced in CORE_SYSTEM_PROMPT"
+  (it "every pattern this test asserts is also surfaced in the built system prompt"
     (require 'com.blockether.vis.internal.prompt)
-    (let [prompt (deref (resolve 'com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT))]
+    (let [prompt ((requiring-resolve 'com.blockether.vis.internal.prompt/build-system-prompt) {})]
       (doseq [tok prompt-required-tokens]
         (expect (str/includes? prompt tok)
           (str "prompt missing token: " tok))))))

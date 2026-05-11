@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.prompt-test
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.skills :as skills]
    [lazytest.core :refer [defdescribe expect it]]))
@@ -72,161 +73,54 @@
     (expect (= 1 (#'prompt/effective-context-limit "any-model" -42)))))
 
 (defdescribe core-system-prompt-test
-  ;; Per PLAN.md §6.1: the prompt was rewritten to a ~60-line caveman
-  ;; form centered on the OODA loop. These tests pin the new shape
-  ;; against accidental regressions back to prose-heavy explanations.
-
-  (it "states the OUTPUT contract before LOOP"
-    ;; Regression: conversation 185fbc4f had GLM-5.1 fabricate a
-    ;; <journal> envelope and close it with a stray ``` that swallowed
-    ;; the next real ```clojure opener. The output rule must come
-    ;; first.
-    (let [p prompt/CORE_SYSTEM_PROMPT
-          fmt-idx (str/index-of p "OUTPUT:")
-          loop-idx (str/index-of p "LOOP:")]
-      (expect (some? fmt-idx))
-      (expect (some? loop-idx))
-      (expect (< (long fmt-idx) (long loop-idx)))
-      (expect (str/includes? p "```clojure fences. Nothing outside"))
-      (expect (str/includes? p ";; comments"))))
-
-  (it "LOOP section names investigation triggers + hallucination guard"
-    ;; Replaces the classify-first OODA strategy block (now retired).
-    ;; The prompt no longer requires `(intent :X)` ceremony; it teaches
-    ;; the two reply shapes (trivial chat vs work) and names the
-    ;; investigation verbs that REQUIRE tool calls.
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "trivial chat"))
-      (expect (str/includes? p "Investigation triggers"))
-      (expect (str/includes? p "HALLUCINATION GUARD"))
-      (expect (str/includes? p "CURRENT OBJECTIVE"))
-      (expect (str/includes? p "old <journal>"))
-      (expect (str/includes? p "previous_turn_context"))
-      (expect (str/includes? p "investigate"))
-      (expect (str/includes? p "tool/symbol names like `z/patch-check`"))
-      (expect (str/includes? p "planning-only / opinion-only / design-only"))
-      (expect (str/includes? p "reproduce first"))
-      ;; Old grill name must be gone (PLAN §4.5 architect rename).
-      (expect (not (str/includes? p ":grill")))))
-
-  (it "BINDINGS and SYSTEM VARS are sibling sections (not conflated)"
-    (let [p prompt/CORE_SYSTEM_PROMPT
-          bind-idx (str/index-of p "BINDINGS:")
-          sys-idx  (str/index-of p "SYSTEM VARS:")]
-      (expect (some? bind-idx))
-      (expect (some? sys-idx))
-      (expect (< (long bind-idx) (long sys-idx)))
-      ;; BINDINGS still mentions escape hatches (PLAN §6.4 BINDINGS spec).
-      (expect (str/includes? p "`*1`"))
-      (expect (str/includes? p "`*e`"))
-      (expect (str/includes? p "durable"))
-      ;; Regression: convo ac0da8ae used [:result :lines] and `(get-in vector)`.
-      (expect (str/includes? p "[:op/result ...]"))
-      (expect (str/includes? p "do not `(get-in vector)`"))))
-
-  (it "SYSTEM VARS section names hierarchy prefix + 11-var registry"
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "CONVERSATION_*"))
-      (expect (str/includes? p "TURN_*"))
-      (expect (str/includes? p "TURN_ITERATION_*"))
-      (expect (str/includes? p "hierarchy"))
-      (expect (str/includes? p "11 names"))
-      (doseq [var-name ["TURN_ID"
-                        "TURN_POSITION"
-                        "TURN_CONVERSATION_STATE_ID"
-                        "TURN_SYSTEM_PROMPT"
-                        "TURN_ACTIVE_EXTENSIONS"
-                        "TURN_ACCESSIBLE_SKILLS"
-                        "TURN_ITERATION_ID"
-                        "TURN_ITERATION_POSITION"
-                        "CONVERSATION_STATE_ID"
-                        "CONVERSATION_TITLE"
-                        "CONVERSATION_PREVIOUS_ANSWER"]]
-        (expect (str/includes? p var-name)))
-      (expect (str/includes? p "read by name"))
-      (expect (str/includes? p "never expect them inside <journal>/<bindings>"))
-      ;; Retired raw SOUL_ID variants must NOT appear AS VAR NAMES.
-      ;; (Mentioning \"raw SOUL_IDs retired\" in the explanatory line
-      ;; is fine — the model needs to know they're gone.)
-      (expect (not (str/includes? p "CONVERSATION_SOUL_ID ")))
-      (expect (not (str/includes? p "TURN_CONVERSATION_SOUL_ID ")))))
-
-  (it "OPS section names the 2-value tag enum + structured error fields"
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p ":op.tag/observation"))
-      (expect (str/includes? p ":op.tag/action"))
-      (expect (str/includes? p "::op/tag"))
-      (expect (str/includes? p "::op/success?"))
-      (expect (str/includes? p "::op/error"))
-      ;; Error structure named per PLAN §2.1 + §6.3.
-      (expect (str/includes? p ":message"))
-      (expect (str/includes? p ":hint"))
-      (expect (str/includes? p ":trace"))
-      (expect (str/includes? p ":block"))
-      ;; PLAN §6.3: agent reads :hint first.
-      (expect (str/includes? p "Read :hint first"))))
-
-  (it "names answer-alone recovery and tool-envelope traps"
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "rerun rejected sibling forms"))
-      (expect (str/includes? p "Tool envelopes store payload"))
-      (expect (str/includes? p "`:op/result`"))
-      (expect (str/includes? p "never use `[:result ...]`"))))
-
-  (it "CODE section embeds the editing/aesthetics rules (abstract; tool-specifics live in extensions)"
-    ;; Concrete tool choices (z/patch vs v/patch, HoneySQL vs raw
-    ;; SQL) belong in the active extension `:ext/prompt` fragments,
-    ;; not the core prompt.
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "code > markdown"))
-      (expect (str/includes? p "data > control_flow"))
-      (expect (str/includes? p "pure > stateful"))
-      (expect (str/includes? p "structural_editing > line_editing > raw_text"))
-      (expect (str/includes? p "one change -> verify -> next"))
-      ;; No tool-specific names in the core prompt.
-      (expect (not (str/includes? p "z/patch > v/patch")))
-      (expect (not (str/includes? p "HoneySQL > raw SQL")))))
-
-  (it "closes with TRUTH precedence (runtime > source > docs > assumption)"
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "TRUTH:"))
-      (expect (str/includes? p "runtime > source > docs > assumption"))))
-
-  (it "removed the prose-heavy GROUND RULE / DEFS RENDER sections (PLAN §6.2)"
-    ;; If any of these survive, the prompt has regressed back to the
-    ;; ~120-line prose form.
-    (let [p prompt/CORE_SYSTEM_PROMPT]
+  (it "stays ultra-minimal and code-only"
+    (let [p (prompt/build-system-prompt {})]
+      (expect (str/includes? p "Reply only with ```clojure``` code fences"))
+      (expect (str/includes? p "Answer IR"))
+      (expect (str/includes? p "OODA:"))
+      (expect (str/includes? p "TURN:"))
+      (expect (str/includes? p "ITERATIONS:"))
+      (expect (str/includes? p "JOURNAL:"))
+      (expect (str/includes? p "ANSWER:"))
+      (expect (str/includes? p "SURFACES:"))
+      (expect (str/includes? p "CODE:"))
       (expect (not (str/includes? p "GROUND RULE")))
       (expect (not (str/includes? p "DEFS RENDER")))
-      (expect (not (str/includes? p "SILENT FORMS")))
-      (expect (not (str/includes? p "TOP-LEVEL DEFS")))
-      (expect (not (str/includes? p "BATCHING")))
-      (expect (not (str/includes? p "DIAGNOSTIC OUTPUT")))
-      (expect (not (str/includes? p "GENERATE one OR MORE")))
-      (expect (not (str/includes? p "AUTOMATICALLY populates"))))))
+      (expect (not (str/includes? p "BATCHING")))))
 
-(defdescribe current-objective-test
-  (it "derives objective from current user request by default"
-    (expect
-      (= {:source :user-request
-          :confidence :high
-          :user-request "Explain the design"
-          :text "Explain the design"}
-        (prompt/derive-current-objective
-          {:initial-user-content "Explain the design"}))))
+  (it "renders only the interesting SYSTEM vars"
+    (let [p (prompt/build-system-prompt {})
+          visible ["CONVERSATION_TITLE"
+                   "TURN_POSITION"
+                   "TURN_ID"
+                   "TURN_ITERATION_ID"
+                   "TURN_ITERATION_POSITION"
+                   "CONVERSATION_STATE_ID"]
+          hidden ["TURN_ACTIVE_EXTENSIONS"
+                  "TURN_ACCESSIBLE_SKILLS"
+                  "TURN_CONVERSATION_STATE_ID"
+                  "TURN_SYSTEM_PROMPT"
+                  "CONVERSATION_PREVIOUS_ANSWER"]]
+      (expect (str/includes? p "SYSTEM vars are live uppercase SCI bindings"))
+      (doseq [var-name visible]
+        (expect (str/includes? p var-name)))
+      (doseq [var-name hidden]
+        (expect (not (str/includes? p var-name))))))
 
-  (it "binds short followups to previous user request"
-    (expect
-      (= {:source :previous-user-request
-          :confidence :high
-          :user-request "do it"
-          :text "Patch TUI header spacing"}
-        (prompt/derive-current-objective
-          {:initial-user-content "do it"
-           :previous-turn-context {:user-request "Patch TUI header spacing"
-                                   :answer "I can do that."}}))))
+  (it "explains turns, iterations, journal, and answer timing"
+    (let [p (prompt/build-system-prompt {})]
+      (expect (str/includes? p "One user request = one turn"))
+      (expect (str/includes? p "One model reply + engine eval = one iteration"))
+      (expect (str/includes? p "TURN_ITERATION_ID is the last persisted iteration UUID"))
+      (expect (str/includes? p "<journal> row labels iN are 1-based"))
+      (expect (str/includes? p "iN.K.M = tool event inside iN.K"))
+      (expect (str/includes? p "read :hint first"))
+      (expect (str/includes? p "After mutation, verify in a later iteration"))
+      (expect (str/includes? p "Final answer iteration is only"))
+      (expect (str/includes? p "runtime > source > docs > assumption")))))
 
-  (it "renders <current_objective> in initial user message"
+(defdescribe initial-messages-test
+  (it "renders previous-turn context without current-objective pinning"
     (let [messages (prompt/assemble-initial-messages
                      {:system-prompt "SYS"
                       :initial-user-content "do it"
@@ -234,10 +128,53 @@
                                               :answer "I can do that."}})
           user-msg (some #(when (= "user" (:role %)) %) messages)
           content (:content user-msg)]
-      (expect (str/includes? content "<current_objective>"))
-      (expect (str/includes? content "source: previous-user-request"))
-      (expect (str/includes? content "objective: Patch TUI header spacing"))
-      (expect (str/includes? content "<user_turn_request_main_goal>")))))
+      (expect (str/includes? content "<previous_turn_context>"))
+      (expect (str/includes? content "Patch TUI header spacing"))
+      (expect (str/includes? content "<user_turn_request_main_goal>"))
+      (expect (not (str/includes? content "<current_objective>"))))))
+
+(defdescribe system-vars-values-rendering-test
+  (it "embeds only interesting live SYSTEM-var values in the per-iteration trailer"
+    (let [{:keys [sci-ctx initial-ns-keys]} (env/create-sci-context nil)
+          environment {:sci-ctx sci-ctx
+                       :initial-ns-keys initial-ns-keys
+                       :conversation-title-atom (atom "Template vars")}
+          _ (doseq [[sym value] {'TURN_ID "turn-123"
+                                 'TURN_POSITION 7
+                                 'TURN_ITERATION_ID "iter-123"
+                                 'TURN_ITERATION_POSITION 3
+                                 'CONVERSATION_STATE_ID "state-123"
+                                 'CONVERSATION_TITLE "Template vars"
+                                 'TURN_ACTIVE_EXTENSIONS "hidden"
+                                 'TURN_ACCESSIBLE_SKILLS "hidden"
+                                 'TURN_SYSTEM_PROMPT "hidden"
+                                 'CONVERSATION_PREVIOUS_ANSWER "hidden"
+                                 'TURN_CONVERSATION_STATE_ID "hidden"}]
+              (env/bind-and-bump! environment sym value))
+          out (prompt/build-iteration-context
+                environment
+                {:active-extensions []
+                 :model "test-model"
+                 :context-limit 4096
+                 :iteration 2
+                 :current-user-content "check vars"})]
+      (expect (str/includes? out "<system_vars>"))
+      (doseq [var-name ["CONVERSATION_TITLE"
+                        "TURN_POSITION"
+                        "TURN_ID"
+                        "TURN_ITERATION_ID"
+                        "TURN_ITERATION_POSITION"
+                        "CONVERSATION_STATE_ID"]]
+        (expect (str/includes? out (str "<system_var name=\"" var-name "\">"))))
+      (doseq [var-name ["TURN_ACTIVE_EXTENSIONS"
+                        "TURN_ACCESSIBLE_SKILLS"
+                        "TURN_CONVERSATION_STATE_ID"
+                        "TURN_SYSTEM_PROMPT"
+                        "CONVERSATION_PREVIOUS_ANSWER"]]
+        (expect (not (str/includes? out var-name))))
+      (expect (str/includes? out "&quot;turn-123&quot;"))
+      (expect (str/includes? out "<system_var name=\"TURN_ITERATION_POSITION\">3</system_var>"))
+      (expect (str/includes? out "&quot;Template vars&quot;")))))
 
 (defdescribe hook-nudge-rendering-test
   (it "renders a system nudge from the canonical namespaced iteration-start phase"
@@ -362,16 +299,16 @@
                   {:active-extensions []
                    :system-prompt nil})]
         (expect (str/includes? out "<system_prompt>"))
-        (expect (not (str/includes? out "<skills>"))))))
+        (expect (not (str/includes? out "<skills>\n"))))))
 
   (it "no extensions = no <extensions>/<environment-info> blocks"
     (with-redefs [skills/list-all (fn [] [])]
       (let [out (prompt/assemble-system-prompt {}
                   {:active-extensions []
                    :system-prompt nil})]
-        (expect (not (str/includes? out "<extensions>")))
-        (expect (not (str/includes? out "<environment-info>")))
-        (expect (not (str/includes? out "<llm_model_prompt")))
+        (expect (not (str/includes? out "<extensions>\n")))
+        (expect (not (str/includes? out "<environment-info>\n")))
+        (expect (not (str/includes? out "<llm_model_prompt>\n")))
         (expect (not (str/includes? out "<specific_provider_model_prompt"))))))
 
   (it "includes <extensions> when an active extension provides :ext/prompt"
