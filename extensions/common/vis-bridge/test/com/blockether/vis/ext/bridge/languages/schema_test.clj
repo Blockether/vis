@@ -34,4 +34,10 @@
                      :kind :not-bridge
                      :scope :global
                      :metadata {}
-                     :content {}}])))))
+                     :content {}}]))))
+
+  (it "publishes the Bridge requirements DSL"
+    (expect (= 1 (:version schema/requirements)))
+    (expect (contains? (get-in schema/requirements [:facts :node :kinds]) :symbol))
+    (expect (= :path (get-in schema/requirements [:incremental :unit])))
+    (expect (contains? (get-in schema/requirements [:rows :metadata-query-keys]) :hash-sha256))))

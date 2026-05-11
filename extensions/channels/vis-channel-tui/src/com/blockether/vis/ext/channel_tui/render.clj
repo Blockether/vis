@@ -760,11 +760,13 @@
    The whole overlay is inset by `INPUT_BORDER_HORIZONTAL_PAD` cols on
    each side so the accent stripe and rule line up exactly with the
    input box's top/bottom rules below."
-  [^TextGraphics g suggestions input-top cols]
-  (when (seq suggestions)
-    (let [pad          INPUT_BORDER_HORIZONTAL_PAD
-          left         pad
-          inner-w      (max 1 (- cols (* 2 pad)))
+  ([g suggestions input-top cols]
+   (draw-slash-command-suggestions! g suggestions input-top cols 0))
+  ([g suggestions input-top cols selected-index]
+   (when (seq suggestions)
+     (let [pad          INPUT_BORDER_HORIZONTAL_PAD
+           left         pad
+           inner-w      (max 1 (- cols (* 2 pad)))
           ;; Layout above the input box (rows decrease as we go up):
           ;;   margin-row    -> terminal-bg gap (optional, drops first)
           ;;   title-row     -> accent stripe (non-negotiable)
@@ -775,43 +777,55 @@
           ;; top margin. Border and margin drop when input-top is tight
           ;; (small terminal, lots of suggestions); only the title row
           ;; is reserved up-front.
-          max-list     (max 0 (dec input-top))   ; reserve title only
-          visible      (take (max 0 (min 6 max-list)) suggestions)
-          n            (count visible)
-          have-border? (>= input-top (+ n 2))
-          have-margin? (>= input-top (+ n 3))
+           max-list     (max 0 (dec input-top))   ; reserve title only
+           visible-cap  (max 0 (min 6 max-list))
+           total        (count suggestions)
+           selected-pos (or (some (fn [[idx suggestion]]
+                                    (when (:slash/selected? suggestion) idx))
+                              (map-indexed vector suggestions))
+                          selected-index
+                          0)
+           sel          (max 0 (min (dec total) (long selected-pos)))
+           first-idx    (if (pos? visible-cap)
+                          (min (max 0 (- total visible-cap))
+                            (max 0 (- sel (quot visible-cap 2))))
+                          0)
+           visible      (->> suggestions (drop first-idx) (take visible-cap))
+           n            (count visible)
+           have-border? (>= input-top (+ n 2))
+           have-margin? (>= input-top (+ n 3))
           ;; Suggestions occupy rows: input-top - n .. input-top - 1.
           ;; Border (if present) sits one row above the first suggestion,
           ;; title sits one row above the border (or above the first
           ;; suggestion if border dropped).
-          first-sug    (- input-top n)
-          border-row   (when have-border? (dec first-sug))
-          title-row    (cond
-                         have-border? (dec border-row)
-                         (pos? first-sug) (dec first-sug)
-                         :else 0)
-          margin-row   (when have-margin? (dec title-row))]
-      (when (pos? n)
+           first-sug    (- input-top n)
+           border-row   (when have-border? (dec first-sug))
+           title-row    (cond
+                          have-border? (dec border-row)
+                          (pos? first-sug) (dec first-sug)
+                          :else 0)
+           margin-row   (when have-margin? (dec title-row))]
+       (when (pos? n)
         ;; Top margin — paint the gap row in terminal-bg so any chat
         ;; content peeking through gets cleared. This is the breathing
         ;; room above the title bar.
-        (when (and margin-row (>= margin-row 0))
-          (p/set-colors! g t/text-fg t/terminal-bg)
-          (p/fill-rect! g 0 margin-row cols 1))
+         (when (and margin-row (>= margin-row 0))
+           (p/set-colors! g t/text-fg t/terminal-bg)
+           (p/fill-rect! g 0 margin-row cols 1))
 
         ;; Title bar (accent + flex hints).
-        (draw-slash-title-bar! g title-row left inner-w)
+         (draw-slash-title-bar! g title-row left inner-w)
 
         ;; Border under the title — single horizontal rule that
         ;; visually delimits the title from the suggestion list, on
         ;; `terminal-bg` (outside the accent) using the same width as
         ;; the input box's top/bottom rules.
-        (when (and border-row (>= border-row 0))
-          (p/set-colors! g t/dialog-border t/terminal-bg)
+         (when (and border-row (>= border-row 0))
+           (p/set-colors! g t/dialog-border t/terminal-bg)
           ;; Clear margin columns to terminal-bg first so the rule
           ;; sits flush within the same column span as the title.
-          (p/fill-rect! g 0 border-row cols 1)
-          (p/put-str! g left border-row (p/horiz-line inner-w)))
+           (p/fill-rect! g 0 border-row cols 1)
+           (p/put-str! g left border-row (p/horiz-line inner-w)))
 
         ;; Suggestion rows — inset by the same margin so the row body
         ;; lines up with the title accent and the input box rule.
@@ -820,22 +834,36 @@
         ;; see `p/SELECTION_GLYPH`). The marker sits INSIDE the inset
         ;; body, not in the terminal-bg margin outside of it, so it
         ;; reads as part of the menu rather than floating loose.
-        (doseq [[i suggestion] (map-indexed vector visible)]
-          (let [row (+ first-sug i)]
+         (doseq [[i suggestion] (map-indexed vector visible)]
+           (let [row (+ first-sug i)]
             ;; Clear the full row to terminal-bg so the margin gutters
             ;; on each side don't bleed leftover paint.
-            (p/set-colors! g t/text-fg t/terminal-bg)
-            (p/fill-rect! g 0 row cols 1)
+             (p/set-colors! g t/text-fg t/terminal-bg)
+             (p/fill-rect! g 0 row cols 1)
             ;; Body row in the normal dialog palette (no inversion).
-            (p/set-colors! g t/dialog-fg t/dialog-bg)
-            (p/fill-rect! g left row inner-w 1)
+             (p/set-colors! g t/dialog-fg t/dialog-bg)
+             (p/fill-rect! g left row inner-w 1)
             ;; Cursor glyph at the FIRST col of the inset body, in
             ;; the dialog palette so it visually belongs to the row.
-            (p/set-colors! g t/dialog-hint-key t/dialog-bg)
-            (p/draw-selection-marker! g left row (:slash/selected? suggestion))
+             (p/set-colors! g t/dialog-hint-key t/dialog-bg)
+             (p/draw-selection-marker! g left row (:slash/selected? suggestion))
             ;; Inline-code chip + ` - ` + italic description.
-            (p/set-colors! g t/dialog-fg t/dialog-bg)
-            (draw-slash-suggestion-row! g row left inner-w suggestion)))))))
+             (p/set-colors! g t/dialog-fg t/dialog-bg)
+             (draw-slash-suggestion-row! g row left inner-w suggestion)))
+
+        ;; Right-side scrollbar when more matches exist than visible rows.
+         (when (and (> total n) (pos? n) (> inner-w 2))
+           (let [bar-col   (+ left (dec inner-w))
+                 thumb-h   (max 1 (int (* n (/ (double n) total))))
+                 denom     (max 1 (- total n))
+                 track-den (max 1 (- n thumb-h))
+                 thumb-top (int (* track-den (/ (double first-idx) denom)))]
+             (p/set-colors! g t/dialog-border t/dialog-bg)
+             (doseq [r (range n)]
+               (p/set-char! g bar-col (+ first-sug r) \│))
+             (p/set-colors! g t/dialog-title-bg t/dialog-bg)
+             (doseq [r (range thumb-h)]
+               (p/set-char! g bar-col (+ first-sug thumb-top r) \█)))))))))
 
 ;;; ── Background fill ────────────────────────────────────────────────────────
 
@@ -2147,10 +2175,16 @@
                       (p/put-str! g x y (subs line 1)))
 
               ;; ── Answer text - answer bg ──
+              ;; Plain final-answer paragraphs can still contain inline
+              ;; sentinels from IR spans, e.g. `[:c "/skill"]` becomes
+              ;; INLINE_CODE_ON/OFF around the body text. Consume those
+              ;; here instead of writing raw PUA glyphs to the terminal.
                     (str/starts-with? line answer-txt-marker)
                     (do (p/set-colors! g t/answer-fg t/answer-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (p/put-str! g x y (subs line 1)))
+                      (p/paint-styled-line! g x y (subs line 1)
+                        t/answer-fg t/answer-bg
+                        t/code-block-fg t/code-block-bg))
 
               ;; ── Answer padding ──
                     (str/starts-with? line answer-pad-marker)
@@ -3627,7 +3661,8 @@
 
    Inputs:
    - `total-h`   total rendered height of all message bubbles.
-   - `inner-h`   visible viewport height (== `track-h`).
+   - `inner-h`   visible viewport height.
+   - `track-h`   optional scrollbar track height; defaults to `inner-h`.
    - `scroll`    current row offset; `nil` means auto-bottom.
 
    Returns `{:thumb-top-rel long :thumb-h long :max-scroll long}`,
@@ -3638,18 +3673,19 @@
    the window is tall, which reads as multiple scroll positions instead
    of one current-position marker. Returns `nil` when there's no overflow
    - no thumb is drawn, no click should hit-test as on-thumb."
-  [^long total-h ^long inner-h scroll]
-  (when (and (pos? inner-h) (> total-h inner-h))
-    (let [track-h    inner-h
-          max-scroll (max 1 (- total-h inner-h))
-          eff-scroll (let [s (long (or scroll max-scroll))]
-                       (max 0 (min s max-scroll)))
-          thumb-h    1
-          thumb-top  (long (* (- track-h thumb-h)
-                             (/ (double eff-scroll) max-scroll)))]
-      {:thumb-top-rel thumb-top
-       :thumb-h       thumb-h
-       :max-scroll    max-scroll})))
+  ([^long total-h ^long inner-h scroll]
+   (scrollbar-thumb-geometry total-h inner-h inner-h scroll))
+  ([^long total-h ^long inner-h ^long track-h scroll]
+   (when (and (pos? inner-h) (pos? track-h) (> total-h inner-h))
+     (let [max-scroll (max 1 (- total-h inner-h))
+           eff-scroll (let [s (long (or scroll max-scroll))]
+                        (max 0 (min s max-scroll)))
+           thumb-h    1
+           thumb-top  (long (* (- track-h thumb-h)
+                              (/ (double eff-scroll) max-scroll)))]
+       {:thumb-top-rel thumb-top
+        :thumb-h       thumb-h
+        :max-scroll    max-scroll}))))
 ;; ^ Convenience: the total horizontal gutter consumed on each row.
 ;; `bubble-w = cols - MESSAGE_SIDE_PAD`. Both this file's painter and
 ;; `screen.clj`'s height calculator MUST use this exact derivation.
@@ -3699,16 +3735,20 @@
           MESSAGE_MARGIN_LEFT bubble-w
           {:viewport-top text-top :viewport-h inner-h}))
 
-      (when-let [{:keys [thumb-top-rel thumb-h]}
-                 (scrollbar-thumb-geometry total-h inner-h eff-scroll)]
+      (let [bar-top box-top
+            track-h (max 0 (- box-bottom box-top))]
+        (when-let [{:keys [thumb-top-rel thumb-h]}
+                   (scrollbar-thumb-geometry total-h inner-h track-h eff-scroll)]
         ;; Place the scrollbar inside the right gutter so it never
-        ;; overlaps message content.
-        (let [bar-col (- cols 2)
-              bar-top text-top
-              track-h inner-h]
-          (doseq [r (range track-h)]
-            (p/set-colors! g t/border-fg t/terminal-bg)
-            (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
-          (doseq [r (range thumb-h)]
-            (p/set-colors! g t/dialog-hint-key t/terminal-bg)
-            (p/set-char! g bar-col (+ bar-top thumb-top-rel r) \u2588)))))))
+        ;; overlaps message content. The track spans the whole message
+        ;; panel, including top/bottom breathing-room rows; otherwise a
+        ;; one-row blank gap appears above the scrollbar.
+          (let [bar-col (- cols 2)
+                bar-top bar-top
+                track-h track-h]
+            (doseq [r (range track-h)]
+              (p/set-colors! g t/border-fg t/terminal-bg)
+              (p/set-char! g bar-col (+ bar-top r) Symbols/SINGLE_LINE_VERTICAL))
+            (doseq [r (range thumb-h)]
+              (p/set-colors! g t/dialog-hint-key t/terminal-bg)
+              (p/set-char! g bar-col (+ bar-top thumb-top-rel r) \u2588))))))))

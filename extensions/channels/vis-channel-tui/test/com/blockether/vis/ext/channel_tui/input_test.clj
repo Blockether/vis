@@ -16,7 +16,6 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.ext.channel-tui.input :as input]
-   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe expect it]])
   (:import [com.googlecode.lanterna.input KeyStroke KeyType]))
 

@@ -303,6 +303,12 @@
          ;; with `:lines-window {:start :total-h}` so the painter
          ;; can translate logical bubble rows to lines-vec indices.
          windowed? (and window-start window-num
+                     ;; Trace assistants are not plain answer IR: their
+                     ;; visible body is synthesized from reasoning + tool
+                     ;; iterations + final answer. Windowing only `:ir`
+                     ;; skips the trace and can yield an empty mid-scroll
+                     ;; viewport. Keep traces on the full projection path.
+                     (not (:traces message))
                      (#{:assistant :user} (:role message))
                      (vector? (:ir message))
                      (= :ir (first (:ir message))))]
@@ -533,11 +539,19 @@
                                               :window-num    window-num
                                               :window-total-h window-total-h)))))
                   pm (with-turn-separator pm messages settings i)
-                  real-h (long (render/bubble-height pm bubble-w))]
-              ;; Pin the real height in the sticky cache for the
-              ;; raw message identity (NOT the loading bubble - its
-              ;; height changes every spinner tick by definition).
-              (when-not loading-bubble?
+                  window-total-h (some-> pm :lines-window :total-h long)
+                  ;; Windowed projections only contain the visible slice
+                  ;; of the bubble. `render/bubble-height` would measure
+                  ;; that slice, then poison the sticky height cache with
+                  ;; a tiny partial height; the next scroll frame would
+                  ;; shrink total-h and clamp the viewport toward bottom.
+                  ;; Keep the full planned height instead.
+                  real-h (long (or window-total-h
+                                 (render/bubble-height pm bubble-w)))]
+              ;; Pin the real height in the sticky cache for the raw
+              ;; message identity. Skip live progress and windowed
+              ;; slices: neither is a full stable bubble measurement.
+              (when (and (not loading-bubble?) (nil? window-total-h))
                 (height-cache-put! m bubble-w settings detail-expansions real-h))
               {:idx i :projected pm :height real-h}))
           visible-idxs)

@@ -544,6 +544,50 @@
         (expect (not (str/includes? painted p/INLINE_CODE_ON)))
         (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
+(defdescribe answer-text-inline-sentinel-paint-test
+  ;; Final-answer IR uses MARKER_ANSWER_TXT for normal paragraphs.
+  ;; Inline code inside that IR arrives at the bubble painter as
+  ;; INLINE_CODE_ON/OFF sentinels. The answer-text branch must consume
+  ;; them just like headings/bullets/quotes; otherwise the user sees
+  ;; raw PUA glyphs like  and  around `/skill`.
+  (it "consumes inline code sentinels in plain final-answer text"
+    (let [captured (atom [])
+          active   (atom #{})
+          fg       (atom nil)
+          bg       (atom nil)
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [c] (reset! fg c) this)
+                     (setBackgroundColor [c] (reset! bg c) this)
+                     (fillRectangle [_pos _size _ch] this)
+                     (setCharacter [_col _row _ch] this)
+                     (putString
+                       ([_col _row text]
+                        (swap! captured conj text)
+                        this)))
+          line     (str p/MARKER_ANSWER_TXT
+                     "Use " p/INLINE_CODE_ON "/skill" p/INLINE_CODE_OFF
+                     " (or pick from slash suggestions).")]
+      (render/draw-chat-bubble! graphics
+        {:role :assistant :timestamp nil :prewrapped-lines [line]}
+        0 0 80)
+      (let [painted (apply str @captured)]
+        (expect (str/includes? painted "/skill"))
+        (expect (not (str/includes? painted p/INLINE_CODE_ON)))
+        (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
+
 (defdescribe scrollbar-thumb-geometry-test
   ;; Pinning the painter/hit-test contract. Both the message-area
   ;; painter and the input-thread mouse handler must agree on which

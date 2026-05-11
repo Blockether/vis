@@ -1,7 +1,9 @@
 (ns com.blockether.vis.ext.bridge.languages.clojure-test
   (:require
+   [clojure.java.io :as io]
    [com.blockether.vis.ext.bridge.languages.clojure :as clj]
    [com.blockether.vis.ext.bridge.languages.schema :as schema]
+   [com.blockether.vis.internal.workspace-context :as workspace-context]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def sample-dump
@@ -32,4 +34,29 @@
       (expect (some #(and (= :imports (:edge-kind %))
                        (= "clojure.string" (:target %)))
                 (:edges result)))
-      (expect (= :clojure-lsp/external-cli (get-in result [:stats :backend]))))))
+      (expect (= :clojure-lsp/external-cli (get-in result [:stats :backend])))))
+
+  (it "defaults Clojure project analysis to the active workspace root"
+    (let [root (.getCanonicalFile (io/file (str (java.nio.file.Files/createTempDirectory "bridge-clj-workspace-" (make-array java.nio.file.attribute.FileAttribute 0)))))
+          src-dir (io/file root "src/demo")
+          file (io/file src-dir "core.clj")]
+      (try
+        (.mkdirs src-dir)
+        (spit file "(ns demo.core)\n")
+        (let [uri (str (.toURI file))
+              dump {:source-paths ["src"]
+                    :analysis {uri {:namespace-definitions
+                                    [{:name 'demo.core :uri uri :row 1 :end-row 1 :bucket :namespace-definitions}]
+                                    :namespace-usages []
+                                    :var-definitions []
+                                    :var-usages []}}
+                    :dep-graph {'demo.core {:dependencies {}}}}]
+          (binding [workspace-context/*workspace-root* (.getCanonicalPath root)]
+            (let [result (clj/extract-project {:dump dump})]
+              (expect (= (.getCanonicalPath root) (get-in result [:stats :project-root])))
+              (expect (= "src/demo/core.clj" (:path (first (:nodes result))))))))
+        (finally
+          (io/delete-file file true)
+          (io/delete-file src-dir true)
+          (io/delete-file (io/file root "src") true)
+          (io/delete-file root true))))))
