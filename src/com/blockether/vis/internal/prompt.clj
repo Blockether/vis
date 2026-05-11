@@ -63,7 +63,7 @@
      renderer never emits a full multi-KB tool / file payload
      into context; it emits a bounded preview and the model can
      fetch the full value through foundation APIs (`v/conversation-state`,
-     `v/event`, `v/preview`, or the live SCI var binding)."
+     `v/event`, `v/cat`, or the live SCI var binding)."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.router :as svar-router]
@@ -752,11 +752,17 @@ OUTPUT:
 LOOP:
   λ engage(request).
     classify(request) -> strategy in #{:answer :ooda :architect}
-    ⊢ :answer    -> reply(short) | no_tools | no_loop
-    ⊢ :ooda      -> observe -> act -> ... | bug -> reproduce(first)
-    ⊢ :architect -> question(one_at_a_time) | explore_codebase > assume
-                    ⊢ recommend(default_answer) | until(shared) -> handoff
+    ⊢ :answer    -> trivial chat | no_tools | no_loop
+    ⊢ :ooda      -> DEFAULT for any 'investigate', 'fix', 'why',
+                    'check', 'find', 'add', 'refactor', 'debug'.
+                    observe(tools) -> act -> verify -> next.
+                    bug -> reproduce(first) | ¬ repro -> ¬ diagnosis.
+    ⊢ :architect -> ONLY when request is genuinely ambiguous AND
+                    no observation can resolve it. question(one) ->
+                    explore_codebase > assume_more. Default ans first.
   declare(strategy) at turn open.
+  bias: investigate > ask. Tool calls before questions.
+  AT MOST ONE clarifying question per turn; default answer suggested.
 
 ITERATION (⊢ :ooda only):
   emit forms -> engine evals -> <journal> populated -> <bindings> updated

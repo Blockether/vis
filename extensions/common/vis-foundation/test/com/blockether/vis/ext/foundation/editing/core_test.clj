@@ -93,26 +93,10 @@
     (expect (string? editing/editing-prompt))
     (expect (not (string/blank? editing/editing-prompt))))
 
-  (it "teaches positive preview strategies without priming bad binding forms"
-    (let [preview-symbol (some #(when (= 'preview (:ext.symbol/sym %)) %)
-                           editing/editing-symbols)]
-      (expect (string/includes? editing/editing-prompt
-                "Correct strategies:"))
-      (expect (string/includes? editing/editing-prompt
-                "use it as a standalone display form"))
-      (expect (string/includes? editing/editing-prompt
-                "(def file (v/cat \"src/foo.clj\"))"))
-      (expect (string/includes? editing/editing-prompt
-                "(v/preview file {:result [[:lines {:from 100 :to 180}]]})"))
-      (expect (string/includes? editing/editing-prompt
-                "(do (v/preview focus {:result [[:lines {:from 100 :to 180}]]}) :done)"))
-      (expect (string/includes? (:ext.symbol/doc preview-symbol)
-                "Strategy: bind full reads/searches you need later, then call preview separately; never echo a var just to inspect it"))
-      (expect (string/includes? (:ext.symbol/doc preview-symbol)
-                "With no EQL, previews the whole payload"))
-      (expect (not (string/includes? editing/editing-prompt "(def x (v/preview")))
-      (expect (not (string/includes? editing/editing-prompt "(def focus-early")))
-      (expect (not (string/includes? (:ext.symbol/doc preview-symbol) "(def x (v/preview")))))
+  (it "editing prompt has no v/preview references (tool retired)"
+    (expect (not (string/includes? editing/editing-prompt "v/preview")))
+    (expect (nil? (some #(when (= 'preview (:ext.symbol/sym %)) %)
+                    editing/editing-symbols))))
 
   (it "pushes search/read/path discovery to the structured v tool surface"
     (expect (string/includes? editing/editing-prompt
@@ -207,7 +191,7 @@
       ;; the model can compute on raw content without parsing display text.
       (expect (= ["   indented" "plain"] (:lines out)))))
 
-  (it "cat reads everything; display ranges belong to v/preview"
+  (it "cat reads everything; no display-range subsetting"
     (let [long-line (apply str (repeat 7000 "x"))
           path (write-temp! "whole-cat.txt" (str long-line "\nlast\n"))
           read-file (private-fn "read-file")

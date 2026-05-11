@@ -459,8 +459,14 @@
           (assoc (empty-line) :block-tag :h :block-level level)))
 
       :code
+      ;; Trailing blank is tagged `:p`, NOT `:code`, so it renders
+      ;; on the bubble bg (the painter fills any `:code`-tagged row -
+      ;; even an empty one - with `code-block-bg`, which would extend
+      ;; the code chip one row past content and erase the visual gap
+      ;; before the next block). The leading-blank guard for first-
+      ;; block-is-code lives in `ir->lines` post-processing.
       (conj (vec (tag-lines (code-block->lines node width opts) :code))
-        (assoc (empty-line) :block-tag :code))
+        (assoc (empty-line) :block-tag :p))
 
       :ul
       (conj (vec (tag-lines (list->lines :ul (node-children node) width opts) :ul))
@@ -521,6 +527,19 @@
          ;; drop leading + trailing blank lines
          lines  (vec (drop-while line-blank? lines))
          lines  (vec (reverse (drop-while line-blank? (reverse lines))))
+         ;; Code-block bookend guard: when a `:code` block sits at the
+         ;; very top or bottom of an answer, the surrounding blank-line
+         ;; trim above would have removed every neutral spacer next to
+         ;; it, leaving the code chip flush against the bubble edge.
+         ;; Re-insert a single `:p`-tagged blank so the chip gets one
+         ;; row of bubble-bg padding on each touching edge. Mirrors the
+         ;; `:code` trailer fix in `block->lines`.
+         lines  (cond->> lines
+                  (= :code (:block-tag (first lines)))
+                  (into [(assoc (empty-line) :block-tag :p)]))
+         lines  (cond-> lines
+                  (= :code (:block-tag (peek lines)))
+                  (conj (assoc (empty-line) :block-tag :p)))
          lines  (mapv trim-trailing-ws lines)]
      (if-let [n (:max-lines opts)]
        (vec (take n lines))

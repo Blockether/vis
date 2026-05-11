@@ -3623,7 +3623,14 @@
         result (iteration-loop env user-request (assoc loop-opts :conversation-turn-id conversation-turn-id))
         prior-outcome (->prior-outcome result)
         _ (persistance/db-update-conversation-turn! (:db-info env) conversation-turn-id
-            {:answer          (:answer result)
+            {;; Coerce through `answer-str` so the persisted answer is
+             ;; ALWAYS the plain-text rendering, never a stringified
+             ;; IR vector. Some terminal paths (e.g. error/cancel
+             ;; fallbacks) feed `:answer` in as the raw value passed
+             ;; to `(answer ...)`; without this coercion the TUI
+             ;; resume path showed literal `[:ir [:p "..."]]` to
+             ;; the user (convo b7ba1d93 regression).
+             :answer          (when-let [a (:answer result)] (answer-str a))
              :iteration-count (:iteration-count result)
              :duration-ms     (:duration-ms result)
              :status          (or (:status result) :success)
