@@ -2274,25 +2274,6 @@
 (def ^:private auto-collapse-line-threshold 12)
 (def ^:private auto-collapse-char-threshold 700)
 (def ^:private thinking-preview-edge-lines 10)
-(def ^:private live-thinking-preview-chars 800)
-
-(defn- live-preview-thinking-text
-  "During live streaming, render only a bounded *tail* of the reasoning
-   text so the bubble stays a fixed compact size as the stream grows.
-   Showing first+last (sandwich) caused the bubble to occupy ~30 lines
-   forever and made the inline marker drift mid-bubble; the head was
-   stale anyway. Tail-only keeps the latest chunk visible and bounds
-   bubble height."
-  [thinking]
-  (let [s (str/trim (str thinking))
-        n (count s)]
-    (if (<= n live-thinking-preview-chars)
-      s
-      (let [tail   (subs s (- n live-thinking-preview-chars) n)
-            hidden (- n live-thinking-preview-chars)]
-        (str "▸ REASONING / " hidden " chars hidden while live\n\n"
-          tail)))))
-
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
    `assoc` round-trips that would change `identityHashCode` but leave
@@ -2885,12 +2866,15 @@
                       [])
         thinking-lines
         (fn [thinking-text-or-texts]
+          ;; Per user direction: do NOT truncate reasoning while it's
+          ;; streaming live. The full reasoning text flows into the
+          ;; bubble as it arrives. Post-stream collapse (the ▾ REASONING
+          ;; summary toggle) still fires once the iteration completes
+          ;; via `maybe-preview-thinking-entries` below.
           (let [raw-texts (if (sequential? thinking-text-or-texts)
                             thinking-text-or-texts
                             [thinking-text-or-texts])
-                texts     (if live-preview?
-                            [(live-preview-thinking-text (str/join "" raw-texts))]
-                            raw-texts)
+                texts     raw-texts
                 entries (into []
                           (mapcat
                             (fn [thinking-text]
@@ -3311,7 +3295,12 @@
          content-w        (max 10 (- bubble-w 4))
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
-         show-iteration-headers?  (get settings :show-iteration-headers false)
+         ;; Iteration headers (the right-aligned ITERATION N band)
+         ;; always show — they are the visual separator between
+         ;; iterations. The deprecated `:show-iteration-headers`
+         ;; toggle was retired (see state.clj/default-settings
+         ;; doc); the gate it controlled is now hardcoded true.
+         show-iteration-headers?  true
          static-limit     (max 1 (long (get settings :progress/live-iteration-limit 24)))
          preview-default-lines (get settings :preview/default-lines 4)
          {:keys [now-ms turn-start-ms cancelling? conversation-id
@@ -3416,7 +3405,7 @@
                                      iter-num
                                      (iteration-fingerprint stripped)
                                      (long content-w)
-                                     (boolean show-iteration-headers?)
+                                     show-iteration-headers?
                                      (boolean show-thinking?)
                                      preview-default-lines
                                      conversation-id
@@ -3479,8 +3468,11 @@
         fill-w                  (max 1 (dec content-w))
         show-thinking?          (get settings :show-thinking true)
         show-iterations?        (get settings :show-iterations true)
-        show-iteration-headers? (get settings :show-iteration-headers false)
-        show-final-hdr?         (get settings :show-final-answer-header false)
+        ;; Same hardcode as in `progress->lines-data` above: the
+        ;; iteration header band is the visual separator and always
+        ;; renders. `:show-final-answer-header` similarly retired.
+        show-iteration-headers? true
+        show-final-hdr?         false
         line-entry              (fn [line] {:line line :meta nil})
         trace-entries           (when (and show-iterations? (seq trace))
                                   (into []
