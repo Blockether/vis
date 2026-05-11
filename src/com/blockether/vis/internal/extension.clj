@@ -736,9 +736,9 @@
 (s/def :ext/nudge-fn fn?)
 
 ;; ----------------------------------------------------------------------------
-;; Iteration guards: structured cousins of `:ext/nudge-fn`. A guard is a named
-;; check that runs once per iteration; its `:check-fn` receives the same
-;; `nudge-ctx` and returns either nil (guard passes silently) or a map
+;; Guards: structured cousins of `:ext/nudge-fn`. A guard is a named check
+;; that runs at a declared lifecycle scope; its `:check-fn` receives the
+;; same `nudge-ctx` and returns either nil (guard passes silently) or a map
 ;; `{:hint <string> :importance <kw>?}` describing what the model should do
 ;; next. The host wraps each non-nil result in a `<system_nudge>` block, so
 ;; guards are MODEL-FACING only — the user never sees them.
@@ -749,21 +749,29 @@
 ;;      guards via settings.
 ;;   2. One extension can ship many independent guards as a flat list
 ;;      instead of multiplexing inside one nudge-fn.
-;;   3. Guards make the contract explicit: every guard has an id +
-;;      one-line doc, so the failure surface is reviewable.
+;;   3. Guards make the contract explicit: every guard has an id, doc,
+;;      and scope, so the failure surface is reviewable.
+;;
+;; Scope determines WHEN the host invokes the check-fn:
+;;   :iteration  every iteration (most common; e.g. blind-answer detector)
+;;   :turn       only the first iteration of each turn (e.g. title nudges)
+;;   :session    only the first iteration of the first turn (one-time onboarding)
 ;;
 ;; Guards do NOT block evaluation. They append a system_nudge to the
 ;; iteration's prompt; the model decides whether to amend. For hard
 ;; preflight rejection, use the existing preflight gates in loop.clj.
 ;; ----------------------------------------------------------------------------
 (s/def :ext.guard/id keyword?)
-(s/def :ext.guard/check-fn fn?)
 (s/def :ext.guard/doc non-blank-string?)
-(s/def ::iteration-guard
-  (s/keys :req-un [:ext.guard/id :ext.guard/check-fn]
-    :opt-un [:ext.guard/doc]))
-(s/def :ext/iteration-guards
-  (s/coll-of ::iteration-guard :kind vector?))
+(s/def :ext.guard/scope #{:iteration :turn :session})
+(s/def :ext.guard/check-fn fn?)
+(s/def ::guard
+  (s/keys :req-un [:ext.guard/id
+                   :ext.guard/doc
+                   :ext.guard/scope
+                   :ext.guard/check-fn]))
+(s/def :ext/guards
+  (s/coll-of ::guard :kind vector?))
 
 ;; Optional source-code rewriter for SCI/edamame parse errors.
 (s/def :ext/on-parse-error-fn fn?)

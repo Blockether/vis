@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.bridge.doctor-test
   (:require
    [com.blockether.vis.ext.bridge.doctor :as doctor]
-   [com.blockether.vis.ext.bridge.extract-clojure-lsp :as lsp]
+   [com.blockether.vis.ext.bridge.languages.clojure-lsp :as lsp]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe bridge-doctor-test

@@ -680,10 +680,23 @@
                    ;; for investigation verbs / blind-answer prevention.
                    :user-request current-user-content}
         ;; Two sources of system_nudge entries:
-        ;;   1. `:ext/nudge-fn`         — freeform, one fn per ext, returns 0+ nudges.
-        ;;   2. `:ext/iteration-guards` — structured per-guard list, each
-        ;;      check-fn returns nil (silent) or `{:hint :importance}`.
+        ;;   1. `:ext/nudge-fn` — freeform, one fn per ext, returns 0+ nudges.
+        ;;   2. `:ext/guards`   — structured per-guard list. Each guard
+        ;;      declares :scope (#{:iteration :turn :session}); the host
+        ;;      invokes :check-fn only when scope matches the current
+        ;;      lifecycle position. Returns nil (silent) or
+        ;;      `{:hint :importance}`.
         ;; Both feed the same nudge ctx and merge into one `<system_nudges>` block.
+        iter-pos     (long (or iteration 0))
+        first-iter?  (zero? iter-pos)
+        turn-pos     (long (or (some-> environment :current-turn-position-atom deref) 1))
+        first-turn?  (= 1 turn-pos)
+        scope-active? (fn [scope]
+                        (case scope
+                          :iteration true
+                          :turn      first-iter?
+                          :session   (and first-iter? first-turn?)
+                          false))
         nudge-fn-nudges (mapcat
                           (fn [ext]
                             (when-let [nudge-fn (:ext/nudge-fn ext)]
@@ -705,13 +718,15 @@
                           (or active-extensions []))
         guard-nudges (mapcat
                        (fn [ext]
-                         (for [{:keys [id check-fn]} (or (:ext/iteration-guards ext) [])
+                         (for [{:keys [id scope check-fn]} (or (:ext/guards ext) [])
+                               :when (scope-active? scope)
                                :let [hit (try (call-extension-callback ext check-fn nudge-ctx)
                                            (catch Throwable t
                                              (tel/log! {:level :warn
-                                                        :id ::iteration-guard-threw
+                                                        :id ::guard-threw
                                                         :data {:ext (:ext/namespace ext)
                                                                :guard id
+                                                               :scope scope
                                                                :error (ex-message t)}})
                                              nil))]
                                :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]

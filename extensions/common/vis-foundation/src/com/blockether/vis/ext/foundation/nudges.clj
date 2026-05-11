@@ -116,9 +116,10 @@
   (into [] (remove nil?) [(title-nudge ctx) (context-pressure-nudge ctx)]))
 
 ;; ----------------------------------------------------------------------------
-;; Iteration guards (`:ext/iteration-guards`) — structured per-iteration
-;; checks that emit MODEL-FACING system_nudges. Different from
-;; `nudge-fn`: a guard is named, declarative, and toggleable.
+;; Guards (`:ext/guards`) — structured lifecycle-scoped checks that emit
+;; MODEL-FACING system_nudges. Each guard declares :id, :doc, :scope
+;; (#{:iteration :turn :session}), and :check-fn. Different from
+;; `:ext/nudge-fn`: a guard is named, declarative, and individually toggleable.
 ;; ----------------------------------------------------------------------------
 
 (def ^:private investigation-verb-regex
@@ -156,9 +157,10 @@
              "request is a hallucination. If the request is truly "
              "trivial chat (greeting, ack), ignore this nudge.")}))
 
-(def iteration-guards
-  "`:ext/iteration-guards` vector for vis-foundation. Each entry has
-   `:id`, `:doc`, and `:check-fn`."
-  [{:id      :foundation/blind-answer
-    :doc     "Warn when iteration 1 is about to answer an investigation-style request without any tool calls."
+(def guards
+  "`:ext/guards` vector for vis-foundation. Each entry conforms to the
+   `::guard` spec in `com.blockether.vis.internal.extension`."
+  [{:id       :foundation/blind-answer
+    :doc      "Warn when iteration 1 is about to answer an investigation-style request without any tool calls."
+    :scope    :iteration
     :check-fn blind-answer-guard-check}])
