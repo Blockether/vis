@@ -22,11 +22,12 @@
                            activated this turn via `(load-skill ...)`.
           <system_nudges>  zero or more `<system_nudge importance=\"...\">`
                            entries, contributed entirely by extensions
-                           via `:ext/nudge-fn`. Core owns the rendering
+                           via `:ext/guards`. Core owns the rendering
                            and the per-iteration ctx (model, context
-                           limit, input-token estimate, title state);
-                           extensions own the policy (title cadence,
-                           context-pressure, future custom nudges).
+                           limit, input-token estimate, title state,
+                           user request); extensions own the policy
+                           (title cadence, context-pressure, blind-
+                           answer detector, future custom guards).
         The current user goal arrives separately as
         `<user_turn_request_main_goal>`, not inside the trailer.
 
@@ -50,7 +51,7 @@
      is just the cached system prompt + the current
      <user_turn_request_main_goal>. Coding turns surface
      observable journal entries, active-skill bodies, bindings
-     entries, and extension/host nudges through the XML-tagged
+     entries, and extension guard hints through the XML-tagged
      blocks above. Prior LLM-only reasoning reaches the model
      through preserved-thinking assistant messages echoed in the
      messages array (svar's canonical `:assistant-message`); the
@@ -614,19 +615,28 @@
      <bindings>   - `(def ...)` bindings in the SCI env.
 
    Plus zero or more tagged `<system_nudge importance=\"...\">` entries
-   wrapped in `<system_nudges>`. All nudges come from active extensions
-   via `:ext/nudge-fn`; core owns no built-in nudge policy. Nudge fns
-   receive an enriched ctx including the resolved `:model`,
-   `:context-limit`, the estimated `:input-tokens` for the assembled
-   prompt-so-far, `:title-refresh?` (turn-boundary hint), and
-   `:conversation-title` (current value or nil). They may return a
-   single nudge (string or `{:importance :low|:normal|:high|:critical
-   :text ...}`), nil, or a sequential coll of such nudges.
+   wrapped in `<system_nudges>`. All entries come from `:ext/guards`
+   on active extensions; core owns no built-in guard policy. Each guard
+   declares its lifecycle `:scope` (#{:iteration :turn :session}) and a
+   `:check-fn` that receives the `nudge-ctx` (the per-iteration ctx
+   below) and returns either nil (silent) or `{:hint :importance?}`.
+
+   `nudge-ctx` fields (passed to every guard `:check-fn`):
+     :environment        full environment map
+     :iteration          1-based current iteration position
+     :previous-blocks    last iteration's executed blocks (or nil)
+     :model              resolved model map
+     :context-limit      effective context window for the model
+     :input-tokens       estimated tokens of the assembled prompt-so-far
+     :title-refresh?     turn-boundary refresh hint
+     :conversation-title current title (or nil/blank)
+     :user-request       raw current-turn user request
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Computed once
         per turn; threaded through every iteration. Each extension's
-        :ext/nudge-fn is consulted (rare).
+        :ext/guards vector is consulted (scope-filtered to the current
+        iteration / turn / session position).
 
    Optional:
      `:blocks-by-iteration` - carried iterations as

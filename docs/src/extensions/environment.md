@@ -1,7 +1,7 @@
 # Environment Map
 
 Every callback an extension receives - `:ext/activation-fn`, optional
-`:ext/prompt`, `:ext/environment-info-fn`, `:ext/nudge-fn`, and the symbol hooks (`:before-fn`,
+`:ext/prompt`, `:ext/environment-info-fn`, `:ext/guards`, and the symbol hooks (`:before-fn`,
 `:after-fn`, `:on-error-fn`) - operates on the **environment**. This
 is the runtime map that represents one live conversation context.
 

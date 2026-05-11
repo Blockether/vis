@@ -31,7 +31,7 @@ sub-registry as a side effect.
 Alongside those surfaces, every extension may also:
 
 - **Inject prompt context** - static LLM-facing docs via `:ext/prompt` and live environment facts via `:ext/environment-info-fn`.
-- **Emit per-iteration nudges** - situational hints (budget, errors, ...) via `:ext/nudge-fn`.
+- **Emit per-iteration nudges** - situational hints (budget, errors, ...) via `:ext/guards`.
 - **Expose Java classes** - enable `(LocalDate/now)` style interop via `:ext/classes` / `:ext/imports`.
 - **Guard activation** - conditionally enable/disable based on env state via `:ext/activation-fn`.
 - **Declare dependencies** on other extensions via `:ext/requires`.
@@ -172,7 +172,7 @@ From classpath jar to live tool call:
 4. **Install** - bind symbols into the aliased SCI namespace; auto-require the alias in `sandbox`
 5. **Prompt** - collect active `:ext/environment-info-fn` sections, then append each active extension's optional `:ext/prompt` block under `[namespace: alias -> ns]`
 6. **Activation (per turn)** - `:ext/activation-fn` check; when falsy, symbols stay unbound and prompt/nudge hooks are skipped for the whole turn
-7. **Nudge (per iteration)** - active extensions' `:ext/nudge-fn` is invoked
+7. **Nudge (per iteration)** - active extensions' `:ext/guards` is invoked
 8. **Hooks (per call)** - `:before-fn` -> `:fn` -> `:after-fn`, with `:on-error-fn` catching `:fn` errors
 
 ## Namespace aliases
@@ -418,4 +418,4 @@ The registrar walks each slot in turn. The user gets:
 - [Extension Spec](spec.md) - all keys, defaults, validation
 - [Symbol Decorators](hooks.md) - `:before-fn`, `:after-fn`, `:on-error-fn` (decorators around the target fn) + `:on-parse-error-fn` (parse rescue)
 - [Environment Map](environment.md) - every key in the environment
-- [Nudge System](nudges.md) - built-in + extension nudges
+- [Guards](guards.md) - built-in + extension nudges
