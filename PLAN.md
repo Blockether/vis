@@ -437,6 +437,8 @@ Tests:
 
 ## Layer 3: action-request evidence gate
 
+Status: **implemented in foundation v1**.
+
 Foundation hook:
 
 ```clojure
@@ -453,7 +455,7 @@ User request is action-like when it contains verbs such as:
 fix, implement, patch, change, add, remove, do it, make it, verify, run, commit, push
 ```
 
-Need context-sensitive handling for short imperatives:
+Current v1 treats `do it` as action-like directly. Better v2 should make it context-sensitive:
 
 ```text
 "do it" -> action-like if previous assistant made actionable offer
@@ -496,13 +498,13 @@ on a fix request with no tool calls.
 
 It avoids dumb "always call tool first" for conceptual questions.
 
-Tests:
+Tests implemented:
 
-- `"what is X?"` allows answer-only
+- conceptual request allows answer-only
 - `"fix it"` rejects answer-only
-- `"do it"` rejects answer-only when previous actionable proposal exists
-- action request accepts after `v/cat`/`v/rg`/`z/patch`/`v/bash` evidence
-- action request accepts blocked/needs-input answer
+- `"do it"` rejects answer-only with no turn evidence
+- action request accepts after successful prior work evidence
+- action request accepts blocked/partial answer
 
 ## Layer 4: current-turn objective pin
 
