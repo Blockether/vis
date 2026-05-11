@@ -161,11 +161,12 @@
               ;; space or tab → whitespace atom
               (or (= c \space) (= c \tab))
               (let [start i
-                    j (loop [j (long (inc i))]
-                        (if (and (< j n)
-                              (let [c2 (.charAt s j)]
-                                (or (= c2 \space) (= c2 \tab))))
-                          (recur (unchecked-inc j)) j))]
+                    j (long
+                        (loop [j (long (inc i))]
+                          (if (and (< j n)
+                                (let [c2 (.charAt s j)]
+                                  (or (= c2 \space) (= c2 \tab))))
+                            (recur (unchecked-inc j)) j)))]
                 (recur j (conj! atoms {:text  (.substring s start j)
                                        :style style :href href :node node})))
 
@@ -174,16 +175,17 @@
               ;; matched [ \t]+ for the ws arm and skipped \n via
               ;; `[^\s]+` not consuming it; behaviour: drop the char).
               (Character/isWhitespace c)
-              (recur (inc i) atoms)
+              (recur (unchecked-inc i) atoms)
 
               ;; non-whitespace word
               :else
               (let [start i
-                    j (loop [j (long (inc i))]
-                        (if (and (< j n)
-                              (let [c2 (.charAt s j)]
-                                (not (Character/isWhitespace c2))))
-                          (recur (unchecked-inc j)) j))]
+                    j (long
+                        (loop [j (long (inc i))]
+                          (if (and (< j n)
+                                (let [c2 (.charAt s j)]
+                                  (not (Character/isWhitespace c2))))
+                            (recur (unchecked-inc j)) j)))]
                 (recur j (conj! atoms {:text  (.substring s start j)
                                        :style style :href href :node node}))))))))))
 
