@@ -283,8 +283,8 @@
                   (if (>= (count acc') cap)
                     (reduced acc')
                     acc')))
-              []
-              children))
+        []
+        children))
     (vec (mapcat #(block->lines % width opts) children))))
 
 (defn- inline-block->lines
@@ -577,7 +577,7 @@
              (let [b   (nth blocks i)
                    est (max 1 (long (Math/ceil
                                       (/ (double (max 1 (ir-text-chars b)))
-                                         (double content-w)))))]
+                                        (double content-w)))))]
                (recur (dec i) (+ accum est)))))
          tail-blocks (subvec blocks picked-from)
          synth-ir    (into [:ir {}] tail-blocks)
