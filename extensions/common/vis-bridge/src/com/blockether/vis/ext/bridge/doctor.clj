@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.bridge.doctor
   "Bridge doctor checks."
   (:require
-   [com.blockether.vis.ext.bridge.extract-clojure-lsp :as clj-lsp]))
+   [com.blockether.vis.ext.bridge.languages.clojure-lsp :as clj-lsp]))
 
 (defn- clojure-lsp-check [_env]
   (let [{:keys [available? command path version error stderr]} (clj-lsp/executable-status)]
