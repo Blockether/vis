@@ -65,6 +65,22 @@
       (expect (some #(= "3" (str/trim %)) bodies)))))
 
 (defdescribe progress-rendering-test
+  (it "iter-0 spinner row has a one-line top margin inside the bubble"
+    ;; Regression: the "Vis is calling the provider" spinner used to
+    ;; sit flush against the bubble's top border because the no-trace
+    ;; branch in `progress->lines-data` emitted just the spinner line.
+    ;; The iter≥1 branch always ended with a blank line before the
+    ;; spinner, so the bubble visually grew by an extra row the moment
+    ;; the first iteration arrived. Keep the blank in both branches.
+    (let [payload (render/progress->lines-data
+                    {:iterations []} 80
+                    {:show-thinking true :show-iterations true}
+                    {:now-ms 1000 :turn-start-ms 0})
+          lines   (mapv strip-ansi (:lines payload))]
+      (expect (= 2 (count lines)))
+      (expect (= "" (first lines)))
+      (expect (str/includes? (second lines) "Vis is calling the provider"))))
+
   (it "live progress renders every iteration instead of hiding history"
     (let [mk-entry (fn [n]
                      {:code      [(str "(+ " n " 1)")]
