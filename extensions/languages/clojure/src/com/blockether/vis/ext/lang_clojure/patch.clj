@@ -881,7 +881,6 @@
   (vis/symbol #'patch-check-tool
     {:sym 'patch-check
 
-     :result-spec :op/envelope
      :journal-render-fn journal-render-patch-check
      :channel-render-fn channel-render-patch-check
      :on-error-fn (tool-failure-on-error :z/patch-check)}))
@@ -890,7 +889,6 @@
   (vis/symbol #'patch-file
     {:sym 'patch
 
-     :result-spec :op/envelope
      :journal-render-fn journal-render-patch-result
      :channel-render-fn channel-render-patch-result
      :on-error-fn (tool-failure-on-error :z/patch)}))
@@ -899,7 +897,6 @@
   (vis/symbol #'locators-file
     {:sym 'locators
 
-     :result-spec :op/envelope
      :journal-render-fn journal-render-locators
      :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/locators)}))
@@ -908,7 +905,6 @@
   (vis/symbol #'forms-file
     {:sym 'forms
 
-     :result-spec :op/envelope
      :journal-render-fn journal-render-locators
      :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/forms)}))
@@ -917,7 +913,6 @@
   (vis/symbol #'symbols-file
     {:sym 'symbols
 
-     :result-spec :op/envelope
      :journal-render-fn journal-render-locators
      :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/symbols)}))
@@ -926,7 +921,6 @@
   (vis/symbol #'locator-for-symbol-file
     {:sym 'locator-for-symbol
 
-     :result-spec :op/envelope
      :journal-render-fn journal-render-locators
      :channel-render-fn channel-render-locators
      :on-error-fn (tool-failure-on-error :z/locator-for-symbol)}))

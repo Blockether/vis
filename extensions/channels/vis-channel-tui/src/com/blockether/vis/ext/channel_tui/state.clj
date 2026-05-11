@@ -340,8 +340,9 @@
          themes are declared through `:ext/theme` and surfaced in Settings.
 
      show-thinking / show-iterations  - high-signal content controls.
-         Default ON because new users want to SEE the agent reasoning;
-         power users turn them off when they want a clean transcript.
+         Thinking defaults OFF so provider chain-of-thought is not shown
+         as assistant prose. Users can opt in from Settings when they
+         want debugging/reasoning traces.
 
      reasoning-level - base model thinking depth for reasoning-capable
          models. Default `:balanced`; users can cycle it via
@@ -367,7 +368,7 @@
    the rendering pipeline outright (the visual zones already convey
    the same boundaries without the labels)."
   {:theme-name            (keyword shared-theme/default-theme-id)
-   :show-thinking          true
+   :show-thinking          false
    :show-iterations        true
    :reasoning-level        :balanced
    :openai-codex-verbosity :low

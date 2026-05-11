@@ -153,4 +153,5 @@
                                            [2 {:blocks [{:code "(v/bash verify)"
                                                          :error nil
                                                          :journal [{:success? true
+                                                                    :form "(v/bash \"./verify.sh --quick\")"
                                                                     :error nil}]}]}]]})))))

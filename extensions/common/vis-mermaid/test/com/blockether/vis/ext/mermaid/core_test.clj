@@ -25,7 +25,7 @@
     (let [out (:lines (mermaid/render-mermaid
                         {:width 80
                          :source "flowchart LR\n  A[Start] --> B[End]"}))]
-      (expect (= "Mermaid (flowchart)" (first out)))
+      (expect (not (str/includes? (first out) "Mermaid")))
       (expect (some #(str/includes? % "Start") out))
       (expect (some #(str/includes? % "──▶") out))))
 
@@ -41,7 +41,7 @@
     (let [out (:lines (mermaid/render-mermaid
                         {:width 80
                          :source "sequenceDiagram\n  participant U as User\n  participant API as API\n  U->>API: Submit\n  API-->>U: OK"}))]
-      (expect (= "Mermaid (sequence)" (first out)))
+      (expect (not (str/includes? (first out) "Mermaid")))
       (expect (some #(str/includes? % "User -> API: Submit") out))
       (expect (some #(str/includes? % "API ⇢ User: OK") out))))
 
@@ -50,6 +50,17 @@
                         {:width 24
                          :source "flowchart LR\n  A[Start with very long label] --> B[End with very long label]"}))]
       (expect (every? #(<= (count %) 24) out))))
+
+  (it "wraps long flowchart labels and Mermaid br tags instead of showing ellipses or HTML"
+    (let [out (:lines (mermaid/render-mermaid
+                        {:width 100
+                         :source "flowchart TD\n  A[Assistant emits Clojure form<br/>with full readable text] --> B[Journal updated<br/>tool output preserved]"}))]
+      (expect (some #(str/includes? % "Assistant emits Clojure") out))
+      (expect (some #(str/includes? % "with full readable text") out))
+      (expect (some #(str/includes? % "Journal updated") out))
+      (expect (some #(str/includes? % "tool output preserved") out))
+      (expect (not-any? #(str/includes? % "<br") out))
+      (expect (not-any? #(str/includes? % "...") out))))
 
   (it "uses the supplied terminal width for flowchart spacing"
     (let [source "flowchart LR\n  A[Start] --> B{Choice}\n  B -->|Yes| C[Do thing]\n  B -->|No| D[Skip]"
@@ -87,4 +98,4 @@
               out (:lines (mermaid/render-mermaid {:width 100 :source source}))]
           (expect (= type (:diagram/type ast)))
           (expect (seq out))
-          (expect (str/includes? (first out) "Mermaid")))))))
+          (expect (not (str/includes? (first out) "Mermaid"))))))))

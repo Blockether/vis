@@ -588,17 +588,13 @@
 ;; Runs before SCI eval when source already parses. Use for symbol-local sugar / repair.
 (s/def :ext.symbol/source-rewrite-fn fn?)
 
-;; Optional result contract enforced on the final public return value
-;; after `:before-fn` / call / `:after-fn` complete.
-(s/def :ext.symbol/result-spec some?)
-
 ;; Renderer for this symbol's result inside <journal>. Receives ONLY the
 ;; unwrapped `:result` value (engine extracts before calling). Returns a
 ;; plaintext string. MANDATORY on every fn-symbol; no engine default.
 (s/def :ext.symbol/journal-render-fn fn?)
 
 ;; Renderer for this symbol's result inside a runtime channel (TUI,
-;; telegram, ...). Receives `(:result tool-result)` only. Returns
+;; telegram, ...). Receives `(:op/result tool-result)` only. Returns
 ;; markdown - UNIFORM across every channel; channel adapters apply
 ;; their own flavor tweaks (escaping, line-wrap) at consume time.
 ;; MANDATORY on every fn-symbol.
@@ -638,7 +634,7 @@
                 :ext.symbol/channel-render-fn]
     :opt [:ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn
-          :ext.symbol/source-rewrite-fn :ext.symbol/result-spec
+          :ext.symbol/source-rewrite-fn
           :ext.symbol/journal-render-error-fn
           :ext.symbol/channel-render-error-fn]))
 
@@ -731,12 +727,29 @@
   [phase]
   (contains? canonical-hook-phases phase))
 
+(def hook-nudge-importances
+  "Allowed importance levels for pre-phase system nudge hook hits."
+  #{:low :normal :high :critical})
+
 (s/def :ext.hook/id keyword?)
 (s/def :ext.hook/doc non-blank-string?)
 (s/def :ext.hook/phase (s/and keyword? hook-phase?))
 (s/def :ext.hook/fn fn?)
 (s/def ::hook (s/keys :req-un [:ext.hook/id :ext.hook/doc :ext.hook/phase :ext.hook/fn]))
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
+
+(s/def :ext.hook.return/hint non-blank-string?)
+(s/def :ext.hook.return/importance hook-nudge-importances)
+(s/def ::system-nudge-hit
+  (s/keys :req-un [:ext.hook.return/hint]
+    :opt-un [:ext.hook.return/importance]))
+
+(s/def :ext.hook.return/reject true?)
+(s/def :ext.hook.return/message non-blank-string?)
+(s/def ::answer-validation-reject
+  (s/keys :req-un [:ext.hook.return/reject]
+    :opt-un [:ext.hook.return/message :ext.hook.return/hint]))
+(s/def ::answer-validation-result (s/nilable ::answer-validation-reject))
 
 ;; Optional source-code rewriter for SCI/edamame parse errors.
 (s/def :ext/on-parse-error-fn fn?)
@@ -1058,8 +1071,7 @@
         (:after-fn opts)                (assoc :ext.symbol/after-fn (:after-fn opts))
         (:on-error-fn opts)             (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
         (:on-parse-error-fn opts)       (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))
-        (:source-rewrite-fn opts)       (assoc :ext.symbol/source-rewrite-fn (:source-rewrite-fn opts))
-        (:result-spec opts)             (assoc :ext.symbol/result-spec (:result-spec opts))))))
+        (:source-rewrite-fn opts)       (assoc :ext.symbol/source-rewrite-fn (:source-rewrite-fn opts))))))
 
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
@@ -1090,7 +1102,10 @@
      :channel-render-error-fn   - (fn [error] string). Override channel
                                   failure render. Uniform across channels.
      :before-fn :after-fn :on-error-fn :on-parse-error-fn :source-rewrite-fn
-     :result-spec
+
+   Every function symbol must return a canonical `:op/envelope` map.
+   The wrapper enforces this globally; per-symbol result specs are not
+   part of the API.
 
    See `docs/src/extensions/hooks.md` for hook semantics."
   ([v] (symbol v nil))
@@ -1338,16 +1353,15 @@
         (do (log-hook! :info ::on-error-fn-done ext-ns sym :on-error-fn ms "retrying") ret)))
     (throw err)))
 
-(defn- validate-symbol-result!
-  [sym spec-ref result]
-  (when spec-ref
-    (when-not (s/valid? spec-ref result)
-      (throw (ex-info (str "Symbol '" sym "' returned a value that does not satisfy " spec-ref)
-               {:type    :extension/invalid-symbol-result
-                :symbol  sym
-                :spec    spec-ref
-                :value   result
-                :explain (s/explain-data spec-ref result)}))))
+(defn- assert-symbol-envelope!
+  [sym result]
+  (when-not (tool-result? result)
+    (throw (ex-info (str "Symbol '" sym "' must return a canonical :op/envelope map")
+             {:type    :extension/invalid-symbol-result
+              :symbol  sym
+              :spec    :op/envelope
+              :value   result
+              :explain (s/explain-data :op/envelope result)})))
   result)
 
 (defn- tool-call-name
@@ -1366,22 +1380,14 @@
      :symbol sym
      :started-at-ms (long started-at-ms)}))
 
-;; Forward reference: tool-result enrichment (this section) calls
-;; `extension-info` defined ~700 lines down. Not mutual recursion
-;; — plain forward call. Removing this declare requires extracting
-;; `extension-info` + its dep chain (source-markers-for-extension,
-;; resolve-markers-for-extension, resolve-markers, the
-;; extension-source-markers defonce, ...) into a separate ns. ~100
-;; lines + transitive dep tracing; tracked as the proper file-split
-;; task. Sister `extension-id-of-ns` declare was retirable because
-;; its only dep was the docs registry atom (now hoisted above this
-;; section). See AGENTS.md S2.
-(declare extension-info)
+(defn- extension-info-now
+  [ext]
+  ((requiring-resolve 'com.blockether.vis.internal.extension/extension-info) ext))
 
 (defn- enrich-tool-result-info
   [ext sym-entry result]
   (if (tool-result? result)
-    (let [ext-prov (extension-info ext)]
+    (let [ext-prov (extension-info-now ext)]
       (merge-into-metadata
         result
         {:tool      (cond-> {:sym  (:ext.symbol/sym sym-entry)
@@ -1478,8 +1484,8 @@
    :before-fn can return {:result val} to short-circuit.
    :on-error-fn can return {:result val}, {:error err}, or {:fn :args :env} to retry.
 
-   When `:ext.symbol/result-spec` is present, the FINAL public return
-   value is validated against it right before control returns to SCI.
+   The FINAL public return value must be a canonical `:op/envelope`.
+   The wrapper enforces this globally for every function symbol.
 
    Returns the final result. Throws on any unrecoverable error."
   [ext sym-entry args env]
@@ -1487,7 +1493,6 @@
             *current-symbol* (:ext.symbol/sym sym-entry)]
     (let [sym    (:ext.symbol/sym sym-entry)
           ext-ns (:ext/namespace ext)
-          spec-ref (:ext.symbol/result-spec sym-entry)
           t0     (System/nanoTime)
           _      (log-hook! :debug ::invoke ext-ns sym nil nil nil)
           before-out (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
@@ -1495,7 +1500,7 @@
         (let [ms (elapsed-ms t0)
               result (->> (:result before-out)
                        (enrich-tool-result-info ext sym-entry)
-                       (validate-symbol-result! sym spec-ref))]
+                       (assert-symbol-envelope! sym))]
           (write-sink-entries! ext sym-entry args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
           result)
@@ -1537,7 +1542,7 @@
               {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
               result (->> result
                        (enrich-tool-result-info ext sym-entry)
-                       (validate-symbol-result! sym spec-ref))
+                       (assert-symbol-envelope! sym))
               ms (elapsed-ms t0)]
           (write-sink-entries! ext sym-entry args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
@@ -2324,7 +2329,7 @@
    Dispatch:
      - On (:op/success? false): call the symbol's `:journal-render-error-fn`
        if present, otherwise `default-journal-error-text`.
-     - On success: unwrap `(:result tool-result)` and call the symbol's
+     - On success: unwrap `(:op/result tool-result)` and call the symbol's
        MANDATORY `:journal-render-fn` with that single arg.
 
    Renderers must return strings; non-string returns throw."
@@ -2351,7 +2356,7 @@
    Dispatch:
      - On (:op/success? false): call the symbol's `:channel-render-error-fn`
        if present, otherwise `default-channel-error-text`.
-     - On success: unwrap `(:result tool-result)` and call the symbol's
+     - On success: unwrap `(:op/result tool-result)` and call the symbol's
        MANDATORY `:channel-render-fn` with the unwrapped result.
 
    Renderers must return strings; non-string returns throw."
