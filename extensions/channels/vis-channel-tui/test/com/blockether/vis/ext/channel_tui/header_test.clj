@@ -85,6 +85,17 @@
         (expect (= {:row 1 :col expected-md-col :width md-w}
                   (:bounds md-hit))))))
 
+  (it "can repaint header hover chrome without mutating click-region staging"
+    (let [uuid "123e4567-e89b-12d3-a456-426614174000"
+          db   {:title "Chat" :conversation {:id uuid}}
+          g    (dummy-text-graphics)]
+      (cr/reset!)
+      (cr/begin-frame!)
+      (binding [header/*register-click-regions?* false]
+        (header/draw-header! g db 0 80))
+      (cr/commit-frame!)
+      (expect (= [] (cr/current)))))
+
   (it "keeps voice channel status on the right without stealing the notification lane"
     (let [uuid          "123e4567-e89b-12d3-a456-426614174000"
           status-text   "● Recording 00:01"

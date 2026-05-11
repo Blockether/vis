@@ -8,13 +8,21 @@
    [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.ext.bridge.schema :as schema])
+   [com.blockether.vis.ext.bridge.languages.schema :as schema])
   (:import
    (java.io File)
    (java.net URI)))
 
 (def ^:private default-analysis-edn "{:type :project-only}")
 (def ^:private default-output-edn "{:format :edn :filter-keys [:source-paths :analysis :dep-graph]}")
+(def clojure-extensions #{"clj" "cljc" "cljs"})
+
+(defn supports-path?
+  "True when `path` looks like a Clojure source file Bridge can extract via
+   clojure-lsp."
+  [path]
+  (contains? clojure-extensions
+    (str/lower-case (or (second (re-find #"\.([^.]+)$" (str path))) ""))))
 
 (defn command
   "Return the clojure-lsp command Bridge should invoke."
@@ -183,14 +191,17 @@
          output (if (string? (:output opts))
                   (:output opts)
                   (pr-str (or (:output opts) (edn/read-string default-output-edn))))
-         result (process/sh {:out :string
-                             :err :string
-                             :continue true
-                             :timeout (or (:timeout-ms opts) 120000)}
-                  cmd "dump" "--raw"
-                  "--project-root" project-root
-                  "--analysis" analysis
-                  "--output" output)]
+         filenames (seq (:filenames opts))
+         args (cond-> [cmd "dump" "--raw"
+                       "--project-root" project-root
+                       "--analysis" analysis
+                       "--output" output]
+                filenames (conj "--filenames" (str/join "," (map str filenames))))
+         result (apply process/sh {:out :string
+                                   :err :string
+                                   :continue true
+                                   :timeout (or (:timeout-ms opts) 120000)}
+                  args)]
      (if (zero? (:exit result))
        (edn/read-string (:out result))
        (throw (ex-info "clojure-lsp dump failed"
@@ -203,7 +214,8 @@
 
 (defn extract-project
   "Extract normalized Bridge facts for a Clojure project using external
-   `clojure-lsp dump`."
+   `clojure-lsp dump`. Optional `:filenames` narrows analysis to one or more
+   paths when supported by clojure-lsp."
   ([] (extract-project nil))
   ([opts]
    (let [opts (or opts {})
@@ -223,4 +235,13 @@
                 :namespace-count (count (:dep-graph dump))
                 :node-count (count nodes)
                 :edge-count (count edges)
+                :paths (vec (map str (:filenames opts)))
                 :backend :clojure-lsp/external-cli}}))))
+
+(defn extract-file
+  "Extract normalized Bridge facts for one Clojure source file. Uses
+   clojure-lsp with `--filenames`; `content` is accepted for the generic
+   extractor contract but clojure-lsp reads from disk."
+  ([path content] (extract-file path content nil))
+  ([path _content opts]
+   (extract-project (assoc (or opts {}) :filenames [(str path)]))))

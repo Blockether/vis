@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.bridge.languages.clojure-test
   (:require
    [com.blockether.vis.ext.bridge.languages.clojure :as clj]
-   [com.blockether.vis.ext.bridge.schema :as schema]
+   [com.blockether.vis.ext.bridge.languages.schema :as schema]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def sample-dump

@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.bridge.languages.markdown-test
   (:require
    [com.blockether.vis.ext.bridge.languages.markdown :as md]
-   [com.blockether.vis.ext.bridge.schema :as schema]
+   [com.blockether.vis.ext.bridge.languages.schema :as schema]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (def sample-md

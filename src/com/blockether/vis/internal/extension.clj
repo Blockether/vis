@@ -724,24 +724,6 @@
 ;; markdown helper calls).
 (s/def :ext/source-rewrite-fn fn?)
 
-;; ----------------------------------------------------------------------------
-;; Iteration-loop lifecycle hooks. Side-effecting fns invoked by the
-;; loop at well-defined boundaries. See
-;; `internal.lifecycle/phase->manifest-key` for the canonical
-;; phase<->key map and `docs/src/extensions/lifecycle.md` for payload
-;; shapes. ALL four are optional; an extension that doesn't care
-;; about lifecycle simply omits them.
-;;
-;; Composition is broadcast: every active extension's listener fires
-;; for every event, plus the per-call `:hooks` slot a channel/test
-;; passed in. A listener that throws is caught + logged via Telemere
-;; - it MUST NOT take the loop down or starve sibling listeners.
-;; ----------------------------------------------------------------------------
-(s/def :ext/on-turn-start-fn      fn?)
-(s/def :ext/on-iteration-start-fn fn?)
-(s/def :ext/on-iteration-end-fn   fn?)
-(s/def :ext/on-turn-end-fn        fn?)
-
 ;; Channel-local hooks let extensions contribute UI commands/status behavior to
 ;; concrete channels without requiring those channel namespaces. The TUI uses
 ;; this for voice commands; other channels may ignore the surface.
@@ -942,9 +924,7 @@
             :ext/version :ext/author :ext/owner :ext/license
             :ext/cli :ext/channels :ext/providers :ext/persistance
             :ext/channel-hooks
-            :ext/doctor-check-fn
-            :ext/on-turn-start-fn :ext/on-iteration-start-fn
-            :ext/on-iteration-end-fn :ext/on-turn-end-fn])
+            :ext/doctor-check-fn])
     ns-alias-required-when-symbols?
     kind-required-when-symbols?))
 

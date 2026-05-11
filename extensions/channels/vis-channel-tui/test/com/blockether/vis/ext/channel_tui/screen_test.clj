@@ -27,6 +27,9 @@
 (def ^:private live-progress-only-change?
   (deref #'screen/live-progress-only-change?))
 
+(def ^:private header-hover-only-change?
+  (deref #'screen/header-hover-only-change?))
+
 (def ^:private submit-input!
   (deref #'screen/submit-input!))
 
@@ -133,7 +136,24 @@
                   :layout {:total-h 2})))
       (expect (not (live-progress-only-change? base
                      (assoc base :input {:lines ["typed"]}
-                       :progress {:iterations [:new]})))))))
+                       :progress {:iterations [:new]}))))))
+
+  (it "classifies header hover bumps as header-only repaints"
+    (let [base {:loading? false
+                :messages [{:role :assistant :text "stable body"}]
+                :input {:lines [""]}
+                :render-version 1
+                :layout {:total-h 10}}
+          bumped (assoc base :render-version 2 :layout {:total-h 10})
+          header-region {:kind :copy-as-markdown
+                         :bounds {:row 1 :col 60 :width 12}}
+          body-region {:kind :url
+                       :bounds {:row 8 :col 4 :width 12}}]
+      (expect (header-hover-only-change? base bumped nil header-region))
+      (expect (header-hover-only-change? base bumped header-region nil))
+      (expect (not (header-hover-only-change? base bumped nil body-region)))
+      (expect (not (header-hover-only-change? base (assoc bumped :input {:lines ["typed"]})
+                     nil header-region))))))
 
 (defdescribe extension-command-test
   (it "hides direct-only extension commands from Ctrl+K palette"
