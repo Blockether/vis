@@ -183,14 +183,15 @@
                                              tool-result-detail
                                              (fn [result]
                                                (when (extension/tool-result? result)
-                                                 (let [prov (:info result)]
-                                                   (cond-> (select-keys prov [:op :op/tag
-                                                                              :spec :paths :hit-count :truncated-by
-                                                                              :command :cwd :target])
-                                                     (get-in result [:result :stdout])
-                                                     (assoc :stdout (get-in result [:result :stdout]))
-                                                     (get-in result [:result :stderr])
-                                                     (assoc :stderr (get-in result [:result :stderr]))))))
+                                                 (let [metadata (:op/metadata result)
+                                                       payload  (:op/result result)]
+                                                   (cond-> (merge (select-keys result [:op/symbol :op/tag])
+                                                             (select-keys metadata [:spec :paths :hit-count :truncated-by
+                                                                                    :command :cwd :target]))
+                                                     (:stdout payload)
+                                                     (assoc :stdout (:stdout payload))
+                                                     (:stderr payload)
+                                                     (assoc :stderr (:stderr payload))))))
                                              result-strs (mapv (fn [{:keys [result error channel]}]
                                                                  (cond
                                                                    error (vis/format-error error)

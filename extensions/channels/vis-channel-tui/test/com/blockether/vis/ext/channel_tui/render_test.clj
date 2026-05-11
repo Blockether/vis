@@ -99,14 +99,10 @@
         s))))
 
 (defdescribe answer-trailer-margin-test
-  ;; Regression: before this fix the answer bubble's top margin
-  ;; depended on whether the turn had any iteration trace. With trace,
-  ;; the trailer was `<trace-trailing-pad><ans-pad-top><answer>...`
-  ;; which the painter rendered as TWO blank rows. Without trace, just
-  ;; `<ans-pad-top><answer>...` = ONE blank row. Same for cancelled.
-  ;; The fix drops the leading ans-pad / leading blank whenever the
-  ;; trace already provides a trailing margin, so both shapes show one
-  ;; blank row between any preceding content and the answer text.
+  ;; Answer layout mirrors code-block chrome: one neutral outside
+  ;; margin row above the answer zone, then one answer-bg inside pad
+  ;; row before text. If a code-bearing trace already ended with a
+  ;; neutral iteration pad, reuse that row as the outside margin.
   (let [ans       [:ir {} [:p {} "hello"]]
         settings  {:show-thinking true :show-iterations true}
         iter      {:code      ["(+ 1 1)"] :comments [nil]
@@ -117,28 +113,30 @@
                              (fn [i ln]
                                (when (str/includes? (strip-ansi ln) needle) i))
                              (:lines p))))]
-    (it "answer with NO trace: exactly one blank row above the answer text"
+    (it "answer with NO trace has outside margin plus inside top padding"
       (let [p   (render/format-answer-with-thinking-data*
                   ans [] 80 settings nil false nil)
-            idx (index-of p "hello")]
-        (expect (= 1 idx))
-        (expect (visually-blank? (first (:lines p))))))
+            idx (index-of p "hello")
+            ln  (:lines p)]
+        (expect (= 2 idx))
+        (expect (= "" (first ln)))
+        (expect (visually-blank? (second ln)))))
 
-    (it "answer with code-bearing trace: exactly one blank row before the answer text"
+    (it "answer with code-bearing trace reuses trace pad as outside margin"
       (let [p   (render/format-answer-with-thinking-data*
                   ans [iter] 80 settings nil false nil)
             idx (index-of p "hello")
             ln  (:lines p)]
         (expect (some? idx))
         (expect (visually-blank? (nth ln (dec idx))))
-        ;; And the row before THAT must NOT also be blank (otherwise
-        ;; the legacy two-row gap is back).
-        (expect (or (zero? (dec idx))
-                  (not (visually-blank? (nth ln (- idx 2))))))))
+        (expect (visually-blank? (nth ln (- idx 2))))
+        (expect (or (< idx 3)
+                  (not (visually-blank? (nth ln (- idx 3))))))))
 
     (it "cancelled with non-empty answer renders the answer text once"
       ;; `cancel-text` falls back to the answer text when the IR is
-      ;; non-empty; assert the same one-row-above invariant.
+      ;; non-empty. Cancelled turns are flat system notes, so they use
+      ;; only the outside margin, not answer-bg inside padding.
       (let [p   (render/format-answer-with-thinking-data*
                   ans [iter] 80 settings nil true nil)
             idx (index-of p "hello")
@@ -859,11 +857,29 @@
       (setCharacter [_ _ _] this))))
 
 (defdescribe reasoning-preview-rendering-test
-  (it "collapses completed reasoning to a compact clickable summary by default"
+  (it "keeps completed reasoning visible when it is ten lines or less"
     (render/invalidate-cache!)
     (let [cid      "conversation"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
-          thinking "Considering footer removal\n\nThis is internal reasoning that should not merge into the answer."
+          thinking (str/join "\n" (map #(format "short-reason-%02d" %) (range 1 11)))
+          payload  (render/format-answer-with-thinking-data
+                     [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
+                     96 {:show-thinking true :show-iterations true} nil false
+                     {:conversation-id cid
+                      :conversation-turn-id turn-id})
+          body     (strip-ansi (:text payload))]
+      (expect (= "" (first (:lines payload))))
+      (expect (= p/MARKER_THINKING (second (:lines payload))))
+      (expect (str/includes? body "short-reason-01"))
+      (expect (str/includes? body "short-reason-10"))
+      (expect (not (str/includes? body "REASONING")))
+      (expect (not-any? #(= :toggle-details (:kind %)) (:line-meta payload)))))
+
+  (it "collapses completed reasoning to a compact clickable summary when it is more than ten lines"
+    (render/invalidate-cache!)
+    (let [cid      "conversation"
+          turn-id  "123e4567-e89b-12d3-a456-426614174000"
+          thinking (str/join "\n\n" (map #(format "long-reason-%02d detail text" %) (range 1 12)))
           payload  (render/format-answer-with-thinking-data
                      [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
                      96 {:show-thinking true :show-iterations true} nil false
@@ -875,7 +891,7 @@
       (expect (some? summary))
       (expect (str/includes? summary "▸ REASONING"))
       (expect (str/includes? summary "lines hidden"))
-      (expect (not (str/includes? body "Considering footer removal")))
+      (expect (not (str/includes? body "long-reason-01")))
       (expect (str/includes? body "done"))
       (expect (some #(and (= :toggle-details (:kind %)) (:collapsed? %)) (:line-meta payload)))))
 
@@ -884,7 +900,7 @@
     (let [cid      "conversation"
           turn-id  "123e4567-e89b-12d3-a456-426614174000"
           node-id  "thinking:t123e4567:i1:reasoning"
-          thinking (str/join "\n" (map #(format "line-%02d" %) (range 1 51)))
+          thinking (str/join "\n\n" (map #(format "line-%02d detail text" %) (range 1 51)))
           payload  (render/format-answer-with-thinking-data
                      [:ir {} [:p {} [:span {} "done"]]] [{:thinking thinking}]
                      96 {:show-thinking true :show-iterations true} nil false
@@ -1278,7 +1294,7 @@
 
   (it "auto-collapses completed reasoning on the answer view and expands all content on demand"
     (render/invalidate-cache!)
-    (let [thinking (str/join "\n" (map #(str "line " %) (range 1 51)))
+    (let [thinking (str/join "\n\n" (map #(str "line " % " detail text") (range 1 51)))
           trace    [{:thinking  thinking
                      :code      []
                      :results   []

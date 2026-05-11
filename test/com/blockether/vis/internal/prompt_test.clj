@@ -109,6 +109,8 @@
       (expect (str/includes? p "Investigation triggers"))
       (expect (str/includes? p "HALLUCINATION GUARD"))
       (expect (str/includes? p "investigate"))
+      (expect (str/includes? p "tool/symbol names like `z/patch-check`"))
+      (expect (str/includes? p "planning-only / opinion-only / design-only"))
       (expect (str/includes? p "reproduce first"))
       ;; Old grill name must be gone (PLAN §4.5 architect rename).
       (expect (not (str/includes? p ":grill")))))
@@ -184,6 +186,58 @@
       (expect (not (str/includes? p "DIAGNOSTIC OUTPUT")))
       (expect (not (str/includes? p "GENERATE one OR MORE")))
       (expect (not (str/includes? p "AUTOMATICALLY populates"))))))
+
+(defdescribe hook-nudge-rendering-test
+  (it "renders a system nudge from the canonical namespaced iteration-start phase"
+    (let [out (prompt/build-iteration-context
+                {:conversation-title-atom (atom "Hook phases")}
+                {:active-extensions [{:ext/namespace 'test.hook-phases
+                                      :ext/hooks [{:id :test/nudge
+                                                   :doc "Fixture nudge."
+                                                   :phase :turn.iteration/start
+                                                   :fn (fn [{:keys [phase]}]
+                                                         {:importance :high
+                                                          :hint (str "phase=" phase)})}]}]
+                 :model "test-model"
+                 :context-limit 4096
+                 :iteration 0
+                 :current-user-content "debug this"})]
+      (expect (str/includes? out "<system_nudges>"))
+      (expect (str/includes? out "<system_nudge importance=\"high\">"))
+      (expect (str/includes? out "phase=:turn.iteration/start"))))
+
+  (it "renders turn-start and session-start nudges only at their boundaries"
+    (let [mk-ext (fn [hits]
+                   {:ext/namespace 'test.hook-boundaries
+                    :ext/hooks [{:id :test/session
+                                 :doc "Session boundary."
+                                 :phase :session/start
+                                 :fn (fn [_] (swap! hits conj :session/start) {:hint "session"})}
+                                {:id :test/turn
+                                 :doc "Turn boundary."
+                                 :phase :turn/start
+                                 :fn (fn [_] (swap! hits conj :turn/start) {:hint "turn"})}]})
+          first-hits (atom [])
+          later-hits (atom [])
+          first-out (prompt/build-iteration-context
+                      {:conversation-title-atom (atom "Hook boundaries")
+                       :current-turn-position-atom (atom 1)}
+                      {:active-extensions [(mk-ext first-hits)]
+                       :model "test-model"
+                       :context-limit 4096
+                       :iteration 0})
+          later-out (prompt/build-iteration-context
+                      {:conversation-title-atom (atom "Hook boundaries")
+                       :current-turn-position-atom (atom 1)}
+                      {:active-extensions [(mk-ext later-hits)]
+                       :model "test-model"
+                       :context-limit 4096
+                       :iteration 1})]
+      (expect (= [:session/start :turn/start] @first-hits))
+      (expect (str/includes? first-out "session"))
+      (expect (str/includes? first-out "turn"))
+      (expect (= [] @later-hits))
+      (expect (nil? later-out)))))
 
 (defdescribe journal-rendering-test
   (it "renders every block in <journal> (no silent elision)"

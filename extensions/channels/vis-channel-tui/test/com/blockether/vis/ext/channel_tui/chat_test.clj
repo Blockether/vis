@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.channel-tui.chat :as chat]
+            [com.blockether.vis.internal.extension :as extension]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe rebuild-history-test)
@@ -46,7 +47,40 @@
         (catch clojure.lang.ExceptionInfo _ true))))
 
   (it "render-answer accepts nil as the empty placeholder"
-    (expect (= "" ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer)) nil)))))
+    (expect (= "" ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer)) nil))))
+
+  (it "rebuilds tool-result details from canonical op envelope keys"
+    (let [tool-out (extension/success
+                     {:op :v/bash
+                      :result {:exit 0 :stdout "ok\n" :stderr ""}
+                      :metadata {:command "echo ok"
+                                 :cwd "."
+                                 :target {:path "."}}})]
+      (with-redefs [extension/channel-render-tool-result (fn [_] "rendered tool")
+                    vis/db-info (fn [] :db)
+                    vis/db-list-conversation-turns
+                    (fn [_db _cid]
+                      [{:id :turn-1
+                        :user-request "run"
+                        :answer [:ir {}]}])
+                    vis/db-list-conversation-turn-iterations
+                    (fn [_db _turn-id]
+                      [{:id :iter-1}])
+                    vis/db-list-iteration-blocks
+                    (fn [_db _iteration-id]
+                      [{:code "(v/bash \"echo ok\")"
+                        :result tool-out}])]
+        (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+              trace   (-> history second :traces first)]
+          (expect (= [:tool] (:result-kinds trace)))
+          (expect (= {:op/symbol :v/bash
+                      :op/tag :op.tag/action
+                      :command "echo ok"
+                      :cwd "."
+                      :target {:path "."}
+                      :stdout "ok\n"
+                      :stderr ""}
+                    (first (:result-details trace)))))))))
 
 (defdescribe turn-options-test
   (it "forwards reasoning-default and extra-body to vis/send!"

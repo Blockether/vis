@@ -2,8 +2,11 @@
   (:require
    [babashka.fs :as fs]
    [clojure.string :as str]
+   [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.lang-clojure.core :as clj-ext]
    [com.blockether.vis.ext.lang-clojure.patch :as patch]
-   [lazytest.core :refer [defdescribe expect it throws?]]))
+   [lazytest.core :refer [defdescribe expect it throws?]]
+   [rewrite-clj.node :as node]))
 
 (defn- private-fn [name]
   (deref (resolve (symbol "com.blockether.vis.ext.lang-clojure.patch" name))))
@@ -19,22 +22,7 @@
     (str f)))
 
 (defdescribe zpatch-surface-test
-  (it "exposes z/patch-shaped guidance and semantic reading tools"
-    (expect (str/includes? patch/z-prompt "`z/` Clojure/EDN zipper patching"))
-    (expect (str/includes? patch/z-prompt "Same map shape as v/patch"))
-    (expect (str/includes? patch/z-prompt "z/forms"))
-    (expect (str/includes? patch/z-prompt "z/locators"))
-    (expect (str/includes? patch/z-prompt "z/symbols"))
-    (expect (str/includes? patch/z-prompt "z/locator-for-symbol"))
-    (expect (str/includes? patch/z-prompt "z/inspect"))
-    (expect (str/includes? patch/z-prompt "z/subedit->"))
-    (expect (not (str/includes? patch/z-prompt "z/zedit")))
-    (expect (< (count patch/z-prompt) 1200))
-    (expect (= 'patch (:ext.symbol/sym patch/patch-symbol)))
-    (expect (= 'forms (:ext.symbol/sym patch/forms-symbol)))
-    (expect (= 'inspect (:ext.symbol/sym patch/inspect-symbol)))
-    (expect (str/includes? (:ext.symbol/doc patch/patch-symbol)
-              "Same input shape as v/patch"))))
+  (it "exposes z/patch-shaped guidance and semantic editing playbooks" (expect (str/includes? patch/z-prompt "`z/` Clojure/EDN zipper patching")) (expect (str/includes? patch/z-prompt "Same map shape as v/patch")) (expect (str/includes? patch/z-prompt "Playbooks:")) (expect (str/includes? patch/z-prompt "Top-level binding")) (expect (str/includes? patch/z-prompt "Nested call/symbol")) (expect (str/includes? patch/z-prompt "Docs/comments")) (expect (str/includes? patch/z-prompt "Namespace/require")) (expect (str/includes? patch/z-prompt "Batch/recovery")) (expect (str/includes? patch/z-prompt "span rows beat lossy sexpr/string search")) (expect (str/includes? patch/z-prompt "Prefer data replacements")) (expect (str/includes? patch/z-prompt "Data forms lose comments; z/source preserves bytes")) (expect (str/includes? patch/z-prompt "z/patch itself preflights exact-match uniqueness")) (expect (str/includes? patch/z-prompt "z/source")) (expect (str/includes? patch/z-prompt "z/lit")) (expect (str/includes? patch/z-prompt "z/forms")) (expect (str/includes? patch/z-prompt "z/locators")) (expect (str/includes? patch/z-prompt "z/symbols")) (expect (str/includes? patch/z-prompt "z/locator-for-symbol")) (expect (str/includes? patch/z-prompt "z/inspect")) (expect (str/includes? patch/z-prompt "z/subedit->")) (expect (not (str/includes? patch/z-prompt "z/zedit"))) (expect (< (count patch/z-prompt) 2300)) (expect (= (quote com.blockether.vis.ext.lang-clojure.core) (:ext/namespace clj-ext/clojure-extension))) (expect (= (quote source) (:ext.symbol/sym patch/source-symbol))) (expect (= (quote lit) (:ext.symbol/sym patch/lit-symbol))) (expect (= (quote patch) (:ext.symbol/sym patch/patch-symbol))) (expect (= (quote forms) (:ext.symbol/sym patch/forms-symbol))) (expect (= (quote inspect) (:ext.symbol/sym patch/inspect-symbol))) (expect (str/includes? (:ext.symbol/doc patch/patch-symbol) "Same input shape as v/patch"))))
 
 (defdescribe zpatch-check-test
   (it "reports valid? true and 1 match for a unique-search edit (no write)"
@@ -84,6 +72,21 @@
           patch-fn (private-fn "patch-safe")]
       (patch-fn {:path path :search 'old-value :replace 'new-value})
       (expect (= "(ns demo)\n(defn f [] new-value)\n" (slurp path)))))
+
+  (it "prefers data replacements and uses z/source only for exact raw source nodes"
+    (let [path      (write-temp! "patch/source-vs-lit.clj" "(ns demo)\n(def s old-value)\n(defn f [] :old)\n")
+          patch-fn  (private-fn "patch-safe")
+          source-fn (:ext.symbol/fn patch/source-symbol)
+          lit-fn    (:ext.symbol/fn patch/lit-symbol)
+          src-node  (source-fn "(defn f []\n  ;; exact source\n  :new)")
+          lit-node  (lit-fn "new string")]
+      (expect (node/node? src-node))
+      (expect (= "\"new string\"" (node/string lit-node)))
+      (patch-fn [{:path path :search 'old-value :replace 'new-symbol}
+                 {:path path :search "(defn f [] :old)" :replace src-node}])
+      (patch-fn {:path path :search 'new-symbol :replace lit-node})
+      (expect (= "(ns demo)\n(def s \"new string\")\n(defn f []\n  ;; exact source\n  :new)\n"
+                (slurp path)))))
 
   (it "accepts the single-map v/patch shape"
     (let [path     (write-temp! "patch/single.clj" "(ns demo)\n(def y 1)\n")
@@ -180,13 +183,13 @@
       (expect (str/includes? journal "(defn f"))
       (expect (not (str/includes? journal "\n  :ok")))
       (expect (str/includes? channel "Patch by adding :replace"))
-      (expect (str/includes? channel path)))))
+      (expect (str/includes? channel path))))
 
   (it "accepts locator rows from z/symbols as span-specific search locators"
     (let [path        (write-temp! "patch/locator-row.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")
           patch-fn    (private-fn "patch-safe")
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
-          old-symbols (filterv #(= 'old-sym (:value %)) (:result (symbols-fn path)))
+          old-symbols (filterv #(= 'old-sym (:value %)) (:op/result (symbols-fn path)))
           second-old  (second old-symbols)]
       (expect (= 2 (count old-symbols)))
       (patch-fn {:path path :search second-old :replace 'new-sym})
@@ -196,7 +199,7 @@
     (let [path        (write-temp! "patch/locator-row-multi.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")
           patch-fn    (private-fn "patch-safe")
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
-          old-symbols (filterv #(= 'old-sym (:value %)) (:result (symbols-fn path)))]
+          old-symbols (filterv #(= 'old-sym (:value %)) (:op/result (symbols-fn path)))]
       (expect (= 2 (count old-symbols)))
       (patch-fn [(assoc (first old-symbols) :replace 'new-a)
                  (assoc (second old-symbols) :replace 'new-b)])
@@ -205,7 +208,7 @@
                         "(ns demo)\n(defn f [xs] (mapv #(inc %) xs))\n")
           patch-fn    (private-fn "patch-safe")
           locators-fn (:ext.symbol/fn patch/locators-symbol)
-          row         (->> (:result (locators-fn path {:source-contains "mapv" :limit 10}))
+          row         (->> (:op/result (locators-fn path {:source-contains "mapv" :limit 10}))
                         (filter #(and (= :list (:tag %))
                                    (str/includes? (:source %) "#(inc %)")))
                         first)]
@@ -218,22 +221,72 @@
     (let [path        (write-temp! "patch/locator-replace.clj" "(ns demo)\n(def a source-sym)\n(def b target-sym)\n")
           patch-fn    (private-fn "patch-safe")
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
-          source-row  (first (filter #(= 'source-sym (:value %)) (:result (symbols-fn path))))]
+          source-row  (first (filter #(= 'source-sym (:value %)) (:op/result (symbols-fn path))))]
       (patch-fn {:path path :search 'target-sym :replace source-row})
       (expect (= "(ns demo)\n(def a source-sym)\n(def b source-sym)\n" (slurp path)))))
 
-  (it "z/patch public symbol returns a tool envelope with diff info"
+  (it "z/patch public symbol returns a tool envelope with journal-visible diff info"
     (let [path     (write-temp! "patch/tool.clj" "(ns demo)\n(def z 1)\n")
           patch-fn (:ext.symbol/fn patch/patch-symbol)
-          out      (patch-fn {:path path :search "(def z 1)" :replace "(def z 3)"})]
+          out      (patch-fn {:path path :search "(def z 1)" :replace "(def z 3)"})
+          journal  (vis/journal-render-tool-result out)
+          channel  (vis/channel-render-tool-result out)]
       (expect (true? (:op/success? out)))
-      (expect (= :z/patch (get-in out [:info :op])))
-      (expect (= [{:path path}] (:result out)))
+      (expect (= :z/patch (:op/symbol out)))
+      (expect (= 1 (get-in out [:op/result :total-changes])))
+      (expect (= path (get-in out [:op/result :files 0 :path])))
       (expect (= "(ns demo)\n(def z 1)\n"
-                (get-in out [:info :files 0 :before])))
+                (get-in out [:op/result :files 0 :before])))
       (expect (= "(ns demo)\n(def z 3)\n"
-                (get-in out [:info :files 0 :after])))
-      (expect (= "(ns demo)\n(def z 3)\n" (slurp path))))))
+                (get-in out [:op/result :files 0 :after])))
+      (expect (= [{:start-line 1
+                   :context-before ["(ns demo)"]
+                   :removed ["(def z 1)"]
+                   :added ["(def z 3)"]
+                   :context-after []
+                   :removed-count 1
+                   :added-count 1}]
+                (get-in out [:op/result :files 0 :hunks])))
+      (expect (str/includes? journal "1/1 file(s) changed; preflight exact-match OK"))
+      (expect (str/includes? journal "hunk@1 -1 +1"))
+      (expect (str/includes? channel "z/patch preflight validated exact matches before writing"))
+      (expect (str/includes? channel "@@ line 1 @@"))
+      (expect (str/includes? channel "-(def z 1)"))
+      (expect (str/includes? channel "+(def z 3)"))
+      (expect (= "(ns demo)\n(def z 3)\n" (slurp path)))))
+
+  (it "failure envelopes carry actionable hints for agent recovery"
+    (let [err       (ex-info "z/patch :search locator must match exactly once; matched 2 time(s)"
+                      {:type :ext.lang-clojure/patch-search-not-unique})
+          on-error  (:ext.symbol/on-error-fn patch/patch-symbol)
+          wrapped   (on-error err nil nil [{:path "src/demo.clj"}])
+          envelope  (:result wrapped)
+          rendered  (vis/journal-render-tool-result envelope)]
+      (expect (false? (:op/success? envelope)))
+      (expect (str/includes? (get-in envelope [:op/error :hint]) "Use z/forms"))
+      (expect (str/includes? rendered "ERROR"))))
+
+  (it "z/inspect turns raw rewrite-clj zlocs into serializable summaries"
+    (let [inspect-fn (:ext.symbol/fn patch/inspect-symbol)
+          zloc       ((deref (resolve 'rewrite-clj.zip/of-string)) "(defn f [] :ok)" {:track-position? true})
+          out        (inspect-fn zloc)]
+      (expect (= :defn (:kind out)))
+      (expect (= 'f (:name out)))
+      (expect (str/includes? (:digest out) "defn f"))
+      (expect (not (contains? out :value))))))
+
+(defdescribe znode-rendering-test
+  (it "z/source and z/lit render source and sexpr literals for agent inspection"
+    (let [source-fn (:ext.symbol/fn patch/source-symbol)
+          lit-fn    (:ext.symbol/fn patch/lit-symbol)
+          src-out   (source-fn "(def x 1)")
+          lit-out   (lit-fn "hello")
+          src-text  ((:ext.symbol/journal-render-fn patch/source-symbol) src-out)
+          lit-text  ((:ext.symbol/channel-render-fn patch/lit-symbol) lit-out)]
+      (expect (str/includes? src-text ":source \"(def x 1)\""))
+      (expect (str/includes? src-text ":sexpr  (def x 1)"))
+      (expect (str/includes? lit-text ":source \"\\\"hello\\\"\""))
+      (expect (str/includes? lit-text ":sexpr  \"hello\"")))))
 
 (defdescribe zpatch-file-extension-precheck-test
   (it "rejects z/patch on a non-Clojure file before any rewrite-clj parse (regression: ANALYSIS.md §1)"

@@ -39,6 +39,33 @@
   (it "does not block final answers with workflow state"
     (expect (nil? (loop/final-answer-gate-error {} 0 [] "done")))))
 
+(defdescribe answer-validation-hook-test
+  (it "lets an extension hard-reject a final answer"
+    (let [calls (atom [])
+          ext   {:ext/namespace 'test.answer-validation
+                 :ext/hooks [{:id :test/reject-answer
+                              :doc "Reject fixture answer."
+                              :phase :turn.answer/validate
+                              :fn (fn [{:keys [phase iteration answer]}]
+                                    (swap! calls conj {:phase phase
+                                                       :iteration iteration
+                                                       :answer answer})
+                                    {:reject true
+                                     :message "Answer rejected by fixture hook."
+                                     :hint "Observe first."})}]}
+          err   (loop/final-answer-gate-error
+                  {:extensions (atom [ext])}
+                  1
+                  []
+                  [:ir [:p "done"]])]
+      (expect (= [{:phase :turn.answer/validate
+                   :iteration 1
+                   :answer [:ir [:p "done"]]}]
+                @calls))
+      (expect (string? err))
+      (expect (str/includes? err "Answer rejected by fixture hook"))
+      (expect (str/includes? err "Observe first")))))
+
 ;; ---------------------------------------------------------------------------
 ;; Preserved-thinking replay (R3 hybrid shape) regression tests.
 ;;

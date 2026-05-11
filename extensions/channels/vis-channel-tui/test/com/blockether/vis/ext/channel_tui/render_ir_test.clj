@@ -152,28 +152,33 @@
       (expect (= :h (:block-tag first-line)))
       (expect (= 2 (:block-level first-line)))))
 
-  (it ":code block stamps :block-tag :code on every content line (incl. inner blanks); leading/trailing rows get neutral :p tags as one-row padding"
+  (it ":code block has neutral outside margins and code-bg inside padding"
     (let [lines       (ir-tui/ir->lines [:ir [:code "a\n\nb"]] 80)
           code-lines  (filter #(= :code (:block-tag %)) lines)
-          pad-lines   (filter #(= :p (:block-tag %)) lines)]
-      ;; Content rows still carry :code (so the painter fills them
-      ;; with `code-block-bg`); the bookend pads carry :p so the
-      ;; bubble bg shows through as a true visual gap.
-      (expect (= 3 (count code-lines)))
-      (expect (= :p (:block-tag (first lines))))
-      (expect (= :p (:block-tag (peek lines))))
-      (expect (= 2 (count pad-lines)))))
+          pad-lines   (filter #(= :p (:block-tag %)) lines)
+          tags        (mapv :block-tag lines)
+          ts          (texts lines)]
+      ;; Shape:
+      ;;   :p     - outside margin before the chip (bubble bg)
+      ;;   :code  - inside top padding (code bg)
+      ;;   :code  - content "a"
+      ;;   :code  - literal blank line inside the source
+      ;;   :code  - content "b"
+      ;;   :code  - inside bottom padding (code bg)
+      ;;   :p     - outside margin after the chip (bubble bg)
+      (expect (= [:p :code :code :code :code :code :p] tags))
+      (expect (= 5 (count code-lines)))
+      (expect (= 2 (count pad-lines)))
+      (expect (= ["" "" "a" "" "b" "" ""] ts))))
 
-  (it "adjacent :code blocks get a neutral :p row between them + neutral :p pads at the bubble edges"
+  (it "adjacent :code blocks keep one neutral margin between padded chips"
     (let [lines (ir-tui/ir->lines [:ir [:code "a"] [:code "b"]] 80)
-          tags  (mapv :block-tag lines)]
-      ;; Expected sequence:
-      ;;   :p     - leading bookend pad (first block is :code)
-      ;;   :code  - 'a' content line
-      ;;   :p     - inner gap from first :code block's trailer
-      ;;   :code  - 'b' content line
-      ;;   :p     - trailing bookend pad (last block is :code)
-      (expect (= [:p :code :p :code :p] tags))))
+          tags  (mapv :block-tag lines)
+          ts    (texts lines)]
+      ;; The middle :p is the one-line margin between code chips; each
+      ;; chip still has its own :code top/bottom padding rows.
+      (expect (= [:p :code :code :code :p :code :code :code :p] tags))
+      (expect (= ["" "" "a" "" "" "" "b" "" ""] ts))))
 
   (it ":ul list stamps :block-tag :ul on marker + continuation lines"
     (let [lines (ir-tui/ir->lines [:ir [:ul [:li "x"] [:li "y"]]] 80)]
