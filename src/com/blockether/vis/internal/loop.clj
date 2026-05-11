@@ -1145,13 +1145,27 @@
     (catch Throwable _
       false)))
 
+(defn- answer-compatible-meta-form?
+  [expr]
+  (try
+    (let [form (edamame/parse-string (str expr) edamame-opts)]
+      (and (seq? form)
+        (symbol? (first form))
+        (= 'conversation-title (first form))))
+    (catch Throwable _
+      false)))
+
 (defn- answer-alone-preflight-violation
   "Return a map describing the violation when an iteration contains an
-   `(answer ...)` call AND any sibling top-level form. The contract:
+   `(answer ...)` call AND illegal sibling top-level forms. The contract:
    `(answer ...)` is its OWN iteration; the iteration that produces the
    answer evaluates EXACTLY ONE top-level form, and that form contains
    the answer call (optionally wrapping prose / inline expressions, but
    no other top-level work).
+
+   Narrow exception: a sibling top-level `(conversation-title \"...\")`
+   meta form is allowed because it does not depend on observing a tool
+   result before the answer is composed.
 
    This is stricter than the legacy `answer-position-preflight`
    (which only required answer-last) and the `answer-with-mutation`
@@ -1165,22 +1179,35 @@
    `{:answer-idx N :total-forms M}`."
   [code-entries]
   (when (< 1 (count code-entries))
-    (when-let [answer-idx (first (keep-indexed (fn [idx {:keys [expr]}]
-                                                 (when (form-contains-answer-call? expr) idx))
-                                   code-entries))]
-      {:answer-idx answer-idx :total-forms (count code-entries)})))
+    (let [answer-idxs (vec (keep-indexed (fn [idx {:keys [expr]}]
+                                           (when (form-contains-answer-call? expr)
+                                             idx))
+                             code-entries))
+          answer-idx (first answer-idxs)
+          illegal-sibling? (fn [idx]
+                             (let [{:keys [expr]} (nth code-entries idx)]
+                               (not (answer-compatible-meta-form? expr))))
+          sibling-idxs (when (some? answer-idx)
+                         (concat (range 0 answer-idx)
+                           (range (inc answer-idx) (count code-entries))))]
+      (when (and (some? answer-idx)
+              (or (< 1 (count answer-idxs))
+                (some illegal-sibling? sibling-idxs)))
+        {:answer-idx answer-idx
+         :total-forms (count code-entries)}))))
 
 (defn- answer-alone-preflight-error-message
   [{:keys [answer-idx total-forms]}]
   (str "Answer-alone preflight rejected this iteration before evaluation: "
-    "(answer ...) MUST be the ONLY top-level form in its iteration. "
+    "(answer ...) MUST be the ONLY top-level form in its iteration, except "
+    "for an optional sibling `(conversation-title \"...\")` meta form. "
     "This iteration had " total-forms " top-level forms; an `(answer ...)` "
     "call appears in form " (inc (or answer-idx 0)) ". "
     "Contract: observe (tool calls) in one iteration; the engine evaluates "
     "and populates `<journal>`; observe the journal; THEN emit a separate "
-    "iteration whose single top-level form is `(answer ...)`. No mixing. "
-    "Recovery: drop the answer from this iteration so the host loops, then "
-    "emit it alone in the next iteration once the journal carries every "
+    "iteration whose single top-level form is `(answer ...)` (or title + "
+    "answer only). No other mixing. Recovery: drop the answer from this "
+    "iteration so the host loops, then emit it once the journal carries every "
     "value cited by the answer."))
 
 (defn- answer-position-preflight-form-idx

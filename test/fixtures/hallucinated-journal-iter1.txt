@@ -12,17 +12,17 @@
 (def hits-walker
   (v/rg {:all ["preserved-thinking-replay-messages"] :include ["*.clj"]}))
 
-(println "replay refs:" (count (get-in hits-replay [:result :hits])))
-(println "budget defs:" (count (get-in hits-budget [:result :hits])))
-(println "MAX_TURN_ITERATIONS refs:" (count (get-in hits-max-iter [:result :hits])))
-(println "walker refs:" (count (get-in hits-walker [:result :hits])))
+(println "replay refs:" (count (get-in hits-replay [:op/result :hits])))
+(println "budget defs:" (count (get-in hits-budget [:op/result :hits])))
+(println "MAX_TURN_ITERATIONS refs:" (count (get-in hits-max-iter [:op/result :hits])))
+(println "walker refs:" (count (get-in hits-walker [:op/result :hits])))
 ```
 
 <journal>
-i1.1 hits-replay -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322} ...], :truncated-by nil}, ...}
-i1.2 hits-budget -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322}], :truncated-by nil}, ...}
-i1.3 hits-max-iter -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1444}, {:path "src/com/blockether/vis/core.clj", :line 1487}, {:path "src/com/blockether/vis/core.clj", :line 1582}], :truncated-by nil}, ...}
-i1.4 hits-walker -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1350}], :truncated-by nil}, ...}
+i1.1 hits-replay -> {:op/result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322} ...], :truncated-by nil}, ...}
+i1.2 hits-budget -> {:op/result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322}], :truncated-by nil}, ...}
+i1.3 hits-max-iter -> {:op/result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1444}, {:path "src/com/blockether/vis/core.clj", :line 1487}, {:path "src/com/blockether/vis/core.clj", :line 1582}], :truncated-by nil}, ...}
+i1.4 hits-walker -> {:op/result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1350}], :truncated-by nil}, ...}
 i1.5 *out* -> replay refs: 3
 budget defs: 1
 MAX_TURN_ITERATIONS refs: 3
@@ -32,7 +32,7 @@ walker refs: 1
 ```clojure
 (def core-file (v/cat "src/com/blockether/vis/core.clj"))
 
-(subvec (get-in core-file [:result :lines]) 1318 1345)
+(subvec (get-in core-file [:op/result :lines]) 1318 1345)
 ```
 
 <journal>
@@ -40,7 +40,7 @@ i2.1 subvec -> ["  \"Given a reasoning-content map, produce a sequence of messag
 </journal>
 
 ```clojure
-(subvec (get-in core-file [:result :lines]) 1340 1410)
+(subvec (get-in core-file [:op/result :lines]) 1340 1410)
 ```
 
 <journal>
@@ -48,7 +48,7 @@ i3.1 subvec -> ["(defn preserved-thinking-replay-messages" "  \"Walk the iterati
 </journal>
 
 ```clojure
-(subvec (get-in core-file [:result :lines]) 1440 1460)
+(subvec (get-in core-file [:op/result :lines]) 1440 1460)
 ```
 
 <journal>
@@ -59,18 +59,18 @@ i4.1 subvec -> ["(def ^:private MAX_TURN_ITERATIONS 8)" ""]
 (def hits-where-used
   (v/rg {:all ["preserved-thinking-replay-messages"] :include ["*.clj"]}))
 
-(println "where-used count:" (count (get-in hits-where-used [:result :hits])))
-(get-in hits-where-used [:result :hits 0 :line])
+(println "where-used count:" (count (get-in hits-where-used [:op/result :hits])))
+(get-in hits-where-used [:op/result :hits 0 :line])
 ```
 
 <journal>
-i5.1 hits-where-used -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1350}, {:path "src/com/blockether/vis/core.clj", :line 3090}], :truncated-by nil}, ...}
+i5.1 hits-where-used -> {:op/result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1350}, {:path "src/com/blockether/vis/core.clj", :line 3090}], :truncated-by nil}, ...}
 i5.2 *out* -> where-used count: 2
 i5.2 println -> where-used count: 2
 ```
 
 ```clojure
-(subvec (get-in core-file [:result :lines]) 3086 3102)
+(subvec (get-in core-file [:op/result :lines]) 3086 3102)
 ```
 
 <journal>
@@ -82,11 +82,11 @@ i6.1 subvec -> ["      ;; Preserved thinking: replay prior iterations' reasoning
 (def test-hits
   (v/rg {:all ["preserved-thinking"] :include ["*_test.clj" "*_test.cljc"]}))
 
-(println "test refs:" (count (get-in test-hits [:result :hits])))
+(println "test refs:" (count (get-in test-hits [:op/result :hits])))
 ```
 
 <journal>
-i7.1 test-hits -> {:result {:hits [], :truncated-by nil}, ...}
+i7.1 test-hits -> {:op/result {:hits [], :truncated-by nil}, ...}
 i7.2 *out* -> test refs: 0
 ```
 
@@ -95,17 +95,17 @@ i7.2 *out* -> test refs: 0
 (def reasoning-refs
   (v/rg {:all ["reasoning-content"] :include ["*.clj"] :paths ["src"]}))
 
-(println "reasoning-content refs:" (count (get-in reasoning-refs [:result :hits])))
+(println "reasoning-content refs:" (count (get-in reasoning-refs [:op/result :hits])))
 ```
 
 <journal>
-i8.1 reasoning-refs -> {:result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322} {:path "src/com/blockether/vis/core.clj", :line 1354} {:path "src/com/blockether/vis/core.clj", :line 1375} {:path "src/com/blockether/vis/core.clj", :line 1550}], :truncated-by nil}, ...}
+i8.1 reasoning-refs -> {:op/result {:hits [{:path "src/com/blockether/vis/core.clj", :line 1322} {:path "src/com/blockether/vis/core.clj", :line 1354} {:path "src/com/blockether/vis/core.clj", :line 1375} {:path "src/com/blockether/vis/core.clj", :line 1550}], :truncated-by nil}, ...}
 i8.2 *out* -> reasoning-content refs: 4
 ```
 
 ```clojure
 ;; Check line 1550 for the other reasoning-content usage
-(subvec (get-in core-file [:result :lines]) 1545 1560)
+(subvec (get-in core-file [:op/result :lines]) 1545 1560)
 ```
 
 <journal>

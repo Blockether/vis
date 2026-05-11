@@ -863,13 +863,15 @@ ITERATION (⊢ :ooda only):
   Engine populates one row per top-level form + sub-row per tool call.
 
 ANSWER (HARD RULE, preflight-enforced):
-  (answer ...) is its OWN iteration. ONE top-level form, NOTHING else.
-  No `(def ...)`, no `(v/...)`, no `(z/...)`, no `(conversation-title ...)`,
-  no `(do ...)` wrapper hiding tool calls. Just `(answer [:ir ...])`.
+  (answer ...) is its OWN iteration. ONE top-level form, NOTHING else,
+  except an optional sibling top-level `(conversation-title \"...\")` meta form.
+  No `(def ...)`, no `(v/...)`, no `(z/...)`, no `(do ...)` wrapper hiding
+  tool calls. Just `(answer [:ir ...])` — or title + answer only.
   Workflow:
     iteration N      -> emit observation/action forms; engine evals
-    iteration N+1    -> read <journal>; emit MORE work OR `(answer ...)` alone
-    iteration N+2    -> ONLY `(answer [:ir ...])`; turn closes.
+    iteration N+1    -> read <journal>; emit MORE work OR final answer iteration
+    iteration N+2    -> ONLY `(answer [:ir ...])` (optionally with sibling
+                        `(conversation-title \"...\")`); turn closes.
   Violation -> engine rejects iteration before any eval and forces
   you to loop. The journal will show the preflight error; read it,
   drop the answer, finish the work, then answer alone next round.

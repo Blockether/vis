@@ -43,5 +43,5 @@ JSON string values can reference env vars as `$NAME`, `${NAME}`, or `env:NAME`:
 }
 ```
 
-Tool results are Vis tool envelopes. Payload lives under `:result`; large MCP output is truncated and full output is written to a temp file.
+Tool results are Vis tool envelopes. Payload lives under `:op/result`; for example `(get-in r [:op/result :content])`. Large MCP output is truncated and full output is written to a temp file under `[:op/result :temp-file]`.
 "}}}}
