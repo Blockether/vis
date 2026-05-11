@@ -2041,74 +2041,13 @@
                                    :switch-conversation
                                    (show-conversations!)
 
-                                   :search-in-conversation
-                                   ;; In-conversation full-text search.
-                                   ;; Walks `(:messages @app-db)`, projects each
-                                   ;; bubble's `:ir` to plain text via
-                                   ;; `vis/search-text`, finds case-insensitive
-                                   ;; substring matches, presents the hit list
-                                   ;; for the user to pick. Picked hit dispatches
-                                   ;; `:scroll-to-message` so the painter scrolls
-                                   ;; that bubble into view.
-                                   (let [initial (or args "")
-                                         query (or (with-dialog-lock
-                                                     #(dlg/text-input-dialog! screen
-                                                        "Find in conversation" "Query"
-                                                        :initial initial
-                                                        :body "Substring match (case-insensitive). Esc to cancel."))
-                                                 "")]
-                                     (when-not (str/blank? query)
-                                       (let [needle  (str/lower-case query)
-                                             messages (vec (or (:messages @state/app-db) []))
-                                             hits (vec
-                                                    (keep-indexed
-                                                      (fn [idx m]
-                                                        (let [haystack (or (vis/search-text (:ir m)) "")
-                                                              h-lower  (str/lower-case haystack)
-                                                              pos      (.indexOf ^String h-lower ^String needle)]
-                                                          (when (>= pos 0)
-                                                            (let [start (max 0 (- pos 24))
-                                                                  end   (min (count haystack) (+ pos (count needle) 48))
-                                                                  pre   (if (pos? start) "…" "")
-                                                                  suf   (if (< end (count haystack)) "…" "")
-                                                                  snip  (str pre (subs haystack start end) suf)]
-                                                              {:msg-idx idx
-                                                               :role    (or (:role m) :assistant)
-                                                               :preview (str/replace snip #"\s+" " ")}))))
-                                                      messages))]
-                                         (cond
-                                           (empty? hits)
-                                           (vis/notify! (str "No matches for: " query)
-                                             :level :warn :ttl-ms copy-success-ttl-ms)
-
-                                           :else
-                                           (let [pick-options (mapv (fn [h]
-                                                                      {:label (format "#%d %-9s %s"
-                                                                                (inc (:msg-idx h))
-                                                                                (name (:role h))
-                                                                                (:preview h))
-                                                                       :msg-idx (:msg-idx h)})
-                                                                hits)
-                                                 picked (with-dialog-lock
-                                                          #(dlg/select-dialog! screen
-                                                             (str (count hits) " match" (when (not= 1 (count hits)) "es")
-                                                               " for \"" query "\"")
-                                                             pick-options))]
-                                             (when-let [target (:msg-idx picked)]
-                                               (let [hit-idxs (mapv :msg-idx hits)
-                                                     start-idx (or (some (fn [[i v]]
-                                                                           (when (= v target) i))
-                                                                     (map-indexed vector hit-idxs))
-                                                                 0)]
-                                                 (state/dispatch [:search-set-active
-                                                                  {:query query
-                                                                   :hits  hit-idxs
-                                                                   :index start-idx}])
-                                                 (vis/notify!
-                                                   (str "Find \"" query "\" — match "
-                                                     (inc start-idx) "/" (count hit-idxs)
-                                                     "  (F3 next, Shift+F3 prev, Esc clear)")
-                                                   :level :info :ttl-ms copy-success-ttl-ms))))))))
+                                   ;; :search-in-conversation removed from
+                                   ;; the command palette — the in-conversation
+                                   ;; search lives in the upper bar (above
+                                   ;; messages) and is triggered by F3 /
+                                   ;; Shift+F3 / its in-place input field. The
+                                   ;; previous palette entry was a duplicate
+                                   ;; entry point for the same action.
 
                                    :providers
                                    (when-let [c (with-dialog-lock

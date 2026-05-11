@@ -999,22 +999,15 @@
 
 (defn- normalize-role
   "Per PLAN §1.3: 4-value block role enum.
-   Maps the block's `:role` (or legacy `:rendering-kind`) to one of
-   `#{:answer :nudge :tool :thinking}`. Errors are derived from
-   `:op/success?` on the envelope, NOT a separate `:vis/error` role.
-
-   Legacy value mapping (for blobs persisted before the cutover):
-     :vis/answer                  -> :answer
-     :vis/tool, :vis/sci          -> :tool
-     :vis/system, :vis/diagnostic -> :nudge
-     :vis/error                   -> derived from :error -> default :tool"
+   Reads `:role` from the block; defaults to `:tool` when missing or
+   when the value is not one of the 4 canonical roles. Errors are
+   derived from `:op/success?` on the envelope, NOT a separate role.
+   No `:vis/*` legacy mapping — dev DBs are blown away per
+   AGENTS.md S3 inline-V1 rule."
   [exec]
-  (let [v (or (:role exec) (:rendering-kind exec))]
+  (let [v (:role exec)]
     (case v
       (:answer :tool :nudge :thinking) v
-      :vis/answer                      :answer
-      (:vis/tool :vis/sci)             :tool
-      (:vis/system :vis/diagnostic)    :nudge
       :tool)))
 
 (defn- prepare-blocks-blob
