@@ -72,62 +72,108 @@
     (expect (= 1 (#'prompt/effective-context-limit "any-model" -42)))))
 
 (defdescribe core-system-prompt-test
-  (it "states the GROUND RULE: generate -> evaluate -> populate -> observe -> decide"
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "GROUND RULE"))
-      (expect (str/includes? p "GENERATE one OR MORE fenced ```clojure blocks"))
-      (expect (str/includes? p "AUTOMATICALLY populates results into <journal>"))
-      (expect (str/includes? p "OBSERVE"))
-      (expect (str/includes? p "DECIDE"))
-      (expect (str/includes? p "(answer"))))
+  ;; Per PLAN.md §6.1: the prompt was rewritten to a ~60-line caveman
+  ;; form centered on the OODA loop. These tests pin the new shape
+  ;; against accidental regressions back to prose-heavy explanations.
 
-  (it "states the OUTPUT FORMAT contract before GROUND RULE"
+  (it "is bounded at <= 70 lines per PLAN §6.4"
+    (let [p prompt/CORE_SYSTEM_PROMPT
+          n (count (str/split-lines p))]
+      (expect (<= n 70)
+        (str "prompt grew to " n " lines; §6.4 caps it at 70"))))
+
+  (it "states the OUTPUT contract before LOOP"
     ;; Regression: conversation 185fbc4f had GLM-5.1 fabricate a
     ;; <journal> envelope and close it with a stray ``` that swallowed
-    ;; the next real ```clojure opener. The strict format header tells
-    ;; the model: only fenced clojure blocks, prose -> ;; comments
-    ;; INSIDE the fence.
+    ;; the next real ```clojure opener. The output rule must come
+    ;; first.
     (let [p prompt/CORE_SYSTEM_PROMPT
-          fmt-idx (str/index-of p "OUTPUT FORMAT")
-          ground-idx (str/index-of p "GROUND RULE")]
+          fmt-idx (str/index-of p "OUTPUT:")
+          loop-idx (str/index-of p "LOOP:")]
       (expect (some? fmt-idx))
-      (expect (some? ground-idx))
-      (expect (< (long fmt-idx) (long ground-idx)))
-      (expect (str/includes? p "ONE OR MORE fenced ```clojure blocks. NOTHING else"))
-      (expect (str/includes? p ";; comments INSIDE the fence"))))
+      (expect (some? loop-idx))
+      (expect (< (long fmt-idx) (long loop-idx)))
+      (expect (str/includes? p "```clojure fences. Nothing outside"))
+      (expect (str/includes? p ";; comments"))))
 
-  (it "DEFS RENDER sub-rule says every top-level form (incl. defs) appears in <journal>"
-    ;; Regression: the prompt previously taught "SILENT FORMS — defs
-    ;; are acquisition, not observation" because lone defs were
-    ;; elided from <journal>. The whole `:vis/silent` mechanism has
-    ;; been removed - every top-level form including defs renders.
+  (it "declares 3 strategies (\":answer\" \":ooda\" \":architect\") with classify-first rule"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "DEFS RENDER"))
-      (expect (str/includes? p "<bindings>"))
-      (expect (str/includes? p "every top-level form"))
-      (expect (str/includes? p "contiguous"))
-      ;; The old language must be gone - if it survives, the
-      ;; prompt is lying to the model about elision behavior.
-      (expect (not (str/includes? p "SILENT FORMS")))
-      (expect (not (str/includes? p "acquisition, not observation")))))
+      (expect (str/includes? p "λ engage"))
+      (expect (str/includes? p ":answer"))
+      (expect (str/includes? p ":ooda"))
+      (expect (str/includes? p ":architect"))
+      (expect (str/includes? p "classify(request) -> strategy"))
+      (expect (str/includes? p "declare(strategy)"))
+      ;; Old grill name must be gone (PLAN §4.5 architect rename).
+      (expect (not (str/includes? p ":grill")))))
 
-  (it "BINDINGS sub-rule documents *1/*2/*3/*e as escape hatches"
-    (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "BINDINGS"))
+  (it "BINDINGS and SYSTEM VARS are sibling sections (not conflated)"
+    (let [p prompt/CORE_SYSTEM_PROMPT
+          bind-idx (str/index-of p "BINDINGS:")
+          sys-idx  (str/index-of p "SYSTEM VARS:")]
+      (expect (some? bind-idx))
+      (expect (some? sys-idx))
+      (expect (< (long bind-idx) (long sys-idx)))
+      ;; BINDINGS still mentions escape hatches (PLAN §6.4 BINDINGS spec).
       (expect (str/includes? p "`*1`"))
       (expect (str/includes? p "`*e`"))
-      (expect (str/includes? p "prefer durable names"))))
+      (expect (str/includes? p "durable"))))
 
-  (it "GROUND RULE step 3 promises every tool call surfaces in <journal>"
-    ;; The sink design makes prompt-level shape coaching (TOP-LEVEL DEFS,
-    ;; BATCHING, DIAGNOSTIC OUTPUT) redundant - the engine captures every
-    ;; call regardless of nesting. The prompt must promise that invariant
-    ;; so the model knows it can write any shape.
+  (it "SYSTEM VARS section names hierarchy prefix + 11-var registry"
     (let [p prompt/CORE_SYSTEM_PROMPT]
-      (expect (str/includes? p "every call surfaces"))
+      (expect (str/includes? p "CONVERSATION_*"))
+      (expect (str/includes? p "TURN_*"))
+      (expect (str/includes? p "TURN_ITERATION_*"))
+      (expect (str/includes? p "hierarchy"))
+      (expect (str/includes? p "11 names"))
+      ;; Retired raw SOUL_ID variants must NOT appear AS VAR NAMES.
+      ;; (Mentioning \"raw SOUL_IDs retired\" in the explanatory line
+      ;; is fine — the model needs to know they're gone.)
+      (expect (not (str/includes? p "CONVERSATION_SOUL_ID ")))
+      (expect (not (str/includes? p "TURN_CONVERSATION_SOUL_ID ")))))
+
+  (it "OPS section names the 2-value tag enum + structured error fields"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p ":op.tag/observation"))
+      (expect (str/includes? p ":op.tag/action"))
+      (expect (str/includes? p "::op/tag"))
+      (expect (str/includes? p "::op/success?"))
+      (expect (str/includes? p "::op/error"))
+      ;; Error structure named per PLAN §2.1 + §6.3.
+      (expect (str/includes? p ":message"))
+      (expect (str/includes? p ":hint"))
+      (expect (str/includes? p ":trace"))
+      (expect (str/includes? p ":block"))
+      ;; PLAN §6.3: agent reads :hint first.
+      (expect (str/includes? p "Read :hint first"))))
+
+  (it "CODE section embeds the editing/aesthetics rules per PLAN §6.1"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "code > markdown"))
+      (expect (str/includes? p "data > control_flow"))
+      (expect (str/includes? p "pure > stateful"))
+      ;; Structural editing hierarchy (z/patch > v/patch > raw text).
+      (expect (str/includes? p "z/patch > v/patch > raw_text"))
+      (expect (str/includes? p "HoneySQL > raw SQL"))
+      (expect (str/includes? p "one change -> verify -> next"))))
+
+  (it "closes with TRUTH precedence (runtime > source > docs > assumption)"
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (str/includes? p "TRUTH:"))
+      (expect (str/includes? p "runtime > source > docs > assumption"))))
+
+  (it "removed the prose-heavy GROUND RULE / DEFS RENDER sections (PLAN §6.2)"
+    ;; If any of these survive, the prompt has regressed back to the
+    ;; ~120-line prose form.
+    (let [p prompt/CORE_SYSTEM_PROMPT]
+      (expect (not (str/includes? p "GROUND RULE")))
+      (expect (not (str/includes? p "DEFS RENDER")))
+      (expect (not (str/includes? p "SILENT FORMS")))
       (expect (not (str/includes? p "TOP-LEVEL DEFS")))
       (expect (not (str/includes? p "BATCHING")))
-      (expect (not (str/includes? p "DIAGNOSTIC OUTPUT"))))))
+      (expect (not (str/includes? p "DIAGNOSTIC OUTPUT")))
+      (expect (not (str/includes? p "GENERATE one OR MORE")))
+      (expect (not (str/includes? p "AUTOMATICALLY populates"))))))
 
 (defdescribe journal-rendering-test
   (it "renders every block in <journal> (no silent elision)"
