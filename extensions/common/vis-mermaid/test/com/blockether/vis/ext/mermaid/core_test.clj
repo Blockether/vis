@@ -62,6 +62,17 @@
       (expect (not-any? #(str/includes? % "<br") out))
       (expect (not-any? #(str/includes? % "...") out))))
 
+  (it "renders complex/cyclic flowcharts as readable wrapped adjacency instead of broken box routing"
+    (let [source "flowchart TD\n  A[User request] --> B[Assistant emits Clojure forms]\n  B --> C[Journal updated<br/>tool results, errors, previews]\n  B --> D[Bindings<br/>named vars, *1 *2 *3 *e]\n  B --> E[System vars<br/>TURN_*, CONVERSATION_*]\n  B --> F[SQLite persistence]\n  C --> G[Assistant reads journal]\n  G --> H{Need more observation?}\n  H -- No --> I[Emit answer as single form]\n  H --> J[Call tools<br/>v/cat v/rg z/locators z/patch v/bash]\n  J --> K[SCI sandbox evaluates]\n  K --> C\n  I --> L[Rendered to user]"
+          out (:lines (mermaid/render-mermaid {:width 100 :source source}))]
+      (expect (some #(str/includes? % "Assistant emits Clojure forms") out))
+      (expect (some #(str/includes? % "tool results, errors, previews") out))
+      (expect (some #(str/includes? % "v/cat v/rg z/locators") out))
+      (expect (some #(str/includes? % "No → Emit answer as single form") out))
+      (expect (not-any? #(str/includes? % "<br") out))
+      (expect (not-any? #(str/includes? % "...") out))
+      (expect (not-any? #(re-find #"[┌┐┘╱╲]" %) out))))
+
   (it "uses the supplied terminal width for flowchart spacing"
     (let [source "flowchart LR\n  A[Start] --> B{Choice}\n  B -->|Yes| C[Do thing]\n  B -->|No| D[Skip]"
           w60 (apply max (map count (:lines (mermaid/render-mermaid {:width 60 :source source}))))

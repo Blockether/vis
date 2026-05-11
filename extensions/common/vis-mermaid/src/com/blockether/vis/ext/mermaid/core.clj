@@ -814,17 +814,39 @@
          (when (and label-only? label)
            (draw-edge-label! canvas (+ 2 (min ax bx)) midy label)))))))
 
+(defn- prefixed-wrap
+  [width prefix continuation text]
+  (let [body-width (max 10 (- (long (or width 80)) (count prefix)))
+        lines (map-indexed vector (wrap-words body-width text))]
+    (mapv (fn [[idx line]]
+            (str (if (zero? idx) prefix continuation) line))
+      lines)))
+
+(defn- render-edge-row
+  [width last? {:keys [target-id label directed?]} nodes]
+  (let [target (clean-label (get-in nodes [target-id :label] target-id))
+        text (str (when label (str (clean-label label) " → ")) target)
+        branch (if last? "└" "├")
+        arrow (if directed? "▶ " "─ ")]
+    (prefixed-wrap width (str "  " branch "─" arrow) "  │   " text)))
+
 (defn- render-flow-edge-list
-  [{:keys [nodes edges warnings]}]
-  (cond-> (into []
-            (map (fn [{:keys [source-id target-id label directed?]}]
-                   (str "• " (single-line-label (get-in nodes [source-id :label] source-id))
-                     " " (if directed? "──" "──")
-                     (when label (str (single-line-label label) "──"))
-                     (if directed? "▶ " "─ ")
-                     (single-line-label (get-in nodes [target-id :label] target-id))))
-              edges))
-    (seq warnings) (conj (str "Warnings: " (count warnings)))))
+  [{:keys [nodes order edges warnings]} width]
+  (let [by-source (group-by :source-id edges)
+        ordered-sources (->> (concat order (map :source-id edges))
+                          distinct
+                          (filter by-source))
+        lines (mapcat (fn [source-id]
+                        (let [source-label (clean-label (get-in nodes [source-id :label] source-id))
+                              source-lines (prefixed-wrap width "• " "  " source-label)
+                              outgoing (vec (get by-source source-id))]
+                          (concat source-lines
+                            (mapcat (fn [[idx edge]]
+                                      (render-edge-row width (= idx (dec (count outgoing))) edge nodes))
+                              (map-indexed vector outgoing)))))
+                ordered-sources)]
+    (cond-> (vec lines)
+      (seq warnings) (conj (str "Warnings: " (count warnings))))))
 
 (defn- flow-layout-candidate
   [ast groups direction width]
@@ -847,6 +869,18 @@
     [direction "TD"]
     [direction "LR"]))
 
+(defn- complex-flowchart?
+  [{:keys [nodes edges]} groups]
+  (let [ranks (into {}
+                (mapcat (fn [{:keys [rank ids]}]
+                          (map #(vector % rank) ids))
+                  groups))]
+    (or (> (count nodes) 6)
+      (> (count edges) 10)
+      (some (fn [{:keys [source-id target-id]}]
+              (>= (get ranks source-id 0) (get ranks target-id 0)))
+        edges))))
+
 (defn- layout-flowchart
   ([ast]
    (layout-flowchart ast {}))
@@ -855,17 +889,19 @@
      (if (or (empty? edges)
            (> (count nodes) max-flow-nodes)
            (> (count edges) max-flow-edges))
-       {:layout/type :edge-list :ast ast}
-       (let [groups (grouped-ranks ast)
-             candidates (mapv #(flow-layout-candidate ast groups % width)
-                          (preferred-fallback-directions direction))]
-         (or (first (filter #(<= (:w %) width) candidates))
-           (first candidates)))))))
+       {:layout/type :edge-list :ast ast :width width}
+       (let [groups (grouped-ranks ast)]
+         (if (complex-flowchart? ast groups)
+           {:layout/type :edge-list :ast ast :width width}
+           (let [candidates (mapv #(flow-layout-candidate ast groups % width)
+                              (preferred-fallback-directions direction))]
+             (or (first (filter #(<= (:w %) width) candidates))
+               (first candidates)))))))))
 
 (defn- render-flowchart-layout
-  [{:keys [layout/type ast positions w h direction]}]
+  [{:keys [layout/type ast positions w h direction width]}]
   (if (= type :edge-list)
-    (render-flow-edge-list ast)
+    (render-flow-edge-list ast width)
     (let [canvas (blank-canvas w h)
           horizontal? (#{"LR" "RL"} direction)]
       (doseq [edge (:edges ast)]
