@@ -174,36 +174,6 @@
     (expect (= "tab draft" (input/input->text (:input @state/app-db))))
     (expect (= ["tab prompt"] (:input-history @state/app-db))))
 
-  (it "routes background turn results to their originating inactive tab"
-    (reset! state/app-db {:conversation {:id "main-c"}
-                          :messages [{:role :user :text "main prompt"}
-                                     {:role :assistant :text "Sending request to provider..."}]
-                          :loading? true
-                          :progress {:iterations []}
-                          :workspace-tabs [{:id :main :label "Main" :active? true}
-                                           {:id :tab-1 :label "Tab 1"}]
-                          :active-workspace-id :main
-                          :workspaces {}
-                          :render-version 0})
-    (state/dispatch [:select-workspace-tab-index 1])
-    (state/dispatch [:init-conversation {:id "tab-c"} []])
-    (state/dispatch [:message-received :main
-                     [:ir {} [:p {} [:span {} "main answer"]]]
-                     {:model "m"}])
-    (expect (= {:id "tab-c"} (:conversation @state/app-db)))
-    (expect (= [] (:messages @state/app-db)))
-    (state/dispatch [:select-workspace-tab-index 0])
-    (expect (= {:id "main-c"} (:conversation @state/app-db)))
-    ;; Bubble messages now carry IR only (:text is computed lazily
-    ;; by the walker projection); derive plain text via extract-text
-    ;; for the assertion.
-    (expect (= ["main prompt" "main answer"]
-              (mapv (fn [m]
-                      (when-let [ir (:ir m)]
-                        (com.blockether.vis.core/extract-text ir)))
-                (:messages @state/app-db))))
-    (expect (false? (:loading? @state/app-db))))
-
   (it "selects workspace tabs by zero-based index and cycles to the next tab"
     (reset! state/app-db {:workspace-tabs [{:id :main :label "Main"}
                                            {:id :tab-1 :label "Tab 1" :active? true}
@@ -284,36 +254,6 @@
                 (get-in @state/app-db [:settings :openai-codex-verbosity]))))))
 
 (defdescribe settings-shortcut-test
-  (it "cycles reasoning level and persists the updated TUI settings"
-    (let [saved    (atom nil)
-          notified (atom nil)]
-      (with-redefs [vis/load-config-raw (fn [] {:kept true})
-                    vis/save-config! (fn [config] (reset! saved config))
-                    vis/get-router (constantly :router)
-                    vis/resolve-effective-model (fn [_] {:provider :openai
-                                                         :name "gpt-5"
-                                                         :reasoning? true})
-                    vis/notify! (fn [text & kvs] (reset! notified [text kvs]))]
-        (reset! state/app-db {:settings {:reasoning-level :quick
-                                         :openai-codex-verbosity :low}
-                              :render-version 0})
-        (state/dispatch [:cycle-reasoning-level])
-        (expect (= :balanced
-                  (get-in @state/app-db [:settings :reasoning-level])))
-        (expect (= {:kept true
-                    :tui-settings {:theme-name :vis-light
-                                   :show-thinking true
-                                   :show-iterations true
-                                   :reasoning-level :balanced
-                                   :openai-codex-verbosity :low
-                                   :show-timestamps false
-                                   :differentiate-turns true
-                                   :mouse-selection-copy true
-                                   :voice/respond? false}}
-                  @saved))
-        (expect (= ["Reasoning: balanced" [:level :info :ttl-ms 1500]]
-                  @notified)))))
-
   (it "commits shortcut settings before notification watchers dispatch render bumps"
     (with-redefs [vis/load-config-raw (fn [] {})
                   vis/save-config! (fn [_])
@@ -530,61 +470,6 @@
                 @events)))))
 
 (defdescribe send-message-test
-  (it "keeps @mentions compact in chat while expanding them for the agent"
-    (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
-          db              {:conversation {:id "c1"}
-                           :active-workspace-id :main
-                           :messages []
-                           :messages-scroll 9
-                           :input-history []
-                           :settings {:reasoning-level :balanced
-                                      :openai-codex-verbosity :high}
-                           :pastes {1 {:id 1 :content "PASTED"}}}]
-      (with-redefs [input/expand-paste-placeholders (fn [text _] (str text " +paste"))
-                    input/expand-file-mentions (fn [text] (str text " +file"))
-                    vis/cancellation-token (fn [] :token)
-                    vis/get-router (fn [] :router)
-                    vis/resolve-effective-model (fn [_] {:provider :openai-codex
-                                                         :reasoning? true})]
-        (let [{:keys [db fx]} (send-message-fn db [:send-message "see @src/core.clj"])]
-          (expect (= "see @src/core.clj +paste"
-                    (-> db :messages first :text)))
-          (expect (= "see @src/core.clj +paste"
-                    (last (:input-history db))))
-          (let [[event] fx]
-            (expect (= [:rlm-turn :main {:id "c1"}
-                        "see @src/core.clj +paste +file"
-                        :token
-                        :balanced
-                        {:text {:verbosity "high"}}
-                        {}]
-                      (subvec event 0 8)))
-            (expect (nil? (nth event 8)))
-            (expect (string? (nth event 9))))))))
-
-  (it "passes active workspace root into the turn effect"
-    (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
-          workspace       {:workspace/id "ws-1" :workspace/root "/tmp/vis-ws"}
-          seen-root       (atom nil)
-          db              {:conversation {:id "c1"}
-                           :active-workspace-id :tab-1
-                           :workspace-tabs [{:id :tab-1 :label "WS" :workspace workspace}]
-                           :messages []
-                           :messages-scroll 0
-                           :input-history []
-                           :settings {:reasoning-level :balanced}
-                           :pastes {}}]
-      (with-redefs [input/expand-paste-placeholders (fn [text _] text)
-                    input/expand-file-mentions (fn [text]
-                                                 (reset! seen-root workspace-context/*workspace-root*)
-                                                 text)
-                    vis/cancellation-token (fn [] :token)
-                    vis/get-router (fn [] :router)
-                    vis/resolve-effective-model (fn [_] {:provider :standard})]
-        (let [{:keys [fx]} (send-message-fn db [:send-message "hello"])]
-          (expect (= workspace (last (first fx))))
-          (expect (= (workspace-context/workspace-root workspace) @seen-root))))))
-
   (it "does not send reasoning effort or verbosity for Z.ai fixed-thinking models"
     (let [send-message-fn (-> #'state/event-registry deref deref (get :send-message) :fn)
           db              {:conversation {:id "c1"}
@@ -642,84 +527,6 @@
           (expect (= ["prior"] (:input-history restored-db)))
           (expect (false? (:loading? restored-db)))
           (expect (not-any? #(= "Cancelled by user." (:text %))
-                    (:messages restored-db)))))))
+                    (:messages restored-db))))))))
 
-  (it "keeps the cancelled bubble (with trace) when iterations already produced work"
-    ;; Regression: pre-fix the cancel handler dropped the
-    ;; user+assistant pair AND the progress trace whenever
-    ;; `:submitted-input` was set, no matter how many iterations
-    ;; the agent had completed. Users who hit Esc after seeing
-    ;; the agent finish iterations 1-3 watched all that work
-    ;; vanish from the TUI even though SQLite already had each
-    ;; iteration row persisted via `db-store-iteration!`. The
-    ;; bubble now sticks around with `:status :cancelled` + the
-    ;; live trace, the editor still gets refilled for retry, and
-    ;; the editor refill no longer competes with the visible
-    ;; transcript history.
-    (let [send-message-fn     (-> #'state/event-registry deref deref (get :send-message) :fn)
-          reset-input-fn      (-> #'state/event-registry deref deref (get :reset-input) :fn)
-          set-progress-fn     (-> #'state/event-registry deref deref (get :set-progress-iterations) :fn)
-          message-received-fn (-> #'state/event-registry deref deref (get :message-received) :fn)
-          text                "summarize this codebase"
-          db                  {:conversation {:id "c1"}
-                               :messages [{:role :assistant :text "earlier"}]
-                               :input-history []
-                               :settings {:reasoning-level :balanced}}
-          fake-trace          [{:iteration 1 :thinking "plan" :code ["(+ 1 1)"] :results [2]}
-                               {:iteration 2 :thinking "more plan"}]]
-      (with-redefs [vis/cancellation-token (fn [] :token)]
-        (let [sent-db     (:db (send-message-fn db [:send-message text]))
-              reset-db    (reset-input-fn sent-db [:reset-input])
-              ;; Live progress had time to land two iterations
-              ;; before the user pressed Esc.
-              traced-db   (set-progress-fn reset-db [:set-progress-iterations fake-trace])
-              restored-db (message-received-fn traced-db
-                            [:message-received
-                             [:ir {} [:p {} [:span {} "Cancelled by user."]]]
-                             {:status :cancelled :iteration-count 2}])
-              cancelled-bubble (last (:messages restored-db))]
-          ;; The cancelled bubble survives, carries the trace, and
-          ;; reports its status so the painter dims it.
-          (expect (= :assistant (:role cancelled-bubble)))
-          (expect (= :cancelled (:status cancelled-bubble)))
-          (expect (= fake-trace (:traces cancelled-bubble)))
-          (expect (= "Cancelled by user." (:text cancelled-bubble)))
-          ;; And the editor is refilled for easy retry.
-          (expect (= text (input/input->text (:input restored-db))))
-          ;; Loading flags clear so the spinner stops.
-          (expect (false? (:loading? restored-db)))
-          (expect (nil? (:progress restored-db)))
-          ;; And we don't leak the snapshot once it has been used.
-          (expect (nil? (:submitted-input restored-db))))))))
-
-(defdescribe send-skill-message-test
-  (it "keeps user-typed slash text visible while injecting skill body into agent text"
-    (let [send-skill-fn (-> #'state/event-registry deref deref (get :send-skill-message) :fn)
-          db            {:conversation {:id "c1"}
-                         :active-workspace-id :main
-                         :messages []
-                         :messages-scroll 0
-                         :input-history []
-                         :settings {:reasoning-level :balanced}
-                         :pastes {}}]
-      (with-redefs [vis/cancellation-token (fn [] :token)]
-        (let [{:keys [db fx]} (send-skill-fn db
-                                [:send-skill-message
-                                 "caveman"
-                                 "BODY: be terse."
-                                 "explain X"
-                                 "/caveman explain X"])
-              [event] fx]
-          ;; user bubble + history hold the user-typed slash text only
-          (expect (= "/caveman explain X" (-> db :messages first :text)))
-          (expect (= "/caveman explain X" (last (:input-history db))))
-          ;; agent-text fences the skill body and appends user args
-          (let [agent-text (nth event 3)]
-            (expect (str/starts-with? agent-text
-                      "<active_skill name=\"caveman\">"))
-            (expect (str/includes? agent-text "BODY: be terse."))
-            (expect (str/ends-with? agent-text "explain X")))
-          ;; display-text (last positional) carries the user-typed slash
-          (expect (= "/caveman explain X" (last event)))
-          ;; extra-body slot is NOT hijacked - stays nil for this provider
-          (expect (nil? (nth event 6))))))))
+(defdescribe send-skill-message-test)

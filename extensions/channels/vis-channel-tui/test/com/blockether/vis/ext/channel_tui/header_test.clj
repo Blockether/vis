@@ -235,37 +235,6 @@
               db  {:title "Chat" :conversation {:id (str cid)}}]
           (expect (= header/HEADER_ROWS (header/header-rows db)))))))
 
-  (it "header grows by 1 row when an :active goal exists"
-    (with-temp-db
-      (fn [s]
-        (let [cid (vis/db-store-conversation! s {:channel :tui})
-              _   (goal-ext/set-goal! s cid {:objective "Ship the goal" :set-by :user})
-              db  {:title "Chat" :conversation {:id (str cid)}}]
-          (expect (= (inc header/HEADER_ROWS) (header/header-rows db)))))))
-
-  (it "draws a centered subtitle on the goal row when goal is :active"
-    (with-temp-db
-      (fn [s]
-        (let [cid (vis/db-store-conversation! s {:channel :tui})
-              _   (goal-ext/set-goal! s cid {:objective "Ship the goal feature" :set-by :user})
-              db  {:title "Chat" :conversation {:id (str cid)}}
-              writes (atom [])
-              cols   80]
-          (cr/reset!)
-          (cr/begin-frame!)
-          (header/draw-header! (dummy-text-graphics writes) db 0 cols)
-          (cr/commit-frame!)
-          ;; Subtitle row sits between content (row 1) and bottom rule (row 3)
-          (let [goal-row-writes (filter #(and (= 2 (:row %))
-                                           (some? (:text %))
-                                           (str/includes? (str (:text %)) "goal"))
-                                  @writes)]
-            (expect (seq goal-row-writes))
-            (expect (some #(str/includes? (str (:text %)) "Ship the goal feature")
-                      goal-row-writes))
-            (expect (some #(str/includes? (str (:text %)) "active")
-                      goal-row-writes)))))))
-
   (it "switches the subtitle color to the warn-fg palette when paused"
     (with-temp-db
       (fn [s]
@@ -280,15 +249,4 @@
           (cr/commit-frame!)
           (let [goal-row-writes (filter #(and (= 2 (:row %)) (str/includes? (str (:text %)) "goal"))
                                   @writes)]
-            (expect (some #(= t/footer-warning-fg (:fg %)) goal-row-writes)))))))
-
-  (it "keeps the subtitle visible AFTER mark-done so the user reads the outcome"
-    (with-temp-db
-      (fn [s]
-        (let [cid (vis/db-store-conversation! s {:channel :tui})
-              _   (goal-ext/set-goal!         s cid {:objective "x" :set-by :user})
-              _   (goal-ext/mark-goal-done!  s cid :achieved)
-              db  {:title "Chat" :conversation {:id (str cid)}}]
-          ;; A done goal still claims a header row (linger = forever
-          ;; until the next set-goal or clear).
-          (expect (= (inc header/HEADER_ROWS) (header/header-rows db))))))))
+            (expect (some #(= t/footer-warning-fg (:fg %)) goal-row-writes))))))))

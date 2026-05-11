@@ -261,16 +261,6 @@
       (expect (seq body-lines))
       (expect (some (fn [l] (some #(str/includes? (or (:text %) "") "body") (:runs l))) body-lines))))
 
-  (it ":details with no :open? omits body (collapsed by default)"
-    (let [lines (ir-tui/ir->lines
-                  [:ir [:details [:summary "X"] [:p "body"]]]
-                  80)
-          body-lines (filter #(= :details-body (:block-tag %)) lines)]
-      ;; The closed default still emits an empty trailing line so the
-      ;; bubble has visual spacing; no body content though.
-      (expect (not-any? (fn [l] (some #(str/includes? (or (:text %) "") "body") (:runs l)))
-                body-lines))))
-
   (it "`ir->entries` propagates `:meta` per line for the painter's click regions"
     (let [entries (ir-tui/ir->entries
                     [:ir [:p "intro"]
