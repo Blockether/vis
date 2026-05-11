@@ -64,6 +64,71 @@
       (expect (= p/MARKER_CODE_OK_PAD (marker-of (nth lines (- (count lines) 2)))))
       (expect (some #(= "3" (str/trim %)) bodies)))))
 
+(defn- visually-blank?
+  "True when a rendered line carries no visible glyphs — either truly
+   empty, plain whitespace, or made up entirely of the invisible
+   Unicode format-class characters (U+200B–U+200D, U+2060–U+206F,
+   U+FEFF) the TUI painter uses as line-kind sentinels. From the
+   user's perspective such rows are blank."
+  [s]
+  (let [s (strip-ansi (or s ""))]
+    (or (str/blank? s)
+      (every? (fn [^Character c]
+                (let [n (int c)]
+                  (or (= n 0x200B) (= n 0x200C) (= n 0x200D) (= n 0xFEFF)
+                    (<= 0x2060 n 0x206F))))
+        s))))
+
+(defdescribe answer-trailer-margin-test
+  ;; Regression: before this fix the answer bubble's top margin
+  ;; depended on whether the turn had any iteration trace. With trace,
+  ;; the trailer was `<trace-trailing-pad><ans-pad-top><answer>...`
+  ;; which the painter rendered as TWO blank rows. Without trace, just
+  ;; `<ans-pad-top><answer>...` = ONE blank row. Same for cancelled.
+  ;; The fix drops the leading ans-pad / leading blank whenever the
+  ;; trace already provides a trailing margin, so both shapes show one
+  ;; blank row between any preceding content and the answer text.
+  (let [ans       [:ir {} [:p {} "hello"]]
+        settings  {:show-thinking true :show-iterations true}
+        iter      {:code      ["(+ 1 1)"] :comments [nil]
+                   :results   ["2"] :stdouts [""] :stderrs [""]
+                   :durations [1] :successes [true]}
+        index-of  (fn [p needle]
+                    (first (keep-indexed
+                             (fn [i ln]
+                               (when (str/includes? (strip-ansi ln) needle) i))
+                             (:lines p))))]
+    (it "answer with NO trace: exactly one blank row above the answer text"
+      (let [p   (render/format-answer-with-thinking-data*
+                  ans [] 80 settings nil false nil)
+            idx (index-of p "hello")]
+        (expect (= 1 idx))
+        (expect (visually-blank? (first (:lines p))))))
+
+    (it "answer with code-bearing trace: exactly one blank row before the answer text"
+      (let [p   (render/format-answer-with-thinking-data*
+                  ans [iter] 80 settings nil false nil)
+            idx (index-of p "hello")
+            ln  (:lines p)]
+        (expect (some? idx))
+        (expect (visually-blank? (nth ln (dec idx))))
+        ;; And the row before THAT must NOT also be blank (otherwise
+        ;; the legacy two-row gap is back).
+        (expect (or (zero? (dec idx))
+                  (not (visually-blank? (nth ln (- idx 2))))))))
+
+    (it "cancelled with non-empty answer renders the answer text once"
+      ;; `cancel-text` falls back to the answer text when the IR is
+      ;; non-empty; assert the same one-row-above invariant.
+      (let [p   (render/format-answer-with-thinking-data*
+                  ans [iter] 80 settings nil true nil)
+            idx (index-of p "hello")
+            ln  (:lines p)]
+        (expect (some? idx))
+        (expect (visually-blank? (nth ln (dec idx))))
+        (expect (or (zero? (dec idx))
+                  (not (visually-blank? (nth ln (- idx 2))))))))))
+
 (defdescribe progress-rendering-test
   (it "iter-0 spinner row has a one-line top margin inside the bubble"
     ;; Regression: the "Vis is calling the provider" spinner used to
