@@ -16,19 +16,31 @@
    (java.nio.file Files)
    (java.nio.file.attribute FileAttribute)))
 
+;; Earlier tests in the suite (extension-aggregate-test fixtures, ...)
+;; can deregister-all-backends as part of their cleanup, taking the
+;; SQLite backend registration with them. Re-register at TEST TIME
+;; (not just at ns-load) so this test ns runs in any order. The
+;; call is idempotent.
+(defn- ensure-sqlite-backend! []
+  (persistance/register-backend! :sqlite
+    'com.blockether.vis.ext.persistance-sqlite.core))
+
 (defdescribe db-error-translation-test
   (it "delegates SQLite CANTOPEN translation to the SQLite adapter"
+    (ensure-sqlite-backend!)
     (let [message (persistance/db-error->user-message
                     (ex-info "[SQLITE_CANTOPEN] unable to open database file" {}))]
       (expect (str/includes? message "Vis database is unavailable"))
       (expect (str/includes? message "/.vis/vis.mdb/vis.db"))))
 
   (it "falls back to the exception message when no adapter recognizes it"
+    (ensure-sqlite-backend!)
     (expect (= "plain failure"
               (persistance/db-error->user-message (ex-info "plain failure" {}))))))
 
 (defdescribe shared-connection-refresh-test
   (it "reopens the shared persistent SQLite store when the db file is replaced"
+    (ensure-sqlite-backend!)
     (let [dir (str (Files/createTempDirectory "vis-persist-test" (make-array FileAttribute 0)))]
       (try
         (try (persistance/db-dispose-shared-connection!) (catch Throwable _ nil))

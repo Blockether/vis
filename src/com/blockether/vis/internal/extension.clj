@@ -145,6 +145,15 @@
   (s/and
     (s/keys :opt-un [:op/symbol :op/tag :op/result :op/success? :op/error
                      :op/stdout :op/stderr :op/metadata])
+    ;; Distinguishing-marker requirement: a real envelope MUST carry
+    ;; at least one canonical op/* key. Without this gate, plain maps
+    ;; (e.g. user data, results from non-envelope code) would all
+    ;; validate as envelopes since every key is :opt-un. Renderers
+    ;; that special-case envelopes would then mis-categorise plain
+    ;; data — see env_test.clj/build-bindings rendering bug. The
+    ;; canonical marker is the boolean `:op/success?` field that
+    ;; every `extension/success`/`extension/failure` constructor sets.
+    #(contains? % :op/success?)
     (fn [{:op/keys [success? error]}]
       (if success?
         (nil? error)
@@ -160,7 +169,7 @@
 (s/def :ext.sink/form      non-blank-string?)
 (s/def :ext.sink/success?  boolean?)
 (s/def :ext.sink/result    (s/nilable string?))
-(s/def :ext.sink/error     (s/nilable ::error-map))
+(s/def :ext.sink/error     :op/error)            ; :op/error is itself nilable per its spec
 
 (s/def ::sink-entry
   (s/and
@@ -678,6 +687,8 @@
 ;;   nil
 ;;   "nudge text"
 ;;   {:importance :low|:normal|:high|:critical :text "nudge text"}
+;;   sequential coll of the above (each element validated independently;
+;;   `nil` entries are dropped)
 ;; `:message` or `:body` are accepted aliases for `:text`.
 (def system-nudge-importances #{:low :normal :high :critical})
 
@@ -689,16 +700,34 @@
       (contains? system-nudge-importances (:importance x)))
     (non-blank-string? (:text x))))
 
+(defn- single-system-nudge?
+  [x]
+  (or (nil? x)
+    (non-blank-string? x)
+    (system-nudge-map? x)))
+
 (s/def ::system-nudge-result
-  (s/nilable
-    (s/or :text non-blank-string?
-      :map system-nudge-map?)))
+  (s/or :one  single-system-nudge?
+    :many (s/and sequential?
+            #(every? single-system-nudge? %))))
 
 (defn system-nudge-result?
   "True when an extension :ext/nudge-fn return value conforms to the
-   supported nudge contract. Used at runtime after calling the nudge fn."
+   supported nudge contract. Used at runtime after calling the nudge fn.
+   Accepts either a single nudge (nil/string/map) or a sequential coll
+   of single nudges; nil entries inside a coll are dropped downstream."
   [x]
   (s/valid? ::system-nudge-result x))
+
+(defn coerce-system-nudge-result
+  "Coerce a validated nudge-fn return value into a (possibly empty) seq of
+   non-nil single nudges. Caller is expected to have validated `x` via
+   `system-nudge-result?` first."
+  [x]
+  (cond
+    (nil? x) ()
+    (sequential? x) (remove nil? x)
+    :else (list x)))
 
 (defn explain-system-nudge-result
   [x]

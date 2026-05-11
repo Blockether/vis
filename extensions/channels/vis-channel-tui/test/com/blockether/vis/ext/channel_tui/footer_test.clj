@@ -1,8 +1,46 @@
 (ns com.blockether.vis.ext.channel-tui.footer-test
   (:require [com.blockether.vis.ext.channel-tui.footer :as footer]
+            [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.theme :as t]
             [com.blockether.vis.internal.git :as git]
             [lazytest.core :refer [defdescribe expect it]]))
+
+(defn- sentinel-char?
+  "True when `c` is a footer-unsafe sentinel codepoint: either a
+   block-marker (Unicode invisible-format range \\u2061-\\u206F, or
+   the markdown PUA range \\uE000-\\uE0FF) or an inline-span
+   sentinel (\\uE110-\\uE119). `draw-spans!` writes characters
+   verbatim into terminal cells, so any of these would leak as a
+   stray blank column."
+  [^Character c]
+  (let [n (int c)]
+    (or (<= 0x2061 n 0x206F)
+      (<= 0xE000 n 0xE0FF)
+      (p/inline-sentinel? (str c)))))
+
+(defdescribe ir->footer-text-test
+  ;; Regression for conversation 39a73cfb: footer hook IR was routed
+  ;; through `lines->sentinel-strings`, which prepends
+  ;; `MARKER_ANSWER_TXT` (\u206E). `draw-spans!` then wrote that
+  ;; marker into a real terminal cell, showing as a leading blank
+  ;; before "zai-coding/glm-5.1" in the second footer row.
+  (let [ir->footer-text @#'footer/ir->footer-text]
+    (it "strips block markers so plain-text IR yields plain text"
+      (expect (= "zai-coding/glm-5.1"
+                (ir->footer-text
+                  [:ir {} [:p {} [:span {} "zai-coding/glm-5.1"]]]))))
+
+    (it "never returns a leading sentinel character"
+      (let [s (ir->footer-text
+                [:ir {} [:p {} [:span {} "openai/gpt-5"]]])]
+        (expect (pos? (count s)))
+        (expect (not (sentinel-char? (.charAt ^String s 0))))))
+
+    (it "strips inline style sentinels too (footer uses :bold? on seg, not IR)"
+      (let [s (ir->footer-text
+                [:ir {} [:p {} [:strong {} "bold"] [:span {} "plain"]]])]
+        (expect (= "boldplain" s))
+        (expect (every? #(not (sentinel-char? %)) s))))))
 
 (defdescribe build-segments-test
   (it "shows the selected reasoning level for reasoning-capable models"

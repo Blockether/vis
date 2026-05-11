@@ -366,17 +366,17 @@
   ;; this test exercises the predicate so we can prove the gate fires
   ;; on both thrown errors and lifted tool-failure sink entries
   ;; (regression: ANALYSIS.md §4.2).
-  (it "surfaces a thrown :error verbatim"
-    (expect (= "boom" (#'loop/block-result-error-summary {:error "boom"}))))
+  (it "surfaces a thrown :error verbatim (PLAN §2.1: structured :op/error)"
+    ;; Block-level :error is the structured :op/error map.
+    ;; block-result-error-summary pulls :message for one-line display.
+    (expect (= "boom" (#'loop/block-result-error-summary {:error {:message "boom"}}))))
 
   (it "surfaces a lifted tool-failure sink-entry's :error.message when block :error is nil"
     (let [result {:error nil
                   :journal [{:position 0 :form "(z/patch ...)"
                              :success? false
                              :result   nil
-                             :error    {:type "clojure.lang.ExceptionInfo"
-                                        :message "z/patch :search locator must match exactly once; matched 4 time(s)"
-                                        :trace []}}]}]
+                             :error    {:message "z/patch :search locator must match exactly once; matched 4 time(s)"}}]}]
       (expect (= "z/patch :search locator must match exactly once; matched 4 time(s)"
                 (#'loop/block-result-error-summary result)))))
 
