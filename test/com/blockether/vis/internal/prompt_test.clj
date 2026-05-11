@@ -221,9 +221,8 @@
                                                                 :form      "(z/patch [{:path \"x.clj\" :search \"y\" :replace \"z\"}])"
                                                                 :success?  false
                                                                 :result    nil
-                                                                :error     {:type    "clojure.lang.ExceptionInfo"
-                                                                            :message "z/patch :search locator must match exactly once; matched 4 time(s)"
-                                                                            :trace   []}}]}]}]]})]
+                                                                ;; PLAN §2.1 + §7.3.5: structured :op/error map.
+                                                                :error     {:message "z/patch :search locator must match exactly once; matched 4 time(s)"}}]}]}]]})]
       (expect (str/includes? out "ERROR"))
       (expect (str/includes? out "matched 4 time(s)")))))
 

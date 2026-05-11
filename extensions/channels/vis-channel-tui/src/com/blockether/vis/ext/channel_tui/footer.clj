@@ -504,13 +504,28 @@
     t/footer-fg))
 
 (defn- ir->footer-text
-  "Walk IR to a single sentinel-prefixed string for the footer
-   packer. Footer is one row; we join multi-line IR output with a
-   space so a misbehaving multi-block IR still fits."
+  "Walk IR to a single PLAIN-text string for the footer packer.
+
+   Footer rows are painted by `draw-spans!` via `p/put-str!`, which
+   writes characters into terminal cells verbatim — it has no
+   sentinel/block-marker decoder like the bubble painter. So we
+   must NOT route through `lines->sentinel-strings`: that prepends
+   a block-marker codepoint (e.g. `MARKER_ANSWER_TXT` = `\u206E`)
+   which would land in a real cell as a stray 1-column blank
+   (the historical \"leading space\" footer bug — conversation
+   39a73cfb) and also throw off `spans-width`.
+
+   Styling for footer segments comes from the seg-map's
+   `:fg-role` / `:bold?`, not from inline span sentinels, so we
+   drop those too and just concat the runs' `:text`.  Multi-line
+   IR output is joined with a single space so a misbehaving
+   multi-block IR still fits one footer row."
   ^String [ir]
   (let [lines (ir-tui/ir->lines ir 1024)
-        strs  (ir-tui/lines->sentinel-strings lines)]
-    (str/join " " (remove str/blank? strs))))
+        line-strs (mapv (fn [{:keys [runs]}]
+                          (apply str (map :text runs)))
+                    lines)]
+    (str/join " " (remove str/blank? line-strs))))
 
 (defn- footer-hook?
   "True when `hook-id` is recognised as a footer-segment contributor."

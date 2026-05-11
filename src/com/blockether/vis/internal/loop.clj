@@ -357,26 +357,39 @@
       "parentheses around the string literal so the helper receives the "
       "string directly.")))
 
+;; Forward declare — `raw-markdown-fence-leak-error` is defined ~900
+;; lines below in the preflight section. `detect-common-mistakes`
+;; (just below) needs it on the lint path; sorting defs would push
+;; the lint section past the preflight, splitting two related
+;; iteration-loop pieces. The declare is the cleaner exception per
+;; AGENTS.md S4.
+(declare raw-markdown-fence-leak-error)
+
 (defn- detect-common-mistakes
-  "Pre-eval lint pass scoped to `(answer ...)` bodies. Returns an error
-   string when an answer body contains a structural shape that has zero
-   legitimate use in Clojure and would crash at SCI eval time. Currently:
+  "Pre-eval lint pass. Returns an error STRING when the source carries
+   a structural shape that would crash at SCI eval time. Returns nil
+   when source is clean enough to hand to the parser. Currently:
+
+     - Raw Markdown fence leaked into :code (` ``` ... `). The reader
+       would fall into a re-parse loop and StackOverflow; rejecting
+       early gives a typed engine error instead of a JVM crash.
 
      - String-as-fn calls, e.g. `(v/bold (\"x\"))` from JS/Python paren
-       leakage -- runtime would throw `String cannot be cast to IFn`.
+       leakage — runtime would throw `String cannot be cast to IFn`.
 
-   Returns nil if nothing structural is wrong, or if the offending shape
-   lives outside an (answer ...) form. Reader / parser errors stay the
-   responsibility of `parse-clojure-syntax`; this lint only fires on
-   cleanly-parsed source."
+   Reader / parser errors stay the responsibility of
+   `parse-clojure-syntax`; this lint only fires on cleanly-parsed
+   source for the string-as-fn check, but the fence check matches
+   raw text first since it short-circuits the parser entirely."
   [code]
   (when (string? code)
-    (try
-      (let [forms (check-syntax code)]
-        (string-as-fn-mistake-message forms))
-      (catch Throwable _
-        ;; Reader failure -- defer to parse-clojure-syntax / extension rescue.
-        nil))))
+    (or (raw-markdown-fence-leak-error code)
+      (try
+        (let [forms (check-syntax code)]
+          (string-as-fn-mistake-message forms))
+        (catch Throwable _
+          ;; Reader failure — defer to parse-clojure-syntax / extension rescue.
+          nil)))))
 
 (defn- edamame-parses?
   "Predicate the repair search hands to `parse-diagnose/try-quote-rebalance`.

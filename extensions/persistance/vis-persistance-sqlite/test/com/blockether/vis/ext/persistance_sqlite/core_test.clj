@@ -119,6 +119,66 @@
                   (select-keys (:scope (first rows)) [:iteration-id :iteration-block-index])))
         (expect (= {:ok true} (:content (first rows))))))))
 
+(defdescribe sqlite-extension-aggregate-metadata-filter-test
+  (it "filters extension aggregate rows by metadata JSON fields"
+    (let [s (h/store)]
+      ;; Insert three rows with different metadata
+      (persistance/db-put-extension-aggregate! s
+        {:extension-id 'test.ext.bridge
+         :aggregate-key "node:core/run"
+         :kind :bridge/node
+         :metadata {:path "src/core.clj"
+                    :kind      "def"
+                    :language  "clojure"}
+         :content {:name "run"}})
+      (persistance/db-put-extension-aggregate! s
+        {:extension-id 'test.ext.bridge
+         :aggregate-key "node:core/start"
+         :kind :bridge/node
+         :metadata {:path "src/core.clj"
+                    :kind      "def"
+                    :language  "clojure"}
+         :content {:name "start"}})
+      (persistance/db-put-extension-aggregate! s
+        {:extension-id 'test.ext.bridge
+         :aggregate-key "edge:core/run::calls::lc/iterate"
+         :kind :bridge/edge
+         :metadata {:edge-kind "calls"
+                    :source    "core/run"
+                    :target    "lc/iterate"
+                    :path "src/core.clj"}
+         :content {:source "core/run" :target "lc/iterate" :kind "calls"}})
+      ;; Filter by kind + metadata file-path → both nodes in core.clj
+      (let [by-file (vis/db-list-extension-aggregates s
+                      {:extension-id 'test.ext.bridge
+                       :kind :bridge/node
+                       :metadata {:path "src/core.clj"}})]
+        (expect (= 2 (count by-file)))
+        (expect (= #{"node:core/run" "node:core/start"}
+                  (set (map :key by-file)))))
+      ;; Filter by metadata edge-kind → one edge
+      (let [by-edge-kind (vis/db-list-extension-aggregates s
+                           {:extension-id 'test.ext.bridge
+                            :metadata {:edge-kind "calls"}})]
+        (expect (= 1 (count by-edge-kind)))
+        (expect (= "edge:core/run::calls::lc/iterate" (:key (first by-edge-kind)))))
+      ;; Filter by metadata source → edge from core/run
+      (let [by-source (vis/db-list-extension-aggregates s
+                        {:extension-id 'test.ext.bridge
+                         :metadata {:source "core/run"}})]
+        (expect (= 1 (count by-source))))
+      ;; Filter edges by file-path → re-indexing use case
+      (let [by-edge-file (vis/db-list-extension-aggregates s
+                           {:extension-id 'test.ext.bridge
+                            :kind :bridge/edge
+                            :metadata {:path "src/core.clj"}})]
+        (expect (= 1 (count by-edge-file))))
+      ;; No match → empty
+      (let [none (vis/db-list-extension-aggregates s
+                   {:extension-id 'test.ext.bridge
+                    :metadata {:path "nonexistent.clj"}})]
+        (expect (= 0 (count none)))))))
+
 (defdescribe sqlite-bootstrap-error-normalization-test
   (it "matches Flyway checksum text at top level"
     (expect (true? (migration-checksum-mismatch?
@@ -623,7 +683,7 @@
       (vis/db-update-conversation-turn! s qid {:status :error})
       (vis/db-retry-conversation-turn! s qid {:status :running :model "better"})
       (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [{:code "2" :result 2}] :duration-ms 5})
-      (expect (= 2 (raw-count s :iteration)))
+      (expect (= 2 (raw-count s :conversation_turn_iteration)))
       (expect (= 1 (count (vis/db-list-conversation-turn-iterations s qid)))))))
 
 ;; =============================================================================
@@ -639,7 +699,7 @@
                                   :blocks [{:code "(+ 1 1)" :result 2 :execution-time-ms 5}
                                            {:code "(* 3 4)" :result 12 :execution-time-ms 3}]
                                   :thinking "Computing" :duration-ms 50})
-      (expect (= 1 (raw-count s :iteration)))
+      (expect (= 1 (raw-count s :conversation_turn_iteration)))
       ;; No more kind='call' rows - the call log lives inline in the
       ;; iteration.blocks Nippy blob.
       (expect (= 0 (raw-count s :expression_soul)))
@@ -664,7 +724,7 @@
                                                     :from :conversation_turn_state
                                                     :where [:= :conversation_turn_soul_id (str qid)]})))
             thrown (try
-                     (raw-query s {:insert-into :iteration
+                     (raw-query s {:insert-into :conversation_turn_iteration
                                    :values [{:id (str (random-uuid))
                                              :conversation_turn_state_id turn-state-id
                                              :position 4
@@ -998,7 +1058,7 @@
       (expect (= 0 (raw-count s :conversation_state)))
       (expect (= 0 (raw-count s :conversation_turn_soul)))
       (expect (= 0 (raw-count s :conversation_turn_state)))
-      (expect (= 0 (raw-count s :iteration)))
+      (expect (= 0 (raw-count s :conversation_turn_iteration)))
       (expect (= 0 (raw-count s :expression_soul)))
       (expect (= 0 (raw-count s :expression_state))))))
 
@@ -1052,7 +1112,7 @@
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0})]
       (let [qstate (first (raw-query s {:select [:id] :from :conversation_turn_state}))
-            iteration (first (raw-query s {:select [:conversation_turn_state_id] :from :iteration}))]
+            iteration (first (raw-query s {:select [:conversation_turn_state_id] :from :conversation_turn_iteration}))]
         (expect (= (:id qstate) (:conversation_turn_state_id iteration))))))
 
   (it "expression_soul.conversation_state_id (var rows) points to conversation_state.id"
@@ -1086,7 +1146,7 @@
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks []
                                           :duration-ms 0
                                           :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
-      (let [iteration (first (raw-query s {:select [:id] :from :iteration}))
+      (let [iteration (first (raw-query s {:select [:id] :from :conversation_turn_iteration}))
             estate (first (raw-query s {:select [:iteration_id] :from :expression_state}))]
         (expect (= (:id iteration) (:iteration_id estate))))))
 

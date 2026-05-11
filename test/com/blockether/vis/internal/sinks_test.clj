@@ -12,6 +12,7 @@
    verify the wiring through `run-sci-code`."
   (:require
    [clojure.spec.alpha :as s]
+   [clojure.string :as str]
    [com.blockether.vis.internal.extension :as ext]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -20,12 +21,11 @@
 ;; -----------------------------------------------------------------------------
 
 (defn- mock-cat-tool [path]
-  (ext/success {:result {:path path :body (str "BODY-" path)}
-                :info   {:op :mock/cat}}))
+  ;; PLAN §2.1 envelope shape: {:result :op :metadata}.
+  (ext/success {:result {:path path :body (str "BODY-" path)} :op :mock/cat}))
 
 (defn- mock-rg-tool [needle]
-  (ext/success {:result {:hits [{:line 1 :text needle}]}
-                :info   {:op :mock/rg}}))
+  (ext/success {:result {:hits [{:line 1 :text needle}]} :op :mock/rg}))
 
 (defn- mock-fail-tool [_]
   (throw (java.io.FileNotFoundException. "missing.txt")))
@@ -37,14 +37,14 @@
 (def ^:private cat-symbol
   (ext/symbol 'cat mock-cat-tool
     {:doc "Mock cat" :arglists '([p])
-     :result-spec ::ext/tool-result
+     :result-spec :op/envelope
      :journal-render-fn (fn [r] (str "JOURNAL cat " (:path r)))
      :channel-render-fn (fn [r] (str "CHANNEL cat " (:path r)))}))
 
 (def ^:private rg-symbol
   (ext/symbol 'rg mock-rg-tool
     {:doc "Mock rg" :arglists '([n])
-     :result-spec ::ext/tool-result
+     :result-spec :op/envelope
      :journal-render-fn (fn [r] (str "JOURNAL rg " (-> r :hits first :text)))
      :channel-render-fn (fn [r] (str "CHANNEL rg " (-> r :hits first :text)))}))
 
@@ -93,6 +93,9 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe sink-entry-spec-test
+  ;; PLAN §2.1 + §2.6: error is the structured `:op/error` map
+  ;; (`{:message :trace? :hint? :block?}`). Sink-entry's `:error`
+  ;; field is now typed as `:op/error` (was the dead `::error-map`).
   (it "::sink-entry valid for both success and failure shapes"
     (expect (s/valid? ::ext/sink-entry
               {:position 0 :form "(mock/cat \"a\")"
@@ -100,15 +103,14 @@
     (expect (s/valid? ::ext/sink-entry
               {:position 7 :form "(mock/fail :x)"
                :success? false :result nil
-               :error {:type "java.io.FileNotFoundException"
-                       :message "missing.txt" :trace []}})))
+               :error {:message "missing.txt"}})))
 
   (it "::sink-entry rejects mixed shapes"
     ;; success with non-nil error
     (expect (not (s/valid? ::ext/sink-entry
                    {:position 0 :form "(x)"
                     :success? true :result "ok"
-                    :error {:type "x" :message "y" :trace []}})))
+                    :error {:message "y"}})))
     ;; success with nil result
     (expect (not (s/valid? ::ext/sink-entry
                    {:position 0 :form "(x)"
@@ -117,7 +119,7 @@
     (expect (not (s/valid? ::ext/sink-entry
                    {:position 0 :form "(x)"
                     :success? false :result "should-be-nil"
-                    :error {:type "x" :message "y" :trace []}})))
+                    :error {:message "y"}})))
     ;; failure with nil error
     (expect (not (s/valid? ::ext/sink-entry
                    {:position 0 :form "(x)"
@@ -170,10 +172,11 @@
 ;; they bypass the SCI catch boundary that wraps real eval.
 
 (defdescribe sink-no-binding-noop-test
-  (it "wrapper succeeds without sinks bound; returns the tool-result envelope"
+  (it "wrapper succeeds without sinks bound; returns the :op/envelope"
     (let [r (invoke! cat-symbol ["a"])]
-      (expect (true? (:success? r)))
-      (expect (= "a" (-> r :result :path)))
+      ;; PLAN §2.1: envelope reads use the `op/*` prefix.
+      (expect (true? (:op/success? r)))
+      (expect (= "a" (-> r :op/result :path)))
       (expect (nil? ext/*journal-render-sink*))
       (expect (nil? ext/*channel-render-sink*)))))
 
@@ -295,4 +298,8 @@
             (expect (= "(mock/cat \"a\")" (:form e0)))
             (expect (false? (:success? e1)))
             (expect (= "(mock/fail :x)" (:form e1)))
-            (expect (= "java.io.FileNotFoundException" (-> e1 :error :type)))))))))
+            ;; PLAN §2.1 + §2.7: structured :op/error has :message and a
+            ;; preformatted :trace string whose first line carries the
+            ;; underlying exception class name (babashka style).
+            (expect (str/includes? (or (-> e1 :error :trace) "")
+                      "java.io.FileNotFoundException"))))))))

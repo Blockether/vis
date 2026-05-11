@@ -125,7 +125,7 @@ Stored via `ext-put!`:
    :kind  :bridge/node
    :scope :global
    :metadata {:language  "clojure"
-              :file-path "src/core.clj"
+              :path "src/core.clj"
               :kind      "def"
               :relevance 1.0}
    :content {:name           "run"
@@ -193,7 +193,8 @@ Stored via `ext-put!`:
    :scope :global
    :metadata {:edge-kind "calls"
               :source    "com.blockether.vis.core/run"
-              :target    "com.blockether.vis.internal.loop-core/iterate!"}
+              :target    "com.blockether.vis.internal.loop-core/iterate!"
+              :path "src/com/blockether/vis/core.clj"}
    :content {:source    "com.blockether.vis.core/run"
              :target    "com.blockether.vis.internal.loop-core/iterate!"
              :kind      "calls"
@@ -202,9 +203,20 @@ Stored via `ext-put!`:
 ```
 
 The `aggregate_key` for edges is `"edge:<source-qname>::<edge-kind>::<target-qname>"`.
-This gives us uniqueness per (source, kind, target) and makes listing edges
-for a given source a prefix scan: `(vis/ext-list env {:kind :bridge/edge})`
-then filter by `:source` in content.
+This gives us uniqueness per (source, kind, target).
+
+Edge queries use metadata filtering — no content deserialization needed:
+
+```clojure
+;; All edges from a node (upstream callers)
+(vis/ext-list env {:kind :bridge/edge :metadata {:source "com.blockether.vis.core/run"}})
+
+;; All edges to a node (downstream callees)
+(vis/ext-list env {:kind :bridge/edge :metadata {:target "com.blockether.vis.internal.loop-core/iterate!"}})
+
+;; All edges for a file (re-indexing)
+(vis/ext-list env {:kind :bridge/edge :metadata {:path "src/com/blockether/vis/core.clj"}})
+```
 
 #### Edge `content` map shape
 
@@ -454,37 +466,45 @@ Bridge needs this because:
 |---|---|
 | Edges from source X | `:metadata {:source "..."}` |
 | Edges to target Y | `:metadata {:target "..."}` |
-| Nodes in file F | `:metadata {:file-path "..."}` |
-| Delete nodes for file | `:metadata {:file-path "..."}` |
+| Nodes in file F | `:metadata {:path "..."}` |
+| Delete nodes for file | `:metadata {:path "..."}` |
 | Nodes of kind "def" | `:metadata {:kind "def"}` |
 
 **Implementation**: add one clause to `extension-aggregate-clauses` in
-`persistance_sqlite/core.clj`, thread it through `extension_aggregate.clj`,
+`persistance_sqlite/core.clj`, thread it through the persistance facade
+(which already passes `:metadata` through via `dissoc`),
 and add a metadata JSON index:
 
-```clojure
-;; In extension-aggregate-clauses (persistance_sqlite/core.clj)
-;; Add to the cond-> vector, after existing clauses:
-(when-let [meta-filter (:metadata opts)]
-  (into []
-    (for [[k v] meta-filter]
-      [:= [:json_extract :metadata (str "$." (name k))] (str v)])))
-```
+**Done.** Changes applied:
 
-And in V1 schema:
+1. `extensions/persistance/vis-persistance-sqlite/src/.../core.clj` —
+   `extension-aggregate-clauses` now accepts `:metadata` map in opts,
+   generates `json_extract(metadata, '$.field') = value` WHERE conditions.
 
-```sql
--- Support metadata JSON filtering for extensions (Bridge, etc.)
-CREATE INDEX idx_extension_aggregate_metadata
-  ON extension_aggregate(extension_id, kind, json_extract(metadata, '$.kind'));
-```
+2. `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql` —
+   `idx_extension_aggregate_metadata` index on `(extension_id, kind, json_extract(metadata, '$.kind'))`.
+   `idx_extension_aggregate_meta_source` on `(extension_id, kind, json_extract(metadata, '$.source'))`.
+   `idx_extension_aggregate_meta_target` on `(extension_id, kind, json_extract(metadata, '$.target'))`.
+   `idx_extension_aggregate_meta_path` on `(extension_id, kind, json_extract(metadata, '$.path'))`.
 
-Then expose `:metadata` in the `normalize-query` path of
-`extension_aggregate.clj` so it reaches the clauses:
+3. `src/.../extension_aggregate.clj` — **no change needed**. `normalize-query`
+   already passes `:metadata` through via `(dissoc query :key :scope)`,
+   and `normalize-row` passes it through the same way for writes.
+
+Usage:
 
 ```clojure
-;; ext-list / ext-delete! accept :metadata map
+;; Filter edges from a specific source node
 (vis/ext-list env {:kind :bridge/edge :metadata {:source "com.blockether.vis.core/run"}})
+
+;; Delete all nodes for a file during re-indexing
+(vis/ext-delete! env {:kind :bridge/node :metadata {:path "src/core.clj"}})
+
+;; Find nodes by their code kind
+(vis/ext-list env {:kind :bridge/node :metadata {:kind "def"}})
+
+;; Combined metadata + kind filter
+(vis/ext-list env {:kind :bridge/node :metadata {:path "src/core.clj" :kind "def"}})
 ```
 
 This is a **small, general-purpose enhancement** that benefits any
@@ -508,9 +528,9 @@ Bridge puts **searchable fields** in `metadata` (JSON, queryable) and
  :kind   :bridge/edge
  :scope  :global
  :metadata {:edge-kind "calls"       ;; searchable via json_extract
-            :source    "core/run"     ;; searchable
-            :target    "lc/iterate!"   ;; searchable
-            :file-path "src/core.clj"} ;; searchable
+            :source    "core/run"     ;; searchable (indexed)
+            :target    "lc/iterate!"   ;; searchable (indexed)
+            :path "src/core.clj"} ;; searchable (indexed, enables re-index)
  :content  {:source    "core/run"     ;; full data, Nipy-encoded
             :target    "lc/iterate!"
             :kind      "calls"
