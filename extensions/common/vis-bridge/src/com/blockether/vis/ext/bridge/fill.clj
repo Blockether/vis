@@ -34,11 +34,12 @@
 (defn index-key [path]
   (str "idx:" path))
 
-(defn- node-metadata [{:keys [path language kind name visibility metadata]}]
+(defn- node-metadata [{node-kind :kind node-name :name
+                       :keys [path language visibility metadata]}]
   (cond-> {:path path
            :language language
-           :kind (name kind)
-           :name name}
+           :kind (name node-kind)
+           :name node-name}
     visibility (assoc :visibility (name visibility))
     (map? metadata) (merge (select-keys metadata [:symbol-kind :doc-kind :relevance :layer]))))
 

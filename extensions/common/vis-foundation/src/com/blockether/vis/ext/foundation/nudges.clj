@@ -1,32 +1,31 @@
 (ns com.blockether.vis.ext.foundation.nudges
-  "Built-in `<system_nudge>` policy for vis-foundation.
+  "Built-in `<system_nudge>` policy for vis-foundation, expressed as
+   `:ext/guards` declarations. Three guards ship here today:
 
-   Two nudges live here today:
-
-     1. `title-nudge` (importance :low)
+     1. `:foundation/conversation-title` (importance :low)
         Reminds the model to keep `CONVERSATION_TITLE` current. Fires
         when the title is blank, at every `TITLE_REFRESH_NUDGE_PERIOD`
         iterations inside a long turn, or on turn boundaries (the
         host passes `:title-refresh?`).
 
-     2. `context-pressure-nudge` (importance :high)
+     2. `:foundation/context-pressure` (importance :high)
         Fires when the estimated input tokens for the assembled
         prompt-so-far cross `CONTEXT_PRESSURE_THRESHOLD * context-limit`.
-        The default is 0.50 - with the uniform 200k Vis ceiling, that
-        means the nudge engages at ~100k input tokens, which matches
-        z.ai's empirically reported GLM sweet spot of 95k-100k input
-        tokens (sluggishness and accuracy regressions are reported on
-        the long tail beyond ~100k).
+        Default 0.50 - with the uniform 200k Vis ceiling, that means
+        the guard engages at ~100k input tokens, which matches z.ai's
+        empirically reported GLM sweet spot of 95k-100k input tokens.
 
-   Both nudges are emitted by a single `nudge-fn` that returns a
-   sequential coll (vec) of zero, one, or two nudges - the host
-   accepts coll-of-nudges as well as a single nudge (see
-   `com.blockether.vis.internal.extension/system-nudge-result?`).
+     3. `:foundation/blind-answer` (importance :high)
+        Fires on iteration 1 when the user request contains
+        investigation verbs (why / fix / check / find / debug / ...)
+        and no prior tool calls have run. Warns the model that
+        answering from memory on an investigation request is a
+        hallucination.
 
-   Keeping nudges as an extension surface (not core hardcoded
-   built-ins) means they go through the same `:ext/nudge-fn` protocol
-   third-party extensions use, can be swapped per channel/config, and
-   the iteration assembly in core stays policy-free."
+   Keeping policy in an extension (not core hardcoded built-ins)
+   means these go through the same `:ext/guards` protocol any
+   third-party extension uses, can be swapped per channel/config,
+   and the iteration assembly in core stays policy-free."
   (:require
    [clojure.string :as str]))
 
@@ -112,9 +111,6 @@
 ;; MODEL-FACING system_nudges. Each guard declares :id, :doc, :scope
 ;; (#{:iteration :turn :session}), and :check-fn.
 ;;
-;; All three foundation nudges — title, context-pressure, blind-answer —
-;; ship as guards. The legacy `:ext/nudge-fn` hook was retired; guards
-;; are the single mechanism for model-facing system_nudges.
 ;; ----------------------------------------------------------------------------
 
 ;; `title-nudge` and `context-pressure-nudge` are exposed as plain fns so
