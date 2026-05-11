@@ -733,13 +733,17 @@
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
+      ;; Per PLAN §2.1 + §7.3.5: :error is the structured :op/error
+      ;; map ({:message :trace? :hint? :block?}). Single error
+      ;; field, no fallback string.
       (vis/db-store-iteration! s {:conversation-turn-id qid
-                                  :blocks [{:code "(/ 1 0)" :error "Divide by zero"
+                                  :blocks [{:code "(/ 1 0)"
+                                            :error {:message "Divide by zero"}
                                             :stdout "dbg" :stderr "warn"}]
                                   :duration-ms 5})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             [exec]    (vis/db-list-iteration-blocks s (:id iteration))]
-        (expect (= "Divide by zero" (:error exec)))
+        (expect (= {:message "Divide by zero"} (:error exec)))
         (expect (= "dbg" (:stdout exec)))
         (expect (= "warn" (:stderr exec)))
         ;; :result intentionally omitted on error - cond-> drops nil.

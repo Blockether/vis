@@ -36,7 +36,7 @@
     (let [path      (write-temp! "range/core.clj" "(ns demo)\n(defn bad [x]\n  (inc x)\n\n(def ok 1)\n")
           repair-fn (:ext.symbol/fn repair/repair-range-symbol)
           out       (repair-fn {:path path :range [[2 1] [4 1]]})]
-      (expect (true? (:success? out)))
+      (expect (true? (:op/success? out)))
       (expect (= :parinfer (get-in out [:result :engine])))
       (expect (true? (get-in out [:result :changed?])))
       (expect (= "(ns demo)\n(defn bad [x]\n  (inc x))\n\n(def ok 1)\n"
@@ -49,7 +49,7 @@
           repair-fn (:ext.symbol/fn repair/repair-range-symbol)
           row       {:path path :span [[2 13] [2 32]] :dry-run? true}
           out       (repair-fn row)]
-      (expect (true? (:success? out)))
+      (expect (true? (:op/success? out)))
       (expect (= :quote (get-in out [:result :engine])))
       (expect (true? (get-in out [:result :changed?])))
       (expect (true? (get-in out [:result :dry-run?])))
@@ -61,7 +61,7 @@
           repair-fn (:ext.symbol/fn repair/repair-locator-symbol)
           locator   {:path path :span [[2 13] [2 32]]}
           out       (repair-fn locator {:dry-run? true})]
-      (expect (true? (:success? out)))
+      (expect (true? (:op/success? out)))
       (expect (= :quote (get-in out [:result :engine])))
       (expect (true? (get-in out [:result :dry-run?])))
       (expect (= :z/repair-locator (get-in out [:info :op])))
@@ -71,7 +71,7 @@
     (let [path      (write-temp! "file/core.clj" "(ns demo)\n(defn bad [x]\n  (inc x)\n")
           repair-fn (:ext.symbol/fn repair/repair-file-symbol)
           out       (repair-fn path {:dry-run? true})]
-      (expect (true? (:success? out)))
+      (expect (true? (:op/success? out)))
       (expect (= :parinfer (get-in out [:result :engine])))
       (expect (true? (get-in out [:result :changed?])))
       (expect (= "(ns demo)\n(defn bad [x]\n  (inc x)\n" (slurp path))))))
