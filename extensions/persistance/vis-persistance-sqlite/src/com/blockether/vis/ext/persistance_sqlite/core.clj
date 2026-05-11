@@ -1628,7 +1628,15 @@
     (:iteration-id opts)               (conj [:= :conversation_turn_iteration_id (->ref (:iteration-id opts))])
     (contains? opts :iteration-block-index)
     (conj [:= :conversation_turn_iteration_block_index (:iteration-block-index opts)])
-    (:iteration-block-id opts)         (conj [:= :conversation_turn_iteration_block_id (str (:iteration-block-id opts))])))
+    (:iteration-block-id opts)         (conj [:= :conversation_turn_iteration_block_id (str (:iteration-block-id opts))])
+    ;; Metadata JSON field filtering.
+    ;; :metadata in a query is a map of {field-key expected-value} pairs.
+    ;; Each pair becomes a json_extract WHERE clause. This lets extensions
+    ;; run structured queries over their metadata without custom tables.
+    ;; Example: (ext-list env {:kind :bridge/edge :metadata {:source "core/run"}})
+    (some? (:metadata opts))
+    (into (for [[k v] (:metadata opts)]
+            [:= [:json_extract :metadata (str "$." (name k))] (str v)]))))
 
 (defn- extension-aggregate-select
   [opts]
