@@ -145,9 +145,15 @@
     ;; already excluded by the regex `[^\s]+` arm and we exclude them
     ;; here too (the walker hands them off via `:break?` runs).
     (let [^String s text
-          n (.length s)
-          atoms (transient [])]
-      (loop [i 0]
+          n (.length s)]
+      ;; `atoms` carried through recur per the transient contract:
+      ;; `conj!` returns a possibly-different handle, so we MUST
+      ;; rebind it (else `persistent!` may miss the appended values
+      ;; in larger transients). Pre-Phase-7 cleanup left the return
+      ;; values dropped; lint flagged it; this restructure threads
+      ;; the handle correctly without changing semantics.
+      (loop [i     (long 0)
+             atoms (transient [])]
         (if (>= i n)
           (persistent! atoms)
           (let [c (.charAt s i)]
@@ -155,33 +161,31 @@
               ;; space or tab → whitespace atom
               (or (= c \space) (= c \tab))
               (let [start i
-                    j (loop [j (inc i)]
+                    j (loop [j (long (inc i))]
                         (if (and (< j n)
                               (let [c2 (.charAt s j)]
                                 (or (= c2 \space) (= c2 \tab))))
-                          (recur (inc j)) j))]
-                (conj! atoms {:text  (.substring s start j)
-                              :style style :href href :node node})
-                (recur j))
+                          (recur (unchecked-inc j)) j))]
+                (recur j (conj! atoms {:text  (.substring s start j)
+                                       :style style :href href :node node})))
 
               ;; treat any other whitespace (newline, etc.) as word
               ;; boundary but skip it (matches old regex which only
               ;; matched [ \t]+ for the ws arm and skipped \n via
               ;; `[^\s]+` not consuming it; behaviour: drop the char).
               (Character/isWhitespace c)
-              (recur (inc i))
+              (recur (inc i) atoms)
 
               ;; non-whitespace word
               :else
               (let [start i
-                    j (loop [j (inc i)]
+                    j (loop [j (long (inc i))]
                         (if (and (< j n)
                               (let [c2 (.charAt s j)]
                                 (not (Character/isWhitespace c2))))
-                          (recur (inc j)) j))]
-                (conj! atoms {:text  (.substring s start j)
-                              :style style :href href :node node})
-                (recur j)))))))))
+                          (recur (unchecked-inc j)) j))]
+                (recur j (conj! atoms {:text  (.substring s start j)
+                                       :style style :href href :node node}))))))))))
 
 (defn- wrap-runs
   "Greedy word-wrap. Returns a vector of lines; each line is `{:runs [...]}`.

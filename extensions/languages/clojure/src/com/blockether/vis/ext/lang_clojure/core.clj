@@ -13,7 +13,6 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.lang-clojure.patch :as patch]
    [com.blockether.vis.ext.lang-clojure.repair :as repair]
-   [com.blockether.vis.ext.lang-clojure.xref :as xref]
    [rewrite-clj.zip]
    [rewrite-clj.zip.subedit])
   (:import
@@ -200,7 +199,7 @@
 (def clojure-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core
-     :ext/doc       "Clojure/EDN intelligence under the `z/` alias: clj-xref graph queries, z/patch zipper edits, z/locators/z/symbols discovery, and rewrite-clj zipper API."
+     :ext/doc       "Clojure/EDN intelligence under the `z/` alias: z/patch zipper edits, z/locators/z/symbols discovery, and rewrite-clj zipper API."
      :ext/version   "0.7.0"
      :ext/author    "Blockether"
      :ext/owner     "vis"
@@ -211,6 +210,6 @@
      :ext/environment-info-fn clojure-environment-info
      :ext/prompt    patch/z-prompt
      :ext/symbols   (into [patch/patch-symbol patch/patch-check-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol]
-                      (concat repair/symbols xref/symbols lsp-symbols rewrite-clj-zip-symbols))}))
+                      (concat repair/symbols lsp-symbols rewrite-clj-zip-symbols))}))
 
 (vis/register-extension! clojure-extension)
