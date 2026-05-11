@@ -97,6 +97,9 @@
 (def ^:private handle-terminal-interrupt!
   (deref #'screen/handle-terminal-interrupt!))
 
+(def ^:private print-conversation-id-on-exit!
+  (deref #'screen/print-conversation-id-on-exit!))
+
 (defn- user-error?
   "True when `f` throws an ex-info carrying the `:vis/user-error` flag -
    the contract the channel entry point relies on to print a clean
@@ -312,13 +315,15 @@
       (with-redefs [screen/redirect-stdio-to-log! (fn [] (swap! calls conj :redirect))
                     vis/init!                    (fn [] (swap! calls conj :init))
                     screen/run-chat!             (fn [_opts] (swap! calls conj :run))
+                    screen/print-conversation-id-on-exit! (fn [] (swap! calls conj :print-id))
                     vis/shutdown!                (fn [] (swap! calls conj :vis-shutdown))
                     clojure.core/shutdown-agents (fn [] (swap! calls conj :shutdown-agents))]
         (screen/channel-main []))
-      ;; Order matters: stop Telemere handlers first, THEN drain the
-      ;; agent pool - the former may flush a final log write that rides
-      ;; the agent pool, and shutdown-agents will refuse new work.
-      (expect (= [:redirect :init :run :vis-shutdown :shutdown-agents] @calls)))))
+      ;; Order matters: print the resume id after the TUI exits, then stop
+      ;; Telemere handlers, THEN drain the agent pool - the former may flush a
+      ;; final log write that rides the agent pool, and shutdown-agents will
+      ;; refuse new work.
+      (expect (= [:redirect :init :run :print-id :vis-shutdown :shutdown-agents] @calls)))))
 
 (defdescribe startup-resume-test
   (it "--conversation-id sweeps orphaned running turns before rebuilding history"
@@ -548,6 +553,18 @@
         (fn []
           (open-click-target! {:kind :url :url "https://example.com"})
           (expect (= "https://example.com" (deref url-opened 1000 ::timeout))))))))
+
+(defdescribe conversation-id-exit-print-test
+  (it "prints the active conversation id after the TUI exits"
+    (let [bytes (java.io.ByteArrayOutputStream.)
+          ps    (java.io.PrintStream. bytes true "UTF-8")]
+      (with-redefs-fn {#'screen/current-conversation-id (fn [] "abc123")
+                       #'vis/original-stdout ps}
+        (fn []
+          (print-conversation-id-on-exit!)
+          (.flush ps)
+          (let [out (.toString bytes "UTF-8")]
+            (expect (= "Resume with:\nvis channels tui --conversation-id abc123\n" out))))))))
 
 (defdescribe parse-args-test
   (it "no args -> empty opts map"

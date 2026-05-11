@@ -366,7 +366,8 @@
                ir bubble-w
                (cond-> {:conversation-id      conversation-id
                         :conversation-turn-id (turn-identity message)
-                        :detail-expansions   detail-expansions}
+                        :detail-expansions   detail-expansions
+                        :section             (:role message)}
                  tail-lines (assoc :tail-lines tail-lines)))]
          (-> message
            (assoc :text text :prewrapped-lines lines :line-meta line-meta)

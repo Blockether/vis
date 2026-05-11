@@ -18,6 +18,7 @@
    [clojure.java.io :as io]
    [clojure.edn :as edn]
    [clojure.string :as str]
+   [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.render :as r]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -425,6 +426,27 @@
     (expect (= "" (r/render [:ir] :html)))
     (expect (= "" (r/render [:ir] :markdown)))
     (expect (= "" (r/render [:ir] :plain)))))
+
+;; ---------------------------------------------------------------------------
+;; Conversation Markdown export
+;; ---------------------------------------------------------------------------
+
+(defdescribe conversation-export-test
+  (it "renders persisted :user-request text under the You heading"
+    (let [cid (java.util.UUID/randomUUID)]
+      (with-redefs [persistance/db-get-conversation
+                    (fn [_db conversation-ref]
+                      (when (= cid conversation-ref)
+                        {:id cid :title "Casual greeting"}))
+                    persistance/db-list-conversation-turns
+                    (fn [_db conversation-ref]
+                      (when (= cid conversation-ref)
+                        [{:user-request "siema"
+                          :answer [:ir [:p "Siema!"]]}]))]
+        (let [out (r/conversation->markdown :db cid)]
+          (expect (str/includes? out "## You\nsiema\n\n## Assistant\nSiema!"))
+          (expect (not (str/includes? out "## You\n\nsiema")))
+          (expect (str/includes? out "Siema!")))))))
 
 ;; ---------------------------------------------------------------------------
 ;; bdc79ae9 fixture — real LLM output that produced the 3-space hanging
