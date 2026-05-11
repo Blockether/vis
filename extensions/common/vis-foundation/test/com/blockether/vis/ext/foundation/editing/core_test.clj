@@ -12,6 +12,7 @@
    `safe-path` accepts them)."
   (:require
    [babashka.fs :as fs]
+   [clojure.set]
    [clojure.string :as string]
    [com.blockether.vis.ext.foundation.core :as foundation]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
@@ -244,10 +245,14 @@
       (expect (string/includes? out "1: only-line"))))
 
   (it "engine-default channel error formatter renders failures without symbol error-fn"
+    ;; Per PLAN §2.1 (Phase 4): envelope is flat under :op/* and the
+    ;; error map is structured {:message :trace? :hint? :block?}.
+    ;; Old shape was {:success? :result :info :error}; lifted to flat.
     (let [out (extension/default-channel-error-text
-                {:success? false :info {:op :v/cat}
-                 :error {:type "java.io.FileNotFoundException"
-                         :message "src/missing.clj (No such file)"}})]
+                {:op/success? false
+                 :op/symbol :v/cat
+                 :op/error {:message "src/missing.clj (No such file)"
+                            :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})]
       (expect (string/includes? out "**ERROR**"))
       (expect (string/includes? out "v/cat"))
       (expect (string/includes? out "FileNotFoundException")))))
@@ -444,7 +449,7 @@
           render-bash (private-fn "render-bash")
           out         (bash-tool "printf '%s\n' 'Traceback (most recent call last):' >&2" {:timeout-ms 5000})
           rendered    (render-bash {:tool-result out})]
-      (expect (true? (:success? out)))
+      (expect (true? (:op/success? out)))
       (expect (= 0 (get-in out [:result :exit])))
       (expect (= :stderr-traceback-with-zero-exit
                 (get-in out [:result :warnings 0 :type])))
@@ -458,7 +463,7 @@
           result         (:result out)]
       (expect (= "set -euo pipefail\nfalse\necho SHOULD_NOT_RUN"
                 (strict-command "false\necho SHOULD_NOT_RUN")))
-      (expect (true? (:success? out)))
+      (expect (true? (:op/success? out)))
       (expect (= 1 (:exit result)))
       (expect (= "" (:stdout result)))
       (expect (true? (:strict? result)))
@@ -487,7 +492,7 @@
             rendered (when (map? v) (render-bash {:tool-result v}))]
         (expect (not= ::timeout v))
         (expect (map? v))
-        (expect (false? (:success? v)))
+        (expect (false? (:op/success? v)))
         (expect (= "java.lang.InterruptedException" (get-in v [:error :type])))
         (expect (= [] (get-in v [:error :trace])))
         (expect (string/includes? (get-in v [:error :message]) "cancelled"))
@@ -498,7 +503,7 @@
         (expect (= "." (get-in v [:info :target :requested])))
         (expect (string/includes? rendered "cancelled"))
         (expect (not (string/includes? rendered "timed out")))
-        (expect (not (string/includes? (pr-str (:error v)) "core.clj"))))))
+        (expect (not (string/includes? (pr-str (:op/error v)) "core.clj"))))))
 
   (it "bash validates cwd through the same safe path guard and blocks shell source edits"
     (let [run-bash (private-fn "run-bash-safe")]
@@ -516,12 +521,15 @@
   (it "patch renderer avoids mandatory duplicate read-back and shows fenced diffs"
     (let [render-patch (private-fn "render-patch")
           rendered (render-patch
-                     {:tool-result {:success? true
-                                    :result [{:path "target/editing-test/out.txt"}]
-                                    :info {:files [{:path "target/editing-test/out.txt"
-                                                    :changed? true
-                                                    :before "alpha\nbeta\n"
-                                                    :after "alpha\ngamma\n"}]}}})]
+                     ;; PLAN §2.1 envelope shape: flat :op/* keys.
+                     {:tool-result {:op/success? true
+                                    :op/result   [{:path "target/editing-test/out.txt"}]
+                                    :op/symbol   :v/patch
+                                    :op/tag      :op.tag/action
+                                    :op/metadata {:files [{:path "target/editing-test/out.txt"
+                                                           :changed? true
+                                                           :before "alpha\nbeta\n"
+                                                           :after "alpha\ngamma\n"}]}}})]
       (expect (string/includes? rendered "Read back only when exact persisted bytes matter"))
       (expect (string/includes? rendered "```diff"))
       (expect (string/includes? rendered "--- a/target/editing-test/out.txt"))
@@ -553,24 +561,27 @@
       (expect (string/includes? rendered "(def x 1)")))))
 
 (defdescribe tool-envelope-test
-  (it "tool wrappers return the required contract keys"
+  (it "tool wrappers return the required contract keys (PLAN §2.1 envelope)"
     (let [path (write-temp! "contract/read.txt" "alpha\nbeta\n")
           cat-tool (private-fn "cat-tool")
-          out (cat-tool path)]
-      (expect (= #{:success? :result :info :error :presentation}
-                (set (keys out))))
-      (expect (true? (:success? out)))
-      (expect (= ["alpha" "beta"] (get-in out [:result :lines])))
+          out (cat-tool path)
+          required #{:op/success? :op/result :op/error :op/symbol :op/tag :op/metadata}]
+      ;; Envelope keys MUST include the canonical op/* set; extra keys
+      ;; (e.g. :presentation, :op/stdout when set) may also appear.
+      (expect (= required (clojure.set/intersection required (set (keys out)))))
+      (expect (true? (:op/success? out)))
+      (expect (= ["alpha" "beta"] (get-in out [:op/result :lines])))
       (expect (not (contains? out :markdown)))
-      (expect (nil? (:error out)))
-      (expect (= :source (get-in out [:presentation :kind])))))
+      (expect (nil? (:op/error out)))))
 
-  (it "tool failure contract includes structured :error with normalized trace"
+  (it "tool failure envelope carries structured :op/error per PLAN §2.1"
     (let [cat-symbol (private-fn "cat-symbol")
           on-error   (:ext.symbol/on-error-fn cat-symbol)
           out        (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
-      (expect (false? (:success? out)))
-      (expect (= nil (:result out)))
-      (expect (= "clojure.lang.ExceptionInfo" (get-in out [:error :type])))
-      (expect (vector? (get-in out [:error :trace])))
+      (expect (false? (:op/success? out)))
+      (expect (nil? (:op/result out)))
+      ;; Per PLAN §2.7 / §7.3.4: :trace is a preformatted string,
+      ;; first line carries the underlying class name.
+      (expect (string? (get-in out [:op/error :trace])))
+      (expect (string/includes? (get-in out [:op/error :trace]) "ExceptionInfo"))
       (expect (not (contains? out :markdown))))))
