@@ -101,10 +101,37 @@
     (removeEldestEntry [_eldest]
       (> (.size ^LinkedHashMap this) (long height-cache-cap)))))
 
+(defn- message-content-fingerprint
+  "Content-derived fingerprint of a message map for the height-cache.
+   Stable across reducer rebuilds (assoc creates a new map identity
+   but content is unchanged), so the cache hits across renders. The
+   prior key used `(System/identityHashCode message)` which churned
+   on every workspace state change — every scroll into a previously-
+   measured bubble re-measured and shifted total-h by the height
+   delta, producing the visible scrollbar jumps.
+
+   Excludes volatile keys the painter assoc's into a copy of the
+   message during projection (`:text`, `:prewrapped-lines`,
+   `:line-meta`, `:turn-separator?`) so cache hits even after
+   projection has decorated the map."
+  [message]
+  (hash (dissoc message :text :prewrapped-lines :line-meta :turn-separator?)))
+
+(defn- settings-fingerprint
+  "Content-derived fingerprint of the subset of settings keys that
+   actually affect bubble height. Same rationale as the message
+   fingerprint: identity is fragile, content is stable."
+  [settings]
+  (hash
+    (select-keys settings
+      [:show-thinking :show-iterations :show-iteration-headers
+       :differentiate-turns :preview/default-lines
+       :progress/live-iteration-limit])))
+
 (defn- height-key [message bubble-w settings _detail-expansions]
-  [(System/identityHashCode message)
+  [(message-content-fingerprint message)
    (long bubble-w)
-   (System/identityHashCode settings)])
+   (settings-fingerprint settings)])
 
 (defn- height-cache-get
   "Peek the sticky height cache. Returns a long or nil."
