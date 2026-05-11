@@ -632,6 +632,7 @@
      :title-refresh?     turn-boundary refresh hint
      :conversation-title current title (or nil/blank)
      :user-request       raw current-turn user request
+     :current-objective  deterministic objective map from initial message pinning
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Computed once
@@ -648,7 +649,7 @@
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
                        model system-prompt current-user-content context-limit
-                       title-refresh?]
+                       title-refresh? current-objective]
                 :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
@@ -689,7 +690,8 @@
                    :conversation-title conversation-title
                    ;; Raw current-turn user request — hooks inspect it
                    ;; for investigation verbs / blind-answer prevention.
-                   :user-request current-user-content}
+                   :user-request current-user-content
+                   :current-objective current-objective}
         ;; <system_nudges> are populated by PRE-phase `:ext/hooks` — the
         ;; single mechanism for model-facing advisory hints. Each hook
         ;; declares :phase; the host invokes :fn only when the phase
@@ -738,6 +740,40 @@
 ;; Initial messages
 ;; =============================================================================
 
+(def ^:private short-followup-request-regex
+  #"(?i)^\s*(a|do it|do that|please do it|please do that|yes|yep|yeah|ok|okay|go ahead)\s*[.!?]*\s*$")
+
+(defn derive-current-objective
+  "Derive the turn's current objective deterministically from the raw user
+   request plus one-turn context. Short imperative follow-ups (`do it`, `yes`,
+   `A`, ...) bind to the previous user request when available; otherwise the
+   current request itself is the objective."
+  [{:keys [initial-user-content previous-turn-context]}]
+  (let [request (some-> initial-user-content str str/trim)
+        previous-user-request (some-> previous-turn-context :user-request str str/trim not-empty)
+        short-followup? (boolean (and request (re-find short-followup-request-regex request)))]
+    (cond
+      (str/blank? (str request)) nil
+      (and short-followup? previous-user-request)
+      {:source :previous-user-request
+       :confidence :high
+       :user-request request
+       :text previous-user-request}
+      :else
+      {:source :user-request
+       :confidence :high
+       :user-request request
+       :text request})))
+
+(defn- current-objective-block
+  [current-objective]
+  (when-let [objective (some-> current-objective :text str str/trim not-empty)]
+    (prompt-block
+      "current_objective"
+      (str "source: " (name (or (:source current-objective) :unknown))
+        "\nconfidence: " (name (or (:confidence current-objective) :normal))
+        "\nobjective: " objective))))
+
 (defn previous-turn-context-block
   "Full previous exchange context for follow-up turns.
 
@@ -765,16 +801,21 @@
 
    One full previous-turn context block may be prepended so short follow-ups
    (`A`, `do it`, `yes`) keep the referent from the prior final answer without
-   replaying the whole conversation."
-  [{:keys [system-prompt initial-user-content previous-turn-context]}]
-  (let [previous-block (previous-turn-context-block previous-turn-context)
-        user-block     (when initial-user-content
-                         (prompt-block "user_turn_request_main_goal" initial-user-content))]
+   replaying the whole conversation. A deterministic <current_objective> block
+   is also prepended for objective pinning and guard hooks."
+  [{:keys [system-prompt initial-user-content previous-turn-context current-objective]}]
+  (let [objective (or current-objective
+                    (derive-current-objective {:initial-user-content initial-user-content
+                                               :previous-turn-context previous-turn-context}))
+        previous-block  (previous-turn-context-block previous-turn-context)
+        objective-block (current-objective-block objective)
+        user-block      (when initial-user-content
+                          (prompt-block "user_turn_request_main_goal" initial-user-content))]
     (vec
       (concat
         (when system-prompt [{:role "system" :content system-prompt}])
         (when user-block
-          [{:role "user" :content (str/join "\n\n" (keep identity [previous-block user-block]))}])))))
+          [{:role "user" :content (str/join "\n\n" (keep identity [previous-block objective-block user-block]))}])))))
 
 ;; =============================================================================
 ;; System prompt

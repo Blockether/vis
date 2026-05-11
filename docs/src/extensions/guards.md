@@ -1,10 +1,17 @@
-# Lifecycle Hooks and System Nudges
+# Lifecycle Hooks (Nudges + Hard Guard Hooks)
 
-`:ext/hooks` is the lifecycle callback surface for extensions. Pre-eval
-phases can surface **model-facing** `<system_nudge>` entries in the
-per-iteration prompt. The user never sees them; they nudge the model
-toward correct behavior without ever blocking evaluation. For hard
-rejections, use the preflight gates in `internal/loop.clj`.
+`:ext/hooks` is the lifecycle callback surface for extensions.
+
+Canonical naming used in this repo:
+
+- **soft hooks** = pre-phase nudges (`:session/start`, `:turn/start`, `:turn.iteration/start`)
+- **hard hooks** = answer-validation guard hooks (`:turn.answer/validate`)
+- **post hooks** = side-effect hooks (`:turn.iteration/stop`, `:turn/stop`)
+
+So “guard” is not a separate extension API; it is a lifecycle hook role.
+Structural/engine invariants (answer-alone form shape,
+answer-with-mutation preflight, etc.) remain core preflight gates in
+`internal/loop.clj`.
 
 ## Where system nudges live
 
@@ -44,22 +51,24 @@ telemetry, logging, and external side effects. The answer-validation phase is
 hard guard territory: `nil` accepts; `{:reject true :message ... :hint ...}`
 rejects the candidate answer and surfaces the message on the answer form.
 
+Return shapes are validated. Reject-looking maps that do not match the
+canonical shape (for example `{:reject false ...}`) are logged and ignored.
+
 ## Phases
 
 Only namespaced keywords are valid. Old dash phases are removed.
 
-| phase | invoked on | return handling |
-|---|---|---|
-| `:session/start` | first iteration of first turn | `{:hint ...}` becomes system nudge |
-| `:turn/start` | first iteration of each turn | `{:hint ...}` becomes system nudge |
-| `:turn.iteration/start` | every iteration before eval | `{:hint ...}` becomes system nudge |
-| `:turn.iteration/stop` | every iteration after eval | ignored |
-| `:turn.answer/validate` | when `(answer ...)` produced a candidate final answer | nil accepts; `{:reject true :message ... :hint ...}` rejects |
-| `:turn/stop` | after the turn closes | ignored |
+| phase | runtime call site | invoked on | return handling |
+|---|---|---|---|
+| `:session/start` | `prompt/build-iteration-context` | first iteration of first turn | `{:hint ...}` becomes system nudge |
+| `:turn/start` | `prompt/build-iteration-context` | first iteration of each turn | `{:hint ...}` becomes system nudge |
+| `:turn.iteration/start` | `prompt/build-iteration-context` | every iteration before eval | `{:hint ...}` becomes system nudge |
+| `:turn.iteration/stop` | `loop/emit-post-hooks!` | every iteration after eval | ignored |
+| `:turn.answer/validate` | `loop/final-answer-gate-error` | when `(answer ...)` produced a candidate final answer | nil accepts; `{:reject true :message ... :hint ...}` rejects |
+| `:turn/stop` | `loop/emit-post-hooks!` | after the turn closes | ignored |
 
-Hooks do NOT block evaluation. Pre-phase hooks append a
-`<system_nudge>` to the iteration prompt; the model decides whether to
-amend.
+Hooks do NOT block evaluation except `:turn.answer/validate`, which is
+explicitly a hard gate for candidate final answers.
 
 ## The `ctx` pre-phase nudge hooks receive
 
@@ -73,17 +82,22 @@ amend.
  :input-tokens        <estimated tokens of the assembled prompt-so-far>
  :title-refresh?      <turn-boundary refresh hint>
  :conversation-title  <current title, or nil/blank>
- :user-request        <raw current-turn user request>}
+ :user-request        <raw current-turn user request>
+ :current-objective   <deterministic objective map or nil>}
 ```
 
 ## The `ctx` answer-validation hooks receive
 
 ```clojure
-{:environment  <full env map>
- :phase        :turn.answer/validate
- :iteration    <1-based current iteration>
- :blocks       <evaluated blocks from this iteration>
- :answer       <candidate final answer IR/value>}
+{:environment         <full env map>
+ :phase               :turn.answer/validate
+ :iteration           <1-based current iteration>
+ :blocks              <evaluated blocks from this iteration>
+ :answer              <candidate final answer IR/value>
+ :user-request        <raw current-turn user request>
+ :current-objective   <deterministic objective map or nil>
+ :previous-iterations <prior iterations in this turn for obligation checks>
+ :previous-blocks     <flattened prior blocks fallback>}
 ```
 
 ## Soft nudge example
@@ -126,12 +140,13 @@ takes the loop down.
 
 ## Built-in foundation hooks
 
-`vis-foundation` ships three pre-phase nudge hooks and one hard
-answer-validation hook:
+`vis-foundation` ships three pre-phase nudges and two hard
+answer-validation hooks:
 
 | id | phase | when it fires |
 |---|---|---|
 | `:foundation/conversation-title` | `:turn.iteration/start` | title blank / refresh-flagged / stale (periodic) |
 | `:foundation/context-pressure` | `:turn.iteration/start` | input tokens > ~50% of model's context window |
-| `:foundation/blind-answer` | `:turn.iteration/start` | iter 1 + request contains investigation verbs + zero observation calls |
-| `:foundation/unresolved-errors-before-answer` | `:turn.answer/validate` | candidate final answer while the latest previous iteration still contains block or journal errors |
+| `:foundation/blind-answer` | `:turn.iteration/start` | iter 1 + investigation-style request + zero prior observation |
+| `:foundation/unresolved-errors-before-answer` | `:turn.answer/validate` | open failure obligations remain (block/journal errors not closed by later proof) |
+| `:foundation/action-request-needs-evidence` | `:turn.answer/validate` | action request (`fix/implement/run/...`) but no prior tool/code evidence in this turn and answer is not blocked/partial |

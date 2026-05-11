@@ -172,8 +172,11 @@ From classpath jar to live tool call:
 4. **Install** - bind symbols into the aliased SCI namespace; auto-require the alias in `sandbox`
 5. **Prompt** - collect active `:ext/environment-info-fn` sections, then append each active extension's optional `:ext/prompt` block under `[namespace: alias -> ns]`
 6. **Activation (per turn)** - `:ext/activation-fn` check; when falsy, symbols stay unbound and prompt/nudge hooks are skipped for the whole turn
-7. **Lifecycle hooks** - active extensions' `:ext/hooks` are invoked by namespaced phase (`:turn.iteration/start`, etc.)
-8. **Hooks (per call)** - `:before-fn` -> `:fn` -> `:after-fn`, with `:on-error-fn` catching `:fn` errors
+7. **Lifecycle hooks** - active extensions' `:ext/hooks` are invoked by namespaced phase:
+   - pre phases (`:session/start`, `:turn/start`, `:turn.iteration/start`) in `prompt/build-iteration-context`
+   - hard answer policy phase (`:turn.answer/validate`) in `loop/final-answer-gate-error`
+   - post phases (`:turn.iteration/stop`, `:turn/stop`) in `loop/emit-post-hooks!`
+8. **Symbol decorators (per call)** - `:before-fn` -> `:fn` -> `:after-fn`, with `:on-error-fn` catching `:fn` errors
 
 ## Namespace aliases
 
@@ -416,6 +419,6 @@ The registrar walks each slot in turn. The user gets:
 ## Where next
 
 - [Extension Spec](spec.md) - all keys, defaults, validation
-- [Symbol Decorators](hooks.md) - `:before-fn`, `:after-fn`, `:on-error-fn` (decorators around the target fn) + `:on-parse-error-fn` (parse rescue)
+- [Symbol Decorators (Symbol-Level Hooks)](hooks.md) - `:before-fn`, `:after-fn`, `:on-error-fn` (decorators around the target fn) + `:on-parse-error-fn` (parse rescue)
 - [Environment Map](environment.md) - every key in the environment
-- [Lifecycle hooks and system nudges](guards.md) - built-in + extension nudges
+- [Lifecycle Hooks (Nudges + Hard Guard Hooks)](guards.md) - built-in + extension lifecycle policy

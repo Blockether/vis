@@ -508,7 +508,9 @@ Tests implemented:
 
 ## Layer 4: current-turn objective pin
 
-Add prompt/runtime helper that derives current objective once per turn.
+Status: **partially implemented (deterministic objective map + prompt block + hook ctx threading)**.
+
+Added prompt/runtime helper that derives current objective once per turn.
 
 ### Rule
 
@@ -533,13 +535,13 @@ Objective shape:
  :confidence :high}
 ```
 
-Render high priority:
+Current rendered shape:
 
 ```xml
 <current_objective>
-User said "do it". Bind to immediately previous assistant proposal:
-"Patch TUI code-block/header spacing in render_ir.clj / markdown->lines path".
-Do not resume older backlog unless user explicitly asks.
+source: previous-user-request
+confidence: high
+objective: Patch TUI code-block/header spacing in render_ir.clj / markdown->lines path
 </current_objective>
 ```
 
@@ -554,11 +556,17 @@ Alternative implementation:
 
 Rejected because prompt-only rule is weaker and not testable against transcripts.
 
-Tests:
+Tests implemented now:
 
-- previous assistant says "I can patch render_ir now" + user `do it` -> objective is render_ir task
-- older unresolved task exists -> objective still latest proposal
-- explicit user says "go back to slash popup" -> objective is slash popup
+- short follow-up `do it` binds objective to previous turn user request
+- default objective source is current user request
+- `<current_objective>` renders in initial user message
+- action-evidence guard uses objective source so bare `do it` without binding is not treated as action request
+
+Still missing:
+
+- explicit switch-back (`go back to slash popup`) objective override regression test
+- objective text narrowing to previous assistant actionable proposal (currently previous user request)
 
 ## Layer 5: stale trace pruning / summarization
 
