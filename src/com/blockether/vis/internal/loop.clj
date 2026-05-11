@@ -1124,10 +1124,48 @@
     (catch Throwable _
       false)))
 
+(defn- answer-alone-preflight-violation
+  "Return a map describing the violation when an iteration contains an
+   `(answer ...)` call AND any sibling top-level form. The contract:
+   `(answer ...)` is its OWN iteration; the iteration that produces the
+   answer evaluates EXACTLY ONE top-level form, and that form contains
+   the answer call (optionally wrapping prose / inline expressions, but
+   no other top-level work).
+
+   This is stricter than the legacy `answer-position-preflight`
+   (which only required answer-last) and the `answer-with-mutation`
+   gate (which only forbade action ops). Pi / Codex / SWE-bench all
+   enforce a strict observe-then-answer split: tool calls in one
+   step, answer in the NEXT step with no other work mixed in. We
+   adopt the same separation so the model can never accidentally
+   claim success on top of un-observed work.
+
+   Returns nil when the iteration is fine. Shape on violation:
+   `{:answer-idx N :total-forms M}`."
+  [code-entries]
+  (when (< 1 (count code-entries))
+    (when-let [answer-idx (first (keep-indexed (fn [idx {:keys [expr]}]
+                                                 (when (form-contains-answer-call? expr) idx))
+                                   code-entries))]
+      {:answer-idx answer-idx :total-forms (count code-entries)})))
+
+(defn- answer-alone-preflight-error-message
+  [{:keys [answer-idx total-forms]}]
+  (str "Answer-alone preflight rejected this iteration before evaluation: "
+    "(answer ...) MUST be the ONLY top-level form in its iteration. "
+    "This iteration had " total-forms " top-level forms; an `(answer ...)` "
+    "call appears in form " (inc (or answer-idx 0)) ". "
+    "Contract: observe (tool calls) in one iteration; the engine evaluates "
+    "and populates `<journal>`; observe the journal; THEN emit a separate "
+    "iteration whose single top-level form is `(answer ...)`. No mixing. "
+    "Recovery: drop the answer from this iteration so the host loops, then "
+    "emit it alone in the next iteration once the journal carries every "
+    "value cited by the answer."))
+
 (defn- answer-position-preflight-form-idx
-  "Return the 0-based top-level form index when an `(answer ...)` call has
-   later sibling top-level forms. This runs before SCI evaluation so
-   rejected final iterations do not execute any of their forms."
+  "Legacy gate. Kept for the answer-second-to-last edge case the
+   stricter `answer-alone` rule already covers; both produce a
+   preflight error so either firing is fine."
   [_iteration-position code-entries]
   (when (< 1 (count code-entries))
     (let [answer-idxs (vec (keep-indexed (fn [idx {:keys [expr]}]
@@ -1521,8 +1559,21 @@
                                   (answer-position-preflight-error-message
                                     answer-preflight-form-idx
                                     parsed-total-blocks))
+         ;; Strictest gate: `(answer ...)` must be the ONLY top-level
+         ;; form in its iteration. Pi / Codex / SWE-bench style hard
+         ;; observe/answer split. Runs FIRST so its error wins over
+         ;; the weaker answer-position / answer-with-mutation gates.
+         answer-alone-violation (when (and (not raw-fence-error)
+                                        (not plain-prose-error)
+                                        (pos? parsed-total-blocks))
+                                  (answer-alone-preflight-violation
+                                    parsed-code-entries))
+         answer-alone-error (when answer-alone-violation
+                              (answer-alone-preflight-error-message
+                                answer-alone-violation))
          answer-with-mutation-mismatch (when (and (not raw-fence-error)
                                                (not plain-prose-error)
+                                               (not answer-alone-error)
                                                (not answer-preflight-error)
                                                (pos? parsed-total-blocks))
                                          (answer-with-mutation-preflight-mismatch
@@ -1536,6 +1587,11 @@
                         :comment (prose->comment raw-code)
                         :preflight-error plain-prose-error}]
 
+                      answer-alone-error
+                      (mapv (fn [entry]
+                              (assoc entry :preflight-error answer-alone-error))
+                        parsed-code-entries)
+
                       answer-preflight-error
                       (mapv (fn [entry]
                               (assoc entry :preflight-error answer-preflight-error))
@@ -1548,6 +1604,7 @@
 
                       :else
                       parsed-code-entries)
+      :answer-alone-preflight-error answer-alone-error
       :answer-preflight-error answer-preflight-error
       :answer-with-mutation-preflight-error answer-with-mutation-error
       :plain-prose-preflight-error plain-prose-error
