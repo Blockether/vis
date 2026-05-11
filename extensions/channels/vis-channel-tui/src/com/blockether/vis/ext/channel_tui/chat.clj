@@ -327,9 +327,9 @@
            cost   (:cost result)
            confidence (:confidence result)]
        ;; Return canonical IR on `:answer`. The bubble layer (state
-           ;; event handler -> assistant-message -> render-answer) is
-           ;; the single rendering chokepoint. Pre-rendering here would
-           ;; force every consumer back through string parsing.
+       ;; event handler -> assistant-message -> render-answer) is
+       ;; the single rendering chokepoint. Pre-rendering here would
+       ;; force every consumer back through string parsing.
        (cond-> {:answer          answer
                 :iteration-count (or (:iteration-count result) 1)
                 :duration-ms     (:duration-ms result)

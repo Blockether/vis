@@ -1108,8 +1108,8 @@
   ;;      are expanded for BOTH the visible transcript and the agent.
   ;;   2. `@path/to/file` mentions inserted by the file picker. Those
   ;;      stay concise in the visible transcript, but expand into
-  ;;      read-now directives for the AGENT: bind `(v/cat path)` with
-  ;;      `def`, then `v/preview` relevant lines before answering.
+  ;;      a short read-now directive for the AGENT; the model picks
+  ;;      the right tool (`v/cat`, `z/symbols`, etc.) itself.
   (fn [db [_ text]]
     (let [visible-text (input/expand-paste-placeholders text (:pastes db))
           workspace-id (current-workspace-id db)

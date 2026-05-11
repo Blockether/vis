@@ -821,7 +821,6 @@
                   :result-kinds [:tool]
                   :result-details [{:op :v/patch
                                     :op/tag :op.tag/action
-                                    :presentation-kind :tool/edit :op/badge "EDIT"
                                     :color-role :tool-color/edit}]
                   :stdouts [""]
                   :durations [1]
@@ -830,7 +829,7 @@
                     nil trace 96 {:show-iterations true} nil false
                     {:conversation-id "conversation"
                      :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
-      (expect (str/includes? (:text payload) "EDIT patch"))
+      (expect (str/includes? (:text payload) "ACTION patch"))
       (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
 
   (it "does not duplicate edit badges when tool results auto-collapse"
@@ -841,7 +840,6 @@
                         :result-kinds [:tool]
                         :result-details [{:op :v/patch
                                           :op/tag :op.tag/action
-                                          :presentation-kind :tool/edit :op/badge "EDIT"
                                           :color-role :tool-color/edit}]
                         :stdouts [""]
                         :durations [1]
@@ -851,9 +849,9 @@
                         {:conversation-id "conversation"
                          :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
-      (expect (= 1 (count (re-seq #"EDIT patch" body))))
-      (expect (some #(str/starts-with? (body-of %) "▸ EDIT patch") (:lines payload)))
-      (expect (not-any? #(str/starts-with? (body-of %) "  ▸ EDIT patch") (:lines payload)))))
+      (expect (= 1 (count (re-seq #"ACTION patch" body))))
+      (expect (some #(str/starts-with? (body-of %) "▸ ACTION patch") (:lines payload)))
+      (expect (not-any? #(str/starts-with? (body-of %) "  ▸ ACTION patch") (:lines payload)))))
 
   (it "does not duplicate self-describing shell result summaries"
     (render/invalidate-cache!)
@@ -865,7 +863,6 @@
                         :result-kinds [:tool]
                         :result-details [{:op :v/bash
                                           :op/tag :op.tag/action
-                                          :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                           :color-role :tool-color/shell}]
                         :stdouts [""]
                         :durations [1]
@@ -875,7 +872,7 @@
                         {:conversation-id "conversation"
                          :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
-      (expect (= 1 (count (re-seq #"BASH bash" body))))))
+      (expect (= 1 (count (re-seq #"ACTION bash" body))))))
 
   (it "keeps shell stderr inside the shell result zone"
     (let [lines (format-iteration-entry {:iteration      0
@@ -884,7 +881,6 @@
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
                                                            :op/tag :op.tag/action
-                                                           :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                                            :color-role :tool-color/shell
                                                            :stderr "Execution error"}]
                                          :stdouts        [""]
@@ -904,7 +900,6 @@
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
                                                            :op/tag :op.tag/action
-                                                           :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                                            :color-role :tool-color/shell
                                                            :stdout "hello\nworld"
                                                            :stderr ""}]
@@ -931,7 +926,6 @@
                     :result-kinds [:tool]
                     :result-details [{:op :v/bash
                                       :op/tag :op.tag/action
-                                      :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                       :color-role :tool-color/shell
                                       :stdout "stdout-line"}]
                     :stdouts [""]
@@ -994,7 +988,6 @@
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
                                                            :op/tag :op.tag/action
-                                                           :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                                            :color-role :tool-color/shell
                                                            :stdout ""
                                                            :stderr ""}]
@@ -1015,7 +1008,6 @@
                     :result-kinds [:tool]
                     :result-details [{:op :any
                                       :op/tag :op.tag/observation
-                                      :presentation-kind :tool/search :op/badge "SEARCH" :op/self-describing? true
                                       :color-role :tool-color/search
                                       :spec {:any ["alpha" "beta"] :paths ["src"]}
                                       :paths ["src"]}]
@@ -1226,7 +1218,6 @@
                     :results [big-body]
                     :result-kinds [:tool]
                     :result-details [{:op :v/bash :op/tag :op.tag/action
-                                      :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                       :color-role :tool-color/shell}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
@@ -1254,7 +1245,6 @@
                     :results [big-body]
                     :result-kinds [:tool]
                     :result-details [{:op :v/bash :op/tag :op.tag/action
-                                      :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                       :color-role :tool-color/shell}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"

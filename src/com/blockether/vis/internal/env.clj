@@ -144,8 +144,8 @@
    sanctioned `v/` file surface."
   [& _args]
   (throw (ex-info (str "slurp is banned in the sandbox - use (v/cat \"path\") "
-                    "for full-file reads and (v/preview value eql) for journal/TUI projections. "
-                    "The sanctioned file surface stays cwd-safe and consistent with the prompt.")
+                    "for full-file reads. The sanctioned file surface stays cwd-safe "
+                    "and consistent with the prompt.")
            {:type :tool/banned :tool 'slurp})))
 
 (defn- sandbox-println
@@ -211,10 +211,10 @@
                        're-seq safe-re-seq
                        're-matches safe-re-matches
                        ;; `slurp` is BANNED. File reads go through the
-                       ;; sanctioned `v/` filesystem surface (`v/cat` for
-                       ;; full-file acquisition, `v/preview` for display
-                       ;; projection). `slurp` bypasses the prompt's
-                       ;; path-policy and encourages ad-hoc I/O.
+                       ;; sanctioned `v/` filesystem surface (`v/cat`
+                       ;; for full-file acquisition). `slurp` bypasses
+                       ;; the prompt's path-policy and encourages
+                       ;; ad-hoc I/O.
                        'slurp banned-slurp}
         all-bindings (merge EXTRA_BINDINGS base-bindings
                        (or custom-bindings {}))
