@@ -2493,47 +2493,25 @@
           :else nil)
         in))))
 
-(def ^:private op-symbol->badge-label
-  "Map raw `:op` symbol (e.g. 'v/cat, 'v/patch, 'v/bash) to the visible
-   badge category. After PLAN §2.11 collapsed `:op/tag` to a 2-value
-   OODA enum, badge granularity moved to per-symbol mapping."
-  {'v/cat       "READ"
-   'v/preview   "PREVIEW"
-   'v/rg        "SEARCH"
-   'v/grep      "SEARCH"
-   'v/glob      "SEARCH"
-   'v/ls        "SEARCH"
-   'v/patch     "EDIT"
-   'v/edit      "EDIT"
-   'z/patch     "EDIT"
-   'v/create-dirs "CREATE"
-   'v/copy      "CREATE"
-   'v/move      "MOVE"
-   'v/delete    "DELETE"
-   'v/delete-if-exists "DELETE"
-   'v/bash      "BASH"
-   'v/exists?   "META"})
-
 (defn- tool-detail-badge
+  "Render the short summary line painted on tool-result rows. Reads
+   `:op/badge` declared by the owning extension via
+   `extension/register-op!`. The channel never owns per-symbol
+   tables."
   [detail]
-  (when (map? detail)
-    (let [op      (:op detail)
-          op-sym  (cond (symbol? op) op (keyword? op) (symbol (subs (str op) 1)) :else nil)
-          label   (get op-symbol->badge-label op-sym)
-          search? (= label "SEARCH")
-          op-name (when-not (and search? (#{:all :any} op))
-                    (some-> op name))]
-      (when label
-        (str label
-          (or (when search? (search-spec-summary detail))
-            (when op-name (str " " op-name))))))))
+  (when-let [label (some-> detail :op/badge)]
+    (let [op (:op detail)]
+      (str label (or (when (= label "SEARCH") (search-spec-summary detail))
+                   (when (and op (not (#{:all :any} op)))
+                     (str " " (name op))))))))
 
 (defn- self-describing-tool-result?
-  "Shell/search ops whose body is its own summary. Skip badge row."
+  "Whether the op's body output speaks for itself (shell stdout,
+   search hits, file listings) so the channel SHOULD skip the
+   redundant badge row. Declared by the extension via
+   `extension/register-op!` `:self-describing?`."
   [detail]
-  (when-let [op (some-> detail :op)]
-    (contains? '#{v/bash v/rg v/grep v/glob v/ls}
-      (symbol (subs (str op) (if (keyword? op) 1 0))))))
+  (true? (:op/self-describing? detail)))
 
 (defn- preview-switcher-entry
   [{:keys [marker active-mode conversation-id node-id max-w summary-left summary-suffix

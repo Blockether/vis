@@ -36,6 +36,7 @@
    namespace replaces that whole path."
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as lp]
+            [com.blockether.vis.ext.channel-tui.limits-fmt :as lfmt]
             [com.blockether.vis.ext.channel-tui.primitives :as p]
             [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
             [com.blockether.vis.ext.channel-tui.theme :as t]
@@ -271,67 +272,13 @@
       ;; legitimately have no quota story.
       :else nil)))
 
-(defn- format-limit-number
-  [n]
-  (when (number? n)
-    (let [d (double n)]
-      (if (== d (Math/floor d))
-        (String/format Locale/ROOT "%.0f" (object-array [d]))
-        (String/format Locale/ROOT "%.1f" (object-array [d]))))))
-
-(defn- generic-limit-label
-  [row]
-  (case (:id row)
-    :premium_interactions "Premium interactions"
-    :premium-interactions "Premium interactions"
-    :codex-5h "Codex 5h"
-    :codex-7d "Codex 7d"
-    (let [label (or (:label row)
-                  (some-> (:id row) name (str/replace #"[_-]" " ") str/capitalize)
-                  "Limit")]
-      (-> label
-        (str/replace #"(?i)\s+quota\s*\(%\)" "")
-        (str/replace #"(?i)\s+quota$" "")))))
-
-(defn- percentage-limit-row?
-  [{:keys [id kind limit remaining]}]
-  (and (number? remaining)
-    (or (contains? #{:codex-5h :codex-7d :zai-coding-5h :zai-coding-7d} id)
-      (and (= :rate kind)
-        (number? limit)
-        (== 100.0 (double limit))))))
-
-(defn- format-limit-usage
-  [{:keys [used limit remaining unlimited?] :as row}]
-  (cond
-    unlimited? "unlimited"
-    (percentage-limit-row? row)
-    (str (long (Math/round (double remaining))) "% left")
-    (and (number? used) (number? limit) (number? remaining))
-    (str (format-limit-number used) "/" (format-limit-number limit)
-      " used (" (format-limit-number remaining) " left)")
-    (and (number? used) (number? limit))
-    (str (format-limit-number used) "/" (format-limit-number limit) " used")
-    (and (number? remaining) (number? limit))
-    (str (format-limit-number remaining) "/" (format-limit-number limit) " left")
-    (number? remaining)
-    (str (format-limit-number remaining) " left")
-    (number? used)
-    (str (format-limit-number used) " used")
-    :else nil))
-
 (defn- format-generic-limit-row
   [now-ms row]
-  (let [usage (format-limit-usage row)
+  (let [usage (lfmt/format-limit-usage row)
         reset (some->> (get-in row [:window :resets-at-ms]) (format-reset now-ms))]
-    (str (generic-limit-label row)
+    (str (lfmt/generic-limit-label row)
       (when usage (str " " usage))
       (when reset (str " " reset)))))
-
-(defn- generic-limit-has-signal?
-  [row]
-  (or (:unlimited? row)
-    (pos? (double (or (:limit row) (:remaining row) (:used row) 0)))))
 
 (defn- generic-limit-sort-key
   [row]
@@ -343,7 +290,7 @@
      :codex-7d 2
      :zai-coding-7d 2
      3)
-   (if (generic-limit-has-signal? row) 0 1)
+   (if (lfmt/generic-limit-has-signal? row) 0 1)
    (or (:label row) (name (:id row)))])
 
 (defn- generic-limits-footer-text
@@ -356,7 +303,7 @@
   [db provider now-ms]
   (let [report    (report-for-current-provider db provider)
         raw-rows  (get-in report [:dynamic :limits])
-        rows      (->> (or (seq (filter generic-limit-has-signal? raw-rows))
+        rows      (->> (or (seq (filter lfmt/generic-limit-has-signal? raw-rows))
                          raw-rows)
                     (sort-by generic-limit-sort-key))]
     (if (seq rows)

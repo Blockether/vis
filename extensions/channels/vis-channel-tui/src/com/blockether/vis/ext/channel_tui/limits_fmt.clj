@@ -1,0 +1,138 @@
+(ns com.blockether.vis.ext.channel-tui.limits-fmt
+  "Shared `{:dynamic {:limits [...]}}` row formatters for the TUI.
+
+   Originally these helpers lived as private fns in
+   `channel_tui/footer.clj`, but the provider-list dialog
+   (`channel_tui/provider.clj`) needed the same compact one-line
+   summary so users can see their Z.ai Coding 5h / 7d quota (and
+   equivalents on other providers) on the provider card itself, not
+   only in the footer or the `Show Status + Limits` dialog.
+
+   The asymmetry being fixed: `draw-provider-card!` previously read
+   only `[:static :rpm]` and `[:static :tpm]`, which are the svar
+   catalog defaults (`{:rpm 500 :tpm 2000000}`) - the same numbers
+   for every provider. The interesting account-level rows
+   (`:zai-coding-5h`, `:zai-coding-7d`, `:codex-5h`, `:codex-7d`,
+   `:premium_interactions`, ...) live under `[:dynamic :limits]`,
+   were rendered by the footer, and were silently dropped on the
+   provider list cards. This namespace owns the row → text mapping
+   so both surfaces stay in sync."
+  (:require [clojure.string :as str])
+  (:import [java.util Locale]))
+
+(defn format-limit-number
+  "Render a numeric usage/limit/remaining value with a single-decimal
+   suffix when the value is non-integral, else as a clean integer.
+   `Locale/ROOT` keeps the JVM locale from injecting a comma decimal
+   separator next to English suffix text."
+  [n]
+  (when (number? n)
+    (let [d (double n)]
+      (if (== d (Math/floor d))
+        (String/format Locale/ROOT "%.0f" (object-array [d]))
+        (String/format Locale/ROOT "%.1f" (object-array [d]))))))
+
+(defn generic-limit-label
+  "Human label for a dynamic-limit row. Hand-rolled overrides for the
+   widely-known plan rows; fallback derives a label from `:label` or
+   `:id`, trimming the redundant ` Quota` / ` Quota (%)` suffixes the
+   raw provider rows ship with."
+  [row]
+  (case (:id row)
+    :premium_interactions "Premium interactions"
+    :premium-interactions "Premium interactions"
+    :codex-5h "Codex 5h"
+    :codex-7d "Codex 7d"
+    (let [label (or (:label row)
+                  (some-> (:id row) name (str/replace #"[_-]" " ") str/capitalize)
+                  "Limit")]
+      (-> label
+        (str/replace #"(?i)\s+quota\s*\(%\)" "")
+        (str/replace #"(?i)\s+quota$" "")))))
+
+(defn percentage-limit-row?
+  "True when the row is best displayed as a percent-remaining (the
+   provider reports a 0-100 percentage rather than raw token counts).
+   The ID allowlist covers the Codex / Z.ai plan windows; the
+   `:rate` + `:limit 100` heuristic catches generic percentage rows."
+  [{:keys [id kind limit remaining]}]
+  (and (number? remaining)
+    (or (contains? #{:codex-5h :codex-7d :zai-coding-5h :zai-coding-7d} id)
+      (and (= :rate kind)
+        (number? limit)
+        (== 100.0 (double limit))))))
+
+(defn format-limit-usage
+  "Render the usage/remaining portion of a row as a short string,
+   choosing the most informative shape the row's numbers allow:
+
+     - explicit `unlimited?` flag         -> \"unlimited\"
+     - percentage-style row               -> \"47% left\"
+     - used + limit + remaining           -> \"3/5 used (2 left)\"
+     - used + limit                       -> \"3/5 used\"
+     - remaining + limit                  -> \"2/5 left\"
+     - remaining only                     -> \"2 left\"
+     - used only                          -> \"3 used\"
+     - none of the above                  -> nil
+
+   Returns nil only when the row carries no usage signal at all, so
+   callers can `(when usage ...)` to skip empty cells."
+  [{:keys [used limit remaining unlimited?] :as row}]
+  (cond
+    unlimited? "unlimited"
+    (percentage-limit-row? row)
+    (str (long (Math/round (double remaining))) "% left")
+    (and (number? used) (number? limit) (number? remaining))
+    (str (format-limit-number used) "/" (format-limit-number limit)
+      " used (" (format-limit-number remaining) " left)")
+    (and (number? used) (number? limit))
+    (str (format-limit-number used) "/" (format-limit-number limit) " used")
+    (and (number? remaining) (number? limit))
+    (str (format-limit-number remaining) "/" (format-limit-number limit) " left")
+    (number? remaining)
+    (str (format-limit-number remaining) " left")
+    (number? used)
+    (str (format-limit-number used) " used")
+    :else nil))
+
+(defn generic-limit-has-signal?
+  "True when the row has any usage signal worth surfacing. Used to
+   prefer non-zero rows when the visible area is tight."
+  [row]
+  (or (:unlimited? row)
+    (pos? (double (or (:limit row) (:remaining row) (:used row) 0)))))
+
+(defn label+usage
+  "Compose `\"<label> <usage>\"` for a single row, or `\"<label>\"`
+   when the row has no usage signal. Returns nil when both are
+   blank/absent. Callers wanting the absolute reset timestamp suffix
+   (the `↺3h @ 09:12` cue) keep using the footer's `format-reset`
+   helper directly; the provider card is too narrow to carry it."
+  [row]
+  (let [label (generic-limit-label row)
+        usage (format-limit-usage row)]
+    (cond
+      (and (seq label) usage) (str label " " usage)
+      (seq label)             label
+      :else                   nil)))
+
+(defn dynamic-summary
+  "Compact one-line summary of the most informative `:dynamic :limits`
+   rows for a provider's normalized limits report.
+
+   Picks rows with signal first, falls back to all rows when nothing
+   has signal yet (so a fresh, all-zero report still surfaces SOMETHING
+   rather than collapsing to empty). Takes up to `max-rows` (default 2)
+   and joins them with ` · `.
+
+   Returns nil when there's nothing to render."
+  ([limits] (dynamic-summary limits 2))
+  ([limits max-rows]
+   (let [rows  (get-in limits [:dynamic :limits])
+         pick  (or (seq (filter generic-limit-has-signal? rows))
+                 (seq rows))
+         lines (->> pick
+                 (keep label+usage)
+                 (take max-rows))]
+     (when (seq lines)
+       (str/join " · " lines)))))

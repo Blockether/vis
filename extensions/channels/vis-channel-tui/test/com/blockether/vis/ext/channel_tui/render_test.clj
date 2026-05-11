@@ -821,7 +821,7 @@
                   :result-kinds [:tool]
                   :result-details [{:op :v/patch
                                     :op/tag :op.tag/action
-                                    :presentation-kind :tool/edit
+                                    :presentation-kind :tool/edit :op/badge "EDIT"
                                     :color-role :tool-color/edit}]
                   :stdouts [""]
                   :durations [1]
@@ -841,7 +841,7 @@
                         :result-kinds [:tool]
                         :result-details [{:op :v/patch
                                           :op/tag :op.tag/action
-                                          :presentation-kind :tool/edit
+                                          :presentation-kind :tool/edit :op/badge "EDIT"
                                           :color-role :tool-color/edit}]
                         :stdouts [""]
                         :durations [1]
@@ -865,7 +865,7 @@
                         :result-kinds [:tool]
                         :result-details [{:op :v/bash
                                           :op/tag :op.tag/action
-                                          :presentation-kind :tool/shell
+                                          :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                           :color-role :tool-color/shell}]
                         :stdouts [""]
                         :durations [1]
@@ -884,7 +884,7 @@
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
                                                            :op/tag :op.tag/action
-                                                           :presentation-kind :tool/shell
+                                                           :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                                            :color-role :tool-color/shell
                                                            :stderr "Execution error"}]
                                          :stdouts        [""]
@@ -904,7 +904,7 @@
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
                                                            :op/tag :op.tag/action
-                                                           :presentation-kind :tool/shell
+                                                           :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                                            :color-role :tool-color/shell
                                                            :stdout "hello\nworld"
                                                            :stderr ""}]
@@ -931,7 +931,7 @@
                     :result-kinds [:tool]
                     :result-details [{:op :v/bash
                                       :op/tag :op.tag/action
-                                      :presentation-kind :tool/shell
+                                      :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                       :color-role :tool-color/shell
                                       :stdout "stdout-line"}]
                     :stdouts [""]
@@ -994,7 +994,7 @@
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
                                                            :op/tag :op.tag/action
-                                                           :presentation-kind :tool/shell
+                                                           :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                                            :color-role :tool-color/shell
                                                            :stdout ""
                                                            :stderr ""}]
@@ -1015,7 +1015,7 @@
                     :result-kinds [:tool]
                     :result-details [{:op :any
                                       :op/tag :op.tag/observation
-                                      :presentation-kind :tool/search
+                                      :presentation-kind :tool/search :op/badge "SEARCH" :op/self-describing? true
                                       :color-role :tool-color/search
                                       :spec {:any ["alpha" "beta"] :paths ["src"]}
                                       :paths ["src"]}]
@@ -1226,7 +1226,7 @@
                     :results [big-body]
                     :result-kinds [:tool]
                     :result-details [{:op :v/bash :op/tag :op.tag/action
-                                      :presentation-kind :tool/shell
+                                      :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                       :color-role :tool-color/shell}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
@@ -1254,7 +1254,7 @@
                     :results [big-body]
                     :result-kinds [:tool]
                     :result-details [{:op :v/bash :op/tag :op.tag/action
-                                      :presentation-kind :tool/shell
+                                      :presentation-kind :tool/shell :op/badge "BASH" :op/self-describing? true
                                       :color-role :tool-color/shell}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
