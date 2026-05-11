@@ -1354,10 +1354,15 @@
      :started-at-ms (long started-at-ms)}))
 
 ;; Forward reference: tool-result enrichment (this section) calls
-;; `extension-info` from the public-API info module ~700 lines down.
-;; Not mutual recursion — plain forward call. The proper fix per
-;; AGENTS.md S2 is to split this 2700-line file into sub-modules
-;; (info / dispatch / registry); kept as declare meanwhile.
+;; `extension-info` defined ~700 lines down. Not mutual recursion
+;; — plain forward call. Removing this declare requires extracting
+;; `extension-info` + its dep chain (source-markers-for-extension,
+;; resolve-markers-for-extension, resolve-markers, the
+;; extension-source-markers defonce, ...) into a separate ns. ~100
+;; lines + transitive dep tracing; tracked as the proper file-split
+;; task. Sister `extension-id-of-ns` declare was retirable because
+;; its only dep was the docs registry atom (now hoisted above this
+;; section). See AGENTS.md S2.
 (declare extension-info)
 
 (defn- enrich-tool-result-info
@@ -2025,11 +2030,22 @@
                    :data  {:ext ns-sym :error (ex-message t)}})))
     ext))
 
-;; Forward reference: `extension-info` (above) calls
-;; `extension-id-of-ns` from the extension-docs registry section
-;; ~400 lines down. Not mutual recursion. See note on `extension-info`
-;; declare above — fix is file split.
-(declare extension-id-of-ns)
+;; Extension-docs registry. Moved here from the inline-extension-docs
+;; catalog section ~400 lines down so `extension-info` (right below)
+;; can reverse-lookup an extension id from a namespace without a
+;; forward declare. The rest of the catalog (registered-extension-ids,
+;; extension-namespaces, extension-doc, etc.) lives in its original
+;; section and continues to reference this defonce — it's just
+;; defined earlier now.
+(defonce ^:private extension-docs-registry (atom {}))
+
+(defn extension-id-of-ns
+  "Reverse lookup: given a namespace symbol, return the extension id
+   that registered it under `:nses`, or `nil`."
+  [ns-sym]
+  (some (fn [[id {nses :nses}]]
+          (when (some #(= ns-sym %) nses) id))
+    @extension-docs-registry))
 
 (def ^:private empty-source-markers
   {:source-paths       []
@@ -2452,7 +2468,9 @@
 ;; merge, so a later jar's links can target an earlier jar's docs.
 ;; =============================================================================
 
-(defonce ^:private extension-docs-registry (atom {}))
+;; `extension-docs-registry` and `extension-id-of-ns` were defined
+;; further up so `extension-info` can use them without a forward
+;; declare. The rest of the catalog uses them as before.
 
 (defn registered-extension-ids
   "Sorted vector of every extension id known to the docs registry."
@@ -2464,14 +2482,6 @@
    the id is unknown."
   [id]
   (vec (get-in @extension-docs-registry [id :nses] [])))
-
-(defn extension-id-of-ns
-  "Reverse lookup: given a namespace symbol, return the extension id
-   that registered it under `:nses`, or `nil`."
-  [ns-sym]
-  (some (fn [[id {nses :nses}]]
-          (when (some #(= ns-sym %) nses) id))
-    @extension-docs-registry))
 
 (defn extension-doc
   "Return the full descriptor map for a declared extension doc:
