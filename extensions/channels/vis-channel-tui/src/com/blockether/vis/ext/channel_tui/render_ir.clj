@@ -308,11 +308,17 @@
 
 (defn- code-block->lines
   "Code block: never wrap, never escape; preserve raw text. Runs carry
-   `:code` style. Empty lines render as a blank line."
+   `:code` style. Empty lines render as a blank line.
+
+   Every fenced block also gets one blank `:code` row above and below
+   its content. Those rows are semantic *inside-code* padding: the
+   bubble painter fills them with the code-block background, giving
+   the chip the same breathing room as tool-call code/result zones."
   [node _width {:keys [code-fence?] :as _opts}]
   (let [src   (raw-body node)
         attrs (node-attrs node)
         lang  (:lang attrs)
+        pad   {:runs []}
         body  (mapv (fn [line]
                       {:runs (if (= "" line)
                                []
@@ -322,7 +328,8 @@
                 (str/split-lines (or src "")))
         body  (if (str/ends-with? (or src "") "\n")
                 (conj body {:runs []})
-                body)]
+                body)
+        body  (vec (concat [pad] body [pad]))]
     (if code-fence?
       (let [open  {:runs [{:text (str "```" (or lang "")) :style #{:dim :code} :node node}]}
             close {:runs [{:text "```" :style #{:dim :code} :node node}]}]
@@ -459,14 +466,14 @@
           (assoc (empty-line) :block-tag :h :block-level level)))
 
       :code
-      ;; Trailing blank is tagged `:p`, NOT `:code`, so it renders
-      ;; on the bubble bg (the painter fills any `:code`-tagged row -
-      ;; even an empty one - with `code-block-bg`, which would extend
-      ;; the code chip one row past content and erase the visual gap
-      ;; before the next block). The leading-blank guard for first-
-      ;; block-is-code lives in `ir->lines` post-processing.
-      (conj (vec (tag-lines (code-block->lines node width opts) :code))
-        (assoc (empty-line) :block-tag :p))
+      ;; Code blocks have two distinct kinds of blank rows:
+      ;;   :p    outside margin before/after the chip (bubble bg)
+      ;;   :code inside padding above/below content (code bg)
+      ;; Keep both semantic tags so the painter can draw the full
+      ;; code-block chrome without callers manually adding blank lines.
+      (vec (concat [(assoc (empty-line) :block-tag :p)]
+             (tag-lines (code-block->lines node width opts) :code)
+             [(assoc (empty-line) :block-tag :p)]))
 
       :ul
       (conj (vec (tag-lines (list->lines :ul (node-children node) width opts) :ul))
@@ -515,18 +522,29 @@
          body   (drop 2 ast)               ; canonical: [:ir {} & blocks]
          lines  (blocks->lines body width (or opts {}))
          lines  (vec lines)
-         ;; collapse runs of >1 trailing blank lines into a single blank
-         lines  (loop [out [] prev-blank? false ls (seq lines)]
+         ;; collapse runs of duplicate blank lines, but preserve a
+         ;; boundary when the blank rows have different semantic tags.
+         ;; `:p` blank + `:code` blank means outside margin followed by
+         ;; inside code padding; collapsing those made fenced blocks sit
+         ;; flush with surrounding text.
+         lines  (loop [out [] prev-blank-tag nil ls (seq lines)]
                   (if (nil? ls)
                     out
-                    (let [l (first ls)
-                          blank? (line-blank? l)]
-                      (recur (if (and blank? prev-blank?) out (conj out l))
-                        blank?
+                    (let [l         (first ls)
+                          blank?    (line-blank? l)
+                          blank-tag (when blank? (:block-tag l))]
+                      (recur (if (and blank? (= prev-blank-tag blank-tag))
+                               out
+                               (conj out l))
+                        blank-tag
                         (next ls)))))
-         ;; drop leading + trailing blank lines
-         lines  (vec (drop-while line-blank? lines))
-         lines  (vec (reverse (drop-while line-blank? (reverse lines))))
+         ;; drop leading + trailing neutral blank lines. Preserve
+         ;; `:code` blanks because they are inside-code padding; the
+         ;; bookend guard below re-adds neutral outer margin when a
+         ;; code block touches the answer edge.
+         lines  (vec (drop-while #(and (line-blank? %) (not= :code (:block-tag %))) lines))
+         lines  (vec (reverse (drop-while #(and (line-blank? %) (not= :code (:block-tag %)))
+                                (reverse lines))))
          ;; Code-block bookend guard: when a `:code` block sits at the
          ;; very top or bottom of an answer, the surrounding blank-line
          ;; trim above would have removed every neutral spacer next to

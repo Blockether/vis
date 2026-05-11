@@ -52,7 +52,7 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 15 (count editing/editing-symbols)))
+    (expect (= 13 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
               (map :ext.symbol/sym editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
@@ -68,9 +68,7 @@
                 (map :ext.symbol/sym editing/editing-symbols)))
       (expect (= 1 (count (filter #{'bash}
                             (map :ext.symbol/sym editing/editing-symbols))))))
-    (expect (some #{'preview}
-              (map :ext.symbol/sym editing/editing-symbols)))
-    (expect (not-any? #{'silent!}
+    (expect (not-any? #{'preview 'silent!}
               (map :ext.symbol/sym editing/editing-symbols))))
 
   (it "omits bash symbols and prompt examples when bash is disabled by config"
@@ -102,7 +100,7 @@
     (expect (string/includes? editing/editing-prompt
               "Use structured tools for discovery and reads"))
     (expect (string/includes? editing/editing-prompt
-              "`v/glob` returns cwd-relative path strings under `:result`"))
+              "`v/glob` returns cwd-relative path strings under `:op/result`"))
     (expect (string/includes? editing/editing-prompt
               "recursive patterns like `**/*.clj` walk descendants"))
     (expect (string/includes? editing/editing-prompt
@@ -116,13 +114,13 @@
         (expect (ifn? (:ext.symbol/journal-render-fn entry)))
         (expect (ifn? (:ext.symbol/channel-render-fn entry))))))
 
-  (it "teaches the model that file and shell payloads live under the tool envelope :result"
+  (it "teaches the model that file and shell payloads live under the tool envelope :op/result"
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
                         editing/editing-symbols)]
-      (expect (string/includes? editing/editing-prompt "[:result :lines]"))
-      (expect (string/includes? editing/editing-prompt "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits)"))
-      (expect (string/includes? editing/editing-prompt "[:result :stdout]"))
-      (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
+      (expect (string/includes? editing/editing-prompt "[:op/result :lines]"))
+      (expect (string/includes? editing/editing-prompt "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :op/result :hits)"))
+      (expect (string/includes? editing/editing-prompt "[:op/result :stdout]"))
+      (expect (string/includes? (:ext.symbol/doc bash-symbol) ":op/result :stdout"))
       (expect (string/includes? (:ext.symbol/doc bash-symbol) "Refuses shell-driven Clojure/EDN source edits"))
       (expect (string/includes? editing/editing-prompt "Use `v/bash`"))
       (expect (string/includes? editing/editing-prompt "set -euo pipefail")))))
@@ -154,7 +152,7 @@
       (expect (string/includes? editing/editing-prompt
                 "`v/cat` reads the whole file"))
       (expect (string/includes? editing/editing-prompt
-                "[:result :lines]"))
+                "[:op/result :lines]"))
       (expect (string/includes? editing/editing-prompt
                 "Edit text with canonical (v/patch"))
       (expect (string/includes? editing/editing-prompt
@@ -224,7 +222,7 @@
     (let [channel-render-cat (private-fn "channel-render-cat")
           result {:path "src/demo.clj" :offset 0 :total-lines 1 :truncated-by :end-of-file
                   :lines ["only-line"]}
-          out (channel-render-cat result :channel-tui)]
+          out (channel-render-cat result)]
       (expect (string/includes? out "```text"))
       (expect (string/includes? out "1: only-line"))))
 
@@ -298,7 +296,7 @@
                 :include ["*.clj"]}
           grep (private-fn "grep-files")
           rg (private-fn "rg-tool")]
-      (expect (= (grep spec) (:result (rg spec))))))
+      (expect (= (grep spec) (:op/result (rg spec))))))
 
   (it "rejects shorthand and unknown keys instead of silently changing grammar"
     (let [grep (private-fn "grep-files")
@@ -430,13 +428,13 @@
 
   (it "bash warns when Traceback appears on stderr despite exit 0"
     (let [bash-tool   (private-fn "bash-tool")
-          render-bash (private-fn "render-bash")
+          render-bash (private-fn "channel-render-bash")
           out         (bash-tool "printf '%s\n' 'Traceback (most recent call last):' >&2" {:timeout-ms 5000})
-          rendered    (render-bash {:tool-result out})]
+          rendered    (render-bash (:op/result out))]
       (expect (true? (:op/success? out)))
-      (expect (= 0 (get-in out [:result :exit])))
+      (expect (= 0 (get-in out [:op/result :exit])))
       (expect (= :stderr-traceback-with-zero-exit
-                (get-in out [:result :warnings 0 :type])))
+                (get-in out [:op/result :warnings 0 :type])))
       (expect (string/includes? rendered "warning(s)"))
       (expect (string/includes? rendered "swallowed"))))
 
@@ -444,7 +442,7 @@
     (let [strict-command (private-fn "strict-bash-command")
           bash-tool      (private-fn "bash-tool")
           out            (bash-tool "false\necho SHOULD_NOT_RUN" {:timeout-ms 5000})
-          result         (:result out)]
+          result         (:op/result out)]
       (expect (= "set -euo pipefail\nfalse\necho SHOULD_NOT_RUN"
                 (strict-command "false\necho SHOULD_NOT_RUN")))
       (expect (true? (:op/success? out)))
@@ -457,7 +455,7 @@
   (it "bash interruption returns concise cancelled failure instead of timeout or stack dump"
     (let [entry       (some #(when (= 'bash (:ext.symbol/sym %)) %)
                         (:ext/symbols foundation/vis-extension))
-          render-bash (private-fn "render-bash")
+          render-bash (private-fn "channel-render-bash")
           out         (promise)
           worker      (Thread.
                         (fn []
@@ -473,18 +471,21 @@
       (Thread/sleep 100)
       (.interrupt worker)
       (let [v        (deref out 2000 ::timeout)
-            rendered (when (map? v) (render-bash {:tool-result v}))]
+            rendered (when (map? v)
+                       (if (:op/success? v)
+                         (render-bash (:op/result v))
+                         (extension/default-channel-error-text v)))]
         (expect (not= ::timeout v))
         (expect (map? v))
         (expect (false? (:op/success? v)))
-        (expect (= "java.lang.InterruptedException" (get-in v [:error :type])))
-        (expect (= [] (get-in v [:error :trace])))
-        (expect (string/includes? (get-in v [:error :message]) "cancelled"))
-        (expect (not (string/includes? (get-in v [:error :message]) "timed out")))
-        (expect (= :interrupted (get-in v [:info :status])))
-        (expect (= "sleep 5" (get-in v [:info :command])))
-        (expect (= :v/bash (get-in v [:info :op])))
-        (expect (= "." (get-in v [:info :target :requested])))
+        (expect (nil? (get-in v [:op/error :type])))
+        (expect (nil? (get-in v [:op/error :trace])))
+        (expect (string/includes? (get-in v [:op/error :message]) "cancelled"))
+        (expect (not (string/includes? (get-in v [:op/error :message]) "timed out")))
+        (expect (= :interrupted (get-in v [:op/metadata :status])))
+        (expect (= "sleep 5" (get-in v [:op/metadata :command])))
+        (expect (= :v/bash (:op/symbol v)))
+        (expect (= "." (get-in v [:op/metadata :target :requested])))
         (expect (string/includes? rendered "cancelled"))
         (expect (not (string/includes? rendered "timed out")))
         (expect (not (string/includes? (pr-str (:op/error v)) "core.clj"))))))
@@ -502,46 +503,34 @@
             (expect (= :use-z-patch (:reason (ex-data e))))))))))
 
 (defdescribe editing-renderer-guidance-test
-  (it "patch renderer avoids mandatory duplicate read-back and shows fenced diffs"
-    (let [render-patch (private-fn "render-patch")
-          rendered (render-patch
-                     ;; PLAN §2.1 envelope shape: flat :op/* keys.
-                     {:tool-result {:op/success? true
-                                    :op/result   [{:path "target/editing-test/out.txt"}]
-                                    :op/symbol   :v/patch
-                                    :op/tag      :op.tag/action
-                                    :op/metadata {:files [{:path "target/editing-test/out.txt"
-                                                           :changed? true
-                                                           :before "alpha\nbeta\n"
-                                                           :after "alpha\ngamma\n"}]}}})]
-      (expect (string/includes? rendered "Read back only when exact persisted bytes matter"))
-      (expect (string/includes? rendered "```diff"))
-      (expect (string/includes? rendered "--- a/target/editing-test/out.txt"))
-      (expect (string/includes? rendered "-beta"))
-      (expect (string/includes? rendered "+gamma"))))
+  (it "patch renderer reports patched paths"
+    (let [render-patch (private-fn "channel-render-patch")
+          rendered (render-patch [{:path "target/editing-test/out.txt"}])]
+      (expect (string/includes? rendered "Patched"))
+      (expect (string/includes? rendered "target/editing-test/out.txt"))))
   (it "search-hits renderer formats partial-projection hits without raw EDN fallback"
-    (let [render-hits (private-fn "render-search-hits-kind")
+    (let [render-hits (private-fn "channel-render-rg")
           rendered (render-hits
-                     {:surface :markdown
-                      :value {:result {:hits [{:line 462
-                                               :text "  (inc (reduce max 0 ...))"}
-                                              {:line 472
-                                               :text "(defn- workspace-tabs-or-base"}]}}})]
+                     {:hits [{:line 462
+                              :text "  (inc (reduce max 0 ...))"}
+                             {:line 472
+                              :text "(defn- workspace-tabs-or-base"}]
+                      :truncated-by :end-of-results})]
       (expect (string? rendered))
       (expect (not (string/includes? rendered "{:line 462")))
       (expect (not (string/includes? rendered ":text \"")))
-      (expect (string/includes? rendered "line 462"))
+      (expect (string/includes? rendered ":462"))
       (expect (string/includes? rendered "(inc (reduce max 0"))
-      (expect (string/includes? rendered "line 472"))
+      (expect (string/includes? rendered ":472"))
       (expect (string/includes? rendered "workspace-tabs-or-base"))))
-  (it "search-hits renderer keeps full path:line backtick prefix when path present"
-    (let [render-hits (private-fn "render-search-hits-kind")
+  (it "search-hits renderer keeps full path:line prefix when path present"
+    (let [render-hits (private-fn "channel-render-rg")
           rendered (render-hits
-                     {:surface :markdown
-                      :value {:result {:hits [{:path "src/foo.clj"
-                                               :line 10
-                                               :text "(def x 1)"}]}}})]
-      (expect (string/includes? rendered "`src/foo.clj:10`"))
+                     {:hits [{:path "src/foo.clj"
+                              :line 10
+                              :text "(def x 1)"}]
+                      :truncated-by :end-of-results})]
+      (expect (string/includes? rendered "src/foo.clj:10"))
       (expect (string/includes? rendered "(def x 1)")))))
 
 (defdescribe tool-envelope-test

@@ -61,18 +61,19 @@
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 50000 :context-limit 0})))))
 
 (defdescribe hooks-registration-test
-  (it "foundation ships three hooks: title, context-pressure, blind-answer"
+  (it "foundation ships answer/title/context/blind-answer hooks"
     (let [ids (set (map :id nudges/hooks))]
       (expect (= #{:foundation/conversation-title
                    :foundation/context-pressure
-                   :foundation/blind-answer}
+                   :foundation/blind-answer
+                   :foundation/unresolved-errors-before-answer}
                 ids))))
 
   (it "every hook declares the four required keys (:id :doc :phase :fn)"
     (doseq [h nudges/hooks]
       (expect (keyword? (:id h)))
       (expect (string? (:doc h)))
-      (expect (contains? #{:session-start :turn-start :iteration-start :iteration-end :turn-end}
+      (expect (contains? #{:session/start :turn/start :turn.iteration/start :turn.iteration/stop :turn.answer/validate :turn/stop}
                 (:phase h)))
       (expect (fn? (:fn h)))))
 
@@ -101,10 +102,17 @@
                   {:iteration 1 :user-request req :previous-blocks nil})]
         (expect (some? hit))
         (expect (= :high (:importance hit)))
-        (expect (string? (:text hit))))))
+        (expect (string? (:hint hit))))))
 
   (it "stays silent on trivial chat"
     (doseq [req ["hey" "thx" "siema" "Hi!" "ok" "yes"]]
+      (expect (nil? (nudges/blind-answer-guard-check
+                      {:iteration 1 :user-request req :previous-blocks nil})))))
+
+  (it "stays silent for explicit planning-only requests and symbol-name triggers"
+    (doseq [req ["Planning-only review. Answer one paragraph: should z/patch-check be de-emphasized?"
+                 "Opinion-only: compare v/patch-check with z/patch-check."
+                 "Design-only, do not inspect files: should foo/check exist?"]]
       (expect (nil? (nudges/blind-answer-guard-check
                       {:iteration 1 :user-request req :previous-blocks nil})))))
 
@@ -119,3 +127,30 @@
                     {:iteration 1
                      :user-request "Why is X broken?"
                      :previous-blocks [{:code "(v/cat \"x\")" :result {}}]})))))
+
+(defdescribe unresolved-error-answer-guard-test
+  (it "rejects final answer when a previous block has an error"
+    (let [hit (nudges/unresolved-error-answer-guard-check
+                {:previous-iterations [[1 {:blocks [{:code "(z/patch ...)"
+                                                     :error {:message "z/patch failed"}}]}]]})]
+      (expect (= true (:reject hit)))
+      (expect (str/includes? (:message hit) "z/patch failed"))
+      (expect (str/includes? (:hint hit) "Do not answer yet"))))
+
+  (it "rejects final answer when a previous journal sink entry failed"
+    (let [hit (nudges/unresolved-error-answer-guard-check
+                {:previous-iterations [[1 {:blocks [{:code "(z/patch ...)"
+                                                     :error nil
+                                                     :journal [{:success? false
+                                                                :error {:message "source not parseable"}}]}]}]]})]
+      (expect (= true (:reject hit)))
+      (expect (str/includes? (:message hit) "source not parseable"))))
+
+  (it "accepts final answer when latest previous iteration is clean"
+    (expect (nil? (nudges/unresolved-error-answer-guard-check
+                    {:previous-iterations [[1 {:blocks [{:code "(z/patch ...)"
+                                                         :error {:message "old fixed error"}}]}]
+                                           [2 {:blocks [{:code "(v/bash verify)"
+                                                         :error nil
+                                                         :journal [{:success? true
+                                                                    :error nil}]}]}]]})))))

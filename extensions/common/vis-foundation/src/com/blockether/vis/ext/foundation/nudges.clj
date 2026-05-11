@@ -18,9 +18,16 @@
      3. `:foundation/blind-answer` (importance :high)
         Fires on iteration 1 when the user request contains
         investigation verbs (why / fix / check / find / debug / ...)
-        and no prior tool calls have run. Warns the model that
-        answering from memory on an investigation request is a
-        hallucination.
+        and no prior tool calls have run. Ignores explicit planning-only
+        requests and symbol-name occurrences like `z/patch-check`.
+        Warns the model that answering from memory on an investigation
+        request is a hallucination.
+
+     4. `:foundation/unresolved-errors-before-answer`
+        Hard answer validator. Rejects final `(answer ...)` when the
+        latest previous iteration in the same turn contains block or
+        journal errors, so the model must read/fix the journal before
+        claiming completion.
 
    Keeping policy in an extension (not core hardcoded built-ins)
    means these go through the same `:ext/hooks` protocol any
@@ -108,8 +115,8 @@
 
 ;; ----------------------------------------------------------------------------
 ;; Hooks (`:ext/hooks`) — structured lifecycle-phase callbacks. Pre-phase
-;; hooks (e.g. :iteration-start) emit MODEL-FACING <system_nudge> entries;
-;; post-phase hooks (e.g. :iteration-end, :turn-end) are side-effect only.
+;; hooks (e.g. :turn.iteration/start) emit MODEL-FACING <system_nudge> entries;
+;; post-phase hooks (e.g. :turn.iteration/stop, :turn/stop) are side-effect only.
 ;; ----------------------------------------------------------------------------
 
 ;; `title-nudge` and `context-pressure-nudge` are exposed as plain fns so
@@ -123,16 +130,19 @@
 
 (def ^:private investigation-verb-regex
   ;; Stems of verbs that strongly imply "answer requires runtime/file
-  ;; observation". Match whole-word, case-insensitive. Conservative
-  ;; list: false positives are fine (model just receives a hint it
-  ;; can ignore), false negatives let real blind-answers slip.
-  #"(?i)\b(investigate|investigating|debug|debugging|why|fix|fixing|check|checking|find|finding|look(?:up|s)?|inspect|inspecting|reproduce|reproducing|diagnose|diagnosing|verify|verifying|trace|tracing|where|which|what does|how does|show me|search for|grep|locate|count)\b")
+  ;; observation". Match whole-word, case-insensitive. Avoid treating
+  ;; tool/symbol names (`z/patch-check`, `foo/check`) as user verbs.
+  #"(?i)(?<![-/])\b(investigate|investigating|debug|debugging|why|fix|fixing|check|checking|find|finding|look(?:up|s)?|inspect|inspecting|reproduce|reproducing|diagnose|diagnosing|verify|verifying|trace|tracing|where|which|what does|how does|show me|search for|grep|locate|count)\b")
+
+(def ^:private planning-only-regex
+  #"(?i)\b(planning-only|plan-only|opinion-only|design-only|no tools?|do not inspect|do not investigate|do not modify files)\b")
 
 (defn- looks-like-investigation?
   [user-request]
   (let [s (some-> user-request str str/trim)]
     (and s
       (>= (count s) 8)        ;; "hey" / "thx" / "siema" stay below
+      (not (re-find planning-only-regex s))
       (boolean (re-find investigation-verb-regex s)))))
 
 (defn blind-answer-guard-check
@@ -148,7 +158,7 @@
           (looks-like-investigation? user-request)
           (empty? previous-blocks))
     {:importance :high
-     :text (str "The user request looks like an investigation (verbs like "
+     :hint (str "The user request looks like an investigation (verbs like "
              "'why', 'fix', 'check', 'find', 'debug', 'show me' …). "
              "You MUST call at least one tool (v/cat, v/rg, z/locators, "
              "v/bash …) to observe the actual state before composing "
@@ -156,18 +166,88 @@
              "request is a hallucination. If the request is truly "
              "trivial chat (greeting, ack), ignore this nudge.")}))
 
+(defn- error-message
+  [err]
+  (cond
+    (nil? err) nil
+    (string? err) err
+    (map? err) (or (:message err) (:msg err) (pr-str err))
+    :else (str err)))
+
+(defn- previous-iteration-entries
+  [{:keys [previous-iterations previous-blocks]}]
+  (if (seq previous-iterations)
+    (map (fn [entry]
+           (if (vector? entry)
+             {:iteration (first entry)
+              :blocks (:blocks (second entry))}
+             {:iteration (or (:iteration entry) (:position entry))
+              :blocks (:blocks entry)}))
+      previous-iterations)
+    [{:iteration nil :blocks previous-blocks}]))
+
+(defn previous-error-summaries
+  "Return compact summaries for the latest previous iteration's block/journal
+   errors visible to the answer-validation hook. Public for regression tests."
+  [ctx]
+  (->> (when-let [latest (last (vec (previous-iteration-entries ctx)))]
+         [latest])
+    (mapcat (fn [{:keys [iteration blocks]}]
+              (map-indexed
+                (fn [idx block]
+                  (let [block-msg (error-message (:error block))
+                        journal-msgs (keep (fn [entry]
+                                             (when (false? (:success? entry))
+                                               (error-message (:error entry))))
+                                       (:journal block))]
+                    (concat
+                      (when block-msg
+                        [{:iteration iteration
+                          :block (inc idx)
+                          :message block-msg}])
+                      (map (fn [msg]
+                             {:iteration iteration
+                              :block (inc idx)
+                              :message msg})
+                        journal-msgs))))
+                (or blocks []))))
+    (apply concat)
+    (remove #(str/blank? (:message %)))
+    vec))
+
+(defn unresolved-error-answer-guard-check
+  "Hard answer validator. Reject a candidate answer while the latest previous
+   iteration in this turn still contains errors. The rejection becomes a
+   validation error on the `(answer ...)` block, so the next loop sees the
+   journal failure and can fix it instead of claiming success."
+  [ctx]
+  (let [errors (previous-error-summaries ctx)]
+    (when (seq errors)
+      (let [preview (str/join "; "
+                      (map (fn [{:keys [iteration block message]}]
+                             (str "iteration " (or iteration "?")
+                               "/block " (or block "?") ": " message))
+                        (take 3 errors)))]
+        {:reject true
+         :message (str "The latest previous iteration still has errors in the journal: " preview)
+         :hint "Do not answer yet. Read the latest journal error, fix or explicitly explain the failed step, rerun needed verification, then answer only after a clean follow-up iteration."}))))
+
 (def hooks
   "`:ext/hooks` vector for vis-foundation. Each entry conforms to the
    `::hook` spec in `com.blockether.vis.internal.extension`."
   [{:id    :foundation/conversation-title
     :doc   "Nudge the model to set / refresh the conversation title when it's blank, refresh-flagged, or stale."
-    :phase :iteration-start
+    :phase :turn.iteration/start
     :fn    (fn [ctx] (nudge->hook-hit (title-nudge ctx)))}
    {:id    :foundation/context-pressure
     :doc   "Warn when assembled input tokens cross ~50% of the model's context window."
-    :phase :iteration-start
+    :phase :turn.iteration/start
     :fn    (fn [ctx] (nudge->hook-hit (context-pressure-nudge ctx)))}
    {:id    :foundation/blind-answer
     :doc   "Warn when iteration 1 is about to answer an investigation-style request without any tool calls."
-    :phase :iteration-start
-    :fn    blind-answer-guard-check}])
+    :phase :turn.iteration/start
+    :fn    blind-answer-guard-check}
+   {:id    :foundation/unresolved-errors-before-answer
+    :doc   "Reject final answers while the latest previous iteration in this turn contains block or journal errors."
+    :phase :turn.answer/validate
+    :fn    unresolved-error-answer-guard-check}])

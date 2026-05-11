@@ -13,6 +13,7 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.lang-clojure.patch :as patch]
    [com.blockether.vis.ext.lang-clojure.repair :as repair]
+   [rewrite-clj.node]
    [rewrite-clj.zip]
    [rewrite-clj.zip.subedit])
   (:import
@@ -148,7 +149,7 @@
 
 (defn- clojure-environment-info
   [_environment]
-  "Clojure/EDN workspace detected. Prefer the `z/` alias before raw text edits: use `z/forms` first for top-level semantic rows, `z/locators` with `{:depth :all}` for deep zipper rows, `z/symbols`, or `z/locator-for-symbol` for symbol rows; use `z/patch` by adding `:replace` to a chosen span row; use `z/patch-check` before risky batches; use `z/repair-range`, `z/repair-locator`, or `z/repair-file` for parse repair; use `z/diagnostics`, `z/rename-plan`, or `z/clean-ns-plan` for clojure-lsp dry-run semantic checks. Locator rows include `:path`, `:index`, `:span`, `:kind`, `:name`, `:digest`, `:source-preview`, and full `:source`; `:span` rows are safer than lossy sexpr equality. Use `z/inspect` for raw rewrite-clj zlocs. Use `v/patch` only for comments/plain text or non-Clojure files.")
+  "Clojure/EDN workspace detected. Prefer the `z/` alias before raw text edits: use `z/forms` first for top-level semantic rows, `z/locators` with `{:depth :all}` for deep zipper rows, `z/symbols`, or `z/locator-for-symbol` for symbol rows; use `z/patch` by adding `:replace` to a chosen span row; prefer symbol/form replacements like `'new-sym` or `'(def x 1)`; use `z/source` only for exact source bytes/comments/formatting and `z/lit` for string literals; `z/patch` preflights exact-match uniqueness before writing, so use `z/patch-check` only for dry-run/no-write inspection; use `z/repair-range`, `z/repair-locator`, or `z/repair-file` for parse repair; use `z/diagnostics`, `z/rename-plan`, or `z/clean-ns-plan` for clojure-lsp dry-run semantic checks. Locator rows include `:path`, `:index`, `:span`, `:kind`, `:name`, `:digest`, `:source-preview`, and full `:source`; `:span` rows are safer than lossy sexpr equality. Use `z/inspect` for raw rewrite-clj zlocs. Use `v/patch` only for comments/plain text or non-Clojure files.")
 
 (defn- lazy-lsp-call
   [sym & args]
@@ -209,7 +210,7 @@
      :ext/activation-fn (fn [_] (clojure-project?))
      :ext/environment-info-fn clojure-environment-info
      :ext/prompt    patch/z-prompt
-     :ext/symbols   (into [patch/patch-symbol patch/patch-check-symbol patch/forms-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol patch/inspect-symbol]
+     :ext/symbols   (into [patch/source-symbol patch/lit-symbol patch/patch-symbol patch/patch-check-symbol patch/forms-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol patch/inspect-symbol]
                       (concat repair/symbols lsp-symbols rewrite-clj-zip-symbols))}))
 
 (vis/register-extension! clojure-extension)

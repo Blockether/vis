@@ -698,15 +698,14 @@
 ;;                           iteration result (status, blocks, error,
 ;;                           duration-ms, tokens, cost). Return is IGNORED;
 ;;                           use for telemetry, logging, side effects.
+;;   :turn.answer/validate — when an `(answer ...)` form produced a candidate
+;;                           final answer. Return nil to accept or
+;;                           {:reject true :message ... :hint ...} to reject.
 ;;   :turn/stop            — after the turn closes (answer, cancel, or error).
 ;;                           ctx includes the final result. Return ignored.
 ;;
-;; Legacy phase keywords are still accepted and normalized at dispatch:
-;;   :session-start -> :session/start
-;;   :turn-start -> :turn/start
-;;   :iteration-start -> :turn.iteration/start
-;;   :iteration-end -> :turn.iteration/stop
-;;   :turn-end -> :turn/stop
+;; Legacy dash phases are intentionally rejected. Use the namespaced keywords
+;; above; no compatibility shim hides stale extension code.
 ;;
 ;; Every hook declares :id, :doc, :phase, :fn — the contract is explicit
 ;; and the failure surface reviewable. One extension can ship many
@@ -724,30 +723,13 @@
     :turn/start
     :turn.iteration/start
     :turn.iteration/stop
+    :turn.answer/validate
     :turn/stop})
 
-(def legacy-hook-phase-aliases
-  "Compatibility aliases for pre-namespaced hook phases."
-  {:session-start :session/start
-   :turn-start :turn/start
-   :iteration-start :turn.iteration/start
-   :iteration-end :turn.iteration/stop
-   :turn-end :turn/stop})
-
-(def accepted-hook-phases
-  "All accepted hook phases: canonical namespaced phases plus legacy aliases."
-  (into canonical-hook-phases (keys legacy-hook-phase-aliases)))
-
-(defn normalize-hook-phase
-  "Return the canonical namespaced hook phase for `phase`.
-   Unknown phases pass through so spec/explain can report the original value."
-  [phase]
-  (get legacy-hook-phase-aliases phase phase))
-
 (defn hook-phase?
-  "True when `phase` is a canonical hook phase or legacy alias."
+  "True when `phase` is a canonical namespaced hook phase."
   [phase]
-  (contains? accepted-hook-phases phase))
+  (contains? canonical-hook-phases phase))
 
 (s/def :ext.hook/id keyword?)
 (s/def :ext.hook/doc non-blank-string?)
@@ -2384,7 +2366,7 @@
         (when-not render-fn
           (throw (AssertionError.
                    (str "No :channel-render-fn for tool result with op "
-                     (pr-str (get-in tool-result [:info :op]))))))
+                     (pr-str (:op/symbol tool-result))))))
         (assert-string! (render-fn (:op/result tool-result))
           ":channel-render-fn" sym-entry)))))
 

@@ -2325,6 +2325,7 @@
     [(:type err) (:message err) (get-in err [:data :raw-data])]))
 
 (def ^:private auto-collapse-line-threshold 12)
+(def ^:private reasoning-auto-collapse-line-threshold 10)
 (def ^:private auto-collapse-char-threshold 700)
 (defn- text-fingerprint
   "Bounded structural fingerprint for a string. Survives `(vec ...)` /
@@ -2767,7 +2768,9 @@
    final answer as ordinary assistant prose."
   [{:keys [entries conversation-id detail-expansions conversation-turn-id iteration-number max-w]}]
   (let [entries (vec entries)]
-    (if (or (nil? conversation-id) (empty? entries))
+    (if (or (nil? conversation-id)
+          (empty? entries)
+          (<= (count entries) reasoning-auto-collapse-line-threshold))
       entries
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
@@ -2918,6 +2921,11 @@
               ;; Live reasoning stays visible while it streams; completed
               ;; reasoning defaults to a compact disclosure so system-like
               ;; chain-of-thought does not visually merge with the answer.
+              ;; Layout shape mirrors code blocks:
+              ;;   neutral blank row  = outside top margin
+              ;;   thinking blank row = inside top padding
+              ;;   content/summary rows
+              ;;   thinking blank row = inside bottom padding
               (let [preview-entries (if live-preview?
                                       entries
                                       (maybe-collapse-thinking-entries
@@ -2927,7 +2935,8 @@
                                          :conversation-turn-id conversation-turn-id
                                          :iteration-number    iteration-number
                                          :max-w               fill-w}))]
-                (vec (concat [(line-entry (str thinking-marker ""))]
+                (vec (concat [(line-entry "")
+                              (line-entry (str thinking-marker ""))]
                        preview-entries
                        [(line-entry (str thinking-marker ""))]))))))
         error-lines
@@ -3541,25 +3550,31 @@
                                   (str/trim (vis/extract-text answer))
                                   "Cancelled by user.")
         cancel-rows             (mapv line-entry (wrap-text cancel-text (max 1 (- fill-w 2))))
-        ;; Trace-to-answer top margin invariant. The trace's final
-        ;; iteration already ends with a blank-rendering padding row
-        ;; (`iteration-pad-marker` for code-bearing iterations, the
-        ;; thinking-block bottom pad for thinking-only iterations).
-        ;; Stacking that with the answer's own top `ans-pad` produced
-        ;; TWO blank rows between trace and answer, while a trace-less
-        ;; answer (or a cancelled-by-user trailer) showed ONE. Drop the
-        ;; leading answer pad whenever trace-entries exist so the row
-        ;; count is identical in both shapes. The bottom `ans-pad` is
-        ;; preserved — it's the only thing between the answer text and
-        ;; the bubble's bottom border.
+        ;; Answer layout shape mirrors code blocks:
+        ;;   neutral blank row = outside top margin (unless the trace
+        ;;                       already ended with a neutral margin row)
+        ;;   answer-pad row    = inside top padding on answer bg
+        ;;   answer rows
+        ;;   answer-pad row    = inside bottom padding on answer bg
+        ;; A code-bearing iteration often already ends with a neutral
+        ;; `iteration-pad-marker`; a thinking-only iteration ends with
+        ;; a thinking-bg pad, so it still needs the neutral answer margin.
         has-trace?              (seq trace-entries)
+        neutral-margin-entry?   (fn [entry]
+                                  (let [line (:line entry)]
+                                    (or (= "" line)
+                                      (= iteration-pad-marker line))))
+        answer-top-margin       (when-not (and has-trace?
+                                            (neutral-margin-entry? (peek trace-entries)))
+                                  (line-entry ""))
         cancel-block            (vec (concat
-                                       (when-not has-trace? [(line-entry "")])
+                                       (when answer-top-margin [answer-top-margin])
                                        cancel-rows
                                        [(line-entry "")]))
         answer-block            (cond-> []
+                                  answer-top-margin                 (conj answer-top-margin)
                                   fa-hdr                            (conj fa-hdr)
-                                  (and (not fa-hdr) (not has-trace?)) (conj ans-pad)
+                                  :always                           (conj ans-pad)
                                   :always                           (into ans-entries)
                                   :always                           (conj ans-pad))
         trailer                 (if cancelled? cancel-block answer-block)
