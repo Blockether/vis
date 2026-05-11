@@ -400,17 +400,8 @@
                        (git/cached-workspace-status)))]
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
-      model-display
-      (conj {:text model-display
-             :fg t/footer-fg-strong :bold? true
-             :region :left :priority 2})
-
-      model-display
-      (conj {:text "(Ctrl+T)"
-             :join-left? true
-             :fg t/footer-fg-muted :bold? false
-             :region :left :priority 5})
-
+      ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
+      ;; (`:tui.builtin.model/footer-segment`).
       reasoning?
       (conj {:text (str "reasoning: " (name reasoning-level))
              :fg t/footer-fg-muted :bold? false
