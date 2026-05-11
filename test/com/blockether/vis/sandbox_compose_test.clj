@@ -391,23 +391,29 @@
 
 (def ^:private prompt-required-tokens
   "Tokens that must appear in CORE_SYSTEM_PROMPT for the prompt to be
-   a meaningful contract. The PRUNE-renderer rewrite collapsed the old
-   COMPOSE primer + SYSTEM-vars enumeration into the GROUND RULE +
-   BINDINGS sub-rule. The compose-test cases below still verify the
-   underlying SCI idioms work; the prompt only needs to teach the loop."
-  ["recursive language model (RLM)"
-   "GROUND RULE"
-   "GENERATE one OR MORE fenced ```clojure blocks"
-   "AUTOMATICALLY populates results into <journal>"
-   "every call surfaces"
-   "OBSERVE"
-   "DECIDE"
-   "(answer"
-   "BINDINGS"
-   "*1"
-   "*e"
-   "<journal>"
-   "<bindings>"])
+   a meaningful contract. Updated for the PLAN.md §6.1 caveman
+   rewrite (≈60 lines, OODA-centered, 3 strategies). Sister coverage
+   in `prompt_test.clj/core-system-prompt-test`."
+  ["You are Vis"
+   "OUTPUT:"
+   "```clojure fences"
+   "LOOP:"
+   "λ engage(request)"
+   ":answer"
+   ":ooda"
+   ":architect"
+   "BINDINGS:"
+   "`*1`"
+   "`*e`"
+   "SYSTEM VARS:"
+   "OPS:"
+   ":op.tag/observation"
+   ":op.tag/action"
+   ":hint"
+   "CODE"
+   "code > markdown"
+   "TRUTH:"
+   "runtime > source > docs > assumption"])
 
 (defdescribe prompt-contract-test
   (it "every pattern this test asserts is also surfaced in CORE_SYSTEM_PROMPT"
