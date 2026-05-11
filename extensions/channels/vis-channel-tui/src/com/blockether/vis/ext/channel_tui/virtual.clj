@@ -611,6 +611,63 @@
 ;;   * Returns the `Thread`. Caller stores it; on conversation
 ;;     switch / shutdown, call `stop-pre-warm!` to interrupt.
 
+(defn- warm-message-height!
+  [messages idx bubble-w settings conversation-id detail-expansions]
+  ;; Warm EVERY message, not just assistants. User-message
+  ;; bubble-height is cheap, but the *real* value is
+  ;; `chrome+lines+refs+1` while `estimated-height` can undershoot
+  ;; by 1 for short prompts. Skipping users means total-h drifts the
+  ;; first time they scroll into view.
+  (let [m  (nth messages idx)
+        pm (project-message m bubble-w settings
+             {:conversation-id conversation-id
+              :detail-expansions detail-expansions})
+        pm (with-turn-separator pm messages settings idx)
+        h  (long (render/bubble-height pm bubble-w))]
+    (height-cache-put! m bubble-w settings detail-expansions h)
+    h))
+
+(defn pre-warm-recent!
+  "Synchronously warm the RECENT tail of a conversation before the
+   background worker kicks in.
+
+   Why: `pre-warm!` is async by design (fast startup), but if the
+   user wheel-scrolls immediately after opening a heavy conversation,
+   they can still hit a cold big-trace bubble before the daemon gets
+   there. Warming the newest tail on the caller thread eliminates that
+   first-scroll cliff while still keeping the full-history warm async.
+
+   Options:
+   - `:count`     max number of newest messages to warm (default 16)
+   - `:budget-ms` wall-clock budget for this sync pass (default 120)
+
+   Returns the number of warmed messages. Safe on empty input."
+  ([messages bubble-w settings]
+   (pre-warm-recent! messages bubble-w settings nil))
+  ([messages bubble-w settings
+    {:keys [conversation-id detail-expansions] :as opts}]
+   (let [tail-count* (long (or (:count opts) 16))
+         tail-count  (if (neg? tail-count*) 0 tail-count*)
+         budget-ms   (long (if (contains? opts :budget-ms)
+                             (or (:budget-ms opts) 0)
+                             120))
+         n           (long (count messages))
+         bubble-w    (long bubble-w)
+         start-idx   (long (max 0 (- n tail-count)))
+         deadline-ns (when-not (neg? budget-ms)
+                       (+ (System/nanoTime)
+                         (* 1000000 budget-ms)))]
+     (loop [i (dec n)
+            warmed 0]
+       (if (or (< i start-idx)
+             (and (some? deadline-ns)
+               (>= (System/nanoTime) (long deadline-ns))))
+         warmed
+         (do
+           (warm-message-height!
+             messages i bubble-w settings conversation-id detail-expansions)
+           (recur (dec i) (inc warmed))))))))
+
 (defn pre-warm!
   "Spawn a daemon worker thread that calls `project-message` and
    `bubble-height` for every message in `messages` so the LRU is
@@ -636,22 +693,8 @@
                   (try
                     (loop [i (dec n)]
                       (when (and (>= i 0) (not (.isInterrupted (Thread/currentThread))))
-                        ;; Warm EVERY message, not just assistants.
-                        ;; User-message bubble-height is cheap, but
-                        ;; the *real* value is `chrome+lines+refs+1`
-                        ;; while `estimated-height` undershoots by 1
-                        ;; for short user prompts. Skipping users
-                        ;; means total-h drifts by 1 per user msg
-                        ;; the first time it scrolls into view -
-                        ;; user-visible as a one-row scrollbar nudge.
-                        ;; Pin everyone; stability beats the cycles.
-                        (let [m (nth messages i)
-                              pm (project-message m bubble-w settings
-                                   {:conversation-id conversation-id
-                                    :detail-expansions detail-expansions})
-                              pm (with-turn-separator pm messages settings i)
-                              h  (long (render/bubble-height pm bubble-w))]
-                          (height-cache-put! m bubble-w settings detail-expansions h))
+                        (warm-message-height!
+                          messages i bubble-w settings conversation-id detail-expansions)
                         (recur (dec i))))
                     (catch InterruptedException _
                       ;; Cooperative cancellation - nothing to do.

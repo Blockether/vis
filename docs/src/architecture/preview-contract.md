@@ -1,18 +1,15 @@
-# Preview Contract
+# Result Payload Contract
 
-`v/preview` projects large values into concise journal/TUI display.
+Current contract:
 
-Rules:
+- Tool payload lives under `:op/result`.
+- Journal/TUI renderers show bounded previews automatically.
+- Bind full reads/searches once, then inspect selected slices with plain Clojure.
+- Read/search helpers do not mutate the original payload.
 
-- Raw value remains under `:result`.
-- EQL selects display fields.
-- Rendering metadata controls human display only.
-- Preview never mutates the original value.
-- Bind full reads/searches when needed later, then preview selected slices.
-
-Examples:
+Example:
 
 ```clojure
 (def file (v/cat "src/foo.clj"))
-(v/preview file {:result [[:lines {:from 40 :to 80}]]})
+(subvec (get-in file [:op/result :lines]) 40 80)
 ```

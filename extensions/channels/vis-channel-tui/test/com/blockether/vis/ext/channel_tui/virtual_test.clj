@@ -315,6 +315,31 @@
         (expect (some? t))
         (expect (.isDaemon ^Thread t))
         (virtual/stop-pre-warm! t)))
+
+    (it "pre-warm-recent! warms only the requested tail-count"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [msgs   [(plain-assistant-msg "m0")
+                    (plain-assistant-msg "m1")
+                    (plain-assistant-msg "m2")
+                    (plain-assistant-msg "m3")
+                    (plain-assistant-msg "m4")]
+            warmed (virtual/pre-warm-recent! msgs bubble-w settings
+                     {:count 2 :budget-ms 1000})]
+        (expect (= 2 warmed))
+        (expect (= 2 (virtual/height-cache-size)))))
+
+    (it "pre-warm-recent! respects wall-clock budget"
+      (virtual/invalidate-heights!)
+      (render/invalidate-cache!)
+      (let [msgs   [(trace-assistant-msg 5 4 "a")
+                    (trace-assistant-msg 5 4 "b")
+                    (trace-assistant-msg 5 4 "c")]
+            warmed (virtual/pre-warm-recent! msgs bubble-w settings
+                     {:count 3 :budget-ms 0})]
+        (expect (= 0 warmed))
+        (expect (= 0 (virtual/height-cache-size)))))
+
     (it "warms the cache so a subsequent layout call is cheap"
       ;; The whole point: after pre-warm finishes, calling
       ;; format-answer-with-thinking on the warmed assistants must

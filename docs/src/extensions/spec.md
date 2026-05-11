@@ -203,10 +203,10 @@ Extensions can register semantic renderers:
                 ...)}
 ```
 
-Use this for data-shaped presentation, especially `v/preview` projections.
-The model selects data with preview EQL; tools/results carry rendering-kind
-metadata; extension renderers turn the selected value into Markdown/text.
-Do not put visibility or presentation options into `v/preview` calls.
+Use this for data-shaped presentation when tools bind large values under
+`:op/result` and the renderer should turn a selected value into
+Markdown/text. Keep selection in ordinary data (`get-in`, `subvec`, etc.)
+and keep visibility or presentation options OUT of the tool call itself.
 
 The render fn receives:
 

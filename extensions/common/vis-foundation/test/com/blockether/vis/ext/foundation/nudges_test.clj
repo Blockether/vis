@@ -155,7 +155,36 @@
                                                          :error nil
                                                          :journal [{:success? true
                                                                     :form "(v/bash \"./verify.sh --quick\")"
-                                                                    :error nil}]}]}]]})))))
+                                                                    :error nil}]}]}]]}))))
+
+  (it "closes a preflighted conversation-title failure after the same form later succeeds"
+    (expect (nil? (nudges/unresolved-error-answer-guard-check
+                    {:previous-iterations [[1 {:blocks [{:code "(conversation-title \"Polish greeting\")"
+                                                         :error {:message "Answer-alone preflight rejected this iteration"}}]}]
+                                           [2 {:blocks [{:code "(conversation-title \"Polish greeting\")"
+                                                         :error nil
+                                                         :result "Polish greeting"
+                                                         :journal []}]}]]}))))
+
+  (it "closes a preflighted bare def failure after the same form later succeeds"
+    (expect (nil? (nudges/unresolved-error-answer-guard-check
+                    {:previous-iterations [[5 {:blocks [{:code "(def z-impl-mid (subvec (get-in z-file [:op/result :lines]) 400 700))"
+                                                         :error {:message "Answer-alone preflight rejected this iteration"}}]}]
+                                           [11 {:blocks [{:code "(def z-impl-mid (subvec (get-in z-file [:op/result :lines]) 400 700))"
+                                                          :error nil
+                                                          :result "#'z-impl-mid"
+                                                          :journal []}]}]]}))))
+
+  (it "does not close a bare-form failure with a different later def"
+    (let [hit (nudges/unresolved-error-answer-guard-check
+                {:previous-iterations [[5 {:blocks [{:code "(def z-impl-mid (subvec (get-in z-file [:op/result :lines]) 400 700))"
+                                                     :error {:message "Answer-alone preflight rejected this iteration"}}]}]
+                                       [11 {:blocks [{:code "(def other 1)"
+                                                      :error nil
+                                                      :result "#'other"
+                                                      :journal []}]}]]})]
+      (expect (= true (:reject hit)))
+      (expect (str/includes? (:message hit) "z-impl-mid")))))
 
 (defdescribe action-request-needs-evidence-test
   (it "allows conceptual answer-only requests"

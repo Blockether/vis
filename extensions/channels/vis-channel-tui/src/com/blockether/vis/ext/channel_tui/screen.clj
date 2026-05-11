@@ -98,6 +98,17 @@
 (def ^:private hint-loading    " Esc cancel / Ctrl+C quit ")
 (def ^:private hint-cancelling " Cancelling... please wait / Ctrl+C quit ")
 
+(def ^:private prewarm-sync-tail-count
+  "How many newest bubbles to warm synchronously before launching
+   the background pre-warm worker. Covers the region users hit on
+   the first wheel-up after opening/switching conversations."
+  16)
+
+(def ^:private prewarm-sync-budget-ms
+  "Wall-clock budget for synchronous tail warm-up. Keeps startup and
+   tab-switch responsive while eliminating first-scroll cold stalls."
+  120)
+
 (defn- input-empty?
   "True when the input editor has no text. The empty editor is `{:lines [\"\"]
    :crow 0 :ccol 0}` - a one-element vec with the empty string - so we
@@ -112,6 +123,53 @@
     loading?            hint-loading
     (input-empty? input) hint-idle-empty
     :else               hint-idle-typed))
+
+(defn- mouse-wheel-delta
+  "Return wheel direction as -1 / +1 for a MouseAction, else nil."
+  [key]
+  (when (instance? MouseAction key)
+    (let [atype (.getActionType ^MouseAction key)]
+      (cond
+        (= atype MouseActionType/SCROLL_UP) -1
+        (= atype MouseActionType/SCROLL_DOWN) 1
+        :else nil))))
+
+(defn- coalesce-wheel-input
+  "Collapse one run of consecutive wheel events into a single delta.
+
+   Input:
+   - `key`: first event already read from the input queue
+   - `poll-next`: zero-arg fn returning next queued event or nil
+
+   Output map:
+   - `:key`         original first key
+   - `:wheel-delta` signed accumulated wheel steps (or nil when zero)
+   - `:next-key`    first non-wheel event encountered while draining"
+  [key poll-next]
+  (if-let [delta (mouse-wheel-delta key)]
+    (loop [acc (long delta)]
+      (if-let [next-key (poll-next)]
+        (if-let [next-delta (mouse-wheel-delta next-key)]
+          (recur (+ acc (long next-delta)))
+          {:key key
+           :wheel-delta (when-not (zero? acc) acc)
+           :next-key next-key})
+        {:key key
+         :wheel-delta (when-not (zero? acc) acc)}))
+    {:key key}))
+
+(defn- read-chat-input!
+  "Read one chat-loop input event, coalescing wheel floods.
+
+   Uses `pending-key` as a one-event stash when the wheel-drain loop
+   consumes one non-wheel event that belongs to the next iteration."
+  [^TerminalScreen screen pending-key]
+  (let [first-key (or @pending-key (.pollInput screen))
+        {:keys [key wheel-delta next-key]}
+        (coalesce-wheel-input first-key #(.pollInput screen))]
+    (vreset! pending-key next-key)
+    {:key key
+     :wheel-delta wheel-delta}))
 
 (defn- throwable-log-data
   [^Throwable t]
@@ -361,6 +419,7 @@
    answer dividers, padding bands, iteration labels, and provider/model footers."
   #{p/MARKER_ITERATION_HDR
     p/MARKER_DURATION
+    p/MARKER_CODE_STATUS
     p/MARKER_STDOUT_SEP
     p/MARKER_STDOUT_PAD
     p/MARKER_SEP
@@ -1424,11 +1483,18 @@
                (let [size     (screen-size screen)
                      cols     (.getColumns size)
                      bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
-                     settings (or (:settings @state/app-db) {})]
+                     settings (or (:settings @state/app-db) {})
+                     warm-opts {:conversation-id    id
+                                :detail-expansions (:detail-expansions @state/app-db)}]
+                 ;; Head-start warm on the input thread so immediate
+                 ;; first-scroll doesn't hit a cold heavy trace bubble.
+                 ;; Full history still warms async below.
+                 (virtual/pre-warm-recent! history bubble-w settings
+                   (assoc warm-opts
+                     :count prewarm-sync-tail-count
+                     :budget-ms prewarm-sync-budget-ms))
                  (vreset! prewarm-thread
-                   (virtual/pre-warm! history bubble-w settings
-                     {:conversation-id    id
-                      :detail-expansions (:detail-expansions @state/app-db)}))))))
+                   (virtual/pre-warm! history bubble-w settings warm-opts))))))
 
       ;; Spawn the render thread BEFORE the input loop. It will paint
       ;; the first frame as soon as `:render-version` is non-zero (every
@@ -1503,6 +1569,11 @@
                ;; kept in a StringBuilder so accumulation stays
                ;; allocation-cheap even for kilobyte pastes.
                paste-buffer          (volatile! nil)
+               ;; One-event stash used by wheel coalescing. When
+               ;; `read-chat-input!` drains wheel floods and sees a
+               ;; non-wheel event, it parks it here for the next loop
+               ;; iteration instead of dropping it.
+               pending-input-key     (volatile! nil)
                prewarm-conversation! (fn [{:keys [id history]}]
                                        (virtual/stop-pre-warm! @prewarm-thread)
                                        (vreset! prewarm-thread nil)
@@ -1510,18 +1581,23 @@
                                          (let [size     (screen-size screen)
                                                cols     (.getColumns size)
                                                bubble-w (max 1 (- cols render/MESSAGE_SIDE_PAD))
-                                               settings (or (:settings @state/app-db) {})]
+                                               settings (or (:settings @state/app-db) {})
+                                               warm-opts {:conversation-id    id
+                                                          :detail-expansions (:detail-expansions @state/app-db)}]
+                                           (virtual/pre-warm-recent! history bubble-w settings
+                                             (assoc warm-opts
+                                               :count prewarm-sync-tail-count
+                                               :budget-ms prewarm-sync-budget-ms))
                                            (vreset! prewarm-thread
-                                             (virtual/pre-warm! history bubble-w settings
-                                               {:conversation-id    id
-                                                :detail-expansions (:detail-expansions @state/app-db)})))))
+                                             (virtual/pre-warm! history bubble-w settings warm-opts)))))
                install-conversation! (fn [{:keys [id] :as conversation-result} notify?]
                                        (when (and id conversation-result)
                                          (when-let [cleanup @title-listener-cleanup]
                                            (try (cleanup) (catch Throwable _ nil)))
                                          (vreset! title-listener-cleanup nil)
-                                         (render/invalidate-cache!)
-                                         (virtual/invalidate-heights!)
+                                         ;; Keep render + height caches HOT across
+                                         ;; conversation/tab switches. Nuking here
+                                         ;; forced every revisit back to cold-scroll.
                                          (vreset! title-listener-cleanup
                                            (init-visible-conversation! conversation-result))
                                          (prewarm-conversation! conversation-result)
@@ -1532,8 +1608,6 @@
                                            (when-let [cleanup @title-listener-cleanup]
                                              (try (cleanup) (catch Throwable _ nil)))
                                            (vreset! title-listener-cleanup nil)
-                                           (render/invalidate-cache!)
-                                           (virtual/invalidate-heights!)
                                            (when-let [id (current-conversation-id)]
                                              (when-let [title (conversation-db-title id)]
                                                (state/dispatch [:set-title title]))
@@ -1600,7 +1674,7 @@
                    total-h (or total-h 0)
                    inner-h (or inner-h 0)
                    messages-top (or messages-top 0)
-                   key     (.pollInput screen)]
+                   {:keys [key wheel-delta]} (read-chat-input! screen pending-input-key)]
                (cond
                  (:shutdown? db) nil
 
@@ -1734,21 +1808,21 @@
                                            (:slash-command-index db))]
                    (cond
                      (and (seq slash-suggestions)
-                       (= atype MouseActionType/SCROLL_UP))
-                     (do (state/dispatch [:move-slash-command-selection -1 (count slash-suggestions)])
+                       (neg? (long (or wheel-delta 0))))
+                     (do (state/dispatch [:move-slash-command-selection (long wheel-delta) (count slash-suggestions)])
                        (recur))
 
                      (and (seq slash-suggestions)
-                       (= atype MouseActionType/SCROLL_DOWN))
-                     (do (state/dispatch [:move-slash-command-selection 1 (count slash-suggestions)])
+                       (pos? (long (or wheel-delta 0))))
+                     (do (state/dispatch [:move-slash-command-selection (long wheel-delta) (count slash-suggestions)])
                        (recur))
 
-                     (= atype MouseActionType/SCROLL_UP)
-                     (do (state/dispatch [:scroll-up 3 total-h inner-h])
+                     (neg? (long (or wheel-delta 0)))
+                     (do (state/dispatch [:scroll-up (* 3 (Math/abs (long wheel-delta))) total-h inner-h])
                        (recur))
 
-                     (= atype MouseActionType/SCROLL_DOWN)
-                     (do (state/dispatch [:scroll-down 3 total-h inner-h])
+                     (pos? (long (or wheel-delta 0)))
+                     (do (state/dispatch [:scroll-down (* 3 (long wheel-delta)) total-h inner-h])
                        (recur))
 
                      ;; CLICK_DOWN on the thumb itself: arm a drag.
