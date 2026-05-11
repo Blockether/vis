@@ -51,7 +51,9 @@
    :warn-on-boxed` clean across this namespace per the repo's GraalVM
    ratchet."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.ext.channel-tui.render :as render]
+   [com.blockether.vis.ext.channel-tui.render-ir :as ir-tui]
    [com.blockether.vis.internal.render :as ir])
   (:import
    [java.util LinkedHashMap]))
@@ -261,10 +263,50 @@
    the user only sees the bottom of the message. See A3 in
    autoresearch."
   ([message ^long bubble-w settings] (project-message message bubble-w settings nil))
-  ([message ^long bubble-w settings {:keys [conversation-id detail-expansions tail-lines]}]
+  ([message ^long bubble-w settings
+    {:keys [conversation-id detail-expansions tail-lines
+            window-start window-num window-total-h]}]
    (let [show-timestamps? (boolean (get settings :show-timestamps false))
-         strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))]
+         strip-ts (fn [m] (if show-timestamps? m (dissoc m :timestamp)))
+         ;; Mid-window walker fast path: when caller specifies a
+         ;; window into the bubble (only the bottom assistant
+         ;; message during genuine mid-scroll), bypass the cached
+         ;; format-answer pipeline and call ir->lines-window
+         ;; directly. The window output is set as :prewrapped-lines
+         ;; with `:lines-window {:start :total-h}` so the painter
+         ;; can translate logical bubble rows to lines-vec indices.
+         windowed? (and window-start window-num
+                     (#{:assistant :user} (:role message))
+                     (vector? (:ir message))
+                     (= :ir (first (:ir message))))]
      (cond
+       windowed?
+       (let [ir       (:ir message)
+             content-w (max 10 (- bubble-w 4))
+             window-lines (ir-tui/ir->lines-window ir content-w
+                            (long window-start) (long window-num))
+             ;; Render through the entries adapter for parity with
+             ;; the non-windowed path: produce sentinel-prefixed
+             ;; strings the bubble painter expects. We bypass
+             ;; format-answer-markdown-data's cache because window
+             ;; opts shift each frame; not worth keying.
+             entry-strs (ir-tui/lines->sentinel-strings window-lines
+                          {:mode :answer})
+             ;; The painter consumes `:prewrapped-lines` as a vec of
+             ;; sentinel-strings (one per content row) for the
+             ;; clip-lines-preserving-markers pass. Each entry is
+             ;; just the string; line-meta starts as nil per row.
+             prewrapped (mapv (fn [^String s] s) entry-strs)
+             text-display (str/join "\n" entry-strs)]
+         (-> message
+           (assoc :text text-display
+             :prewrapped-lines prewrapped
+             :line-meta (vec (repeat (count prewrapped) nil))
+             :lines-window {:start (long window-start)
+                            :total-h (long (or window-total-h
+                                             (+ (count prewrapped) (long window-start))))})
+           strip-ts))
+
        (and (= :assistant (:role message)) (:traces message))
        (let [{:keys [text lines line-meta]}
              (render/format-answer-with-thinking-data
@@ -433,19 +475,36 @@
                        ;; user-visible content; A4 only handled the
                        ;; first case. See A3 / A4 / A6.
                        ;;
-                       ;; Any other scroll position (user scrolled UP
-                       ;; to read deep history) falls through to the
-                       ;; full walker so the whole bubble is
-                       ;; accessible.
-                       (let [max-scroll     (max 0 (- est-tot inner-h))
-                             bottom-locked? (and (= i (long (dec n)))
-                                              (= eff-1 max-scroll))
+                       ;; Three projection paths for the LAST bubble:
+                       ;;   1. Bottom-locked (auto-scroll OR scroll
+                       ;;      clamped to max): tail-walker (A4/A6).
+                       ;;   2. Genuine mid-scroll: window-walker (A7).
+                       ;;      Only the rows in the user's viewport are
+                       ;;      walked; bubble is reported at its full
+                       ;;      estimated height for scroll math.
+                       ;;   3. Anything else (older scrollback bubble,
+                       ;;      etc.): full render.
+                       (let [last?          (= i (long (dec n)))
+                             max-scroll     (max 0 (- est-tot inner-h))
+                             bottom-locked? (and last? (= eff-1 max-scroll))
+                             ;; Bubble's top in viewport coords (negative
+                             ;; if the bubble extends above the viewport).
+                             bubble-top     (- (long (nth est-off i)) eff-1)
+                             window-start   (when (and last? (not bottom-locked?))
+                                              (long (max 0 (- bubble-top))))
+                             window-num     (when window-start
+                                              (long (* 2 inner-h)))
+                             window-total-h (when window-start
+                                              (long (nth est i)))
                              tail-n         (when bottom-locked?
                                               (long (* 2 inner-h)))]
                          (project-message m bubble-w settings
                            (cond-> {:conversation-id conversation-id
                                     :detail-expansions detail-expansions}
-                             tail-n (assoc :tail-lines tail-n)))))
+                             tail-n         (assoc :tail-lines tail-n)
+                             window-start   (assoc :window-start  window-start
+                                              :window-num    window-num
+                                              :window-total-h window-total-h)))))
                   pm (with-turn-separator pm messages settings i)
                   real-h (long (render/bubble-height pm bubble-w))]
               ;; Pin the real height in the sticky cache for the
