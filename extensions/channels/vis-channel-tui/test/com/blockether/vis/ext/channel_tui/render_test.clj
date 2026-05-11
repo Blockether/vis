@@ -121,7 +121,9 @@
             ln   (:lines p)
             pad? (fn [line]
                    (str/starts-with? line p/MARKER_ANSWER_PAD))]
-        (expect (= 0 idx))
+        ;; Top-margin blank row pushes content down by one.
+        (expect (= 1 idx))
+        (expect (visually-blank? (nth ln 0)))
         (expect (not-any? pad? ln))))
 
     (it "answer with code-bearing trace reuses trace pad as outside margin"
@@ -1758,7 +1760,21 @@
           clipped   (first (clip-lines-preserving-markers [ansi-line] 12))]
       (expect (= p/MARKER_CODE_OK (marker-of clipped)))
       (expect (str/includes? clipped "\u001b[32m"))
-      (expect (<= (p/display-width (strip-ansi (body-of clipped))) 12)))))
+      (expect (<= (p/display-width (strip-ansi (body-of clipped))) 12))))
+
+  (it "reuses clipped prewrapped rows while scrolling huge trace bubbles"
+    (render/invalidate-cache!)
+    (let [huge-line (str p/MARKER_CODE_OK (apply str (repeat 4000 "x")))
+          message   {:role :assistant
+                     :timestamp nil
+                     :prewrapped-lines (vec (repeat 1000 huge-line))}
+          draw!     #(render/draw-chat-bubble! (dummy-text-graphics) message 0 2 100
+                       {:viewport-top 0 :viewport-h 35})]
+      (draw!)
+      (let [t0 (System/nanoTime)
+            _  (draw!)
+            ms (/ (- (System/nanoTime) t0) 1e6)]
+        (expect (< ms 20.0))))))
 
 (defdescribe slash-command-suggestions-overlay-test
   (it "draws a bordered, BOLD, accent-stripe title with flex hint pairs"

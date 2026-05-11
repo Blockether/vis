@@ -22,9 +22,9 @@
 
 - [Overview](extensions/overview.md)
 - [Extension spec](extensions/spec.md)
-- [Symbol Decorators](extensions/hooks.md)
+- [Symbol Decorators (Symbol-Level Hooks)](extensions/hooks.md)
 - [Environment Map](extensions/environment.md)
-- [Lifecycle hooks and system nudges](extensions/guards.md)
+- [Lifecycle Hooks (Nudges + Hard Guard Hooks)](extensions/guards.md)
 - [vis-foundation extension](extensions/common/vis-foundation.md)
   - [Markdown builders under `v/`](extensions/common/markdown.md)
 - [vis-exa extension](extensions/common/vis-exa.md)

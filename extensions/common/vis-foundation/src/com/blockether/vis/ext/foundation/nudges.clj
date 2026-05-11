@@ -332,17 +332,26 @@
          :hint "Do not answer yet. Read the failed journal entry, fix or explicitly prove/acknowledge it, then run a later proof step (for example ./verify.sh --quick or a successful same-tool retry) before answering."}))))
 
 (def ^:private action-request-regex
-  #"(?i)\b(fix|implement|patch|change|add|remove|delete|create|edit|update|verify|run|commit|push|do it|make it)\b")
+  #"(?i)\b(fix|implement|patch|change|add|remove|delete|create|edit|update|verify|run|commit|push)\b")
+
+(def ^:private short-followup-action-regex
+  #"(?i)^\s*(do it|do that|please do it|please do that|make it|go ahead|yes|yep|ok|okay|a)\s*[.!?]*\s*$")
 
 (def ^:private blocked-answer-regex
   #"(?i)\b(blocked|cannot|can't|unable|need input|needs input|partial|not done|failed)\b")
 
 (defn- action-request?
-  [user-request]
-  (let [s (some-> user-request str str/trim)]
-    (boolean (and (seq s)
-               (not (re-find planning-only-regex s))
-               (re-find action-request-regex s)))))
+  [{:keys [user-request current-objective]}]
+  (let [s (some-> user-request str str/trim)
+        objective-source (:source current-objective)
+        objective-text (some-> current-objective :text str str/trim not-empty)]
+    (boolean
+      (and (seq s)
+        (not (re-find planning-only-regex s))
+        (or (re-find action-request-regex s)
+          (and (re-find short-followup-action-regex s)
+            (= :previous-user-request objective-source)
+            objective-text))))))
 
 (defn- answer-blocked-or-partial?
   [answer]
@@ -372,8 +381,8 @@
    previous tool/code evidence event in this turn before a final answer claims
    completion. Blocked/partial failure reports are allowed so the model can
    truthfully stop when no useful recovery exists."
-  [{:keys [user-request answer] :as ctx}]
-  (when (and (action-request? user-request)
+  [{:keys [answer] :as ctx}]
+  (when (and (action-request? ctx)
           (not (turn-has-work-evidence? ctx))
           (not (answer-blocked-or-partial? answer)))
     {:reject true

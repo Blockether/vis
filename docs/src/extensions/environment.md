@@ -1,9 +1,15 @@
 # Environment Map
 
-Every callback an extension receives - `:ext/activation-fn`, optional
-`:ext/prompt`, `:ext/environment-info-fn`, `:ext/hooks`, and the symbol hooks (`:before-fn`,
-`:after-fn`, `:on-error-fn`) - operates on the **environment**. This
-is the runtime map that represents one live conversation context.
+Every callback an extension receives operates on the **environment**
+either directly or via lifecycle ctx:
+
+- direct env callbacks: `:ext/activation-fn`, optional `:ext/prompt`,
+  `:ext/environment-info-fn`, symbol decorators (`:before-fn`,
+  `:after-fn`, `:on-error-fn`)
+- lifecycle hooks (`:ext/hooks`): receive a phase ctx map whose
+  `:environment` key is this same runtime map
+
+This runtime map represents one live conversation context.
 
 ## All keys
 

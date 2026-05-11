@@ -3073,10 +3073,15 @@
                          :active-extensions        active-exts
                          :provider-prompt-context (provider-prompt-context environment resolved-model)})
         initial-user-content user-request
+        previous-turn-ctx (previous-turn-context environment conversation-turn-id)
+        current-objective (prompt/derive-current-objective
+                            {:initial-user-content initial-user-content
+                             :previous-turn-context previous-turn-ctx})
         initial-messages (prompt/assemble-initial-messages
                            {:system-prompt system-prompt
                             :initial-user-content initial-user-content
-                            :previous-turn-context (previous-turn-context environment conversation-turn-id)})
+                            :previous-turn-context previous-turn-ctx
+                            :current-objective current-objective})
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0
                           :cache-creation-tokens 0})
         accumulate-usage! (fn [api-usage]
@@ -3363,6 +3368,7 @@
                                            :model               (some-> pre-resolved-model :name str)
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
+                                           :current-objective   current-objective
                                            :system-prompt       system-prompt
                                            ;; One low-importance turn-boundary check keeps
                                            ;; titles live across topic shifts. The old
@@ -3423,6 +3429,7 @@
                                           :active-extensions active-exts
                                           :answer-validation-context
                                           {:user-request user-request
+                                           :current-objective current-objective
                                            :previous-iterations journal-iters
                                            :previous-blocks (vec (mapcat (comp :blocks second) journal-iters))}
                                           :extra-body (assoc (or extra-body {})
