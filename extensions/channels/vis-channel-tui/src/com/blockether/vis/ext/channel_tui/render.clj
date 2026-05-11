@@ -1001,6 +1001,10 @@
    coloring. The TUI painter translates those ANSI SGR codes to
    Lanterna colors; raw ANSI is never written to the terminal.
 
+   Used for CODE blocks (the user's authored source). Result bodies
+   render via `format-clojure-plain` instead so vec/map literals
+   don't pick up syntax-highlight ANSI/PUA noise on copy.
+
    The source may be a complete file or fenced block with leading
    comments and multiple top-level forms. `fmt/format-clojure-ansi`
    owns the zprint source/file contract (`:parse-string-all?`).
@@ -1014,6 +1018,21 @@
         width     (long width)]
     (cached* [:clojure-ansi width code-text]
       #(fmt/format-clojure-ansi code-text width))))
+
+(defn- format-clojure-plain
+  "Pretty-print Clojure/EDN source via zprint WITHOUT ANSI syntax
+   coloring. Used for tool RESULT bodies in `:raw` preview mode —
+   the value is whatever the tool returned (often a vec/map literal
+   from `:editing` ops); pretty indentation is helpful, but layered
+   syntax colors fight with the surrounding result-block bg and
+   leak ANSI/PUA markers into clipboard copies.
+
+   Same source/file contract + cache pattern as `format-clojure-ansi`."
+  [code-text width]
+  (let [code-text (str code-text)
+        width     (long width)]
+    (cached* [:clojure-plain width code-text]
+      #(fmt/format-clojure code-text width))))
 
 (defn- paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
@@ -3036,7 +3055,13 @@
                                                                :else (:lines preview-window))
                                         mode-lines           (if (= :preview active-mode)
                                                                (mapcat #(wrap-text % fill-w) visible-source-lines)
-                                                               (str/split-lines (format-clojure-ansi mode-text fill-w)))
+                                                               ;; :raw mode of a :preview result — the value
+                                                               ;; is whatever the tool returned. Pretty-print
+                                                               ;; without ANSI colors so vec/map literals
+                                                               ;; don't pick up syntax-highlight noise that
+                                                               ;; leaks into copy-paste; plain zprint is what
+                                                               ;; the user asked for here.
+                                                               (str/split-lines (format-clojure-plain mode-text fill-w)))
                                         hidden-count         (when collapsed?
                                                                (max 0 (- preview-source-count preview-limit)))
                                         summary-left         (when collapsible? (if collapsed? (str "▸ " hidden-count " lines hidden") (str "▾ showing all " preview-source-count " lines")))
