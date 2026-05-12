@@ -809,7 +809,7 @@
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
-      ;; Per PLAN §2.1 + §7.3.5: :error is the structured :op/error
+      ;; Per PLAN §2.1 + §7.3.5: :error is the structured :error
       ;; map ({:message :trace? :hint? :block?}). Single error
       ;; field, no fallback string.
       (vis/db-store-iteration! s {:conversation-turn-id qid

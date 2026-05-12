@@ -113,13 +113,13 @@
           forms       (forms-fn path {:limit 100})
           locators    (locators-fn path {:depth :all :limit 100})
           symbols     (symbols-fn path {:limit 100})
-          form-row    (first (filter #(= 'f (:name %)) (:op/result forms)))
-          old-row     (first (filter #(= 'old-sym (:value %)) (:op/result locators)))]
-      (expect (true? (:op/success? forms)))
-      (expect (true? (:op/success? locators)))
-      (expect (true? (:op/success? symbols)))
-      (expect (every? #(= path (:path %)) (:op/result forms)))
-      (expect (every? #(integer? (:index %)) (:op/result forms)))
+          form-row    (first (filter #(= 'f (:name %)) (:result forms)))
+          old-row     (first (filter #(= 'old-sym (:value %)) (:result locators)))]
+      (expect (true? (:success? forms)))
+      (expect (true? (:success? locators)))
+      (expect (true? (:success? symbols)))
+      (expect (every? #(= path (:path %)) (:result forms)))
+      (expect (every? #(integer? (:index %)) (:result forms)))
       (expect (= :defn (:kind form-row)))
       (expect (= 'f (:name form-row)))
       (expect (= true (:doc? form-row)))
@@ -127,7 +127,7 @@
       (expect (contains? form-row :source-preview))
       ;; Back-compat patch handles stay available.
       (expect (every? #(every? (set (keys %)) [:path :index :tag :value :locator :source :span :kind :digest :source-preview])
-                (:op/result forms)))
+                (:result forms)))
       (expect (= {:path path
                   :tag :token
                   :kind :symbol
@@ -137,9 +137,9 @@
                   :source "old-sym"
                   :span [[2 18] [2 25]]}
                 (select-keys old-row [:path :tag :kind :name :value :locator :source :span])))
-      (expect (every? #(symbol? (:value %)) (:op/result symbols)))
-      (expect (every? #(= path (:path %)) (:op/result symbols)))
-      (expect (some #(= 'old-sym (:value %)) (:op/result symbols)))))
+      (expect (every? #(symbol? (:value %)) (:result symbols)))
+      (expect (every? #(= path (:path %)) (:result symbols)))
+      (expect (some #(= 'old-sym (:value %)) (:result symbols)))))
 
   (it "z/locators defaults to top-level rows and supports focused lookup"
     (let [path          (write-temp! "patch/locators-focused.clj"
@@ -155,22 +155,22 @@
           by-symbol     (locators-fn path {:symbol 'target-sym})
           by-source     (locators-fn path {:source-contains "needle" :limit 20})
           symbol-filter (symbols-fn path {:name 'target-sym})]
-      (expect (= 22 (count (:op/result by-default))))
-      (expect (false? (get-in by-default [:op/metadata :truncated?])))
-      (expect (= [:defn] (mapv :kind (:op/result by-kind))))
-      (expect (= ['needle] (mapv :name (:op/result by-name))))
-      (expect (= ['target-sym] (mapv :value (:op/result by-symbol))))
-      (expect (some #(str/includes? (:source %) "needle") (:op/result by-source)))
-      (expect (= ['target-sym] (mapv :value (:op/result symbol-filter))))))
+      (expect (= 22 (count (:result by-default))))
+      (expect (false? (get-in by-default [:metadata :truncated?])))
+      (expect (= [:defn] (mapv :kind (:result by-kind))))
+      (expect (= ['needle] (mapv :name (:result by-name))))
+      (expect (= ['target-sym] (mapv :value (:result by-symbol))))
+      (expect (some #(str/includes? (:source %) "needle") (:result by-source)))
+      (expect (= ['target-sym] (mapv :value (:result symbol-filter))))))
 
   (it "z/locator-for-symbol returns one symbol row without dumping the namespace"
     (let [path       (write-temp! "patch/locator-for-symbol.clj" "(ns demo)\n(defn f [] target-sym)\n")
           locator-fn (:ext.symbol/fn patch/locator-for-symbol-symbol)
           out        (locator-fn path 'target-sym)]
-      (expect (true? (:op/success? out)))
-      (expect (= :z/locator-for-symbol (:op/symbol out)))
-      (expect (= :z/locator-for-symbol (get-in out [:op/metadata :op])))
-      (expect (= 'target-sym (get-in out [:op/result :value])))))
+      (expect (true? (:success? out)))
+      (expect (= :z/locator-for-symbol (:symbol out)))
+      (expect (= :z/locator-for-symbol (get-in out [:metadata :op])))
+      (expect (= 'target-sym (get-in out [:result :value])))))
 
   (it "renders locators through the canonical Vis renderers with compact semantic summaries"
     (let [tool-fn (:ext.symbol/fn patch/forms-symbol)
@@ -189,7 +189,7 @@
     (let [path        (write-temp! "patch/locator-row.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")
           patch-fn    (private-fn "patch-safe")
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
-          old-symbols (filterv #(= 'old-sym (:value %)) (:op/result (symbols-fn path)))
+          old-symbols (filterv #(= 'old-sym (:value %)) (:result (symbols-fn path)))
           second-old  (second old-symbols)]
       (expect (= 2 (count old-symbols)))
       (patch-fn {:path path :search second-old :replace 'new-sym})
@@ -199,7 +199,7 @@
     (let [path        (write-temp! "patch/locator-row-multi.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")
           patch-fn    (private-fn "patch-safe")
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
-          old-symbols (filterv #(= 'old-sym (:value %)) (:op/result (symbols-fn path)))]
+          old-symbols (filterv #(= 'old-sym (:value %)) (:result (symbols-fn path)))]
       (expect (= 2 (count old-symbols)))
       (patch-fn [(assoc (first old-symbols) :replace 'new-a)
                  (assoc (second old-symbols) :replace 'new-b)])
@@ -208,7 +208,7 @@
                         "(ns demo)\n(defn f [xs] (mapv #(inc %) xs))\n")
           patch-fn    (private-fn "patch-safe")
           locators-fn (:ext.symbol/fn patch/locators-symbol)
-          row         (->> (:op/result (locators-fn path {:source-contains "mapv" :limit 10}))
+          row         (->> (:result (locators-fn path {:source-contains "mapv" :limit 10}))
                         (filter #(and (= :list (:tag %))
                                    (str/includes? (:source %) "#(inc %)")))
                         first)]
@@ -221,7 +221,7 @@
     (let [path        (write-temp! "patch/locator-replace.clj" "(ns demo)\n(def a source-sym)\n(def b target-sym)\n")
           patch-fn    (private-fn "patch-safe")
           symbols-fn  (:ext.symbol/fn patch/symbols-symbol)
-          source-row  (first (filter #(= 'source-sym (:value %)) (:op/result (symbols-fn path))))]
+          source-row  (first (filter #(= 'source-sym (:value %)) (:result (symbols-fn path))))]
       (patch-fn {:path path :search 'target-sym :replace source-row})
       (expect (= "(ns demo)\n(def a source-sym)\n(def b source-sym)\n" (slurp path)))))
 
@@ -231,14 +231,14 @@
           out      (patch-fn {:path path :search "(def z 1)" :replace "(def z 3)"})
           journal  (vis/journal-render-tool-result out)
           channel  (vis/channel-render-tool-result out)]
-      (expect (true? (:op/success? out)))
-      (expect (= :z/patch (:op/symbol out)))
-      (expect (= 1 (get-in out [:op/result :total-changes])))
-      (expect (= path (get-in out [:op/result :files 0 :path])))
+      (expect (true? (:success? out)))
+      (expect (= :z/patch (:symbol out)))
+      (expect (= 1 (get-in out [:result :total-changes])))
+      (expect (= path (get-in out [:result :files 0 :path])))
       (expect (= "(ns demo)\n(def z 1)\n"
-                (get-in out [:op/result :files 0 :before])))
+                (get-in out [:result :files 0 :before])))
       (expect (= "(ns demo)\n(def z 3)\n"
-                (get-in out [:op/result :files 0 :after])))
+                (get-in out [:result :files 0 :after])))
       (expect (= [{:start-line 1
                    :context-before ["(ns demo)"]
                    :removed ["(def z 1)"]
@@ -246,7 +246,7 @@
                    :context-after []
                    :removed-count 1
                    :added-count 1}]
-                (get-in out [:op/result :files 0 :hunks])))
+                (get-in out [:result :files 0 :hunks])))
       (expect (str/includes? journal "1/1 file(s) changed; preflight exact-match OK"))
       (expect (str/includes? journal "hunk@1 -1 +1"))
       (expect (str/includes? channel "z/patch preflight validated exact matches before writing"))
@@ -262,8 +262,8 @@
           wrapped   (on-error err nil nil [{:path "src/demo.clj"}])
           envelope  (:result wrapped)
           rendered  (vis/journal-render-tool-result envelope)]
-      (expect (false? (:op/success? envelope)))
-      (expect (str/includes? (get-in envelope [:op/error :hint]) "Use z/forms"))
+      (expect (false? (:success? envelope)))
+      (expect (str/includes? (get-in envelope [:error :hint]) "Use z/forms"))
       (expect (str/includes? rendered "ERROR"))))
 
   (it "z/inspect turns raw rewrite-clj zlocs into serializable summaries"

@@ -1001,7 +1001,7 @@
   "Per PLAN §1.3: 4-value block role enum.
    Reads `:role` from the block; defaults to `:tool` when missing or
    when the value is not one of the 4 canonical roles. Errors are
-   derived from `:op/success?` on the envelope, NOT a separate role.
+   derived from `:success?` on the envelope, NOT a separate role.
    No `:vis/*` legacy mapping — dev DBs are blown away per
    AGENTS.md S3 inline-V1 rule."
   [exec]
@@ -1024,7 +1024,7 @@
             (some? (:result exec))             (assoc :result (freeze-safe (:result exec)))
             (seq (:journal exec))              (assoc :journal (freeze-safe (:journal exec)))
             (seq (:channel exec))              (assoc :channel (freeze-safe (:channel exec)))
-;; Per PLAN §2.1 + §7.3.5: :error is the structured :op/error map
+;; Per PLAN §2.1 + §7.3.5: :error is the structured :error map
             ;; (Nippy serialises maps natively). Was previously stringified via
             ;; (str ...) which produced unreadable Clojure-map literal text.
             (some? (:error exec))              (assoc :error (freeze-safe (:error exec)))

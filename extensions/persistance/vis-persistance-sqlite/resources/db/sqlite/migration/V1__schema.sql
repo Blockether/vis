@@ -15,9 +15,9 @@
 --          │                   :result :error :stdout :stderr :duration-ms
 --          │                   :timeout? :repaired?}`. When the top-level
 --          │                   form is a Vis tool call, `:result` is the flat
---          │                   tool envelope `{:op/symbol :op/tag :op/result
---          │                   :op/success? :op/error :op/stdout :op/stderr
---          │                   :op/metadata}`. Raw SCI forms store their plain
+--          │                   tool envelope `{:symbol :tag :result
+--          │                   :success? :error :stdout :stderr
+--          │                   :metadata}`. Raw SCI forms store their plain
 --          │                   value in `:result`.
 --          │
 --          └─ expression_soul (branch-local var identities, kind='var')
@@ -257,7 +257,7 @@ CREATE TABLE conversation_turn_iteration (
   --     :result            <Nippy-frozen form value> | absent
   --                        Tool calls store the full flat op envelope here,
   --                        and the tool payload then lives under
-  --                        `[:result :op/result]` after thaw/read.
+  --                        `[:result :result]` after thaw/read.
   --                        Raw SCI forms store their plain result value here.
   --     :error             structured error map | absent
   --     :stdout            non-blank | absent

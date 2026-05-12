@@ -640,7 +640,7 @@
                           (catch Throwable e
                             (reset! thrown e)
                             ;; Per PLAN §2.1 + §2.6 + §7.3.5: :error is
-                            ;; the STRUCTURED :op/error map
+                            ;; the STRUCTURED :error map
                             ;; ({:message :trace :hint? :block?}) — no
                             ;; legacy string fallback. SCI parses the
                             ;; whole `code` at once so its :line/:column
@@ -811,7 +811,7 @@
           lint-error (detect-common-mistakes code)]
       (if lint-error
         ;; Per PLAN §2.1 + §7.3.5: :error is the structured
-        ;; :op/error map. Wrap engine-internal string errors
+        ;; :error map. Wrap engine-internal string errors
         ;; (lint, parse) into the same shape with :phase :preflight.
         {:result nil :stdout "" :stderr ""
          :error  {:message lint-error
@@ -913,7 +913,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- op-error
-  "Coerce engine/model error values into the canonical structured :op/error map.
+  "Coerce engine/model error values into the canonical structured :error map.
 
    Iteration blocks require `:error` to be nil or a map. Preflight gates and
    answer validators naturally produce strings; wrap them before persistence so
@@ -1304,7 +1304,7 @@
    `:success?` is false (lifted tool-failure). Returns nil when the
    form ran cleanly.
 
-   Per PLAN §2.1 + §7.3.5: `:error` is the structured `:op/error` map
+   Per PLAN §2.1 + §7.3.5: `:error` is the structured `:error` map
    (`{:message :trace? :hint? :block?}`). This fn extracts `:message`
    for the answer-after-error gate's terse one-line display."
   [result]
@@ -1752,7 +1752,7 @@
      :nudge     system-emitted reminders / diagnostics
      :thinking  model reasoning blocks
    The previous `:vis/error` role is gone — errors are derived from
-   `:op/success?` on the envelope (or block-level `:error` slot for
+   `:success?` on the envelope (or block-level `:error` slot for
    non-tool evals). Replaces the prior `eval-rendering-kind` fn."
   [result]
   (cond
@@ -1801,7 +1801,7 @@
 (s/def ::code string?)
 (s/def ::stdout string?)
 (s/def ::stderr string?)
-(s/def ::error (s/nilable map?))                       ; structured :op/error map
+(s/def ::error (s/nilable map?))                       ; structured :error map
 (s/def ::execution-time-ms nat-int?)
 (s/def ::timeout? (s/nilable boolean?))
 (s/def ::repaired? (s/nilable boolean?))
@@ -2554,7 +2554,7 @@
    provider failures, but they are exactly the feedback the model needs
    after repeated parse/eval failures.
 
-   Per PLAN §2.1 + §7.3.5: `:error` is the structured `:op/error`
+   Per PLAN §2.1 + §7.3.5: `:error` is the structured `:error`
    map; pull `:message` for terse one-line display."
   [iteration block]
   (let [pos  (or (:idx block) (:id block))

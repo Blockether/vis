@@ -517,7 +517,7 @@
        :total-changes (count (filter :changed? files))})))
 
 (defn- patch-file
-  "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator row/span or locator form/source snippet and must match exactly once before any write. Tool result envelope returns the changed file diffs in :op/result."
+  "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator row/span or locator form/source snippet and must match exactly once before any write. Tool result envelope returns the changed file diffs in :result."
   [edits]
   (let [plans (patch-safe edits)
         result (patch-file-result plans)]
@@ -767,10 +767,10 @@
   ([path opts]
    (let [out (locators-file path (assoc (or opts {}) :depth :top))]
      (assoc out
-       :op/symbol :z/forms
-       :op/metadata (assoc (:op/metadata out)
-                      :op :z/forms
-                      :tool {:sym 'forms})))))
+       :symbol :z/forms
+       :metadata (assoc (:metadata out)
+                   :op :z/forms
+                   :tool {:sym 'forms})))))
 
 (defn- symbols-file
   "List symbol zipper locator rows in a Clojure/EDN file. Defaults to 50 rows; pass opts like {:name 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
@@ -799,12 +799,12 @@
   [path sym]
   (let [out (symbols-file path {:symbol sym :limit 2})]
     (assoc out
-      :op/symbol :z/locator-for-symbol
-      :op/result (first (:op/result out))
-      :op/metadata (assoc (:op/metadata out)
-                     :op :z/locator-for-symbol
-                     :tool {:sym 'locator-for-symbol}
-                     :symbol sym))))
+      :symbol :z/locator-for-symbol
+      :result (first (:result out))
+      :metadata (assoc (:metadata out)
+                  :op :z/locator-for-symbol
+                  :tool {:sym 'locator-for-symbol}
+                  :symbol sym))))
 
 (defn- locator-label
   [{:keys [kind name digest source-preview locator]}]
@@ -933,4 +933,4 @@
      :channel-render-fn render-inspect}))
 
 (def z-prompt
-  "`z/` Clojure/EDN zipper patching and structural reading.\n  Preferred for Clojure/EDN files: parse forms, preserve whitespace/comments,\n  refuse non-Clojure files. Same map shape as v/patch.\n\n  Playbooks:\n  1. Top-level binding: (z/forms p {:kind :defn :name 'foo}) -> pick row by :digest/:span -> (z/patch (assoc row :replace '(defn foo [x] ...))).\n  2. Nested call/symbol: (z/locators p {:depth :all :source-contains \"swap!\"}) or (z/symbols p {:name 'old}) -> patch chosen span row with symbol/form data.\n  3. Docs/comments: find def row with z/forms; for docstrings/comments/formatting replace whole def via (z/source \"...\"). Data forms lose comments; z/source preserves bytes.\n  4. Namespace/require: find ns row with (z/forms p {:kind :ns}); patch the ns form. Use data for simple require changes; z/source when preserving require layout/comments.\n  5. Batch/recovery: z/patch itself preflights exact-match uniqueness before writing, applies rows bottom-up when possible, and returns a diff summary. Use z/patch-check only for dry-run/no-write inspection.\n\n  Rules: span rows beat lossy sexpr/string search. Prefer data replacements: 'new-sym, '(def x 1), {:a 1}. Use z/source only for exact bytes; z/lit for string literals.\n  Deep read: z/locators, z/symbols, z/locator-for-symbol. These return tool envelopes too; rows live under :op/result. Inspect raw zlocs with z/inspect. Repair parse damage with z/repair-*. Full rewrite-clj.zip API under z/, including z/subedit->.\n\nExamples: (get-in (z/locators \"src/foo.clj\") [:op/result])\n          (z/patch (assoc row :replace 'new-sym))\n          (z/patch (assoc row :replace '(def x 1)))\n          (z/patch (assoc row :replace (z/source \"(def x 2)\")))\n          (z/forms \"src/foo.clj\" {:kind :defn :name 'foo})")
+  "`z/` Clojure/EDN zipper patching and structural reading.\n  Preferred for Clojure/EDN files: parse forms, preserve whitespace/comments,\n  refuse non-Clojure files. Same map shape as v/patch.\n\n  Playbooks:\n  1. Top-level binding: (z/forms p {:kind :defn :name 'foo}) -> pick row by :digest/:span -> (z/patch (assoc row :replace '(defn foo [x] ...))).\n  2. Nested call/symbol: (z/locators p {:depth :all :source-contains \"swap!\"}) or (z/symbols p {:name 'old}) -> patch chosen span row with symbol/form data.\n  3. Docs/comments: find def row with z/forms; for docstrings/comments/formatting replace whole def via (z/source \"...\"). Data forms lose comments; z/source preserves bytes.\n  4. Namespace/require: find ns row with (z/forms p {:kind :ns}); patch the ns form. Use data for simple require changes; z/source when preserving require layout/comments.\n  5. Batch/recovery: z/patch itself preflights exact-match uniqueness before writing, applies rows bottom-up when possible, and returns a diff summary. Use z/patch-check only for dry-run/no-write inspection.\n\n  Rules: span rows beat lossy sexpr/string search. Prefer data replacements: 'new-sym, '(def x 1), {:a 1}. Use z/source only for exact bytes; z/lit for string literals.\n  Deep read: z/locators, z/symbols, z/locator-for-symbol. These return tool envelopes too; rows live under :result. Inspect raw zlocs with z/inspect. Repair parse damage with z/repair-*. Full rewrite-clj.zip API under z/, including z/subedit->.\n\nExamples: (get-in (z/locators \"src/foo.clj\") [:result])\n          (z/patch (assoc row :replace 'new-sym))\n          (z/patch (assoc row :replace '(def x 1)))\n          (z/patch (assoc row :replace (z/source \"(def x 2)\")))\n          (z/forms \"src/foo.clj\" {:kind :defn :name 'foo})")

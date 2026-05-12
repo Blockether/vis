@@ -204,7 +204,7 @@ Extensions can register semantic renderers:
 ```
 
 Use this for data-shaped presentation when tools bind large values under
-`:op/result` and the renderer should turn a selected value into
+`:result` and the renderer should turn a selected value into
 Markdown/text. Keep selection in ordinary data (`get-in`, `subvec`, etc.)
 and keep visibility or presentation options OUT of the tool call itself.
 
