@@ -172,6 +172,7 @@
                         ;; `(turn-answer! "...")` call as code above it.
                         turn-iterations (vis/db-list-conversation-turn-iterations d (:id q))
                         last-iteration-id (some-> (last turn-iterations) :id)
+                        llm-routing (some-> (last turn-iterations) :metadata :llm)
                         ;; Empty IR is `[:ir {}]` (count 2 — just root tag
                         ;; + attrs); a real answer adds at least one block.
                         produced-answer? (and (canonical-ir? (:answer q)) (> (count (:answer q)) 2))
@@ -267,6 +268,7 @@
                                                                      (= :vis/silent (:result expr)))))
                                                            exprs)]
                                          {:thinking  (visible-thinking (:thinking it))
+                                          :provider-fallbacks (get-in it [:metadata :llm :fallback-trace])
                                           :code      (mapv :code exprs)
                                           :comments  (mapv :comment exprs)
                                           :results   result-strs
@@ -291,6 +293,10 @@
                                             true       (assoc :conversation-turn-id (:id q))
                                             (seq trace) (assoc :traces trace :ir answer-ir)
                                             model  (assoc :model model)
+                                            (:selected llm-routing) (assoc :llm-selected (:selected llm-routing))
+                                            (:actual llm-routing) (assoc :llm-actual (:actual llm-routing))
+                                            (contains? llm-routing :fallback?) (assoc :llm-fallback? (:fallback? llm-routing))
+                                            (seq (:fallback-trace llm-routing)) (assoc :llm-fallback-trace (:fallback-trace llm-routing))
                                             iteration-count (assoc :iteration-count iteration-count)
                                             duration-ms (assoc :duration-ms duration-ms)
                                             cost   (assoc :cost cost)
@@ -373,9 +379,14 @@
            answer (answer->ir (:answer result)
                     (if cancelled? "Cancelled by user." "[empty response]"))
            model  (or (get-in result [:cost :model]) (get result :model))
+           provider (or (get-in result [:cost :provider]) (get result :provider))
            tokens (:tokens result)
            cost   (:cost result)
-           confidence (:confidence result)]
+           confidence (:confidence result)
+           llm-selected (:llm-selected result)
+           llm-actual (:llm-actual result)
+           llm-fallback? (:llm-fallback? result)
+           llm-fallback-trace (:llm-fallback-trace result)]
        ;; Return canonical IR on `:answer`. The bubble layer (state
        ;; event handler -> assistant-message -> render-answer) is
        ;; the single rendering chokepoint. Pre-rendering here would
@@ -385,6 +396,11 @@
                 :duration-ms     (:duration-ms result)
                 :conversation-turn-id        (:conversation-turn-id result)}
          model      (assoc :model model)
+         provider   (assoc :provider provider)
+         llm-selected (assoc :llm-selected llm-selected)
+         llm-actual (assoc :llm-actual llm-actual)
+         (some? llm-fallback?) (assoc :llm-fallback? llm-fallback?)
+         (seq llm-fallback-trace) (assoc :llm-fallback-trace llm-fallback-trace)
          tokens     (assoc :tokens tokens)
          cost       (assoc :cost cost)
          confidence (assoc :confidence confidence)

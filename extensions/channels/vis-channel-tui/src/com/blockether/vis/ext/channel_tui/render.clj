@@ -1496,6 +1496,24 @@
               (or (:traces message) [])))]
     (when (pos? n) n)))
 
+(defn- llm-label
+  [{:keys [provider model]}]
+  (when (or provider model)
+    (str (or provider "unknown") (when model (str "/" model)))))
+
+(defn- fallback-summary
+  [{:keys [llm-selected llm-actual llm-fallback? llm-fallback-trace]}]
+  (when llm-fallback?
+    (let [from (llm-label llm-selected)
+          to   (llm-label llm-actual)
+          why  (or (some-> llm-fallback-trace first :error)
+                 (some-> llm-fallback-trace first :reason name))]
+      (str "fallback"
+        (when (or from to)
+          (str " " (or from "unknown") " → " (or to "unknown")))
+        (when-not (str/blank? (or why ""))
+          (str " — " why))))))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1610,7 +1628,9 @@
                                    :silent-count (silent-form-count message)
                                    :duration-ms duration-ms
                                    :tokens tokens
-                                   :cost cost})]
+                                   :cost cost}
+                                  {:suffix (when-let [fallback (fallback-summary message)]
+                                             [fallback])})]
                        (when-not (str/blank? line) line)))
         refs       (extract-link-refs message bubble-w)]
 
@@ -2450,8 +2470,8 @@
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
   [{:keys [thinking code comments results result-kinds result-details
-           stdouts stderrs durations successes started-at-ms silents error
-           repeat-count]}]
+           stdouts stderrs durations successes started-at-ms silents
+           provider-fallbacks error repeat-count]}]
   [(text-fingerprint thinking)
    (mapv text-fingerprint code)
    (mapv text-fingerprint comments)
@@ -2469,6 +2489,7 @@
    successes
    started-at-ms
    silents
+   provider-fallbacks
    (when error (select-keys error [:type :message]))
    repeat-count])
 
@@ -2985,8 +3006,28 @@
           (+ i run)
           (subvec remaining run))))))
 
+(defn- format-fallback-notice
+  [{:keys [reason failed-provider new-provider] :as notice}]
+  (let [failed-provider (or failed-provider notice)
+        failed-id (or (some-> (:id failed-provider) name)
+                    (some-> (:provider-id failed-provider) name)
+                    (some-> (:provider failed-provider) name)
+                    "unknown")
+        failed-model (:model failed-provider)
+        new-id (or (some-> (:id new-provider) name)
+                 (some-> (:provider-id new-provider) name)
+                 (some-> (:provider new-provider) name))
+        new-model (:model new-provider)
+        from (str failed-id (when failed-model (str "/" failed-model)))
+        to   (when (or new-id new-model)
+               (str (or new-id "unknown") (when new-model (str "/" new-model))))
+        why  (or (:error failed-provider) (some-> reason name) "provider fallback")]
+    (str "↪ provider fallback: " from
+      (when to (str " → " to))
+      " — " why)))
+
 (defn- format-iteration-entry-entries
-  [{:keys [thinking code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms error repeat-count]}
+  [{:keys [thinking code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms provider-fallbacks error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines live-preview?]
        :or   {show-header? false preview-default-lines 4 live-preview? false}}]]
@@ -3348,14 +3389,17 @@
                      code+result-lines
                      [(line-entry (str iteration-pad-marker ""))])))))
         body (or grouped [])
+        fallback-lines (when (seq provider-fallbacks)
+                         (vec (concat [(line-entry "")]
+                                (mapcat (fn [notice]
+                                          (map #(line-entry (str thinking-marker %))
+                                            (wrap-text (format-fallback-notice notice) fill-w)))
+                                  provider-fallbacks))))
         trailing-errors (error-lines)]
-    ;; Layout: header (with optional ITERATION-N label) + collected
-    ;; thinking lines + any error rows + body (per-form code/result
-    ;; pairs). The pre-existing `:events`-driven interleaved variant
-    ;; was removed when the runtime contract dropped `:events` (see
-    ;; `progress.clj` doc). Resume / live now share the same flat
-    ;; layout.
-    (into (vec (concat header (thinking-lines thinking) trailing-errors))
+    ;; Layout: header (with optional ITERATION-N label) + provider fallback
+    ;; notices + collected thinking lines + any error rows + body (per-form
+    ;; code/result pairs). Resume / live share the same flat layout.
+    (into (vec (concat header fallback-lines (thinking-lines thinking) trailing-errors))
       body)))
 
 (defn format-iteration-entry
