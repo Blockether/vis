@@ -23,12 +23,9 @@
    `rediscover!` is a test/REPL helper that drops the cache and
    re-scans.
 
-   The docs-registry merge (which inverts authored `:links` into
-   `:reflinks` on target descriptors and exposes
-   `(v/extension-doc id name)` etc.) lives one layer up in
-   `com.blockether.vis.internal.extension`. This namespace knows
-   nothing about reflinks; it just produces parsed-and-normalized
-   manifests."
+   The docs-registry merge (which exposes `(v/extension-doc id name)`
+   etc.) lives one layer up in `com.blockether.vis.internal.extension`.
+   This namespace just produces parsed-and-normalized manifests."
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
@@ -85,8 +82,7 @@
     {:created-at  (:created-at descriptor)
      :description (:description descriptor)
      :content     (:content descriptor)
-     :links       (vec (filter valid-link? (:links descriptor)))
-     :reflinks    []}))
+     :links       (vec (filter valid-link? (:links descriptor)))}))
 
 (defn- normalize-vis-edn
   "Coerce a parsed `vis.edn` payload into the canonical map shape
@@ -255,8 +251,8 @@
    parsed manifests as `{<id-sym> {:nses [...] :docs {...}}}`. Memoized
    on first success; subsequent calls return the cache.
 
-   Callers that want the docs-registry side effect (reflinks
-   computation + the `(v/extension-doc ...)` index) should call
+   Callers that want the docs-registry side effect (the
+   `(v/extension-doc ...)` index) should call
    `com.blockether.vis.internal.extension/discover-extensions!`
    instead - which wraps this primitive with the docs merge.
 

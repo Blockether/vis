@@ -1030,25 +1030,6 @@
   result)
 
 ;; ---------------------------------------------------------------------------
-;; Noop expression filter
-;; ---------------------------------------------------------------------------
-
-(def ^:private noop-exprs
-  "Expressions the LLM emits only to satisfy the 'must return code' constraint.
-   These carry no information - filter them before storage and display."
-  #{":ok" ":ok\n" "nil" ":noop"})
-
-(defn- noop-expr?
-  "True when an expression is a structural noop (e.g. `:ok`)."
-  [expr]
-  (contains? noop-exprs (str/trim (str expr))))
-
-(defn- strip-noop-blocks
-  "Remove noop blocks from a vec. Returns nil-safe vec."
-  [blocks]
-  (vec (remove #(noop-expr? (:code %)) (or blocks []))))
-
-;; ---------------------------------------------------------------------------
 ;; Answer-scoping helper (Option C)
 ;;
 ;; The iteration loop discards a `(turn-answer! ...)` call iff the form
@@ -2523,7 +2504,7 @@
              :assistant-message (:assistant-message ask-result)}
             (let [final-answer* (append-runtime-appendices environment final-answer value)]
               {:thinking thinking
-               :blocks (strip-noop-blocks blocks)
+               :blocks blocks
                :final-result {:final?           true
                               :answer           final-answer*
                               ;; Index of the form that called
@@ -2549,7 +2530,7 @@
                :assistant-message (:assistant-message ask-result)})))
           ;; Normal path
         {:thinking thinking
-         :blocks (strip-noop-blocks blocks)
+         :blocks blocks
          :final-result nil :api-usage api-usage
          :duration-ms (or (:duration-ms ask-result) 0)
          :silent-form-idxs silent-form-idxs

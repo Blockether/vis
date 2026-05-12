@@ -31,3 +31,24 @@
       (expect (= "plus helper" (:ext.symbol/doc entry)))
       (expect (= '([x y]) (:ext.symbol/arglists entry)))
       (expect (true? (:ext.symbol/raw? entry))))))
+
+(defdescribe extension-docs-test
+  (it "returns authored doc links without computed backlinks"
+    (let [registry-var (resolve 'com.blockether.vis.internal.extension/extension-docs-registry)
+          registry     @registry-var
+          before       @registry
+          backlink-key (keyword (str "ref" "links"))]
+      (try
+        (reset! registry
+          {'demo {:nses ['demo.core]
+                  :docs {"README.md" {:description "demo"
+                                      :content "body"
+                                      :links [{:to-doc "OTHER.md"}]}}}})
+        (let [doc     (extension/extension-doc 'demo "README.md")
+              summary (extension/extension-doc-summary 'demo "README.md")]
+          (expect (= [{:to-doc "OTHER.md"}] (:links doc)))
+          (expect (not (contains? doc backlink-key)))
+          (expect (not (contains? summary :content)))
+          (expect (not (contains? summary backlink-key))))
+        (finally
+          (reset! registry before))))))
