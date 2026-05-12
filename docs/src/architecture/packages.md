@@ -110,7 +110,7 @@ effect:
 
 | Slot | Per-entry shape | What happens at registration |
 | ---- | --------------- | ---------------------------- |
-| `:ext/symbols` | `(sdk/symbol ...)` / `(sdk/value ...)` entries | Bound into the dedicated SCI namespace declared via `:ext/ns-alias`. |
+| `:ext/symbols` | `(sdk/symbol ...)` / `(sdk/value ...)` entries | Bound into the dedicated SCI namespace declared via `:ext/alias`. |
 | `:ext/cli` | `:cmd/*` maps (`:cmd/name`, `:cmd/run-fn`, `:cmd/parent`, ...) | `registry/register-cmd!`. Auto-mounted under `["extensions"]` unless `:cmd/parent` overrides it (and only `["extensions" ...]` parents are accepted from the slot). |
 | `:ext/channels` | `:channel/*` maps (`:channel/id`, `:channel/cmd`, `:channel/main-fn`, ...) | `registry/register-channel!`. Surfaces under `vis channels <cmd>`. |
 | `:ext/providers` | `:provider/*` maps (`:provider/id`, `:provider/auth-fn`, ...) | `registry/register-provider!`. Surfaces under `vis providers auth <id>`. |

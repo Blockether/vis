@@ -1230,7 +1230,7 @@
                          (str/replace #"\s+\(.*\)$" ""))
         channel-label  (or (some-> (first (:ext/channels ext)) :channel/cmd titleize-label)
                          (some-> (first (:ext/channels ext)) :channel/id name titleize-label))
-        alias-label    (some-> (get-in ext [:ext/ns-alias :alias]) name titleize-label)
+        alias-label    (some-> (get-in ext [:ext/alias :alias]) name titleize-label)
         ;; Take the meaningful tail segment of the namespace (drop
         ;; `com.blockether.vis.ext` vendor prefix and the trailing
         ;; `core` / `bot` / `main` registrar entry-point convention)

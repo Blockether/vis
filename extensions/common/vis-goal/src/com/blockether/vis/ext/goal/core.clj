@@ -653,48 +653,48 @@
 ;; ----------------------------------------------------------------------------
 ;; Symbol entries — each binds the public name (without the leading
 ;; `goal-` prefix the local var carries; sandbox sees `goal/status`,
-;; `goal/set`, `goal/pause`, etc. via `:sym` override). The shared
-;; `:ext/ns-alias` below routes them all to the `goal/` alias.
+;; `goal/set`, `goal/pause`, etc. via `:symbol` override). The shared
+;; `:ext/alias` below routes them all to the `goal/` alias.
 ;; ----------------------------------------------------------------------------
 
 (def ^:private status-symbol
   (vis/symbol #'goal-status
-    {:sym 'status
+    {:symbol 'status
      :before-fn inject-environment
      :journal-render-fn vis/render-pr-str-journal
      :channel-render-fn vis/render-pr-str-channel}))
 
 (def ^:private set-symbol
   (vis/symbol #'goal-set
-    {:sym 'set
+    {:symbol 'set
      :before-fn inject-environment
      :journal-render-fn vis/render-pr-str-journal
      :channel-render-fn vis/render-pr-str-channel}))
 
 (def ^:private pause-symbol
   (vis/symbol #'goal-pause
-    {:sym 'pause
+    {:symbol 'pause
      :before-fn inject-environment
      :journal-render-fn vis/render-pr-str-journal
      :channel-render-fn vis/render-pr-str-channel}))
 
 (def ^:private resume-symbol
   (vis/symbol #'goal-resume
-    {:sym 'resume
+    {:symbol 'resume
      :before-fn inject-environment
      :journal-render-fn vis/render-pr-str-journal
      :channel-render-fn vis/render-pr-str-channel}))
 
 (def ^:private clear-symbol
   (vis/symbol #'goal-clear
-    {:sym 'clear
+    {:symbol 'clear
      :before-fn inject-environment
      :journal-render-fn vis/render-pr-str-journal
      :channel-render-fn vis/render-pr-str-channel}))
 
 (def ^:private mark-symbol
   (vis/symbol #'goal-mark
-    {:sym 'mark
+    {:symbol 'mark
      :before-fn inject-environment
      :journal-render-fn vis/render-pr-str-journal
      :channel-render-fn vis/render-pr-str-channel}))
@@ -939,7 +939,7 @@
      ;; Sandbox alias — model calls `(goal/status)`, `(goal/set "...")`,
      ;; `(goal/pause)`, etc. Always on; per user fiat, NOT gated behind a
      ;; `[features] goals = true` flag.
-     :ext/ns-alias  {:ns 'vis.ext.goal :alias 'goal}
+     :ext/alias  {:ns 'vis.ext.goal :alias 'goal}
      :ext/symbols   goal-symbols
      ;; Static fragment injected via the canonical extensions surface.
      ;; No `requiring-resolve` from internal/prompt.clj — the goal

@@ -15,11 +15,11 @@
 
 (defdescribe vis-foundation-aggregator-test
   (it "registers the unified v/ alias"
-    (expect (= 'v (get-in foundation/vis-extension [:ext/ns-alias :alias])))
-    (expect (= 'vis.ext.v (get-in foundation/vis-extension [:ext/ns-alias :ns]))))
+    (expect (= 'v (get-in foundation/vis-extension [:ext/alias :alias])))
+    (expect (= 'vis.ext.v (get-in foundation/vis-extension [:ext/alias :ns]))))
 
   (it "merges markdown builders into the unified symbol surface"
-    (let [syms (set (map :ext.symbol/sym (:ext/symbols foundation/vis-extension)))]
+    (let [syms (set (map :ext.symbol/symbol (:ext/symbols foundation/vis-extension)))]
       ;; Existing areas still present.
       (expect (contains? syms 'extensions))
       (expect (contains? syms 'cat))

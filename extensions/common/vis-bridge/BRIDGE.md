@@ -451,7 +451,7 @@ whose content hash changed or whose index row is missing/stale.
 
 ### 7.1 Extension registration
 
-Standard Vis extension. `:ext/ns-alias {:ns vis.ext.bridge :alias bridge}`.
+Standard Vis extension. `:ext/alias {:ns vis.ext.bridge :alias bridge}`.
 
 Requires `vis-foundation` (for `v/` tools).
 

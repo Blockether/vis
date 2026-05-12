@@ -54,26 +54,26 @@
     (expect (vector? editing/editing-symbols))
     (expect (= 13 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
-              (map :ext.symbol/sym editing/editing-symbols)))
+              (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
-              (map :ext.symbol/sym editing/editing-symbols)))
+              (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (some #{'patch}
-              (map :ext.symbol/sym editing/editing-symbols)))
+              (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (some #{'patch-check}
-              (map :ext.symbol/sym editing/editing-symbols)))
+              (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'write-lines 'update-file}
-              (map :ext.symbol/sym editing/editing-symbols)))
+              (map :ext.symbol/symbol editing/editing-symbols)))
     (do
       (expect (some #{'bash}
-                (map :ext.symbol/sym editing/editing-symbols)))
+                (map :ext.symbol/symbol editing/editing-symbols)))
       (expect (= 1 (count (filter #{'bash}
-                            (map :ext.symbol/sym editing/editing-symbols))))))
+                            (map :ext.symbol/symbol editing/editing-symbols))))))
     (expect (not-any? #{'preview 'silent!}
-              (map :ext.symbol/sym editing/editing-symbols))))
+              (map :ext.symbol/symbol editing/editing-symbols))))
 
   (it "omits bash symbols and prompt examples when bash is disabled by config"
     (with-redefs [config/bash-disabled? (fn [] true)]
-      (let [symbols (map :ext.symbol/sym (editing/available-editing-symbols))
+      (let [symbols (map :ext.symbol/symbol (editing/available-editing-symbols))
             prompt (editing/available-editing-prompt)]
         (expect (not-any? #{'bash} symbols))
         (expect (string/includes? prompt "v/bash is disabled"))
@@ -93,7 +93,7 @@
 
   (it "editing prompt has no v/preview references (tool retired)"
     (expect (not (string/includes? editing/editing-prompt "v/preview")))
-    (expect (nil? (some #(when (= 'preview (:ext.symbol/sym %)) %)
+    (expect (nil? (some #(when (= 'preview (:ext.symbol/symbol %)) %)
                     editing/editing-symbols))))
 
   (it "pushes search/read/path discovery to the structured v tool surface"
@@ -109,13 +109,13 @@
 
   (it "registers journal + channel renderers on every fn-symbol"
     (doseq [sym-name '[cat ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash]]
-      (let [entry (some #(when (= sym-name (:ext.symbol/sym %)) %)
+      (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
                     editing/editing-symbols)]
         (expect (ifn? (:ext.symbol/journal-render-fn entry)))
         (expect (ifn? (:ext.symbol/channel-render-fn entry))))))
 
   (it "teaches the model that file and shell payloads live under the tool envelope :result"
-    (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
+    (let [bash-symbol (some #(when (= 'bash (:ext.symbol/symbol %)) %)
                         editing/editing-symbols)]
       (expect (string/includes? editing/editing-prompt "[:result :lines]"))
       (expect (string/includes? editing/editing-prompt "Never use [:result :lines]"))
@@ -149,7 +149,7 @@
 
 (defdescribe editing-prompt-read-policy-test
   (it "teaches full-read vars, canonical patching, and no duplicate rereads by default"
-    (let [patch-symbol (some #(when (= 'patch (:ext.symbol/sym %)) %)
+    (let [patch-symbol (some #(when (= 'patch (:ext.symbol/symbol %)) %)
                          editing/editing-symbols)]
       (expect (string/includes? editing/editing-prompt
                 "`v/cat` reads the whole file"))
@@ -455,7 +455,7 @@
       (expect (string/starts-with? (:command result) "set -euo pipefail\n"))))
 
   (it "bash interruption returns concise cancelled failure instead of timeout or stack dump"
-    (let [entry       (some #(when (= 'bash (:ext.symbol/sym %)) %)
+    (let [entry       (some #(when (= 'bash (:ext.symbol/symbol %)) %)
                         (:ext/symbols foundation/vis-extension))
           render-bash (private-fn "channel-render-bash")
           out         (promise)

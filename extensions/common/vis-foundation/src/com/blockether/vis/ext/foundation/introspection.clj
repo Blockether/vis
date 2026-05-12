@@ -21,7 +21,9 @@
    [charred.api :as json]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.foundation.transcript :as transcript]))
+   [com.blockether.vis.ext.foundation.transcript :as transcript]
+   [com.blockether.vis.internal.extension :as extension]
+   [sci.core :as sci]))
 
 ;; ---------------------------------------------------------------------------
 ;; Channels we know how to enumerate. Derived from the global channel
@@ -714,6 +716,246 @@
 
 ;; Removed extra workflow surfaces.
 
+;; ---------------------------------------------------------------------------
+;; SCI symbol introspection - v/clojure-symbol-*
+;; ---------------------------------------------------------------------------
+
+(def ^:private symbol-render-chars 3000)
+(def ^:private apropos-limit 100)
+(def ^:private apropos-render-limit 25)
+
+(defn- truncate-text
+  [s n]
+  (let [s (str s)]
+    (if (> (count s) n)
+      (str (subs s 0 n) " ...<+" (- (count s) n) " chars>")
+      s)))
+
+(defn- coerce-symbol-arg
+  [x]
+  (cond
+    (symbol? x) x
+    (keyword? x) (symbol (namespace x) (name x))
+    (string? x) (symbol x)
+    :else (symbol (str x))))
+
+(defn- ns-display
+  [ns-v]
+  (some-> ns-v str symbol))
+
+(defn- resolved-symbol-display
+  [requested meta-map]
+  (let [ns-sym (:ns meta-map)
+        nm     (:name meta-map)]
+    (if (and ns-sym nm)
+      (symbol (str (ns-display ns-sym)) (str nm))
+      requested)))
+
+(defn- safe-meta
+  [v]
+  (try (meta v) (catch Throwable _ nil)))
+
+(defn- sci-symbol-info
+  [env sym]
+  (let [sym     (coerce-symbol-arg sym)
+        sci-ctx (:sci-ctx env)]
+    (if-not sci-ctx
+      {:symbol sym :found? false :message "No SCI context available."}
+      (try
+        (if-let [v (sci/resolve sci-ctx sym)]
+          (let [m      (or (safe-meta v) {})
+                source (:vis/source m)]
+            {:symbol          sym
+             :resolved-symbol (resolved-symbol-display sym m)
+             :found?          true
+             :doc             (:doc m)
+             :arglists        (:arglists m)
+             :macro?          (boolean (:macro m))
+             :source          source
+             :source-chars    (count (or source ""))
+             :metadata        (cond-> {:ns          (ns-display (:ns m))
+                                        :name        (:name m)
+                                        :doc         (:doc m)
+                                        :arglists    (:arglists m)
+                                        :macro?      (boolean (:macro m))
+                                        :has-source? (boolean source)}
+                                source (assoc :source-chars (count source)))})
+          {:symbol sym :found? false :message "Symbol not found in SCI sandbox."})
+        (catch Throwable t
+          {:symbol sym :found? false :message (or (ex-message t) (str t))})))))
+
+(defn- symbol-tool-success
+  [op result]
+  (extension/success
+    {:op       op
+     :result   result
+     :metadata {:symbol (:symbol result)
+                :found? (:found? result)}}))
+
+(defn- clojure-symbol-documentation-tool
+  "Return journal-visible documentation for a SCI symbol such as `v/cat`, `z/source`, or `map`."
+  [env sym]
+  (let [info (sci-symbol-info env sym)]
+    (symbol-tool-success
+      :v/clojure-symbol-documentation
+      (select-keys info [:symbol :resolved-symbol :found? :doc :arglists :macro? :message]))))
+
+(defn- clojure-symbol-source-code-tool
+  "Return journal-visible source code for a SCI symbol such as `v/cat` or `z/source`."
+  [env sym]
+  (let [info (sci-symbol-info env sym)]
+    (symbol-tool-success
+      :v/clojure-symbol-source-code
+      (select-keys info [:symbol :resolved-symbol :found? :source :source-chars :message]))))
+
+(defn- clojure-symbol-metadata-tool
+  "Return journal-visible metadata for a SCI symbol without dumping bulky source text."
+  [env sym]
+  (let [info (sci-symbol-info env sym)]
+    (symbol-tool-success
+      :v/clojure-symbol-metadata
+      (select-keys info [:symbol :resolved-symbol :found? :metadata :message]))))
+
+(defn- namespace-aliases
+  [sci-env]
+  (reduce-kv (fn [acc alias ns-sym]
+               (update acc (ns-display ns-sym) (fnil conj []) alias))
+    {}
+    (:ns-aliases sci-env)))
+
+(defn- model-symbol-name
+  [aliases-by-ns ns-sym sym]
+  (let [ns-sym (ns-display ns-sym)]
+    (cond
+      (#{'clojure.core 'sandbox} ns-sym) sym
+      (seq (get aliases-by-ns ns-sym)) (symbol (str (first (get aliases-by-ns ns-sym))) (str sym))
+      ns-sym (symbol (str ns-sym) (str sym))
+      :else sym)))
+
+(defn- apropos-matches
+  [env query]
+  (let [needle (str/lower-case (str query))
+        sci-env (some-> env :sci-ctx :env deref)
+        aliases-by-ns (namespace-aliases sci-env)]
+    (->> (:namespaces sci-env)
+      (mapcat (fn [[ns-sym bindings]]
+                (for [[sym v] bindings
+                      :let [m (or (safe-meta v) {})
+                            model-sym (model-symbol-name aliases-by-ns ns-sym sym)
+                            haystack (str/lower-case (str model-sym "\n" (:doc m)))]
+                      :when (str/includes? haystack needle)]
+                  (cond-> {:symbol model-sym}
+                    (:doc m) (assoc :doc (:doc m))
+                    (:arglists m) (assoc :arglists (:arglists m))
+                    (:macro m) (assoc :macro? true)
+                    (:vis/source m) (assoc :has-source? true)))))
+      (sort-by (comp str :symbol))
+      (take apropos-limit)
+      vec)))
+
+(defn- clojure-symbol-apropos-tool
+  "Return journal-visible matching SCI symbols by symbol name or doc text."
+  [env query]
+  (let [matches (apropos-matches env query)]
+    (extension/success
+      {:op       :v/clojure-symbol-apropos
+       :result   {:query (str query)
+                  :count (count matches)
+                  :matches matches}
+       :metadata {:query (str query)
+                  :count (count matches)}})))
+
+(defn- ir-text
+  [s]
+  [:span {} (str s)])
+
+(defn- ir-code
+  [s]
+  [:c {} (str s)])
+
+(defn- ir-p
+  [& children]
+  (into [:p {}] children))
+
+(defn- ir-code-block
+  [lang body]
+  [:code (cond-> {} lang (assoc :lang lang)) (str body)])
+
+(defn- render-ir-plain
+  [ir]
+  (vis/render ir :plain))
+
+(defn- render-ir-markdown
+  [ir]
+  (vis/render ir :markdown))
+
+(defn- arglists-text
+  [arglists]
+  (when (seq arglists)
+    (str " " (pr-str arglists))))
+
+(defn- one-line
+  [s]
+  (some-> s str str/split-lines first str/trim))
+
+(defn- symbol-doc-ir
+  [{:keys [symbol resolved-symbol found? doc arglists message]}]
+  [:ir {}
+   (if found?
+     (ir-p (ir-code (or resolved-symbol symbol))
+       (ir-text (str (arglists-text arglists) " — "
+                  (truncate-text (or doc "<no docstring>") 1200))))
+     (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found")))))] )
+
+(defn- symbol-source-ir
+  [{:keys [symbol resolved-symbol found? source source-chars message]}]
+  [:ir {}
+   (cond
+     (not found?)
+     (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found"))))
+
+     (seq source)
+     [:div {}
+      (ir-p (ir-code (or resolved-symbol symbol))
+        (ir-text (str " source (" source-chars " chars):")))
+      (ir-code-block "clojure" (truncate-text source symbol-render-chars))]
+
+     :else
+     (ir-p (ir-code (or resolved-symbol symbol)) (ir-text " — source not available")))] )
+
+(defn- symbol-meta-ir
+  [{:keys [symbol resolved-symbol found? metadata message]}]
+  [:ir {}
+   (if found?
+     [:div {}
+      (ir-p (ir-code (or resolved-symbol symbol)) (ir-text " metadata:"))
+      (ir-code-block "edn" (truncate-text (pr-str metadata) symbol-render-chars))]
+     (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found")))))] )
+
+(defn- apropos-ir
+  [{:keys [query count matches]}]
+  (into [:ir {}
+         (ir-p (ir-text "apropos ") (ir-code (pr-str query))
+           (ir-text (str " — " count " match(es)")))]
+    (when (seq matches)
+      [(into [:ul {}]
+         (map (fn [{:keys [symbol doc arglists]}]
+                [:li {}
+                 (ir-p (ir-code symbol)
+                   (ir-text (str (arglists-text arglists)
+                              (when-let [line (one-line doc)]
+                                (str " — " (truncate-text line 180))))))])
+           (take apropos-render-limit matches)))])))
+
+(defn- symbol-doc-journal [result] (render-ir-plain (symbol-doc-ir result)))
+(defn- symbol-doc-channel [result] (render-ir-markdown (symbol-doc-ir result)))
+(defn- symbol-source-journal [result] (render-ir-plain (symbol-source-ir result)))
+(defn- symbol-source-channel [result] (render-ir-markdown (symbol-source-ir result)))
+(defn- symbol-meta-journal [result] (render-ir-plain (symbol-meta-ir result)))
+(defn- symbol-meta-channel [result] (render-ir-markdown (symbol-meta-ir result)))
+(defn- apropos-journal [result] (render-ir-plain (apropos-ir result)))
+(defn- apropos-channel [result] (render-ir-markdown (apropos-ir result)))
+
 (defn- inject-environment
   [env f args]
   {:env env :fn f :args (into [env] args)})
@@ -740,12 +982,44 @@
      :journal-render-fn vis/render-string-journal
      :channel-render-fn vis/render-string-channel}))
 
+(def clojure-symbol-documentation-symbol
+  (vis/symbol #'clojure-symbol-documentation-tool
+    {:symbol 'clojure-symbol-documentation
+     :before-fn inject-environment
+     :journal-render-fn symbol-doc-journal
+     :channel-render-fn symbol-doc-channel}))
+
+(def clojure-symbol-source-code-symbol
+  (vis/symbol #'clojure-symbol-source-code-tool
+    {:symbol 'clojure-symbol-source-code
+     :before-fn inject-environment
+     :journal-render-fn symbol-source-journal
+     :channel-render-fn symbol-source-channel}))
+
+(def clojure-symbol-metadata-symbol
+  (vis/symbol #'clojure-symbol-metadata-tool
+    {:symbol 'clojure-symbol-metadata
+     :before-fn inject-environment
+     :journal-render-fn symbol-meta-journal
+     :channel-render-fn symbol-meta-channel}))
+
+(def clojure-symbol-apropos-symbol
+  (vis/symbol #'clojure-symbol-apropos-tool
+    {:symbol 'clojure-symbol-apropos
+     :before-fn inject-environment
+     :journal-render-fn apropos-journal
+     :channel-render-fn apropos-channel}))
+
 (def all-symbols
   [conversation-state-symbol
-   conversation-report-symbol])
+   conversation-report-symbol
+   clojure-symbol-documentation-symbol
+   clojure-symbol-source-code-symbol
+   clojure-symbol-metadata-symbol
+   clojure-symbol-apropos-symbol])
 
 (def introspection-prompt
-  "`v/` conversation strategy: use v/conversation-state for data you will combine/filter, v/conversation-report when a rendered forensic report is enough.")
+  "`v/` conversation strategy: use v/conversation-state for data you will combine/filter, v/conversation-report when a rendered forensic report is enough. Use v/clojure-symbol-documentation, v/clojure-symbol-source-code, v/clojure-symbol-metadata, and v/clojure-symbol-apropos for journal-visible SCI symbol docs/source/metadata/search.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

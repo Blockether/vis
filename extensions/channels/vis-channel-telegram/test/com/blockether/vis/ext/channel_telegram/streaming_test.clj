@@ -13,7 +13,7 @@
 
 (defn- p [sym]
   (or (some-> (ns-resolve bot-ns sym) deref)
-    (throw (ex-info (str "private symbol not found: " sym) {:sym sym}))))
+    (throw (ex-info (str "private symbol not found: " sym) {:symbol sym}))))
 
 ;; ---------------------------------------------------------------------------
 ;; thinking-html

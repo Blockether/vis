@@ -22,10 +22,10 @@
 
   (it "exports a valid extension surface"
     (expect (= 'com.blockether.vis.ext.bridge.core (:ext/namespace bridge/vis-extension)))
-    (expect (= {:ns 'vis.ext.bridge :alias 'bridge} (:ext/ns-alias bridge/vis-extension)))
+    (expect (= {:ns 'vis.ext.bridge :alias 'bridge} (:ext/alias bridge/vis-extension)))
     (expect (= '[extract extract-file extract-markdown clojure-lsp-status extract-clojure
                  aggregate-rows fill! extract-and-fill! backfill!]
-              (mapv :ext.symbol/sym (:ext/symbols bridge/vis-extension))))
+              (mapv :ext.symbol/symbol (:ext/symbols bridge/vis-extension))))
     (expect (fn? (:ext/doctor-check-fn bridge/vis-extension)))))
 
 (defdescribe bridge-generic-extract-test
