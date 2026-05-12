@@ -361,7 +361,7 @@ Key bindings live in the dialogs (`Ctrl+K` opens the action menu).
 Typing `@` opens the file picker for inline file references. The visible
 chat keeps `@path`, while the agent prompt gets an `[Attached File: path]`
 read-now directive requiring `(v/cat path)`, a `def` binding, and
-inspection through `:op/result` slices before answering about that file. Inside the picker, `Alt+I`
+inspection through `:result` slices before answering about that file. Inside the picker, `Alt+I`
 toggles ignored files, `Alt+S` cycles sort mode, and `Alt+O` opens the
 selected file through the OS opener.
 On the main chat screen, `Ctrl+R` cycles reasoning effort, `Ctrl+L`
@@ -473,11 +473,11 @@ The bundled `extensions/common/vis-foundation` package adds `v/cat`,
 spec-map grammar: `(v/rg {:all ["defn" "name"] :paths ["src"]})` narrows to
 lines containing every literal; `(v/rg {:any ["foo" "bar"] :paths ["."]})`
 broadens to either literal. There is no public `v/grep`; bind `v/rg` once and
-inspect selected hits through `:op/result`. It is already wired into the root
+inspect selected hits through `:result`. It is already wired into the root
 `deps.edn`; add the same `:local/root` entry to a downstream consumer's
 `deps.edn` to enable it. Bind `v/rg` / `v/cat` results once, then inspect
-payload via `:op/result` instead of re-reading the same file or search:
-`(get-in file [:op/result :lines])`, `(-> hits :op/result :hits)`.
+payload via `:result` instead of re-reading the same file or search:
+`(get-in file [:result :lines])`, `(-> hits :result :hits)`.
 
 ```clojure
 ;; deps.edn

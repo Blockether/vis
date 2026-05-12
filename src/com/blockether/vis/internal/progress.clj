@@ -106,19 +106,19 @@
 
 (defn- tool-result-detail
   "Project tool-result envelope to the small detail map TUI labels
-   consume. Phase-4 envelope is flat (`:op/symbol`, `:op/tag`,
-   `:op/metadata`, `:op/stdout`, `:op/stderr`); legacy `:info` key
+   consume. Phase-4 envelope is flat (`:symbol`, `:tag`,
+   `:metadata`, `:stdout`, `:stderr`); legacy `:info` key
    is gone."
   [tool-result]
   (when (extension/tool-result? tool-result)
-    (let [meta (or (:op/metadata tool-result) {})]
+    (let [meta (or (:metadata tool-result) {})]
       (cond-> {}
-        (:op/symbol tool-result) (assoc :op (:op/symbol tool-result))
-        (:op/tag tool-result)    (assoc :op/tag (:op/tag tool-result))
+        (:symbol tool-result) (assoc :op (:symbol tool-result))
+        (:tag tool-result)    (assoc :tag (:tag tool-result))
         :always (merge (select-keys meta [:spec :paths :hit-count :truncated-by
                                           :command :cwd :target]))
-        (some? (:op/stdout tool-result)) (assoc :stdout (:op/stdout tool-result))
-        (some? (:op/stderr tool-result)) (assoc :stderr (:op/stderr tool-result))))))
+        (some? (:stdout tool-result)) (assoc :stdout (:stdout tool-result))
+        (some? (:stderr tool-result)) (assoc :stderr (:stderr tool-result))))))
 
 (defn- form-result-detail
   [chunk]
@@ -137,7 +137,7 @@
    When `:channel` is empty (plain-value form: `(+ 1 2)`, a `def` whose
    value isn't a tool-result, etc.) the form-level `:result` IS what
    the model wrote: render via `channel-render-tool-result` when the
-   value is an `:op/envelope`, otherwise bounded `safe-pr-str`."
+   value is an `:envelope`, otherwise bounded `safe-pr-str`."
   [chunk]
   (if (:error chunk)
     (error/format-error (:error chunk))
@@ -154,7 +154,7 @@
                    ;; Per PLAN §2.1: build the envelope shape the
                    ;; default error formatter expects.
                    (extension/default-channel-error-text
-                     {:op/success? false :op/error error})))
+                     {:success? false :error error})))
             (sort-by :position channel-entries)))
 
         (extension/tool-result? (:result chunk))

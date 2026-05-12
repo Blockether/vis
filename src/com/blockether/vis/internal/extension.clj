@@ -63,7 +63,7 @@
 ;; The old `::info` map (which lived inside an outer wrapper of
 ;; {:success? :result :info :error}) is REPLACED by a flat
 ;; envelope. Payload and metadata fields live under the `op/*`
-;; namespace. The canonical payload key is `:op/result`; there is no
+;; namespace. The canonical payload key is `:result`; there is no
 ;; outer plain `:result` key in an envelope.
 ;;
 ;; Old shape (deleted):
@@ -72,14 +72,14 @@
 ;;    :error {:type :message :trace [<frames>]}}
 ;;
 ;; New shape:
-;;   {:op/result   <v>
-;;    :op/symbol   :v/cat
-;;    :op/tag      :op.tag/observation
-;;    :op/success? true
-;;    :op/error    nil
-;;    :op/stdout   ""
-;;    :op/stderr   ""
-;;    :op/metadata {:paths [...] :duration-ms 5 ...}}
+;;   {:result   <v>
+;;    :symbol   :v/cat
+;;    :tag      :op.tag/observation
+;;    :success? true
+;;    :error    nil
+;;    :stdout   ""
+;;    :stderr   ""
+;;    :metadata {:paths [...] :duration-ms 5 ...}}
 ;; ============================================================
 
 (s/def ::sym symbol?)
@@ -107,13 +107,13 @@
 (s/def ::source (s/keys :req-un [::paths ::mtime-max ::hash-sha256]))
 
 ;; ---- envelope leaf specs (op/*) ----
-(s/def :op/symbol     keyword?)        ; e.g. :v/cat ; nil for raw user code
-(s/def :op/tag        keyword?)        ; #{:op.tag/observation :op.tag/action}
-(s/def :op/result     any?)            ; the actual SCI eval value; shape varies per tool
-(s/def :op/success?   boolean?)
-(s/def :op/stdout     (s/nilable string?))
-(s/def :op/stderr     (s/nilable string?))
-(s/def :op/metadata   (s/map-of keyword? any?))   ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
+(s/def :symbol     keyword?)        ; e.g. :v/cat ; nil for raw user code
+(s/def :tag        keyword?)        ; #{:op.tag/observation :op.tag/action}
+(s/def :result     any?)            ; the actual SCI eval value; shape varies per tool
+(s/def :success?   boolean?)
+(s/def :stdout     (s/nilable string?))
+(s/def :stderr     (s/nilable string?))
+(s/def :metadata   (s/map-of keyword? any?))   ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
 
 ;; ---- structured op/error sub-specs ----
 (s/def :op.error/message  (s/and string? #(not (str/blank? %))))
@@ -134,24 +134,24 @@
                                     :op.error.block/col
                                     :op.error.block/opened-loc])))
 
-(s/def :op/error
+(s/def :error
   (s/nilable
     (s/keys :req-un [:op.error/message]
       :opt-un [:op.error/trace :op.error/hint :op.error/block])))
 
 ;; ---- the envelope ----
-(s/def :op/envelope
+(s/def :envelope
   (s/and
-    (s/keys :opt [:op/symbol :op/tag :op/result :op/success? :op/error
-                  :op/stdout :op/stderr :op/metadata])
+    (s/keys :opt [:symbol :tag :result :success? :error
+                  :stdout :stderr :metadata])
     ;; Distinguishing-marker requirement: a real envelope MUST carry
-    ;; the canonical boolean `:op/success?` field. Without this gate,
+    ;; the canonical boolean `:success?` field. Without this gate,
     ;; plain maps (e.g. user data, results from non-envelope code)
     ;; would validate as envelopes because every field is optional.
     ;; Renderers that special-case envelopes would then mis-categorise
     ;; plain data — see env_test.clj/build-bindings rendering bug.
-    #(contains? % :op/success?)
-    (fn [{:op/keys [success? error]}]
+    #(contains? % :success?)
+    (fn [{:keys [success? error]}]
       (if success?
         (nil? error)
         (or (nil? success?) (some? error))))))
@@ -164,7 +164,7 @@
 (s/def :ext.sink/form      non-blank-string?)
 (s/def :ext.sink/success?  boolean?)
 (s/def :ext.sink/result    (s/nilable string?))
-(s/def :ext.sink/error     :op/error)            ; :op/error is itself nilable per its spec
+(s/def :ext.sink/error     :error)            ; :error is itself nilable per its spec
 
 (s/def ::sink-entry
   (s/and
@@ -268,10 +268,10 @@
   entry)
 
 (defn tool-result?
-  "True when `x` is a valid `:op/envelope` map. Renamed conceptually;
+  "True when `x` is a valid `:envelope` map. Renamed conceptually;
    name kept for caller compatibility."
   [x]
-  (s/valid? :op/envelope x))
+  (s/valid? :envelope x))
 
 (defn assert-tool-result!
   [x]
@@ -279,13 +279,13 @@
     (throw (ex-info "Invalid tool result"
              {:type :vis/invalid-tool-result
               :value x
-              :explain (s/explain-data :op/envelope x)})))
+              :explain (s/explain-data :envelope x)})))
   x)
 
 (defn normalize-metadata
-  "Fill timing keys on the `:op/metadata` map when absent. Returns a
+  "Fill timing keys on the `:metadata` map when absent. Returns a
    metadata map (NOT an envelope). The envelope wraps the result of
-   this fn under `:op/metadata`.
+   this fn under `:metadata`.
 
    Timing keys (always populated):
      :started-at-ms  :finished-at-ms  :duration-ms
@@ -306,14 +306,14 @@
       :duration-ms duration)))
 
 (defn merge-into-metadata
-  "Merge `extra` into the `:op/metadata` slot of an already-valid
+  "Merge `extra` into the `:metadata` slot of an already-valid
    envelope, re-check the contract, and preserve metadata. Used by the
    extension wrapper to stamp extension/source info onto tool-like
    returns."
   [envelope extra]
   (let [meta*  (meta envelope)
         merged (-> envelope
-                 (update :op/metadata #(merge (or % {}) extra))
+                 (update :metadata #(merge (or % {}) extra))
                  assert-tool-result!)]
     (with-meta merged meta*)))
 
@@ -353,7 +353,7 @@
     (str/join "\n" (cons header frames))))
 
 (defn normalize-error
-  "Build a structured `:op/error` map from a Throwable per PLAN §2.1.
+  "Build a structured `:error` map from a Throwable per PLAN §2.1.
    Required `:message`; optional `:trace` (preformatted string
    including header + frames). `:hint` and `:block` are tool/engine-
    supplied via `merge-into-metadata` style updates after
@@ -369,7 +369,7 @@
   "Internal builder used by both `success` and `failure`. Accepts
    only the canonical shape:
 
-     :result   raw SCI eval value; stored under `:op/result`
+     :result   raw SCI eval value; stored under `:result`
      :op       op symbol e.g. :v/cat (nil for raw user code)
      :metadata free-form aux map: :tool, :extension, :source,
                :paths, :hit-count, :command, :started-at-ms,
@@ -377,50 +377,50 @@
      :stdout   captured stdout string (optional)
      :stderr   captured stderr string (optional)
 
-   Produces a flat `:op/envelope` map."
+   Produces a flat `:envelope` map."
   [{:keys [result op metadata stdout stderr]} success? error]
-  (cond-> {:op/result   result
-           :op/success? success?
-           :op/error    error
-           :op/metadata (normalize-metadata metadata)}
-    op             (assoc :op/symbol op
-                     :op/tag    (op-tag op))
-    (some? stdout) (assoc :op/stdout stdout)
-    (some? stderr) (assoc :op/stderr stderr)
+  (cond-> {:result   result
+           :success? success?
+           :error    error
+           :metadata (normalize-metadata metadata)}
+    op             (assoc :symbol op
+                     :tag    (op-tag op))
+    (some? stdout) (assoc :stdout stdout)
+    (some? stderr) (assoc :stderr stderr)
     :always        assert-tool-result!))
 
 (defn success
   "Construct a successful tool-result envelope. See `envelope-of` for
-   the call shape. Returns a `:op/envelope` map (flat, all metadata
+   the call shape. Returns a `:envelope` map (flat, all metadata
    under `op/*`)."
   [args]
   (envelope-of args true nil))
 
 (defn failure
   "Construct a failing tool-result envelope. `:throwable` auto-builds
-   an `:op/error` map via `normalize-error`. Explicit `:error`
+   an `:error` map via `normalize-error`. Explicit `:error`
    (already structured) wins."
   [{:keys [error throwable] :as args}]
   (let [err (or error (when throwable (normalize-error throwable)))]
     (envelope-of args false err)))
 
 (defn envelope-success?
-  "True when `envelope` is an `:op/envelope` and `:op/success?` is
-   true. Use this instead of raw `(:op/success? e)` in renderers and
+  "True when `envelope` is an `:envelope` and `:success?` is
+   true. Use this instead of raw `(:success? e)` in renderers and
    guards — it (a) reads as English and (b) returns false for non-
    envelopes (defensive against shape drift)."
   [envelope]
-  (and (tool-result? envelope) (true? (:op/success? envelope))))
+  (and (tool-result? envelope) (true? (:success? envelope))))
 
 (defn envelope-failure?
-  "True when `envelope` is an `:op/envelope` and `:op/success?` is
-   false (i.e. failure path with a structured `:op/error`). Returns
+  "True when `envelope` is an `:envelope` and `:success?` is
+   false (i.e. failure path with a structured `:error`). Returns
    false for non-envelopes."
   [envelope]
-  (and (tool-result? envelope) (false? (:op/success? envelope))))
+  (and (tool-result? envelope) (false? (:success? envelope))))
 
 (defn ex->op-error
-  "Convert an arbitrary `Throwable` to a structured `:op/error` map
+  "Convert an arbitrary `Throwable` to a structured `:error` map
    per PLAN.md §2.1 + §2.6.
 
    Output shape:
@@ -497,7 +497,7 @@
       cause-data                   (assoc :cause-data cause-data))))
 
 (defn render-error-context
-  "Render the source from an `:op/error :block` map per PLAN §2.8
+  "Render the source from an `:error :block` map per PLAN §2.8
    layout: babashka-style. Every line is gutter-numbered. The line
    containing the failure gets a `^---` arrow at the exact column
    on the line below it. Lines belonging to the failing form
@@ -513,7 +513,7 @@
 
    Args:
      block - `{:source :phase :row? :col? :opened-loc?}` map
-             from `:op/error :block`.
+             from `:error :block`.
      opts  - optional map; recognised keys:
                :form-start-row  1-based int, range start for `>`
                                 marker. nil => no marker.
@@ -589,7 +589,7 @@
 (s/def :ext.symbol/journal-render-fn fn?)
 
 ;; Renderer for this symbol's result inside a runtime channel (TUI,
-;; telegram, ...). Receives `(:op/result tool-result)` only. Returns
+;; telegram, ...). Receives `(:result tool-result)` only. Returns
 ;; markdown - UNIFORM across every channel; channel adapters apply
 ;; their own flavor tweaks (escaping, line-wrap) at consume time.
 ;; MANDATORY on every fn-symbol.
@@ -1098,7 +1098,7 @@
                                   failure render. Uniform across channels.
      :before-fn :after-fn :on-error-fn :on-parse-error-fn :source-rewrite-fn
 
-   Every function symbol must return a canonical `:op/envelope` map.
+   Every function symbol must return a canonical `:envelope` map.
    The wrapper enforces this globally; per-symbol result specs are not
    part of the API.
 
@@ -1351,12 +1351,12 @@
 (defn- assert-symbol-envelope!
   [sym result]
   (when-not (tool-result? result)
-    (throw (ex-info (str "Symbol '" sym "' must return a canonical :op/envelope map")
+    (throw (ex-info (str "Symbol '" sym "' must return a canonical :envelope map")
              {:type    :extension/invalid-symbol-result
               :symbol  sym
-              :spec    :op/envelope
+              :spec    :envelope
               :value   result
-              :explain (s/explain-data :op/envelope result)})))
+              :explain (s/explain-data :envelope result)})))
   result)
 
 (defn- tool-call-name
@@ -1442,15 +1442,15 @@
           form-str (sink-form-string ext sym-entry args)
           sym-name (:ext.symbol/sym sym-entry)
           base     {:position position :form form-str}]
-      (if (:op/success? result)
-        (let [unwrapped (:op/result result)
+      (if (:success? result)
+        (let [unwrapped (:result result)
               j-text   (safely-render (:ext.symbol/journal-render-fn sym-entry)
                          sym-name ":journal-render-fn" unwrapped)
               c-text   (safely-render (:ext.symbol/channel-render-fn sym-entry)
                          sym-name ":channel-render-fn" unwrapped)]
           (record-journal-entry! (assoc base :success? true :result j-text :error nil))
           (record-channel-entry! (assoc base :success? true :result c-text :error nil)))
-        (let [err (:op/error result)]
+        (let [err (:error result)]
           (record-journal-entry! (assoc base :success? false :result nil :error err))
           (record-channel-entry! (assoc base :success? false :result nil :error err))))))
   result)
@@ -1479,7 +1479,7 @@
    :before-fn can return {:result val} to short-circuit.
    :on-error-fn can return {:result val}, {:error err}, or {:fn :args :env} to retry.
 
-   The FINAL public return value must be a canonical `:op/envelope`.
+   The FINAL public return value must be a canonical `:envelope`.
    The wrapper enforces this globally for every function symbol.
 
    Returns the final result. Throws on any unrecoverable error."
@@ -2243,10 +2243,10 @@
 (defn- tool-result-symbol-entry
   [tool-result]
   ;; Per PLAN §2.1, `:tool` and `:extension` blobs live under
-  ;; `:op/metadata` on the new flat envelope (they were inside
+  ;; `:metadata` on the new flat envelope (they were inside
   ;; `:info` on the old shape).
-  (let [ext-ns (get-in tool-result [:op/metadata :extension :namespace])
-        sym    (get-in tool-result [:op/metadata :tool :sym])]
+  (let [ext-ns (get-in tool-result [:metadata :extension :namespace])
+        sym    (get-in tool-result [:metadata :tool :sym])]
     (when (and ext-ns sym)
       (some (fn [entry]
               (when (= sym (:ext.symbol/sym entry))
@@ -2255,7 +2255,7 @@
 
 (defn- format-error-fields
   "Pull the `:message` (and an inferred `:type` from the trace's first
-   line) out of an `:op/error` map for the engine's default error
+   line) out of an `:error` map for the engine's default error
    formatters. Defensive: never throws inside a renderer.
 
    Per PLAN §2.1 the new structured error has `:message :trace :hint
@@ -2287,8 +2287,8 @@
    DB."
   ([tool-result] (default-journal-error-text tool-result nil))
   ([tool-result _ctx]
-   (let [op   (:op/symbol tool-result)
-         {:keys [type message]} (format-error-fields (:op/error tool-result))]
+   (let [op   (:symbol tool-result)
+         {:keys [type message]} (format-error-fields (:error tool-result))]
      (str "ERROR "
        (when op (str ":op " op " "))
        ":type " type
@@ -2299,8 +2299,8 @@
    does NOT declare `:ext.symbol/channel-render-error-fn`. Markdown
    one-liner; uniform across every channel."
   [tool-result]
-  (let [op   (:op/symbol tool-result)
-        {:keys [type message]} (format-error-fields (:op/error tool-result))]
+  (let [op   (:symbol tool-result)
+        {:keys [type message]} (format-error-fields (:error tool-result))]
     (str "**ERROR**"
       (when op (str " `" op "`"))
       " — " type
@@ -2322,15 +2322,15 @@
   "Render a tool-result for the model-facing `<journal>` block.
 
    Dispatch:
-     - On (:op/success? false): call the symbol's `:journal-render-error-fn`
+     - On (:success? false): call the symbol's `:journal-render-error-fn`
        if present, otherwise `default-journal-error-text`.
-     - On success: unwrap `(:op/result tool-result)` and call the symbol's
+     - On success: unwrap `(:result tool-result)` and call the symbol's
        MANDATORY `:journal-render-fn` with that single arg.
 
    Renderers must return strings; non-string returns throw."
   [tool-result]
   (let [sym-entry (tool-result-symbol-entry tool-result)]
-    (if-not (:op/success? tool-result)
+    (if-not (:success? tool-result)
       (let [error-fn (or (:ext.symbol/journal-render-error-fn sym-entry)
                        default-journal-error-text)
             rendered (error-fn tool-result)]
@@ -2339,8 +2339,8 @@
         (when-not render-fn
           (throw (AssertionError.
                    (str "No :journal-render-fn for tool result with op "
-                     (pr-str (:op/symbol tool-result))))))
-        (assert-string! (render-fn (:op/result tool-result))
+                     (pr-str (:symbol tool-result))))))
+        (assert-string! (render-fn (:result tool-result))
           ":journal-render-fn" sym-entry)))))
 
 (defn channel-render-tool-result
@@ -2349,15 +2349,15 @@
    channel adapter's responsibility, not the symbol renderer's.
 
    Dispatch:
-     - On (:op/success? false): call the symbol's `:channel-render-error-fn`
+     - On (:success? false): call the symbol's `:channel-render-error-fn`
        if present, otherwise `default-channel-error-text`.
-     - On success: unwrap `(:op/result tool-result)` and call the symbol's
+     - On success: unwrap `(:result tool-result)` and call the symbol's
        MANDATORY `:channel-render-fn` with the unwrapped result.
 
    Renderers must return strings; non-string returns throw."
   [tool-result]
   (let [sym-entry (tool-result-symbol-entry tool-result)]
-    (if-not (:op/success? tool-result)
+    (if-not (:success? tool-result)
       (let [error-fn (or (:ext.symbol/channel-render-error-fn sym-entry)
                        default-channel-error-text)
             rendered (error-fn tool-result)]
@@ -2366,8 +2366,8 @@
         (when-not render-fn
           (throw (AssertionError.
                    (str "No :channel-render-fn for tool result with op "
-                     (pr-str (:op/symbol tool-result))))))
-        (assert-string! (render-fn (:op/result tool-result))
+                     (pr-str (:symbol tool-result))))))
+        (assert-string! (render-fn (:result tool-result))
           ":channel-render-fn" sym-entry)))))
 
 (defn- topo-sort-extensions
@@ -2616,7 +2616,7 @@
                            queries, registry lookups, AND post-action
                            verification (./verify.sh, patch-check,
                            parse-check). Verification distinguishes
-                           via :op/success? on the envelope, not a
+                           via :success? on the envelope, not a
                            separate tag.
 
      :op.tag/action        mutates state — patch, write, append,
@@ -2698,16 +2698,16 @@
 
 (defn op-presentation
   "Engine-owned metadata for a tool's `:op` keyword:
-   `{:op/tag ... :op/self-describing? ...}`. Tool wrappers merge this
+   `{:tag ... :self-describing? ...}`. Tool wrappers merge this
    into their `:info`/`:metadata` so channels read canonical keys.
 
-   Badge LABEL is derived from `:op/tag` by the channel, not stored
+   Badge LABEL is derived from `:tag` by the channel, not stored
    here. Color / glyph / layout remain pure channel concerns."
   [op]
   (let [m (get @op-keyword->meta op :op.tag/observation)
         m (if (map? m) m {:tag m})]
-    (cond-> {:op/tag (:tag m :op.tag/observation)}
-      (:self-describing? m) (assoc :op/self-describing? true))))
+    (cond-> {:tag (:tag m :op.tag/observation)}
+      (:self-describing? m) (assoc :self-describing? true))))
 
 (defn registered-extensions-summary
   "Pure data view of the docs registry: returns

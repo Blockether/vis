@@ -100,7 +100,7 @@
     (expect (string/includes? editing/editing-prompt
               "Use structured tools for discovery and reads"))
     (expect (string/includes? editing/editing-prompt
-              "`v/glob` returns cwd-relative path strings under `:op/result`"))
+              "`v/glob` returns cwd-relative path strings under `:result`"))
     (expect (string/includes? editing/editing-prompt
               "recursive patterns like `**/*.clj` walk descendants"))
     (expect (string/includes? editing/editing-prompt
@@ -114,15 +114,15 @@
         (expect (ifn? (:ext.symbol/journal-render-fn entry)))
         (expect (ifn? (:ext.symbol/channel-render-fn entry))))))
 
-  (it "teaches the model that file and shell payloads live under the tool envelope :op/result"
+  (it "teaches the model that file and shell payloads live under the tool envelope :result"
     (let [bash-symbol (some #(when (= 'bash (:ext.symbol/sym %)) %)
                         editing/editing-symbols)]
-      (expect (string/includes? editing/editing-prompt "[:op/result :lines]"))
+      (expect (string/includes? editing/editing-prompt "[:result :lines]"))
       (expect (string/includes? editing/editing-prompt "Never use [:result :lines]"))
       (expect (string/includes? editing/editing-prompt "`(get-in vector)` is an arity error"))
-      (expect (string/includes? editing/editing-prompt "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :op/result :hits)"))
-      (expect (string/includes? editing/editing-prompt "[:op/result :stdout]"))
-      (expect (string/includes? (:ext.symbol/doc bash-symbol) ":op/result :stdout"))
+      (expect (string/includes? editing/editing-prompt "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits)"))
+      (expect (string/includes? editing/editing-prompt "[:result :stdout]"))
+      (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
       (expect (string/includes? (:ext.symbol/doc bash-symbol) "Refuses shell-driven Clojure/EDN source edits"))
       (expect (string/includes? editing/editing-prompt "Use `v/bash`"))
       (expect (string/includes? editing/editing-prompt "set -euo pipefail")))))
@@ -145,7 +145,7 @@
                     [:v/bash        :op.tag/observation]   ; default; bash wrapper overrides at call site
                     [:v/extensions  :op.tag/observation]]] ; unregistered -> default
     (expect (= tag (extension/op-tag op)))
-    (expect (= {:op/tag tag} (extension/op-presentation op)))))
+    (expect (= {:tag tag} (extension/op-presentation op)))))
 
 (defdescribe editing-prompt-read-policy-test
   (it "teaches full-read vars, canonical patching, and no duplicate rereads by default"
@@ -154,7 +154,7 @@
       (expect (string/includes? editing/editing-prompt
                 "`v/cat` reads the whole file"))
       (expect (string/includes? editing/editing-prompt
-                "[:op/result :lines]"))
+                "[:result :lines]"))
       (expect (string/includes? editing/editing-prompt
                 "Edit text with canonical (v/patch"))
       (expect (string/includes? editing/editing-prompt
@@ -229,14 +229,14 @@
       (expect (string/includes? out "1: only-line"))))
 
   (it "engine-default channel error formatter renders failures without symbol error-fn"
-    ;; Per PLAN §2.1 (Phase 4): envelope is flat under :op/* and the
+    ;; Per PLAN §2.1 (Phase 4): envelope is flat under :* and the
     ;; error map is structured {:message :trace? :hint? :block?}.
     ;; Old shape was {:success? :result :info :error}; lifted to flat.
     (let [out (extension/default-channel-error-text
-                {:op/success? false
-                 :op/symbol :v/cat
-                 :op/error {:message "src/missing.clj (No such file)"
-                            :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})]
+                {:success? false
+                 :symbol :v/cat
+                 :error {:message "src/missing.clj (No such file)"
+                         :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})]
       (expect (string/includes? out "**ERROR**"))
       (expect (string/includes? out "v/cat"))
       (expect (string/includes? out "FileNotFoundException")))))
@@ -298,7 +298,7 @@
                 :include ["*.clj"]}
           grep (private-fn "grep-files")
           rg (private-fn "rg-tool")]
-      (expect (= (grep spec) (:op/result (rg spec))))))
+      (expect (= (grep spec) (:result (rg spec))))))
 
   (it "rejects shorthand and unknown keys instead of silently changing grammar"
     (let [grep (private-fn "grep-files")
@@ -432,11 +432,11 @@
     (let [bash-tool   (private-fn "bash-tool")
           render-bash (private-fn "channel-render-bash")
           out         (bash-tool "printf '%s\n' 'Traceback (most recent call last):' >&2" {:timeout-ms 5000})
-          rendered    (render-bash (:op/result out))]
-      (expect (true? (:op/success? out)))
-      (expect (= 0 (get-in out [:op/result :exit])))
+          rendered    (render-bash (:result out))]
+      (expect (true? (:success? out)))
+      (expect (= 0 (get-in out [:result :exit])))
       (expect (= :stderr-traceback-with-zero-exit
-                (get-in out [:op/result :warnings 0 :type])))
+                (get-in out [:result :warnings 0 :type])))
       (expect (string/includes? rendered "warning(s)"))
       (expect (string/includes? rendered "swallowed"))))
 
@@ -444,10 +444,10 @@
     (let [strict-command (private-fn "strict-bash-command")
           bash-tool      (private-fn "bash-tool")
           out            (bash-tool "false\necho SHOULD_NOT_RUN" {:timeout-ms 5000})
-          result         (:op/result out)]
+          result         (:result out)]
       (expect (= "set -euo pipefail\nfalse\necho SHOULD_NOT_RUN"
                 (strict-command "false\necho SHOULD_NOT_RUN")))
-      (expect (true? (:op/success? out)))
+      (expect (true? (:success? out)))
       (expect (= 1 (:exit result)))
       (expect (= "" (:stdout result)))
       (expect (true? (:strict? result)))
@@ -474,23 +474,23 @@
       (.interrupt worker)
       (let [v        (deref out 2000 ::timeout)
             rendered (when (map? v)
-                       (if (:op/success? v)
-                         (render-bash (:op/result v))
+                       (if (:success? v)
+                         (render-bash (:result v))
                          (extension/default-channel-error-text v)))]
         (expect (not= ::timeout v))
         (expect (map? v))
-        (expect (false? (:op/success? v)))
-        (expect (nil? (get-in v [:op/error :type])))
-        (expect (nil? (get-in v [:op/error :trace])))
-        (expect (string/includes? (get-in v [:op/error :message]) "cancelled"))
-        (expect (not (string/includes? (get-in v [:op/error :message]) "timed out")))
-        (expect (= :interrupted (get-in v [:op/metadata :status])))
-        (expect (= "sleep 5" (get-in v [:op/metadata :command])))
-        (expect (= :v/bash (:op/symbol v)))
-        (expect (= "." (get-in v [:op/metadata :target :requested])))
+        (expect (false? (:success? v)))
+        (expect (nil? (get-in v [:error :type])))
+        (expect (nil? (get-in v [:error :trace])))
+        (expect (string/includes? (get-in v [:error :message]) "cancelled"))
+        (expect (not (string/includes? (get-in v [:error :message]) "timed out")))
+        (expect (= :interrupted (get-in v [:metadata :status])))
+        (expect (= "sleep 5" (get-in v [:metadata :command])))
+        (expect (= :v/bash (:symbol v)))
+        (expect (= "." (get-in v [:metadata :target :requested])))
         (expect (string/includes? rendered "cancelled"))
         (expect (not (string/includes? rendered "timed out")))
-        (expect (not (string/includes? (pr-str (:op/error v)) "core.clj"))))))
+        (expect (not (string/includes? (pr-str (:error v)) "core.clj"))))))
 
   (it "bash validates cwd through the same safe path guard and blocks shell source edits"
     (let [run-bash (private-fn "run-bash-safe")]
@@ -540,23 +540,23 @@
     (let [path (write-temp! "contract/read.txt" "alpha\nbeta\n")
           cat-tool (private-fn "cat-tool")
           out (cat-tool path)
-          required #{:op/success? :op/result :op/error :op/symbol :op/tag :op/metadata}]
+          required #{:success? :result :error :symbol :tag :metadata}]
       ;; Envelope keys MUST include the canonical op/* set; extra keys
-      ;; (e.g. :presentation, :op/stdout when set) may also appear.
+      ;; (e.g. :presentation, :stdout when set) may also appear.
       (expect (= required (clojure.set/intersection required (set (keys out)))))
-      (expect (true? (:op/success? out)))
-      (expect (= ["alpha" "beta"] (get-in out [:op/result :lines])))
+      (expect (true? (:success? out)))
+      (expect (= ["alpha" "beta"] (get-in out [:result :lines])))
       (expect (not (contains? out :markdown)))
-      (expect (nil? (:op/error out)))))
+      (expect (nil? (:error out)))))
 
-  (it "tool failure envelope carries structured :op/error per PLAN §2.1"
+  (it "tool failure envelope carries structured :error per PLAN §2.1"
     (let [cat-symbol (private-fn "cat-symbol")
           on-error   (:ext.symbol/on-error-fn cat-symbol)
           out        (:result (on-error (ex-info "boom" {}) nil nil ["missing.txt"]))]
-      (expect (false? (:op/success? out)))
-      (expect (nil? (:op/result out)))
+      (expect (false? (:success? out)))
+      (expect (nil? (:result out)))
       ;; Per PLAN §2.7 / §7.3.4: :trace is a preformatted string,
       ;; first line carries the underlying class name.
-      (expect (string? (get-in out [:op/error :trace])))
-      (expect (string/includes? (get-in out [:op/error :trace]) "ExceptionInfo"))
+      (expect (string? (get-in out [:error :trace])))
+      (expect (string/includes? (get-in out [:error :trace]) "ExceptionInfo"))
       (expect (not (contains? out :markdown))))))

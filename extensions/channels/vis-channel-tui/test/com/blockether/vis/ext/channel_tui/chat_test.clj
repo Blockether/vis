@@ -164,8 +164,8 @@
         (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
               trace   (-> history second :traces first)]
           (expect (= [:tool] (:result-kinds trace)))
-          (expect (= {:op/symbol :v/bash
-                      :op/tag :op.tag/action
+          (expect (= {:symbol :v/bash
+                      :tag :op.tag/action
                       :command "echo ok"
                       :cwd "."
                       :target {:path "."}

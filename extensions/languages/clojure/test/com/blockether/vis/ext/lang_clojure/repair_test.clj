@@ -36,42 +36,42 @@
     (let [path      (write-temp! "range/core.clj" "(ns demo)\n(defn bad [x]\n  (inc x)\n\n(def ok 1)\n")
           repair-fn (:ext.symbol/fn repair/repair-range-symbol)
           out       (repair-fn {:path path :range [[2 1] [4 1]]})]
-      (expect (true? (:op/success? out)))
-      (expect (= :parinfer (get-in out [:op/result :engine])))
-      (expect (true? (get-in out [:op/result :changed?])))
+      (expect (true? (:success? out)))
+      (expect (= :parinfer (get-in out [:result :engine])))
+      (expect (true? (get-in out [:result :changed?])))
       (expect (= "(ns demo)\n(defn bad [x]\n  (inc x))\n\n(def ok 1)\n"
                 (slurp path)))
-      (expect (= "(defn bad [x]\n  (inc x)\n" (get-in out [:op/metadata :files 0 :before])))
-      (expect (= "(defn bad [x]\n  (inc x))\n" (get-in out [:op/metadata :files 0 :after])))))
+      (expect (= "(defn bad [x]\n  (inc x)\n" (get-in out [:metadata :files 0 :before])))
+      (expect (= "(defn bad [x]\n  (inc x))\n" (get-in out [:metadata :files 0 :after])))))
 
   (it "accepts locator-row :span and supports dry-run"
     (let [path      (write-temp! "range/quote.clj" "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n")
           repair-fn (:ext.symbol/fn repair/repair-range-symbol)
           row       {:path path :span [[2 13] [2 32]] :dry-run? true}
           out       (repair-fn row)]
-      (expect (true? (:op/success? out)))
-      (expect (= :quote (get-in out [:op/result :engine])))
-      (expect (true? (get-in out [:op/result :changed?])))
-      (expect (true? (get-in out [:op/result :dry-run?])))
+      (expect (true? (:success? out)))
+      (expect (= :quote (get-in out [:result :engine])))
+      (expect (true? (get-in out [:result :changed?])))
+      (expect (true? (get-in out [:result :dry-run?])))
       (expect (= "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n" (slurp path)))
-      (expect (str/includes? (get-in out [:op/metadata :files 0 :after]) "(str"))))
+      (expect (str/includes? (get-in out [:metadata :files 0 :after]) "(str"))))
 
   (it "repairs locator rows through z/repair-locator"
     (let [path      (write-temp! "range/locator.clj" "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n")
           repair-fn (:ext.symbol/fn repair/repair-locator-symbol)
           locator   {:path path :span [[2 13] [2 32]]}
           out       (repair-fn locator {:dry-run? true})]
-      (expect (true? (:op/success? out)))
-      (expect (= :quote (get-in out [:op/result :engine])))
-      (expect (true? (get-in out [:op/result :dry-run?])))
-      (expect (= :z/repair-locator (:op/symbol out)))
+      (expect (true? (:success? out)))
+      (expect (= :quote (get-in out [:result :engine])))
+      (expect (true? (get-in out [:result :dry-run?])))
+      (expect (= :z/repair-locator (:symbol out)))
       (expect (= "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n" (slurp path)))))
 
   (it "repairs a whole file through z/repair-file"
     (let [path      (write-temp! "file/core.clj" "(ns demo)\n(defn bad [x]\n  (inc x)\n")
           repair-fn (:ext.symbol/fn repair/repair-file-symbol)
           out       (repair-fn path {:dry-run? true})]
-      (expect (true? (:op/success? out)))
-      (expect (= :parinfer (get-in out [:op/result :engine])))
-      (expect (true? (get-in out [:op/result :changed?])))
+      (expect (true? (:success? out)))
+      (expect (= :parinfer (get-in out [:result :engine])))
+      (expect (true? (get-in out [:result :changed?])))
       (expect (= "(ns demo)\n(defn bad [x]\n  (inc x)\n" (slurp path))))))

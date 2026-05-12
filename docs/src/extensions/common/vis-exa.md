@@ -8,13 +8,13 @@ Package: `com.blockether/vis-exa`. Source: `extensions/common/vis-exa/`.
 
 ```clojure
 (def r (exa/web-search "latest Clojure release" {:num-results 5}))
-(get-in r [:op/result :content])
+(get-in r [:result :content])
 
 (def c (exa/code-context "rewrite-clj z/find-value examples" {:tokens-num 12000}))
-(get-in c [:op/result :content])
+(get-in c [:result :content])
 ```
 
-Tool results are Vis envelopes. Payload lives under `:op/result`; do not read `(:content r)` or `[:result ...]`.
+Tool results are Vis envelopes. Payload lives under `:result`; do not read `(:content r)` or `[:result ...]`.
 
 ## Endpoint and token behavior
 
@@ -59,4 +59,4 @@ Config string values can reference environment variables as `$NAME`, `${NAME}`, 
 
 ## Output bounds
 
-The MCP content is rendered into `[:op/result :content]`, then bounded by `:max-bytes` and `:max-lines` call options, capped by configured `maxBytes` and `maxLines`. If truncated, the full output is written to a temp file and `[:op/result :temp-file]` points at it.
+The MCP content is rendered into `[:result :content]`, then bounded by `:max-bytes` and `:max-lines` call options, capped by configured `maxBytes` and `maxLines`. If truncated, the full output is written to a temp file and `[:result :temp-file]` points at it.

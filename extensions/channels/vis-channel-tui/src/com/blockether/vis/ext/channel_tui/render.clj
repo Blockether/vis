@@ -1419,7 +1419,7 @@
 
 (defn- op-tag->color-role
   "Channel-local mapping from the engine `:op.tag/...` value to a
-   TUI color role. Editing extensions emit `:op/tag` ONLY — they
+   TUI color role. Editing extensions emit `:tag` ONLY — they
    don't decide colors. This is the single point where the TUI
    binds the engine contract to its own theme vocabulary.
 
@@ -1449,10 +1449,10 @@
     nil))
 
 (defn- meta->color-role
-  "Resolve a color role from a meta map carrying `:op/tag`. Single
+  "Resolve a color role from a meta map carrying `:tag`. Single
    source of truth: the engine-derived tag (PLAN §2.1, 2-value enum)."
   [m]
-  (op-tag->color-role (:op/tag m)))
+  (op-tag->color-role (:tag m)))
 
 (defn- paint-preview-switcher!
   [g x y fbx iw abs-row meta bg fg inactive-fg base-styles]
@@ -2587,10 +2587,10 @@
 
 (defn- tool-detail-badge
   "Compose the short summary line painted on tool-result rows.
-   Label = OBSERVATION/ACTION (derived from `:op/tag`); suffix =
+   Label = OBSERVATION/ACTION (derived from `:tag`); suffix =
    op-name. No per-op badge field anywhere."
   [detail]
-  (when-let [tag (some-> detail :op/tag)]
+  (when-let [tag (some-> detail :tag)]
     (let [label (case tag
                   :op.tag/observation "OBSERVATION"
                   :op.tag/action      "ACTION"
@@ -2606,7 +2606,7 @@
    redundant badge row. Declared by the extension via
    `extension/register-op!` `:self-describing?`."
   [detail]
-  (true? (:op/self-describing? detail)))
+  (true? (:self-describing? detail)))
 
 (defn- preview-switcher-entry
   [{:keys [marker active-mode conversation-id node-id max-w summary-left summary-suffix
