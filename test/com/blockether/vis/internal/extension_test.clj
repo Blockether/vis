@@ -9,6 +9,11 @@
   [a b]
   (+ a b))
 
+(defn env-echo-tool
+  "Observed helper whose before-fn injects env into call args."
+  [_env x]
+  (extension/success {:op :demo/env-echo :result x}))
+
 (defdescribe symbol-builder-test
   (it "builds raw callable symbols without renderers"
     (let [entry (extension/symbol #'raw-add {:raw? true})]
@@ -31,6 +36,27 @@
       (expect (= "plus helper" (:ext.symbol/doc entry)))
       (expect (= '([x y]) (:ext.symbol/arglists entry)))
       (expect (true? (:ext.symbol/raw? entry))))))
+
+(defdescribe invoke-symbol-wrapper-test
+  (it "renders sink forms from user args, not before-fn injected env"
+    (let [entry (extension/symbol #'env-echo-tool
+                  {:symbol 'env-echo
+                   :before-fn (fn [env f args]
+                                {:env env :fn f :args (into [env] args)})
+                   :journal-render-fn pr-str
+                   :channel-render-fn pr-str})
+          ext   {:ext/namespace 'demo.ext
+                 :ext/alias {:alias 'd}}
+          env   {:large "host env must not be printed in sink form"}
+          journal (atom [])
+          channel (atom [])]
+      (binding [extension/*journal-render-sink* journal
+                extension/*channel-render-sink* channel
+                extension/*sink-position* (atom -1)]
+        (expect (= :payload (extension/invoke-symbol-wrapper ext entry [:payload] env))))
+      (expect (= "(d/env-echo :payload)" (:form (first @journal))))
+      (expect (= "(d/env-echo :payload)" (:form (first @channel))))
+      (expect (not (clojure.string/includes? (:form (first @journal)) "host env"))))))
 
 (defdescribe extension-docs-test
   (it "returns authored doc links without computed backlinks"

@@ -717,7 +717,7 @@
 ;; Removed extra workflow surfaces.
 
 ;; ---------------------------------------------------------------------------
-;; SCI symbol introspection - v/clojure-symbol-*
+;; SCI symbol introspection - v/engine-symbol-*
 ;; ---------------------------------------------------------------------------
 
 (def ^:private symbol-render-chars 3000)
@@ -792,28 +792,28 @@
      :metadata {:symbol (:symbol result)
                 :found? (:found? result)}}))
 
-(defn- clojure-symbol-documentation-tool
+(defn- engine-symbol-documentation-tool
   "Return journal-visible documentation for a SCI symbol such as `v/cat`, `z/source`, or `map`."
   [env sym]
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success
-      :v/clojure-symbol-documentation
+      :v/engine-symbol-documentation
       (select-keys info [:symbol :resolved-symbol :found? :doc :arglists :macro? :message]))))
 
-(defn- clojure-symbol-source-code-tool
+(defn- engine-symbol-source-code-tool
   "Return journal-visible source code for a SCI symbol such as `v/cat` or `z/source`."
   [env sym]
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success
-      :v/clojure-symbol-source-code
+      :v/engine-symbol-source-code
       (select-keys info [:symbol :resolved-symbol :found? :source :source-length :message]))))
 
-(defn- clojure-symbol-metadata-tool
+(defn- engine-symbol-metadata-tool
   "Return journal-visible metadata for a SCI symbol without dumping bulky source text."
   [env sym]
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success
-      :v/clojure-symbol-metadata
+      :v/engine-symbol-metadata
       (select-keys info [:symbol :resolved-symbol :found? :metadata :message]))))
 
 (defn- namespace-aliases
@@ -853,12 +853,12 @@
       (take apropos-limit)
       vec)))
 
-(defn- clojure-symbol-apropos-tool
+(defn- engine-symbol-apropos-tool
   "Return journal-visible matching SCI symbols by symbol name or doc text."
   [env query]
   (let [matches (apropos-matches env query)]
     (extension/success
-      {:op       :v/clojure-symbol-apropos
+      {:op       :v/engine-symbol-apropos
        :result   {:query (str query)
                   :count (count matches)
                   :matches matches}
@@ -980,30 +980,30 @@
      :journal-render-fn vis/render-string-journal
      :channel-render-fn vis/render-string-channel}))
 
-(def clojure-symbol-documentation-symbol
-  (vis/symbol #'clojure-symbol-documentation-tool
-    {:symbol 'clojure-symbol-documentation
+(def engine-symbol-documentation-symbol
+  (vis/symbol #'engine-symbol-documentation-tool
+    {:symbol 'engine-symbol-documentation
      :before-fn inject-environment
      :journal-render-fn symbol-doc-journal
      :channel-render-fn symbol-doc-channel}))
 
-(def clojure-symbol-source-code-symbol
-  (vis/symbol #'clojure-symbol-source-code-tool
-    {:symbol 'clojure-symbol-source-code
+(def engine-symbol-source-code-symbol
+  (vis/symbol #'engine-symbol-source-code-tool
+    {:symbol 'engine-symbol-source-code
      :before-fn inject-environment
      :journal-render-fn symbol-source-journal
      :channel-render-fn symbol-source-channel}))
 
-(def clojure-symbol-metadata-symbol
-  (vis/symbol #'clojure-symbol-metadata-tool
-    {:symbol 'clojure-symbol-metadata
+(def engine-symbol-metadata-symbol
+  (vis/symbol #'engine-symbol-metadata-tool
+    {:symbol 'engine-symbol-metadata
      :before-fn inject-environment
      :journal-render-fn symbol-meta-journal
      :channel-render-fn symbol-meta-channel}))
 
-(def clojure-symbol-apropos-symbol
-  (vis/symbol #'clojure-symbol-apropos-tool
-    {:symbol 'clojure-symbol-apropos
+(def engine-symbol-apropos-symbol
+  (vis/symbol #'engine-symbol-apropos-tool
+    {:symbol 'engine-symbol-apropos
      :before-fn inject-environment
      :journal-render-fn apropos-journal
      :channel-render-fn apropos-channel}))
@@ -1011,13 +1011,13 @@
 (def all-symbols
   [conversation-state-symbol
    conversation-report-symbol
-   clojure-symbol-documentation-symbol
-   clojure-symbol-source-code-symbol
-   clojure-symbol-metadata-symbol
-   clojure-symbol-apropos-symbol])
+   engine-symbol-documentation-symbol
+   engine-symbol-source-code-symbol
+   engine-symbol-metadata-symbol
+   engine-symbol-apropos-symbol])
 
 (def introspection-prompt
-  "`v/` conversation strategy: use v/conversation-state for data you will combine/filter, v/conversation-report when a rendered forensic report is enough. Use v/clojure-symbol-documentation, v/clojure-symbol-source-code, v/clojure-symbol-metadata, and v/clojure-symbol-apropos for journal-visible SCI symbol docs/source/metadata/search.")
+  "`v/` conversation strategy: use v/conversation-state for data you will combine/filter, v/conversation-report when a rendered forensic report is enough. Use v/engine-symbol-documentation, v/engine-symbol-source-code, v/engine-symbol-metadata, and v/engine-symbol-apropos for journal-visible SCI symbol docs/source/metadata/search.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

@@ -717,11 +717,11 @@
 
    Required opts: `:left`, `:row`, `:width`, `:active-id`, `:fg`, `:bg`,
    `:active-fg`, `:active-bg`, `:inactive-fg`, `:inactive-bg`.
-   Optional: `:gap`.
+   Optional: `:gap`, `:bordered?`.
 
    This primitive knows layout and drawing only. Callers own domain actions and
    click-region registration."
-  [g tabs {:keys [left row width active-id gap fg bg active-fg active-bg inactive-fg inactive-bg]}]
+  [g tabs {:keys [left row width active-id gap fg bg active-fg active-bg inactive-fg inactive-bg bordered?]}]
   (let [layout (tab-layout tabs left width active-id {:gap gap})]
     (set-colors! g (or fg inactive-fg active-fg) (or bg inactive-bg active-bg))
     (fill-rect! g left row width 1)
@@ -733,6 +733,8 @@
           (enable! g BOLD))
         (do (set-colors! g inactive-fg inactive-bg)
           (enable! g ITALIC)))
+      (when bordered?
+        (enable! g BORDERED))
       (fill-rect! g left row width 1)
       (draw-centered! g left row width text))
     (clear-styles! g)
