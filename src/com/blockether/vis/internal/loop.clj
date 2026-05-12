@@ -1018,12 +1018,10 @@
       {})))
 
 (defn- def-display-result
-  "Pass-through. Historical note: previous versions tagged single top-level
-   `(def x ...)` / `(defonce x ...)` blocks (and a handful of host-form
-   primitives like `conversation-title`) as silent so the TUI hid them.
-   That obscured where bindings came from in resumed traces. The whole
-   `:vis/silent` mechanism has been removed - every block renders. The fn
-   is kept as a single seam in case future display tweaks need it."
+  "Pass-through seam for future display tweaks. Silent system-call
+   elision now happens explicitly on progress chunks (`:silent?`) and
+   via the `:vis/silent` return sentinel for host primitives such as
+   `conversation-title`; normal value-bearing forms remain visible."
   [_environment _code result]
   result)
 
@@ -2130,7 +2128,10 @@
           executed (mapv (fn [idx {:keys [expr preflight-error parse-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
-                           (when (and on-chunk (not suppress-form-start?))
+                           (when (and on-chunk
+                                   (not suppress-form-start?)
+                                   (not (answer-compatible-meta-form? expr))
+                                   (not (form-contains-answer-call? expr)))
                              (on-chunk {:phase         :form-start
                                         :iteration     iteration-position
                                         :form-idx      idx
@@ -2193,7 +2194,10 @@
                                                  :error (op-error err {:code expr :phase :vis/guard})
                                                  :stdout "" :stderr "" :execution-time-ms 0
                                                  :op :vis/guard}
-                                                (let [tool-event-fn (when (and on-chunk (not suppress-form-start?))
+                                                (let [tool-event-fn (when (and on-chunk
+                                                                            (not suppress-form-start?)
+                                                                            (not (answer-compatible-meta-form? expr))
+                                                                            (not (form-contains-answer-call? expr)))
                                                                       (fn [tool-event]
                                                                         (on-chunk {:phase :tool-start
                                                                                    :iteration iteration-position
@@ -2268,6 +2272,10 @@
                                           :execution-time-ms (:execution-time-ms result*)
                                           :info        (:info result*)
                                           :role        (:role result*)
+                                          :silent?     (boolean (or (:vis/silent result*)
+                                                                  (= :vis/silent (:result result*))
+                                                                  (answer-compatible-meta-form? expr)
+                                                                  (form-contains-answer-call? expr)))
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))}))
                              {:block expr :result result* :form-comment form-comment}))
@@ -2298,8 +2306,15 @@
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)}
                              form-comment (assoc :comment form-comment)
+                             (:vis/silent result) (assoc :vis/silent true)
                              (get preflight-by-idx idx) (assoc :vis/preflight? true)))
-                     (range) code-blocks block-results block-comments))]
+                     (range) code-blocks block-results block-comments))
+          silent-form-idxs (into #{}
+                             (keep-indexed (fn [idx block]
+                                             (when (or (:vis/silent block)
+                                                     (= :vis/silent (:result block)))
+                                               idx)))
+                             blocks)]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(answer "...")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. Two
@@ -2377,6 +2392,10 @@
                                :execution-time-ms (:execution-time-ms b)
                                :info        (:info b)
                                :role        (:role b)
+                               :silent?     (boolean (or (:vis/silent b)
+                                                       (= :vis/silent (:result b))
+                                                       (answer-compatible-meta-form? (:code b))
+                                                       (form-contains-answer-call? (:code b))))
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))
               model-name       (some-> (:name resolved-model) str)
@@ -2391,6 +2410,7 @@
                                    :phase :vis/final-answer-validation})}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
+             :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-raw-response (:raw ask-result)
              :llm-executable-code (:result ask-result)
@@ -2411,6 +2431,7 @@
                               :answer-form-idx  form-idx}
                :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)
+               :silent-form-idxs silent-form-idxs
                :llm-messages messages :llm-provider provider :llm-model model-name
                :llm-raw-response (:raw ask-result)
                :llm-executable-code (:result ask-result)
@@ -2421,6 +2442,7 @@
          :blocks (strip-noop-blocks blocks)
          :final-result nil :api-usage api-usage
          :duration-ms (or (:duration-ms ask-result) 0)
+         :silent-form-idxs silent-form-idxs
          :llm-messages messages
          :llm-provider (:provider resolved-model)
          :llm-model    (some-> (:name resolved-model) str)
@@ -3664,6 +3686,7 @@
                                                           :iteration-count (inc iteration)
                                                           :status          :success}
                                        :answer-form-idx  (:answer-form-idx final-result)
+                                       :silent-form-idxs (:silent-form-idxs iteration-result)
                                        :done?            true}))
                           (let [result (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
                                                :iteration-count (inc iteration)}
@@ -3699,6 +3722,7 @@
                                          :iteration        (inc (long iteration))
                                          :thinking         thinking
                                          :final            nil
+                                         :silent-form-idxs (:silent-form-idxs iteration-result)
                                          :done?            false}))
                             (let [had-success? (some #(nil? (:error %)) blocks)
                                   next-errors (if had-success? 0 (inc consecutive-errors))
@@ -4661,16 +4685,15 @@
         ;; call would invite the model to round-trip what it can
         ;; read for free. Calling with the wrong arity raises an
         ;; `ArityException` from SCI like any other Clojure fn.
-        ;; Returns the title string itself so the trace shows what was set.
-        ;; Previous versions returned `:vis/silent` to make the TUI hide the
-        ;; whole form; the silent-elision mechanism has been removed, so the
-        ;; natural value (the new title) is the right thing to surface.
+        ;; Returns `:vis/silent`: the title is visible in channel chrome
+        ;; and the model journal, but the host call itself is noise in
+        ;; live progress / iteration rendering.
         conversation-title-fn    (fn conversation-title [s]
                                    (let [s (str s)]
                                      (set-title-with-broadcast!
                                        db-info conversation-id
                                        conversation-title-atom s)
-                                     s))
+                                     :vis/silent))
         ;; The retired `TURN_USER_REQUEST` SYSTEM var has no replacement
         ;; binding by design - the same data already flows through
         ;; `(v/conversation-state)` -> :current-turn :user-request (and through

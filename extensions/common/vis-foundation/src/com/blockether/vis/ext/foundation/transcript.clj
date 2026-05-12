@@ -131,6 +131,7 @@
         provider  (some #(some-> % :provider name) iters)
         model     (some :model iters)]
     (cond-> {:id              (:id turn)
+             :position        (:position turn)
              :user-request    (or (:user-request turn) "")
              :status          (:status turn)
              :prior-outcome   (:prior-outcome turn)
@@ -285,12 +286,14 @@
 
 (defn- tool-call-row
   [turn iteration block var-row envelope]
-  (let [tool-meta       (:op/metadata envelope)
-        result          (:op/result envelope)
-        op              (or (:op/symbol envelope) :v/tool)
+  (let [tool-meta       (or (:op/metadata envelope) (:info envelope))
+        result          (if (contains? envelope :op/result) (:op/result envelope) (:result envelope))
+        success?        (if (contains? envelope :op/success?) (:op/success? envelope) (:success? envelope))
+        error           (if (contains? envelope :op/error) (:op/error envelope) (:error envelope))
+        op              (or (:op/symbol envelope) (:op tool-meta) :v/tool)
         parent-ref      (when block (block-ref turn iteration block))
         ref             (when parent-ref (str parent-ref "/tool/" (op-slug op)))
-        status          (event-status (:op/error envelope) (:op/success? envelope)
+        status          (event-status error success?
                           (or (:timed-out? result) (:timeout? tool-meta)))
         tool            (:tool tool-meta)]
     (cond-> {:kind           :tool-call
@@ -302,7 +305,7 @@
              :op             op
              :tool           (or (:sym tool) (:call tool) tool)
              :status         status
-             :success?       (:op/success? envelope)
+             :success?       success?
              :duration-ms    (or (:duration-ms tool-meta)
                                (:duration-ms result)
                                0)
@@ -314,7 +317,7 @@
       (:command tool-meta) (assoc :command (:command tool-meta))
       (:command result)    (assoc :command (:command result))
       (:target tool-meta)  (assoc :target  (:target tool-meta))
-      (:op/error envelope) (assoc :error  (:op/error envelope)))))
+      error                (assoc :error error))))
 
 (defn- block-by-code
   [iteration]
@@ -631,19 +634,43 @@
           (str "System prompt (" size " chars)")
           (render-fenced "text" system-prompt))))))
 
+(defn- prompt-message-purpose
+  [role content]
+  (let [role (str role)
+        content (str content)]
+    (cond
+      (= "system" role) "stable system prompt"
+      (and (= "user" role) (str/includes? content "<current_turn_context>")) "per-iteration trailer"
+      (and (= "user" role) (str/includes? content "<user_turn_request_main_goal>")) "user goal"
+      (= "assistant" role) "assistant optional replay"
+      :else nil)))
+
+(defn- render-prompt-message
+  [idx {:keys [role content]}]
+  (let [role (or role "?")
+        purpose (prompt-message-purpose role content)]
+    (str "[" idx "] role=" role
+      (when purpose (str " - " purpose))
+      " (" (count (str content)) " chars):\n"
+      (render-fenced "text" content)
+      "\n")))
+
+(defn- render-raw-provider-messages
+  [messages]
+  (str "RAW provider messages sent to LLM (exact persisted vector):\n"
+    (render-fenced "clojure" (pr-str (vec messages)))
+    "\n"))
+
 (defn- render-llm-messages
   "Collapsible `<details>` block carrying the full LLM message
-   envelope for this iteration: every `[{:role :content}]` pair the
-   provider was called with. Each message renders as its own
-   `_role:_` fenced text block. Empty / nil envelope -> no output."
+   envelope for this iteration: the exact persisted vector passed to
+   the provider, followed by an indexed readability view. Empty / nil
+   envelope -> no output."
   [messages]
   (when (seq messages)
-    (let [body (apply str
-                 (map (fn [{:keys [role content]}]
-                        (str "_" (or role "?") ":_\n"
-                          (render-fenced "text" (str content))
-                          "\n"))
-                   messages))]
+    (let [body (str (render-raw-provider-messages messages)
+                 "Indexed view:\n\n"
+                 (apply str (map-indexed render-prompt-message messages)))]
       (render-collapsible
         (str "LLM messages (" (count messages) " messages, "
           (reduce + 0 (map #(count (str (:content %))) messages)) " chars total)")
@@ -666,6 +693,7 @@
                               (seq (:llm-executable-blocks iter)))
                         (let [executable-blocks (vec (:llm-executable-blocks iter))]
                           {:turn-id           (:id turn)
+                           :turn-position     (:position turn)
                            :iteration         (:position iter)
                            :status            (:status iter)
                            :raw-preview       (:llm-raw-response-preview iter)
@@ -684,8 +712,8 @@
     (truncate s 12)))
 
 (defn- render-raw-diagnostic-row
-  [{:keys [turn-id iteration status raw-length raw-sha256 block-count block-langs]}]
-  (str "| `" turn-id "` | " iteration " | " (or (some-> status name) "-")
+  [{:keys [turn-position iteration status raw-length raw-sha256 block-count block-langs]}]
+  (str "| " (or turn-position "?") " | " iteration " | " (or (some-> status name) "-")
     " | " (or raw-length "-")
     " | `" (or (sha-prefix raw-sha256) "-") "`"
     " | " (or block-count "-")
@@ -693,9 +721,9 @@
     " |\n"))
 
 (defn- render-raw-diagnostic-details
-  [{:keys [turn-id iteration raw-preview raw-length executable-code executable-blocks]}]
+  [{:keys [turn-position iteration raw-preview raw-length executable-code executable-blocks]}]
   (render-collapsible
-    (str "Raw LLM response preview for turn " turn-id
+    (str "Raw LLM response preview for turn " (or turn-position "?")
       " / iteration " iteration
       (when raw-length (str " (" raw-length " chars total)")))
     (str
@@ -797,21 +825,17 @@
           ["" nil]
           rows)))))
 
-(defn- render-prompt-message
-  [idx {:keys [role content]}]
-  (str "_message " idx " / " (or role "?") " (" (count (str content)) " chars):_\n"
-    (render-fenced "text" content)
-    "\n"))
-
 (defn- render-provider-prompt-snapshot-row
   [{:keys [turn-id iteration system-prompt messages]}]
   (render-collapsible
     (str "Provider prompt turn " turn-id " / iteration " iteration
       " (system " (count (str system-prompt)) " chars, "
       (count messages) " messages)")
-    (str "_system prompt:_\n"
+    (str "_system prompt snapshot:_\n"
       (render-fenced "text" system-prompt)
-      "\n"
+      "\n_full provider message envelope:_\n\n"
+      (render-raw-provider-messages messages)
+      "Indexed view:\n\n"
       (apply str (map-indexed render-prompt-message messages)))))
 
 (defn- render-provider-prompts-report
