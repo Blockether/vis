@@ -1483,6 +1483,14 @@
        :node-id (:node-id meta)
        :mode mode})))
 
+(defn- silent-form-count
+  [message]
+  (let [n (reduce + 0
+            (map (fn [trace]
+                   (count (filter true? (:silents trace))))
+              (or (:traces message) [])))]
+    (when (pos? n) n)))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1523,10 +1531,10 @@
         ;; meta line, dim the role label too. Skips markdown so a
         ;; bare text like \"Cancelled by user.\" reads naturally.
         cancelled? (= :cancelled status)
-        turn-separator? (boolean (:turn-separator? message))
-        ;; Turn separators are blank spacer rows only. Do not draw a rule:
-        ;; it reads as `You ───` when the label shares the row.
-        top-sep-h (if turn-separator? 2 0)
+        ;; Turn separators no longer add top spacer rows. The regular
+        ;; per-message flow is enough; extra rows after Vis->You made
+        ;; resumed chats look like they had a double top margin.
+        top-sep-h 0
         label     (if user? "You" "Vis")
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the
@@ -1594,6 +1602,7 @@
         meta-str   (when (and (not user?) (not cancelled?))
                      (let [line (vis/format-meta-line
                                   {:iteration-count iteration-count
+                                   :silent-count (silent-form-count message)
                                    :duration-ms duration-ms
                                    :tokens tokens
                                    :cost cost})]
@@ -2279,8 +2288,7 @@
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
         ;; Return: rows consumed
-        ;;   = optional turn separator + one spacer row (0|2)
-        ;;     + label(1) + top-pad(user only) + content(N)
+        ;;   = label(1) + top-pad(user only) + content(N)
         ;;     + bottom-pad(user only)
         ;;     + footer(meta)(0|1)
         ;;     + gap(1)
@@ -2293,9 +2301,9 @@
    + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
-  [{:keys [text role prewrapped-lines iteration-count duration-ms tokens cost status turn-separator?]} max-w]
+  [{:keys [text role prewrapped-lines iteration-count duration-ms tokens cost status] :as message} max-w]
   (let [bubble-w   max-w
-        top-sep-h  (if turn-separator? 2 0)
+        top-sep-h  0
         h-pad      2
         content-w  (max 1 (- bubble-w (* 2 h-pad)))
         ;; Same contract: virtual.clj projection populates
@@ -2313,6 +2321,7 @@
         meta-str   (when (and (not= role :user) (not cancelled?))
                      (let [line (vis/format-meta-line
                                   {:iteration-count iteration-count
+                                   :silent-count (silent-form-count message)
                                    :duration-ms duration-ms
                                    :tokens tokens
                                    :cost cost})]
@@ -2395,6 +2404,33 @@
       (range (max (count (or started-at-ms []))
                (count (or successes [])))))))
 
+(defn- drop-indexes
+  [v idxs]
+  (if (and (vector? v) (seq idxs))
+    (reduce-kv (fn [acc idx x]
+                 (if (contains? idxs idx)
+                   acc
+                   (conj acc x)))
+      []
+      v)
+    v))
+
+(defn- visible-iteration-entry
+  [entry show-silent?]
+  (if show-silent?
+    entry
+    (let [hidden-idxs (into #{}
+                        (keep-indexed (fn [idx silent?]
+                                        (when silent? idx)))
+                        (or (:silents entry) []))]
+      (if (empty? hidden-idxs)
+        entry
+        (reduce (fn [e k]
+                  (update e k drop-indexes hidden-idxs))
+          entry
+          [:code :comments :results :result-kinds :result-details
+           :stdouts :stderrs :durations :successes :started-at-ms :silents])))))
+
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
    field `format-iteration-entry-entries` reads. No `identityHashCode`
@@ -2403,7 +2439,7 @@
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
   [{:keys [thinking code comments results result-kinds result-details
-           stdouts stderrs durations successes started-at-ms error
+           stdouts stderrs durations successes started-at-ms silents error
            repeat-count]}]
   [(text-fingerprint thinking)
    (mapv text-fingerprint code)
@@ -2421,6 +2457,7 @@
    durations
    successes
    started-at-ms
+   silents
    (when error (select-keys error [:type :message]))
    repeat-count])
 
@@ -3382,6 +3419,7 @@
          content-w        (max 10 (- bubble-w 4))
          show-thinking?   (get settings :show-thinking true)
          show-iterations? (get settings :show-iterations true)
+         show-silent?     (get settings :show-silent false)
          ;; Iteration / block headers (ITERATION N, BLOCK N) are
          ;; removed entirely per user directive. The visual separator
          ;; between iterations is the trailing newline + per-block
@@ -3471,9 +3509,10 @@
          ;; running-block second-bucket; completed iterations hit forever,
          ;; only the streaming iteration recomputes. Steady-state ~1-5 ms.
          iter-entry-fn    (fn [[idx entry]]
-                            (let [stripped (if show-thinking?
-                                             entry
-                                             (dissoc entry :thinking))
+                            (let [visible  (visible-iteration-entry entry show-silent?)
+                                  stripped (if show-thinking?
+                                             visible
+                                             (dissoc visible :thinking))
                                   ;; Only include the second-bucket in the
                                   ;; cache key for iterations that actually
                                   ;; have a running block. Done iterations
@@ -3493,6 +3532,7 @@
                                      (long content-w)
                                      show-iteration-headers?
                                      (boolean show-thinking?)
+                                     (boolean show-silent?)
                                      preview-default-lines
                                      conversation-id
                                      conversation-turn-id
@@ -3564,6 +3604,7 @@
         fill-w                  (max 1 (dec content-w))
         show-thinking?          (get settings :show-thinking true)
         show-iterations?        (get settings :show-iterations true)
+        show-silent?            (get settings :show-silent false)
         ;; Same hardcode as in `progress->lines-data` above: the
         ;; iteration header band is the visual separator and always
         ;; renders. `:show-final-answer-header` similarly retired.
@@ -3573,14 +3614,15 @@
         trace-entries           (when (and show-iterations? (seq trace))
                                   (into []
                                     (mapcat (fn [[idx entry]]
-                                              (format-iteration-entry-entries
-                                                (if show-thinking? entry (dissoc entry :thinking))
-                                                content-w (inc idx)
-                                                {:show-header?         show-iteration-headers?
-                                                 :conversation-id      (:conversation-id opts)
-                                                 :detail-expansions   (:detail-expansions opts)
-                                                 :conversation-turn-id (:conversation-turn-id opts)
-                                                 :preview-default-lines (get settings :preview/default-lines 4)})))
+                                              (let [visible (visible-iteration-entry entry show-silent?)]
+                                                (format-iteration-entry-entries
+                                                  (if show-thinking? visible (dissoc visible :thinking))
+                                                  content-w (inc idx)
+                                                  {:show-header?         show-iteration-headers?
+                                                   :conversation-id      (:conversation-id opts)
+                                                   :detail-expansions   (:detail-expansions opts)
+                                                   :conversation-turn-id (:conversation-turn-id opts)
+                                                   :preview-default-lines (get settings :preview/default-lines 4)}))))
                                     (collapse-repeated-error-runs trace)))
         _                       (assert-canonical-ir! answer)
         fa-label                (label-text "final answer")
@@ -3657,6 +3699,7 @@
              (long bubble-w)
              (boolean (get settings :show-thinking true))
              (boolean (get settings :show-iterations true))
+             (boolean (get settings :show-silent false))
              confidence
              (boolean cancelled?)
              (:conversation-turn-id opts)

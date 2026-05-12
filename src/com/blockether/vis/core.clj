@@ -444,14 +444,15 @@
 ;; =============================================================================
 ;; Prompt builders
 ;; =============================================================================
-(def active-extensions          prompt/active-extensions)
-(def assemble-system-prompt     prompt/assemble-system-prompt)
-(def build-system-prompt        prompt/build-system-prompt)
-(def build-iteration-context    prompt/build-iteration-context)
+(def active-extensions                prompt/active-extensions)
+(def assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages)
+(def build-system-prompt              prompt/build-system-prompt)
+(def stable-prompt-text               prompt/stable-prompt-text)
+(def build-iteration-context          prompt/build-iteration-context)
 
-(def safe-pr-str                prompt/safe-pr-str)
-(def truncated-pr-str           prompt/truncated-pr-str)
-(def assemble-initial-messages  prompt/assemble-initial-messages)
+(def safe-pr-str                      prompt/safe-pr-str)
+(def truncated-pr-str                 prompt/truncated-pr-str)
+(def assemble-initial-messages        prompt/assemble-initial-messages)
 ;; =============================================================================
 ;; Channel event bus
 ;; =============================================================================

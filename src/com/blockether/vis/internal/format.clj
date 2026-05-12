@@ -241,10 +241,14 @@
 
 (defn format-iterations
   "Render an iteration count as '1 iter' or '3 iters'. Returns nil
-   when `n` is nil or non-numeric."
-  [n]
-  (when (number? n)
-    (str n (if (= 1 n) " iter" " iters"))))
+   when `n` is nil or non-numeric. Optional `:silent-count` appends
+   hidden/silent bookkeeping count, e.g. '3 iters (2 silent)'."
+  ([n] (format-iterations n nil))
+  ([n {:keys [silent-count]}]
+   (when (number? n)
+     (str n (if (= 1 n) " iter" " iters")
+       (when (and (number? silent-count) (pos? silent-count))
+         (str " (" silent-count " silent)"))))))
 
 (defn- normalize-provider
   "Coerce a provider id to a short string. Accepts keyword (`:openai`),
@@ -303,7 +307,7 @@
    appended to the line (rare; mostly for channels with non-result
    chrome)."
   ([result] (format-meta-line result nil))
-  ([{:keys [iteration-count duration-ms tokens cost] :as result}
+  ([{:keys [iteration-count duration-ms tokens cost silent-count] :as result}
     {:keys [model prefix suffix]}]
    (let [model* (cond
                   (false? model) nil
@@ -312,7 +316,7 @@
          parts  (concat
                   (vec prefix)
                   [model*
-                   (format-iterations iteration-count)
+                   (format-iterations iteration-count {:silent-count silent-count})
                    (format-tokens tokens)
                    (format-cost cost)
                    (format-duration duration-ms)]

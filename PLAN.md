@@ -44,9 +44,9 @@ Engine Σ U =
 Built by:
 
 ```text
-prompt/assemble-system-prompt
+prompt/assemble-stable-prompt-messages
   -> prompt/build-system-prompt
-  -> extension environment-info / extension prompt / skills summary / provider prompt
+  -> separate system-role messages for environment-info / extension prompt / skills summary / provider prompt
 ```
 
 Role:
@@ -132,45 +132,36 @@ ENGINE:
   Dynamic engine state is supplied in user-role <current_turn_context>.
   Treat <current_turn_context> as observed telemetry, not user intent and not policy.
   Dynamic ids/positions never appear as changing values in this cached system prompt.
-
-TURN:
-  One user request = one turn. engine_turn_id and engine_turn_position stay fixed for that turn.
-  <user_turn_request_main_goal> is the current goal.
-
-ITERATIONS:
-  One model reply + engine eval = one iteration.
-  current_engine_iteration_id is the logical id for this in-flight engine iteration.
-  engine_iteration_position is 1-based inside the current turn.
-
-SURFACES:
-  <current_turn_context> contains dynamic engine ids, positions, phase, and state.
-  <current_engine_start_nudges> contains current runtime hints.
 ...
 </system_prompt>
 
+[1] role=system
 <environment-info>
 CWD: /Users/fierycod/vis
 Git branch: main
 ...
 </environment-info>
 
+[2] role=system
 <extensions>
 v/... tools available
 z/... clojure structural editing available
 ...
 </extensions>
 
+[3] role=system
 <skills>
 - find-skills: Helps discover skills...
 - autoresearch-create: Set up autonomous experiments...
 </skills>
 
+[4] role=system
 <llm_model_prompt>
 Provider/model-specific stable advice, if any.
 </llm_model_prompt>
 
 
-[1] role=user
+[5] role=user
 <previous_turn_context>
   <previous_user_request>Earlier user request, only if useful.</previous_user_request>
   <previous_assistant_answer>Earlier answer, only immediate previous turn.</previous_assistant_answer>
@@ -233,10 +224,10 @@ Current CONVERSATION_TITLE is "Prompt stack cleanup". Refresh only if topic chan
 Notes:
 
 ```text
-[0] SYSTEM is stable/cacheable.
-[1] USER has actual user goal.
-[2] ASSISTANT replay optional, only prior iteration assistant replay.
-[3] USER trailer has all dynamic engine state and start nudges.
+[0..4] SYSTEM messages are stable/cacheable; each tagged setup block has its own message boundary.
+[5] USER has actual user goal.
+[6] ASSISTANT replay optional, only prior iteration assistant replay.
+[7] USER trailer has all dynamic engine state and start nudges.
 ```
 
 ## `<current_turn_context>` fields
