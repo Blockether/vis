@@ -31,6 +31,19 @@
       (expect (str/includes? rendered "… many more"))
       (expect (not (str/includes? (pr-str answer) "LazySeq"))))))
 
+(defdescribe routed-provider-metadata-test
+  (it "uses svar routed provider/model over pre-call routing guess"
+    (let [provider #'loop/actual-llm-provider
+          model    #'loop/actual-llm-model
+          guessed  {:provider :anthropic-coding-plan
+                    :name "claude-opus-4-7"}
+          result   #:routed{:provider-id :zai-coding-plan
+                            :model "glm-5.1"}]
+      (expect (= :zai-coding-plan (provider guessed result)))
+      (expect (= "glm-5.1" (model guessed result)))
+      (expect (= :anthropic-coding-plan (provider guessed {})))
+      (expect (= "claude-opus-4-7" (model guessed {}))))))
+
 (defdescribe preserved-thinking-replay-test
   (it "does not replay z.ai thinking into an Anthropic provider/model call"
     (let [append-replay #'loop/append-preserved-thinking-replay
@@ -61,7 +74,23 @@
       (expect (= messages
                 (append-replay messages journal
                   {:provider :anthropic-coding-plan
-                   :model "claude-sonnet-4-6"}))))))
+                   :model "claude-sonnet-4-6"})))))
+
+  (it "does not replay poisoned z.ai-style signatures recorded as Anthropic"
+    (let [append-replay #'loop/append-preserved-thinking-replay
+          messages      [{:role "user" :content "continue"}]
+          poisoned-message {:role "assistant"
+                            :content [{:type "thinking"
+                                       :thinking "raw z.ai reasoning text"
+                                       :thinking-signature "raw z.ai reasoning text"}
+                                      {:type "text" :text "done"}]}
+          journal      [[1 {:llm-provider :anthropic-coding-plan
+                            :llm-model "claude-opus-4-7"
+                            :assistant-message poisoned-message}]]]
+      (expect (= messages
+                (append-replay messages journal
+                  {:provider :anthropic-coding-plan
+                   :model "claude-opus-4-7"}))))))
 
 (defdescribe provider-error-rendering-test
   (it "uses one stable provider error code and still includes provider body"
@@ -80,4 +109,12 @@
                                         :body "{\"error\":{\"message\":\"Invalid `signature` in `thinking` block\"}}"}})]
       (expect (= :ir (first ir)))
       (expect (true? (get-in ir [1 :vis/provider-error])))
-      (expect (str/includes? (loop/answer-str ir) "PROVIDER_ERROR")))))
+      (expect (str/includes? (loop/answer-str ir) "PROVIDER_ERROR"))))
+
+  (it "diagnoses indexed Anthropic thinking signature errors"
+    (let [provider-error-ir #'loop/provider-error-ir
+          ir (provider-error-ir {:message "Exceptional status code: 400"
+                                 :data {:status 400
+                                        :body "{\"error\":{\"message\":\"messages.1.content.3: Invalid `signature` in `thinking` block\"}}"}})
+          rendered (loop/answer-str ir)]
+      (expect (str/includes? rendered "preserved-thinking replay crossed")))))
