@@ -1250,7 +1250,7 @@
 
 (reg-event-db :message-received
   (fn [db [_ a b c]]
-    (let [[workspace-id answer {:keys [model iteration-count duration-ms tokens cost confidence conversation-turn-id status client-turn-id]}]
+    (let [[workspace-id answer {:keys [model provider llm-selected llm-actual llm-fallback? llm-fallback-trace iteration-count duration-ms tokens cost confidence conversation-turn-id status client-turn-id]}]
           (if (keyword? a)
             [a b c]
             [(current-workspace-id db) a b])]
@@ -1281,6 +1281,11 @@
                                  (assoc :traces trace :ir answer-ir)
                                  (or duration-ms wall-ms) (assoc :duration-ms (or duration-ms wall-ms))
                                  model      (assoc :model model)
+                                 provider   (assoc :provider provider)
+                                 llm-selected (assoc :llm-selected llm-selected)
+                                 llm-actual (assoc :llm-actual llm-actual)
+                                 (some? llm-fallback?) (assoc :llm-fallback? llm-fallback?)
+                                 (seq llm-fallback-trace) (assoc :llm-fallback-trace llm-fallback-trace)
                                  iteration-count (assoc :iteration-count iteration-count)
                                  tokens     (assoc :tokens tokens)
                                  cost       (assoc :cost cost)

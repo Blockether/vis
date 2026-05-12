@@ -495,6 +495,20 @@
           (update-bubble-state! chat-id update :thinking-acc str delta)
           (update-live-bubble! token chat-id))
 
+        (= phase :provider-fallback)
+        (do
+          (update-bubble-state! chat-id assoc :status-line
+            (let [failed (:failed-provider chunk)
+                  target (:new-provider chunk)
+                  from   (str (or (some-> (:id failed) name) (some-> (:provider-id failed) name) "provider")
+                           (when-let [m (:model failed)] (str "/" m)))
+                  to     (when (or (:id target) (:provider-id target) (:model target))
+                           (str (or (some-> (:id target) name) (some-> (:provider-id target) name) "provider")
+                             (when-let [m (:model target)] (str "/" m))))
+                  why    (or (:error failed) (some-> (:reason chunk) name) "fallback")]
+              (str "↪ Fallback " from (when to (str " → " to)) " — " why)))
+          (update-live-bubble! token chat-id :flush? true))
+
         ;; Form starts swap the status line; flush so the user sees the
         ;; new step within a tick.
         (= phase :form-start)
