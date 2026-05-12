@@ -144,7 +144,7 @@
   ;; `:extension-load` so the foundation `<scan-warnings>` block can
   ;; tag every line with its origin and the user reads "the
   ;; extension-load-failure warnings come from manifest discovery,
-  ;; not from skills". Public via `load-failures` (read-only); cleared
+  ;; not from runtime features". Public via `load-failures` (read-only); cleared
   ;; on every `scan!`. The atom is the single point that lets us
   ;; surface the failure to TWO consumers - the system prompt's
   ;; `<scan-warnings>` block (so the LLM sees "foundation extension

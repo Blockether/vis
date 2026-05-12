@@ -32,12 +32,6 @@
    [com.blockether.vis.ext.foundation.environment.monorepo :as monorepo]
    [com.blockether.vis.ext.foundation.environment.render :as render]
    [com.blockether.vis.ext.foundation.environment.repositories :as repositories]
-   ;; Skills catalog moved to `com.blockether.vis.internal.skills` during
-   ;; the May 2026 merge consolidation (the legacy
-   ;; `environment.skills` namespace was removed). The internal skills
-   ;; loader is API-compatible: `list-all`, `reload!`, `lookup`,
-   ;; `scan-warnings` all unchanged.
-   [com.blockether.vis.internal.skills :as skills]
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
@@ -53,8 +47,7 @@
 ;; `defonce` so the atom survives a `(require :reload)` during an
 ;; extension reload (per plan caveat: extensions holding mutable
 ;; state across reload MUST use defonce). The cwd-keyed snapshot
-;; covers host/git/languages/monorepo only — agents + skills hold
-;; their own caches in their respective namespaces (plan Q8).
+;; covers host/git/languages/monorepo only — agents hold their own cache.
 (defonce ^:private cache
   (atom {:key nil :value nil}))
 
@@ -115,21 +108,12 @@
         value))))
 
 (defn refresh!
-  "Drop the cached snapshot and recompute. Useful after the working tree changes substantially (new files, branch checkout, etc.). Cascades into agents + skills caches so `<project-guidance>` and `<skills>` also refresh."
-  ;; Cascade rationale: users editing `AGENTS.md` reach for
-  ;; `(vis/refresh!)` (existing muscle memory). Without the cascade,
-  ;; `<environment>` would refresh but `<project-guidance>` and
-  ;; `<skills>` would stay stale until the explicit reload fns are
-  ;; called. See plan caveat: `(vis/refresh!) cascades`.
+  "Drop the cached snapshot and recompute. Useful after the working tree changes substantially (new files, branch checkout, etc.). Cascades into the project-guidance cache."
   []
   (reset! cache {:key nil :value nil})
   (try (agents/reload!)
     (catch Throwable t
       (tel/log! {:level :warn :id ::agents-reload-failed
-                 :data  {:error (ex-message t)}})))
-  (try (skills/reload!)
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::skills-reload-failed
                  :data  {:error (ex-message t)}})))
   (snapshot))
 
@@ -210,7 +194,7 @@
     {}))
 
 ;; ---------------------------------------------------------------------------
-;; Project guidance + skills + scan-warnings surface (plan §3).
+;; Project guidance + scan-warnings surface.
 ;; ---------------------------------------------------------------------------
 
 (defn main-agent-instructions
@@ -222,30 +206,15 @@
   (env-data-symbol #'main-agent-instructions
     {}))
 
-;; (v/skills) WAS HERE. Removed: enumeration is now the
-;; `TURN_ACCESSIBLE_SKILLS` SYSTEM var (frozen at turn start, vec of
-;; summaries, no body). Having both `(v/skills)` AND the SYSTEM var
-;; trained the model to call the symbol — see conversation
-;; eeaf9651-06c7-4dda-9e97-877fcef06337's `(def skills (v/skills))`
-;; followed by an answer composed straight off the call result, when
-;; the same data was already in the prompt's <skills> block + the
-;; SYSTEM var. ONE source of truth wins; the redundant call goes.
-;;
-;; Surfaces still exposed: TURN_ACCESSIBLE_SKILLS for filtering and
-;; `(v/reload-skills!)` for the cache-bust after editing on disk.
-;; Skill body loading is INTERNAL host state: use `(load-skill! "name")`,
-;; not a `v/` extension symbol.
-
 (defn- combined-scan-warnings []
-  ;; Three sources, all `{:source :reason :path}` shaped so the
+  ;; Two sources, all `{:source :reason :path}` shaped so the
   ;; renderer can splice them into one `<scan-warnings>` block:
   ;;
   ;;   (a) AGENTS.md / CLAUDE.md read failures              — agents/scan-warnings
-  ;;   (b) SKILL.md frontmatter / shape rejections           — skills/scan-warnings
-  ;;   (c) Extension namespace `(require)` failures collected
+  ;;   (b) Extension namespace `(require)` failures collected
   ;;       during classpath discovery                        — vis/extension-load-failures
   ;;
-  ;; (c) is the load-bearing addition. Pre-fix a single typo in any
+  ;; (b) is load-bearing. Pre-fix a single typo in any
   ;; extension source file silently disabled its alias namespace
   ;; (`v/`, `z/`, `clj/`, …). The user saw nothing; the LLM saw
   ;; "Unable to resolve symbol" forever (conversation
@@ -254,7 +223,6 @@
   ;; failed to load: Syntax error reading source at markdown.clj:328:17" —
   ;; into the system prompt where the model will read it.
   (vec (concat (agents/scan-warnings)
-         (skills/scan-warnings)
          (vis/extension-load-failures))))
 
 (defn ^{:doc "Scan warnings vec: {:source :reason :path}. Empty when clean."
@@ -266,11 +234,6 @@
   "Reload AGENTS.md / CLAUDE.md cache."
   []
   (agents/reload!))
-
-(defn reload-skills!
-  "Reload SKILL.md cache. Returns {:scanned :loaded :dropped :warnings}."
-  []
-  (skills/reload!))
 
 (defn reload-extensions!
   "Reload extension registry. Returns diff: {:added :removed :reloaded :errors ...}."
@@ -285,10 +248,6 @@
   (env-data-symbol #'reload-instructions!
     {}))
 
-(def reload-skills!-symbol
-  (env-data-symbol #'reload-skills!
-    {}))
-
 (def reload-extensions!-symbol
   (env-data-symbol #'reload-extensions!
     {}))
@@ -298,15 +257,15 @@
    refresh!-symbol render-symbol
    main-agent-instructions-symbol
    scan-warnings-symbol
-   reload-instructions!-symbol reload-skills!-symbol
+   reload-instructions!-symbol
    reload-extensions!-symbol])
 
 (def ^:private FN_INDEX
   "One-line strategy for environment fns under the `v/` alias."
-  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; v/render only when you need the prompt block; reload helpers after instruction/skill/extension changes.")
+  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; v/render only when you need the prompt block; reload helpers after instruction/extension changes.")
 
 (defn environment-info
-  "Render the foundation-owned environment_info contribution. The
+  "Render the foundation-owned environment contribution. The
    internal prompt assembler owns placement; this function owns the
    host/git/language/monorepo/multirepo snapshot text."
   [_environment]

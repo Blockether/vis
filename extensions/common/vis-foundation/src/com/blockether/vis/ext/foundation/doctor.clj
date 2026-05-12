@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.foundation.doctor
   "Foundation's contribution to the `vis extensions doctor` aggregator. ONE fn
-   (`check-fn`) returns the full message stream from five logical
+   (`check-fn`) returns the full message stream from four logical
    sections, each stamping its own `:check-id` so the formatter
    groups them under the same banner the original four-checks-vec
    shape produced (plan §1 Q18 / §10):
@@ -13,12 +13,9 @@
                           when neither AGENTS.md nor CLAUDE.md exists
                           (rules silently absent is worth flagging
                           even though it isn't an error per se).
-     ::skills            Skills catalog summary: count + breakdown
-                          by source; :error lines per malformed
-                          SKILL.md file.
      ::voice             Optional voice runtime readiness: voice feature,
                           ffmpeg, and Piper espeak-ng-data presence.
-     ::scan-warnings     Aggregated warnings from agents + skills
+     ::scan-warnings     Aggregated warnings from project-guidance
                           scanners (already surfaced via
                           `(v/scan-warnings)`); promoted to
                           :error level for prominence in the
@@ -34,8 +31,7 @@
    [babashka.process :as process]
    [clojure.java.io :as io]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.ext.foundation.environment.agents :as agents]
-   [com.blockether.vis.internal.skills :as skills]))
+   [com.blockether.vis.ext.foundation.environment.agents :as agents]))
 
 (set! *warn-on-reflection* true)
 
@@ -98,23 +94,6 @@
       [{:level       :warn
         :message     "No project guidance found (neither AGENTS.md nor CLAUDE.md in the repo root)."
         :remediation "Add `AGENTS.md` to your repo root with the rules / conventions you want vis to follow every turn."}])))
-
-;; ---------------------------------------------------------------------------
-;; ::skills - catalog summary
-;; ---------------------------------------------------------------------------
-
-(defn- skills-check-fn [_environment]
-  (let [skills-list (skills/list-all)
-        by-source   (frequencies (mapv :source skills-list))
-        repo-n      (or (:repo by-source) 0)
-        user-n      (or (:user-global by-source) 0)
-        total       (count skills-list)]
-    (if (zero? total)
-      [{:level   :info
-        :message "No skills installed (neither <repo>/.agents/skills/ nor ~/.agents/skills/ has any SKILL.md files)."}]
-      [{:level   :info
-        :message (str total " skill" (when (not= 1 total) "s")
-                   " loaded (" repo-n " repo, " user-n " user-global)")}])))
 
 ;; ---------------------------------------------------------------------------
 ;; ::voice - optional voice runtime checks
@@ -180,17 +159,13 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- scan-warnings-check-fn [_environment]
-  (let [warnings (concat (agents/scan-warnings) (skills/scan-warnings))]
+  (let [warnings (agents/scan-warnings)]
     (if (empty? warnings)
       []
       (mapv (fn [{:keys [path reason source]}]
               {:level       :error
                :message     (str path ": " reason)
                :remediation (case source
-                              :skill-frontmatter
-                              (str "Fix the YAML frontmatter (required fields: name, description), "
-                                "then run `(reload-skills!)` from `:code` or `bin/vis extensions doctor` "
-                                "to revalidate.")
                               :agents-md
                               (str "Verify the file is readable; then run `(vis/reload-instructions!)` "
                                 "or `bin/vis extensions doctor` to revalidate.")
@@ -204,8 +179,8 @@
 ;; ---------------------------------------------------------------------------
 ;; The single fn the foundation extension wires into
 ;; `:ext/doctor-check-fn`. Order is intentional: system facts first,
-;; then project-guidance presence, then skills summary, then voice
-;; readiness, then any scan failures. Each section stamps its own
+;; then project-guidance presence, then voice readiness, then any scan
+;; failures. Each section stamps its own
 ;; `:check-id` so the formatter still groups the output under the
 ;; documented prefixes.
 ;; ---------------------------------------------------------------------------
@@ -221,7 +196,6 @@
     (concat
       (stamp ::system        (system-check-fn        environment))
       (stamp ::agents-md     (agents-md-check-fn     environment))
-      (stamp ::skills        (skills-check-fn        environment))
       (stamp ::voice         (voice-check-fn         environment))
       (stamp ::scan-warnings (scan-warnings-check-fn environment)))))
 

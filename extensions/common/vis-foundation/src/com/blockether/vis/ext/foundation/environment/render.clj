@@ -172,8 +172,7 @@
 
 ;; ---------------------------------------------------------------------------
 ;; Project guidance + scan-warnings blocks. Rendered alongside
-;; <environment> by the foundation aggregator's prompt fn. Skills are
-;; host-internal and rendered by the core prompt assembler.
+;; <environment> by the foundation aggregator's prompt fn.
 ;; Each format-*-block is a pure fn from data -> string-or-nil; the caller
 ;; (environment-prompt) drops nil blocks (conditional render).
 ;; ---------------------------------------------------------------------------

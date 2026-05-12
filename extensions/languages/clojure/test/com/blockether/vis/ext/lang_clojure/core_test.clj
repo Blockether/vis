@@ -72,7 +72,7 @@
       (expect (contains? symbols 'clean-ns-plan))))
 
   (it "adds minimal Clojure structural-editing strategy to environment info"
-    (let [info ((:ext/environment-info-fn clj-ext/clojure-extension) {})]
+    (let [info ((:ext/environment-prompt-fn clj-ext/clojure-extension) {})]
       (expect (string? info))
       (expect (str/includes? info "Clojure/EDN"))
       (expect (str/includes? info "z/forms"))

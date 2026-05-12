@@ -186,7 +186,7 @@
      :ext/alias  {:ns 'vis.ext.clj :alias 'z}
      :ext/kind      "languages"
      :ext/activation-fn (fn [_] (clojure-project?))
-     :ext/environment-info-fn clojure-environment-info
+     :ext/environment-prompt-fn clojure-environment-info
      :ext/prompt    patch/z-prompt
      :ext/symbols   (into [patch/source-symbol patch/lit-symbol patch/patch-symbol patch/patch-check-symbol patch/forms-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol patch/inspect-symbol]
                       (concat repair/symbols lsp-symbols rewrite-clj-zip-symbols))}))

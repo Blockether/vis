@@ -580,20 +580,14 @@
    and the prefix-based lifetime convention
    (`TURN_*`, `ITERATION_*`, `CONVERSATION_*`).
 
-   Vocabulary note: `ACTIVE` vs `ACCESSIBLE`. An extension is ACTIVE when
-   its activation-fn returned truthy and its symbols got intern'd into
-   the SCI sandbox (the model can call `v/cat` directly because the var
-   is loaded). A skill is ACCESSIBLE when the loader can find it on disk
-   and surface its `:name`/`:description`; the body becomes a sandbox var
-   only after the model calls `(load-skill! \"name\")` - that's the
-   internal activation step. Hence: TURN_ACTIVE_EXTENSIONS (loaded) vs
-   TURN_ACCESSIBLE_SKILLS (discoverable, lazy-load on demand)."
+   Vocabulary note: `ACTIVE` means an extension activation-fn returned
+   truthy and its symbols got intern'd into the SCI sandbox (the model can
+   call `v/cat` directly because the var is loaded)."
   '#{TURN_ID
      TURN_POSITION
      TURN_CONVERSATION_STATE_ID
      TURN_SYSTEM_PROMPT
      TURN_ACTIVE_EXTENSIONS
-     TURN_ACCESSIBLE_SKILLS
      TURN_ITERATION_ID
      TURN_ITERATION_POSITION
      CONVERSATION_STATE_ID

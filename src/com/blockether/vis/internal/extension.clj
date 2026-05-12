@@ -677,11 +677,11 @@
 ;; Optional extra LLM-facing documentation appended when the extension is active.
 (s/def :ext/prompt fn?)
 
-;; Optional system-prompt environment_info contributor. Called once at
+;; Optional system-prompt environment contributor. Called once at
 ;; system-prompt assembly with the live environment. Any active extension
 ;; can add repo/runtime/project facts here without taking over the whole
 ;; `:ext/prompt` fragment.
-(s/def :ext/environment-info-fn fn?)
+(s/def :ext/environment-prompt-fn fn?)
 
 ;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
@@ -959,7 +959,7 @@
     (s/keys :req [:ext/namespace :ext/doc]
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
-            :ext/alias :ext/prompt :ext/environment-info-fn
+            :ext/alias :ext/prompt :ext/environment-prompt-fn
             :ext/on-parse-error-fn :ext/source-rewrite-fn :ext/fenced-renderers
             :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
@@ -2652,11 +2652,7 @@
 
      :op.tag/observation   reads state without changing it — cat,
                            ls, glob, exists?, locators, rg, env
-                           queries, registry lookups, AND post-action
-                           verification (./verify.sh, patch-check,
-                           parse-check). Verification distinguishes
-                           via :success? on the envelope, not a
-                           separate tag.
+                           queries, registry lookups
 
      :op.tag/action        mutates state — patch, write, append,
                            mkdir, touch, delete, move, copy.
@@ -2679,37 +2675,7 @@
    per-op badge field. Channels compose `(str tag-label \" \" op-name)`.
 
    Each extension owns its own ops via `register-op!`."
-  (atom
-    {;; foundation editing (alias `v`)
-     :v/cat              {:tag :op.tag/observation}
-     :v/ls               {:tag :op.tag/observation :self-describing? true}
-     :v/glob             {:tag :op.tag/observation :self-describing? true}
-     :v/exists?          {:tag :op.tag/observation}
-     :v/rg               {:tag :op.tag/observation :self-describing? true}
-     :v/grep             {:tag :op.tag/observation :self-describing? true}
-     :v/patch            {:tag :op.tag/action}
-     :v/patch-check      {:tag :op.tag/observation}
-     :v/write            {:tag :op.tag/action}
-     :v/append           {:tag :op.tag/action}
-     :v/create-dirs      {:tag :op.tag/action}
-     :v/delete           {:tag :op.tag/action}
-     :v/delete-if-exists {:tag :op.tag/action}
-     :v/move             {:tag :op.tag/action}
-     :v/copy             {:tag :op.tag/action}
-     :v/bash             {:tag :op.tag/action :self-describing? true}
-     ;; lang-clojure (alias `z`)
-     :z/forms              {:tag :op.tag/observation :self-describing? true}
-     :z/locators           {:tag :op.tag/observation :self-describing? true}
-     :z/symbols            {:tag :op.tag/observation :self-describing? true}
-     :z/locator-for-symbol {:tag :op.tag/observation}
-     :z/inspect            {:tag :op.tag/observation}
-     :z/patch              {:tag :op.tag/action}
-     :z/patch-check        {:tag :op.tag/observation}
-     :z/repair-range       {:tag :op.tag/action}
-     :z/repair-locator     {:tag :op.tag/action}
-     :z/repair-file        {:tag :op.tag/action}
-     ;; clojure.core mutators reachable through SCI sandbox
-     :spit                 {:tag :op.tag/action}}))
+  (atom {}))
 
 (defn register-op!
   "Register or override op metadata for `op-keyword`. `meta` is a map

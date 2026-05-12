@@ -648,7 +648,7 @@
   ;; Inline code inside that IR arrives at the bubble painter as
   ;; INLINE_CODE_ON/OFF sentinels. The answer-text branch must consume
   ;; them just like headings/bullets/quotes; otherwise the user sees
-  ;; raw PUA glyphs like  and  around `/skill`.
+  ;; raw PUA glyphs like  and  around `/command`.
   (it "consumes inline code sentinels in plain final-answer text"
     (let [captured (atom [])
           active   (atom #{})
@@ -677,13 +677,13 @@
                         (swap! captured conj text)
                         this)))
           line     (str p/MARKER_ANSWER_TXT
-                     "Use " p/INLINE_CODE_ON "/skill" p/INLINE_CODE_OFF
+                     "Use " p/INLINE_CODE_ON "/command" p/INLINE_CODE_OFF
                      " (or pick from slash suggestions).")]
       (render/draw-chat-bubble! graphics
         {:role :assistant :timestamp nil :prewrapped-lines [line]}
         0 0 80)
       (let [painted (apply str @captured)]
-        (expect (str/includes? painted "/skill"))
+        (expect (str/includes? painted "/command"))
         (expect (not (str/includes? painted p/INLINE_CODE_ON)))
         (expect (not (str/includes? painted p/INLINE_CODE_OFF)))))))
 
@@ -1095,23 +1095,6 @@
                      :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
       (expect (str/includes? (:text payload) "ACTION patch"))
       (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
-
-  (it "renders load-skill result bodies as Markdown with a skill badge"
-    (render/invalidate-cache!)
-    (let [trace [{:code ["(load-skill! \"find-skills\")"]
-                  :results ["Loaded skill `find-skills`.\n\n# Find Skills\n\nNice body."]
-                  :result-kinds [:value]
-                  :result-details [{:kind :skill-load :name "find-skills"}]
-                  :stdouts [""]
-                  :durations [1]
-                  :successes [true]}]
-          payload (render/format-answer-with-thinking-data
-                    nil trace 96 {:show-iterations true} nil false
-                    {:conversation-id "conversation"
-                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
-      (expect (str/includes? (:text payload) "SKILL find-skills"))
-      (expect (str/includes? (:text payload) "Find Skills"))
-      (expect (not (str/includes? (:text payload) ":body")))))
 
   (it "does not duplicate edit badges when tool results auto-collapse"
     (render/invalidate-cache!)
