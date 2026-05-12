@@ -9,7 +9,7 @@ Canonical naming used in this repo:
 - **post hooks** = side-effect hooks (`:turn.iteration/stop`, `:turn/stop`)
 
 So “guard” is not a separate extension API; it is a lifecycle hook role.
-Structural/engine invariants (answer-alone form shape,
+Structural/engine invariants (turn-answer!-alone form shape,
 answer-with-mutation preflight, etc.) remain core preflight gates in
 `internal/loop.clj`.
 
@@ -65,7 +65,7 @@ Only namespaced keywords are valid. Old dash phases are removed.
 | `:turn/start` | `prompt/build-iteration-context` | first iteration of each turn | `{:hint ...}` becomes current engine nudge |
 | `:turn.iteration/start` | `prompt/build-iteration-context` | every iteration before eval | `{:hint ...}` becomes current engine nudge |
 | `:turn.iteration/stop` | `loop/emit-post-hooks!` | every iteration after eval | ignored |
-| `:turn.answer/validate` | `loop/final-answer-gate-error` | when `(answer ...)` produced a candidate final answer | nil accepts; `{:reject true :message ... :hint ...}` rejects |
+| `:turn.answer/validate` | `loop/final-answer-gate-error` | when `(turn-answer! ...)` produced a candidate final answer | nil accepts; `{:reject true :message ... :hint ...}` rejects |
 | `:turn/stop` | `loop/emit-post-hooks!` | after the turn closes | ignored |
 
 Hooks do NOT block evaluation except `:turn.answer/validate`, which is
@@ -149,5 +149,5 @@ answer-validation hooks:
 | `:foundation/conversation-title` | `:turn.iteration/start` | title blank / refresh-flagged / stale (periodic) |
 | `:foundation/context-pressure` | `:turn.iteration/start` | input tokens > ~50% of model's context window |
 | `:foundation/blind-answer` | `:turn.iteration/start` | iter 1 + investigation-style request + zero prior observation |
-| `:foundation/unresolved-errors-before-answer` | `:turn.answer/validate` | open failure obligations remain (block/journal errors not closed by later proof). For answer-alone preflight failures, rerun the rejected sibling forms without `(answer ...)`, observe success, then answer alone. |
+| `:foundation/unresolved-errors-before-answer` | `:turn.answer/validate` | open failure obligations remain (block/journal errors not closed by later proof). For answer-alone preflight failures, rerun the rejected sibling forms without `(turn-answer! ...)`, observe success, then answer alone. |
 | `:foundation/action-request-needs-evidence` | `:turn.answer/validate` | action request (`fix/implement/run/...`) but no prior tool/code evidence in this turn and answer is not blocked/partial |

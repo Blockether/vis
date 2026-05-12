@@ -292,7 +292,7 @@
       (expect (str/includes? body "(+ 11 1)"))))
 
   (it "toggles :vis/silent forms in live progress traces"
-    (let [progress {:iterations [{:code ["(conversation-title \"Greeting\")" "(+ 1 2)"]
+    (let [progress {:iterations [{:code ["(set-conversation-title \"Greeting\")" "(+ 1 2)"]
                                   :comments [nil nil]
                                   :results [":vis/silent" "3"]
                                   :result-kinds [:value :value]
@@ -310,9 +310,9 @@
                         (render/progress->text progress 80
                           {:show-thinking true :show-iterations true :show-silent true}
                           {:now-ms 1000 :turn-start-ms 0}))]
-      (expect (not (str/includes? hidden-body "conversation-title")))
+      (expect (not (str/includes? hidden-body "set-conversation-title")))
       (expect (str/includes? hidden-body "(+ 1 2)"))
-      (expect (str/includes? shown-body "conversation-title"))
+      (expect (str/includes? shown-body "set-conversation-title"))
       (expect (str/includes? shown-body ":vis/silent")))))
 
 (defdescribe progress-streaming-perf-test
@@ -817,7 +817,7 @@
 ;; md-join inline-bold inside a bullet - the `Let / me / dig / deeper`
 ;; regression
 ;;
-;; Faithful reconstruction of the FIRST `(answer ...)` block in conversation
+;; Faithful reconstruction of the FIRST `(turn-answer! ...)` block in conversation
 ;; eeaf9651-06c7-4dda-9e97-877fcef06337, turn 363de6c6-..., position 1.
 ;; The agent built a bullet's body via `md-join`, which inserts `\n\n`
 ;; between every part. With the naive bullet-coalesce that earlier

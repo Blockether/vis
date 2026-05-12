@@ -277,7 +277,7 @@ CREATE TABLE conversation_turn_iteration (
   -- dependency-graphed.
   code_blocks                     BLOB,
 
-  -- Index of the form that called `(answer ...)` when the conversation_turn_iteration
+  -- Index of the form that called `(turn-answer! ...)` when the conversation_turn_iteration
   -- produced a final answer. Channels render the answer text below;
   -- this slot lets readers ELIDE that form from the displayed call
   -- log without re-walking the source. NULL for non-terminal

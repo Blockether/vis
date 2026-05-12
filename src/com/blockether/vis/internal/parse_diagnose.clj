@@ -12,7 +12,7 @@
 
    Today the catalogue covers ONE class of error - the most common
    one we've seen in real agent traces: UNBALANCED DOUBLE-QUOTE
-   STRING. The model writes a multi-line `(answer (v/join ...))` and
+   STRING. The model writes a multi-line `(turn-answer! (v/join ...))` and
    accidentally drops or doubles a `\\` + `\"` escape somewhere in
    the middle. edamame's response is `Invalid symbol: <text>` at a
    row far BELOW the actual broken line - because the unbalanced
@@ -215,7 +215,7 @@
 ;; Eval-time diagnostic: `Unable to resolve symbol: X`
 ;;
 ;; Class of LLM mistake: model writes a vector of strings inside
-;; `(answer (v/join (v/ul [...])))` and forgets the opening `"`
+;; `(turn-answer! (v/join (v/ul [...])))` and forgets the opening `"`
 ;; on one element. The bare prose still parses (Unicode words are
 ;; legal Clojure symbols), but SCI throws `Unable to resolve
 ;; symbol: <FirstWord>` at eval-time. Edamame is happy. The repair
@@ -224,7 +224,7 @@
 ;; This diagnostic doesn't auto-repair - the safe move at this
 ;; level is to enrich the error message so the model sees WHY the
 ;; symbol was unresolved (it's prose-shaped, not a real binding).
-;; Auto-repair scoped to `(answer ...)` is a separate concern and
+;; Auto-repair scoped to `(turn-answer! ...)` is a separate concern and
 ;; lives outside this ns.
 ;;
 ;; Source: conversation ec64266c-...'s turn 2 (iter 0+1) where the
@@ -305,18 +305,18 @@
           " as a string literal.")))))
 
 ;; -----------------------------------------------------------------------------
-;; Eval-time auto-repair scoped to `(answer ...)` forms.
+;; Eval-time auto-repair scoped to `(turn-answer! ...)` forms.
 ;;
 ;; Why scoped to `answer`: it's the terminal sink of the RLM loop.
-;; A failed `(answer ...)` burns an iteration, the cost-USD on the
+;; A failed `(turn-answer! ...)` burns an iteration, the cost-USD on the
 ;; LLM call, and the user's wall-clock - and the user is staring
 ;; at a spinner while the model regenerates the same long markdown
-;; payload. Inside `(answer ...)` the body is by contract
+;; payload. Inside `(turn-answer! ...)` the body is by contract
 ;; markdown-shaped prose, NOT computation - so a bare-prose symbol
 ;; in a `v/ul`/`v/p`/etc vector of strings has no legitimate use
 ;; case. We can rewrite safely.
 ;;
-;; Outside `(answer ...)` we do NOT rewrite: a bare Unicode symbol
+;; Outside `(turn-answer! ...)` we do NOT rewrite: a bare Unicode symbol
 ;; in regular code might be the intended binding (rare but legal),
 ;; and silently coercing it to a string would mask real bugs.
 ;;
@@ -414,7 +414,7 @@
       ;; close — strategies A and B both rely on an existing inner
       ;; quote to land the close, so without one they generate
       ;; unparseable candidates. Conv a1ccbb8c shape
-      ;; `(answer Hi there)` is the canonical repro.
+      ;; `(turn-answer! Hi there)` is the canonical repro.
       (cond-> [strategy-a]
         strategy-b (conj strategy-b)
         ;; Strategy C only when there's no inner unescaped `"` to
@@ -423,14 +423,14 @@
         (conj (str prefix "\"" span-text "\"" suffix))))))
 
 (defn- bare-symbol-leads-answer?
-  "True when `source` opens with `(answer SYM` where the first
-   non-whitespace token after `(answer ` is a bare Clojure
+  "True when `source` opens with `(turn-answer! SYM` where the first
+   non-whitespace token after `(turn-answer! ` is a bare Clojure
    identifier (not a string literal, not an opening paren, not a
    keyword, not a number).
 
    This is the strongest possible signal that the model forgot the
    opening `\"` on the answer body — the answer-form arity contract
-   is `(answer <markdown-string-or-renderable>)` and a bare symbol
+   is `(turn-answer! <markdown-string-or-renderable>)` and a bare symbol
    in the first slot has no legitimate use case (no plain symbol is
    `:vis/answer`-shaped). When this fires we can restitch even when
    the symbol fails the broader `looks-like-prose?` heuristic
@@ -444,7 +444,7 @@
    `restitch-candidates`) or nil when the pattern doesn't match."
   ^Long [^String source ^String sym]
   (when (and source sym)
-    (let [;; `(answer` followed by required whitespace, then a
+    (let [;; `(turn-answer!` followed by required whitespace, then a
           ;; capture group around the bare-ident shape we want to
           ;; promote to a string. We anchor on `\b` so partial
           ;; matches inside identifiers don't fire. The ident must
@@ -452,7 +452,7 @@
           ;; out of scope and either parse fine or have their own
           ;; restitch path.
           quoted-sym (java.util.regex.Pattern/quote sym)
-          pat        (re-pattern (str "\\(answer\\s+(" quoted-sym ")\\b"))
+          pat        (re-pattern (str "\\(turn-answer!\\s+(" quoted-sym ")\\b"))
           m          (re-matcher pat source)]
       (when (.find m)
         (long (.start m 1))))))
@@ -460,7 +460,7 @@
 (defn try-answer-string-restitch
   "Repair-candidate generator for the eval-time error class
    `Unable to resolve symbol: X` when X is a bare word that was
-   supposed to be a string literal inside an `(answer ...)` form.
+   supposed to be a string literal inside an `(turn-answer! ...)` form.
 
    Two trigger paths:
 
@@ -471,9 +471,9 @@
       Polish/German/etc. fragments inside `(v/ul [\"a\" \"b\" Niektore
       ...])`-shaped vectors.
 
-   2. **Bare leading symbol in `(answer SYM ...)`** (conv
+   2. **Bare leading symbol in `(turn-answer! SYM ...)`** (conv
       a1ccbb8c-a1a3-434c-86ad-b0f79cd2dee8) — X is the very first
-      token after `(answer `. The arity contract guarantees there's
+      token after `(turn-answer! `. The arity contract guarantees there's
       no legitimate symbol there, so we restitch unconditionally,
       bypassing the prose-shape filter. Catches short fragments
       (`Co`, `Hi`, `Ok`) that the prose detector — intentionally
@@ -489,7 +489,7 @@
   [^String source ^String sym]
   (when (and (string? source)
           (string? sym)
-          (str/includes? source "(answer"))
+          (str/includes? source "(turn-answer!"))
     (let [;; Path 2 first: it's strictly more specific (the symbol
           ;; must literally lead an answer form). When it matches,
           ;; we know the offset already, no fuzzy index-of needed.

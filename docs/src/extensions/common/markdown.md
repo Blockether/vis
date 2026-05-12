@@ -9,7 +9,7 @@ surface.
 
 `v/` is the only supported way the agent constructs an answer body.
 No Mustache, no template language, no `{{var}}` interpolation -
-every fn is a pure string builder. Whatever `(answer (v/join ...))`
+every fn is a pure string builder. Whatever `(turn-answer! (v/join ...))`
 produces *is* the answer markdown verbatim, no post-processing.
 
 Why programmatic over templating:
@@ -29,7 +29,7 @@ Why programmatic over templating:
 ## Usage
 
 ```clojure
-(answer
+(turn-answer!
   (v/join
     (v/h1 "Patch report")
     (v/p "Three files touched.")
@@ -43,9 +43,9 @@ Why programmatic over templating:
 
 Block fns **return text without a trailing newline**. Stitch with
 `(v/join ...)` (blank line between blocks) or `(v/lines ...)` (single
-newline between lines), then hand the final string to `(answer ...)`.
+newline between lines), then hand the final string to `(turn-answer! ...)`.
 See [Iteration flow](../../architecture/iteration-flow.md) for how
-`(answer ...)` interacts with the loop.
+`(turn-answer! ...)` interacts with the loop.
 
 ## Surface
 
@@ -254,7 +254,7 @@ map. Three things made it wrong:
    mode error from inside the renderer, surfacing as "iteration
    failed" rather than "your final-answer template referenced an
    unbound name".
-3. **Redundant.** `(answer ...)` is a real Clojure call; arg passes
+3. **Redundant.** `(turn-answer! ...)` is a real Clojure call; arg passes
    through `str`. The model already has `clojure.string`, `format`,
    `pr-str`, `let` - every interpolation primitive - for building
    the answer body. Templating was a second way to do the same

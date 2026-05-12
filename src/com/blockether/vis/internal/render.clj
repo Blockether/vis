@@ -53,6 +53,7 @@
      anything else                — surfaced as [:code {:lang \"edn\"} pr-str]"
   (:require
    [clojure.string :as str]
+   [clojure+.walk :as cwalk]
    [com.blockether.vis.internal.persistance :as persistance])
   (:import
    [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
@@ -460,36 +461,76 @@
    render passes — walker output is computed once per canonical IR
    identity, not once per equal-but-fresh allocation.
 
+   Before canonicalization, Hiccup child positions are walked with
+   `clojure+.walk` semantics and non-vector sequential values (notably
+   lazy seqs from `(map ...)` inside answer IR) are safely realized to
+   at most 100 items, then replaced with an explicit `… many more`
+   marker when truncated. This avoids persisting Java LazySeq identity
+   strings and avoids hanging on infinite seqs.
+
    See namespace docstring for the full canonical-form invariants."
   [v]
   (if (canonical? v)
     v   ;; identical preserved — cache-friendliness fast path
-    (let [raw-children
-          (cond
-            (and (vector? v) (= :ir (first v)))
-            (let [v (ensure-attrs v)] (drop 2 v))
-
-            (string? v)
-            [v]
-
-            (and (vector? v) (keyword? (first v)))
-            [v]
-
-            (sequential? v)
-            (seq v)
-
-            :else
-            [[:code {:lang "edn"} (pr-str v)]])
-
-          coerced
-          (mapv (fn [x]
+    (let [max-seq-items 100
+          truncation-marker "… many more"]
+      (letfn [(bounded-seq [xs]
+                (let [items (doall (take (inc max-seq-items) xs))
+                      more? (> (count items) max-seq-items)]
+                  (cond-> (mapv sanitize (take max-seq-items items))
+                    more? (conj truncation-marker))))
+              (expand-child [child]
+                (if (and (sequential? child) (not (vector? child)) (not (string? child)))
+                  (bounded-seq child)
+                  [(sanitize child)]))
+              (sanitize-vector [x]
+                (let [x (vec x)]
+                  (if (and (seq x) (keyword? (first x)))
+                    (let [tag      (first x)
+                          attrs?   (map? (second x))
+                          prefix   (if attrs? [tag (sanitize (second x))] [tag])
+                          children (if attrs? (nnext x) (next x))]
+                      (into prefix (mapcat expand-child children)))
+                    (cwalk/walk sanitize identity x))))
+              (sanitize [x]
+                (cond
+                  (nil? x)                         nil
+                  (string? x)                      x
+                  (vector? x)                      (sanitize-vector x)
+                  (map? x)                         (cwalk/walk sanitize identity x)
+                  (set? x)                         (cwalk/walk sanitize identity x)
+                  (and (sequential? x)
+                    (not (string? x)))             (bounded-seq x)
+                  :else                            x))]
+        (let [v (sanitize v)]
+          (if (canonical? v)
+            v
+            (let [raw-children
                   (cond
-                    (string? x)                              x
-                    (and (vector? x) (keyword? (first x)))   x
-                    (nil? x)                                  nil
-                    :else                                     [:code {:lang "edn"} (pr-str x)]))
-            raw-children)]
-      (into [:ir {}] (canon-blocks-strict (filter some? coerced))))))
+                    (and (vector? v) (= :ir (first v)))
+                    (let [v (ensure-attrs v)] (drop 2 v))
+
+                    (string? v)
+                    [v]
+
+                    (and (vector? v) (keyword? (first v)))
+                    [v]
+
+                    (sequential? v)
+                    (seq v)
+
+                    :else
+                    [[:code {:lang "edn"} (pr-str v)]])
+
+                  coerced
+                  (mapv (fn [x]
+                          (cond
+                            (string? x)                              x
+                            (and (vector? x) (keyword? (first x)))   x
+                            (nil? x)                                  nil
+                            :else                                     [:code {:lang "edn"} (pr-str x)]))
+                    raw-children)]
+              (into [:ir {}] (canon-blocks-strict (filter some? coerced))))))))))
 
 (defn ir?
   "True when x is a canonical [:ir ...] AST."

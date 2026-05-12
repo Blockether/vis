@@ -169,7 +169,7 @@
                         ;; vectors so resumed conversations render the
                         ;; same way live ones do - just the answer
                         ;; text below the iteration trace, never the
-                        ;; `(answer "...")` call as code above it.
+                        ;; `(turn-answer! "...")` call as code above it.
                         turn-iterations (vis/db-list-conversation-turn-iterations d (:id q))
                         last-iteration-id (some-> (last turn-iterations) :id)
                         ;; Empty IR is `[:ir {}]` (count 2 — just root tag
@@ -182,7 +182,7 @@
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))
                                              ;; Elide:
-                                             ;; 1. the `(answer "...")` form on the answer iteration
+                                             ;; 1. the `(turn-answer! "...")` form on the answer iteration
                                              ;;    (rule b': always last form)
                                              ;; 2. any block tagged `:vis/preflight?` — those are
                                              ;;    synthetic gate rejections, model-facing only,

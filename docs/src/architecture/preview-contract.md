@@ -22,4 +22,4 @@ Anti-patterns that caused conversation `ac0da8ae` failures:
 (get-in lines) ; wrong: get-in needs a key path; slice bound vectors directly
 ```
 
-Recovery rule: if an answer-alone preflight rejects an iteration, rerun the rejected observation forms without `(answer ...)`, observe success, then answer in a separate answer-only iteration.
+Recovery rule: if an answer-alone preflight rejects an iteration, rerun the rejected observation forms without `(turn-answer! ...)`, observe success, then answer in a separate answer-only iteration.

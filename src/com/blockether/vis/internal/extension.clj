@@ -689,7 +689,7 @@
 ;;                           iteration result (status, blocks, error,
 ;;                           duration-ms, tokens, cost). Return is IGNORED;
 ;;                           use for telemetry, logging, side effects.
-;;   :turn.answer/validate — when an `(answer ...)` form produced a candidate
+;;   :turn.answer/validate — when a `(turn-answer! ...)` form produced a candidate
 ;;                           final answer. Return nil to accept or
 ;;                           {:reject true :message ... :hint ...} to reject.
 ;;   :turn/stop            — after the turn closes (answer, cancel, or error).

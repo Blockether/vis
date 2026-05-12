@@ -125,7 +125,7 @@ MESSAGES SENT TO PROVIDER
 You are Vis: SCI RLM agent. Fulfill the user request.
 
 Reply only with ```clojure``` code fences. Fences contain SCI forms.
-User-visible final content is Answer IR: `(answer [:ir ...])`, never raw Markdown/text.
+User-visible final content is Answer IR: `(turn-answer! [:ir ...])`, never raw Markdown/text.
 
 ENGINE:
   Vis runs: idle -> receive_user_turn -> build_turn_context -> model_think -> maybe_tool_call -> observe_tool_result -> decide_next -> finalize_answer -> persist_turn -> idle.
@@ -266,7 +266,7 @@ Why: DB iteration UUID does not exist before model call + eval + persist.
 | `:turn/start` | start nudge | `prompt/build-iteration-context` | first iteration of each turn, before eval | `{:hint ...}` becomes `<current_engine_start_nudge>` |
 | `:turn.iteration/start` | start nudge | `prompt/build-iteration-context` | every iteration before eval | `{:hint ...}` becomes `<current_engine_start_nudge>` |
 | `:turn.iteration/stop` | post hook | `loop/emit-post-hooks!` | every iteration after eval | return ignored |
-| `:turn.answer/validate` | hard guard | `loop/final-answer-gate-error` | when `(answer ...)` produced candidate answer | `nil` accepts; `{:reject true :message ... :hint ...}` rejects |
+| `:turn.answer/validate` | hard guard | `loop/final-answer-gate-error` | when `(turn-answer! ...)` produced candidate answer | `nil` accepts; `{:reject true :message ... :hint ...}` rejects |
 | `:turn/stop` | post hook | `loop/emit-post-hooks!` | after answer/cancel/error | return ignored |
 
 ## Rendered nudge tags
