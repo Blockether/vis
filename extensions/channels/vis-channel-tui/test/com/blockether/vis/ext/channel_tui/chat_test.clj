@@ -66,13 +66,13 @@
                     [{:id :iter-1 :answer-form-idx 1}])
                   vis/db-list-iteration-blocks
                   (fn [_db _iteration-id]
-                    [{:code "(set-conversation-title \"Greeting\")"
+                    [{:code "(set-conversation-title! \"Greeting\")"
                       :result :vis/silent}
                      {:code "(turn-answer! [:ir [:p \"Siema!\"]])"
                       :result :vis/answer}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)]
-        (expect (= ["(set-conversation-title \"Greeting\")"] (:code trace)))
+        (expect (= ["(set-conversation-title! \"Greeting\")"] (:code trace)))
         (expect (= [true] (:silents trace)))
         (expect (= [":vis/silent"] (:results trace))))))
 

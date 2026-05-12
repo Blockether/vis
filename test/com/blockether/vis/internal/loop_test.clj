@@ -3,7 +3,6 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.ext.lang-clojure.core :as clj-ext]
             [com.blockether.vis.internal.loop :as loop]
-            [com.blockether.vis.internal.prompt :as prompt]
             [lazytest.core :refer [defdescribe expect it]]
             [sci.core :as sci]))
 
@@ -13,7 +12,7 @@
           title-form?  #'loop/answer-compatible-meta-form?]
       (expect (true? (answer-call? '(turn-answer! [:ir [:p "Done"]]))))
       (expect (false? (answer-call? '(answer [:ir [:p "Done"]]))))
-      (expect (true? (title-form? "(set-conversation-title \"Prompt cleanup\")")))
+      (expect (true? (title-form? "(set-conversation-title! \"Prompt cleanup\")")))
       (expect (false? (title-form? "(conversation-title \"Prompt cleanup\")")))))
 
   (it "preflight messages teach turn-answer! and not the retired answer form"
@@ -26,20 +25,13 @@
           entries (:code-entries
                    (preflight 1
                      (str "(def a 1)\n\n"
-                       "(set-conversation-title \"Def a 1\")\n\n"
+                       "(set-conversation-title! \"Def a 1\")\n\n"
                        "(turn-answer! [:ir [:p \"Done\"]])")))
-          error (:vis/preflight-error (first entries))
-          legacy-journal (#'prompt/format-journal-block
-                          {:name "test-model"}
-                          [[1 {:blocks [{:code "(def a 1)" :error error}
-                                        {:code "(set-conversation-title \"Def a 1\")" :error error}
-                                        {:code "(turn-answer! [:ir [:p \"Done\"]])" :error error}]}]])]
+          error (:vis/preflight-error (first entries))]
       (expect (= 1 (count entries)))
       (expect (= "(vis/preflight-error :answer-alone)" (:expr (first entries))))
       (expect (str/includes? error "Answer-alone preflight"))
-      (expect (not (str/includes? (:expr (first entries)) "(def a 1)")))
-      (expect (str/includes? legacy-journal "(vis/preflight-error :answer-alone)"))
-      (expect (not (str/includes? legacy-journal "(def a 1)")))))
+      (expect (not (str/includes? (:expr (first entries)) "(def a 1)")))))
 
   (it "canonicalizes final answer IR and caps lazy children at the persistence boundary"
     (let [answer (loop/append-runtime-appendices

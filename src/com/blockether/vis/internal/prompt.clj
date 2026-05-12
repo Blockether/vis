@@ -313,78 +313,40 @@
       (str/join "\n" (cons header sub-rows))
       header)))
 
-(do
-  (defn- error-message-text
-    [error]
-    (cond
-      (map? error) (or (:message error) (str error))
-      (some? error) (str error)
-      :else nil))
-
-  (defn- answer-alone-preflight-message
-    [block]
-    (let [message (error-message-text (:error block))]
-      (when (and message
-              (str/includes? message "Answer-alone preflight rejected"))
-        message)))
-
-  (defn- collapse-answer-alone-preflight-blocks
-    "Collapse legacy persisted answer-alone preflight rows.
-
-     Older loop builds attached the same iteration-level answer-alone
-     preflight error to every parsed top-level form, so `<journal>` showed
-     fake rows like `(def a 1) -> ERROR` even though no form evaluated.
-     Render those legacy batches as one synthetic guard row, matching the
-     current persistence shape."
-    [blocks]
-    (let [blocks   (if (vector? blocks) blocks (vec (or blocks [])))
-          messages (mapv answer-alone-preflight-message blocks)]
-      (if (and (< 1 (count blocks))
-            (every? some? messages)
-            (= 1 (count (distinct messages))))
-        [(assoc (first blocks)
-           :code "(vis/preflight-error :answer-alone)"
-           :error (first messages)
-           :result nil
-           :journal nil
-           :stdout ""
-           :stderr "")]
-        blocks)))
-
-  (defn- format-journal-iteration-block
-    "One iteration's full `<journal>` segment: per-block labels
-     include the leading `:comment` (when present) right above
-     the code->value line. LLM-only iteration `:thinking` is intentionally
-     excluded — prior thinking that needs to round-trip flows through
-     preserved-thinking assistant messages echoed in the messages array,
-     not through the journal."
-    [iteration-position iteration-data]
-    (let [{:keys [blocks answer]} iteration-data
-          visible-blocks (collapse-answer-alone-preflight-blocks blocks)
-          block-lines (persistent!
-                        (reduce-kv
-                          (fn [acc k blk]
-                            (let [comment-text (some-> (:comment blk) str str/trim not-empty)
-                                  ;; `:comment` is captured by `split-top-level-forms`
-                                  ;; as the verbatim source slice between forms
-                                  ;; (already includes `;;` prefixes / `#_(...)`
-                                  ;; discards). Render as-is; DO NOT prepend
-                                  ;; another `;; ` or we get `;; ;;` doubling
-                                  ;; (conversation d2763464 regression).
-                                  acc (if comment-text
-                                        (conj! acc (str "  i" iteration-position "." (inc k)
-                                                     "  "
-                                                     (truncate comment-text 400)))
-                                        acc)]
-                              (conj! acc (format-block-line iteration-position k blk))))
-                          (transient [])
-                          visible-blocks))
-          answer-text (some-> answer str str/trim not-empty)
-          answer-line (when answer-text
-                        (str "  i" iteration-position ".answer  <final-answer> -> "
-                          (pr-str (truncate answer-text MAX_RESULT_DISPLAY_CHARS))))]
-      (cond-> block-lines
-        answer-line (conj answer-line)))))
+(defn- format-journal-iteration-block
+  "One iteration's full `<journal>` segment: per-block labels
+   include the leading `:comment` (when present) right above
+   the code->value line. LLM-only iteration `:thinking` is intentionally
+   excluded — prior thinking that needs to round-trip flows through
+   preserved-thinking assistant messages echoed in the messages array,
+   not through the journal."
+  [iteration-position iteration-data]
+  (let [{:keys [blocks answer]} iteration-data
+        visible-blocks (if (vector? blocks) blocks (vec (or blocks [])))
+        block-lines (persistent!
+                      (reduce-kv
+                        (fn [acc k blk]
+                          (let [comment-text (some-> (:comment blk) str str/trim not-empty)
+                                ;; `:comment` is captured by `split-top-level-forms`
+                                ;; as the verbatim source slice between forms
+                                ;; (already includes `;;` prefixes / `#_(...)`
+                                ;; discards). Render as-is; DO NOT prepend
+                                ;; another `;; ` or we get `;; ;;` doubling
+                                ;; (conversation d2763464 regression).
+                                acc (if comment-text
+                                      (conj! acc (str "  i" iteration-position "." (inc k)
+                                                   "  "
+                                                   (truncate comment-text 400)))
+                                      acc)]
+                            (conj! acc (format-block-line iteration-position k blk))))
+                        (transient [])
+                        visible-blocks))
+        answer-text (some-> answer str str/trim not-empty)
+        answer-line (when answer-text
+                      (str "  i" iteration-position ".answer  <final-answer> -> "
+                        (pr-str (truncate answer-text MAX_RESULT_DISPLAY_CHARS))))]
+    (cond-> block-lines
+      answer-line (conj answer-line))))
 
 (defn- trim-journal-lines
   "Keep newest journal lines within the supplied journal token budget.
@@ -927,7 +889,7 @@ All `clojure.core` vars are interned, for the other namespaces the following are
 
   FINAL :=
     allowed top-level forms:
-      optional `(set-conversation-title \"...\")`
+      optional `(set-conversation-title! \"...\")`
       exactly one `(turn-answer! [:ir ...])`
 
   FINAL forbids:
@@ -952,8 +914,8 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   <current_engine_start_nudges> := extension hook runtime hints for this iteration.
 
 λHOST.
-  (turn-answer! ir)                 ; finalize turn, ir must be [:ir ...]
-  (set-conversation-title s)      ; set conversation title
+  (turn-answer! ir)           ; finalize turn, ir must be [:ir ...]
+  (set-conversation-title! s)  ; set conversation title
   (load-skill! name)          ; load skill body for next iteration, never FINAL
   (reload-skills!)            ; refresh skill cache, never FINAL
   (skills)                    ; list accessible skill summaries
@@ -981,6 +943,10 @@ All `clojure.core` vars are interned, for the other namespaces the following are
 λMIN_EXAMPLES.
   ITERATION 1 - Work iteration, observe only:
     ```clojure
+    ;; Set the initial conversation-title 
+    (set-conversation-title! \"...\")
+
+    ;; 
     ;; Need evidence first. No answer in this iteration.
     (def src (v/cat \"src/foo.clj\"))
     ```

@@ -805,7 +805,7 @@
 
    Every call performs a real SCI eval. There is no result cache:
    forms with side effects (e.g. host primitives `(turn-answer! ...)` and
-   `(set-conversation-title ...)`) MUST run their bodies on every
+   `(set-conversation-title! ...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [{:keys [sci-ctx sandbox-ns] :as environment} code
@@ -1153,7 +1153,7 @@
     (let [form (edamame/parse-string (str expr) edamame-opts)]
       (and (seq? form)
         (symbol? (first form))
-        (= 'set-conversation-title (first form))))
+        (= 'set-conversation-title! (first form))))
     (catch Throwable _
       false)))
 
@@ -1165,7 +1165,7 @@
    the answer call (optionally wrapping prose / inline expressions, but
    no other top-level work).
 
-   Narrow exception: a sibling top-level `(set-conversation-title \"...\")`
+   Narrow exception: a sibling top-level `(set-conversation-title! \"...\")`
    meta form is allowed because it does not depend on observing a tool
    result before the answer is composed.
 
@@ -1202,7 +1202,7 @@
   [{:keys [answer-idx total-forms]}]
   (str "Answer-alone preflight rejected this iteration before evaluation: "
     "(turn-answer! ...) MUST be the ONLY top-level form in its iteration, except "
-    "for an optional sibling `(set-conversation-title \"...\")` meta form. "
+    "for an optional sibling `(set-conversation-title! \"...\")` meta form. "
     "This iteration had " total-forms " top-level forms; a `(turn-answer! ...)` "
     "call appears in form " (inc (or answer-idx 0)) ". "
     "Contract: observe (tool calls) in one iteration; the engine evaluates "
@@ -2971,7 +2971,7 @@
                                      iterations of the same turn it
                                      keeps the previous turn's value.
      CONVERSATION_TITLE           - mirrors `:conversation-title-atom`
-                                     so a `(set-conversation-title \"...\")`
+                                     so a `(set-conversation-title! \"...\")`
                                      inside iteration N is observable
                                      to the model in iteration N+1
                                      without a DB round-trip.
@@ -4144,7 +4144,7 @@
 ;; Title listeners + set-title! broadcast
 ;;
 ;; Channels (TUI, Telegram, ...) that want to react to a conversation
-;; title change - typically because the model emitted `(set-conversation-title "...")`
+;; title change - typically because the model emitted `(set-conversation-title! "...")`
 ;; mid-turn - register a listener via `add-title-listener!`. The
 ;; listener fn receives the new title; it MUST be cheap (typically a
 ;; `state/dispatch` into the channel's app-db). Listeners are stored
@@ -4152,7 +4152,7 @@
 ;; woken by a Telegram bot updating conversation B.
 ;;
 ;; Both `set-title!` (host-driven, e.g. CLI rename) and the SCI
-;; `(set-conversation-title "...")` fn (model-driven) funnel through
+;; `(set-conversation-title! "...")` fn (model-driven) funnel through
 ;; `set-title-with-broadcast!`, which is the single mutation point.
 ;; That keeps the in-memory env atom + DB column + listener fan-out
 ;; in lockstep - no path can update one without the others.
@@ -4863,7 +4863,7 @@
                                       :form-idx @current-form-idx-atom})
                                    :vis/answer)
         ;; SCI binding for the conversation title:
-        ;;   `(set-conversation-title \"...\")` - writes the title through
+        ;;   `(set-conversation-title! \"...\")` - writes the title through
         ;;                              to DB, syncs the in-memory
         ;;                              atom, and broadcasts
         ;;                              `:title-changed` to every
@@ -4873,14 +4873,14 @@
         ;;                              polling.
         ;; ONE-ARITY ONLY. To READ the current title from `:code`,
         ;; reference the `CONVERSATION_TITLE` SYSTEM var - there is
-        ;; no zero-arg reader, by design: a `(set-conversation-title)`
+        ;; no zero-arg reader, by design: a `(set-conversation-title!)`
         ;; call would invite the model to round-trip what it can
         ;; read for free. Calling with the wrong arity raises an
         ;; `ArityException` from SCI like any other Clojure fn.
         ;; Returns `:vis/silent`: the title is visible in channel chrome
         ;; and the model journal, but the host call itself is noise in
         ;; live progress / iteration rendering.
-        conversation-title-fn    (fn set-conversation-title [s]
+        conversation-title-fn    (fn set-conversation-title! [s]
                                    (let [s (str s)]
                                      (set-title-with-broadcast!
                                        db-info conversation-id
@@ -4894,7 +4894,7 @@
         env-bindings             (merge {'var-history          var-history-fn
                                          'var-history-timeline var-history-timeline-fn
                                          'turn-answer!         answer-fn
-                                         'set-conversation-title conversation-title-fn}
+                                         'set-conversation-title! conversation-title-fn}
                                    (skills/sandbox-bindings active-skills-atom))
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
