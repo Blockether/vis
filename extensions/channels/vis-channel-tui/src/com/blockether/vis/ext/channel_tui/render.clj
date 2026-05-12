@@ -1002,6 +1002,11 @@
 (def ^:private th-md-hr-marker         p/MARKER_TH_MD_HR)
 (def ^:private th-md-summary-marker    p/MARKER_TH_MD_SUMMARY)
 
+(def ^:private code-text-inset-markers
+  #{code-marker code-ok-marker code-err-marker code-status-marker
+    result-marker err-result-marker stdout-marker stderr-marker stdout-sep-marker
+    md-code-marker th-md-code-marker})
+
 (defn- ansi-code->fg [code current-fg base-fg]
   (case code
     0 base-fg
@@ -1754,7 +1759,10 @@
                 ;; Right-aligned labels in `format-iteration-entry` write at
                 ;; `x` and inherit `content-w`, so they still sit inset from
                 ;; the right edge by h-pad even though the bg fills past them.
-                      x   (+ bx h-pad) y (+ btop i)
+                      ;; Assistant answer text starts at the same column as
+                      ;; the `Vis` label. User bubbles keep their inset so the
+                      ;; left rail remains visually separate from prompt text.
+                      x   (+ bx (if user? h-pad 0)) y (+ btop i)
                       iw  bubble-w
                       fbx bx
                       marker (when (pos? (count line)) (subs line 0 1))
@@ -1764,7 +1772,10 @@
                       line (if output-indented?
                              (str marker (subs body (count tool-output-indent)))
                              line)
-                      x   (if output-indented? (+ x tool-output-indent-cols) x)
+                      code-text-inset? (and (not user?) (contains? code-text-inset-markers marker))
+                      x   (cond-> x
+                            output-indented? (+ tool-output-indent-cols)
+                            code-text-inset? inc)
                       iw  (if output-indented? (max 0 (- iw tool-output-indent-cols)) iw)
                       fbx (if output-indented? (+ fbx tool-output-indent-cols) fbx)]
             ;; Pre-fill answer zone bg so ALL line types get it

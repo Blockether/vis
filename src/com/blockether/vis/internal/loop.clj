@@ -1588,7 +1588,7 @@
          parsed-code-entries (cond
                                raw-fence-error
                                [{:expr "(vis/preflight-error :raw-markdown-fence-leak)"
-                                 :preflight-error raw-fence-error}]
+                                 :vis/preflight-error raw-fence-error}]
 
                                parse-error
                                [{:expr (str raw-code) :parse-error parse-error}]
@@ -1638,21 +1638,21 @@
                       plain-prose-error
                       [{:expr "(vis/preflight-error :plain-prose-code)"
                         :comment (prose->comment raw-code)
-                        :preflight-error plain-prose-error}]
+                        :vis/preflight-error plain-prose-error}]
 
                       answer-alone-error
                       (mapv (fn [entry]
-                              (assoc entry :preflight-error answer-alone-error))
+                              (assoc entry :vis/preflight-error answer-alone-error))
                         parsed-code-entries)
 
                       answer-preflight-error
                       (mapv (fn [entry]
-                              (assoc entry :preflight-error answer-preflight-error))
+                              (assoc entry :vis/preflight-error answer-preflight-error))
                         parsed-code-entries)
 
                       answer-with-mutation-error
                       (mapv (fn [entry]
-                              (assoc entry :preflight-error answer-with-mutation-error))
+                              (assoc entry :vis/preflight-error answer-with-mutation-error))
                         parsed-code-entries)
 
                       :else
@@ -1973,13 +1973,56 @@
   {:provider (:provider resolved-model)
    :model    (some-> (:name resolved-model) str)})
 
+(defn- anthropic-replay-context?
+  [{:keys [provider model]}]
+  (or (boolean (re-find #"(?i)anthropic" (str provider)))
+    (boolean (re-find #"(?i)^claude" (str model)))))
+
+(defn- thinking-blocks
+  [assistant-message]
+  (filterv #(= "thinking" (:type %)) (:content assistant-message)))
+
+(defn- anthropic-invalid-thinking-replay-block?
+  "True for poisoned Anthropic replay state. In bad historical rows,
+   Vis recorded a fallback z.ai response as Anthropic; z.ai stores raw
+   reasoning text as `:thinking-signature`, so signature == thinking.
+   Anthropic signatures are opaque HMACs and must not equal prose."
+  [block]
+  (let [thinking  (:thinking block)
+        signature (:thinking-signature block)]
+    (and (string? thinking)
+      (not (str/blank? thinking))
+      (string? signature)
+      (= thinking signature))))
+
+(defn- assistant-message-compatible-with-replay-target?
+  [target assistant-message]
+  (not (and (anthropic-replay-context? target)
+         (some anthropic-invalid-thinking-replay-block?
+           (thinking-blocks assistant-message)))))
+
+(defn- actual-llm-provider
+  "Provider that actually served an ask-result. svar may route/fallback
+   inside ask-code!, so prefer routed metadata over Vis' pre-call guess."
+  [resolved-model ask-result]
+  (or (:routed/provider-id ask-result)
+    (:provider resolved-model)))
+
+(defn- actual-llm-model
+  "Model that actually served an ask-result. See `actual-llm-provider`."
+  [resolved-model ask-result]
+  (or (:routed/model ask-result)
+    (some-> (:name resolved-model) str)))
+
 (defn- compatible-preserved-thinking-journal-iters
   [journal-iters target]
   (let [{target-provider :provider target-model :model} target]
     (filterv (fn [[_ {:keys [assistant-message llm-provider llm-model]}]]
                (and assistant-message
                  (= target-provider llm-provider)
-                 (= target-model llm-model)))
+                 (= target-model llm-model)
+                 (assistant-message-compatible-with-replay-target?
+                   target assistant-message)))
       (or journal-iters []))))
 
 (defn- append-preserved-thinking-replay
@@ -2124,13 +2167,13 @@
           final-answer-preflight-error
           (when (and direct-answer-entry
                   (not answer-preflight-error)
-                  (not (:preflight-error direct-answer-entry))
+                  (not (:vis/preflight-error direct-answer-entry))
                   (direct-answer-entry? direct-answer-entry)
                   (not (form-contains-needs-input-call? (:expr direct-answer-entry))))
             (final-answer-gate-error environment iteration-position [] nil))
           code-entries (if final-answer-preflight-error
                          [{:expr "(vis/preflight-error :final-answer-gate)"
-                           :preflight-error final-answer-preflight-error}]
+                           :vis/preflight-error final-answer-preflight-error}]
                          code-entries)
           suppress-form-start? (or answer-preflight-error
                                  final-answer-preflight-error)
@@ -2143,7 +2186,7 @@
           ;; structured preflight error in place of the answer instead
           ;; of a fabricated success-claim.
           prior-error-atom (atom nil)
-          executed (mapv (fn [idx {:keys [expr preflight-error parse-error] form-repaired? :repaired? form-comment :comment}]
+          executed (mapv (fn [idx {:keys [expr parse-error] :vis/keys [preflight-error] form-repaired? :repaired? form-comment :comment}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
                            (when (and on-chunk
@@ -2305,7 +2348,7 @@
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/journal stream so the model still
           ;; reads the failure on its next iteration.
-          preflight-by-idx (zipmap (range) (map (fn [{:keys [preflight-error]}]
+          preflight-by-idx (zipmap (range) (map (fn [{:vis/keys [preflight-error]}]
                                                   (boolean preflight-error))
                                              code-entries))
           blocks (validate-iteration-blocks!
@@ -2416,8 +2459,8 @@
                                                        (form-contains-answer-call? (:code b))))
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))
-              model-name       (some-> (:name resolved-model) str)
-              provider         (:provider resolved-model)]
+              model-name       (actual-llm-model resolved-model ask-result)
+              provider         (actual-llm-provider resolved-model ask-result)]
           (if validation-error
             {:thinking thinking
              :blocks (or (seq blocks*)
@@ -2462,8 +2505,8 @@
          :duration-ms (or (:duration-ms ask-result) 0)
          :silent-form-idxs silent-form-idxs
          :llm-messages messages
-         :llm-provider (:provider resolved-model)
-         :llm-model    (some-> (:name resolved-model) str)
+         :llm-provider (actual-llm-provider resolved-model ask-result)
+         :llm-model    (actual-llm-model resolved-model ask-result)
          :llm-raw-response (:raw ask-result)
          :llm-executable-code (:result ask-result)
          :llm-executable-blocks (:blocks ask-result)
@@ -2550,7 +2593,7 @@
 (defn- invalid-thinking-signature-message?
   [message]
   (boolean (and (string? message)
-             (re-find #"(?i)invalid.*signature.*thinking block" message))))
+             (re-find #"(?i)invalid.*signature.*thinking.*block" message))))
 
 (defn- provider-error-explanation
   [err]

@@ -1754,7 +1754,43 @@
       (expect (some #(str/includes? (or (:text %) "") "SIEMA") @puts))
       (expect (some #(str/includes? (or (:text %) "") "quoted text") @puts))))
 
-  (it "draws markdown fenced code at the normal text left edge"
+  (it "draws assistant answer text aligned with the Vis label"
+    (let [puts    (atom [])
+          active  (atom #{})
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString [col row text]
+                       (swap! puts conj {:col col :row row :text text})
+                       this)
+                     (fillRectangle [_ _ _] this)
+                     (setCharacter [_ _ _] this))
+          rendered (render/format-answer-markdown-data
+                     (vis/text->ir "hello") 50 nil)
+          left     2
+          _height  (render/draw-chat-bubble! graphics
+                     {:role :assistant
+                      :text ""
+                      :prewrapped-lines (:lines rendered)
+                      :line-meta (:line-meta rendered)}
+                     4 left 50 {:viewport-h 40})
+          answer-put (first (filter #(str/includes? (:text %) "hello") @puts))]
+      (expect (= left (:col answer-put)))))
+
+  (it "draws markdown fenced code one column inside the bubble band"
     (let [fills   (atom [])
           puts    (atom [])
           active  (atom #{})
@@ -1792,7 +1828,7 @@
                      (vis/text->ir "```clojure\n(+ 1 2)\n```") 50 nil)
           left    2
           width   50
-          text-x  (+ left 2)
+          text-x  (inc left)
           _height (render/draw-chat-bubble! graphics
                     {:role :assistant
                      :text ""
