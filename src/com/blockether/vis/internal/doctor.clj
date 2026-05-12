@@ -165,12 +165,12 @@
        :else
        (let [grouped  (group-by :ext messages)
              ;; Preserve ordering by walking in the order messages appeared.
-             ext-list (vec (distinct (mapv :ext messages)))
+             extension-list-aggregates (vec (distinct (mapv :ext messages)))
              sections (mapv #(format-extension-section
                                %
                                (get grouped %)
                                use-ansi?)
-                        ext-list)
+                        extension-list-aggregates)
              totals   (frequencies (mapv :level messages))
              summary  (str "Summary: "
                         (or (:error totals) 0) " errors, "

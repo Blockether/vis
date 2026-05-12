@@ -242,40 +242,18 @@
         (expect (some #(str/includes? % "znajduje nodes wiarygodnie") out))))))
 
 ;; ---------------------------------------------------------------------------
-;; :details / :summary disclosure widget
+;; Retired disclosure tags stay out of answer rendering
 ;; ---------------------------------------------------------------------------
 
-(defdescribe details-walker-test
-  (it ":details emits one summary line tagged :summary with toggle meta"
-    (let [lines (ir-tui/ir->lines
-                  [:ir [:details {:open? true}
-                        [:summary "Click me"]
-                        [:p "hidden body"]]]
-                  80)
-          summary-line (first (filter #(= :summary (:block-tag %)) lines))]
-      (expect (some? summary-line))
-      (expect (= :toggle-details (get-in summary-line [:meta :kind])))
-      (expect (true? (get-in summary-line [:meta :open?])))
-      (expect (string? (get-in summary-line [:meta :node-id])))))
-
-  (it ":details {:open? true} body lines tagged :details-body"
-    (let [lines (ir-tui/ir->lines
-                  [:ir [:details {:open? true} [:summary "X"] [:p "body"]]]
-                  80)
-          body-lines (filter #(= :details-body (:block-tag %)) lines)]
-      (expect (seq body-lines))
-      (expect (some (fn [l] (some #(str/includes? (or (:text %) "") "body") (:runs l))) body-lines))))
-
-  (it "`ir->entries` propagates `:meta` per line for the painter's click regions"
+(defdescribe retired-disclosure-tags-test
+  (it ":details/:summary input is flattened without toggle metadata"
     (let [entries (ir-tui/ir->entries
                     [:ir [:p "intro"]
                      [:details {:open? true}
                       [:summary "toggle"]
                       [:p "body"]]]
                     80)
-          summary (first (filter #(= :toggle-details (get-in % [:meta :kind])) entries))]
-      (expect (some? summary))
-      (expect (string? (:line summary)))
-      ;; meta carries node-id + open? for state diff
-      (expect (true? (get-in summary [:meta :open?])))
-      (expect (string? (get-in summary [:meta :node-id]))))))
+          body    (str/join "\n" (map :line entries))]
+      (expect (str/includes? body "intro"))
+      (expect (str/includes? body "togglebody"))
+      (expect (not-any? #(= :toggle-details (get-in % [:meta :kind])) entries)))))

@@ -1,7 +1,10 @@
 (ns com.blockether.vis.internal.loop-test
   (:require [clojure.string :as str]
+            [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.lang-clojure.core :as clj-ext]
             [com.blockether.vis.internal.loop :as loop]
-            [lazytest.core :refer [defdescribe expect it]]))
+            [lazytest.core :refer [defdescribe expect it]]
+            [sci.core :as sci]))
 
 (defdescribe host-final-surface-test
   (it "recognizes only the new final-answer and title host forms"
@@ -16,6 +19,18 @@
     (let [msg (loop/answer-position-error-message 0 2)]
       (expect (str/includes? msg "(turn-answer! ...)"))
       (expect (not (str/includes? msg "(answer ...)")))))
+
+  (it "collapses answer-alone preflight to one synthetic guard block"
+    (let [preflight #'loop/code-entries-preflight
+          entries (:code-entries
+                   (preflight 1
+                     (str "(def a 1)\n\n"
+                       "(set-conversation-title \"Def a 1\")\n\n"
+                       "(turn-answer! [:ir [:p \"Done\"]])")))]
+      (expect (= 1 (count entries)))
+      (expect (= "(vis/preflight-error :answer-alone)" (:expr (first entries))))
+      (expect (str/includes? (:vis/preflight-error (first entries)) "Answer-alone preflight"))
+      (expect (not (str/includes? (:expr (first entries)) "(def a 1)")))))
 
   (it "canonicalizes final answer IR and caps lazy children at the persistence boundary"
     (let [answer (loop/append-runtime-appendices
@@ -141,3 +156,27 @@
                                         :body "{\"error\":{\"message\":\"messages.1.content.3: Invalid `signature` in `thinking` block\"}}"}})
           rendered (loop/answer-str ir)]
       (expect (str/includes? rendered "preserved-thinking replay crossed")))))
+
+(defdescribe sci-extension-repl-test
+  (it "makes doc apropos and source work for extension alias symbols"
+    (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (vis/create-sci-context nil)
+          env {:sci-ctx sci-ctx
+               :sandbox-ns sandbox-ns
+               :initial-ns-keys initial-ns-keys
+               :extensions (atom [])}
+          eval* (fn [code]
+                  (:val (sci/eval-string+ sci-ctx code {:ns sandbox-ns})))]
+      (vis/install-extension! env clj-ext/clojure-extension)
+      (expect (some #(= 'vis.ext.clj/source %)
+                (eval* "(repl/apropos \"source\")")))
+      (expect (str/includes? (eval* "(repl/source-fn 'z/source)")
+                "(defn source"))
+      (let [w (java.io.StringWriter.)]
+        (sci/binding [sci/out w sci/err w]
+          (eval* "(repl/doc z/source)"))
+        (expect (str/includes? (str w) "vis.ext.clj/source"))
+        (expect (str/includes? (str w) "Parse exact Clojure/EDN source")))
+      (let [w (java.io.StringWriter.)]
+        (sci/binding [sci/out w sci/err w]
+          (eval* "(repl/source z/source)"))
+        (expect (str/includes? (str w) "(defn source"))))))

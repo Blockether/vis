@@ -320,12 +320,12 @@
 ;; Extension-owned durable sidecar helpers. These are for extension callbacks;
 ;; they fill extension id from the current extension context and reject caller-
 ;; supplied :extension-id.
-(def ext-create!                         extension-aggregate/ext-create!)
-(def ext-put!                            extension-aggregate/ext-put!)
-(def ext-get                             extension-aggregate/ext-get)
-(def ext-list                            extension-aggregate/ext-list)
-(def ext-delete!                         extension-aggregate/ext-delete!)
-(def ext-swap!                           extension-aggregate/ext-swap!)
+(def extension-aggregate-create!         extension-aggregate/extension-aggregate-create!)
+(def extension-aggregate-put!            extension-aggregate/extension-aggregate-put!)
+(def extension-aggregate-get             extension-aggregate/extension-aggregate-get)
+(def extension-list-aggregates           extension-aggregate/extension-list-aggregates)
+(def extension-delete-aggregate!         extension-aggregate/extension-delete-aggregate!)
+(def extension-update-aggregate!         extension-aggregate/extension-update-aggregate!)
 
 ;; =============================================================================
 ;; Doctor protocol

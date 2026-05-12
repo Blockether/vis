@@ -92,7 +92,7 @@ Do not render Markdown as IR; build IR nodes directly. Channels render IR at the
 (def vis-extension
   (vis/extension
     {:ext/namespace      'com.blockether.vis.ext.foundation.core
-     :ext/doc            "Foundation `v/`: conversation-state/conversation-report, file I/O (cat/ls/rg/patch/bash), markdown answer builders (h1/p/table/file-link/join/code-block/details), env snapshot, project guidance, skills, scan warnings, doctor/reproduction CLI."
+     :ext/doc            "Foundation `v/`: conversation-state/conversation-report, file I/O (cat/ls/rg/patch/bash), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, skills, scan warnings, doctor/reproduction CLI."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"

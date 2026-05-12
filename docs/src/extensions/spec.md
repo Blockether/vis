@@ -71,12 +71,12 @@ Two conditional rules apply on top of the spec:
 Extensions that need durable private sidecar state use the host facade helpers:
 
 ```clojure
-(vis/ext-create! env row) ;; append history/snapshot row
-(vis/ext-put! env row)    ;; upsert singleton row for key/kind/scope
-(vis/ext-get env query)   ;; read one own row/latest match
-(vis/ext-list env query)  ;; list own rows
-(vis/ext-delete! env q)   ;; delete own rows only
-(vis/ext-swap! env q f & args)
+(vis/extension-aggregate-create! env row) ;; append history/snapshot row
+(vis/extension-aggregate-put! env row)    ;; upsert singleton row for key/kind/scope
+(vis/extension-aggregate-get env query)   ;; read one own row/latest match
+(vis/extension-list-aggregates env query)  ;; list own rows
+(vis/extension-delete-aggregate! env q)   ;; delete own rows only
+(vis/extension-update-aggregate! env q f & args)
 ```
 
 Normal extension code never passes `:extension-id`. The symbol/callback wrapper binds the currently executing extension, and the helper fills `extension_id` from `:ext/namespace`. Supplying `:extension-id` or `:extension_id` throws `:extension-aggregate/extension-id-forbidden`.

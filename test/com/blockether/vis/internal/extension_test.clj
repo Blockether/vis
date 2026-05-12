@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.extension-test
   (:require
+   [clojure.string]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it]]))
 
@@ -16,6 +17,8 @@
       (expect (true? (:ext.symbol/raw? entry)))
       (expect (= "Raw helper used by symbol builder tests." (:ext.symbol/doc entry)))
       (expect (= '([a b]) (:ext.symbol/arglists entry)))
+      (expect (string? (:ext.symbol/source entry)))
+      (expect (clojure.string/includes? (:ext.symbol/source entry) "(defn raw-add"))
       (expect (nil? (:ext.symbol/journal-render-fn entry)))
       (expect (nil? (:ext.symbol/channel-render-fn entry)))))
 

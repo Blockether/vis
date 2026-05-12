@@ -11,18 +11,14 @@
 
    Tags:
      ROOT             :ir
-     BLOCKS    (13)   :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li
+     BLOCKS    (11)   :p :h{:level 1-6} :code{:lang} :ul :ol{:start} :li
                       :quote :table :tr :th :td
-                      :details{:open?} :summary
      INLINES   (11)   :span{:preserve-ws? :nowrap?} :br
                       :strong :em :c :a{:href}
                       :img{:src :alt} :kbd :mark :sup :sub
 
-   `:details` is the canonical disclosure widget (LLM-emitted
-   collapsible section). Children: exactly one `:summary` head
-   followed by zero-or-more body blocks. `{:open? true}` opens by
-   default; the TUI bubble painter toggles state via the click
-   region attached to the rendered summary line.
+   Disclosure/collapsible answer blocks are intentionally unsupported:
+   no `:details`, no `:summary`, no HTML `<details>/<summary>` in answer IR.
 
    ─── Canonical form (invariant after `->ast`) ───────────────────────────────
 
@@ -70,7 +66,7 @@
 ;; =============================================================================
 
 (def ^:private block-tags
-  #{:p :h :code :ul :ol :li :quote :table :tr :th :td :details :summary})
+  #{:p :h :code :ul :ol :li :quote :table :tr :th :td})
 
 (def ^:private inline-tags
   #{:span :br :strong :em :c :a :img :kbd :mark :sup :sub})
@@ -166,15 +162,6 @@
         :tr
         (every? #(and (vector? %) (#{:th :td} (first %)) (block-canonical? %)) children)
 
-        :details
-        (and (seq children)
-          (let [head (first children)]
-            (and (vector? head) (= :summary (first head)) (block-canonical? head)))
-          (every? block-canonical? (rest children)))
-
-        :summary
-        (every? inline-canonical? children)
-
         false))))
 
 (defn canonical?
@@ -207,6 +194,22 @@
     (string? x)     x
     (vector? x)     (apply str (map text-flatten (drop 2 x)))
     (sequential? x) (apply str (map text-flatten x))
+    (nil? x)        ""
+    :else           ""))
+
+(defn- loose-text-flatten
+  "Text-flatten non-canonical or retired tag trees. Unlike `text-flatten`,
+   this accepts Hiccup shorthand vectors whose attrs map is absent, so
+   retired `[:details [:summary \"x\"] ...]` input stays visible while the
+   unsupported structure is removed."
+  ^String [x]
+  (cond
+    (string? x)     x
+    (vector? x)     (let [children (if (and (keyword? (first x)) (map? (second x)))
+                                     (drop 2 x)
+                                     (rest x))]
+                      (apply str (map loose-text-flatten children)))
+    (sequential? x) (apply str (map loose-text-flatten x))
     (nil? x)        ""
     :else           ""))
 
@@ -248,9 +251,18 @@
             nil
             [:span attrs text]))
 
-        :else
+        (contains? inline-tags tag)
         (let [child-nodes (canon-inline-children children preserve-ws?)]
-          (into [tag attrs] child-nodes))))))
+          (into [tag attrs] child-nodes))
+
+        :else
+        ;; Unknown/retired tags are not preserved in canonical IR. This is
+        ;; deliberate for removed answer affordances such as :details/:summary:
+        ;; keep any human-visible text, but never keep unsupported structure.
+        (let [text (loose-text-flatten children)
+              text (if preserve-ws? text (collapse-soft-breaks text))]
+          (when-not (= "" text)
+            [:span {} text]))))))
 
 (defn- map-keep-identity
   "Like `mapv` but returns the input vector unchanged when `f` is
@@ -427,25 +439,6 @@
       :quote
       ;; quote contains blocks; loose inlines bucket into :p
       (into [:quote attrs] (canon-blocks-strict children))
-
-      :summary
-      ;; summary head: inline content only
-      (into [:summary attrs] (canon-block-children children))
-
-      :details
-      ;; details: first child must be :summary; rest are body blocks.
-      ;; A details with no summary gets a synthetic empty one so the
-      ;; bubble painter always has a click target.
-      (let [children (vec children)
-            first-c  (first children)
-            head     (if (and (vector? first-c) (= :summary (first first-c)))
-                       (canon-block (ensure-attrs first-c))
-                       (canon-block [:summary {} "Details"]))
-            body     (let [tail (if (and (vector? first-c) (= :summary (first first-c)))
-                                  (subvec children 1)
-                                  children)]
-                       (canon-blocks-strict tail))]
-        (into [:details attrs head] body))
 
       ;; should not happen — caller dispatches by block?/inline?
       (into [tag attrs] (canon-block-children children)))))
@@ -641,8 +634,8 @@
     [(cm->table n)]
 
     (instance? HtmlBlock n)
-    ;; Recognise <details>/<summary> disclosure blocks; everything else
-    ;; becomes a verbatim paragraph so it stays visible.
+    ;; Raw HTML is not answer IR structure. Keep it visible as text;
+    ;; notably, <details>/<summary> does not become a collapsible widget.
     (let [literal (.getLiteral ^HtmlBlock n)]
       [[:p {} [:span {} literal]]])
 
@@ -787,15 +780,6 @@
         :ol       (str (render-html-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
         :li       (render-html-children children opts)
 
-        :details  (let [head (first children)
-                        body (rest children)
-                        head-html (when head (render-html-children (node-children head) opts))]
-                    (str "<blockquote" (when (:open? attrs) " expandable") ">"
-                      (when head-html (str "<b>" head-html "</b>\n"))
-                      (render-html-children body opts)
-                      "</blockquote>\n\n"))
-        :summary  (render-html-children children opts)
-
         :quote    (let [body (render-html-children children opts)]
                     (if (= :thinking (:context opts))
                       (str "<blockquote expandable>" body "</blockquote>\n\n")
@@ -886,17 +870,6 @@
         :ol       (str (render-md-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
         :li       (render-md-children children opts)
 
-        :details  (let [head      (first children)
-                        body      (rest children)
-                        head-md   (when head (render-md-children (node-children head) opts))
-                        open?     (boolean (:open? attrs))
-                        open-tag  (if open? "<details open>" "<details>")]
-                    (str open-tag "\n"
-                      (when head-md (str "<summary>" head-md "</summary>\n\n"))
-                      (render-md-children body opts)
-                      "</details>\n\n"))
-        :summary  (render-md-children children opts)
-
         :quote    (let [body (str/trim (render-md-children children opts))
                         prefixed (str/join "\n" (map #(str "> " %) (str/split-lines body)))]
                     (str prefixed "\n\n"))
@@ -975,13 +948,6 @@
         :ul       (str (render-plain-list :ul children opts) "\n")
         :ol       (str (render-plain-list :ol children (assoc opts :start (or (:start attrs) 1))) "\n")
         :li       (render-plain-children children opts)
-
-        :details  (let [head    (first children)
-                        body    (rest children)
-                        h-text  (when head (str/trim (render-plain-children (node-children head) opts)))
-                        b-text  (render-plain-children body opts)]
-                    (str "▸ " (or h-text "Details") "\n" b-text "\n"))
-        :summary  (render-plain-children children opts)
 
         :quote    (let [body (str/trim (render-plain-children children opts))
                         prefixed (str/join "\n" (map #(str "│ " %) (str/split-lines body)))]
@@ -1064,9 +1030,9 @@
    `->ast` can coerce; returns a single concatenated string suitable
    for FT5 indexing or substring matching.
 
-   IR-side rendering: all `:p`, `:h`, `:li`, `:quote`, `:summary`,
-   `:details` body content collapses to spaces; `:code`/`:c` bodies
-   included verbatim (often the highest-signal text for search).
+   IR-side rendering: all prose/list/quote/table text collapses to spaces;
+   `:code`/`:c` bodies are included verbatim (often the highest-signal text
+   for search).
    Strings are lifted via `text->ir` so search hits the same shape
    regardless of upstream contract.
 

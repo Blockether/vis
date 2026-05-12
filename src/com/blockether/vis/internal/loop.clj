@@ -1641,19 +1641,16 @@
                         :vis/preflight-error plain-prose-error}]
 
                       answer-alone-error
-                      (mapv (fn [entry]
-                              (assoc entry :vis/preflight-error answer-alone-error))
-                        parsed-code-entries)
+                      [{:expr "(vis/preflight-error :answer-alone)"
+                        :vis/preflight-error answer-alone-error}]
 
                       answer-preflight-error
-                      (mapv (fn [entry]
-                              (assoc entry :vis/preflight-error answer-preflight-error))
-                        parsed-code-entries)
+                      [{:expr "(vis/preflight-error :answer-position)"
+                        :vis/preflight-error answer-preflight-error}]
 
                       answer-with-mutation-error
-                      (mapv (fn [entry]
-                              (assoc entry :vis/preflight-error answer-with-mutation-error))
-                        parsed-code-entries)
+                      [{:expr "(vis/preflight-error :answer-with-mutation)"
+                        :vis/preflight-error answer-with-mutation-error}]
 
                       :else
                       parsed-code-entries)
@@ -2217,7 +2214,7 @@
                          [{:expr "(vis/preflight-error :final-answer-gate)"
                            :vis/preflight-error final-answer-preflight-error}]
                          code-entries)
-          suppress-form-start? (or answer-preflight-error
+          suppress-form-start? (or (some :vis/preflight-error code-entries)
                                  final-answer-preflight-error)
           total-blocks (count code-entries)
           ;; Engine-level answer-after-error gate (ANALYSIS.md §4.2):
@@ -4601,9 +4598,11 @@
   [ext-ns sym val sym-entry]
   (let [doc      (:ext.symbol/doc sym-entry)
         arglists (:ext.symbol/arglists sym-entry)
+        source   (:ext.symbol/source sym-entry)
         meta-map (cond-> {:ns ext-ns}
                    doc      (assoc :doc doc)
-                   arglists (assoc :arglists arglists))]
+                   arglists (assoc :arglists arglists)
+                   source   (assoc :vis/source source))]
     (if (and (map? val) (contains? val :vis.sci/macro-fn))
       (sci/new-var sym (:vis.sci/macro-fn val) (assoc meta-map :macro true))
       (sci/new-var sym val meta-map))))
