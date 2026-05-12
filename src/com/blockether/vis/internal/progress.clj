@@ -73,8 +73,7 @@
    [clojure.string :as str]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.prompt :as prompt]
-   [com.blockether.vis.internal.skills :as skills]))
+   [com.blockether.vis.internal.prompt :as prompt]))
 
 (defn- empty-iteration-entry [iteration]
   {:iteration iteration
@@ -127,8 +126,7 @@
 
 (defn- form-result-detail
   [chunk]
-  (or (tool-result-detail (:result chunk))
-    (skills/load-result-detail (:result chunk))))
+  (tool-result-detail (:result chunk)))
 
 (defn- format-form-result
   "Pre-format a per-form chunk's result for renderer consumption.
@@ -165,9 +163,6 @@
 
         (extension/tool-result? (:result chunk))
         (extension/channel-render-tool-result (:result chunk))
-
-        (skills/load-result? (:result chunk))
-        (skills/render-load-result (:result chunk))
 
         :else
         (prompt/safe-pr-str (:result chunk))))))

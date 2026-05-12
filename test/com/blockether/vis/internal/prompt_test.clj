@@ -3,7 +3,6 @@
             [com.blockether.svar.internal.llm :as svar-llm]
             [com.blockether.vis.internal.env :as env]
             [com.blockether.vis.internal.prompt :as prompt]
-            [com.blockether.vis.internal.skills :as skills]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- role-seq
@@ -16,30 +15,27 @@
 
 (defdescribe prompt-test
   (it "assembles stable prompt fragments as many system messages before the user message"
-    (with-redefs-fn {#'skills/list-all (constantly [{:name "demo-skill"
-                                                     :description "Demo skill."}])}
-      (fn []
-        (let [active-extensions [{:ext/namespace 'test.env
-                                  :ext/environment-info-fn (fn [_] "host facts")}
-                                 {:ext/namespace 'test.ext
-                                  :ext/prompt (fn [_] "extension rules")}]
-              stable-messages (prompt/assemble-stable-prompt-messages
-                                {}
-                                {:system-prompt "caller addendum"
-                                 :active-extensions active-extensions})
-              messages (prompt/assemble-initial-messages
-                         {:stable-prompt-messages stable-messages
-                          :initial-user-content "Do the thing."})]
-          (expect (= ["system" "system" "system" "system" "user"]
-                    (role-seq messages)))
-          (expect (= stable-messages (subvec messages 0 (count stable-messages))))
-          (expect (every? #(= "system" (:role %)) stable-messages))
-          (expect (contains-tag? (nth messages 0) "system_prompt"))
-          (expect (contains-tag? (nth messages 1) "environment_info"))
-          (expect (contains-tag? (nth messages 2) "extensions"))
-          (expect (contains-tag? (nth messages 3) "skills"))
-          (expect (str/includes? (get-in messages [4 :content])
-                    "<user_turn_request_main_goal>\nDo the thing.\n</user_turn_request_main_goal>"))))))
+    (let [active-extensions [{:ext/namespace 'test.env
+                              :ext/environment-prompt-fn (fn [_] "host facts")}
+                             {:ext/namespace 'test.ext
+                              :ext/prompt (fn [_] "extension rules")}]
+          stable-messages (prompt/assemble-stable-prompt-messages
+                            {}
+                            {:system-prompt "caller addendum"
+                             :active-extensions active-extensions})
+          messages (prompt/assemble-initial-messages
+                     {:stable-prompt-messages stable-messages
+                      :initial-user-content "Do the thing."})]
+      (expect (= ["system" "system" "system" "user"]
+                (role-seq messages)))
+      (expect (= stable-messages (subvec messages 0 (count stable-messages))))
+      (expect (every? #(= "system" (:role %)) stable-messages))
+      (expect (contains-tag? (nth messages 0) "system_prompt"))
+      (expect (contains-tag? (nth messages 1) "environment"))
+      (expect (contains-tag? (nth messages 2) "extensions"))
+      (expect (not (some #(contains-tag? % "skills") stable-messages)))
+      (expect (str/includes? (get-in messages [3 :content])
+                "<user_turn_request_main_goal>\nDo the thing.\n</user_turn_request_main_goal>"))))
 
   (it "core system prompt splits static and dynamic context truthfully"
     (let [content (:content (first (prompt/assemble-stable-prompt-messages
@@ -52,7 +48,7 @@
       (expect (not (str/includes? content "Host loop: assistant emits executable SCI forms")))
       (expect (str/includes? content "λSTATIC_CONTEXT."))
       (expect (str/includes? content "system-role stable prefix, built once at turn start"))
-      (expect (str/includes? content "<environment_info>   := turn-start host/project facts from active extension callbacks."))
+      (expect (str/includes? content "<environment>   := turn-start host/project facts from active extension callbacks."))
       (expect (str/includes? content "λDYNAMIC_CONTEXT."))
       (expect (str/includes? content "<journal>                     := token-budgeted iteration evidence; newest at bottom; may carry prior conversation iterations."))
       (expect (str/includes? content "<bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings."))
@@ -66,7 +62,6 @@
       (expect (str/includes? content "v/engine-symbol-apropos"))
       (expect (not (str/includes? content "clojure.repl")))
       (expect (not (str/includes? content "repl/doc")))
-      (expect (str/includes? content "load-skill! name)          ; load skill body for next iteration, never FINAL"))
       (expect (str/includes? content "required_evidence_observed?"))
       (expect (str/includes? content "decide from <journal> + <bindings>, not memory"))
       (expect (str/includes? content "false guard"))
@@ -80,6 +75,10 @@
       (expect (not (str/includes? content "read_only :=")))
       (expect (not (str/includes? content "TURN_ID")))
       (expect (not (str/includes? content "CONVERSATION_PREVIOUS_ANSWER")))
+      (expect (not (str/includes? content "load-skill")))
+      (expect (not (str/includes? content "reload-skills")))
+      (expect (not (str/includes? content "<skills>")))
+      (expect (not (str/includes? content "<active_skills>")))
       (expect (not (str/includes? content "(answer")))
       (expect (not (str/includes? content "(conversation-title")))
       (expect (not (str/includes? content "cached host/project facts")))
@@ -100,25 +99,19 @@
         #uuid "33333333-3333-3333-3333-333333333333")
       (env/bind-and-bump! environment 'CONVERSATION_PREVIOUS_ANSWER
         "Previous final answer.")
-      (let [content (with-redefs-fn {#'skills/list-all
-                                     (constantly [{:name "diagnose"
-                                                   :description "Debug failures."
-                                                   :path "/skills/diagnose/SKILL.md"
-                                                   :source :repo}])}
-                      (fn []
-                        (prompt/build-iteration-context
-                          environment
-                          {:active-extensions [{:ext/namespace 'test.ext
-                                                :ext/alias {:alias 't}
-                                                :ext/doc "Test extension."
-                                                :ext/symbols [{:ext.symbol/symbol 'demo}]}]
-                           :iteration 2
-                           :model "unknown-model"
-                           :current-user-content "Do the thing."
-                           :stable-prompt-content "stable prompt"
-                           :provider-prompt-context
-                           {:provider {:id :demo-provider}
-                            :descriptor {:provider/prompt-fn (fn [_] "provider rules")}}})))]
+      (let [content (prompt/build-iteration-context
+                      environment
+                      {:active-extensions [{:ext/namespace 'test.ext
+                                            :ext/alias {:alias 't}
+                                            :ext/doc "Test extension."
+                                            :ext/symbols [{:ext.symbol/symbol 'demo}]}]
+                       :iteration 2
+                       :model "unknown-model"
+                       :current-user-content "Do the thing."
+                       :stable-prompt-content "stable prompt"
+                       :provider-prompt-context
+                       {:provider {:id :demo-provider}
+                        :descriptor {:provider/prompt-fn (fn [_] "provider rules")}}})]
         (expect (str/includes? content "<current_turn_context>"))
         (expect (str/includes? content "engine_state: :turn.iteration/start"))
         (expect (str/includes? content "engine_phase: :model_think"))
@@ -130,7 +123,7 @@
         (expect (str/includes? content "turn_conversation_state_id: #uuid \"33333333-3333-3333-3333-333333333333\""))
         (expect (str/includes? content "turn_system_prompt: \"stable prompt\""))
         (expect (str/includes? content "turn_active_extensions:"))
-        (expect (str/includes? content "turn_accessible_skills:"))
+        (expect (not (str/includes? content "turn_accessible_skills:")))
         (expect (str/includes? content "turn_iteration_id: #uuid \"22222222-2222-2222-2222-222222222222\""))
         (expect (str/includes? content "turn_iteration_position: 2"))
         (expect (str/includes? content "conversation_state_id: #uuid \"33333333-3333-3333-3333-333333333333\""))

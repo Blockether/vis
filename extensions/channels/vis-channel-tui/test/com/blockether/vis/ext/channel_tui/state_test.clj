@@ -537,5 +537,3 @@
           (expect (false? (:loading? restored-db)))
           (expect (not-any? #(= "Cancelled by user." (:text %))
                     (:messages restored-db))))))))
-
-(defdescribe send-skill-message-test)

@@ -103,32 +103,6 @@
         (expect (str/includes? rendered "Read `src/foo.clj`"))
         (expect (not (str/includes? rendered "<runtime value"))))))
 
-  (it "rebuild-history renders load-skill results as Markdown instead of escaped maps"
-    (with-redefs [vis/db-info (fn [] :db)
-                  vis/db-list-conversation-turns
-                  (fn [_db _cid]
-                    [{:id :turn-1
-                      :user-request "load skill"
-                      :answer [:ir {}]}])
-                  vis/db-list-conversation-turn-iterations
-                  (fn [_db _turn-id]
-                    [{:id :iter-1}])
-                  vis/db-list-iteration-blocks
-                  (fn [_db _iteration-id]
-                    [{:code "(load-skill! \"find-skills\")"
-                      :result {:found? true
-                               :name "find-skills"
-                               :path "/tmp/SKILL.md"
-                               :body "# Find Skills\n\nNice body."}}])]
-      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
-            trace   (-> history second :traces first)
-            rendered (first (:results trace))]
-        (expect (str/includes? rendered "Loaded skill `find-skills`"))
-        (expect (str/includes? rendered "# Find Skills"))
-        (expect (not (str/includes? rendered ":body")))
-        (expect (= [{:kind :skill-load :name "find-skills"}]
-                  (:result-details trace))))))
-
   (it "rebuild-history shows restored def values when the def form returned a runtime var"
     ;; `(def derived (subvec ...))` returns a SCI Var at the form level, so
     ;; the iteration block stores `{:vis/ref :expr}`. The actual value is

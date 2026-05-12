@@ -2,11 +2,11 @@
   "Prompt assembly.
 
    Stable provider prefix is separate system-role messages: core RLM rules,
-   then environment, extension, skill-summary, and provider fragments. Initial
-   user-role content carries the current user goal plus optional previous-turn
-   context. Per-iteration user-role context carries dynamic engine telemetry
+   then environment, extension, and provider fragments. Initial user-role
+   content carries the current user goal plus optional previous-turn context.
+   Per-iteration user-role context carries dynamic engine telemetry
    (<current_turn_context>), fresh evidence (<journal>), live bindings,
-   activated skill bodies, and current engine nudges.
+   and current engine nudges.
 
    Dynamic turn / iteration ids never enter the cached stable prefix. Static
    lifecycle and policy stay in the system prompt; `<current_turn_context>`
@@ -17,7 +17,6 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
-   [com.blockether.vis.internal.skills :as skills]
    [sci.core :as sci]
    [taoensso.telemere :as tel]))
 
@@ -539,16 +538,6 @@
             (assoc :kind (:ext/kind ext))))
     (or active-extensions [])))
 
-(defn- accessible-skills-context-value
-  []
-  (try
-    (mapv (fn [s]
-            (cond-> (select-keys s [:name :description :path :source])
-              (seq (:extra s)) (assoc :extra (:extra s))))
-      (skills/list-all))
-    (catch Throwable _
-      [])))
-
 (defn- current-turn-context-block
   "Render dynamic engine telemetry into the user-role iteration trailer.
 
@@ -591,27 +580,12 @@
         "turn_conversation_state_id: " (context-value-str (or conversation-state-id "")) "\n"
         "turn_system_prompt: " (context-value-str (or turn-system-prompt "")) "\n"
         "turn_active_extensions: " (context-value-str (active-extensions-context-value active-extensions)) "\n"
-        "turn_accessible_skills: " (context-value-str (accessible-skills-context-value)) "\n"
         "turn_iteration_id: " (context-value-str (or previous-iter-id "")) "\n"
         "turn_iteration_position: " (context-value-str previous-position) "\n"
         "conversation_state_id: " (context-value-str (or conversation-state-id "")) "\n"
         "conversation_title: " (context-value-str (or conversation-title "")) "\n"
         "conversation_previous_answer: " (context-value-str (or previous-answer "")) "\n"
         "prompt_role: user"))))
-
-(defn- format-active-skill
-  [{:keys [name source body]}]
-  (str "<skill name=\"" (attr-str name) "\" source=\"" (attr-name (or source :unknown)) "\">\n"
-    (or body "")
-    (when-not (str/ends-with? (or body "") "\n") "\n")
-    "</skill>"))
-
-(defn- active-skills-block
-  [environment]
-  (when-let [skills (some-> (:active-skills-atom environment) deref vals seq)]
-    (str "<active_skills count=\"" (count skills) "\">\n"
-      (str/join "\n\n" (map format-active-skill (sort-by :name skills)))
-      "\n</active_skills>")))
 
 (defn- normalize-system-nudge
   [default-importance nudge]
@@ -735,9 +709,8 @@
                                  :engine-phase :model_think
                                  :active-extensions active-extensions
                                  :system-prompt stable-prompt-content})
-        active-skills-block (active-skills-block environment)
         provider-block (provider-prompt-block provider-prompt-context)
-        pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block active-skills-block provider-block]))
+        pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block provider-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
         budget-after-pinned (max 1 (- ctx-limit (long pinned-tokens)))
         bindings-str (read-bindings-str environment)
@@ -758,7 +731,7 @@
         ;; passes the value; policy lives in extensions.
         prompt-text (str/join "\n\n"
                       (keep identity
-                        [stable-prompt-content current-user-content current-context-block active-skills-block provider-block recent-block bindings-block]))
+                        [stable-prompt-content current-user-content current-context-block provider-block recent-block bindings-block]))
         input-tokens (or (count-prompt-tokens model prompt-text) 0)
         conversation-title (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
         nudge-ctx {:environment environment
@@ -812,7 +785,7 @@
                      (or active-extensions []))
         nudges-block (current-engine-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [current-context-block active-skills-block provider-block recent-block bindings-block nudges-block])]
+                [current-context-block provider-block recent-block bindings-block nudges-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -907,14 +880,13 @@ Aliases:
     direct or guarded answer: `(turn-answer! [:ir ...])` or
     `(when condition (turn-answer! [:ir ...]))`.
   false guard ⇒ no FINAL; ENGINE loops.
-  FINAL forbids stateful mutation/reloads/skill loads.
+  FINAL forbids stateful mutation/reloads.
 
 λSTATIC_CONTEXT.
   system-role stable prefix, built once at turn start; provider may cache it.
   <system_prompt>      := core RLM rules + caller addendum.
-  <environment_info>   := turn-start host/project facts from active extension callbacks.
+  <environment>   := turn-start host/project facts from active extension callbacks.
   <extensions>         := turn-start active extension prompt fragments.
-  <skills>             := accessible skill summaries (names/descriptions only).
 
 λDYNAMIC_CONTEXT.
   user-role turn/iteration context; initial user message plus per-iteration trailer.
@@ -923,16 +895,12 @@ Aliases:
   <current_turn_context>        := per-iteration engine ids/positions/state + direct turn/conversation values; no user intent; no policy; no named runtime-var indirection.
   <journal>                     := token-budgeted iteration evidence; newest at bottom; may carry prior conversation iterations.
   <bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings.
-  <active_skills>               := loaded skill bodies; appears after `(load-skill! ...)`.
   <current_engine_start_nudges> := extension hook runtime hints for this iteration.
   <llm_model_prompt>            := provider/model-specific prompt fragment for this iteration.
 
 λHOST.
   (turn-answer! ir)           ; finalize turn, ir must be [:ir ...]
   (set-conversation-title! s)  ; set conversation title
-  (load-skill! name)          ; load skill body for next iteration, never FINAL
-  (reload-skills!)            ; refresh skill cache, never FINAL
-  (skills)                    ; list accessible skill summaries
   (var-history ...)           ; inspect persisted vars
   (var-history-timeline ...)  ; inspect var timeline
 
@@ -1072,40 +1040,14 @@ Aliases:
                 (nil? (:kind info)) (dissoc :kind)
                 (nil? registry-id) (dissoc :registry-id)))))))
 
-(defn accessible-skills-snapshot
-  "Build the value of the `TURN_ACCESSIBLE_SKILLS` SYSTEM var: a vec of
-   compact skill summaries the model can `filter`/`map`/`some` over
-   without paying for the full SKILL.md body.
-
-   Per element: `{:name :description :path :source :extra}`. The `:body`
-   field is INTENTIONALLY omitted - it lazy-loads via `(load-skill! name)`,
-   the canonical internal activation surface. Pulling every body into a
-   SYSTEM var would balloon turn-start memory for a value the model rarely
-   needs in full (the internal `<skills>` block already shows name +
-   description).
-
-   Frozen ONCE at turn start (see `iteration-loop`). The model sees the
-   same vec across every iteration of the same turn."
-  []
-  (try
-    (->> (skills/list-all)
-      (mapv (fn [s]
-              (cond-> (select-keys s [:name :description :path :source])
-                (seq (:extra s)) (assoc :extra (:extra s))))))
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::skills-snapshot-failed
-                 :data  {:error (ex-message t)}}
-        "TURN_ACCESSIBLE_SKILLS snapshot failed; defaulting to []")
-      [])))
-
 (defn- environment-info-block
-  "Collect `<environment_info>` from every active extension that declares
-   `:ext/environment-info-fn`. Each fn receives the live environment and
+  "Collect `<environment>` from every active extension that declares
+   `:ext/environment-prompt-fn`. Each fn receives the live environment and
    returns a string or nil. Non-blank results are joined and wrapped in
-   `<environment_info>...</environment_info>`."
+   `<environment>...</environment>`."
   [environment active-extensions]
   (let [fragments (keep (fn [ext]
-                          (when-let [f (:ext/environment-info-fn ext)]
+                          (when-let [f (:ext/environment-prompt-fn ext)]
                             (try
                               (let [result (call-extension-callback ext f environment)]
                                 (when (and (string? result) (not (str/blank? result)))
@@ -1119,7 +1061,7 @@ Aliases:
                                 nil))))
                     active-extensions)]
     (when (seq fragments)
-      (prompt-block "environment_info" (str/join "\n\n" fragments)))))
+      (prompt-block "environment" (str/join "\n\n" fragments)))))
 
 (defn- extensions-prompt-block
   "Collect `<extensions>` from every active extension that declares
@@ -1144,21 +1086,6 @@ Aliases:
     (when (seq fragments)
       (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
-(defn- skills-summary-block
-  "Render `<skills>` with name + description for every accessible skill.
-   Full bodies are NOT included; they arrive only after the model calls
-   `(load-skill! ...)`."
-  []
-  (let [all-skills (skills/list-all)]
-    (when (seq all-skills)
-      (prompt-block "skills"
-        (str/join "\n"
-          (map (fn [{:keys [name description]}]
-                 (str "- " name
-                   (when (and description (not (str/blank? description)))
-                     (str ": " description))))
-            (sort-by :name all-skills)))))))
-
 (defn- stable-prompt-message
   [content]
   (when (and (string? content) (not (str/blank? content)))
@@ -1176,17 +1103,12 @@ Aliases:
    Each tagged block becomes its own system-role message so provider prompt
    caching can catch stable boundaries independently:
      `<system_prompt>`      - CORE_SYSTEM_PROMPT + caller addendum
-     `<environment_info>`   - host/git/project facts from extensions
+     `<environment>`   - host/git/project facts from extensions
      `<extensions>`         - extension `:ext/prompt` fragments
-     `<skills>`             - skill name + description summaries
-
-   Full skill bodies are not in the cached prefix; they arrive only after
-   the model calls `(load-skill! ...)` and are rendered in user-role
-   `<active_skills>`.
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Drives
-        environment_info, extension prompt, and nudge collection.
+        environment, extension prompt, and nudge collection.
 
    Optional opts:
      `:system-prompt`            - caller addendum appended to CORE."
@@ -1197,11 +1119,10 @@ Aliases:
   (let [core-block   (prompt-block "system_prompt"
                        (build-system-prompt {:system-prompt system-prompt}))
         env-block    (environment-info-block environment active-extensions)
-        ext-block    (extensions-prompt-block environment active-extensions)
-        skills-block (skills-summary-block)]
+        ext-block    (extensions-prompt-block environment active-extensions)]
     (vec
       (keep stable-prompt-message
-        [core-block env-block ext-block skills-block]))))
+        [core-block env-block ext-block]))))
 
 (defn assemble-system-prompt
   "Backward-compatible joined-text view of `assemble-stable-prompt-messages`.

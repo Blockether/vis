@@ -42,7 +42,7 @@
       (expect (< (count prompt) 1600))))
 
   (it "contributes environment info through the dedicated hook"
-    (expect (fn? (:ext/environment-info-fn foundation/vis-extension))))
+    (expect (fn? (:ext/environment-prompt-fn foundation/vis-extension))))
 
   (it "does not leave a standalone md extension registered"
     (expect (contains? (set (vis/registered-extension-ids)) 'v))

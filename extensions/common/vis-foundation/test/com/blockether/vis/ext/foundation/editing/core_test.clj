@@ -300,13 +300,25 @@
           rg (private-fn "rg-tool")]
       (expect (= (grep spec) (:result (rg spec))))))
 
-  (it "rejects shorthand and unknown keys instead of silently changing grammar"
+  (it "public rg accepts the legacy query-plus-glob shorthand"
+    (let [_  (write-temp! "rglegacy/src/a.clj" "alpha here\n")
+          _  (write-temp! "rglegacy/src/b.clj" "beta here\n")
+          _  (write-temp! "rglegacy/src/c.txt" "alpha ignored\n")
+          rg (private-fn "rg-tool")
+          out (:result (rg "alpha|beta" {:paths [(temp-dir-path "rglegacy")]
+                                          :glob "src/**/*.clj"}))]
+      (expect (= ["alpha here" "beta here"] (mapv :text (:hits out))))))
+
+  (it "private grep keeps strict spec validation and public rg rejects unknown shorthand opts"
     (let [grep (private-fn "grep-files")
+          rg (private-fn "rg-tool")
           bad-spec (fn [k v] (assoc {:all ["needle"] :paths ["."]} k v))]
       (expect (throws? clojure.lang.ExceptionInfo
                 #(grep "needle")))
       (expect (throws? clojure.lang.ExceptionInfo
                 #(grep {:all ["needle"] :paths "."})))
+      (expect (throws? clojure.lang.ExceptionInfo
+                #(rg "needle" {:limit 2})))
       (doseq [[k v] [[(keyword "limit") 2]
                      [(keyword "type") :clj]
                      [(keyword "mode") :any]]]

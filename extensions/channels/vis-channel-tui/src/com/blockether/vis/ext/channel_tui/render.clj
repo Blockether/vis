@@ -2257,7 +2257,7 @@
 
               ;; ── Answer text - answer bg ──
               ;; Plain final-answer paragraphs can still contain inline
-              ;; sentinels from IR spans, e.g. `[:c "/skill"]` becomes
+              ;; sentinels from IR spans, e.g. `[:c "/command"]` becomes
               ;; INLINE_CODE_ON/OFF around the body text. Consume those
               ;; here instead of writing raw PUA glyphs to the terminal.
                     (str/starts-with? line answer-txt-marker)
@@ -2635,20 +2635,15 @@
    Label = OBSERVATION/ACTION (derived from `:tag`); suffix =
    op-name. No per-op badge field anywhere."
   [detail]
-  (cond
-    (= :skill-load (:kind detail))
-    (str "SKILL " (:name detail))
-
-    :else
-    (when-let [tag (some-> detail :tag)]
-      (let [label (case tag
-                    :op.tag/observation "OBSERVATION"
-                    :op.tag/action      "ACTION"
-                    nil)
-            op    (:op detail)]
-        (when label
-          (str label (when (and op (not (#{:all :any} op)))
-                       (str " " (name op)))))))))
+  (when-let [tag (some-> detail :tag)]
+    (let [label (case tag
+                  :op.tag/observation "OBSERVATION"
+                  :op.tag/action      "ACTION"
+                  nil)
+          op    (:op detail)]
+      (when label
+        (str label (when (and op (not (#{:all :any} op)))
+                     (str " " (name op))))))))
 
 (defn- self-describing-tool-result?
   "Whether the op's body output speaks for itself (shell stdout,

@@ -1,6 +1,6 @@
 (ns com.blockether.vis.ext.foundation.doctor-test
   "Unit tests for foundation's `:ext/doctor-check-fn` sections:
-   ::system, ::agents-md, ::skills, ::scan-warnings.
+   ::system, ::agents-md, ::voice, ::scan-warnings.
 
    Plan §6: each section returns expected message shapes for every
    input scenario; the composite `check-fn` stamps the right
@@ -64,19 +64,6 @@
         (expect (str/includes? (:message m) "source: repo"))))))
 
 ;; ---------------------------------------------------------------------------
-;; ::skills
-;; ---------------------------------------------------------------------------
-
-(defdescribe skills-check-test
-  (it "emits one :info message summarising count + breakdown"
-    (let [msgs (section-msgs ::doctor/skills {})]
-      (expect (= 1 (count msgs)))
-      (let [m (first msgs)]
-        (expect (= :info (:level m)))
-        ;; The repo has 5 repo skills + 1 user-global skill.
-        (expect (re-find #"\d+ skills? loaded" (:message m)))))))
-
-;; ---------------------------------------------------------------------------
 ;; ::voice
 ;; ---------------------------------------------------------------------------
 
@@ -106,18 +93,17 @@
   (it "check-fn is a function suitable for `:ext/doctor-check-fn`"
     (expect (fn? doctor/check-fn)))
 
-  (it "every emitted message carries one of the five documented :check-ids in section order"
+  (it "every emitted message carries one of the four documented :check-ids in section order"
     (let [msgs (doctor/check-fn {})
           ids  (distinct (mapv :check-id msgs))]
       (expect (every? #{::doctor/system
                         ::doctor/agents-md
-                        ::doctor/skills
                         ::doctor/voice
                         ::doctor/scan-warnings}
                 ids))
-      ;; Sections appear in the documented order - system, agents-md, skills,
+      ;; Sections appear in the documented order - system, agents-md,
       ;; voice, scan-warnings. Any present subset preserves that ordering.
       (let [section-order [::doctor/system ::doctor/agents-md
-                           ::doctor/skills ::doctor/voice ::doctor/scan-warnings]
+                           ::doctor/voice ::doctor/scan-warnings]
             present (filter (set ids) section-order)]
         (expect (= present ids))))))
