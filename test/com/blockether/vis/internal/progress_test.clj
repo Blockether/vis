@@ -1,5 +1,6 @@
 (ns com.blockether.vis.internal.progress-test
-  (:require [com.blockether.vis.internal.progress :as progress]
+  (:require [clojure.string :as str]
+            [com.blockether.vis.internal.progress :as progress]
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe progress-test
@@ -70,4 +71,23 @@
       (on-chunk {:phase :form-start :iteration 1 :form-idx 0 :code "(+ 1 2)"})
       (let [entry (first (get-timeline))]
         (expect (nil? (:activity entry)))
-        (expect (= ["(+ 1 2)"] (:code entry)))))))
+        (expect (= ["(+ 1 2)"] (:code entry))))))
+
+  (it "renders live load-skill results as Markdown instead of escaped maps"
+    (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+      (on-chunk {:phase :form-result
+                 :iteration 1
+                 :form-idx 0
+                 :code "(load-skill! \"find-skills\")"
+                 :result {:found? true
+                          :name "find-skills"
+                          :path "/tmp/SKILL.md"
+                          :body "# Find Skills\n\nNice body."}
+                 :execution-time-ms 1})
+      (let [entry (first (get-timeline))
+            rendered (first (:results entry))]
+        (expect (str/includes? rendered "Loaded skill `find-skills`"))
+        (expect (str/includes? rendered "# Find Skills"))
+        (expect (not (str/includes? rendered ":body")))
+        (expect (= [{:kind :skill-load :name "find-skills"}]
+                  (:result-details entry)))))))
