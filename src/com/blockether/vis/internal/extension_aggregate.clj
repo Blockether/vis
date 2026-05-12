@@ -167,47 +167,47 @@
     (or (:aggregate-key query) (:key query))
     (assoc :aggregate-key (or (:aggregate-key query) (:key query)))))
 
-(defn ext-create!
+(defn extension-aggregate-create!
   "Append one extension-owned aggregate row. Returns the decoded row.
    Extension id is always filled from current extension callback context."
   [env row]
   (persistance/db-create-extension-aggregate! (db-info! env) (normalize-row env row)))
 
-(defn ext-put!
+(defn extension-aggregate-put!
   "Upsert one singleton extension-owned aggregate row for key/kind/scope.
    Returns the decoded row."
   [env row]
   (persistance/db-put-extension-aggregate! (db-info! env) (normalize-row env row)))
 
-(defn ext-get
+(defn extension-aggregate-get
   "Return one extension-owned aggregate row by query, or nil. Defaults to the
    latest row when the query is not unique."
   [env query]
   (persistance/db-get-extension-aggregate (db-info! env) (normalize-query env query)))
 
-(defn ext-list
+(defn extension-list-aggregates
   "List extension-owned aggregate rows. The current extension id is always
    applied; normal extension code cannot list another extension's rows."
   [env query]
   (persistance/db-list-extension-aggregates (db-info! env) (normalize-query env query)))
 
-(defn ext-delete!
+(defn extension-delete-aggregate!
   "Delete extension-owned aggregate rows matching query. Cross-extension delete
    is impossible through this API because extension id is runtime-filled."
   [env query]
   (persistance/db-delete-extension-aggregates! (db-info! env) (normalize-query env query)))
 
-(defn ext-swap!
+(defn extension-update-aggregate!
   "Atomic singleton update. Reads the current content for query, applies f, and
    writes the returned value as :content. Query must include :key and :kind."
   [env query f & args]
   (let [row (normalize-query env (cond-> query (not (contains? query :scope)) (assoc :scope :global)))]
     (when-not (:aggregate-key row)
-      (throw (ex-info "ext-swap! requires :key"
+      (throw (ex-info "extension-update-aggregate! requires :key"
                {:type :extension-aggregate/missing-required
                 :key :key})))
     (when-not (:kind row)
-      (throw (ex-info "ext-swap! requires :kind"
+      (throw (ex-info "extension-update-aggregate! requires :kind"
                {:type :extension-aggregate/missing-required
                 :key :kind})))
     (persistance/db-swap-extension-aggregate! (db-info! env) row f args)))

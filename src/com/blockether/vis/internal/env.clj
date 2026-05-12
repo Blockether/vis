@@ -14,8 +14,8 @@
    [clojure+.core]
    [clojure+.walk]
    [com.blockether.vis.internal.format :as fmt]
-   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.persistance :as persistance]
+   [malli.provider :as mp]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
    [taoensso.telemere :as tel]))
@@ -177,6 +177,37 @@
   (into {} (for [[sym v] (ns-publics (the-ns ns-sym))
                  :when (and (var? v) (not (:macro (meta v))))]
              [sym @v])))
+
+(defn- sci-var-source
+  [sci-ctx sym]
+  (try
+    (some-> (sci/resolve sci-ctx sym) meta :vis/source)
+    (catch Throwable _
+      nil)))
+
+(defn- patch-repl-helpers!
+  "Patch SCI's clojure.repl for Vis' synthetic extension namespaces.
+
+   Extension aliases (`v/`, `z/`, `bridge/`, ...) are not backed by source
+   files inside SCI, so the stock `source-fn` cannot find them. Extension
+   installation stores host source on SCI var meta as `:vis/source`; this
+   wrapper checks that first and then falls back to SCI's original source-fn.
+   Also preinstalls the `repl` alias promised by the system prompt."
+  [sci-ctx]
+  (let [repl-ns            (sci/find-ns sci-ctx 'clojure.repl)
+        original-source-fn (some-> (sci/resolve sci-ctx 'clojure.repl/source-fn) deref)
+        source-fn          (fn vis-source-fn [sym]
+                             (or (sci-var-source sci-ctx sym)
+                               (when original-source-fn
+                                 (original-source-fn sym))))]
+    (when repl-ns
+      (swap! (:env sci-ctx) assoc-in [:namespaces 'clojure.repl 'source-fn]
+        (sci/new-var 'source-fn source-fn
+          {:ns repl-ns
+           :doc "Returns source for SCI vars, including Vis extension aliases."
+           :arglists '([sym])})))
+    (swap! (:env sci-ctx) update :ns-aliases assoc 'repl 'clojure.repl)
+    sci-ctx))
 
 (def MODERN_CORE_BINDINGS
   "Clojure core helpers absent from SCI 0.12.51's default `clojure.core`
@@ -464,7 +495,8 @@
                                                spit
                                                intern
                                                sh
-                                               *in* *command-line-args*]}))]
+                                               *in* *command-line-args*]}))
+        sci-ctx (patch-repl-helpers! sci-ctx)]
     ;; REPL-style recovery bindings: `*1` `*2` `*3` carry the last three
     ;; evaluated form values (most recent first); `*e` carries the most
     ;; recent uncaught exception. The iteration loop pushes onto the
@@ -478,8 +510,6 @@
     {:sci-ctx sci-ctx
      :sandbox-ns sandbox-ns
      :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))}))
-
-(def ^:private ^:const MAX_BINDINGS_COUNT 1000)
 
 ;; SYSTEM vars are read-only bindings the loop maintains for the
 ;; agent. Three lifetime tiers, each tagged by its prefix:
@@ -626,43 +656,20 @@
     (symbol? val) :symbol
     :else (some-> val class .getSimpleName str/lower-case keyword)))
 
-(defn- var-size [val persisted?]
-  (cond
-    persisted? nil
-    (nil? val) nil
-    (string? val) (count val)
-    (or (map? val) (vector? val) (set? val)) (count val)
-    (sequential? val)
-    (let [n (bounded-count MAX_BINDINGS_COUNT val)]
-      (if (= n MAX_BINDINGS_COUNT) (str MAX_BINDINGS_COUNT "+") n))
-    :else nil))
-
 ;; ---------------------------------------------------------------------------
-;; Type-aware var rendering
+;; Source-backed var rendering
 ;;
-;; Cheap values get their actual content inlined so the model never has to
-;; round-trip via `(var-history 'sym)` just to see what's in a var. Expensive
-;; values fall back to a schema preview (key list, head, size). The render
-;; emits VALID Clojure shape - stats live in a `;;` comment line, never as
-;; reader-macro metadata onto the symbol (the old `^{:v N :s :l :t :map}` form
-;; was fake-Clojure that confused parser priors).
+;; `<bindings>` is intentionally tiny: one Malli-derived `;; shape:` comment
+;; followed by the persisted `(def ...)` / `(defn ...)` source form. Runtime
+;; values stay in the sandbox; the prompt sees source + shape, not payload
+;; previews.
 ;; ---------------------------------------------------------------------------
 
-(def ^:private STRING_INLINE_MAX_CHARS 8000)
-(def ^:private STRING_HEAD_PREVIEW_CHARS 800)
-(def ^:private MAP_INLINE_MAX_KEYS 8)
-(def ^:private MAP_KEYS_SAMPLE_SIZE 6)
-(def ^:private SEQ_INLINE_MAX_ELEMS 5)
-(def ^:private SEQ_HEAD_SAMPLE_SIZE 3)
 (def ^:private DOCSTRING_FIRST_LINE_CHARS 100)
-;; Per-entry char cap when rendering collection bodies. A 5-element
-;; vector of 1000-char strings would otherwise blow up to 5000+ chars
-;; even though our element-count check passes. This is the SAFETY net.
 (def ^:private BINDINGS_BODY_MAX_CHARS 600)
 (def ^:private BINDINGS_PRINT_LENGTH 32)
 (def ^:private BINDINGS_PRINT_LEVEL 6)
 (def ^:private MAX_BINDINGS_ENTRIES 100)
-(def ^:private BINDINGS_SUMMARY_MAX_NAMES 10)
 
 (defn- bounded-pr-str
   "Local mirror of `iteration.core/safe-pr-str` for the bindings render
@@ -682,120 +689,61 @@
 (defn- truncate-string [s n]
   (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
 
-(defn- map-keys-preview [val]
-  (let [ks (vec (keys val))]
-    (if (<= (count ks) MAP_INLINE_MAX_KEYS)
-      {:inline? true :keys ks}
-      {:inline? false
-       :keys-sample (vec (take MAP_KEYS_SAMPLE_SIZE ks))
-       :total (count ks)})))
+(defn- stored-def-source?
+  [code]
+  (boolean
+    (when (string? code)
+      (re-find #"^\s*\((?:clojure.core/)?(?:defn-|defn|def)(?:\s|$)" code))))
 
-(defn- seq-head-preview [val]
-  (let [n (var-size val false)
-        sample-count (cond
-                       (string? n) SEQ_HEAD_SAMPLE_SIZE          ;; "1000+" - lazy/big
-                       (number? n) (min n SEQ_HEAD_SAMPLE_SIZE)
-                       :else SEQ_HEAD_SAMPLE_SIZE)
-        head (vec (take sample-count val))]
-    {:total n :head head}))
+(defn- malli-shape
+  [v]
+  (try
+    (mp/provide [v])
+    (catch Throwable t
+      [:any {:error (or (ex-message t) (.getName (class t)))}])))
 
-(defn- stats-comment
-  "Render the per-entry stats as a single `;;` comment line. Replaces the
-   fake-Clojure metadata-on-symbol form. `:scope` uses full words
-   (`:live | :archived | :system`); `:v` is the persisted version count."
-  [{:keys [version status size]}]
-  (let [scope-word (case status
-                     :sys :system
-                     :f   :archived
-                     :l   :live
-                     status)]
-    (str ";; v=" version " scope=" (name scope-word)
-      (when (some? size) (str " n=" size)))))
+(defn- shape-comment
+  [v]
+  (str ";; shape: " (bounded-pr-str (malli-shape v))))
+
+(defn- fallback-source-form
+  [{:keys [sym type val arglists doc]}]
+  (if (= type :fn)
+    (let [single? (and (sequential? arglists)
+                    (= 1 (count arglists))
+                    (vector? (first arglists)))
+          doc-line (when (and (string? doc) (not (str/blank? doc)))
+                     (truncate-string
+                       (-> (str doc) str/split-lines first str/trim)
+                       DOCSTRING_FIRST_LINE_CHARS))
+          sig (cond
+                single? (pr-str (first arglists))
+                (seq arglists) (str/join " " (map pr-str arglists))
+                :else "[& args]")]
+      (str "(defn " sym " " sig
+        (when doc-line (str " \"" doc-line "\""))
+        " ...)"))
+    (str "(def " sym " " (bounded-pr-str val) ")")))
+
+(defn- source-form
+  [{:keys [code] :as entry}]
+  (if (stored-def-source? code)
+    (str/trim code)
+    (fallback-source-form entry)))
 
 (defn- render-fn-form
-  [{:keys [sym arglists doc] :as entry}]
-  (let [stats   (stats-comment entry)
-        single? (and (sequential? arglists)
-                  (= 1 (count arglists))
-                  (vector? (first arglists)))
-        doc-line (when (and (string? doc) (not (str/blank? doc)))
-                   (truncate-string
-                     (-> (str doc) str/split-lines first str/trim)
-                     DOCSTRING_FIRST_LINE_CHARS))
-        body (cond
-               doc-line (str " \"" doc-line "\" ...")
-               :else " ...")
-        sig  (cond
-               single? (pr-str (first arglists))
-               (seq arglists) (str/join " " (map pr-str arglists))
-               :else "[& args]")]
-    (str stats "\n(defn " sym " " sig body ")")))
+  [entry]
+  (str (shape-comment (:val entry)) "\n" (source-form entry)))
 
 (defn- render-data-form
-  "Render a non-fn var with type-aware preview. Cheap values inline; large
-   values fall back to a schema map (`{:n N :keys-sample [...]}` etc.).
-   When a `:doc` is set on the var meta, embed the first line of the
-   docstring before the body - same UX as render-fn-form, so all
-   var-defining forms surface their purpose in `<bindings>`."
-  [{:keys [sym type val doc] :as entry}]
-  (let [stats (stats-comment entry)
-        doc-line (when (and (string? doc) (not (str/blank? doc)))
-                   (truncate-string
-                     (-> (str doc) str/split-lines first str/trim)
-                     DOCSTRING_FIRST_LINE_CHARS))
-        body  (if (extension/tool-result? val)
-                (bounded-pr-str {:tool-result true
-                                 :success?    (:success? val)
-                                 :op          (get-in val [:info :op])
-                                 :hit-count   (some-> val :result :hits count)})
-                (case type
-                  ;; Scalars: pr-str output is bounded by the type. A
-                  ;; literal `true` / `42` / `:foo` cannot blow up.
-                  :nil     "nil"
-                  :bool    (pr-str val)
-                  :int     (pr-str val)
-                  :float   (pr-str val)
-                  :keyword (pr-str val)
-                  :symbol  (pr-str val)
-                  ;; Strings: capped before pr-str, so the printed form is
-                  ;; bounded by STRING_HEAD_PREVIEW_CHARS + quotes.
-                  :string  (let [s val]
-                             (if (<= (count s) STRING_INLINE_MAX_CHARS)
-                               (pr-str s)
-                               (pr-str {:string-size (count s)
-                                        :head (truncate-string s STRING_HEAD_PREVIEW_CHARS)})))
-                  ;; Collections route through bounded-pr-str so an inline
-                  ;; render of a 5-element vec of 1000-char strings can't
-                  ;; produce a 5000+ char body.
-                  :map     (let [{:keys [inline? keys keys-sample total]} (map-keys-preview val)]
-                             (if inline?
-                               (bounded-pr-str {:keys keys})
-                               (bounded-pr-str {:n total :keys-sample keys-sample})))
-                  (:vector :set :list :seq)
-                  (let [{:keys [total head]} (seq-head-preview val)]
-                    (cond
-                      (and (number? total) (<= total SEQ_INLINE_MAX_ELEMS))
-                      (bounded-pr-str (vec val))
-                      :else
-                      (bounded-pr-str {:n total :head head})))
-                  ;; unknown type - punt to a value-only stub
-                  (pr-str {:type type})))]
-    (str stats
-      "\n(def " sym
-      (when doc-line (str " \"" doc-line "\""))
-      " " body ")")))
+  [entry]
+  (str (shape-comment (:val entry)) "\n" (source-form entry)))
 
 (defn- render-var-form
-  "Live-var render path. Persisted-only entries are routed to the archive
-   block by the caller; this function should only see live entries."
   [{:keys [type] :as entry}]
   (if (= type :fn)
     (render-fn-form entry)
     (render-data-form entry)))
-
-(defn- display-sym-name
-  [sym]
-  (name sym))
 
 (defn- safe-defn-source?
   [expr]
@@ -803,42 +751,15 @@
     (when (string? expr)
       (re-find #"^\s*\((?:clojure.core/)?defn(?:-|\s)" expr))))
 
-(defn- unavailable-archive-entry?
-  [{:keys [value code]}]
-  (and (map? value)
-    (= :expr (:vis/ref value))
-    (not (safe-defn-source? code))))
-
-(defn- render-symbol-summary
-  [label syms]
-  (when (seq syms)
-    (str ";; " label ": "
-      (str/join ", " (map display-sym-name (take BINDINGS_SUMMARY_MAX_NAMES syms)))
-      (when (> (count syms) BINDINGS_SUMMARY_MAX_NAMES)
-        (str " (+" (- (count syms) BINDINGS_SUMMARY_MAX_NAMES) " more)")))))
-
-(defn- render-bindings-summary
-  [{:keys [overflow-live archived unavailable-count]}]
-  (let [lines (cond-> []
-                (seq overflow-live)
-                (conj (str ";; overflow-live-symbols: " (count overflow-live))
-                  (render-symbol-summary "hidden live symbols" overflow-live))
-                (seq archived)
-                (conj (str ";; archived-symbols: " (count archived)
-                        (when (pos? (long (or unavailable-count 0)))
-                          (str ", unavailable: " unavailable-count)))
-                  (render-symbol-summary "recent archived" archived)
-                  ";; use (var-history) to browse symbol history/info"))]
-    (seq (keep identity lines))))
-
 (defn build-bindings
   "Build the `<bindings>` block from user-defined vars in the SCI sandbox.
 
    Returns nil when no user vars exist; otherwise a multi-line string
-   with one entry per `(def ...)`. SYSTEM vars (every name in
-   `SYSTEM_VAR_NAMES` - `TURN_*`, `ITERATION_*`, `CONVERSATION_*`) and
-   initial-ns bindings (tools, helpers) are excluded - the model reads
-   SYSTEM vars by name directly from the sandbox.
+   with one entry per live user `(def ...)` / `(defn ...)`: one Malli-derived
+   `;; shape:` comment followed by the persisted source form. SYSTEM vars
+   (every name in `SYSTEM_VAR_NAMES` - `TURN_*`, `ITERATION_*`,
+   `CONVERSATION_*`) and initial-ns bindings (tools, helpers) are excluded -
+   the model reads SYSTEM vars by name directly from the sandbox.
 
    Sort order: most-recently-bound first."
   ([sci-ctx initial-ns-keys]
@@ -860,10 +781,11 @@
          live-info (into {}
                      (for [[s v] sandbox-map
                            :when (symbol? s)]
-                       [s {:val (if (instance? clojure.lang.IDeref v) @v v)
+                       [s {:val      (if (instance? clojure.lang.IDeref v) @v v)
                            :arglists (:arglists (meta v))
                            :doc      (:doc (meta v))
-                           :version  (get-in var-registry [s :version] 1)}]))
+                           :version  (get-in var-registry [s :version] 1)
+                           :code     (get-in var-registry [s :code])}]))
          keep? (fn [[sym _]]
                  (and (not (contains? initial-ns-keys sym))
                    (not (system-var-sym? sym))))
@@ -871,32 +793,16 @@
                         (filter keep?)
                         (sort-by (fn [[sym _]]
                                    [(- (long (recency-of sym))) (str sym)]))
-                        (mapv (fn [[sym {:keys [val arglists doc version]}]]
+                        (mapv (fn [[sym {:keys [val arglists doc version code]}]]
                                 {:sym sym
                                  :version version
                                  :status (var-status-keyword {:system? false :persisted? false})
                                  :type (var-type-keyword val false)
-                                 :size (var-size val false)
                                  :val val
                                  :arglists arglists
-                                 :doc doc})))
-         rendered-live (take MAX_BINDINGS_ENTRIES live-entries)
-         overflow-live (mapv :sym (drop MAX_BINDINGS_ENTRIES live-entries))
-         live-syms     (set (keys live-info))
-         archived-entries (->> (or var-registry {})
-                            (remove (fn [[sym _]]
-                                      (or (contains? live-syms sym)
-                                        (contains? initial-ns-keys sym)
-                                        (system-var-sym? sym))))
-                            (sort-by (fn [[sym _]]
-                                       [(- (long (recency-of sym))) (str sym)]))
-                            vec)
-         archived-syms (mapv first archived-entries)
-         unavailable-count (count (filter (comp unavailable-archive-entry? second) archived-entries))
-         summary-lines (render-bindings-summary {:overflow-live overflow-live
-                                                 :archived archived-syms
-                                                 :unavailable-count unavailable-count})
-         lines (vec (concat (map render-var-form rendered-live) summary-lines))]
+                                 :doc doc
+                                 :code code})))
+         lines (mapv render-var-form (take MAX_BINDINGS_ENTRIES live-entries))]
      (when (seq lines)
        (str/join "\n" lines)))))
 

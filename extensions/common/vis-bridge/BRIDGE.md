@@ -65,12 +65,12 @@ It needs:
 Bridge stores **everything** through Vis's extension aggregate API:
 
 ```clojure
-(vis/ext-create! env row)
-(vis/ext-put!    env row)   ;; upsert by key/kind/scope
-(vis/ext-get     env query)
-(vis/ext-list    env query)
-(vis/ext-delete! env query)
-(vis/ext-swap!   env query f & args)
+(vis/extension-aggregate-create! env row)
+(vis/extension-aggregate-put!    env row)   ;; upsert by key/kind/scope
+(vis/extension-aggregate-get     env query)
+(vis/extension-list-aggregates    env query)
+(vis/extension-delete-aggregate! env query)
+(vis/extension-update-aggregate!   env query f & args)
 ```
 
 Rows are scoped `:global` (the graph is project-wide, not per-conversation).
@@ -104,7 +104,7 @@ Bridge maps its graph concepts onto this KV shape:
 
 > **Why this works**: The aggregate UNIQUE constraint on
 > `(extension_id, aggregate_key, kind, scope_key)` gives us dedup for free.
-> `ext-put!` upserts by that tuple. `ext-list` with `:kind` filter gives us
+> `extension-aggregate-put!` upserts by that tuple. `extension-list-aggregates` with `:kind` filter gives us
 > typed queries. `aggregate_key` encodes the graph identity (qualified names)
 > so we can list by prefix pattern.
 
@@ -117,10 +117,10 @@ Bridge maps its graph concepts onto this KV shape:
 
 ### 3.2 Nodes
 
-Stored via `ext-put!`:
+Stored via `extension-aggregate-put!`:
 
 ```clojure
-(vis/ext-put! env
+(vis/extension-aggregate-put! env
   {:key   "node:com.blockether.vis.core/run"  ;; unique aggregate_key per node
    :kind  :bridge/node
    :scope :global
@@ -184,10 +184,10 @@ Stored via `ext-put!`:
 
 ### 3.3 Edges
 
-Stored via `ext-put!`:
+Stored via `extension-aggregate-put!`:
 
 ```clojure
-(vis/ext-put! env
+(vis/extension-aggregate-put! env
   {:key   "edge:com.blockether.vis.core/run::calls::com.blockether.vis.internal.loop-core/iterate!"
    :kind  :bridge/edge
    :scope :global
@@ -209,13 +209,13 @@ Edge queries use metadata filtering — no content deserialization needed:
 
 ```clojure
 ;; All edges from a node (upstream callers)
-(vis/ext-list env {:kind :bridge/edge :metadata {:source "com.blockether.vis.core/run"}})
+(vis/extension-list-aggregates env {:kind :bridge/edge :metadata {:source "com.blockether.vis.core/run"}})
 
 ;; All edges to a node (downstream callees)
-(vis/ext-list env {:kind :bridge/edge :metadata {:target "com.blockether.vis.internal.loop-core/iterate!"}})
+(vis/extension-list-aggregates env {:kind :bridge/edge :metadata {:target "com.blockether.vis.internal.loop-core/iterate!"}})
 
 ;; All edges for a file (re-indexing)
-(vis/ext-list env {:kind :bridge/edge :metadata {:path "src/com/blockether/vis/core.clj"}})
+(vis/extension-list-aggregates env {:kind :bridge/edge :metadata {:path "src/com/blockether/vis/core.clj"}})
 ```
 
 #### Edge `content` map shape
@@ -245,10 +245,10 @@ Edge queries use metadata filtering — no content deserialization needed:
 
 ### 3.4 Index state
 
-Stored via `ext-put!`:
+Stored via `extension-aggregate-put!`:
 
 ```clojure
-(vis/ext-put! env
+(vis/extension-aggregate-put! env
   {:key   "idx:src/core.clj"
    :kind  :bridge/index
    :scope :global
@@ -270,10 +270,10 @@ content hash. On re-index:
 
 ### 3.5 Semantic summaries (optional)
 
-Stored via `ext-put!`:
+Stored via `extension-aggregate-put!`:
 
 ```clojure
-(vis/ext-put! env
+(vis/extension-aggregate-put! env
   {:key   "summary:com.blockether.vis.core/run:role"
    :kind  :bridge/summary
    :scope :global
@@ -436,14 +436,14 @@ whose content hash changed or whose index row is missing/stale.
 1. Delete old nodes/edges for stale/deleted files.
 2. Insert new nodes. Collect generated IDs.
 3. Insert new edges (resolve target qualified names → IDs).
-4. Update index aggregates via `ext-put!`.
-5. All via batched `ext-delete!` + `ext-put!` calls.
+4. Update index aggregates via `extension-aggregate-put!`.
+5. All via batched `extension-delete-aggregate!` + `extension-aggregate-put!` calls.
 
 ### Phase 5: Enrich (optional, deferred)
 
 1. For nodes without summaries, queue LLM summary generation.
 2. Run asynchronously (not in the agent's critical path).
-3. Store in summary aggregates via `ext-put!`.
+3. Store in summary aggregates via `extension-aggregate-put!`.
 
 ---
 
@@ -457,12 +457,12 @@ Requires `vis-foundation` (for `v/` tools).
 
 ### 7.2 Persistence
 
-Bridge stores **everything** through extension aggregates (`vis/ext-put!`,
-`vis/ext-list`, etc.). No custom SQL tables. No DDL migration.
+Bridge stores **everything** through extension aggregates (`vis/extension-aggregate-put!`,
+`vis/extension-list-aggregates`, etc.). No custom SQL tables. No DDL migration.
 
 The aggregate KV schema gives us:
 - **Dedup** via `UNIQUE (extension_id, aggregate_key, kind, scope_key)`
-- **Upsert** via `ext-put!`
+- **Upsert** via `extension-aggregate-put!`
 - **Typed queries** via `:kind` filter (`:bridge/node`, `:bridge/edge`, etc.)
 - **Ownership** via runtime-filled `extension_id`
 
@@ -471,7 +471,7 @@ The aggregate KV schema gives us:
 Bridge needs one enhancement to the extension aggregate query layer
 that does not exist today: **metadata JSON field filtering**.
 
-Current `ext-list` / `ext-delete!` support filtering by `:id`, `:key`,
+Current `extension-list-aggregates` / `extension-delete-aggregate!` support filtering by `:id`, `:key`,
 `:kind`, and scope FK columns. They do NOT support filtering by fields
 inside the `metadata` JSON column.
 
@@ -510,16 +510,16 @@ Usage:
 
 ```clojure
 ;; Filter edges from a specific source node
-(vis/ext-list env {:kind :bridge/edge :metadata {:source "com.blockether.vis.core/run"}})
+(vis/extension-list-aggregates env {:kind :bridge/edge :metadata {:source "com.blockether.vis.core/run"}})
 
 ;; Delete all nodes for a file during re-indexing
-(vis/ext-delete! env {:kind :bridge/node :metadata {:path "src/core.clj"}})
+(vis/extension-delete-aggregate! env {:kind :bridge/node :metadata {:path "src/core.clj"}})
 
 ;; Find nodes by their code kind
-(vis/ext-list env {:kind :bridge/node :metadata {:kind "def"}})
+(vis/extension-list-aggregates env {:kind :bridge/node :metadata {:kind "def"}})
 
 ;; Combined metadata + kind filter
-(vis/ext-list env {:kind :bridge/node :metadata {:path "src/core.clj" :kind "def"}})
+(vis/extension-list-aggregates env {:kind :bridge/node :metadata {:path "src/core.clj" :kind "def"}})
 ```
 
 This is a **small, general-purpose enhancement** that benefits any

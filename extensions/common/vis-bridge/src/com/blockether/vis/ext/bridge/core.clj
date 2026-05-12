@@ -208,7 +208,7 @@
   [env path]
   (reduce +
     (map (fn [kind]
-           (vis/ext-delete! env {:kind kind :metadata {:path path}}))
+           (vis/extension-delete-aggregate! env {:kind kind :metadata {:path path}}))
       [:bridge/node :bridge/edge :bridge/index :bridge/summary])))
 
 (defn delete-language!
@@ -216,14 +216,14 @@
   [env language]
   (reduce +
     (map (fn [kind]
-           (vis/ext-delete! env {:kind kind :metadata {:language language}}))
+           (vis/extension-delete-aggregate! env {:kind kind :metadata {:language language}}))
       [:bridge/node :bridge/edge :bridge/index :bridge/summary])))
 
 (defn clear!
   "Delete all Bridge aggregate rows for this extension."
   [env]
   (reduce +
-    (map (fn [kind] (vis/ext-delete! env {:kind kind}))
+    (map (fn [kind] (vis/extension-delete-aggregate! env {:kind kind}))
       [:bridge/node :bridge/edge :bridge/index :bridge/summary])))
 
 (defn- apply-replace!
@@ -248,7 +248,7 @@
         rows (aggregate-rows result opts)
         deleted (apply-replace! env result opts)]
     (doseq [row rows]
-      (vis/ext-put! env row))
+      (vis/extension-aggregate-put! env row))
     {:rows (count rows)
      :deleted deleted
      :nodes (count (:nodes result))
@@ -257,12 +257,12 @@
 
 (defn indexed-path-state
   "Return current hash/index state for `path` using Bridge index rows.
-   Requires extension context because it reads via `vis/ext-get`."
+   Requires extension context because it reads via `vis/extension-aggregate-get`."
   [env path]
   (let [path (str path)
         content (slurp-path path)
         current-hash (content-sha256 content)
-        row (vis/ext-get env {:kind :bridge/index :metadata {:path path}})
+        row (vis/extension-aggregate-get env {:kind :bridge/index :metadata {:path path}})
         indexed-hash (or (get-in row [:content :hash-sha256])
                        (get-in row [:metadata :hash-sha256]))]
     {:path path
@@ -278,7 +278,7 @@
 
 (defn stale-paths
   "Return path-state rows for paths whose current SHA differs from Bridge's
-   index aggregate. This is the pure backfill decision seam around ext-get."
+   index aggregate. This is the pure backfill decision seam around extension-aggregate-get."
   [env paths]
   (vec (filter :changed? (map #(indexed-path-state env %) paths))))
 

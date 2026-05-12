@@ -24,6 +24,7 @@
   (:refer-clojure :exclude [symbol])
   (:require
    [clojure.java.io :as io]
+   [clojure.repl :as repl]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
@@ -561,6 +562,9 @@
 ;; One-liner description shown in the sandbox var's docstring.
 (s/def :ext.symbol/doc non-blank-string?)
 
+;; Original host-side source form for REPL `(source alias/sym)` in SCI.
+(s/def :ext.symbol/source non-blank-string?)
+
 ;; Argument signatures, e.g. '([term] [term opts]).
 ;; Shown in var meta :arglists and used by `render-symbol-line` to
 ;; build the model-facing call form (e.g. `(v/cat path)`).
@@ -636,11 +640,13 @@
           :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn
           :ext.symbol/source-rewrite-fn
+          :ext.symbol/source
           :ext.symbol/journal-render-error-fn
           :ext.symbol/channel-render-error-fn]))
 
 (s/def ::val-symbol-entry
-  (s/keys :req [:ext.symbol/sym :ext.symbol/val :ext.symbol/doc]))
+  (s/keys :req [:ext.symbol/sym :ext.symbol/val :ext.symbol/doc]
+    :opt [:ext.symbol/source]))
 
 (s/def ::symbol-entry
   (s/or :fn  ::fn-symbol-entry
@@ -1008,8 +1014,22 @@
               :explain (s/explain-data ::symbol-entry entry)})))
   entry)
 
+(defn- var-source
+  "Best-effort source form for a host Var. Stored on extension symbol entries
+   so SCI's patched `clojure.repl/source-fn` can show source for aliased
+   extension vars whose SCI namespace (`v/`, `z/`, ...) is synthetic."
+  [v]
+  (let [m  (meta v)
+        ns (:ns m)
+        nm (:name m)]
+    (when (and ns nm)
+      (try
+        (repl/source-fn (clojure.core/symbol (str (ns-name ns)) (str nm)))
+        (catch Throwable _
+          nil)))))
+
 (defn- var-meta
-  "Read `:doc` / `:arglists` / `:name` from a var's metadata. Throws when the
+  "Read `:doc` / `:arglists` / `:name` / source from a var's metadata. Throws when the
    var lacks a non-blank docstring or non-empty arglists - extension symbols
    carry their canonical surface from the underlying defn, not from a side
    map. Without these, the SCI sandbox cannot expose `(doc v/sym)` to the
@@ -1049,15 +1069,17 @@
          (str "Var " v " is missing :arglists in its metadata; extension fn "
            "symbols inherit :arglists from the underlying defn.")
          {:type :extension/missing-arglists :var v}))
-     {:sym      nm
-      :doc      doc
-      :arglists (when (seq al) (vec al))})))
+     (let [source (var-source v)]
+       (cond-> {:sym      nm
+                :doc      doc
+                :arglists (when (seq al) (vec al))}
+         source (assoc :source source))))))
 
 (defn- build-symbol-entry
-  "Shared core that turns `{:sym :fn :doc :arglists}` plus opts into
+  "Shared core that turns `{:sym :fn :doc :arglists :source}` plus opts into
    a validated `::fn-symbol-entry`. Used by both the var-based public API
    and the test-friendly direct-args form below."
-  [{:keys [sym fn doc arglists]} opts]
+  [{:keys [sym fn doc arglists source]} opts]
   (let [raw? (true? (:raw? opts))
         journal-render-fn (:journal-render-fn opts)
         channel-render-fn (:channel-render-fn opts)]
@@ -1077,6 +1099,7 @@
                            :doc      doc
                            :arglists arglists}
         raw?                       (assoc :ext.symbol/raw? true)
+        source                     (assoc :ext.symbol/source source)
         journal-render-fn          (assoc :ext.symbol/journal-render-fn journal-render-fn)
         channel-render-fn          (assoc :ext.symbol/channel-render-fn channel-render-fn)
         (:journal-render-error-fn opts) (assoc :ext.symbol/journal-render-error-fn (:journal-render-error-fn opts))
@@ -1128,7 +1151,7 @@
   ([v opts-or-fn]
    (if (var? v)
      (let [opts opts-or-fn
-           {:keys [sym doc arglists]} (var-meta v true opts)
+           {:keys [sym doc arglists source]} (var-meta v true opts)
            sym      (or (:sym opts) sym)
            f        @v]
        (when-not (fn? f)
@@ -1136,7 +1159,7 @@
            (str "Var " v " does not hold a function; use vis/value for plain values.")
            {:type :extension/symbol-not-a-fn :var v}))
        (build-symbol-entry
-         {:sym sym :fn f :doc doc :arglists arglists}
+         {:sym sym :fn f :doc doc :arglists arglists :source source}
          opts))
      (anomaly/incorrect!
        "vis/symbol expects a Clojure var (e.g. #'my-tool); use the 3-arg form (symbol sym-name f opts) for test-only direct construction."
@@ -1178,7 +1201,7 @@
   ([v] (helper v nil))
   ([v opts]
    (if (var? v)
-     (let [{:keys [sym doc arglists]} (var-meta v true (assoc opts :raw? true))
+     (let [{:keys [sym doc arglists source]} (var-meta v true (assoc opts :raw? true))
            sym (or (:sym opts) sym)
            val @v]
        (when-not (fn? val)
@@ -1186,7 +1209,8 @@
            (str "Var " v " does not hold a function; use vis/value for plain values.")
            {:type :extension/helper-not-a-fn :var v}))
        (validate-symbol-entry!
-         #:ext.symbol{:sym sym :val val :doc doc :arglists arglists}))
+         (cond-> #:ext.symbol{:sym sym :val val :doc doc :arglists arglists}
+           source (assoc :ext.symbol/source source))))
      (anomaly/incorrect!
        "vis/helper expects a Clojure var (e.g. #'my-helper)."
        {:type :extension/helper-not-a-var :given v}))))
@@ -1209,10 +1233,11 @@
   ([v opts-or-val]
    (if (var? v)
      (let [opts opts-or-val
-           {:keys [sym doc]} (var-meta v false opts)
+           {:keys [sym doc source]} (var-meta v false opts)
            sym (or (:sym opts) sym)
            val (if (contains? opts :val) (:val opts) @v)
-           entry #:ext.symbol{:sym sym :val val :doc doc}]
+           entry (cond-> #:ext.symbol{:sym sym :val val :doc doc}
+                   source (assoc :ext.symbol/source source))]
        (validate-symbol-entry! entry))
      (anomaly/incorrect!
        "vis/value expects a Clojure var (e.g. #'my-const); use the 3-arg form (value sym-name val opts) for test-only direct construction."
