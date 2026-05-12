@@ -22,7 +22,9 @@
                        `:stdout`, `:stderr`, `:execution-time-ms`. The
                        tracker writes per-form data into the
                        iteration entry's parallel vectors at index
-                       `:form-idx`.
+                       `:form-idx`. Chunks tagged `:silent?` (or
+                       returning `:vis/silent`) are elided when they
+                       succeeded.
 
      :iteration-final  Iteration is complete. Carries `:final` (nil
                        when the turn isn't done yet) and `:done?`
@@ -82,6 +84,7 @@
    :durations []
    :successes []
    :started-at-ms []
+   :elided-form-idxs #{}
    :error     nil
    :final     nil
    :done?     false})
@@ -160,13 +163,22 @@
 (defn- normalize-thinking-text [thinking]
   (some-> thinking str str/trim))
 
+(defn- display-form-idx
+  "Map original engine `form-idx` to the visible vector index after any
+   prior silent system-call forms have been elided."
+  [entry idx]
+  (if (integer? idx)
+    (let [elided (or (:elided-form-idxs entry) #{})]
+      (- idx (count (filter #(< % idx) elided))))
+    idx))
+
 (defn- write-form-start-slot
   "Per-form start chunks land at `:form-idx` before eval completes.
    Only `:code` / `:comments` / `:started-at-ms` are populated; result-
    side vectors intentionally stay empty so renderers can distinguish
    running code from completed success or failure."
   [entry chunk]
-  (let [idx  (:form-idx chunk)
+  (let [idx  (display-form-idx entry (:form-idx chunk))
         need (inc idx)]
     (-> entry
       (update :code     #(assoc (pad-to % need) idx (:code chunk)))
@@ -179,7 +191,7 @@
    tolerates out-of-order arrivals (e.g. a future async eval)
    without crashing on `assoc out-of-bounds`."
   [entry chunk]
-  (let [idx (:form-idx chunk)
+  (let [idx (display-form-idx entry (:form-idx chunk))
         need (inc idx)]
     (-> entry
       (update :code      #(assoc (pad-to % need) idx (:code chunk)))
@@ -203,11 +215,20 @@
     (into (subvec v 0 idx) (subvec v (inc idx)))
     v))
 
+(defn- insert-slot
+  "Insert nil at index `idx` in vector `v`, padding if needed. Used when
+   a previously silent form is re-emitted with an error and must become
+   visible again without overwriting later visible forms."
+  [v idx]
+  (if (and (vector? v) (integer? idx) (not (neg? idx)))
+    (let [padded (pad-to v idx)]
+      (into (conj (subvec padded 0 idx) nil) (subvec padded idx)))
+    v))
+
 (defn- elide-form-slots
-  "Remove form slots at the given indices from every parallel vector
-   in `entry`. Indices shift down, which is fine - the channel
-   re-numbers in display order. Used to elide the `(answer ...)`
-   form so its prose doesn't double-render below the answer text."
+  "Remove visible form slots at the given indices from every parallel
+   vector in `entry`. Indices shift down, which is fine - the channel
+   re-numbers in display order."
   [entry idx-set]
   (reduce
     (fn [e idx]
@@ -225,6 +246,40 @@
     entry
     (sort > idx-set)))
 
+(defn- hide-form-slot
+  "Remember original form index `idx` as elided and remove its current
+   visible slot if present. Future chunks with higher original indices
+   are shifted left by `display-form-idx`, avoiding nil holes in live
+   progress when a silent system call appears before visible work."
+  [entry idx]
+  (if (contains? (or (:elided-form-idxs entry) #{}) idx)
+    entry
+    (let [display-idx (display-form-idx entry idx)]
+      (-> entry
+        (update :elided-form-idxs (fnil conj #{}) idx)
+        (elide-form-slots #{display-idx})))))
+
+(defn- unhide-form-slot
+  "Make original form index `idx` visible again. This happens when an
+   answer form first succeeded silently, then validation re-emitted the
+   same form with an error."
+  [entry idx]
+  (if-not (contains? (or (:elided-form-idxs entry) #{}) idx)
+    entry
+    (let [display-idx (display-form-idx entry idx)]
+      (-> entry
+        (update :elided-form-idxs disj idx)
+        (update :code      insert-slot display-idx)
+        (update :comments  insert-slot display-idx)
+        (update :results   insert-slot display-idx)
+        (update :result-kinds insert-slot display-idx)
+        (update :result-details insert-slot display-idx)
+        (update :stdouts   insert-slot display-idx)
+        (update :stderrs   insert-slot display-idx)
+        (update :durations insert-slot display-idx)
+        (update :successes insert-slot display-idx)
+        (update :started-at-ms insert-slot display-idx)))))
+
 (defn- update-entry
   "Apply a single chunk to its iteration's timeline entry. Dispatches
    on `:phase`; unknown phases pass through unchanged so a future
@@ -237,10 +292,17 @@
       (assoc entry :thinking next-thinking))
 
     :form-start
-    (write-form-start-slot entry chunk)
+    (if (:silent? chunk)
+      (hide-form-slot entry (:form-idx chunk))
+      (write-form-start-slot entry chunk))
 
     :form-result
-    (write-form-slot entry chunk)
+    (if (and (not (:error chunk))
+          (or (:silent? chunk)
+            (= :vis/silent (:result chunk))
+            (= :vis/answer (:result chunk))))
+      (hide-form-slot entry (:form-idx chunk))
+      (write-form-slot (unhide-form-slot entry (:form-idx chunk)) chunk))
 
     :iteration-final
     (let [duplicate-final? (and (:done? entry) (:final entry) (:final chunk))
@@ -260,6 +322,7 @@
           ;; stable.
           answer-idx   (when-not duplicate-final?
                          (when (:final chunk) (:answer-form-idx chunk)))
+          silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
           title-idxs   (when-not duplicate-final?
                          (->> (or (:code base) [])
                            (keep-indexed
@@ -269,10 +332,10 @@
                                          code))
                                  idx)))
                            set))
-          elide-set    (cond-> (or title-idxs #{})
+          elide-set    (cond-> (into (or title-idxs #{}) silent-idxs)
                          (some? answer-idx) (conj answer-idx))]
       (if (seq elide-set)
-        (elide-form-slots base elide-set)
+        (reduce hide-form-slot base (sort elide-set))
         base))
 
     :iteration-error
