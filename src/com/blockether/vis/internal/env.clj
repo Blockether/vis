@@ -580,7 +580,7 @@
    the SCI sandbox (the model can call `v/cat` directly because the var
    is loaded). A skill is ACCESSIBLE when the loader can find it on disk
    and surface its `:name`/`:description`; the body becomes a sandbox var
-   only after the model calls `(load-skill \"name\")` - that's the
+   only after the model calls `(load-skill! \"name\")` - that's the
    internal activation step. Hence: TURN_ACTIVE_EXTENSIONS (loaded) vs
    TURN_ACCESSIBLE_SKILLS (discoverable, lazy-load on demand)."
   '#{TURN_ID

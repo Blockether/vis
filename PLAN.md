@@ -46,7 +46,7 @@ Built by:
 ```text
 prompt/assemble-stable-prompt-messages
   -> prompt/build-system-prompt
-  -> separate system-role messages for environment-info / extension prompt / skills summary / provider prompt
+  -> separate system-role messages for environment_info / extension prompt / skills summary / provider prompt
 ```
 
 Role:
@@ -136,11 +136,11 @@ ENGINE:
 </system_prompt>
 
 [1] role=system
-<environment-info>
+<environment_info>
 CWD: /Users/fierycod/vis
 Git branch: main
 ...
-</environment-info>
+</environment_info>
 
 [2] role=system
 <extensions>

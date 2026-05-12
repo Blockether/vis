@@ -64,7 +64,7 @@ Every plug-in ships exactly one classpath manifest at
 | `vis-channel-tui` | `extensions/channels/vis-channel-tui/` | Lanterna-based TUI chat. Internal namespace: `com.blockether.vis.ext.channel-tui.*` (state / dialogs / screen / chat / render / input / footer / theme / primitives / provider). | `:tui` | `:channel/owns-tty? true`. Conversations are stored under the same `:tui` keyword used for CLI dispatch. |
 | `vis-channel-telegram` | `extensions/channels/vis-channel-telegram/` | Telegram Bot API long-poll loop wired into `for-telegram-chat!`. Internal namespace: `com.blockether.vis.ext.channel-telegram.*`. | `:telegram` | Optional channel; omitting the jar leaves the rest of vis usable. |
 | `vis-foundation` | `extensions/common/vis-foundation/` | Unified `v/` sandbox surface: introspection (`(v/inspect)`, `(v/report)`, `(v/extensions)`, `(v/extension-readme)` ...) plus markdown answer builders (`(v/h1)`, `(v/p)`, `(v/table)`, `(v/file-link)`, `(v/join)` ...). Internal namespaces: `com.blockether.vis.ext.foundation.introspection`, `com.blockether.vis.ext.foundation.markdown`. | - | Pure `:ext/symbols` contribution. See [vis-foundation](../extensions/common/vis-foundation.md). |
-| `vis-foundation` | `extensions/common/vis-foundation/` | cwd / OS / git-facts / multirepo SCI helpers plus the default `:ext/environment-info-fn` system-prompt section. Internal namespace: `com.blockether.vis.ext.foundation.environment.core`. | - | Pure `:ext/symbols` + environment-info contribution. |
+| `vis-foundation` | `extensions/common/vis-foundation/` | cwd / OS / git-facts / multirepo SCI helpers plus the default `:ext/environment-info-fn` system-prompt section rendered as `<environment_info>`. Internal namespace: `com.blockether.vis.ext.foundation.environment.core`. | - | Pure `:ext/symbols` + environment_info contribution. |
 | `vis-foundation` | `extensions/common/vis-foundation/` | Filesystem / search helpers plus thin babashka.fs wrappers (`v/cat`, `v/patch`, `v/ls`, `v/rg`, `v/glob`, ...). Internal namespace: `com.blockether.vis.ext.foundation.editing.core`. | - | Pure `:ext/symbols` contribution. |
 | `vis-exa` | `extensions/common/vis-exa/` | Exa MCP search helpers under the `exa/` alias: `(exa/web-search ...)` and `(exa/code-context ...)`. Internal namespace: `com.blockether.vis.ext.exa.core`. | - | Pure `:ext/symbols` contribution. Basic Exa MCP usage needs no API key; `EXA_API_KEY` / `EXA_MCP_API_KEY` enable higher limits. See [vis-exa](../extensions/common/vis-exa.md). |
 | `vis-language-clojure` | `extensions/languages/clojure/` | Clojure/EDN zipper patching (`z/patch`, same map shape as `v/patch`), locator discovery (`z/locators`, `z/symbols`), and rewrite-clj zipper API under the single `z/` alias. Internal namespace: `com.blockether.vis.ext.lang-clojure.core`. | - | Add new `extensions/languages/<lang>/` directories when shipping tools that only make sense for one source language. |
@@ -127,7 +127,7 @@ extension populates. New extension-owned surfaces (themes, future
 plugin slots) require zero loader changes - add a slot key to the
 extension spec, ship a jar with a `META-INF/vis-extension/vis.edn`,
 populate the slot, done. Agent skills are deliberately not such a
-slot: SKILL.md discovery, prompt rendering, and `(load-skill ...)`
+slot: SKILL.md discovery, prompt rendering, and `(load-skill! ...)`
 activation are host-internal surfaces.
 
 Drop a jar on the classpath that ships a
