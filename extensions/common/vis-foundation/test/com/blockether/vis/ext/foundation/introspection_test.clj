@@ -4,8 +4,12 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe introspection-public-surface-test
-  (it "exposes conversation-state and conversation-report symbols"
+  (it "exposes conversation and Clojure symbol introspection symbols"
     (let [symbols (set (map :ext.symbol/symbol introspection/all-symbols))]
       (expect (contains? symbols 'conversation-state))
       (expect (contains? symbols 'conversation-report))
-      (expect (= 2 (count symbols))))))
+      (expect (contains? symbols 'clojure-symbol-documentation))
+      (expect (contains? symbols 'clojure-symbol-source-code))
+      (expect (contains? symbols 'clojure-symbol-metadata))
+      (expect (contains? symbols 'clojure-symbol-apropos))
+      (expect (= 6 (count symbols))))))

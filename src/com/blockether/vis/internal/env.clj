@@ -178,10 +178,6 @@
                  :when (and (var? v) (not (:macro (meta v))))]
              [sym @v])))
 
-(comment "clojure.repl sandbox helpers removed; use v/clojure-symbol-source-code")
-
-(comment "clojure.repl sandbox alias disabled; use v/clojure-symbol-documentation and v/clojure-symbol-source-code")
-
 (def MODERN_CORE_BINDINGS
   "Clojure core helpers absent from SCI 0.12.51's default `clojure.core`
    snapshot. Install these into both `sandbox` (unqualified use) and
@@ -469,6 +465,13 @@
                                                intern
                                                sh
                                                *in* *command-line-args*]}))]
+    ;; SCI preloads a few convenience namespaces. Keep model-facing
+    ;; introspection and file access on sanctioned `v/` tools instead.
+    (swap! (:env sci-ctx)
+      (fn [sci-env]
+        (-> sci-env
+          (update :namespaces dissoc 'clojure.repl 'clojure.java.io)
+          (update :ns-aliases dissoc 'repl 'io))))
     ;; REPL-style recovery bindings: `*1` `*2` `*3` carry the last three
     ;; evaluated form values (most recent first); `*e` carries the most
     ;; recent uncaught exception. The iteration loop pushes onto the

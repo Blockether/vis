@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.loop-test
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
+            [com.blockether.vis.ext.foundation.core :as foundation]
             [com.blockether.vis.ext.lang-clojure.core :as clj-ext]
             [com.blockether.vis.internal.loop :as loop]
             [lazytest.core :refer [defdescribe expect it]]
@@ -8,30 +9,25 @@
 
 (defdescribe host-final-surface-test
   (it "recognizes only the new final-answer and title host forms"
-    (let [answer-call? #'loop/answer-call-form?
-          title-form?  #'loop/answer-compatible-meta-form?]
+    (let [answer-call? #'loop/turn-answer-call-form?
+          title-form?  #'loop/conversation-title-meta-form?]
       (expect (true? (answer-call? '(turn-answer! [:ir [:p "Done"]]))))
       (expect (false? (answer-call? '(answer [:ir [:p "Done"]]))))
       (expect (true? (title-form? "(set-conversation-title! \"Prompt cleanup\")")))
       (expect (false? (title-form? "(conversation-title \"Prompt cleanup\")")))))
 
-  (it "preflight messages teach turn-answer! and not the retired answer form"
-    (let [msg (loop/answer-position-error-message 0 2)]
-      (expect (str/includes? msg "(turn-answer! ...)"))
-      (expect (not (str/includes? msg "(answer ...)")))))
-
-  (it "collapses answer-alone preflight to one synthetic guard block"
+  (it "does not collapse non-mutating sibling forms beside a final answer"
     (let [preflight #'loop/code-entries-preflight
           entries (:code-entries
                    (preflight 1
                      (str "(def a 1)\n\n"
                        "(set-conversation-title! \"Def a 1\")\n\n"
-                       "(turn-answer! [:ir [:p \"Done\"]])")))
-          error (:vis/preflight-error (first entries))]
-      (expect (= 1 (count entries)))
-      (expect (= "(vis/preflight-error :answer-alone)" (:expr (first entries))))
-      (expect (str/includes? error "Answer-alone preflight"))
-      (expect (not (str/includes? (:expr (first entries)) "(def a 1)")))))
+                       "(turn-answer! [:ir [:p \"Done\"]])")))]
+      (expect (= 3 (count entries)))
+      (expect (= ["(def a 1)"
+                  "(set-conversation-title! \"Def a 1\")"
+                  "(turn-answer! [:ir [:p \"Done\"]])"]
+                (mapv :expr entries)))))
 
   (it "canonicalizes final answer IR and caps lazy children at the persistence boundary"
     (let [answer (loop/append-runtime-appendices
@@ -63,7 +59,19 @@
       (expect (nil? parse-error))
       (expect (= 1 (count entries)))
       (expect (:repaired? (first entries)))
-      (expect (str/includes? (:expr (first entries)) "\"\\\\e[200~\"")))))
+      (expect (str/includes? (:expr (first entries)) "\"\\\\e[200~\""))))
+
+  (it "caps one parser repair attempt at about one second"
+    (let [repair #'loop/try-repair-with-timeout
+          start  (System/nanoTime)
+          fixed  (repair :slow-test
+                   (fn [_src _err]
+                     (Thread/sleep 5000)
+                     "fixed")
+                   "(broken" "parse failed")
+          elapsed-ms (/ (double (- (System/nanoTime) start)) 1000000.0)]
+      (expect (nil? fixed))
+      (expect (< elapsed-ms 1500.0)))))
 
 (defdescribe routed-provider-metadata-test
   (it "uses svar routed provider/model over pre-call routing guess"
@@ -176,8 +184,8 @@
           rendered (loop/answer-str ir)]
       (expect (str/includes? rendered "preserved-thinking replay crossed")))))
 
-(defdescribe sci-extension-repl-test
-  (it "makes doc apropos and source work for extension alias symbols"
+(defdescribe sci-extension-symbol-introspection-test
+  (it "makes v/clojure-symbol-* work for extension alias symbols"
     (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (vis/create-sci-context nil)
           env {:sci-ctx sci-ctx
                :sandbox-ns sandbox-ns
@@ -185,17 +193,15 @@
                :extensions (atom [])}
           eval* (fn [code]
                   (:val (sci/eval-string+ sci-ctx code {:ns sandbox-ns})))]
+      (vis/install-extension! env foundation/vis-extension)
       (vis/install-extension! env clj-ext/clojure-extension)
-      (expect (some #(= 'vis.ext.clj/source %)
-                (eval* "(repl/apropos \"source\")")))
-      (expect (str/includes? (eval* "(repl/source-fn 'z/source)")
-                "(defn source"))
-      (let [w (java.io.StringWriter.)]
-        (sci/binding [sci/out w sci/err w]
-          (eval* "(repl/doc z/source)"))
-        (expect (str/includes? (str w) "vis.ext.clj/source"))
-        (expect (str/includes? (str w) "Parse exact Clojure/EDN source")))
-      (let [w (java.io.StringWriter.)]
-        (sci/binding [sci/out w sci/err w]
-          (eval* "(repl/source z/source)"))
-        (expect (str/includes? (str w) "(defn source"))))))
+      (let [matches (eval* "(v/clojure-symbol-apropos \"source\")")]
+        (expect (some #(= 'z/source (:symbol %)) (:matches matches))))
+      (let [doc (eval* "(v/clojure-symbol-documentation 'z/source)")]
+        (expect (= 'z/source (:symbol doc)))
+        (expect (str/includes? (:doc doc) "Parse exact Clojure/EDN source")))
+      (let [source (eval* "(v/clojure-symbol-source-code 'z/source)")]
+        (expect (str/includes? (:source source) "(defn source")))
+      (let [metadata (eval* "(v/clojure-symbol-metadata 'z/source)")]
+        (expect (true? (get-in metadata [:metadata :has-source?])))
+        (expect (seq (get-in metadata [:metadata :arglists])))))))

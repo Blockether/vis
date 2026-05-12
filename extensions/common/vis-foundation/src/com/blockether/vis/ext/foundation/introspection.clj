@@ -772,14 +772,14 @@
              :arglists        (:arglists m)
              :macro?          (boolean (:macro m))
              :source          source
-             :source-chars    (count (or source ""))
+             :source-length    (count (or source ""))
              :metadata        (cond-> {:ns          (ns-display (:ns m))
-                                        :name        (:name m)
-                                        :doc         (:doc m)
-                                        :arglists    (:arglists m)
-                                        :macro?      (boolean (:macro m))
-                                        :has-source? (boolean source)}
-                                source (assoc :source-chars (count source)))})
+                                       :name        (:name m)
+                                       :doc         (:doc m)
+                                       :arglists    (:arglists m)
+                                       :macro?      (boolean (:macro m))
+                                       :has-source? (boolean source)}
+                                source (assoc :source-length (count source)))})
           {:symbol sym :found? false :message "Symbol not found in SCI sandbox."})
         (catch Throwable t
           {:symbol sym :found? false :message (or (ex-message t) (str t))})))))
@@ -806,7 +806,7 @@
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success
       :v/clojure-symbol-source-code
-      (select-keys info [:symbol :resolved-symbol :found? :source :source-chars :message]))))
+      (select-keys info [:symbol :resolved-symbol :found? :source :source-length :message]))))
 
 (defn- clojure-symbol-metadata-tool
   "Return journal-visible metadata for a SCI symbol without dumping bulky source text."
@@ -821,7 +821,7 @@
   (reduce-kv (fn [acc alias ns-sym]
                (update acc (ns-display ns-sym) (fnil conj []) alias))
     {}
-    (:ns-aliases sci-env)))
+    (or (:ns-aliases sci-env) {})))
 
 (defn- model-symbol-name
   [aliases-by-ns ns-sym sym]
@@ -837,7 +837,7 @@
   (let [needle (str/lower-case (str query))
         sci-env (some-> env :sci-ctx :env deref)
         aliases-by-ns (namespace-aliases sci-env)]
-    (->> (:namespaces sci-env)
+    (->> (or (:namespaces sci-env) {})
       (mapcat (fn [[ns-sym bindings]]
                 (for [[sym v] bindings
                       :let [m (or (safe-meta v) {})
@@ -905,32 +905,30 @@
      (ir-p (ir-code (or resolved-symbol symbol))
        (ir-text (str (arglists-text arglists) " — "
                   (truncate-text (or doc "<no docstring>") 1200))))
-     (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found")))))] )
+     (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found")))))])
 
 (defn- symbol-source-ir
-  [{:keys [symbol resolved-symbol found? source source-chars message]}]
-  [:ir {}
-   (cond
-     (not found?)
-     (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found"))))
+  [{:keys [symbol resolved-symbol found? source source-length message]}]
+  (cond
+    (not found?)
+    [:ir {} (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found"))))]
 
-     (seq source)
-     [:div {}
-      (ir-p (ir-code (or resolved-symbol symbol))
-        (ir-text (str " source (" source-chars " chars):")))
-      (ir-code-block "clojure" (truncate-text source symbol-render-chars))]
+    (seq source)
+    [:ir {}
+     (ir-p (ir-code (or resolved-symbol symbol))
+       (ir-text (str " source (" source-length " chars):")))
+     (ir-code-block "clojure" (truncate-text source symbol-render-chars))]
 
-     :else
-     (ir-p (ir-code (or resolved-symbol symbol)) (ir-text " — source not available")))] )
+    :else
+    [:ir {} (ir-p (ir-code (or resolved-symbol symbol)) (ir-text " — source not available"))]))
 
 (defn- symbol-meta-ir
   [{:keys [symbol resolved-symbol found? metadata message]}]
-  [:ir {}
-   (if found?
-     [:div {}
-      (ir-p (ir-code (or resolved-symbol symbol)) (ir-text " metadata:"))
-      (ir-code-block "edn" (truncate-text (pr-str metadata) symbol-render-chars))]
-     (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found")))))] )
+  (if found?
+    [:ir {}
+     (ir-p (ir-code (or resolved-symbol symbol)) (ir-text " metadata:"))
+     (ir-code-block "edn" (truncate-text (pr-str metadata) symbol-render-chars))]
+    [:ir {} (ir-p (ir-code symbol) (ir-text (str " — " (or message "symbol not found"))))]))
 
 (defn- apropos-ir
   [{:keys [query count matches]}]

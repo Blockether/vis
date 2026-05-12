@@ -44,7 +44,7 @@
                   (fn [_db _cid]
                     [{:id :turn-legacy
                       :user-request "siema"
-                      :answer "Stopped after 20 iterations without `(turn-answer! ...)`."}])
+                      :answer "Cancelled by user."}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id] [])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -52,7 +52,7 @@
             ir (:ir assistant)]
         (expect (= 2 (count history)))
         (expect (= :ir (first ir)))
-        (expect (str/includes? (vis/render ir :markdown) "Stopped after 20 iterations")))))
+        (expect (str/includes? (vis/render ir :markdown) "Cancelled by user")))))
 
   (it "rebuild-history marks persisted silent system calls for the TUI visibility toggle"
     (with-redefs [vis/db-info (fn [] :db)
@@ -200,9 +200,9 @@
   (it "coerces raw cancellation text into canonical IR"
     (with-redefs [vis/send! (fn [& _]
                               {:status :cancelled
-                               :answer "Stopped after 32 iterations without `(turn-answer! ...)`."})]
+                               :answer "Cancelled by user."})]
       (let [result (chat/turn! {:id "c1"} "hello")]
         (expect (= :cancelled (:status result)))
         (expect (= :ir (first (:answer result))))
         (expect (str/includes? (vis/render (:answer result) :markdown)
-                  "Stopped after 32 iterations"))))))
+                  "Cancelled by user"))))))

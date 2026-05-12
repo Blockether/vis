@@ -407,8 +407,6 @@
 ;; SCI execution helpers (used by extensions for parse-rescue)
 (def extract-defining-name        lp/extract-defining-name)
 (def answer-form-error              lp/answer-form-error)
-(def answer-position-violation?              lp/answer-position-violation?)
-(def answer-position-error-message           lp/answer-position-error-message)
 (def parinfer-rebalance             lp/parinfer-rebalance)
 (def split-top-level-forms          lp/split-top-level-forms)
 

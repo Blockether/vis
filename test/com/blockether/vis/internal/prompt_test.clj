@@ -60,7 +60,12 @@
       (expect (str/includes? content "FINAL forbids:"))
       (expect (str/includes? content "(turn-answer! ir)"))
       (expect (str/includes? content "(set-conversation-title! s)"))
-      (expect (str/includes? content "Use repl/doc and repl/source"))
+      (expect (str/includes? content "v/clojure-symbol-documentation"))
+      (expect (str/includes? content "v/clojure-symbol-source-code"))
+      (expect (str/includes? content "v/clojure-symbol-metadata"))
+      (expect (str/includes? content "v/clojure-symbol-apropos"))
+      (expect (not (str/includes? content "clojure.repl")))
+      (expect (not (str/includes? content "repl/doc")))
       (expect (str/includes? content "load-skill! name)          ; load skill body for next iteration, never FINAL"))
       (expect (str/includes? content "required_evidence_observed?"))
       (expect (not (str/includes? content "tool-events")))
@@ -103,8 +108,7 @@
                            :iteration 2
                            :model "unknown-model"
                            :current-user-content "Do the thing."
-                           :stable-prompt-content "stable prompt"
-                           :max-iterations 12})))]
+                           :stable-prompt-content "stable prompt"})))]
         (expect (str/includes? content "<current_turn_context>"))
         (expect (str/includes? content "engine_state: :turn.iteration/start"))
         (expect (str/includes? content "engine_phase: :model_think"))

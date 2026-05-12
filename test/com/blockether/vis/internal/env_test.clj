@@ -11,18 +11,12 @@
   (:val (sci/eval-string+ sci-ctx code {:ns sandbox-ns})))
 
 (defdescribe repl-helper-test
-  (it "preinstalls the repl alias promised by the sandbox prompt"
+  (it "does not expose the retired repl alias in the sandbox"
     (let [ctx (env/create-sci-context nil)]
-      (expect (some? (eval-sci ctx "(resolve 'repl/apropos)")))
-      (expect (some #(= 'clojure.repl/source-fn %)
-                (eval-sci ctx "(repl/apropos \"source-fn\")")))))
-
-  (it "keeps clojure.repl/source printing Source not found when no source metadata exists"
-    (let [ctx (env/create-sci-context nil)
-          w   (java.io.StringWriter.)]
-      (sci/binding [sci/out w sci/err w]
-        (eval-sci ctx "(repl/source definitely-missing-symbol)"))
-      (expect (str/includes? (str w) "Source not found")))))
+      (expect (nil? (eval-sci ctx "(resolve 'repl/apropos)")))
+      (expect (nil? (eval-sci ctx "(resolve 'clojure.repl/apropos)")))
+      (expect (nil? (eval-sci ctx "(resolve 'clojure.java.io/file)")))
+      (expect (some? (eval-sci ctx "IOException"))))))
 
 (defdescribe build-bindings-test
   (it "renders persisted def source with version, scope, and Malli shape comment"
