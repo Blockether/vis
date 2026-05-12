@@ -347,7 +347,7 @@
       (expect (str/includes? body "(+ 11 1)"))))
 
   (it "toggles :vis/silent forms in live progress traces"
-    (let [progress {:iterations [{:code ["(set-conversation-title \"Greeting\")" "(+ 1 2)"]
+    (let [progress {:iterations [{:code ["(set-conversation-title! \"Greeting\")" "(+ 1 2)"]
                                   :comments [nil nil]
                                   :results [":vis/silent" "3"]
                                   :result-kinds [:value :value]
@@ -365,9 +365,9 @@
                         (render/progress->text progress 80
                           {:show-thinking true :show-iterations true :show-silent true}
                           {:now-ms 1000 :turn-start-ms 0}))]
-      (expect (not (str/includes? hidden-body "set-conversation-title")))
+      (expect (not (str/includes? hidden-body "set-conversation-title!")))
       (expect (str/includes? hidden-body "(+ 1 2)"))
-      (expect (str/includes? shown-body "set-conversation-title"))
+      (expect (str/includes? shown-body "set-conversation-title!"))
       (expect (str/includes? shown-body ":vis/silent")))))
 
 (defdescribe progress-streaming-perf-test

@@ -1351,7 +1351,7 @@
         (cleanup)))))
 
 (defn- subscribe-title-listener!
-  "Wire `(set-conversation-title \"...\")` calls inside this conversation's iteration
+  "Wire `(set-conversation-title! \"...\")` calls inside this conversation's iteration
    loop to the TUI header: every change dispatches `[:set-title]`
    into app-db so the next render frame paints the new title without
    polling. Returns a zero-arg cleanup fn.

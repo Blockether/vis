@@ -585,7 +585,7 @@
 ;;                                   with no consumers.)
 ;;     CONVERSATION_TITLE            current conversation title ("" until set).
 ;;                                   The model writes via the host primitive
-;;                                   `(set-conversation-title "...")`, never by
+;;                                   `(set-conversation-title! "...")`, never by
 ;;                                   `def`-ing it directly - the SYSTEM-var write
 ;;                                   guard in `loop.clj` rejects that on principle.
 ;;     CONVERSATION_PREVIOUS_ANSWER  previous turn's final answer string ("" on
