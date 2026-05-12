@@ -1145,6 +1145,77 @@
                :channel-render-fn (constantly "")}
          opts)))))
 
+(defn helper
+  "Build a raw callable helper entry FROM A CLOJURE VAR.
+
+   Helpers are installed into SCI as plain functions: no envelope
+   enforcement, no journal/channel sink, no tool metadata. Use helpers
+   for composable library functions (`z/of-string`, `z/down`, ...). Use
+   `symbol` for observable tools that return canonical envelopes.
+
+   The var supplies `:sym`, `:val`, `:doc`, and `:arglists`.
+
+   Opts:
+     :sym - override the SCI sandbox name (default: var name)."
+  ([v] (helper v nil))
+  ([v opts]
+   (if (var? v)
+     (let [{:keys [sym doc arglists]} (var-meta v true)
+           sym (or (:sym opts) sym)
+           f   @v]
+       (when-not (fn? f)
+         (anomaly/incorrect!
+           (str "Var " v " does not hold a function; use vis/value for plain values.")
+           {:type :extension/helper-not-a-fn :var v}))
+       (validate-symbol-entry!
+         #:ext.symbol{:sym sym :val f :doc doc :arglists arglists}))
+     (anomaly/incorrect!
+       "vis/helper expects a Clojure var (e.g. #'raw-helper)."
+       {:type :extension/helper-not-a-var :given v}))))
+
+(defn raw-var
+  "Convert a Clojure var into a raw SCI binding entry.
+
+   Function vars become helper entries; non-function vars become value entries;
+   macro vars are skipped unless opts supplies `:val` (used by SCI macro marker
+   shims like `{:vis.sci/macro-fn ...}`). This is for library surfaces that
+   must compose as normal Clojure values, not observable Vis tools.
+
+   Opts:
+     :sym      override the SCI sandbox name
+     :doc      override/supply doc when third-party metadata is missing
+     :arglists override/supply arglists for function helpers
+     :val      expose this value instead of derefing the var
+     :doc-fn   fallback `(fn [sym var] string)` when metadata has no doc"
+  ([v] (raw-var v nil))
+  ([v opts]
+   (when-not (var? v)
+     (anomaly/incorrect! "vis/raw-var expects a Clojure var"
+       {:type :extension/raw-var-not-a-var :given v}))
+   (let [m         (meta v)
+         sym       (or (:sym opts) (:name m))
+         val-given? (contains? opts :val)
+         val       (if val-given? (:val opts) @v)
+         doc-fn    (or (:doc-fn opts)
+                     (fn [sym' v']
+                       (str (some-> v' meta :ns ns-name) "/" sym')))
+         doc       (or (:doc opts) (:doc m) (doc-fn sym v))
+         arglists  (or (:arglists opts)
+                     (some-> (:arglists m) vec)
+                     (when (fn? val) '([& args])))]
+     (cond
+       (and (:macro m) (not val-given?))
+       nil
+
+       (fn? val)
+       (validate-symbol-entry!
+         #:ext.symbol{:sym sym :val val :doc doc :arglists (vec arglists)})
+
+       :else
+       (validate-symbol-entry!
+         (cond-> #:ext.symbol{:sym sym :val val :doc doc}
+           (seq arglists) (assoc :ext.symbol/arglists (vec arglists))))))))
+
 (defn value
   "Build a value symbol entry FROM A CLOJURE VAR - a plain constant/data binding.
 
@@ -1193,8 +1264,10 @@
   [alias-sym entry]
   (let [{sym-name :ext.symbol/sym
          doc      :ext.symbol/doc
-         arglists :ext.symbol/arglists} entry]
-    (if (:ext.symbol/fn entry)
+         arglists :ext.symbol/arglists} entry
+        callable? (or (:ext.symbol/fn entry)
+                    (and (fn? (:ext.symbol/val entry)) (seq arglists)))]
+    (if callable?
       (str "- "
         (str/join " or " (map #(arglist->call-form alias-sym sym-name %) arglists))
         " - " doc)

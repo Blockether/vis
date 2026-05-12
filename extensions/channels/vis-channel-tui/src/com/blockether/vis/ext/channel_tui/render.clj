@@ -2471,9 +2471,10 @@
    (detail-expanded? detail-expansions conversation-id node-id true))
   ([detail-expansions conversation-id node-id default-expanded?]
    (boolean
-     (get detail-expansions
-       [(str conversation-id) (str node-id)]
-       default-expanded?))))
+     (or (:vis.channel-tui/expand-all-details? detail-expansions)
+       (get detail-expansions
+         [(str conversation-id) (str node-id)]
+         default-expanded?)))))
 
 (defn- preview-mode
   [detail-expansions conversation-id node-id]
@@ -2558,12 +2559,14 @@
         base            (detail-node-base-id opts)
         prefix          (str base ":")]
     (->> (:detail-expansions opts)
-      (keep (fn [[[cid node-id] expanded?]]
-              (let [node-id (str node-id)]
-                (when (and (= conversation-id (str cid))
-                        (or (= base node-id)
-                          (str/starts-with? node-id prefix)))
-                  [node-id expanded?]))))
+      (keep (fn [[k expanded?]]
+              (when (vector? k)
+                (let [[cid node-id] k
+                      node-id (str node-id)]
+                  (when (and (= conversation-id (str cid))
+                          (or (= base node-id)
+                            (str/starts-with? node-id prefix)))
+                    [node-id expanded?])))))
       sort
       vec)))
 
@@ -2576,12 +2579,14 @@
         turn-fragment   (some-> (:conversation-turn-id opts) short-id-fragment)
         turn-token      (when turn-fragment (str ":t" turn-fragment))]
     (->> (:detail-expansions opts)
-      (keep (fn [[[cid node-id] expanded?]]
-              (let [node-id (str node-id)]
-                (when (and (= conversation-id (str cid))
-                        (or (nil? turn-token)
-                          (str/includes? node-id turn-token)))
-                  [node-id expanded?]))))
+      (keep (fn [[k expanded?]]
+              (when (vector? k)
+                (let [[cid node-id] k
+                      node-id (str node-id)]
+                  (when (and (= conversation-id (str cid))
+                          (or (nil? turn-token)
+                            (str/includes? node-id turn-token)))
+                    [node-id expanded?])))))
       sort
       vec)))
 
@@ -3037,12 +3042,29 @@
           (when (map? error)
             (let [repeat-count      (max 1 (long (or repeat-count 1)))
                   badge             (when (> repeat-count 1) (str "  x " repeat-count))
-                  hdr-label         (str (label-text "error") (or badge ""))
+                  data              (:data error)
+                  provider-error?   (or (:status data) (:body data) (:request-id data) (:request_id data))
+                  hdr-label         (str (label-text (if provider-error? "provider error" "error")) (or badge ""))
                   hdr-pad           (max 0 (- fill-w (count hdr-label) 1))
                   hdr-line          (str iteration-hdr-marker (repeat-str \space hdr-pad) hdr-label " ")
                   err-message       (or (:message error) (str (:type error)) "unknown error")
                   raw               (some-> (get-in error [:data :raw-data]) str str/trim)
                   recv              (get-in error [:data :received-type])
+                  body              (some-> (:body data) str str/trim)
+                  status            (:status data)
+                  request-id        (or (:request-id data) (:request_id data))
+                  invalid-thinking? (and body (re-find #"(?i)invalid.*signature.*thinking block" body))
+                  provider-rows     (when provider-error?
+                                      (mapv #(line-entry (str err-result-marker %))
+                                        (mapcat #(wrap-text % fill-w)
+                                          (cond-> [(str "PROVIDER_ERROR" (when status (str "  HTTP " status))
+                                                     (when request-id (str "  " request-id)))]
+                                            invalid-thinking?
+                                            (conj "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a thinking block with a signature that is not valid for Anthropic. This usually means preserved-thinking from another provider/model was replayed into Anthropic.")
+                                            (and body (not (str/blank? body)))
+                                            (conj (str "provider response: " (if (> (count body) 1200)
+                                                                               (str (subs body 0 1200) "...")
+                                                                               body)))))))
                   err-message-rows  (mapv #(line-entry (str err-result-marker %))
                                       (wrap-text (vis/format-error err-message) fill-w))
                   raw-rows          (when (and raw (not (str/blank? raw)))
@@ -3058,7 +3080,7 @@
                      (when show-header? [(line-entry (str iteration-pad-marker ""))])
                      (when show-header? [(line-entry hdr-line)])
                      [(line-entry (str code-err-pad-marker ""))]
-                     err-message-rows
+                     (or provider-rows err-message-rows)
                      (when (seq raw-rows) [(line-entry (str code-err-pad-marker ""))])
                      (or raw-rows [])
                      [(line-entry (str code-err-pad-marker ""))])))))

@@ -30,3 +30,45 @@
       (expect (not (str/includes? rendered "item 100")))
       (expect (str/includes? rendered "… many more"))
       (expect (not (str/includes? (pr-str answer) "LazySeq"))))))
+
+(defdescribe preserved-thinking-replay-test
+  (it "does not replay z.ai thinking into an Anthropic provider/model call"
+    (let [append-replay #'loop/append-preserved-thinking-replay
+          messages      [{:role "user" :content "continue"}]
+          zai-message   {:role "assistant"
+                         :content [{:type "thinking"
+                                    :thinking "zai reasoning"
+                                    :thinking-signature "zai reasoning"}
+                                   {:type "text" :text "done"}]}
+          anthropic-message {:role "assistant"
+                             :content [{:type "thinking"
+                                        :thinking "claude reasoning"
+                                        :thinking-signature "anthropic-hmac"}
+                                       {:type "text" :text "done"}]}
+          journal      [[1 {:llm-provider :zai-coding
+                            :llm-model "glm-5.1"
+                            :assistant-message zai-message}]
+                        [2 {:llm-provider :anthropic-coding-plan
+                            :llm-model "claude-opus-4-7"
+                            :assistant-message anthropic-message}]]]
+      (expect (= [messages anthropic-message]
+                [(subvec (vec (append-replay messages journal
+                                {:provider :anthropic-coding-plan
+                                 :model "claude-opus-4-7"})) 0 1)
+                 (last (append-replay messages journal
+                         {:provider :anthropic-coding-plan
+                          :model "claude-opus-4-7"}))]))
+      (expect (= messages
+                (append-replay messages journal
+                  {:provider :anthropic-coding-plan
+                   :model "claude-sonnet-4-6"}))))))
+
+(defdescribe provider-error-rendering-test
+  (it "uses one stable provider error code and still includes provider body"
+    (let [format-error #'loop/format-iteration-error
+          rendered (format-error
+                     {:message "Exceptional status code: 400"
+                      :data {:status 400
+                             :body "{\"error\":{\"message\":\"Invalid `signature` in `thinking` block\"}}"}})]
+      (expect (str/includes? rendered "PROVIDER_ERROR"))
+      (expect (str/includes? rendered "Invalid `signature` in `thinking` block")))))

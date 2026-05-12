@@ -28,6 +28,7 @@
   (:refer-clojure)
   (:require
    [clojure.set :as set]
+   [charred.api :as json]
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
@@ -1960,34 +1961,48 @@
           sized)]
     (vec kept)))
 
+(defn- replay-context
+  "Small identity map for deciding whether preserved-thinking can be
+   replayed into the next provider call. Provider-native thinking
+   signatures are not portable: z.ai stores reasoning text under
+   `:thinking-signature`, Anthropic expects an HMAC signature, and
+   OpenAI Responses stores a JSON reasoning item. Replaying across a
+   provider/model switch corrupts the next request (Anthropic 400:
+   invalid signature in thinking block)."
+  [resolved-model]
+  {:provider (:provider resolved-model)
+   :model    (some-> (:name resolved-model) str)})
+
+(defn- compatible-preserved-thinking-journal-iters
+  [journal-iters target]
+  (let [{target-provider :provider target-model :model} target]
+    (filterv (fn [[_ {:keys [assistant-message llm-provider llm-model]}]]
+               (and assistant-message
+                 (= target-provider llm-provider)
+                 (= target-model llm-model)))
+      (or journal-iters []))))
+
 (defn- append-preserved-thinking-replay
   "Appends svar's canonical assistant-replay messages from prior
    iterations to the END of `messages` (R3 hybrid shape).
 
-   Pre-R3 path inserted replays BEFORE the last user message,
-   producing `[system, asst_iter1, asst_iter2, …, user_journal,
-   user_initial]` — two adjacent assistants and two adjacent users
-   at the tail. That fights z.ai's canonical preserved-thinking
-   shape (`user → asst → user → asst → user`) and made GLM-5.1
-   restart its plan every iter (conversation 1db62d10).
-
-   R3 keeps the original user request once at the start of the
-   conversation, then alternates `asst_n` (preserved replay) with
-   `user_journal_n` (per-iter observation/nudge — appended by the
-   call site). The 9a55ca1a OpenAI-Codex regression (huge journal
-   as the last user message drifting topic) stays guarded by the
-   journal renderer's existing token budget, not by message
-   ordering.
-
-   Every provider that surfaces preserved-thinking state on
-   `ask-code!` (Anthropic extended thinking, z.ai GLM Coding Plan,
-   OpenAI Responses) flows through the same canonical shape; the
-   wire serializer in svar handles per-provider translation."
-  [messages journal-iters]
-  (let [messages* (vec (or messages []))
-        replays   (preserved-thinking-replay-messages journal-iters)]
-    (cond-> messages*
-      (seq replays) (into replays))))
+   Replays are scoped to the exact provider/model that produced them.
+   This is mandatory because preserved-thinking payloads are
+   provider-native, despite sharing svar's canonical map shape:
+   Anthropic `:thinking-signature` is an HMAC, z.ai's is raw
+   reasoning text, and OpenAI Responses' is a JSON reasoning item.
+   Crossing those streams reproduces Anthropic's
+   `Invalid signature in thinking block` HTTP 400."
+  ([messages journal-iters]
+   (append-preserved-thinking-replay messages journal-iters nil))
+  ([messages journal-iters target]
+   (let [messages* (vec (or messages []))
+         compatible-iters (if target
+                            (compatible-preserved-thinking-journal-iters journal-iters target)
+                            (or journal-iters []))
+         replays   (preserved-thinking-replay-messages compatible-iters)]
+     (cond-> messages*
+       (seq replays) (into replays)))))
 
 (def ^:private MAX_TURN_ITERATIONS
   "Hard cap on iterations per turn. Vis used to have NO cap (\"if a
@@ -2513,44 +2528,90 @@
    long body” threshold."
   4000)
 
+(defn- provider-error-data?
+  [err]
+  (let [data (:data err)]
+    (boolean (or (:status data) (:body data) (:request-id data) (:request_id data)))))
+
+(defn- parse-provider-body
+  [body]
+  (when (and (string? body) (not (str/blank? body)))
+    (try
+      (json/read-json body :key-fn keyword)
+      (catch Throwable _ nil))))
+
+(defn- provider-body-message
+  [body]
+  (let [parsed (parse-provider-body body)]
+    (or (get-in parsed [:error :message])
+      (:message parsed)
+      (some-> body str/trim not-empty))))
+
+(defn- invalid-thinking-signature-message?
+  [message]
+  (boolean (and (string? message)
+             (re-find #"(?i)invalid.*signature.*thinking block" message))))
+
+(defn- provider-error-explanation
+  [err]
+  (let [data             (:data err)
+        body-raw         (some-> (:body data) str)
+        provider-message (provider-body-message body-raw)]
+    (cond
+      (invalid-thinking-signature-message? provider-message)
+      (str "WHAT HAPPENED: Anthropic rejected the request before the model ran because Vis sent a `thinking` block with a signature that is not valid for Anthropic. "
+        "Most likely cause: preserved-thinking replay crossed a provider/model boundary (for example Z.ai/Codex/OpenAI reasoning state was replayed into Anthropic), or an old Anthropic thinking block came from a different session/key. "
+        "Fix: do not replay preserved-thinking unless provider AND model match; retry with only normal transcript/journal context.")
+
+      (seq provider-message)
+      (str "WHAT HAPPENED: provider rejected the request before the model ran. Provider message: " provider-message)
+
+      :else
+      "WHAT HAPPENED: provider rejected the request before the model ran.")))
+
+(defn- format-provider-error
+  [err]
+  (let [message          (or (:message err) (str err))
+        data             (:data err)
+        body-raw         (some-> (:body data) str)
+        status           (:status data)
+        request-id       (or (:request-id data) (:request_id data))
+        provider-message (provider-body-message body-raw)
+        provider-body    (when (and body-raw (not (str/blank? body-raw)))
+                           (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))]
+    (str "## 🚨 PROVIDER_ERROR"
+      "\n\n"
+      "Provider call failed before the model could run."
+      "\n\n"
+      "**" (provider-error-explanation err) "**"
+      "\n\n"
+      "- Wrapper: `" message "`"
+      (when status (str "\n- HTTP: `" status "`"))
+      (when request-id (str "\n- Request id: `" request-id "`"))
+      (when provider-message (str "\n- Provider message: `" provider-message "`"))
+      (when provider-body
+        (str "\n\nProvider response:\n\n```json\n" provider-body "\n```")))))
+
 (defn- format-iteration-error
   "Render one trace `:error` map as a Markdown bullet for the user.
-   Always includes the wrapper message and, when the underlying
-   `ex-data` carries provider context, surfaces it inline so users
-   stop seeing opaque rows like `Exceptional status code: 400` with
-   no follow-up.
-
-   Sources of provider context:
-   - `:raw-data` — spec-rejection (`svar.spec/schema-rejected`) stashes
-     the literal model output here.
-   - `:body` — svar's `:svar.core/http-error` carries the raw upstream
-     response body (truncated to `MAX_HTTP_ERROR_BODY_CHARS`). This is
-     where Anthropic's structured `error.message` lives, e.g.
-     `messages.1.content.1: Invalid signature in thinking block`.
-   - `:status` / `:request_id` — included when present so users can
-     paste the request id straight into provider support."
+   Provider HTTP failures get a dedicated PROVIDER_ERROR block with the
+   exact upstream message plus a human explanation. Local eval/form
+   errors stay as normal bullets."
   [err]
-  (let [message    (or (:message err) (str err))
-        data       (:data err)
-        raw        (some-> (:raw-data data) str)
-        recv       (:received-type data)
-        body-raw   (some-> (:body data) str)
-        status     (:status data)
-        request-id (or (:request-id data) (:request_id data))
-        provider-payload (when (and raw (not (str/blank? raw)))
-                           (truncate raw 400))
-        provider-body    (when (and body-raw (not (str/blank? body-raw)))
-                           (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))
-        overflow? (stream-output-overflow? err)]
-    (cond-> (str "- " message)
-      overflow?        (str " Reason: max_output_tokens. Vis will retry with compact working memory and an explicit compact-recovery instruction.")
-      provider-payload (str "\n  provider returned"
-                         (when recv (str " (" recv ")"))
-                         ": " provider-payload)
-      provider-body    (str "\n  provider response"
-                         (when status (str " (HTTP " status ")"))
-                         (when request-id (str " [" request-id "]"))
-                         ":\n  ```\n  " (str/replace provider-body #"\n" "\n  ") "\n  ```"))))
+  (if (provider-error-data? err)
+    (format-provider-error err)
+    (let [message    (or (:message err) (str err))
+          data       (:data err)
+          raw        (some-> (:raw-data data) str)
+          recv       (:received-type data)
+          provider-payload (when (and raw (not (str/blank? raw)))
+                             (truncate raw 400))
+          overflow? (stream-output-overflow? err)]
+      (cond-> (str "- " message)
+        overflow?        (str " Reason: max_output_tokens. Vis will retry with compact working memory and an explicit compact-recovery instruction.")
+        provider-payload (str "\n  provider returned"
+                           (when recv (str " (" recv ")"))
+                           ": " provider-payload)))))
 
 (defn- format-block-error
   "Render one failed code block from an iteration trace. These are not
@@ -2586,8 +2647,22 @@
                (take n))]
     (when (seq errs)
       (str "**Recent errors:**\n\n"
-        (str/join "\n" errs)
+        (str/join "\n\n" errs)
         "\n\n"))))
+
+(defn- recent-provider-errors-block
+  "Fatal provider failures should not be visually mixed with old local
+   form/eval failures. Show the provider block alone so the user sees
+   the real blocker first."
+  [trace n]
+  (let [errs (->> trace
+               reverse
+               (keep :error)
+               (filter provider-error-data?)
+               (map format-provider-error)
+               (take n))]
+    (when (seq errs)
+      (str/join "\n\n" errs))))
 
 ;; -----------------------------------------------------------------------------
 ;; Router lifecycle + model helpers (turn single-file API)
@@ -3329,9 +3404,12 @@
                          {:thinking (:thinking it)
                           :blocks   (try (persistance/db-list-iteration-blocks d (:id it))
                                       (catch Throwable _ []))
+                          :llm-provider (:provider it)
+                          :llm-model    (some-> (:model it) str)
                           ;; svar canonical assistant message persisted on the
                           ;; iteration row; rehydrating here keeps preserved-thinking
-                          ;; replay alive across vis restarts.
+                          ;; replay alive across vis restarts, but only for the
+                          ;; same provider/model that produced it.
                           :assistant-message (:llm-assistant-message it)}])
                   iters)))
             (catch Throwable t
@@ -3452,7 +3530,7 @@
                       ;; stops GLM-5.1 from re-reading the same initial
                       ;; goal every iter and restarting its plan.
                       provider-messages (append-preserved-thinking-replay
-                                          messages journal-iters)
+                                          messages journal-iters (replay-context pre-resolved-model))
                       ;; Soft convergence nudge after CONVERGENCE_NUDGE_AT
                       ;; — appended INSIDE the iteration-context user
                       ;; trailer so we don't add an extra wire message.
@@ -3562,9 +3640,10 @@
                           "on-chunk (iteration error)")
                         (if (::fatal-iteration-error iteration-result)
                           (let [trace' (conj trace trace-entry)
-                                errors-block (recent-errors-block trace' 3)
-                                fallback (str "Provider call failed before the model could run.\n\n"
-                                           errors-block)
+                                errors-block (or (recent-provider-errors-block trace' 1)
+                                               (recent-errors-block trace' 3))
+                                fallback (or errors-block
+                                           "## 🚨 PROVIDER_ERROR\n\nProvider call failed before the model could run.")
                                 result (merge {:answer fallback
                                                :status :error
                                                :status-id (status->id :error)
@@ -3739,6 +3818,8 @@
                                                  {:thinking thinking
                                                   :blocks   blocks
                                                   :llm-executable-code (:llm-executable-code iteration-result)
+                                                  :llm-provider (:provider resolved-model)
+                                                  :llm-model    (some-> (:name resolved-model) str)
                                                   ;; svar's canonical replay handle for this
                                                   ;; iteration. Re-emitted into messages on
                                                   ;; the next iteration via
