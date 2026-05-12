@@ -1096,6 +1096,23 @@
       (expect (str/includes? (:text payload) "ACTION patch"))
       (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
 
+  (it "renders load-skill result bodies as Markdown with a skill badge"
+    (render/invalidate-cache!)
+    (let [trace [{:code ["(load-skill! \"find-skills\")"]
+                  :results ["Loaded skill `find-skills`.\n\n# Find Skills\n\nNice body."]
+                  :result-kinds [:value]
+                  :result-details [{:kind :skill-load :name "find-skills"}]
+                  :stdouts [""]
+                  :durations [1]
+                  :successes [true]}]
+          payload (render/format-answer-with-thinking-data
+                    nil trace 96 {:show-iterations true} nil false
+                    {:conversation-id "conversation"
+                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
+      (expect (str/includes? (:text payload) "SKILL find-skills"))
+      (expect (str/includes? (:text payload) "Find Skills"))
+      (expect (not (str/includes? (:text payload) ":body")))))
+
   (it "does not duplicate edit badges when tool results auto-collapse"
     (render/invalidate-cache!)
     (let [huge-result (str "Patched file.\n" (str/join " " (repeat 500 "diff-line")))

@@ -9,6 +9,7 @@
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
             [com.blockether.vis.internal.history-restore :as history-restore]
+            [com.blockether.vis.internal.skills :as skills]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
 
@@ -253,10 +254,13 @@
                                                                      "<runtime value; re-evaluate expression to restore>"
                                                                      (extension/tool-result? result)
                                                                      (extension/channel-render-tool-result result)
+                                                                     (skills/load-result? result)
+                                                                     (skills/render-load-result result)
                                                                      :else (pr-str result))))
                                                            exprs)
                                              result-details (mapv (fn [expr]
-                                                                    (tool-result-detail (:result expr)))
+                                                                    (or (tool-result-detail (:result expr))
+                                                                      (skills/load-result-detail (:result expr))))
                                                               exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
                                              stderr-strs (mapv #(or (:stderr %) "") exprs)

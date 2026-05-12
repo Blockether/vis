@@ -2635,15 +2635,20 @@
    Label = OBSERVATION/ACTION (derived from `:tag`); suffix =
    op-name. No per-op badge field anywhere."
   [detail]
-  (when-let [tag (some-> detail :tag)]
-    (let [label (case tag
-                  :op.tag/observation "OBSERVATION"
-                  :op.tag/action      "ACTION"
-                  nil)
-          op    (:op detail)]
-      (when label
-        (str label (when (and op (not (#{:all :any} op)))
-                     (str " " (name op))))))))
+  (cond
+    (= :skill-load (:kind detail))
+    (str "SKILL " (:name detail))
+
+    :else
+    (when-let [tag (some-> detail :tag)]
+      (let [label (case tag
+                    :op.tag/observation "OBSERVATION"
+                    :op.tag/action      "ACTION"
+                    nil)
+            op    (:op detail)]
+        (when label
+          (str label (when (and op (not (#{:all :any} op)))
+                       (str " " (name op)))))))))
 
 (defn- self-describing-tool-result?
   "Whether the op's body output speaks for itself (shell stdout,
