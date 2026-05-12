@@ -525,13 +525,24 @@
           {:row row :col text-left :width content-w})))))
 
 (defn- copyable-bubble-text
-  "Whole-bubble copy hands the user the rendered markdown verbatim.
-   `:text` is set by the walker projection; pre-projection messages
-   fall back to rendering `:ir` directly so clipboard always works."
-  [message]
-  (or (:text message)
-    (some-> (:ir message) (vis/render :markdown))
-    ""))
+  "Whole-bubble copy hands the user complete text, not the collapsed viewport.
+
+   For trace bubbles, expand disclosure blocks for clipboard export so a copied
+   bubble does not paste `N chars hidden` placeholders back into the prompt.
+   Plain answer/user bubbles keep the projected text fallback used for live
+   streaming, where the raw message can still be a placeholder."
+  [message bubble-w settings {:keys [conversation-id detail-expansions]}]
+  (if (and (= :assistant (:role message)) (:traces message))
+    (let [opts {:conversation-id      conversation-id
+                :conversation-turn-id (or (:turn-id message) (:conversation-turn-id message) (:id message))
+                :detail-expansions   (assoc (or detail-expansions {})
+                                       :vis.channel-tui/expand-all-details? true)}]
+      (:text (render/format-answer-with-thinking-data
+               (:ir message) (:traces message) bubble-w settings
+               (:confidence message) (= :cancelled (:status message)) opts)))
+    (or (:text message)
+      (some-> (:ir message) (vis/render :markdown))
+      "")))
 
 (defn- bubble-copy-regions
   "Return absolute screen-cell rectangles for single-click whole-bubble copy.
@@ -541,7 +552,7 @@
    simple click land on? They cover the visible bubble rectangle except for
    the final inter-bubble gap row, so clicking the role row or bubble padding
    still copies the message while clicking between bubbles does nothing."
-  [layout messages text-top inner-h cols]
+  [layout messages text-top inner-h cols settings copy-opts]
   (let [bubble-left  (long render/MESSAGE_MARGIN_LEFT)
         bubble-w     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
         top-limit    (long text-top)
@@ -558,8 +569,13 @@
                     ;; with the actual streamed content. Falling back to
                     ;; the raw message would render the placeholder IR
                     ;; on copy, which is the bug fixed here.
-                    message       (or projected (nth messages idx nil))
-                    text          (copyable-bubble-text message)
+                    raw-message   (nth messages idx nil)
+                    ;; Prefer the raw persisted message for trace bubbles so
+                    ;; clipboard can expand hidden blocks. Keep projected text
+                    ;; for live streaming/plain bubbles; it may carry fresher
+                    ;; visible content than the raw placeholder.
+                    message       (if (:traces raw-message) raw-message (or projected raw-message))
+                    text          (copyable-bubble-text message bubble-w settings copy-opts)
                     sep-pad       0
                     bubble-top    (+ top-limit (long top) sep-pad)
                     copy-height   (max 1 (- (long height) sep-pad 1))
@@ -776,7 +792,9 @@
         total-h      (long (:total-h layout))
         text-top     (+ messages-top render/MESSAGE_MARGIN_TOP)
         transcript-selectable-ranges (bubble-selectable-ranges layout text-top inner-h cols)
-        transcript-bubble-copy-regions (bubble-copy-regions layout messages text-top inner-h cols)
+        transcript-bubble-copy-regions (bubble-copy-regions layout messages text-top inner-h cols settings
+                                         {:conversation-id   (get-in db [:conversation :id])
+                                          :detail-expansions (:detail-expansions db)})
         transcript-disclosure-copy-regions (disclosure-copy-regions layout text-top inner-h cols)
         input-selectable-ranges (input-selectable-ranges input-top text-rows cols)
         selectable-ranges (into transcript-selectable-ranges input-selectable-ranges)
