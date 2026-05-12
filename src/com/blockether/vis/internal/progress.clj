@@ -61,6 +61,7 @@
       :started-at-ms [int-ms ...] ;; running form start timestamps
       :silents   [bool ...]       ;; per-form :vis/silent visibility marker
       :provider-fallbacks [map ...] ;; routed provider fallback notices
+      :activity  nil-or-keyword      ;; live coarse phase (:provider-call/:response-parse)
       :error     nil-or-iteration-error
       :final     nil-or-{:answer :iteration-count :status}
       :done?     bool}
@@ -89,6 +90,7 @@
    :started-at-ms []
    :silents   []
    :provider-fallbacks []
+   :activity  nil
    :elided-form-idxs #{}
    :error     nil
    :final     nil
@@ -302,28 +304,41 @@
    loop-side phase doesn't crash older trackers."
   [entry chunk]
   (case (:phase chunk)
+    :provider-call
+    (assoc entry :activity :provider-call)
+
+    :response-parse
+    (if (= :done (:status chunk))
+      (assoc entry :activity nil :response-parse chunk)
+      (assoc entry :activity :response-parse :response-parse chunk))
+
     :reasoning
     (let [next-thinking (or (normalize-thinking-text (:thinking chunk))
                           (normalize-thinking-text (:thinking entry)))]
-      (assoc entry :thinking next-thinking))
+      (assoc entry :thinking next-thinking :activity nil))
 
     :provider-fallback
-    (update entry :provider-fallbacks conj
-      (select-keys chunk [:reason :failed-provider :new-provider :fallback]))
+    (-> entry
+      (assoc :activity :provider-call)
+      (update :provider-fallbacks conj
+        (select-keys chunk [:reason :failed-provider :new-provider :fallback])))
 
     :form-start
-    (write-form-start-slot entry chunk)
+    (assoc (write-form-start-slot entry chunk) :activity nil)
 
     :form-result
-    (if (and (not (:error chunk)) (= :vis/answer (:result chunk)))
-      (hide-form-slot entry (:form-idx chunk))
-      (write-form-slot (unhide-form-slot entry (:form-idx chunk)) chunk))
+    (assoc
+      (if (and (not (:error chunk)) (= :vis/answer (:result chunk)))
+        (hide-form-slot entry (:form-idx chunk))
+        (write-form-slot (unhide-form-slot entry (:form-idx chunk)) chunk))
+      :activity nil)
 
     :iteration-final
     (let [duplicate-final? (and (:done? entry) (:final entry) (:final chunk))
           base (assoc entry
                  :thinking (or (normalize-thinking-text (:thinking chunk))
                              (normalize-thinking-text (:thinking entry)))
+                 :activity nil
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
           ;; Elide `(turn-answer! ...)`: the answer text already renders below;
@@ -347,6 +362,7 @@
     (assoc entry
       :thinking (or (normalize-thinking-text (:thinking chunk))
                   (normalize-thinking-text (:thinking entry)))
+      :activity nil
       :error    (:error chunk)
       :done?    true)
 

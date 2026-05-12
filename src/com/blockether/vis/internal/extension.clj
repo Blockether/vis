@@ -716,8 +716,8 @@
 ;; loop or starves siblings.
 ;;
 ;; Hooks do NOT block evaluation. Pre-phase hooks emit advisory <current_engine_start_nudge>
-;; entries; post-phase hooks side-effect only. For HARD preflight rejection
-;; (e.g. answer-alone gate), use the preflight gates in loop.clj.
+;; entries; post-phase hooks side-effect only. For HARD preflight rejection,
+;; use the preflight gates in loop.clj.
 ;; ----------------------------------------------------------------------------
 (def canonical-hook-phases
   "Canonical namespaced lifecycle phases accepted by `:ext/hooks`."

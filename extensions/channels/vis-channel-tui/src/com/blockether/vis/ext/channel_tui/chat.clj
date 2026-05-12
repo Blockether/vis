@@ -70,9 +70,8 @@
   "Normalize a turn result answer into canonical IR for the TUI boundary.
 
    The normal `vis/send!` success path already returns `[:ir ...]`, but
-   terminal paths such as cancellation / iteration-cap fallbacks can carry
-   human-readable strings. The channel must still hand `assistant-message`
-   canonical IR, never raw text."
+   terminal paths such as cancellation can carry human-readable strings.
+   The channel must still hand `assistant-message` canonical IR, never raw text."
   [answer fallback-text]
   (cond
     (canonical-ir? answer) answer
@@ -147,8 +146,8 @@
         (mapcat (fn [q]
                   (let [user-message (user-message (or (:user-request q) "") (or (:created-at q) (java.util.Date.)))
                         ;; Modern rows store Nippy-thawed canonical IR;
-                        ;; legacy terminal paths may have persisted a string
-                        ;; (for example iteration-cap text). Normalize both.
+                        ;; legacy terminal paths may have persisted a string.
+                        ;; Normalize both.
                         answer-ir (answer->ir (:answer q) nil)
                         model     (:model q)
                         tokens    (cond-> {}
@@ -373,8 +372,8 @@
            result (vis/send! id text send-opts)
            cancelled? (= :cancelled (:status result))
            ;; `(:answer result)` from `vis/send!` is normally canonical IR
-           ;; (`[:ir & nodes]`), but cancellation/iteration-cap terminal paths
-           ;; may carry raw status text. Normalize here so `render-answer` /
+           ;; (`[:ir & nodes]`), but cancellation terminal paths may carry raw
+           ;; status text. Normalize here so `render-answer` /
            ;; `assistant-message` never see raw strings.
            answer (answer->ir (:answer result)
                     (if cancelled? "Cancelled by user." "[empty response]"))

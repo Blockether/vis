@@ -189,7 +189,6 @@ engine_turn_id: 9f2e1d0c-aaaa-bbbb-cccc-ddddeeeeffff
 engine_turn_position: 12
 current_engine_iteration_id: turn/9f2e1d0c/iteration/3
 engine_iteration_position: 3
-engine_iteration_max: 20
 previous_persisted_iteration_id: 37b6f7d5-9999-8888-7777-666655554444
 previous_persisted_iteration_position: 2
 prompt_role: user
@@ -243,7 +242,6 @@ engine_turn_id: <turn uuid>
 engine_turn_position: <1-based turn position in conversation>
 current_engine_iteration_id: turn/<short-turn-id>/iteration/<position>
 engine_iteration_position: <1-based iteration position in current turn>
-engine_iteration_max: <hard cap>
 previous_persisted_iteration_id: <last committed DB iteration uuid or nil>
 previous_persisted_iteration_position: <0 before first commit, else previous position>
 prompt_role: user
@@ -371,7 +369,6 @@ model sees current turn/iteration position
 Change:
 
 ```text
-pass max iteration cap into prompt/build-iteration-context
 track current turn position atom
 strip hallucinated <current_turn_context> and <current_engine_start_nudge[s]> from model replies
 keep legacy stripper tags only as cleanup compatibility
@@ -380,7 +377,6 @@ keep legacy stripper tags only as cleanup compatibility
 Why:
 
 ```text
-context block can show engine_iteration_max
 turn position can render without DB lookup each prompt
 model must not echo engine-only XML into executable code
 ```
@@ -434,7 +430,7 @@ Change:
 ```text
 test/com/blockether/vis/internal/prompt_test.clj
   assert dynamic ids are absent from system prompt
-  assert <current_turn_context> has engine ids / positions / max
+  assert <current_turn_context> has engine ids / positions
   assert start nudges render with start tag
 
 test/com/blockether/vis/internal/loop_test.clj

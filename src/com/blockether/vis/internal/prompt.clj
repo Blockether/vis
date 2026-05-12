@@ -54,9 +54,8 @@
 (def ^:const PRESERVED_THINKING_REPLAY_FRACTION
   "Fraction of `MAX_ITERATION_CONTEXT_TOKENS` reserved for preserved-thinking
    replay across iterations within a single turn. Sized to fit ~10 newest
-   iterations of typical thinking (~3k tokens each) under the 200k cap, which
-   covers the soft convergence-nudge region (`CONVERGENCE_NUDGE_AT = 8`)
-   comfortably while still leaving room for journal + bindings + output.
+   iterations of typical thinking (~3k tokens each) under the 200k cap while
+   still leaving room for journal + bindings + output.
 
    Coupled to the cap: if `MAX_ITERATION_CONTEXT_TOKENS` is bumped, the
    replay budget tracks it (instead of being a magic 30000 that drifts out
@@ -559,7 +558,7 @@
    `current_engine_iteration_id` is a logical engine id for the in-flight
    iteration; the DB UUID appears only after persistence, so the previous
    persisted DB id is exposed separately."
-  [environment {:keys [iteration max-iterations engine-state engine-phase
+  [environment {:keys [iteration engine-state engine-phase
                        active-extensions system-prompt]}]
   (let [iteration-position  (inc (long (or iteration 0)))
         previous-position   (max 0 (dec iteration-position))
@@ -585,7 +584,6 @@
         "engine_turn_position: " turn-position "\n"
         "current_engine_iteration_id: " (current-engine-iteration-id turn-id iteration-position) "\n"
         "engine_iteration_position: " iteration-position "\n"
-        "engine_iteration_max: " (or max-iterations "unknown") "\n"
         "previous_persisted_iteration_id: " previous-iter-id "\n"
         "previous_persisted_iteration_position: " previous-position "\n"
         "turn_id: " (context-value-str (or turn-id "")) "\n"
@@ -703,7 +701,7 @@
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
                        model stable-prompt-content current-user-content context-limit
-                       title-refresh? max-iterations]
+                       title-refresh?]
                 :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
@@ -711,7 +709,6 @@
   (let [ctx-limit (effective-context-limit model context-limit)
         current-context-block (current-turn-context-block environment
                                 {:iteration iteration
-                                 :max-iterations max-iterations
                                  :engine-state :turn.iteration/start
                                  :engine-phase :model_think
                                  :active-extensions active-extensions
