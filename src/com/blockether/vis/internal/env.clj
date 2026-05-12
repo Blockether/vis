@@ -634,9 +634,9 @@
 
 (defn- var-status-keyword [{:keys [system? persisted?]}]
   (cond
-    system? :sys
-    persisted? :f
-    :else :l))
+    system? :system
+    persisted? :archived
+    :else :live))
 
 (defn- var-type-keyword [val persisted?]
   (cond
@@ -702,9 +702,15 @@
     (catch Throwable t
       [:any {:error (or (ex-message t) (.getName (class t)))}])))
 
-(defn- shape-comment
-  [v]
-  (str ";; shape: " (bounded-pr-str (malli-shape v))))
+(defn- scope-label
+  [status]
+  (name (or status :unknown)))
+
+(defn- binding-comment
+  [{:keys [version status val]}]
+  (str ";; version=" (or version 0)
+    " scope=" (scope-label status)
+    " shape=" (bounded-pr-str (malli-shape val))))
 
 (defn- fallback-source-form
   [{:keys [sym type val arglists doc]}]
@@ -733,11 +739,11 @@
 
 (defn- render-fn-form
   [entry]
-  (str (shape-comment (:val entry)) "\n" (source-form entry)))
+  (str (binding-comment entry) "\n" (source-form entry)))
 
 (defn- render-data-form
   [entry]
-  (str (shape-comment (:val entry)) "\n" (source-form entry)))
+  (str (binding-comment entry) "\n" (source-form entry)))
 
 (defn- render-var-form
   [{:keys [type] :as entry}]
@@ -755,8 +761,8 @@
   "Build the `<bindings>` block from user-defined vars in the SCI sandbox.
 
    Returns nil when no user vars exist; otherwise a multi-line string
-   with one entry per live user `(def ...)` / `(defn ...)`: one Malli-derived
-   `;; shape:` comment followed by the persisted source form. SYSTEM vars
+   with one entry per live user `(def ...)` / `(defn ...)`: one comment with
+   version, scope, and Malli-derived shape followed by the persisted source form. SYSTEM vars
    (every name in `SYSTEM_VAR_NAMES` - `TURN_*`, `ITERATION_*`,
    `CONVERSATION_*`) and initial-ns bindings (tools, helpers) are excluded -
    the model reads SYSTEM vars by name directly from the sandbox.

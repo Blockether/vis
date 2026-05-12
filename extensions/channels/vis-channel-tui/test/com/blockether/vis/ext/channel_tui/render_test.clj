@@ -726,19 +726,6 @@
     ))
 
 ;; ─────────────────────────────────────────────────────────────────────────
-;; <details> / <summary> rendering
-;;
-;; Pre-fix the TUI markdown pipeline had no branch for HTML block tags,
-;; so the lines emitted by `(md-details (md-summary ...) body)` rendered
-;; literally as `<details>`, `<summary>Click</summary>`, `</details>`
-;; in the chat bubble - three rows of raw HTML the user can't act on.
-;; The renderer now drops the framing tags and paints the summary as
-;; a bold `▾ label` disclosure heading. True click-to-collapse still
-;; needs per-bubble state + click regions; this fix is the visual
-;; baseline.
-;; ─────────────────────────────────────────────────────────────────────────
-
-;; ─────────────────────────────────────────────────────────────────────────
 ;; Link-chrome strip - strip inline emphasis from anchor text
 ;;
 ;; `parse-md-refs` captures whatever sits between `[...]` raw, so
