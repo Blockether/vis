@@ -264,11 +264,12 @@
      :level :success :ttl-ms copy-success-ttl-ms)))
 
 (defn- copy-bubble! [text]
-  (vis/worker-future "vis-tui-copy-bubble"
-    #(try (input/clipboard-copy! (or text ""))
-       (catch Throwable _ nil)))
-  (vis/notify! "✓ Copied bubble"
-    :level :success :ttl-ms copy-success-ttl-ms))
+  (let [text (selection/clean-copied-text text)]
+    (vis/worker-future "vis-tui-copy-bubble"
+      #(try (input/clipboard-copy! text)
+         (catch Throwable _ nil)))
+    (vis/notify! "✓ Copied bubble"
+      :level :success :ttl-ms copy-success-ttl-ms)))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} handle-channel-event!
   [{:keys [op id text level ttl-ms] :as event}]

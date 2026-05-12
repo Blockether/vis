@@ -51,7 +51,7 @@
       (expect (contains? syms 'refresh!))
       (expect (contains? syms 'render))
       (expect (contains? syms 'main-agent-instructions))
-      (expect (contains? syms 'load-skill!))
+      (expect (not (contains? syms 'load-skill!)))
       (expect (not (contains? syms 'load-skill)))
       (expect (contains? syms 'scan-warnings))
       (expect (contains? syms 'reload-instructions!))
@@ -62,8 +62,7 @@
     (let [prompt (env-core/environment-prompt {})]
       (expect (string? prompt))
       (expect (str/includes? prompt "(v/snapshot)"))
-      (expect (str/includes? prompt "(v/load-skill! \"name\")"))
-      (expect (not (str/includes? prompt "(v/load-skill \"name\")")))
+      (expect (not (str/includes? prompt "v/load-skill")))
       (expect (str/includes? prompt "(v/reload-extensions!)"))
       (expect (not (str/includes? prompt "`md/`")))))
 
@@ -85,16 +84,4 @@
         (finally
           (binding [workspace/*workspace-root* nil]
             (env-core/refresh!))
-          (cleanup root)))))
-
-  (it "tracks loaded skills for the <active_skills> prompt block"
-    (let [active-skills (atom {})
-          load-skill (some #(when (= 'load-skill! (:ext.symbol/sym %)) %)
-                       env-core/environment-symbols)
-          after-fn (:ext.symbol/after-fn load-skill)
-          result {:found? true
-                  :name "diagnose"
-                  :description "Debug loop."
-                  :body "Full body."}]
-      (after-fn {:active-skills-atom active-skills} nil ["diagnose"] result)
-      (expect (= result (get @active-skills "diagnose"))))))
+          (cleanup root))))))

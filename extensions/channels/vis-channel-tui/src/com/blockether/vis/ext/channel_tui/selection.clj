@@ -210,10 +210,28 @@
 (defn- clean-copied-line
   [s]
   (-> (or s "")
+    ;; Drop terminal styling/control sequences. Whole-bubble copy can carry
+    ;; actual ESC bytes; pasting those through Lanterna may turn them into the
+    ;; visible control-picture glyph `␛`, so strip both forms.
+    (str/replace #"(?:\u001B|\u241B)\][^\u0007\u001B\u241B]*(?:\u0007|(?:\u001B|\u241B)\\)" "")
     (str/replace #"(?:\u001B|\u241B)\[[0-?]*[ -/]*[@-~]" "")
+    ;; Defensive: if an external paste path dropped ESC but left a bare SGR
+    ;; tail, do not put color fragments back into prompts.
+    (str/replace #"\[[0-9;:]*m" "")
     (str/replace #"[\u200B-\u200D\u2060-\u206F\uFEFF\uE000-\uE02C\uE110-\uE119]" "")
     (str/replace #"[\u0000-\u0008\u000B-\u001F\u007F]" "")
     (str/replace #" +$" "")))
+
+(defn clean-copied-text
+  "Strip render-only markers and terminal control styling from copied text.
+
+   Used by mouse selection and whole-bubble copy. The output should be safe to
+   paste back into Vis without ANSI SGR / OSC fragments reaching the prompt or
+   the model."
+  [text]
+  (->> (str/split (str/replace (or text "") #"\r\n?" "\n") #"\n" -1)
+    (map clean-copied-line)
+    (str/join "\n")))
 
 (defn selected-text
   "Extract selected visible text from `screen-cells`.
@@ -235,5 +253,5 @@
               (let [cells (row-cells (nth rows row []))
                     from  (min (count cells) (long col))
                     to    (min (count cells) (+ from (long width)))]
-                (clean-copied-line (apply str (subvec cells from to))))))
+                (clean-copied-text (apply str (subvec cells from to))))))
        (str/join "\n")))))

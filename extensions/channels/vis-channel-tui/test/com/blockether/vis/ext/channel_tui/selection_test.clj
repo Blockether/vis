@@ -69,6 +69,13 @@
                 {:anchor (selection/point 0 0)
                  :focus  (selection/point 40 1)})))))
 
+  (it "cleans whole-bubble copy payloads before they can be pasted back"
+    (expect (= "(def x 1)\nplain ok\nred bare"
+              (selection/clean-copied-text
+                (str "\u001B[32m(def\u001B[0m x 1)\uE000   \r\n"
+                  "\u241B]52;c;AAAA\u0007plain \u241B[31mok\u241B[0m\uE111  \n"
+                  "[31mred[0m bare  "))))))
+
 (defdescribe selectable-ranges-test
   (it "reports whether a point is inside a selectable bubble range"
     (expect (selection/point-in-ranges? (selection/point 3 1)
