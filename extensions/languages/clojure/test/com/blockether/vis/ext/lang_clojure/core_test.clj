@@ -71,26 +71,18 @@
       (expect (contains? symbols 'rename-plan))
       (expect (contains? symbols 'clean-ns-plan))))
 
-  (it "adds Clojure structural-editing guidance to environment info"
+  (it "adds minimal Clojure structural-editing strategy to environment info"
     (let [info ((:ext/environment-info-fn clj-ext/clojure-extension) {})]
       (expect (string? info))
-      (expect (str/includes? info "Prefer the `z/` alias"))
-      (expect (str/includes? info "`z/forms`"))
-      (expect (str/includes? info "`z/locators`"))
-      (expect (str/includes? info "`z/symbols`"))
-      (expect (str/includes? info "`z/locator-for-symbol`"))
-      (expect (str/includes? info "`z/patch`"))
-      (expect (str/includes? info "`z/source`"))
-      (expect (str/includes? info "`z/lit`"))
-      (expect (str/includes? info "`z/patch-check`"))
-      (expect (str/includes? info "preflights exact-match uniqueness"))
-      (expect (str/includes? info "adding `:replace`"))
-      (expect (str/includes? info "`:span` rows are safer"))
-      (expect (str/includes? info "`z/inspect`"))
-      (expect (str/includes? info "`z/repair-range`"))
-      (expect (str/includes? info "`z/repair-locator`"))
-      (expect (str/includes? info "`z/diagnostics`"))
-      (expect (str/includes? info "`z/rename-plan`"))))
+      (expect (str/includes? info "Clojure/EDN"))
+      (expect (str/includes? info "z/forms"))
+      (expect (str/includes? info "z/locators"))
+      (expect (str/includes? info "z/symbols"))
+      (expect (str/includes? info "add :replace"))
+      (expect (str/includes? info "z/patch-check"))
+      (expect (str/includes? info "v/patch outside"))
+      (expect (not (str/includes? info "clojure.repl/doc")))
+      (expect (< (count info) 300))))
 
   (it "exposes rewrite-clj zipper API as raw composable SCI symbols"
     (let [entry (first (filter #(= 'of-string (:ext.symbol/sym %))

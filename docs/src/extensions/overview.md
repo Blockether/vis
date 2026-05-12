@@ -88,8 +88,7 @@ calls `com.blockether.vis.core/discover-extensions!` which:
    all URLs, triggering each ns's `(sdk/register-extension! ...)` call as
    a side effect.
 4. Validates declared docs (rejecting entries without `:description`
-   or `:content`), and inverts authored `:links` into `:reflinks` on
-   target descriptors.
+   or `:content`) and preserves authored `:links` on each descriptor.
 5. Logs every success at `:info` and every failure at `:error`.
 
 The loader is **type-agnostic**: the same

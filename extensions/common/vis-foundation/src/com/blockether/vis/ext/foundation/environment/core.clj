@@ -302,15 +302,8 @@
    reload-extensions!-symbol])
 
 (def ^:private FN_INDEX
-  "One-line surface listing for the environment fns under the `v/`
-   alias. Authored here (not auto-rendered from `:ext/symbols`)
-   because the runtime no longer auto-canonicalizes symbols into
-   prompt text — see
-   `com.blockether.vis.internal.prompt/render-extension-prompt-block`
-   for the rationale."
-  (str "`v/` env: (v/snapshot) full map; shortcuts (v/repositories) (v/git) (v/languages) (v/monorepo); (v/render) prints env block; (v/refresh!) refreshes cache. "
-    "Guidance: (v/main-agent-instructions), (v/scan-warnings). "
-    "Reload: (v/reload-instructions!), (v/reload-skills!), (v/reload-extensions!)."))
+  "One-line strategy for environment fns under the `v/` alias."
+  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; v/render only when you need the prompt block; reload helpers after instruction/skill/extension changes.")
 
 (defn environment-info
   "Render the foundation-owned environment_info contribution. The

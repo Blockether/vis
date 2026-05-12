@@ -1403,23 +1403,12 @@
 (defn available-editing-prompt
   []
   (str
-    "`v/` files: Use structured tools for discovery and reads: (v/cat path), (v/rg spec), (v/glob root pat opts?), (v/ls path opts?). "
-    "v/rg has one spec-map grammar: {:all [\"a\" \"b\"]} requires ALL literals on the same line; {:any [\"a\" \"b\"]} is explicit OR; :paths defaults to [\".\"] and must be a vector; use :include [\"*.clj\" \"*.cljc\"] / :exclude [...] for file filters; no regex, no positional args, no public limit. "
-    "v/rg strategy: use :all to find definitions or narrow noisy searches, e.g. {:all [\"defn\" \"target-name\"] :include [\"*.clj\"]}; use :any to find any of several related names; if :truncated-by is :internal-cap, narrow :all/:paths/:include instead of asking for a limit. "
-    "`v/cat` returns the whole file payload with :lines. The journal renders a BOUNDED preview (first 50 + last 50 lines) plus a hint; bind the full result so you can slice further on a later iteration with plain Clojure: (def file (v/cat \"src/foo.clj\")) then (subvec (:lines file) 100 200). "
-    "Same pattern for v/rg / v/glob / v/ls: bind the raw payload, slice with get-in/subvec/take/drop. If the var is already a vector, slice it directly; `(get-in vector)` is an arity error. Do not echo a var to \"see\" it - the journal entry the engine appended is your preview. "
-    "`v/glob` returns cwd-relative path strings directly. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. "
-    "Example child listing: (->> (v/glob \"src\" \"*.clj\") sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. "
-    "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Use (v/patch-check edits) to preflight match counts without writing. Read exact bytes first; keep searches small and unique; do not invent long paragraphs. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
-    "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).\n"
+    "`v/` strategy: combine v/rg/v/glob/v/ls to locate, v/cat to read, then bind raw payloads and slice with normal Clojure. "
+    "Use v/patch for exact raw-text edits and v/patch-check when uniqueness is uncertain; use z/patch for Clojure/EDN when `z/` is active. "
+    "Use path ops for filesystem moves/deletes/copies. "
     (if (config/bash-disabled?)
-      "`v/` shell: v/bash is disabled by config. Use non-shell tools for file edits and Clojure introspection helpers.\n"
-      "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). It always prepends `set -euo pipefail`, so multi-step scripts stop on failed commands, unset variables, and failed pipeline stages. `v/bash` refuses shell-driven Clojure/EDN source edits; use z/patch for those.\n")
-    "Tool calls return raw payloads to SCI while Vis records journal/provenance internally. Examples: (:lines (v/cat \"IDEAS.md\")), "
-    (when-not (config/bash-disabled?)
-      "(:stdout (v/bash \"pwd\")), ")
-    "(:hits (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]})). "
-    "For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))
+      "v/bash is disabled; stay in tools/REPL. "
+      "Use v/bash only for process boundaries (git, verify, CLI); it runs pipefail and refuses shell Clojure/EDN edits. ")))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests. Runtime extension registration calls

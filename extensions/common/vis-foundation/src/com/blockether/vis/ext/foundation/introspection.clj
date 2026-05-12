@@ -745,8 +745,7 @@
    conversation-report-symbol])
 
 (def introspection-prompt
-  (str "`v/` conversation state: (v/conversation-state cid?) -> full conversation data map (turns, iterations, failures, diagnosis, transcript, LLM diagnostics).\n"
-    "`v/` conversation report: (v/conversation-report cid?) -> complete Markdown report of the same data.\n"))
+  "`v/` conversation strategy: use v/conversation-state for data you will combine/filter, v/conversation-report when a rendered forensic report is enough.")
 
 ;; The extension that owns all `v/`-aliased symbols is built
 ;; and registered by `com.blockether.vis.ext.foundation.core`,

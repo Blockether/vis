@@ -2567,8 +2567,7 @@
 ;; `META-INF/vis-extension/vis.edn` on the classpath. Multiple jars
 ;; that declare the same id are merged: `:nses` deduped (preserving
 ;; first-occurrence order); `:docs` map-merged (later wins per name).
-;; `:reflinks` are recomputed from the union of all `:links` on every
-;; merge, so a later jar's links can target an earlier jar's docs.
+;; Authored `:links` stay on each descriptor; no backlink index is built.
 ;; =============================================================================
 
 ;; `extension-docs-registry` and `extension-id-of-ns` were defined
@@ -2588,8 +2587,8 @@
 
 (defn extension-doc
   "Return the full descriptor map for a declared extension doc:
-   `{:name :created-at :abstract :content :links :reflinks}`. Returns
-   `nil` when the id is unknown or no doc by that name was declared."
+   `{:name :created-at :abstract :content :links}`. Returns `nil`
+   when the id is unknown or no doc by that name was declared."
   [id doc-name]
   (when-let [descriptor (and id doc-name
                           (get-in @extension-docs-registry [id :docs doc-name]))]
@@ -2609,8 +2608,8 @@
 
 (defn extension-doc-summary
   "Lightweight doc descriptor (no `:content`):
-   `{:name :created-at :abstract :links :reflinks}`. Returns `nil`
-   when the doc is unknown."
+   `{:name :created-at :abstract :links}`. Returns `nil` when the doc
+   is unknown."
   [id doc-name]
   (when-let [descriptor (and id doc-name
                           (get-in @extension-docs-registry [id :docs doc-name]))]
@@ -2644,56 +2643,6 @@
       (let [merged-nses (vec (distinct (concat (:nses existing) (:nses entry))))
             merged-docs (merge (or (:docs existing) {}) (or (:docs entry) {}))]
         {:nses merged-nses :docs merged-docs}))))
-
-(defn- link-target
-  "Return `[<target-id> <target-doc>]` for a cross-ext or same-ext
-   doc link, or `nil` for url/file/external links."
-  [from-id link]
-  (cond
-    (and (symbol? (:to-id link)) (string? (:to-doc link)))
-    [(:to-id link) (:to-doc link)]
-
-    (and (nil? (:to-id link)) (string? (:to-doc link)))
-    [from-id (:to-doc link)]
-
-    :else nil))
-
-(defn- recompute-reflinks!
-  "Walk every doc's `:links` across the entire registry and rebuild
-   the `:reflinks` vector on each target. Idempotent."
-  []
-  (swap! extension-docs-registry
-    (fn [registry]
-      (let [cleared (reduce-kv
-                      (fn [acc id entry]
-                        (assoc acc id
-                          (update entry :docs
-                            (fn [docs]
-                              (reduce-kv (fn [d name descriptor]
-                                           (assoc d name (assoc descriptor :reflinks [])))
-                                {} docs)))))
-                      {} registry)
-            with-reflinks
-            (reduce-kv
-              (fn [acc from-id entry]
-                (reduce-kv
-                  (fn [acc2 from-doc descriptor]
-                    (reduce
-                      (fn [acc3 link]
-                        (if-let [[to-id to-doc] (link-target from-id link)]
-                          (if (get-in acc3 [to-id :docs to-doc])
-                            (update-in acc3 [to-id :docs to-doc :reflinks]
-                              (fnil conj [])
-                              (cond-> {:from-id  from-id
-                                       :from-doc from-doc}
-                                (string? (:context link))
-                                (assoc :context (:context link))))
-                            acc3)
-                          acc3))
-                      acc2 (:links descriptor)))
-                  acc (:docs entry)))
-              cleared cleared)]
-        with-reflinks))))
 
 (def op-tags
   "Closed set of operation tags a tool can declare. The two values
@@ -2827,7 +2776,6 @@
   (let [manifests (manifest/scan-extensions!)]
     (doseq [[id entry] manifests]
       (merge-manifest-entry! id entry))
-    (recompute-reflinks!)
     (count (mapcat :nses (vals manifests)))))
 
 ;; =============================================================================
