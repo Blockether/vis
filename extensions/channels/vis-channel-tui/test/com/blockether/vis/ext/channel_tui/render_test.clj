@@ -1572,6 +1572,23 @@
 ;; trip into Markdown that the TUI can then tokenise as usual.
 ;; ─────────────────────────────────────────────────────────────────────────
 
+(defdescribe provider-error-answer-test
+  (it "renders only the IR provider-error block, not duplicate trace error rows"
+    (render/invalidate-cache!)
+    (let [answer [:ir {:vis/provider-error true}
+                  [:h {:level 2} [:span {} "🚨 PROVIDER_ERROR"]]
+                  [:p {} [:span {} "Provider call failed before the model could run."]]
+                  [:p {} [:span {} "WHAT HAPPENED: invalid thinking signature"]]]
+          trace  [{:error {:message "Exceptional status code: 400"
+                           :data {:status 400
+                                  :body "{\"error\":{\"message\":\"Invalid `signature` in `thinking` block\"}}"}}}]
+          payload (render/format-answer-with-thinking-data
+                    answer trace 96 {:show-iterations true} nil false {})
+          text (:text payload)]
+      (expect (= 1 (count (re-seq #"PROVIDER_ERROR" text))))
+      (expect (not (str/includes? text "provider response:")))
+      (expect (str/includes? text "WHAT HAPPENED: invalid thinking signature")))))
+
 (defdescribe answer-separator-test
   (it "does not draw a bottom border between reasoning and final answer"
     (render/invalidate-cache!)

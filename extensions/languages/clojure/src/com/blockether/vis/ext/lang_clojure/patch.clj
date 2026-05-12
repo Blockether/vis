@@ -854,7 +854,7 @@
   [result]
   (str "z/inspect — " (pr-str result)))
 
-(defn- render-node
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} render-node
   [result]
   (if (node/node? result)
     (str "rewrite-clj node\n"
@@ -868,14 +868,10 @@
 ;; =============================================================================
 
 (def source-symbol
-  (vis/symbol #'source
-    {:journal-render-fn render-node
-     :channel-render-fn render-node}))
+  (vis/symbol #'source {:raw? true}))
 
 (def lit-symbol
-  (vis/symbol #'lit
-    {:journal-render-fn render-node
-     :channel-render-fn render-node}))
+  (vis/symbol #'lit {:raw? true}))
 
 (def patch-check-symbol
   (vis/symbol #'patch-check-tool

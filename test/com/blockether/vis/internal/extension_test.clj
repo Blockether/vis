@@ -4,24 +4,27 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn raw-add
-  "Raw helper used by helper builder tests."
+  "Raw helper used by symbol builder tests."
   [a b]
   (+ a b))
 
-(defdescribe helper-builder-test
-  (it "builds raw callable entries without tool wrapper keys"
-    (let [entry (extension/helper #'raw-add)]
+(defdescribe symbol-builder-test
+  (it "builds raw callable symbols without renderers"
+    (let [entry (extension/symbol #'raw-add {:raw? true})]
       (expect (= 'raw-add (:ext.symbol/sym entry)))
-      (expect (identical? raw-add (:ext.symbol/val entry)))
-      (expect (= "Raw helper used by helper builder tests." (:ext.symbol/doc entry)))
+      (expect (identical? raw-add (:ext.symbol/fn entry)))
+      (expect (true? (:ext.symbol/raw? entry)))
+      (expect (= "Raw helper used by symbol builder tests." (:ext.symbol/doc entry)))
       (expect (= '([a b]) (:ext.symbol/arglists entry)))
-      (expect (nil? (:ext.symbol/fn entry)))
       (expect (nil? (:ext.symbol/journal-render-fn entry)))
       (expect (nil? (:ext.symbol/channel-render-fn entry)))))
 
-  (it "raw-var converts function vars to helpers with fallback metadata"
-    (let [entry (extension/raw-var #'raw-add {:sym 'plus2})]
+  (it "raw symbols can use fallback metadata for third-party vars"
+    (let [entry (extension/symbol #'raw-add {:sym 'plus2
+                                             :raw? true
+                                             :doc "plus helper"
+                                             :arglists '([x y])})]
       (expect (= 'plus2 (:ext.symbol/sym entry)))
-      (expect (identical? raw-add (:ext.symbol/val entry)))
-      (expect (= '([a b]) (:ext.symbol/arglists entry)))
-      (expect (nil? (:ext.symbol/fn entry))))))
+      (expect (= "plus helper" (:ext.symbol/doc entry)))
+      (expect (= '([x y]) (:ext.symbol/arglists entry)))
+      (expect (true? (:ext.symbol/raw? entry))))))

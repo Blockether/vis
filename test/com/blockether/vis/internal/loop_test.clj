@@ -71,4 +71,13 @@
                       :data {:status 400
                              :body "{\"error\":{\"message\":\"Invalid `signature` in `thinking` block\"}}"}})]
       (expect (str/includes? rendered "PROVIDER_ERROR"))
-      (expect (str/includes? rendered "Invalid `signature` in `thinking` block")))))
+      (expect (str/includes? rendered "Invalid `signature` in `thinking` block"))))
+
+  (it "builds canonical IR for user-visible provider errors"
+    (let [provider-error-ir #'loop/provider-error-ir
+          ir (provider-error-ir {:message "Exceptional status code: 400"
+                                 :data {:status 400
+                                        :body "{\"error\":{\"message\":\"Invalid `signature` in `thinking` block\"}}"}})]
+      (expect (= :ir (first ir)))
+      (expect (true? (get-in ir [1 :vis/provider-error])))
+      (expect (str/includes? (loop/answer-str ir) "PROVIDER_ERROR")))))

@@ -775,7 +775,7 @@
 ;; =============================================================================
 
 (defn- cat-tool
-  "Read the whole text file into `[:result :lines]`. `v/cat` has no display or pagination opts; the journal renders a bounded preview (first 50 + last 50 lines) and the full vector stays bound for slicing. Tool result; `:result` = {:path :offset :total-lines :truncated-by :lines}."
+  "Read the whole text file into `:lines`. `v/cat` has no display or pagination opts; the journal renders a bounded preview (first 50 + last 50 lines) and the full vector stays bound for slicing. Returns {:path :offset :total-lines :truncated-by :lines}."
   ([path]
    (let [out (read-file path)]
      (tool-success
@@ -793,7 +793,7 @@
                        :offset (:offset out)}}))))
 
 (defn- ls-tool
-  "Preview directory tree. Tool result; `:result` = nested tree."
+  "Preview directory tree. Returns nested tree payload."
   ([path]
    (ls-tool path nil))
   ([path opts]
@@ -809,7 +809,7 @@
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
-  "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; bind the result and slice for display. Tool result; `:result` = {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
+  "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; bind the result and slice for display. Returns {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
   [spec]
   (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
         out (grep-files spec)]
@@ -831,7 +831,7 @@
                       :row-keys [:path :line :text]}})))
 
 (defn- patch-tool
-  "Canonical exact text patch. Takes one edit map or a vector of maps with required keys `:path`, `:search`, `:replace`. Every `:search` must match exactly once in the current file; all edits validate before any write. Tool result envelope."
+  "Canonical exact text patch. Takes one edit map or a vector of maps with required keys `:path`, `:search`, `:replace`. Every `:search` must match exactly once in the current file; all edits validate before any write. Returns changed path summaries."
   [edits]
   (let [plans (patch-safe edits)]
     (tool-success
@@ -875,7 +875,7 @@
               :already-existed? before}})))
 
 (defn- glob-tool
-  "Path matching. Tool result; `:result` = matching cwd-relative path strings. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Opts may include `:scope :children|:recursive`, `:hidden?`, and `:respect-gitignore?`."
+  "Path matching. Returns matching cwd-relative path strings. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Opts may include `:scope :children|:recursive`, `:hidden?`, and `:respect-gitignore?`."
   ([root pattern]
    (glob-tool root pattern nil))
   ([root pattern opts]
@@ -943,7 +943,7 @@
        :info {:deleted? deleted?}})))
 
 (defn- exists-tool
-  "Existence check. Tool result; `:result` = boolean."
+  "Existence check. Returns boolean."
   [path]
   (let [exists? (exists-safe? path)]
     (tool-success
@@ -981,7 +981,7 @@
        :presentation {:kind :diagnostic}})))
 
 (defn- bash-tool
-  "Run bounded `/usr/bin/env bash -lc` in worktree with `set -euo pipefail` prepended. Tool result envelope; shell fields live under :result, e.g. :result :stdout, :result :stderr, :result :exit. Do not read (:stdout run), (:exit run), or [:result ...]. Refuses shell-driven Clojure/EDN source edits; use z/patch for those. Emits :warnings when stderr looks like a swallowed failure."
+  "Run bounded `/usr/bin/env bash -lc` in worktree with `set -euo pipefail` prepended. Returns shell payload map with :stdout, :stderr, :exit, :warnings, etc. Refuses shell-driven Clojure/EDN source edits; use z/patch for those. Emits :warnings when stderr looks like a swallowed failure."
   ([command]
    (bash-tool command nil))
   ([command opts]
