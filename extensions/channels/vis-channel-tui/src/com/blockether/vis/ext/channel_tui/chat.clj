@@ -187,17 +187,13 @@
                                              ;; 2. any block tagged `:vis/preflight?` — those are
                                              ;;    synthetic gate rejections, model-facing only,
                                              ;;    never displayed to the user.
+                                             ;; Successful `:vis/silent` forms are retained and
+                                             ;; marked in `:silents`; the TUI setting decides
+                                             ;; whether to render them.
                                              preflight-idxs (into #{}
                                                               (keep-indexed
                                                                 (fn [i b] (when (:vis/preflight? b) i)))
                                                               all-exprs)
-                                             silent-idxs (into #{}
-                                                           (keep-indexed
-                                                             (fn [i b]
-                                                               (when (or (:vis/silent b)
-                                                                       (= :vis/silent (:result b)))
-                                                                 i)))
-                                                           all-exprs)
                                              answer-idx  (when answer-here?
                                                            (let [idx (or (:answer-form-idx it)
                                                                        (dec (count all-exprs)))]
@@ -205,7 +201,7 @@
                                                                      (not (neg? idx))
                                                                      (< idx (count all-exprs)))
                                                                idx)))
-                                             elide-idxs  (cond-> (into preflight-idxs silent-idxs)
+                                             elide-idxs  (cond-> preflight-idxs
                                                            (some? answer-idx) (conj answer-idx))
                                              exprs       (into []
                                                            (keep-indexed
@@ -264,7 +260,12 @@
                                                               exprs)
                                              stdout-strs (mapv #(or (:stdout %) "") exprs)
                                              stderr-strs (mapv #(or (:stderr %) "") exprs)
-                                             durations   (mapv #(or (:duration-ms %) 0) exprs)]
+                                             durations   (mapv #(or (:duration-ms %) 0) exprs)
+                                             silents     (mapv (fn [expr]
+                                                                 (and (nil? (:error expr))
+                                                                   (or (:vis/silent expr)
+                                                                     (= :vis/silent (:result expr)))))
+                                                           exprs)]
                                          {:thinking  (visible-thinking (:thinking it))
                                           :code      (mapv :code exprs)
                                           :comments  (mapv :comment exprs)
@@ -274,7 +275,8 @@
                                           :stdouts   stdout-strs
                                           :stderrs   stderr-strs
                                           :durations durations
-                                          :successes (mapv #(nil? (:error %)) exprs)})))
+                                          :successes (mapv #(nil? (:error %)) exprs)
+                                          :silents   silents})))
                                 turn-iterations)
                         ;; `:prior-outcome :cancelled` is how the
                         ;; persistance layer marks an aborted turn (the

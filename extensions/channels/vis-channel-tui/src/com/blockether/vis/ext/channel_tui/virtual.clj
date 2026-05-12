@@ -124,7 +124,7 @@
   [settings]
   (hash
     (select-keys settings
-      [:show-thinking :show-iterations :show-iteration-headers
+      [:show-thinking :show-iterations :show-silent :show-iteration-headers
        :differentiate-turns :preview/default-lines
        :progress/live-iteration-limit])))
 
@@ -246,11 +246,11 @@
     (= :assistant (:role (nth messages (dec idx))))))
 
 (defn- estimated-height-with-turn-separator
-  [messages settings bubble-w idx message]
-  (let [bubble-w (long bubble-w)
-        idx      (long idx)]
-    (long (+ (estimated-height message bubble-w)
-            (if (turn-separator? messages settings idx) 2 0)))))
+  [_messages _settings bubble-w _idx message]
+  (let [bubble-w (long bubble-w)]
+    ;; Vis->You turn markers no longer add spacer rows; keep this seam
+    ;; so cached height math stays aligned with `render/bubble-height`.
+    (estimated-height message bubble-w)))
 
 (defn- with-turn-separator
   [message messages settings ^long idx]

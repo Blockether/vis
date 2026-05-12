@@ -328,6 +328,7 @@
     ;; transcript/reproduction surfaces still retain it for debugging.
     (assoc :show-thinking false)
     (update :show-iterations boolean)
+    (update :show-silent boolean)
     (update :show-timestamps boolean)
     (update :differentiate-turns boolean)
     (update :mouse-selection-copy boolean)
@@ -342,10 +343,11 @@
      theme-name - reusable channel theme id. Default `:vis-light`; extension
          themes are declared through `:ext/theme` and surfaced in Settings.
 
-     show-thinking / show-iterations  - high-signal content controls.
-         Thinking is forced OFF so provider chain-of-thought is not shown
-         as assistant prose. Forensics still keep reasoning in the DB /
-         reproduction surfaces; chat UI only shows code/results/answers.
+     show-thinking / show-iterations / show-silent - high-signal content
+         controls. Thinking is forced OFF so provider chain-of-thought is
+         not shown as assistant prose. Forensics still keep reasoning in the
+         DB / reproduction surfaces; chat UI normally hides successful
+         :vis/silent system calls unless show-silent is enabled.
 
      reasoning-level - base model thinking depth for reasoning-capable
          models. Default `:balanced`; users can cycle it via
@@ -373,6 +375,7 @@
   {:theme-name            (keyword shared-theme/default-theme-id)
    :show-thinking          false
    :show-iterations        true
+   :show-silent            false
    :reasoning-level        :balanced
    :openai-codex-verbosity :low
    :show-timestamps        false
