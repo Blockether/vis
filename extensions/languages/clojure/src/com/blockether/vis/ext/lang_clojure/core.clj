@@ -77,71 +77,37 @@
    'subedit->  (thread-macro 'vis.ext.clj/subedit-node 'clojure.core/->)
    'subedit->> (thread-macro 'vis.ext.clj/subedit-node 'clojure.core/->>)})
 
-(defn- ensure-var-doc-meta
-  "Return a copy of `v`'s metadata with `:doc` and `:arglists` filled in when
-   the source var didn't carry them. rewrite-clj.zip is a third-party lib and
-   some of its vars ship without docstrings; the new `vis/symbol` API requires
-   one, so we synthesize a minimal stub instead of crashing extension load."
-  [sym v]
-  (let [m (meta v)]
-    {:doc      (or (:doc m) (str "rewrite-clj.zip/" sym))
-     :arglists (or (some-> (:arglists m) vec)
-                 (when-not (fn? @v) nil)
-                 '([& args]))}))
+(defn- rewrite-doc-fallback
+  [sym _v]
+  (str "rewrite-clj.zip/" sym))
+
+(defn- raw-rewrite-var
+  [sym v opts]
+  (vis/raw-var v (merge {:sym sym :doc-fn rewrite-doc-fallback} opts)))
 
 (defn- macro-entry
   "Build a value entry for an SCI-callable macro shim. The shim's value is
-   the marker map `{:vis.sci/macro-fn ...}`; doc/arglists are looked up on
-   the underlying rewrite-clj.zip var so the SCI sandbox sees the same docs
-   the library ships."
+   the marker map `{:vis.sci/macro-fn ...}`; docs/arglists and raw binding
+   shape are normalized by Vis' internal raw-var converter."
   [sym v macro-fn]
-  (let [{:keys [doc arglists]} (ensure-var-doc-meta sym v)
-        ;; Wrap a real var around the macro marker map so `vis/value` can
-        ;; derive `:doc` and `:arglists` from var meta. Naming the var after
-        ;; the SCI symbol keeps the prompt listing aligned with the call.
-        macro-var (intern *ns*
-                    (with-meta sym {:doc doc :arglists arglists
-                                    :private true})
-                    {:vis.sci/macro-fn macro-fn})]
-    (vis/value macro-var)))
+  (raw-rewrite-var sym v {:val {:vis.sci/macro-fn macro-fn}}))
 
 (defn- var->symbol-entry
-  "Convert a rewrite-clj.zip public var into an SDK symbol entry.
+  "Convert a rewrite-clj.zip public var into a raw SDK entry.
 
-   Functions/values are direct bindings. Four threading helpers are macros;
-   expose SCI-local macro shims that expand to same-namespace helper calls so
-   `(z/subedit-> ...)` works inside the sandbox."
+   Vis core owns the raw-var conversion: functions become raw helpers,
+   values stay values, and macros are skipped unless we supply an SCI macro
+   marker. Four threading helpers are macros; expose SCI-local macro shims
+   that expand to same-namespace helper calls so `(z/subedit-> ...)` works
+   inside the sandbox."
   [sym v]
-  (let [m      (meta v)
-        target @v]
-    (cond
-      (contains? macro-symbols sym)
-      (macro-entry sym v (get macro-symbols sym))
-
-      (:macro m)
-      nil
-
-      (fn? target)
-      ;; rewrite-clj.zip vars: feed straight in. The new `vis/symbol` API
-      ;; reads `:doc`/`:arglists` from var meta and uses `:sym` to override
-      ;; the SCI-visible name. We re-meta the var first because some lib
-      ;; vars ship without `:doc` or `:arglists`. Renderers default to the
-      ;; pr-str pair: rewrite-clj returns zippers/data, never strings.
-      (let [{:keys [doc arglists]} (ensure-var-doc-meta sym v)]
-        (alter-meta! v assoc :doc doc :arglists arglists)
-        (vis/symbol v
-          {:sym sym
-           :journal-render-fn vis/render-pr-str-journal
-           :channel-render-fn vis/render-pr-str-channel}))
-
-      :else
-      (let [{:keys [doc]} (ensure-var-doc-meta sym v)]
-        (alter-meta! v assoc :doc doc)
-        (vis/value v {:sym sym})))))
+  (if (contains? macro-symbols sym)
+    (macro-entry sym v (get macro-symbols sym))
+    (raw-rewrite-var sym v nil)))
 
 (def ^:private rewrite-clj-zip-symbols
   ;; Top-level :require already loaded rewrite-clj.zip. Walk its publics
-  ;; and convert each one into a v/symbol or v/value entry.
+  ;; and convert each one into a raw helper, macro value, or plain value entry.
   (->> (ns-publics 'rewrite-clj.zip)
     (sort-by key)
     (keep (fn [[sym v]] (var->symbol-entry sym v)))

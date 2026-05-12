@@ -92,6 +92,13 @@
       (expect (str/includes? info "`z/diagnostics`"))
       (expect (str/includes? info "`z/rename-plan`"))))
 
+  (it "exposes rewrite-clj zipper API as raw composable SCI helpers"
+    (let [entry (first (filter #(= 'of-string (:ext.symbol/sym %))
+                         (:ext/symbols clj-ext/clojure-extension)))]
+      (expect (fn? (:ext.symbol/val entry)))
+      (expect (nil? (:ext.symbol/fn entry)))
+      (expect (seq (:ext.symbol/arglists entry)))))
+
   (it "makes rewrite-clj threading macros callable inside SCI"
     (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (vis/create-sci-context nil)
           env {:sci-ctx sci-ctx
@@ -100,6 +107,8 @@
                :extensions (atom [])}
           eval* (fn [s] (:val (sci/eval-string+ sci-ctx s {:ns sandbox-ns})))]
       (vis/install-extension! env clj-ext/clojure-extension)
+      (expect (= "(a b)"
+                (eval* "(z/root-string (z/of-string \"(a b)\"))")))
       (expect (= "(x b)"
                 (eval* "(z/root-string (z/subedit-> (z/of-string \"(a b)\") z/down (z/replace (quote x))))")))
       (expect (= "(x b)"

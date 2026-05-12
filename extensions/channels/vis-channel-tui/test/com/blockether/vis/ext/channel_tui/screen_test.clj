@@ -6,6 +6,7 @@
    accept of unknown flags previously masked typos like
    `--conversations-id`."
   (:require
+   [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.channel-tui.chat :as chat]
    [com.blockether.vis.ext.channel-tui.input :as input]
@@ -72,6 +73,9 @@
 
 (def ^:private bubble-selectable-ranges
   (deref #'screen/bubble-selectable-ranges))
+
+(def ^:private copyable-bubble-text
+  (deref #'screen/copyable-bubble-text))
 
 (def ^:private input-selectable-ranges
   (deref #'screen/input-selectable-ranges))
@@ -495,6 +499,35 @@
           (expect (= "whole bubble" (deref copied 1000 ::timeout)))
           (expect (= ["✓ Copied bubble" [:level :success :ttl-ms 1500]]
                     @notified))))))
+
+  (it "single-click bubble copy strips ANSI/control-picture artifacts"
+    (let [copied (promise)]
+      (with-redefs-fn {#'input/clipboard-copy! (fn [text]
+                                                 (deliver copied text)
+                                                 true)
+                       #'vis/notify!           (fn [& _] nil)}
+        (fn []
+          (copy-bubble! (str "\u001B[32m(def\u001B[0m x 1)\n"
+                          "\u241B[31mok\u241B[0m"))
+          (expect (= "(def x 1)\nok" (deref copied 1000 ::timeout)))))))
+
+  (it "whole trace bubble copy expands hidden result bodies"
+    (let [huge-result (str/join " " (repeat 500 "abcdefghij"))
+          trace       [{:code      ["(+ 1 2)"]
+                        :comments  [nil]
+                        :results   [huge-result]
+                        :stdouts   [""]
+                        :durations [1]
+                        :successes [true]}]
+          copied      (copyable-bubble-text
+                        {:role :assistant
+                         :id "turn-1"
+                         :traces trace
+                         :ir [:ir {} [:p {} [:span {} "done"]]]}
+                        96 {:show-iterations true}
+                        {:conversation-id "conversation"})]
+      (expect (str/includes? copied "abcdefghij"))
+      (expect (not (str/includes? copied "chars hidden")))))
 
   (it "input mouse selection copy names the input in the notification"
     (let [copied   (promise)
