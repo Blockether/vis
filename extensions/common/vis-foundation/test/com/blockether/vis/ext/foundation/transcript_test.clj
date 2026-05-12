@@ -48,7 +48,7 @@
         q1  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                 :user-request "First turn"
                                                 :status :running})]
-    ;; Turn 1: terminal iteration with a `(def ...)` var, an `(answer ...)`
+    ;; Turn 1: terminal iteration with a `(def ...)` var, an `(turn-answer! ...)`
     ;; block (idx 1), thinking trace, system prompt, and a full LLM
     ;; message envelope. The persistance layer derives :llm_system_prompt
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
@@ -58,7 +58,7 @@
                                           :result            2
                                           :stdout            "hello from clojure"
                                           :execution-time-ms 5}
-                                         {:code              "(answer \"42\")"
+                                         {:code              "(turn-answer! \"42\")"
                                           :result            :vis/answer
                                           :execution-time-ms 2}]
                                 :answer        "42"
@@ -237,7 +237,7 @@
               iter  (first (:iterations turn))]
           ;; Reasoning trace surfaces verbatim on the iteration.
           (expect (= "Reasoning about arithmetic" (:thinking iter)))
-          ;; The terminal block index points at the `(answer ...)` form.
+          ;; The terminal block index points at the `(turn-answer! ...)` form.
           (expect (= 1 (:answer-form-idx iter)))
           ;; Per-iteration vars carry the (def ...) we persisted.
           (let [vars (:vars iter)]
@@ -472,7 +472,7 @@
           ;; label with one bullet per var.
           (expect (str/includes? out "_vars defined this iteration:_"))
           (expect (str/includes? out "`x`"))
-          ;; The `(answer ...)` block is flagged with `[answer]` on
+          ;; The `(turn-answer! ...)` block is flagged with `[answer]` on
           ;; the status line so the reader spots the terminal form.
           (expect (str/includes? out "[answer]"))
           ;; The final answer text renders under a `#### Final answer`

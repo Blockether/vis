@@ -232,7 +232,7 @@
         "\" elapsed=\"" (format-elapsed elapsed) "\">\n"
         "  " (str/replace objective "\n" "\n  ") "\n"
         "  Stay focused on this goal across iterations. Treat any "
-        "off-goal exploration as scope creep and call `(answer ...)` "
+        "off-goal exploration as scope creep and call `(turn-answer! ...)` "
         "with what you have when the next deliverable is ready.\n"
         "</conversation_goal>"))))
 

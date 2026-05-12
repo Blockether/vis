@@ -67,7 +67,7 @@
       blank?
       {:importance :low
        :text (str "CONVERSATION_TITLE is currently empty. "
-               "Set it via `(conversation-title \"...\")` (3-7-word noun phrase, "
+               "Set it via `(set-conversation-title \"...\")` (3-7-word noun phrase, "
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
                "the conversation is discoverable in the sidebar.")}
 
@@ -75,7 +75,7 @@
       {:importance :low
        :text (str "Current CONVERSATION_TITLE is \"" conversation-title "\". "
                "If this turn changes the conversation focus, refresh the title via "
-               "`(conversation-title \"...\")`.")}
+               "`(set-conversation-title \"...\")`.")}
 
       (and (integer? iteration)
         (pos? iteration)
@@ -83,7 +83,7 @@
       {:importance :low
        :text (str "You're " iteration " iterations into this turn. "
                "If the conversation's focus has shifted from \"" conversation-title "\", "
-               "refresh the title via `(conversation-title \"...\")`.")})))
+               "refresh the title via `(set-conversation-title \"...\")`.")})))
 
 (defn context-pressure-nudge
   "Return a `:high`-importance nudge when the estimated input tokens
@@ -108,7 +108,7 @@
         {:importance :high
          :text (str "Context pressure: ~" used " / " limit " input tokens (~"
                  pct "%) of this model's effective window. "
-                 "Converge now - finalise the answer via `(answer ...)`, "
+                 "Converge now - finalise the answer via `(turn-answer! ...)`, "
                  "avoid dumping more file contents, diffs, or repeated diagnostics. "
                  "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 
@@ -161,7 +161,7 @@
              "'why', 'fix', 'check', 'find', 'debug', 'show me' …). "
              "You MUST call at least one tool (v/cat, v/rg, z/locators, "
              "v/bash …) to observe the actual state before composing "
-             "`(answer …)`. Answering from memory on an investigation "
+             "`(turn-answer! …)`. Answering from memory on an investigation "
              "request is a hallucination. If the request is truly "
              "trivial chat (greeting, ack), ignore this nudge.")}))
 
@@ -198,7 +198,7 @@
 
 (defn- answer-form?
   [form]
-  (boolean (some-> form str str/trim (str/starts-with? "(answer"))))
+  (boolean (some-> form str str/trim (str/starts-with? "(turn-answer!"))))
 
 (defn- successful-work-event?
   [block]

@@ -23,7 +23,7 @@
    The separate `fs/` alias was dropped, but the useful babashka.fs
    surface is now inlined under `v/` as thin cwd-safe wrappers
    (`v/cat`, `v/patch`, `v/glob`, ...). The markdown builders were merged too, so the
-   model now uses `(answer (v/join ...))`, `(v/h1 ...)`,
+   model now uses `(turn-answer! (v/join ...))`, `(v/h1 ...)`,
    `(v/file-link ...)`, etc. through the same `v/` prefix. One short
    alias, normal Clojure code, no bespoke edit DSLs, no alias
    switching mid-iteration."
@@ -36,7 +36,7 @@
 
 (def ^:private answer-ir-prompt
   "Answer IR grammar lives in the core system prompt.
-Always emit `(answer [:ir ...])`. Do not emit Markdown/text strings in `(answer ...)`.
+Always emit `(turn-answer! [:ir ...])`. Do not emit Markdown/text strings in `(turn-answer! ...)`.
 Do not render Markdown as IR; build IR nodes directly. Channels render IR at their boundary.")
 
 (defn- combined-prompt

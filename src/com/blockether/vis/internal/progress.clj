@@ -218,7 +218,7 @@
 
 (defn- drop-slot
   "Drop index `idx` from `v`. Out-of-bounds idx returns `v` unchanged.
-   Used to ELIDE the `(answer ...)` form from the iteration's per-form
+   Used to ELIDE the `(turn-answer! ...)` form from the iteration's per-form
    parallel vectors when an iteration produces a final answer - the
    channel renders the answer text below; showing the answer call
    itself in the code trace is redundant noise."
@@ -320,7 +320,7 @@
                              (normalize-thinking-text (:thinking entry)))
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
-          ;; Elide `(answer ...)`: the answer text already renders below;
+          ;; Elide `(turn-answer! ...)`: the answer text already renders below;
           ;; showing the answer call itself in the trace is redundant.
           ;; Other successful `:vis/silent` forms stay in the timeline and
           ;; are marked in `:silents`; channel settings decide whether to

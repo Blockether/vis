@@ -44,7 +44,7 @@
                   (fn [_db _cid]
                     [{:id :turn-legacy
                       :user-request "siema"
-                      :answer "Stopped after 20 iterations without `(answer ...)`."}])
+                      :answer "Stopped after 20 iterations without `(turn-answer! ...)`."}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id] [])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
@@ -66,13 +66,13 @@
                     [{:id :iter-1 :answer-form-idx 1}])
                   vis/db-list-iteration-blocks
                   (fn [_db _iteration-id]
-                    [{:code "(conversation-title \"Greeting\")"
+                    [{:code "(set-conversation-title \"Greeting\")"
                       :result :vis/silent}
-                     {:code "(answer [:ir [:p \"Siema!\"]])"
+                     {:code "(turn-answer! [:ir [:p \"Siema!\"]])"
                       :result :vis/answer}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)]
-        (expect (= ["(conversation-title \"Greeting\")"] (:code trace)))
+        (expect (= ["(set-conversation-title \"Greeting\")"] (:code trace)))
         (expect (= [true] (:silents trace)))
         (expect (= [":vis/silent"] (:results trace))))))
 
@@ -200,7 +200,7 @@
   (it "coerces raw cancellation text into canonical IR"
     (with-redefs [vis/send! (fn [& _]
                               {:status :cancelled
-                               :answer "Stopped after 32 iterations without `(answer ...)`."})]
+                               :answer "Stopped after 32 iterations without `(turn-answer! ...)`."})]
       (let [result (chat/turn! {:id "c1"} "hello")]
         (expect (= :cancelled (:status result)))
         (expect (= :ir (first (:answer result))))
