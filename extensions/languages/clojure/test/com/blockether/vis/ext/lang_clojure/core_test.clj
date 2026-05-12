@@ -51,7 +51,7 @@
     (expect (fn? (:ext/activation-fn clj-ext/clojure-extension))))
 
   (it "exports z/patch helpers, semantic readers, repair/lsp tools, and rewrite-clj zipper API"
-    (let [symbols (set (map :ext.symbol/sym (:ext/symbols clj-ext/clojure-extension)))]
+    (let [symbols (set (map :ext.symbol/symbol (:ext/symbols clj-ext/clojure-extension)))]
       (expect (contains? symbols 'source))
       (expect (contains? symbols 'lit))
       (expect (contains? symbols 'patch))
@@ -85,7 +85,7 @@
       (expect (< (count info) 300))))
 
   (it "exposes rewrite-clj zipper API as raw composable SCI symbols"
-    (let [entry (first (filter #(= 'of-string (:ext.symbol/sym %))
+    (let [entry (first (filter #(= 'of-string (:ext.symbol/symbol %))
                          (:ext/symbols clj-ext/clojure-extension)))]
       (expect (fn? (:ext.symbol/fn entry)))
       (expect (true? (:ext.symbol/raw? entry)))

@@ -83,10 +83,9 @@
 ;;    :metadata {:paths [...] :duration-ms 5 ...}}
 ;; ============================================================
 
-(s/def ::sym symbol?)
 (s/def ::alias symbol?)
 (s/def ::call (s/and string? #(not (str/blank? %))))
-(s/def ::tool (s/keys :req-un [::sym ::call]
+(s/def ::tool (s/keys :req-un [::symbol ::call]
                 :opt-un [::alias]))
 
 (s/def ::namespace symbol?)
@@ -108,7 +107,7 @@
 (s/def ::source (s/keys :req-un [::paths ::mtime-max ::hash-sha256]))
 
 ;; ---- envelope leaf specs (op/*) ----
-(s/def ::symbol     keyword?)        ; e.g. :v/cat ; nil for raw user code
+(s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
 (s/def ::tag        keyword?)        ; #{:op.tag/observation :op.tag/action}
 (s/def ::result     any?)            ; the actual SCI eval value; shape varies per tool
 (s/def ::success?   boolean?)
@@ -554,7 +553,7 @@
 ;; =============================================================================
 
 ;; Symbol name bound in the SCI sandbox.
-(s/def :ext.symbol/sym symbol?)
+(s/def :ext.symbol/symbol symbol?)
 
 ;; Implementation function the LLM calls from :code blocks.
 (s/def :ext.symbol/fn fn?)
@@ -632,7 +631,7 @@
 (s/def :ext.symbol/val some?)
 
 (s/def ::fn-symbol-entry
-  (s/keys :req [:ext.symbol/sym :ext.symbol/fn :ext.symbol/doc
+  (s/keys :req [:ext.symbol/symbol :ext.symbol/fn :ext.symbol/doc
                 :ext.symbol/arglists]
     :opt [:ext.symbol/raw?
           :ext.symbol/journal-render-fn
@@ -645,7 +644,7 @@
           :ext.symbol/channel-render-error-fn]))
 
 (s/def ::val-symbol-entry
-  (s/keys :req [:ext.symbol/sym :ext.symbol/val :ext.symbol/doc]
+  (s/keys :req [:ext.symbol/symbol :ext.symbol/val :ext.symbol/doc]
     :opt [:ext.symbol/source]))
 
 (s/def ::symbol-entry
@@ -916,7 +915,7 @@
 ;; Optional SCI namespace alias for this extension's symbols.
 (s/def :ext.ns-alias/ns    (s/and symbol? #(nil? (namespace %))))
 (s/def :ext.ns-alias/alias (s/and symbol? #(nil? (namespace %))))
-(s/def :ext/ns-alias
+(s/def :ext/alias
   (s/and map?
     #(s/valid? :ext.ns-alias/ns    (:ns %))
     #(s/valid? :ext.ns-alias/alias (:alias %))))
@@ -948,7 +947,7 @@
 (defn- ns-alias-required-when-symbols?
   [ext]
   (or (empty? (:ext/symbols ext))
-    (some? (:ext/ns-alias ext))))
+    (some? (:ext/alias ext))))
 
 (defn- kind-required-when-symbols?
   [ext]
@@ -960,7 +959,7 @@
     (s/keys :req [:ext/namespace :ext/doc]
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
-            :ext/ns-alias :ext/prompt :ext/environment-info-fn
+            :ext/alias :ext/prompt :ext/environment-info-fn
             :ext/on-parse-error-fn :ext/source-rewrite-fn :ext/fenced-renderers
             :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
@@ -1007,10 +1006,10 @@
   "Assert a symbol entry conforms to ::symbol-entry. Throws on violation."
   [entry]
   (when-not (s/valid? ::symbol-entry entry)
-    (throw (ex-info (str "Invalid symbol '" (:ext.symbol/sym entry) "':\n"
+    (throw (ex-info (str "Invalid symbol '" (:ext.symbol/symbol entry) "':\n"
                       (with-out-str (s/explain ::symbol-entry entry)))
              {:type   :extension/invalid-symbol
-              :sym    (:ext.symbol/sym entry)
+              :symbol    (:ext.symbol/symbol entry)
               :explain (s/explain-data ::symbol-entry entry)})))
   entry)
 
@@ -1049,7 +1048,7 @@
          doc-fn (:doc-fn opts)
          doc    (or (:doc opts)
                   (:doc m)
-                  (when doc-fn (doc-fn (or (:sym opts) nm) v)))
+                  (when doc-fn (doc-fn (or (:symbol opts) nm) v)))
          al     (or (:arglists opts)
                   (:arglists m)
                   (when (:raw? opts) '([& args])))]
@@ -1070,16 +1069,16 @@
            "symbols inherit :arglists from the underlying defn.")
          {:type :extension/missing-arglists :var v}))
      (let [source (var-source v)]
-       (cond-> {:sym      nm
+       (cond-> {:symbol      nm
                 :doc      doc
                 :arglists (when (seq al) (vec al))}
          source (assoc :source source))))))
 
 (defn- build-symbol-entry
-  "Shared core that turns `{:sym :fn :doc :arglists :source}` plus opts into
+  "Shared core that turns `{:symbol :fn :doc :arglists :source}` plus opts into
    a validated `::fn-symbol-entry`. Used by both the var-based public API
    and the test-friendly direct-args form below."
-  [{:keys [sym fn doc arglists source]} opts]
+  [{sym :symbol :keys [fn doc arglists source]} opts]
   (let [raw? (true? (:raw? opts))
         journal-render-fn (:journal-render-fn opts)
         channel-render-fn (:channel-render-fn opts)]
@@ -1087,14 +1086,14 @@
       (anomaly/incorrect!
         (str "Symbol '" sym "' is missing :journal-render-fn. Observed tool symbols must "
           "declare a journal renderer (fn [result] -> string), or set :raw? true for plain helpers.")
-        {:type :extension/missing-journal-render-fn :sym sym}))
+        {:type :extension/missing-journal-render-fn :symbol sym}))
     (when (and (not raw?) (not (clojure.core/fn? channel-render-fn)))
       (anomaly/incorrect!
         (str "Symbol '" sym "' is missing :channel-render-fn. Observed tool symbols must "
           "declare a channel renderer (fn [result] -> string), or set :raw? true for plain helpers.")
-        {:type :extension/missing-channel-render-fn :sym sym}))
+        {:type :extension/missing-channel-render-fn :symbol sym}))
     (validate-symbol-entry!
-      (cond-> #:ext.symbol{:sym      sym
+      (cond-> #:ext.symbol{:symbol      sym
                            :fn       fn
                            :doc      doc
                            :arglists arglists}
@@ -1118,7 +1117,7 @@
    an opts map whose `:doc` / `:arglists` are read directly from opts
    instead of var meta. Production code uses the var form.
 
-   The var supplies `:sym` (var name), `:fn` (the var's value), `:doc` and
+   The var supplies `:symbol` (var name), `:fn` (the var's value), `:doc` and
    `:arglists` (read from var metadata - i.e. the underlying defn's
    docstring + arglists). Pass it as `#'my-tool`.
 
@@ -1133,7 +1132,7 @@
    envelope enforcement, journal/channel sink, or tool metadata.
 
    Optional opts:
-     :sym                       - override the SCI sandbox name (default: var name).
+     :symbol                       - override the SCI sandbox name (default: var name).
      :doc / :doc-fn / :arglists - metadata fallback for third-party vars.
      :raw?                      - true for plain composable helpers.
      :journal-render-error-fn   - (fn [error] string). Override journal
@@ -1151,15 +1150,15 @@
   ([v opts-or-fn]
    (if (var? v)
      (let [opts opts-or-fn
-           {:keys [sym doc arglists source]} (var-meta v true opts)
-           sym      (or (:sym opts) sym)
+           {default-symbol :symbol :keys [doc arglists source]} (var-meta v true opts)
+           sym      (or (:symbol opts) default-symbol)
            f        @v]
        (when-not (fn? f)
          (anomaly/incorrect!
            (str "Var " v " does not hold a function; use vis/value for plain values.")
            {:type :extension/symbol-not-a-fn :var v}))
        (build-symbol-entry
-         {:sym sym :fn f :doc doc :arglists arglists :source source}
+         {:symbol sym :fn f :doc doc :arglists arglists :source source}
          opts))
      (anomaly/incorrect!
        "vis/symbol expects a Clojure var (e.g. #'my-tool); use the 3-arg form (symbol sym-name f opts) for test-only direct construction."
@@ -1178,13 +1177,13 @@
      (when-not (non-blank-string? doc)
        (anomaly/incorrect!
          (str "3-arg symbol '" sym-name "' missing :doc in opts.")
-         {:type :extension/missing-doc :sym sym-name}))
+         {:type :extension/missing-doc :symbol sym-name}))
      (when-not (and (sequential? arglists) (seq arglists))
        (anomaly/incorrect!
          (str "3-arg symbol '" sym-name "' missing :arglists in opts.")
-         {:type :extension/missing-arglists :sym sym-name}))
+         {:type :extension/missing-arglists :symbol sym-name}))
      (build-symbol-entry
-       {:sym sym-name :fn f :doc doc :arglists (vec arglists)}
+       {:symbol sym-name :fn f :doc doc :arglists (vec arglists)}
        (if (:raw? opts)
          opts
          (merge {:journal-render-fn (constantly "")
@@ -1201,15 +1200,15 @@
   ([v] (helper v nil))
   ([v opts]
    (if (var? v)
-     (let [{:keys [sym doc arglists source]} (var-meta v true (assoc opts :raw? true))
-           sym (or (:sym opts) sym)
+     (let [{default-symbol :symbol :keys [doc arglists source]} (var-meta v true (assoc opts :raw? true))
+           sym (or (:symbol opts) default-symbol)
            val @v]
        (when-not (fn? val)
          (anomaly/incorrect!
            (str "Var " v " does not hold a function; use vis/value for plain values.")
            {:type :extension/helper-not-a-fn :var v}))
        (validate-symbol-entry!
-         (cond-> #:ext.symbol{:sym sym :val val :doc doc :arglists arglists}
+         (cond-> #:ext.symbol{:symbol sym :val val :doc doc :arglists arglists}
            source (assoc :ext.symbol/source source))))
      (anomaly/incorrect!
        "vis/helper expects a Clojure var (e.g. #'my-helper)."
@@ -1218,7 +1217,7 @@
 (defn value
   "Build a value symbol entry FROM A CLOJURE VAR - a plain constant/data binding.
 
-   The var supplies `:sym` (var name), `:val` (the var's value, unless `:val`
+   The var supplies `:symbol` (var name), `:val` (the var's value, unless `:val`
    is provided in opts to override - used by macro-shim entries), and `:doc`
    (from var metadata, i.e. the defn's docstring).
 
@@ -1226,17 +1225,17 @@
    (vis/value #'max-retries)
 
    Opts:
-     :sym - override the SCI sandbox name (default: var name).
+     :symbol - override the SCI sandbox name (default: var name).
      :val - explicit value override (rare; for macro shims that bind a
             marker map instead of the var's own value)."
   ([v] (value v nil))
   ([v opts-or-val]
    (if (var? v)
      (let [opts opts-or-val
-           {:keys [sym doc source]} (var-meta v false opts)
-           sym (or (:sym opts) sym)
+           {default-symbol :symbol :keys [doc source]} (var-meta v false opts)
+           sym (or (:symbol opts) default-symbol)
            val (if (contains? opts :val) (:val opts) @v)
-           entry (cond-> #:ext.symbol{:sym sym :val val :doc doc}
+           entry (cond-> #:ext.symbol{:symbol sym :val val :doc doc}
                    source (assoc :ext.symbol/source source))]
        (validate-symbol-entry! entry))
      (anomaly/incorrect!
@@ -1248,9 +1247,9 @@
      (when-not (non-blank-string? doc)
        (anomaly/incorrect!
          (str "3-arg value '" sym-name "' missing :doc in opts.")
-         {:type :extension/missing-doc :sym sym-name}))
+         {:type :extension/missing-doc :symbol sym-name}))
      (validate-symbol-entry!
-       #:ext.symbol{:sym sym-name :val val :doc doc}))))
+       #:ext.symbol{:symbol sym-name :val val :doc doc}))))
 
 (defn- arglist->call-form
   [alias-sym sym-name arglist]
@@ -1262,7 +1261,7 @@
 
 (defn- render-symbol-line
   [alias-sym entry]
-  (let [{sym-name :ext.symbol/sym
+  (let [{sym-name :ext.symbol/symbol
          doc      :ext.symbol/doc
          arglists :ext.symbol/arglists} entry
         callable? (or (:ext.symbol/fn entry)
@@ -1282,14 +1281,14 @@
 
    Accepts an extension map or any map with:
    - :ext/doc      or :heading
-   - :ext/ns-alias optional {:alias 'v}
+   - :ext/alias optional {:alias 'v}
    - :ext/symbols  vector of symbol + value entries
    - :usage-note   optional extra note added to the heading
    - :notes        optional string or seq of extra lines appended verbatim
 
    Returns a prompt string suitable for :ext/prompt."
   [{:keys [heading usage-note notes] :as opts}]
-  (let [alias-sym    (get-in opts [:ext/ns-alias :alias])
+  (let [alias-sym    (get-in opts [:ext/alias :alias])
         symbols      (or (:symbols opts) (:ext/symbols opts))
         heading      (or heading (:ext/doc opts) "Extension tools")
         header-notes (vec (remove nil?
@@ -1343,7 +1342,7 @@
   [hook-name sym returned]
   (when-not (map? returned)
     (throw (ex-info (str hook-name " for '" sym "' must return a map, got: " (type returned))
-             {:type (keyword "extension" (str hook-name "-error")) :sym sym :returned returned}))))
+             {:type (keyword "extension" (str hook-name "-error")) :symbol sym :returned returned}))))
 
 (defn- call-hook
   [hook-name sym hook-fn hook-args]
@@ -1351,16 +1350,16 @@
     (apply hook-fn hook-args)
     (catch clojure.lang.ArityException e
       (throw (ex-info (str hook-name " for '" sym "' has wrong arity: " (ex-message e))
-               {:type (keyword "extension" (str hook-name "-error")) :sym sym} e)))
+               {:type (keyword "extension" (str hook-name "-error")) :symbol sym} e)))
     (catch Throwable e
       (throw (ex-info (str hook-name " for '" sym "' threw: " (ex-message e))
-               {:type (keyword "extension" (str hook-name "-error")) :sym sym} e)))))
+               {:type (keyword "extension" (str hook-name "-error")) :symbol sym} e)))))
 
 (defn- elapsed-ms [t0] (/ (- (System/nanoTime) t0) 1e6))
 
 (defn- log-hook! [level id ext-ns sym phase ms extra-msg]
   (tel/log! {:level level :id id
-             :data {:ext ext-ns :sym sym :phase phase :ms ms}
+             :data {:ext ext-ns :symbol sym :phase phase :ms ms}
              :msg (str ext-ns "/" sym " :invoke"
                     (when phase (str " " phase))
                     (when ms (str " " (format "%.1fms" (double ms))))
@@ -1368,7 +1367,7 @@
 
 (defn- run-before [ext-ns sym-entry env f args]
   (if-let [before (:ext.symbol/before-fn sym-entry)]
-    (let [sym (:ext.symbol/sym sym-entry)
+    (let [sym (:ext.symbol/symbol sym-entry)
           t0  (System/nanoTime)
           _   (log-hook! :debug ::before-fn ext-ns sym :before-fn nil nil)
           ret (call-hook ":before-fn" sym before [env f args])
@@ -1385,7 +1384,7 @@
 
 (defn- run-after [ext-ns sym-entry env f args result]
   (if-let [after (:ext.symbol/after-fn sym-entry)]
-    (let [sym (:ext.symbol/sym sym-entry)
+    (let [sym (:ext.symbol/symbol sym-entry)
           t0  (System/nanoTime)
           _   (log-hook! :debug ::after-fn ext-ns sym :after-fn nil nil)
           ret (call-hook ":after-fn" sym after [env f args result])
@@ -1400,7 +1399,7 @@
 
 (defn- run-on-error [ext-ns sym-entry err env f args]
   (if-let [on-error (:ext.symbol/on-error-fn sym-entry)]
-    (let [sym (:ext.symbol/sym sym-entry)
+    (let [sym (:ext.symbol/symbol sym-entry)
           t0  (System/nanoTime)
           _   (log-hook! :warn ::on-error-fn ext-ns sym :on-error-fn nil (str "handling: " (ex-message err)))
           ret (try
@@ -1409,7 +1408,7 @@
                   (if (identical? e err)
                     (throw e)
                     (throw (ex-info (str ":on-error-fn for '" sym "' threw: " (ex-message e))
-                             {:type :extension/on-error-fn-error :sym sym} e)))))
+                             {:type :extension/on-error-fn-error :symbol sym} e)))))
           _   (validate-hook-return! ":on-error-fn" sym ret)
           ms  (elapsed-ms t0)]
       (cond
@@ -1434,13 +1433,13 @@
 
 (defn- tool-call-name
   [ext sym]
-  (if-let [alias (get-in ext [:ext/ns-alias :alias])]
+  (if-let [alias (get-in ext [:ext/alias :alias])]
     (str alias "/" sym)
     (str sym)))
 
 (defn- tool-start-event
   [ext sym-entry started-at-ms]
-  (let [sym (:ext.symbol/sym sym-entry)]
+  (let [sym (:ext.symbol/symbol sym-entry)]
     {:phase :tool-start
      :status :running
      :op (keyword (tool-call-name ext sym))
@@ -1458,10 +1457,10 @@
     (let [ext-prov (extension-info-now ext)]
       (merge-into-metadata
         result
-        {:tool      (cond-> {:sym  (:ext.symbol/sym sym-entry)
-                             :call (tool-call-name ext (:ext.symbol/sym sym-entry))}
-                      (get-in ext [:ext/ns-alias :alias])
-                      (assoc :alias (get-in ext [:ext/ns-alias :alias])))
+        {:tool      (cond-> {:symbol  (:ext.symbol/symbol sym-entry)
+                             :call (tool-call-name ext (:ext.symbol/symbol sym-entry))}
+                      (get-in ext [:ext/alias :alias])
+                      (assoc :alias (get-in ext [:ext/alias :alias])))
          :extension (dissoc ext-prov :source-paths :source-mtime-max :source-hash-sha256)
          :source    {:paths       (:source-paths ext-prov)
                      :mtime-max   (:source-mtime-max ext-prov)
@@ -1474,8 +1473,8 @@
    the wrapper); the form reflects the actual call made, not the lexical
    source. Returns a non-blank string suitable for the spec."
   [ext sym-entry args]
-  (let [alias-sym (get-in ext [:ext/ns-alias :alias])
-        sym-name  (:ext.symbol/sym sym-entry)
+  (let [alias-sym (get-in ext [:ext/alias :alias])
+        sym-name  (:ext.symbol/symbol sym-entry)
         head      (if alias-sym
                     (clojure.core/symbol (str alias-sym) (str sym-name))
                     sym-name)]
@@ -1513,7 +1512,7 @@
           (or *journal-render-sink* *channel-render-sink*))
     (let [position (next-sink-position!)
           form-str (sink-form-string ext sym-entry args)
-          sym-name (:ext.symbol/sym sym-entry)
+          sym-name (:ext.symbol/symbol sym-entry)
           base     {:position position :form form-str}]
       (if (:success? result)
         (let [unwrapped (:result result)
@@ -1571,8 +1570,8 @@
    Raw helper symbols (`:ext.symbol/raw? true`) bypass this function entirely."
   [ext sym-entry args env]
   (binding [*current-extension* ext
-            *current-symbol* (:ext.symbol/sym sym-entry)]
-    (let [sym    (:ext.symbol/sym sym-entry)
+            *current-symbol* (:ext.symbol/symbol sym-entry)]
+    (let [sym    (:ext.symbol/symbol sym-entry)
           ext-ns (:ext/namespace ext)
           t0     (System/nanoTime)
           _      (log-hook! :debug ::invoke ext-ns sym nil nil nil)
@@ -1655,7 +1654,7 @@
   [ext env]
   (into {}
     (map (fn [sym-entry]
-           (let [sym (:ext.symbol/sym sym-entry)]
+           (let [sym (:ext.symbol/symbol sym-entry)]
              (if (contains? sym-entry :ext.symbol/fn)
                [sym (if (:ext.symbol/raw? sym-entry)
                       (fn [& args]
@@ -1701,12 +1700,12 @@
   (loop [exts (seq extensions)]
     (when exts
       (let [ext   (first exts)
-            alias (some-> (:ext/ns-alias ext) :alias clojure.core/name)
+            alias (some-> (:ext/alias ext) :alias clojure.core/name)
             hit
             (loop [syms (seq (:ext/symbols ext))]
               (when syms
                 (let [entry (first syms)
-                      sym   (:ext.symbol/sym entry)
+                      sym   (:ext.symbol/symbol entry)
                       hook  (:ext.symbol/on-parse-error-fn entry)]
                   (if (and hook sym (code-mentions-symbol? code (str sym) alias))
                     (let [out (run-parse-rescue-hook
@@ -1714,7 +1713,7 @@
                                 hook
                                 {:code        code
                                  :error       error
-                                 :sym         sym
+                                 :symbol         sym
                                  :environment environment})]
                       (if (and (string? out) (not= out code))
                         out
@@ -1758,19 +1757,19 @@
   (loop [exts (seq extensions)]
     (when exts
       (let [ext   (first exts)
-            alias (some-> (:ext/ns-alias ext) :alias clojure.core/name)
+            alias (some-> (:ext/alias ext) :alias clojure.core/name)
             hit
             (loop [syms (seq (:ext/symbols ext))]
               (when syms
                 (let [entry (first syms)
-                      sym   (:ext.symbol/sym entry)
+                      sym   (:ext.symbol/symbol entry)
                       hook  (:ext.symbol/source-rewrite-fn entry)]
                   (if (and hook sym (code-mentions-symbol? code (str sym) alias))
                     (let [out (run-parse-rescue-hook
                                 (str (:ext/namespace ext) "/" sym "/source-rewrite")
                                 hook
                                 {:code        code
-                                 :sym         sym
+                                 :symbol         sym
                                  :environment environment})]
                       (if (and (string? out) (not= out code))
                         out
@@ -2187,7 +2186,7 @@
    `v/extensions`, and tool-result enrichment."
   [ext]
   (let [ext-ns     (:ext/namespace ext)
-        alias      (get-in ext [:ext/ns-alias :alias])
+        alias      (get-in ext [:ext/alias :alias])
         registry-id (or (try (extension-id-of-ns ext-ns)
                           (catch Throwable _ nil))
                       alias)
@@ -2336,10 +2335,10 @@
   ;; `:metadata` on the new flat envelope (they were inside
   ;; `:info` on the old shape).
   (let [ext-ns (get-in tool-result [:metadata :extension :namespace])
-        sym    (get-in tool-result [:metadata :tool :sym])]
+        sym    (get-in tool-result [:metadata :tool :symbol])]
     (when (and ext-ns sym)
       (some (fn [entry]
-              (when (= sym (:ext.symbol/sym entry))
+              (when (= sym (:ext.symbol/symbol entry))
                 entry))
         (:ext/symbols (get @extension-registry ext-ns))))))
 
@@ -2400,10 +2399,10 @@
   [v label sym-entry]
   (when-not (string? v)
     (throw (ex-info (str label " for symbol '"
-                      (:ext.symbol/sym sym-entry)
+                      (:ext.symbol/symbol sym-entry)
                       "' must return a string, got " (pr-str (type v)))
              {:type :extension/render-non-string
-              :sym  (:ext.symbol/sym sym-entry)
+              :symbol  (:ext.symbol/symbol sym-entry)
               :label label
               :value v})))
   v)

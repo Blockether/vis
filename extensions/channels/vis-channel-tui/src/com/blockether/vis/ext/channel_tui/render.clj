@@ -3182,9 +3182,14 @@
                 comment-lines (when (and (string? comment-text)
                                       (not (str/blank? comment-text)))
                                 (let [trimmed (str/trim comment-text)
-                                      wrapped (mapcat (fn [line] (wrap-text line fill-w))
+                                      ;; Form comments sit in their own thinking-style band above
+                                      ;; the code block. Give the visible text the same one-column
+                                      ;; left breathing room as code rows, without shifting all
+                                      ;; reasoning/thinking rows globally.
+                                      comment-w (max 1 (dec fill-w))
+                                      wrapped (mapcat (fn [line] (wrap-text line comment-w))
                                                 (str/split-lines trimmed))]
-                                  (mapv #(line-entry (str thinking-marker %)) wrapped)))
+                                  (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
                 code-text     (str/trim (or form ""))
                 formatted     (format-clojure-ansi code-text fill-w)
                 code-lines    (str/split-lines formatted)

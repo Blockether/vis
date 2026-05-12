@@ -505,6 +505,142 @@
             (let [cands (restitch-candidates source (long idx))]
               (when (seq cands) cands))))))))
 
+(defn- unsupported-escape-e-error?
+  [parse-error]
+  (and (string? parse-error)
+    (str/includes? parse-error "Unsupported escape character: \\e")))
+
+(defn- answer-call-start?
+  [^String source ^long i]
+  (let [needle "(turn-answer!"
+        end    (+ i (count needle))
+        n      (.length source)]
+    (and (<= end n)
+      (.startsWith source needle i)
+      (or (= end n)
+        (Character/isWhitespace (.charAt source end))))))
+
+(defn- rescue-answer-escape-e-source
+  "Rewrite invalid terminal-notation `\\e` escapes inside string literals that
+   occur within a `(turn-answer! ...)` form. The replacement is `\\\\e`, i.e. a
+   literal backslash + e in the eventual answer text, not an ESC byte. Returns
+   nil when no rewrite was made.
+
+   This is intentionally lexical rather than reader-based: edamame cannot parse
+   the source before this repair because `\\e` is the reader error. The scanner
+   tracks strings, line comments, and paren depth just far enough to scope the
+   rewrite to the answer form. Outside `(turn-answer! ...)`, Clojure source
+   stays strict."
+  [^String source]
+  (let [n (.length source)]
+    (loop [i            0
+           paren-depth  0
+           answer-depth nil
+           in-string?   false
+           escaped?     false
+           in-comment?  false
+           changed?     false
+           out          (StringBuilder.)]
+      (if (>= i n)
+        (when changed? (str out))
+        (let [c (.charAt source i)]
+          (cond
+            in-comment?
+            (do
+              (.append out c)
+              (recur (inc i)
+                paren-depth
+                answer-depth
+                in-string?
+                escaped?
+                (not= c \newline)
+                changed?
+                out))
+
+            in-string?
+            (cond
+              escaped?
+              (do
+                (.append out c)
+                (recur (inc i) paren-depth answer-depth true false false changed? out))
+
+              (= c \\)
+              (if (and (some? answer-depth)
+                    (< (inc i) n)
+                    (= \e (.charAt source (inc i))))
+                (do
+                  (.append out "\\\\e")
+                  (recur (+ i 2) paren-depth answer-depth true false false true out))
+                (do
+                  (.append out c)
+                  (recur (inc i) paren-depth answer-depth true true false changed? out)))
+
+              (= c \")
+              (do
+                (.append out c)
+                (recur (inc i) paren-depth answer-depth false false false changed? out))
+
+              :else
+              (do
+                (.append out c)
+                (recur (inc i) paren-depth answer-depth true false false changed? out)))
+
+            :else
+            (let [answer-start? (and (nil? answer-depth)
+                                  (answer-call-start? source i))
+                  answer-depth' (if answer-start? (inc paren-depth) answer-depth)]
+              (cond
+                (= c \;)
+                (do
+                  (.append out c)
+                  (recur (inc i) paren-depth answer-depth' false false true changed? out))
+
+                (= c \")
+                (do
+                  (.append out c)
+                  (recur (inc i) paren-depth answer-depth' true false false changed? out))
+
+                (= c \()
+                (do
+                  (.append out c)
+                  (recur (inc i) (inc paren-depth) answer-depth' false false false changed? out))
+
+                (= c \))
+                (let [closing-answer? (and (some? answer-depth')
+                                        (= paren-depth answer-depth'))]
+                  (.append out c)
+                  (recur (inc i)
+                    (max 0 (dec paren-depth))
+                    (when-not closing-answer? answer-depth')
+                    false
+                    false
+                    false
+                    changed?
+                    out))
+
+                :else
+                (do
+                  (.append out c)
+                  (recur (inc i) paren-depth answer-depth' false false false changed? out))))))))))
+
+(defn try-answer-escape-rescue
+  "Repair unsupported `\\e` string escapes in `(turn-answer! ...)` source.
+
+   Models often use terminal notation like `\\e[200~` when describing escape
+   sequences. Clojure strings do not support `\\e`, so the answer form fails at
+   the reader before IR exists. This rescue changes the source to `\\\\e[200~`
+   inside answer strings, preserving the intended visible notation.
+
+   Returns a parsable repaired source string, or nil when the error/source does
+   not match or the candidate still fails `parse-ok?`."
+  [^String source parse-error parse-ok?]
+  (when (and (string? source)
+          (str/includes? source "(turn-answer!")
+          (unsupported-escape-e-error? parse-error))
+    (when-let [candidate (rescue-answer-escape-e-source source)]
+      (when (parse-ok? candidate)
+        candidate))))
+
 (defn try-quote-rebalance
   "Parinfer-equivalent for unbalanced double-quotes.
 

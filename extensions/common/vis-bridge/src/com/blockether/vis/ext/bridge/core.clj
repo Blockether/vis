@@ -413,7 +413,7 @@
 (defn- prompt [_env]
   (str (vis/render-prompt
          {:ext/doc "Bridge codebase graph tools"
-          :ext/ns-alias {:alias 'bridge}
+          :ext/alias {:alias 'bridge}
           :ext/symbols bridge-symbols})
     "\nBridge v1 contract: language extractors emit stable normalized facts; bridge/fill! maps them to aggregate rows. Use bridge/extract for facts, bridge/aggregate-rows for preview, bridge/fill! to persist, bridge/extract-and-fill! for forced reindexing, or bridge/backfill! to reindex only changed paths."))
 
@@ -426,7 +426,7 @@
      :ext/owner "vis"
      :ext/license "Apache-2.0"
      :ext/kind "code-intelligence"
-     :ext/ns-alias {:ns 'vis.ext.bridge :alias 'bridge}
+     :ext/alias {:ns 'vis.ext.bridge :alias 'bridge}
      :ext/symbols bridge-symbols
      :ext/prompt prompt
      :ext/doctor-check-fn doctor/check-fn}))

@@ -82,7 +82,16 @@
       ;; result-text format sentinel (U+206E), so `body-of` alone
       ;; doesn't strip down to the bare token. Use a contains check
       ;; instead of a strict equality.
-      (expect (some #(str/includes? % "3") bodies)))))
+      (expect (some #(str/includes? % "3") bodies))))
+
+  (it "pads displayed form comments by one column"
+    (let [lines (format-iteration-entry {:iteration 0
+                                         :code ["(+ 1 2)"]
+                                         :comments [";; why this runs"]}
+                  40 1 {})
+          comment-line (first (filter #(str/includes? % ";; why this runs") lines))]
+      (expect (= p/MARKER_THINKING (marker-of comment-line)))
+      (expect (str/starts-with? (body-of comment-line) " ;;")))))
 
 (defdescribe provider-fallback-notice-test
   (it "formats provider fallback notices as yellow-band rows with one left space"

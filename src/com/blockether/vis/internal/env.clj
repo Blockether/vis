@@ -178,36 +178,9 @@
                  :when (and (var? v) (not (:macro (meta v))))]
              [sym @v])))
 
-(defn- sci-var-source
-  [sci-ctx sym]
-  (try
-    (some-> (sci/resolve sci-ctx sym) meta :vis/source)
-    (catch Throwable _
-      nil)))
+(comment "clojure.repl sandbox helpers removed; use v/clojure-symbol-source-code")
 
-(defn- patch-repl-helpers!
-  "Patch SCI's clojure.repl for Vis' synthetic extension namespaces.
-
-   Extension aliases (`v/`, `z/`, `bridge/`, ...) are not backed by source
-   files inside SCI, so the stock `source-fn` cannot find them. Extension
-   installation stores host source on SCI var meta as `:vis/source`; this
-   wrapper checks that first and then falls back to SCI's original source-fn.
-   Also preinstalls the `repl` alias promised by the system prompt."
-  [sci-ctx]
-  (let [repl-ns            (sci/find-ns sci-ctx 'clojure.repl)
-        original-source-fn (some-> (sci/resolve sci-ctx 'clojure.repl/source-fn) deref)
-        source-fn          (fn vis-source-fn [sym]
-                             (or (sci-var-source sci-ctx sym)
-                               (when original-source-fn
-                                 (original-source-fn sym))))]
-    (when repl-ns
-      (swap! (:env sci-ctx) assoc-in [:namespaces 'clojure.repl 'source-fn]
-        (sci/new-var 'source-fn source-fn
-          {:ns repl-ns
-           :doc "Returns source for SCI vars, including Vis extension aliases."
-           :arglists '([sym])})))
-    (swap! (:env sci-ctx) update :ns-aliases assoc 'repl 'clojure.repl)
-    sci-ctx))
+(comment "clojure.repl sandbox alias disabled; use v/clojure-symbol-documentation and v/clojure-symbol-source-code")
 
 (def MODERN_CORE_BINDINGS
   "Clojure core helpers absent from SCI 0.12.51's default `clojure.core`
@@ -495,8 +468,7 @@
                                                spit
                                                intern
                                                sh
-                                               *in* *command-line-args*]}))
-        sci-ctx (patch-repl-helpers! sci-ctx)]
+                                               *in* *command-line-args*]}))]
     ;; REPL-style recovery bindings: `*1` `*2` `*3` carry the last three
     ;; evaluated form values (most recent first); `*e` carries the most
     ;; recent uncaught exception. The iteration loop pushes onto the
@@ -713,7 +685,7 @@
     " shape=" (bounded-pr-str (malli-shape val))))
 
 (defn- fallback-source-form
-  [{:keys [sym type val arglists doc]}]
+  [{:keys [symbol type val arglists doc]}]
   (if (= type :fn)
     (let [single? (and (sequential? arglists)
                     (= 1 (count arglists))
@@ -726,10 +698,10 @@
                 single? (pr-str (first arglists))
                 (seq arglists) (str/join " " (map pr-str arglists))
                 :else "[& args]")]
-      (str "(defn " sym " " sig
+      (str "(defn " symbol " " sig
         (when doc-line (str " \"" doc-line "\""))
         " ...)"))
-    (str "(def " sym " " (bounded-pr-str val) ")")))
+    (str "(def " symbol " " (bounded-pr-str val) ")")))
 
 (defn- source-form
   [{:keys [code] :as entry}]
@@ -800,7 +772,7 @@
                         (sort-by (fn [[sym _]]
                                    [(- (long (recency-of sym))) (str sym)]))
                         (mapv (fn [[sym {:keys [val arglists doc version code]}]]
-                                {:sym sym
+                                {:symbol sym
                                  :version version
                                  :status (var-status-keyword {:system? false :persisted? false})
                                  :type (var-type-keyword val false)

@@ -117,7 +117,7 @@
     (extension/success
       {:result   result
        :op       op
-       :metadata (merge {:tool           {:sym (op->tool-sym op)}
+       :metadata (merge {:tool           {:symbol (op->tool-sym op)}
                          :extension      {:namespace 'com.blockether.vis.ext.lang-clojure.core}
                          :target         (path->target path kind)
                          :started-at-ms  t
@@ -164,7 +164,7 @@
       {:result (extension/failure
                  {:result   nil
                   :op       op
-                  :metadata {:tool           {:sym (op->tool-sym op)}
+                  :metadata {:tool           {:symbol (op->tool-sym op)}
                              :extension      {:namespace 'com.blockether.vis.ext.lang-clojure.core}
                              :target         (path->target path :file)
                              :started-at-ms  t
@@ -770,7 +770,7 @@
        :symbol :z/forms
        :metadata (assoc (:metadata out)
                    :op :z/forms
-                   :tool {:sym 'forms})))))
+                   :tool {:symbol 'forms})))))
 
 (defn- symbols-file
   "List symbol zipper locator rows in a Clojure/EDN file. Defaults to 50 rows; pass opts like {:name 'foo}, {:source-contains \"foo\"}, or {:limit 20}. Rows can become z/patch edits by adding :replace."
@@ -803,7 +803,7 @@
       :result (first (:result out))
       :metadata (assoc (:metadata out)
                   :op :z/locator-for-symbol
-                  :tool {:sym 'locator-for-symbol}
+                  :tool {:symbol 'locator-for-symbol}
                   :symbol sym))))
 
 (defn- locator-label
@@ -875,7 +875,7 @@
 
 (def patch-check-symbol
   (vis/symbol #'patch-check-tool
-    {:sym 'patch-check
+    {:symbol 'patch-check
 
      :journal-render-fn journal-render-patch-check
      :channel-render-fn channel-render-patch-check
@@ -883,7 +883,7 @@
 
 (def patch-symbol
   (vis/symbol #'patch-file
-    {:sym 'patch
+    {:symbol 'patch
 
      :journal-render-fn journal-render-patch-result
      :channel-render-fn channel-render-patch-result
@@ -891,7 +891,7 @@
 
 (def locators-symbol
   (vis/symbol #'locators-file
-    {:sym 'locators
+    {:symbol 'locators
 
      :journal-render-fn journal-render-locators
      :channel-render-fn channel-render-locators
@@ -899,7 +899,7 @@
 
 (def forms-symbol
   (vis/symbol #'forms-file
-    {:sym 'forms
+    {:symbol 'forms
 
      :journal-render-fn journal-render-locators
      :channel-render-fn channel-render-locators
@@ -907,7 +907,7 @@
 
 (def symbols-symbol
   (vis/symbol #'symbols-file
-    {:sym 'symbols
+    {:symbol 'symbols
 
      :journal-render-fn journal-render-locators
      :channel-render-fn channel-render-locators
@@ -915,7 +915,7 @@
 
 (def locator-for-symbol-symbol
   (vis/symbol #'locator-for-symbol-file
-    {:sym 'locator-for-symbol
+    {:symbol 'locator-for-symbol
 
      :journal-render-fn journal-render-locators
      :channel-render-fn channel-render-locators
@@ -923,7 +923,7 @@
 
 (def inspect-symbol
   (vis/symbol #'inspect-locator
-    {:sym 'inspect
+    {:symbol 'inspect
 
      :journal-render-fn render-inspect
      :channel-render-fn render-inspect}))

@@ -1274,14 +1274,14 @@
 ;; Each underlying `xxx-tool` defn carries the canonical docstring + arglists
 ;; on its var. `vis/symbol` reads them straight from the var meta - the
 ;; SCI sandbox sees the same text the prompt-listing renders.
-;; `:sym` overrides the var name (`cat-tool` -> `cat`) for the model-facing
+;; `:symbol` overrides the var name (`cat-tool` -> `cat`) for the model-facing
 ;; surface; everything else (examples, render-fn, error hook, result spec)
 ;; lives in opts because it has nothing to do with the function's signature.
 ;; -----------------------------------------------------------------------------
 
 (def cat-symbol
   (vis/symbol #'cat-tool
-    {:sym 'cat
+    {:symbol 'cat
 
      :journal-render-fn journal-render-cat
      :channel-render-fn channel-render-cat
@@ -1289,7 +1289,7 @@
 
 (def ls-symbol
   (vis/symbol #'ls-tool
-    {:sym 'ls
+    {:symbol 'ls
 
      :journal-render-fn journal-render-ls
      :channel-render-fn channel-render-ls
@@ -1297,7 +1297,7 @@
 
 (def rg-symbol
   (vis/symbol #'rg-tool
-    {:sym 'rg
+    {:symbol 'rg
 
      :journal-render-fn journal-render-rg
      :channel-render-fn channel-render-rg
@@ -1305,7 +1305,7 @@
 
 (def patch-symbol
   (vis/symbol #'patch-tool
-    {:sym 'patch
+    {:symbol 'patch
 
      :journal-render-fn journal-render-patch
      :channel-render-fn channel-render-patch
@@ -1313,7 +1313,7 @@
 
 (def patch-check-symbol
   (vis/symbol #'patch-check-tool
-    {:sym 'patch-check
+    {:symbol 'patch-check
 
      :journal-render-fn journal-render-patch-check
      :channel-render-fn channel-render-patch-check
@@ -1321,7 +1321,7 @@
 
 (def create-dirs-symbol
   (vis/symbol #'create-dirs-tool
-    {:sym 'create-dirs
+    {:symbol 'create-dirs
 
      :journal-render-fn journal-render-create-dirs
      :channel-render-fn channel-render-create-dirs
@@ -1329,7 +1329,7 @@
 
 (def glob-symbol
   (vis/symbol #'glob-tool
-    {:sym 'glob
+    {:symbol 'glob
 
      :journal-render-fn journal-render-glob
      :channel-render-fn channel-render-glob
@@ -1337,7 +1337,7 @@
 
 (def copy-symbol
   (vis/symbol #'copy-tool
-    {:sym 'copy
+    {:symbol 'copy
 
      :journal-render-fn journal-render-copy
      :channel-render-fn channel-render-copy
@@ -1345,7 +1345,7 @@
 
 (def move-symbol
   (vis/symbol #'move-tool
-    {:sym 'move
+    {:symbol 'move
 
      :journal-render-fn journal-render-move
      :channel-render-fn channel-render-move
@@ -1353,7 +1353,7 @@
 
 (def delete-symbol
   (vis/symbol #'delete-tool
-    {:sym 'delete
+    {:symbol 'delete
 
      :journal-render-fn journal-render-delete
      :channel-render-fn channel-render-delete
@@ -1361,7 +1361,7 @@
 
 (def delete-if-exists-symbol
   (vis/symbol #'delete-if-exists-tool
-    {:sym 'delete-if-exists
+    {:symbol 'delete-if-exists
 
      :journal-render-fn journal-render-delete-if-exists
      :channel-render-fn channel-render-delete-if-exists
@@ -1369,7 +1369,7 @@
 
 (def exists?-symbol
   (vis/symbol #'exists-tool
-    {:sym 'exists?
+    {:symbol 'exists?
 
      :journal-render-fn journal-render-exists?
      :channel-render-fn channel-render-exists?
@@ -1377,7 +1377,7 @@
 
 (def bash-symbol
   (vis/symbol #'bash-tool
-    {:sym 'bash
+    {:symbol 'bash
 
      :journal-render-fn journal-render-bash
      :channel-render-fn channel-render-bash

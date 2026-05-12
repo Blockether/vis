@@ -101,7 +101,7 @@
             (label {:ext/channels [{:channel/cmd "tui"}]
                     :ext/namespace 'com.blockether.vis.ext.channel-tui.core})))
       (is (= "V"
-            (label {:ext/ns-alias {:ns 'vis.ext.v :alias 'v}
+            (label {:ext/alias {:ns 'vis.ext.v :alias 'v}
                     :ext/namespace 'com.blockether.vis.ext.foundation.core}))))))
 
 (deftest resource-dialog-items-test
@@ -305,7 +305,7 @@
     (testing "extension-declared env vars render under Extensions / Exa without UNKNOWN labels"
       (with-redefs [vis/get-router (constantly nil)
                     vis/registered-extensions (fn [] [{:ext/namespace 'test.ext
-                                                       :ext/ns-alias {:alias 'exa}
+                                                       :ext/alias {:alias 'exa}
                                                        :ext/env [{:name "EXA_API_KEY"
                                                                   :label "Exa API key"
                                                                   :description "Optional key."

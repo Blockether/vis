@@ -1,32 +1,4 @@
 (ns com.blockether.vis.ext.foundation.core
-  "vis-foundation aggregator. ONE extension under ONE alias `v/`,
-   bundling the agent's read + write + introspect + answer-build
-   surface so the model never has to switch alias-namespaces in the
-   middle of a form. Four sources, each contributing its
-   `:ext/symbols` vec and its share of the merged `:ext/prompt`:
-
-     introspection.clj          (v/conversation-state, v/conversation-report)
-     editing/core.clj           (v/cat, v/ls, v/rg, v/bash,
-                                 thin babashka.fs wrappers)
-     markdown.clj               (v/h1, v/p, v/table,
-                                 v/file-link, v/join, ...)
-     environment/core.clj       (v/snapshot,
-                                 v/git,
-                                 v/languages,
-                                 v/monorepo,
-                                 v/render,
-                                 v/refresh!)
-
-   Plus a live `<environment>` block in the system prompt, contributed
-   through `environment/core.clj`'s `environment-info` hook.
-
-   The separate `fs/` alias was dropped, but the useful babashka.fs
-   surface is now inlined under `v/` as thin cwd-safe wrappers
-   (`v/cat`, `v/patch`, `v/glob`, ...). The markdown builders were merged too, so the
-   model now uses `(turn-answer! (v/join ...))`, `(v/h1 ...)`,
-   `(v/file-link ...)`, etc. through the same `v/` prefix. One short
-   alias, normal Clojure code, no bespoke edit DSLs, no alias
-   switching mid-iteration."
   (:require
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
@@ -90,7 +62,7 @@
      :ext/author         "Blockether"
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
-     :ext/ns-alias       {:ns 'vis.ext.v :alias 'v}
+     :ext/alias       {:ns 'vis.ext.v :alias 'v}
      :ext/kind           "foundation"
      :ext/environment-info-fn environment/environment-info
      :ext/hooks          nudges/hooks

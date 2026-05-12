@@ -787,7 +787,7 @@
                                                            :op :v/bash
                                                            :status :running
                                                            :started-at-ms 123
-                                                           :tool {:sym 'bash :call "v/bash"}}]}]
+                                                           :tool {:symbol 'bash :call "v/bash"}}]}]
                                   :duration-ms 120000})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             [exec] (vis/db-list-iteration-blocks s (:id iteration))]

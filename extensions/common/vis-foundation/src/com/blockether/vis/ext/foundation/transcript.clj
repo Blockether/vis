@@ -303,7 +303,7 @@
              :iteration-id   (:id iteration)
              :iteration      (:position iteration)
              :op             op
-             :tool           (or (:sym tool) (:call tool) tool)
+             :tool           (or (:symbol tool) (:call tool) tool)
              :status         status
              :success?       success?
              :duration-ms    (or (:duration-ms tool-meta)

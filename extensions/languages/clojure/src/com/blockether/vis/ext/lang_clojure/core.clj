@@ -83,13 +83,13 @@
 
 (defn- raw-opts
   [sym]
-  {:sym sym :raw? true :doc-fn rewrite-doc-fallback})
+  {:symbol sym :raw? true :doc-fn rewrite-doc-fallback})
 
 (defn- macro-entry
   "Build a value entry for an SCI-callable macro shim. The shim's value is
    the marker map `{:vis.sci/macro-fn ...}`."
   [sym v macro-fn]
-  (vis/value v {:sym sym
+  (vis/value v {:symbol sym
                 :val {:vis.sci/macro-fn macro-fn}
                 :doc-fn rewrite-doc-fallback}))
 
@@ -115,7 +115,7 @@
       (vis/symbol v (raw-opts sym))
 
       :else
-      (vis/value v {:sym sym :doc-fn rewrite-doc-fallback}))))
+      (vis/value v {:symbol sym :doc-fn rewrite-doc-fallback}))))
 
 (def ^:private rewrite-clj-zip-symbols
   ;; Top-level :require already loaded rewrite-clj.zip. Walk its publics
@@ -160,17 +160,17 @@
 
 (def ^:private lsp-symbols
   [(vis/symbol #'diagnostics-lazy
-     {:sym 'diagnostics
+     {:symbol 'diagnostics
 
       :journal-render-fn vis/render-pr-str-journal
       :channel-render-fn vis/render-pr-str-channel})
    (vis/symbol #'rename-plan-lazy
-     {:sym 'rename-plan
+     {:symbol 'rename-plan
 
       :journal-render-fn vis/render-pr-str-journal
       :channel-render-fn vis/render-pr-str-channel})
    (vis/symbol #'clean-ns-plan-lazy
-     {:sym 'clean-ns-plan
+     {:symbol 'clean-ns-plan
 
       :journal-render-fn vis/render-pr-str-journal
       :channel-render-fn vis/render-pr-str-channel})])
@@ -183,7 +183,7 @@
      :ext/author    "Blockether"
      :ext/owner     "vis"
      :ext/license   "Apache-2.0"
-     :ext/ns-alias  {:ns 'vis.ext.clj :alias 'z}
+     :ext/alias  {:ns 'vis.ext.clj :alias 'z}
      :ext/kind      "languages"
      :ext/activation-fn (fn [_] (clojure-project?))
      :ext/environment-info-fn clojure-environment-info

@@ -180,7 +180,7 @@ From classpath jar to live tool call:
 ## Namespace aliases
 
 An extension that ships any `:ext/symbols` **must** declare
-`:ext/ns-alias` - a map with `:ns` (the full SCI namespace symbol)
+`:ext/alias` - a map with `:ns` (the full SCI namespace symbol)
 and `:alias` (the short alias the LLM uses). Pure prompt-only
 extensions (no `:ext/symbols`) may omit it. When present, extension
 symbols are bound **only** into this dedicated namespace, **never**
@@ -190,7 +190,7 @@ the alias prefix.
 ```clojure
 (ext/extension
   {:ext/namespace 'com.blockether.vis.ext.foundation.editing.core
-   :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
+   :ext/alias  {:ns 'vis.ext.tools :alias 'vis}
    ...})
 ```
 
@@ -265,7 +265,7 @@ the turn still runs.
     {:ext/namespace 'com.acme.ext.search
      :ext/doc       "Document search"
      :ext/kind      "knowledge"
-     :ext/ns-alias  {:ns 'vis.ext.search :alias 'search}
+     :ext/alias  {:ns 'vis.ext.search :alias 'search}
      :ext/prompt    "Prefer search before manual file scans."
      :ext/symbols   [find-symbol]}))
 ```
@@ -299,7 +299,7 @@ Real in-tree examples - every package below ships exactly one
      :ext/doc       "Common Vis operations: cat, ls, rg, patch."
      :ext/version   "0.4.0"
      :ext/kind      "filesystem"
-     :ext/ns-alias  {:ns 'vis.ext.tools :alias 'vis}
+     :ext/alias  {:ns 'vis.ext.tools :alias 'vis}
      :ext/symbols   all-symbols
      :ext/prompt    combined-prompt}))
 ```
@@ -398,7 +398,7 @@ an extension that ships SCI tools, a CLI command, AND a channel:
     {:ext/namespace 'com.acme.ext.git
      :ext/doc       "Git integration: SCI tools + CLI + a web-hook channel."
      :ext/kind      "vcs"
-     :ext/ns-alias  {:ns 'vis.ext.git :alias 'git}
+     :ext/alias  {:ns 'vis.ext.git :alias 'git}
      :ext/symbols   [git-status-sym git-blame-sym]
      :ext/cli       [{:cmd/name   "blame"
                       :cmd/doc    "Run git blame on a path."

@@ -605,7 +605,7 @@
      :ext/author "Blockether"
      :ext/owner "vis"
      :ext/license "Apache-2.0"
-     :ext/ns-alias {:ns 'vis.ext.exa :alias 'exa}
+     :ext/alias {:ns 'vis.ext.exa :alias 'exa}
      :ext/kind "search"
      :ext/env exa-env
      :ext/prompt exa-prompt
