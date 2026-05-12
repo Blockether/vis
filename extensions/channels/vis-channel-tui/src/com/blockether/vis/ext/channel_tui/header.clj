@@ -79,10 +79,14 @@
 (def ^:const HEADER_ROWS
   "Minimum rows reserved by the header band: top rule + content + bottom
    rule. Use `header-rows` for a concrete app-db, because workspace tabs add
-   one row only when more than one tab exists, and registered header-row
-   contributors (see `contributors.clj`) add their own rows below the
-   title."
+   a tab row plus one bottom spacer when more than one tab exists, and
+   registered header-row contributors (see `contributors.clj`) add their own
+   rows below the title."
   3)
+
+(def ^:private workspace-tabs-extra-rows
+  "Rows added when workspace tabs are visible: tab top border + tab strip."
+  2)
 
 (def ^:private placeholder-title
   "Shown center when the conversation has no title yet (fresh run,
@@ -237,9 +241,9 @@
       {:id hook-id :spec spec})))
 
 (defn header-rows
-  "Rows needed by the header for this app-db. Workspace tabs add one
-   row when more than one tab exists; each enabled extension that
-   declares a `:tui/header-row` channel-hook adds its render-fn's
+  "Rows needed by the header for this app-db. Workspace tabs add a tab top
+   border plus tab row when more than one tab exists; each enabled extension
+   that declares a `:tui/header-row` channel-hook adds its render-fn's
    reported height.
 
    Note: render-fns are invoked here AND in `draw-header!` (the
@@ -253,7 +257,7 @@
    (header-rows db 0))
   ([db cols]
    (+ HEADER_ROWS
-     (if (seq (workspace-tabs db)) 1 0)
+     (if (seq (workspace-tabs db)) workspace-tabs-extra-rows 0)
      (reduce + 0 (map #(long (:height (:spec %)))
                    (header-row-specs db cols))))))
 
@@ -313,14 +317,15 @@
     t/footer-fg-muted))
 
 (defn- draw-rule!
-  "Paint a full-width single-line horizontal rule on `row` in the
-   muted footer color."
-  [g row cols]
-  (p/clear-styles! g)
-  (p/set-colors! g t/footer-fg-muted t/terminal-bg)
-  (dotimes [c cols]
-    (p/set-char! g c row p/BOX_H))
-  (p/clear-styles! g))
+  "Paint a full-width single-line horizontal rule on `row`."
+  ([g row cols]
+   (draw-rule! g row cols t/footer-fg-muted))
+  ([g row cols fg]
+   (p/clear-styles! g)
+   (p/set-colors! g fg t/terminal-bg)
+   (dotimes [c cols]
+     (p/set-char! g c row p/BOX_H))
+   (p/clear-styles! g)))
 
 (defn- id-copy-block-text [id-short]
   (if id-short
@@ -366,9 +371,11 @@
    surfaces in the LEFT slot."
   [g db header-top cols]
   (let [tabs         (workspace-tabs db)
-        tabs-row     (when (seq tabs) header-top)
-        separator-row (if (seq tabs) (inc header-top) header-top)
-        content-row  (+ header-top (if (seq tabs) 2 1))
+        tabs?        (seq tabs)
+        tab-top-rule-row (when tabs? header-top)
+        tabs-row     (when tabs? (inc header-top))
+        top-rule-row (+ header-top (if tabs? 2 0))
+        content-row  (+ header-top (if tabs? 3 1))
         ;; Extension-contributed rows sit BETWEEN the title content
         ;; row and the bottom rule. Each `:tui/header-row` hook
         ;; returns a row spec or nil; we allocate rows for the
@@ -434,25 +441,27 @@
                        :else
                        title-col-raw)]
 
-    ;; Optional Workspace tabs. They live in the header, but only when there is
-    ;; more than one Workspace tab to choose from. Tabs occupy the top row;
-    ;; the rule below them separates workspace navigation from conversation
-    ;; title/id actions.
-    (when (seq tabs)
+    ;; Workspace tabs live above the header chrome. They occupy the full width
+    ;; with no left/right padding. The tab strip gets its own yellow top rule;
+    ;; the normal header top rule stays between tabs and title.
+    (when tabs?
+      (draw-rule! g tab-top-rule-row cols t/footer-warning-fg)
       (p/clear-styles! g)
-      (p/set-colors! g t/header-fg t/terminal-bg)
+      (p/set-colors! g t/dialog-fg t/dialog-bg)
       (p/fill-rect! g 0 tabs-row cols 1)
       (let [layout (p/draw-tabs! g tabs
-                     {:left        edge-pad
+                     {:left        0
                       :row         tabs-row
-                      :width       (max 0 (- cols (* 2 edge-pad)))
+                      :width       cols
+                      :gap         0
+                      :bordered?   true
                       :active-id   (active-workspace-tab-id db tabs)
-                      :fg          t/header-fg
-                      :bg          t/terminal-bg
-                      :active-fg   t/header-hover-fg
-                      :active-bg   t/terminal-bg
-                      :inactive-fg t/footer-fg-muted
-                      :inactive-bg t/terminal-bg})]
+                      :fg          t/footer-warning-fg
+                      :bg          t/dialog-bg
+                      :active-fg   t/footer-warning-fg
+                      :active-bg   t/dialog-title-bg
+                      :inactive-fg t/footer-warning-fg
+                      :inactive-bg t/dialog-bg})]
         (doseq [[idx {:keys [id left width]}] (map-indexed vector layout)
                 :when (pos? (long width))]
           (when *register-click-regions?*
@@ -463,8 +472,7 @@
                :workspace-id id
                :text         id
                :enabled?     true})))))
-
-    (draw-rule! g separator-row cols)
+    (draw-rule! g top-rule-row cols)
 
     ;; Wipe content row to terminal-bg first so the previous frame's
     ;; characters can't bleed through the gaps between LEFT/CENTER/RIGHT.

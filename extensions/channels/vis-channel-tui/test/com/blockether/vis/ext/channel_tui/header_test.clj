@@ -42,7 +42,14 @@
                               :bg @bg
                               :modifiers @active})
           this))
-       (setCharacter [_ _ _] this)))))
+       (setCharacter [col row ch]
+         (swap! writes conj {:col col
+                             :row row
+                             :char ch
+                             :fg @fg
+                             :bg @bg
+                             :modifiers @active})
+         this)))))
 
 (defdescribe right-block-text-test
   (it "shows separated copy-id and transcript copy actions with copy icons"
@@ -170,7 +177,7 @@
           (expect (= t/header-fg (:fg (write-by-text "⧉ Transcript")))))))))
 
 (defdescribe draw-header-workspace-tabs-test
-  (it "adds one header row and renders workspace tabs only when more than one exists"
+  (it "renders yellow tab top border and normal header top border without spacer"
     (cr/reset!)
     (let [writes (atom [])
           g      (dummy-text-graphics writes)
@@ -181,26 +188,55 @@
                                    {:id :feature :label "Feature" :dirty? true}
                                    {:id :verify :label "Verify" :state :running}]}]
       (expect (= 3 (header/header-rows (assoc db :workspace-tabs [{:id :main}]))))
-      (expect (= 4 (header/header-rows db)))
+      (expect (= 5 (header/header-rows db)))
       (cr/begin-frame!)
       (header/draw-header! g db 0 80)
       (cr/commit-frame!)
-      (let [tab-writes (filter #(= 0 (:row %)) @writes)
+      (let [tab-writes (filter #(= 1 (:row %)) @writes)
             title      (some #(when (= "Chat" (:text %)) %) @writes)
-            layout     (p/tab-layout (:workspace-tabs db) 1 78 :feature)
+            layout     (p/tab-layout (:workspace-tabs db) 0 80 :feature {:gap 0})
             expected   (nth layout 1)
             tab-hit    (some #(when (and (= :workspace-tab (:kind %))
                                       (= 1 (:index %)))
                                 %)
-                         (cr/current))]
-        (expect (some #(= "Main" (str/trim (:text %))) tab-writes))
-        (expect (some #(= "Feature •" (str/trim (:text %))) tab-writes))
-        (expect (some #(= "Verify ▶" (str/trim (:text %))) tab-writes))
-        (expect (= 2 (:row title)))
-        (expect (= {:row 0 :col (:left expected) :width (:width expected)}
+                         (cr/current))
+            tab-write  (fn [label]
+                         (some #(when (= label (str/trim (:text %))) %) tab-writes))
+            tab-top-rule (some #(when (and (= 0 (:row %))
+                                        (= 0 (:col %))
+                                        (= p/BOX_H (:char %)))
+                                  %)
+                           @writes)
+            top-rule   (some #(when (and (= 2 (:row %))
+                                      (= 0 (:col %))
+                                      (= p/BOX_H (:char %)))
+                                %)
+                         @writes)
+            main-tab   (tab-write "Main")
+            active-tab (tab-write "Feature •")
+            verify-tab (tab-write "Verify ▶")]
+        (expect (= t/footer-warning-fg (:fg tab-top-rule)))
+        (expect (= t/footer-fg-muted (:fg top-rule)))
+        (expect (some? main-tab))
+        (expect (some? active-tab))
+        (expect (some? verify-tab))
+        (expect (= 0 (:col main-tab)))
+        (expect (= (:left expected) (:col active-tab)))
+        (expect (= t/footer-warning-fg (:fg main-tab)))
+        (expect (= t/dialog-bg (:bg main-tab)))
+        (expect (contains? (:modifiers main-tab) p/ITALIC))
+        (expect (contains? (:modifiers main-tab) p/BORDERED))
+        (expect (= t/footer-warning-fg (:fg active-tab)))
+        (expect (= t/dialog-title-bg (:bg active-tab)))
+        (expect (contains? (:modifiers active-tab) p/BOLD))
+        (expect (contains? (:modifiers active-tab) p/BORDERED))
+        (expect (= t/footer-warning-fg (:fg verify-tab)))
+        (expect (contains? (:modifiers verify-tab) p/BORDERED))
+        (expect (= 3 (:row title)))
+        (expect (= {:row 1 :col (:left expected) :width (:width expected)}
                   (:bounds tab-hit)))
         (expect (= :feature (:workspace-id tab-hit)))
-        (expect (= tab-hit (cr/lookup (:left expected) 0)))))))
+        (expect (= tab-hit (cr/lookup (:left expected) 1)))))))
 
 ;; =============================================================================
 ;; Goal subtitle row (vis-goal extension hook in the header)

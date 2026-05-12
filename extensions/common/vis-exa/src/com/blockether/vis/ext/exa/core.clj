@@ -564,7 +564,7 @@
    code-context-symbol])
 
 (def exa-prompt
-  "`exa/` web search: (exa/web-search query opts?) for current web facts; (exa/code-context query opts?) for code/docs/API examples. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :max-bytes, :max-lines. code-context supports :tokens-num, :max-bytes, :max-lines. Tool results are envelopes; read payload with (get-in r [:result :content]), not (:content r) or [:result ...].")
+  "`exa/` evidence search: before answering current web facts or unfamiliar APIs, bind `(def r (exa/web-search query opts?))` or `(def r (exa/code-context query opts?))`, then read observed text with `(get-in r [:result :content])`. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :max-bytes, :max-lines. code-context supports :tokens-num, :max-bytes, :max-lines. Tool results are envelopes; do not use `(:content r)` or `[:result ...]`.")
 
 (def exa-env
   [{:name "EXA_API_KEY"

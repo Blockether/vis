@@ -207,47 +207,16 @@
     (and (= :deep reasoning-level) (not allow-copilot-claude-deep?)) :balanced
     :else reasoning-level))
 
-(defn- message-has-image?
-  [message]
-  (some (fn [block]
-          (= "image_url" (:type block)))
-    (when (sequential? (:content message)) (:content message))))
+(defn- copilot-provider?
+  [provider-id]
+  (contains? #{:github-copilot :github-copilot-individual :github-copilot-business}
+    provider-id))
 
-(defn- copilot-dynamic-headers
-  [initiator messages]
-  (cond-> {"X-Initiator" (if (= "agent" initiator) "agent" "user")
-           "Openai-Intent" "conversation-edits"}
-    (some message-has-image? messages)
-    (assoc "Copilot-Vision-Request" "true")))
-
-(defn- svar-copilot-dynamic-headers-var
-  []
-  (or (ns-resolve 'com.blockether.svar.internal.llm 'copilot-dynamic-headers)
-    (throw (ex-info "svar Copilot header helper not found."
-             {:type :vis/svar-copilot-header-helper-missing}))))
-
-(defonce ^:private copilot-header-patch-installed? (atom false))
-
-(defn- install-copilot-header-patch!
-  "Patch svar's private Copilot header helper once so Vis can classify
-   user-vs-agent initiated calls through svar-llm/*log-context*.
-
-   Why here: svar 0.4.3 infers X-Initiator from the final API message role.
-   Vis appends synthetic user-role journal/context messages on internal
-   iterations, so role-only inference bills autonomous follow-up/tool-loop
-   calls as fresh user prompts. Dynamic log context is thread-local, so it is
-   safer than with-redefs around a long network call."
-  []
-  (when (compare-and-set! copilot-header-patch-installed? false true)
-    (alter-var-root (svar-copilot-dynamic-headers-var)
-      (fn [original]
-        (with-meta
-          (fn [messages]
-            (let [ctx-initiator (:copilot-initiator svar-llm/*log-context*)]
-              (if (#{"user" "agent"} ctx-initiator)
-                (copilot-dynamic-headers ctx-initiator messages)
-                (original messages))))
-          {:vis/copilot-header-patch true})))))
+(defn- copilot-llm-headers
+  [resolved-model initiator]
+  (when (and (copilot-provider? (:provider resolved-model))
+          (#{"user" "agent"} initiator))
+    {"X-Initiator" initiator}))
 
 (defn- copilot-initiator-for-iteration
   [iteration]
@@ -1970,7 +1939,7 @@
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
-  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body active-extensions answer-validation-context]}]]
+  [environment messages & [{:keys [routing iteration reasoning-level resolved-model on-chunk extra-body llm-headers active-extensions answer-validation-context]}]]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :run-iteration})]
     (let [iteration-position (inc (long (or iteration 0)))
           turn-prefix (runtime-turn-prefix environment)
@@ -2022,9 +1991,10 @@
                                         :iteration iteration-position
                                         :thinking  (some-> reasoning str)
                                         :done?     (boolean done?)}))))
-          _ (install-copilot-header-patch!)
-          copilot-initiator (or (:copilot-initiator extra-body)
-                              (copilot-initiator-for-iteration iteration))
+          copilot-initiator (copilot-initiator-for-iteration iteration)
+          effective-llm-headers (not-empty
+                                  (merge (copilot-llm-headers resolved-model copilot-initiator)
+                                    llm-headers))
           provider-started-at-ms (System/currentTimeMillis)
           _ (when on-chunk
               (on-chunk {:phase :provider-call
@@ -2033,17 +2003,17 @@
           provider-start-ns (System/nanoTime)
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                             :conversation-turn-id (:environment-id environment)
-                                                            :iteration iteration-position
-                                                            :copilot-initiator copilot-initiator)]
+                                                            :iteration iteration-position)]
                            (svar/ask-code! (:router environment)
                              (cond-> {:lang     "clojure"
                                       :messages messages
                                       :routing  (or routing {})
                                       :check-context? true
                                       :preserved-thinking? true}
-                               effective-reasoning (assoc :reasoning effective-reasoning)
-                               streaming-fn        (assoc :on-chunk streaming-fn)
-                               extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
+                               effective-reasoning  (assoc :reasoning effective-reasoning)
+                               streaming-fn         (assoc :on-chunk streaming-fn)
+                               effective-llm-headers (assoc :llm-headers effective-llm-headers)
+                               extra-body           (assoc :extra-body extra-body))))
           provider-duration-ms (elapsed-ms provider-start-ns)
           _ (log-stage! :provider-call/stop iteration
               {:duration-ms provider-duration-ms
@@ -3181,9 +3151,8 @@
                         (reset! a {}))
         _             (activate-auto-skills! environment user-request)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
-                                 {:system-prompt           system-prompt
-                                  :active-extensions       active-exts
-                                  :provider-prompt-context (provider-prompt-context environment resolved-model)})
+                                 {:system-prompt     system-prompt
+                                  :active-extensions active-exts})
         stable-prompt-content (prompt/stable-prompt-text stable-prompt-messages)
         initial-user-content user-request
         previous-turn-ctx (previous-turn-context environment conversation-turn-id)
@@ -3458,6 +3427,8 @@
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
                                            :stable-prompt-content stable-prompt-content
+                                           :provider-prompt-context
+                                           (provider-prompt-context environment pre-resolved-model)
                                            ;; One low-importance turn-boundary check keeps
                                            ;; titles live across topic shifts. The old
                                            ;; iteration-only cadence never fired for a
@@ -3507,9 +3478,7 @@
                                           {:user-request user-request
                                            :previous-iterations journal-iters
                                            :previous-blocks (vec (mapcat (comp :blocks second) journal-iters))}
-                                          :extra-body (assoc (or extra-body {})
-                                                        :copilot-initiator
-                                                        (copilot-initiator-for-iteration iteration))})
+                                          :extra-body extra-body})
                                        (catch Exception e
                                          (if (and (stream-truncated-error? e)
                                                (< attempt MAX_STREAM_TRUNCATED_RETRIES))
@@ -3919,6 +3888,7 @@
       {:cancel-atom            cancel-atom
        :user-request           user-request
        :router                 env-router
+       :root-resolved-model    root-resolved-model
        :root-model             root-model
        :root-provider          root-provider
        :db-info                db-info
@@ -4089,7 +4059,7 @@
 
    Goes through `svar/ask-code!` with `:lang \"text\"` (no JSON spec
    anywhere in Vis)."
-  [{:keys [router db-info conversation-id conversation-title-atom user-request]}]
+  [{:keys [router db-info conversation-id conversation-title-atom user-request resolved-model]}]
   (when (and router db-info conversation-id
           (string? user-request)
           (not (str/blank? user-request)))
@@ -4102,16 +4072,16 @@
                          auto-title-max-words " words, plain text only, no quotes, no period.\n\n"
                          "User request:\n" user-request "\n\n"
                          "Reply with ONE fenced ```text block containing only the title.")
-                _ (install-copilot-header-patch!)
+                llm-headers (copilot-llm-headers resolved-model "agent")
                 resp (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                         :conversation-id conversation-id
-                                                        :copilot-initiator "agent"
                                                         :internal-call :auto-title)]
                        (svar/ask-code! router
-                         {:messages           [(svar/user prompt)]
-                          :lang               "text"
-                          :reasoning          :off
-                          :code-tail-pointer? true}))
+                         (cond-> {:messages           [(svar/user prompt)]
+                                  :lang               "text"
+                                  :reasoning          :off
+                                  :code-tail-pointer? true}
+                           llm-headers (assoc :llm-headers llm-headers))))
                 raw  (or (some-> resp :result str/trim not-empty)
                        (some-> resp :raw str/trim not-empty))
                 title (clean-auto-title raw)]
@@ -4251,7 +4221,7 @@
   ([environment messages opts]
    (let [ctx (prepare-turn-context environment messages opts)
          {:keys [eval-timeout-ms concurrency
-                 debug? user-request root-model
+                 debug? user-request root-resolved-model root-model
                  db-info
                  environment-id]} ctx
          merged-concurrency (merge DEFAULT_CONCURRENCY concurrency)]
@@ -4315,7 +4285,8 @@
                 :db-info                 db-info
                 :conversation-id         (:conversation-id environment)
                 :conversation-title-atom (:conversation-title-atom environment)
-                :user-request            user-request}))
+                :user-request            user-request
+                :resolved-model          root-resolved-model}))
            result))))))
 
 ;; =============================================================================

@@ -1571,29 +1571,30 @@
   [ext sym-entry args env]
   (binding [*current-extension* ext
             *current-symbol* (:ext.symbol/symbol sym-entry)]
-    (let [sym    (:ext.symbol/symbol sym-entry)
-          ext-ns (:ext/namespace ext)
-          t0     (System/nanoTime)
-          _      (log-hook! :debug ::invoke ext-ns sym nil nil nil)
-          before-out (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
+    (let [sym          (:ext.symbol/symbol sym-entry)
+          ext-ns       (:ext/namespace ext)
+          original-args args
+          t0           (System/nanoTime)
+          _            (log-hook! :debug ::invoke ext-ns sym nil nil nil)
+          before-out   (run-before ext-ns sym-entry env (:ext.symbol/fn sym-entry) args)]
       (if (contains? before-out :result)
         (let [ms (elapsed-ms t0)
               result (->> (:result before-out)
                        (enrich-tool-result-info ext sym-entry)
                        (assert-symbol-envelope! sym))]
-          (write-sink-entries! ext sym-entry args result)
+          (write-sink-entries! ext sym-entry original-args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
           (tool-result->public-value result))
-        (let [{env  :env
-               f    :fn
-               args :args} before-out
+        (let [{call-env  :env
+               f         :fn
+               call-args :args} before-out
 
               call-result
               (let [ct0 (System/nanoTime)
                     call-started-at-ms (now-ms)]
                 (record-tool-event! (tool-start-event ext sym-entry call-started-at-ms))
                 (try
-                  (let [r  (apply f args)
+                  (let [r  (apply f call-args)
                         ms (elapsed-ms ct0)]
                     (log-hook! :debug ::fn-returned ext-ns sym :call ms nil)
                     {:result r})
@@ -1601,30 +1602,30 @@
                     (let [ms (elapsed-ms ct0)]
                       (log-hook! :warn ::fn-threw ext-ns sym :call ms (ex-message e))
                       (try
-                        (let [recovery (run-on-error ext-ns sym-entry e env f args)]
+                        (let [recovery (run-on-error ext-ns sym-entry e call-env f call-args)]
                           (cond
                             (contains? recovery :result) recovery
                             (contains? recovery :error)  (throw (:error recovery))
                             :else {:result (apply (get recovery :fn f)
-                                             (vec (get recovery :args args)))}))
+                                             (vec (get recovery :args call-args)))}))
                         (catch Throwable e2
                           ;; Unrecoverable: no on-error-fn or it surfaced the
                           ;; error. Write a failure sink entry derived from
                           ;; the original throwable BEFORE the throw escapes,
                           ;; so consumers see exactly which call broke even
                           ;; when the form bubbles up the exception.
-                          (write-sink-entries! ext sym-entry args
+                          (write-sink-entries! ext sym-entry original-args
                             (failure {:result    nil
                                       :op        (keyword (tool-call-name ext sym))
                                       :throwable e2}))
                           (throw e2)))))))
 
-              {:keys [result]} (run-after ext-ns sym-entry env f args (:result call-result))
+              {:keys [result]} (run-after ext-ns sym-entry call-env f call-args (:result call-result))
               result (->> result
                        (enrich-tool-result-info ext sym-entry)
                        (assert-symbol-envelope! sym))
               ms (elapsed-ms t0)]
-          (write-sink-entries! ext sym-entry args result)
+          (write-sink-entries! ext sym-entry original-args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
           (tool-result->public-value result))))))
 

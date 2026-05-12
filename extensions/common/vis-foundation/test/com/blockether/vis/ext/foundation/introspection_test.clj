@@ -8,8 +8,8 @@
     (let [symbols (set (map :ext.symbol/symbol introspection/all-symbols))]
       (expect (contains? symbols 'conversation-state))
       (expect (contains? symbols 'conversation-report))
-      (expect (contains? symbols 'clojure-symbol-documentation))
-      (expect (contains? symbols 'clojure-symbol-source-code))
-      (expect (contains? symbols 'clojure-symbol-metadata))
-      (expect (contains? symbols 'clojure-symbol-apropos))
+      (expect (contains? symbols 'engine-symbol-documentation))
+      (expect (contains? symbols 'engine-symbol-source-code))
+      (expect (contains? symbols 'engine-symbol-metadata))
+      (expect (contains? symbols 'engine-symbol-apropos))
       (expect (= 6 (count symbols))))))

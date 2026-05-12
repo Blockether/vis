@@ -649,6 +649,26 @@
             extension/*current-symbol* nil]
     (apply f args)))
 
+(defn- provider-prompt-block
+  "Render `<llm_model_prompt>` by calling the active provider's
+   `:provider/prompt-fn` with the prompt context built by the loop
+   layer. Returns nil when no provider hook is configured or when
+   it returns blank."
+  [provider-prompt-context]
+  (when-let [{:keys [descriptor] :as ctx} provider-prompt-context]
+    (when-let [f (:provider/prompt-fn descriptor)]
+      (try
+        (let [result (f ctx)]
+          (when (and (string? result) (not (str/blank? result)))
+            (prompt-block "llm_model_prompt" result)))
+        (catch Throwable t
+          (tel/log! {:level :warn
+                     :id ::provider-prompt-error
+                     :data {:provider (:id (:provider ctx))
+                            :error (ex-message t)}}
+            "Provider prompt-fn threw")
+          nil)))))
+
 (defn build-iteration-context
   "Assemble the per-iteration user-role trailer appended to each model call.
 
@@ -666,6 +686,8 @@
                      the wire messages array.
      <bindings>   - `(def ...)` user vars in the SCI env; SYSTEM vars and
                     initial tool/helper bindings are excluded.
+     <llm_model_prompt> - provider/model-specific prompt hook. Dynamic because
+                    model/provider routing can change per iteration.
 
    Plus zero or more tagged `<current_engine_start_nudge importance=\"...\">`
    entries wrapped in `<current_engine_start_nudges>`. All entries come from
@@ -701,7 +723,7 @@
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
                        model stable-prompt-content current-user-content context-limit
-                       title-refresh?]
+                       provider-prompt-context title-refresh?]
                 :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
@@ -714,7 +736,8 @@
                                  :active-extensions active-extensions
                                  :system-prompt stable-prompt-content})
         active-skills-block (active-skills-block environment)
-        pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block active-skills-block]))
+        provider-block (provider-prompt-block provider-prompt-context)
+        pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block active-skills-block provider-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
         budget-after-pinned (max 1 (- ctx-limit (long pinned-tokens)))
         bindings-str (read-bindings-str environment)
@@ -735,7 +758,7 @@
         ;; passes the value; policy lives in extensions.
         prompt-text (str/join "\n\n"
                       (keep identity
-                        [stable-prompt-content current-user-content current-context-block active-skills-block recent-block bindings-block]))
+                        [stable-prompt-content current-user-content current-context-block active-skills-block provider-block recent-block bindings-block]))
         input-tokens (or (count-prompt-tokens model prompt-text) 0)
         conversation-title (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
         nudge-ctx {:environment environment
@@ -789,7 +812,7 @@
                      (or active-extensions []))
         nudges-block (current-engine-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [current-context-block active-skills-block recent-block bindings-block nudges-block])]
+                [current-context-block active-skills-block provider-block recent-block bindings-block nudges-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -840,30 +863,26 @@
 
 (def ^:private CORE_SYSTEM_PROMPT
   "λVis.
-You are Vis ≜ SCI-based Small Clojure Interpreter Recursive Model.
-You emit Clojure forms into a live SCI sandbox. ENGINE evaluates them, records evidence, and asks again until final `(turn-answer! ...)`.
-Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
-   
-All `clojure.core` vars are interned, for the other namespaces the following are aliases are available:
-  - `clojure.walk` as `walk`
-  - `clojure.string` as `str`
-  - `clojure.set` as `set`
-  - `clojure.pprint` as `pp`
-  - `clojure.edn` as `edn`
-  - `clojure.spec.alpha` as `s`
-   
+SCI-based recursive model runtime.
+Sandbox := Clojure core + aliases + active EXTENSIONS + host primitives.
+Goal := drive evaluated code until `(turn-answer! [:ir ...])`.
+
+Aliases:
+  clojure.walk -> walk
+  clojure.string -> str
+  clojure.set -> set
+  clojure.pprint -> pp
+  clojure.edn -> edn
+  clojure.spec.alpha -> s
+
 λOUTPUT.
-  ∀ model replies: emit only ```clojure code fences```.
-  fence_body := SCI forms
-  narration := `;;` comments inside fences
-  user_visible_final := FINAL_CALL := `(turn-answer! [:ir ...])`
-  FINAL_CALL accepted ⇒ TURN ends
-  never final raw Markdown/text.
+  reply := ```clojure``` fences only; body := SCI forms.
+  narration := `;;` comments inside fences.
+  final := `(turn-answer! [:ir ...])`; never raw Markdown/prose.
 
 λENGINE.
-  machine := idle → receive_user_turn → build_turn_context → model_think
-             → maybe_tool_call → observe_tool_result → decide_next
-             → finalize_answer → persist_turn → idle
+  Host evals forms, records evidence to <journal>/<bindings>, then asks again
+  or persists accepted final answer.
 
   TURN := USER_GOAL × WORK(ITERATIONS)* × FINAL
 
@@ -884,12 +903,11 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   if READY?  → EMIT FINAL
 
   FINAL :=
-    allowed top-level forms:
-      optional `(set-conversation-title! \"...\")`
-      exactly one `(turn-answer! [:ir ...])`
-
-  FINAL forbids:
-    defs, tools, mutation, reloads, skill loads, extra work.
+    allowed forms: optional title, optional read-only evidence, exactly one
+    direct or guarded answer: `(turn-answer! [:ir ...])` or
+    `(when condition (turn-answer! [:ir ...]))`.
+  false guard ⇒ no FINAL; ENGINE loops.
+  FINAL forbids stateful mutation/reloads/skill loads.
 
 λSTATIC_CONTEXT.
   system-role stable prefix, built once at turn start; provider may cache it.
@@ -897,7 +915,6 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   <environment_info>   := turn-start host/project facts from active extension callbacks.
   <extensions>         := turn-start active extension prompt fragments.
   <skills>             := accessible skill summaries (names/descriptions only).
-  <llm_model_prompt>   := provider/model-specific prompt fragment.
 
 λDYNAMIC_CONTEXT.
   user-role turn/iteration context; initial user message plus per-iteration trailer.
@@ -908,6 +925,7 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   <bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings.
   <active_skills>               := loaded skill bodies; appears after `(load-skill! ...)`.
   <current_engine_start_nudges> := extension hook runtime hints for this iteration.
+  <llm_model_prompt>            := provider/model-specific prompt fragment for this iteration.
 
 λHOST.
   (turn-answer! ir)           ; finalize turn, ir must be [:ir ...]
@@ -918,13 +936,20 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   (var-history ...)           ; inspect persisted vars
   (var-history-timeline ...)  ; inspect var timeline
 
-λREPL_RECOVERY.
-  *1 *2 *3 *e := last values/errors for sandbox recovery; ordinary prompt context uses rendered values, not named runtime-var indirection.
-  When `v/` is active, use `v/clojure-symbol-documentation`, `v/clojure-symbol-source-code`, `v/clojure-symbol-metadata`, and `v/clojure-symbol-apropos` for function docs/source/metadata so results land in <journal>.
+λENGINE_RECOVERY.
+  - *1 *2 *3 *e := last values/errors for sandbox recovery; ordinary prompt context uses rendered values, not named runtime-var indirection.
+  - `(v/engine-symbol-documentation 'map)` -> puts the documentation + signature for `map` into the <journal> for model inspection.
+  - `(v/engine-symbol-source-code 'map)` -> puts the source code for `map` into the <journal> for model inspection.
+  - `(v/engine-symbol-metadata 'map)` -> puts the metadata map for `map` into the <journal> for model inspection.
+  - `(v/engine-symbol-apropos 'map)` -> puts the list of matching symbols for `map` into the <journal> for model inspection.
 
 λDISCIPLINE.
-  separate_observe_code_blocks from mutation e.g. reads then (turn-answer! ...)/mutations like write file/patches in the same iteration are BANNED
-  never_guess_when_asked_about_code -> emit observation code blocks if the data is not in <bindings> or <journal>; do not guess or fabricate code to fill in gaps in the observed evidence. 
+  decide from <journal> + <bindings>, not memory.
+  missing_facts? -> observe with defs.
+  need_change? -> mutate alone; no answer same iteration.
+  after_mutation -> verify with read-only evidence.
+  answer only when enough?; guard if condition is machine-checkable.
+  no guessing.
   
 λANSWER_IR.
   Build IR directly; do not render Markdown into IR.
@@ -937,28 +962,30 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   text   := string shorthand
   preserve_ws := :code | :c | :kbd
 
-λMIN_EXAMPLES.
-  ITERATION 1 - Work iteration, observe only:
-    ```clojure
-    ;; Set the initial conversation-title 
-    (set-conversation-title! \"...\")
+λEXAMPLE TURN.
 
-    ;; 
-    ;; Need evidence first. No answer in this iteration.
-    (def src (v/cat \"src/foo.clj\"))
+  Human: Change `src/foo.clj` so `foo` returns `\"new\"`.
+
+  Vis iteration 1 - observe:
+    ```clojure
+    (set-conversation-title! \"Update foo return\")
+    (def foo-source (v/cat \"src/foo.clj\"))
     ```
 
-  ITERATION 2 - Work iteration, act + verify later:
+  Iteration 2 - mutate only:
     ```clojure
-    ;; Mutate now; verify after journal records result.
-    (v/patch [{:path \"src/foo.clj\"
-               :search \"old\"
-               :replace \"new\"}])
+    (def foo-patch
+      (z/patch [{:path \"src/foo.clj\"
+                 :search \"(defn foo [] \\\"old\\\")\"
+                 :replace \"(defn foo [] \\\"new\\\")\"}]))
     ```
 
-  ITERATION 3 - Final iteration:
+  Iteration 3 - verify + guarded answer:
     ```clojure
-    (turn-answer! [:ir [:p \"Done.\"]])
+    (def foo-after (v/cat \"src/foo.clj\"))
+    (when (and (:success? foo-patch)
+               (some #(str/includes? % \"(defn foo [] \\\"new\\\")\") (:lines foo-after)))
+      (turn-answer! [:ir [:p \"Patch applied and verified by rereading src/foo.clj.\"]]))
     ```")
 
 (defn build-system-prompt
@@ -1132,26 +1159,6 @@ All `clojure.core` vars are interned, for the other namespaces the following are
                      (str ": " description))))
             (sort-by :name all-skills)))))))
 
-(defn- provider-prompt-block
-  "Render `<llm_model_prompt>` by calling the active provider's
-   `:provider/prompt-fn` with the prompt context built by the loop
-   layer. Returns nil when no provider hook is configured or when
-   it returns blank."
-  [provider-prompt-context]
-  (when-let [{:keys [descriptor] :as ctx} provider-prompt-context]
-    (when-let [f (:provider/prompt-fn descriptor)]
-      (try
-        (let [result (f ctx)]
-          (when (and (string? result) (not (str/blank? result)))
-            (prompt-block "llm_model_prompt" result)))
-        (catch Throwable t
-          (tel/log! {:level :warn
-                     :id ::provider-prompt-error
-                     :data {:provider (:id (:provider ctx))
-                            :error (ex-message t)}}
-            "Provider prompt-fn threw")
-          nil)))))
-
 (defn- stable-prompt-message
   [content]
   (when (and (string? content) (not (str/blank? content)))
@@ -1172,7 +1179,6 @@ All `clojure.core` vars are interned, for the other namespaces the following are
      `<environment_info>`   - host/git/project facts from extensions
      `<extensions>`         - extension `:ext/prompt` fragments
      `<skills>`             - skill name + description summaries
-     `<llm_model_prompt>`   - provider/model-specific prompt hook
 
    Full skill bodies are not in the cached prefix; they arrive only after
    the model calls `(load-skill! ...)` and are rendered in user-role
@@ -1183,9 +1189,8 @@ All `clojure.core` vars are interned, for the other namespaces the following are
         environment_info, extension prompt, and nudge collection.
 
    Optional opts:
-     `:system-prompt`            - caller addendum appended to CORE.
-     `:provider-prompt-context`  - provider hook context."
-  [environment {:keys [system-prompt active-extensions provider-prompt-context] :as opts}]
+     `:system-prompt`            - caller addendum appended to CORE."
+  [environment {:keys [system-prompt active-extensions] :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
              {:type :vis/missing-active-extensions})))
@@ -1193,11 +1198,10 @@ All `clojure.core` vars are interned, for the other namespaces the following are
                        (build-system-prompt {:system-prompt system-prompt}))
         env-block    (environment-info-block environment active-extensions)
         ext-block    (extensions-prompt-block environment active-extensions)
-        skills-block (skills-summary-block)
-        prov-block   (provider-prompt-block provider-prompt-context)]
+        skills-block (skills-summary-block)]
     (vec
       (keep stable-prompt-message
-        [core-block env-block ext-block skills-block prov-block]))))
+        [core-block env-block ext-block skills-block]))))
 
 (defn assemble-system-prompt
   "Backward-compatible joined-text view of `assemble-stable-prompt-messages`.

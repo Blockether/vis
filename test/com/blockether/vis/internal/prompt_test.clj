@@ -26,14 +26,11 @@
               stable-messages (prompt/assemble-stable-prompt-messages
                                 {}
                                 {:system-prompt "caller addendum"
-                                 :active-extensions active-extensions
-                                 :provider-prompt-context
-                                 {:provider {:id :demo-provider}
-                                  :descriptor {:provider/prompt-fn (fn [_] "provider rules")}}})
+                                 :active-extensions active-extensions})
               messages (prompt/assemble-initial-messages
                          {:stable-prompt-messages stable-messages
                           :initial-user-content "Do the thing."})]
-          (expect (= ["system" "system" "system" "system" "system" "user"]
+          (expect (= ["system" "system" "system" "system" "user"]
                     (role-seq messages)))
           (expect (= stable-messages (subvec messages 0 (count stable-messages))))
           (expect (every? #(= "system" (:role %)) stable-messages))
@@ -41,15 +38,18 @@
           (expect (contains-tag? (nth messages 1) "environment_info"))
           (expect (contains-tag? (nth messages 2) "extensions"))
           (expect (contains-tag? (nth messages 3) "skills"))
-          (expect (contains-tag? (nth messages 4) "llm_model_prompt"))
-          (expect (str/includes? (get-in messages [5 :content])
+          (expect (str/includes? (get-in messages [4 :content])
                     "<user_turn_request_main_goal>\nDo the thing.\n</user_turn_request_main_goal>"))))))
 
   (it "core system prompt splits static and dynamic context truthfully"
     (let [content (:content (first (prompt/assemble-stable-prompt-messages
                                      {}
                                      {:active-extensions []})))]
+      (expect (str/includes? content "SCI-based recursive model runtime"))
+      (expect (str/includes? content "reply := ```clojure``` fences only"))
+      (expect (str/includes? content "Host evals forms, records evidence"))
       (expect (str/includes? content "TURN := USER_GOAL × WORK(ITERATIONS)* × FINAL"))
+      (expect (not (str/includes? content "Host loop: assistant emits executable SCI forms")))
       (expect (str/includes? content "λSTATIC_CONTEXT."))
       (expect (str/includes? content "system-role stable prefix, built once at turn start"))
       (expect (str/includes? content "<environment_info>   := turn-start host/project facts from active extension callbacks."))
@@ -57,17 +57,24 @@
       (expect (str/includes? content "<journal>                     := token-budgeted iteration evidence; newest at bottom; may carry prior conversation iterations."))
       (expect (str/includes? content "<bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings."))
       (expect (str/includes? content "direct turn/conversation values"))
-      (expect (str/includes? content "FINAL forbids:"))
+      (expect (str/includes? content "FINAL forbids stateful mutation"))
       (expect (str/includes? content "(turn-answer! ir)"))
       (expect (str/includes? content "(set-conversation-title! s)"))
-      (expect (str/includes? content "v/clojure-symbol-documentation"))
-      (expect (str/includes? content "v/clojure-symbol-source-code"))
-      (expect (str/includes? content "v/clojure-symbol-metadata"))
-      (expect (str/includes? content "v/clojure-symbol-apropos"))
+      (expect (str/includes? content "v/engine-symbol-documentation"))
+      (expect (str/includes? content "v/engine-symbol-source-code"))
+      (expect (str/includes? content "v/engine-symbol-metadata"))
+      (expect (str/includes? content "v/engine-symbol-apropos"))
       (expect (not (str/includes? content "clojure.repl")))
       (expect (not (str/includes? content "repl/doc")))
       (expect (str/includes? content "load-skill! name)          ; load skill body for next iteration, never FINAL"))
       (expect (str/includes? content "required_evidence_observed?"))
+      (expect (str/includes? content "decide from <journal> + <bindings>, not memory"))
+      (expect (str/includes? content "false guard"))
+      (expect (str/includes? content "(when condition (turn-answer! [:ir ...]))"))
+      (expect (str/includes? content "<llm_model_prompt>"))
+      (expect (not (str/includes? content "<llm_model_prompt>   := provider/model-specific prompt fragment.")))
+      (expect (not (str/includes? content "v/bash")))
+      (expect (not (str/includes? content "(v/cat \"src/foo.clj\" :from 0 :to 1000)")))
       (expect (not (str/includes? content "tool-events")))
       (expect (not (str/includes? content "λSYSTEM_VARS.")))
       (expect (not (str/includes? content "read_only :=")))
@@ -108,7 +115,10 @@
                            :iteration 2
                            :model "unknown-model"
                            :current-user-content "Do the thing."
-                           :stable-prompt-content "stable prompt"})))]
+                           :stable-prompt-content "stable prompt"
+                           :provider-prompt-context
+                           {:provider {:id :demo-provider}
+                            :descriptor {:provider/prompt-fn (fn [_] "provider rules")}}})))]
         (expect (str/includes? content "<current_turn_context>"))
         (expect (str/includes? content "engine_state: :turn.iteration/start"))
         (expect (str/includes? content "engine_phase: :model_think"))
@@ -126,6 +136,7 @@
         (expect (str/includes? content "conversation_state_id: #uuid \"33333333-3333-3333-3333-333333333333\""))
         (expect (str/includes? content "conversation_title: \"Prompt stack cleanup\""))
         (expect (str/includes? content "conversation_previous_answer: \"Previous final answer.\""))
+        (expect (str/includes? content "<llm_model_prompt>\nprovider rules\n</llm_model_prompt>"))
         (expect (not (str/includes? content "TURN_ID")))
         (expect (not (str/includes? content "CONVERSATION_PREVIOUS_ANSWER")))
         (expect (not (str/includes? content "engine_state_machine")))
