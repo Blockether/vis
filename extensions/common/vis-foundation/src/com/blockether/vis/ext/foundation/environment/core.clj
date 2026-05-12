@@ -231,25 +231,10 @@
 ;; the same data was already in the prompt's <skills> block + the
 ;; SYSTEM var. ONE source of truth wins; the redundant call goes.
 ;;
-;; Surfaces still exposed: TURN_ACCESSIBLE_SKILLS for filtering,
-;; `(v/load-skill! "name")` for activation (loads body),
+;; Surfaces still exposed: TURN_ACCESSIBLE_SKILLS for filtering and
 ;; `(v/reload-skills!)` for the cache-bust after editing on disk.
-
-(defn- remember-active-skill!
-  [environment _f _args result]
-  (when (and (:found? result) (string? (:name result)))
-    (when-let [active-skills-atom (:active-skills-atom environment)]
-      (swap! active-skills-atom assoc (:name result) result)))
-  {:result result})
-
-(defn load-skill!
-  "Load skill body by name. Returns {:found? true :body ...} or {:found? false}. Loaded skills appear in <active_skills> with full body on the next iteration."
-  [skill-name]
-  (skills/lookup skill-name))
-
-(def load-skill!-symbol
-  (env-data-symbol #'load-skill!
-    {:after-fn remember-active-skill!}))
+;; Skill body loading is INTERNAL host state: use `(load-skill! "name")`,
+;; not a `v/` extension symbol.
 
 (defn- combined-scan-warnings []
   ;; Three sources, all `{:source :reason :path}` shaped so the
@@ -311,7 +296,7 @@
 (def environment-symbols
   [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol
-   main-agent-instructions-symbol load-skill!-symbol
+   main-agent-instructions-symbol
    scan-warnings-symbol
    reload-instructions!-symbol reload-skills!-symbol
    reload-extensions!-symbol])
@@ -324,7 +309,7 @@
    `com.blockether.vis.internal.prompt/render-extension-prompt-block`
    for the rationale."
   (str "`v/` env: (v/snapshot) full map; shortcuts (v/repositories) (v/git) (v/languages) (v/monorepo); (v/render) prints env block; (v/refresh!) refreshes cache. "
-    "Guidance/skills: (v/main-agent-instructions), (v/load-skill! \"name\"), (v/scan-warnings). "
+    "Guidance: (v/main-agent-instructions), (v/scan-warnings). "
     "Reload: (v/reload-instructions!), (v/reload-skills!), (v/reload-extensions!)."))
 
 (defn environment-info

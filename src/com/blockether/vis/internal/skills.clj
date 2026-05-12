@@ -291,22 +291,19 @@
   "Return internal sandbox bindings for skill activation. These are host
    primitives, not extension symbols: `(load-skill! \"name\")` loads the
    full body and records it in `active-skills-atom` for the next
-   `<active_skills>` trailer; `(reload-skills!)` cache-busts the scanner.
-   `(load-skill \"name\")` remains as a compatibility alias, but prompts
-   teach only the bang form because it mutates the active-skill set."
+   `<active_skills>` trailer; `(reload-skills!)` cache-busts the scanner."
   [active-skills-atom]
-  (let [load-skill!* (fn load-skill! [skill-name]
-                       (let [result (lookup skill-name)]
-                         (when (and (:found? result) (string? (:name result)) active-skills-atom)
-                           (swap! active-skills-atom assoc (:name result) result))
-                         result))]
-    {'load-skill! load-skill!*
-     'load-skill  load-skill!*
-     'reload-skills!
-     (fn reload-skills! []
-       (reload!))
-     ;; (skills) - lazy replacement for the retired TURN_ACCESSIBLE_SKILLS
-     ;; SYSTEM var. Returns the same compact summary vec; the model uses
-     ;; plain Clojure (filter, some, map) over the result.
-     'skills
-     (fn skills [] (list-summaries))}))
+  {'load-skill!
+   (fn load-skill! [skill-name]
+     (let [result (lookup skill-name)]
+       (when (and (:found? result) (string? (:name result)) active-skills-atom)
+         (swap! active-skills-atom assoc (:name result) result))
+       result))
+   'reload-skills!
+   (fn reload-skills! []
+     (reload!))
+   ;; (skills) - lazy replacement for the retired TURN_ACCESSIBLE_SKILLS
+   ;; SYSTEM var. Returns the same compact summary vec; the model uses
+   ;; plain Clojure (filter, some, map) over the result.
+   'skills
+   (fn skills [] (list-summaries))})
