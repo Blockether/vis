@@ -287,6 +287,34 @@
   []
   (or (:warnings (current)) []))
 
+(defn load-result?
+  "True when `x` is the map returned by internal `(load-skill! ...)`."
+  [x]
+  (and (map? x)
+    (contains? x :found?)
+    (string? (:name x))))
+
+(defn render-load-result
+  "Human-facing Markdown for the map returned by `(load-skill! ...)`.
+   The model still receives the raw map; channels use this to avoid
+   printing a giant escaped `:body` string in RESULT blocks."
+  [x]
+  (let [name (or (:name x) "unknown")]
+    (if (:found? x)
+      (str "Loaded skill `" name "`."
+        (when-let [path (:path x)]
+          (str "\n\n`" path "`"))
+        (when-let [body (some-> (:body x) str str/trim)]
+          (str "\n\n" body)))
+      (str "Skill `" name "` not found."))))
+
+(defn load-result-detail
+  "Small renderer metadata for `(load-skill! ...)` result rows."
+  [x]
+  (when (load-result? x)
+    {:kind :skill-load
+     :name (:name x)}))
+
 (defn sandbox-bindings
   "Return internal sandbox bindings for skill activation. These are host
    primitives, not extension symbols: `(load-skill! \"name\")` loads the

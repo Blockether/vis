@@ -458,9 +458,9 @@
                       :active-id   (active-workspace-tab-id db tabs)
                       :fg          t/footer-warning-fg
                       :bg          t/dialog-bg
-                      :active-fg   t/footer-warning-fg
+                      :active-fg   t/header-hover-fg
                       :active-bg   t/dialog-title-bg
-                      :inactive-fg t/footer-warning-fg
+                      :inactive-fg t/header-fg
                       :inactive-bg t/dialog-bg})]
         (doseq [[idx {:keys [id left width]}] (map-indexed vector layout)
                 :when (pos? (long width))]
