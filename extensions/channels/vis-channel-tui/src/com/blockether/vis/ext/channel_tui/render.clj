@@ -3615,6 +3615,11 @@
 (defn- ir-non-empty? [ir]
   (and (vector? ir) (= :ir (first ir)) (> (count ir) 2)))
 
+(defn- provider-error-answer? [ir]
+  (boolean (and (vector? ir)
+             (= :ir (first ir))
+             (true? (get-in ir [1 :vis/provider-error])))))
+
 (defn format-answer-with-thinking-data*
   "Uncached implementation. Returns `{:text :lines :line-meta}` so the
    bubble painter can keep clickable summary-row metadata aligned with
@@ -3633,7 +3638,9 @@
         show-iteration-headers? true
         show-final-hdr?         false
         line-entry              (fn [line] {:line line :meta nil})
-        trace-entries           (when (and show-iterations? (seq trace))
+        _                       (assert-canonical-ir! answer)
+        suppress-trace?         (provider-error-answer? answer)
+        trace-entries           (when (and show-iterations? (not suppress-trace?) (seq trace))
                                   (into []
                                     (mapcat (fn [[idx entry]]
                                               (let [visible (visible-iteration-entry entry show-silent?)]
@@ -3646,7 +3653,6 @@
                                                    :conversation-turn-id (:conversation-turn-id opts)
                                                    :preview-default-lines (get settings :preview/default-lines 4)}))))
                                     (collapse-repeated-error-runs trace)))
-        _                       (assert-canonical-ir! answer)
         fa-label                (label-text "final answer")
         conf-str                (when confidence (str " / " (name confidence)))
         full-label              (str fa-label (or conf-str ""))

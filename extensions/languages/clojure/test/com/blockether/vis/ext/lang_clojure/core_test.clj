@@ -92,11 +92,11 @@
       (expect (str/includes? info "`z/diagnostics`"))
       (expect (str/includes? info "`z/rename-plan`"))))
 
-  (it "exposes rewrite-clj zipper API as raw composable SCI helpers"
+  (it "exposes rewrite-clj zipper API as raw composable SCI symbols"
     (let [entry (first (filter #(= 'of-string (:ext.symbol/sym %))
                          (:ext/symbols clj-ext/clojure-extension)))]
-      (expect (fn? (:ext.symbol/val entry)))
-      (expect (nil? (:ext.symbol/fn entry)))
+      (expect (fn? (:ext.symbol/fn entry)))
+      (expect (true? (:ext.symbol/raw? entry)))
       (expect (seq (:ext.symbol/arglists entry)))))
 
   (it "makes rewrite-clj threading macros callable inside SCI"
