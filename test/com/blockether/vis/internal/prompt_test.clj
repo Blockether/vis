@@ -60,6 +60,7 @@
       (expect (str/includes? content "FINAL forbids:"))
       (expect (str/includes? content "(turn-answer! ir)"))
       (expect (str/includes? content "(set-conversation-title! s)"))
+      (expect (str/includes? content "Use repl/doc and repl/source"))
       (expect (str/includes? content "load-skill! name)          ; load skill body for next iteration, never FINAL"))
       (expect (str/includes? content "required_evidence_observed?"))
       (expect (not (str/includes? content "tool-events")))

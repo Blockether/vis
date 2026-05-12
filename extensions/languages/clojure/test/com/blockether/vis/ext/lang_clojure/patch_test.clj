@@ -22,7 +22,25 @@
     (str f)))
 
 (defdescribe zpatch-surface-test
-  (it "exposes z/patch-shaped guidance and semantic editing playbooks" (expect (str/includes? patch/z-prompt "`z/` Clojure/EDN zipper patching")) (expect (str/includes? patch/z-prompt "Same map shape as v/patch")) (expect (str/includes? patch/z-prompt "Playbooks:")) (expect (str/includes? patch/z-prompt "Top-level binding")) (expect (str/includes? patch/z-prompt "Nested call/symbol")) (expect (str/includes? patch/z-prompt "Docs/comments")) (expect (str/includes? patch/z-prompt "Namespace/require")) (expect (str/includes? patch/z-prompt "Batch/recovery")) (expect (str/includes? patch/z-prompt "span rows beat lossy sexpr/string search")) (expect (str/includes? patch/z-prompt "Prefer data replacements")) (expect (str/includes? patch/z-prompt "Data forms lose comments; z/source preserves bytes")) (expect (str/includes? patch/z-prompt "z/patch itself preflights exact-match uniqueness")) (expect (str/includes? patch/z-prompt "z/source")) (expect (str/includes? patch/z-prompt "z/lit")) (expect (str/includes? patch/z-prompt "z/forms")) (expect (str/includes? patch/z-prompt "z/locators")) (expect (str/includes? patch/z-prompt "z/symbols")) (expect (str/includes? patch/z-prompt "z/locator-for-symbol")) (expect (str/includes? patch/z-prompt "z/inspect")) (expect (str/includes? patch/z-prompt "z/subedit->")) (expect (not (str/includes? patch/z-prompt "z/zedit"))) (expect (< (count patch/z-prompt) 2300)) (expect (= (quote com.blockether.vis.ext.lang-clojure.core) (:ext/namespace clj-ext/clojure-extension))) (expect (= (quote source) (:ext.symbol/sym patch/source-symbol))) (expect (= (quote lit) (:ext.symbol/sym patch/lit-symbol))) (expect (= (quote patch) (:ext.symbol/sym patch/patch-symbol))) (expect (= (quote forms) (:ext.symbol/sym patch/forms-symbol))) (expect (= (quote inspect) (:ext.symbol/sym patch/inspect-symbol))) (expect (str/includes? (:ext.symbol/doc patch/patch-symbol) "Same input shape as v/patch"))))
+  (it "exposes minimal z/patch strategy guidance"
+    (expect (str/includes? patch/z-prompt "`z/` strategy"))
+    (expect (str/includes? patch/z-prompt "Combine discovery rows with one patch"))
+    (expect (str/includes? patch/z-prompt "z/forms"))
+    (expect (str/includes? patch/z-prompt "z/locators"))
+    (expect (str/includes? patch/z-prompt "z/symbols"))
+    (expect (str/includes? patch/z-prompt "add :replace"))
+    (expect (str/includes? patch/z-prompt "z/source only"))
+    (expect (not (str/includes? patch/z-prompt "clojure.repl")))
+    (expect (not (str/includes? patch/z-prompt "Playbooks:")))
+    (expect (not (str/includes? patch/z-prompt "z/zedit")))
+    (expect (< (count patch/z-prompt) 700))
+    (expect (= (quote com.blockether.vis.ext.lang-clojure.core) (:ext/namespace clj-ext/clojure-extension)))
+    (expect (= (quote source) (:ext.symbol/sym patch/source-symbol)))
+    (expect (= (quote lit) (:ext.symbol/sym patch/lit-symbol)))
+    (expect (= (quote patch) (:ext.symbol/sym patch/patch-symbol)))
+    (expect (= (quote forms) (:ext.symbol/sym patch/forms-symbol)))
+    (expect (= (quote inspect) (:ext.symbol/sym patch/inspect-symbol)))
+    (expect (str/includes? (:ext.symbol/doc patch/patch-symbol) "Same input shape as v/patch"))))
 
 (defdescribe zpatch-check-test
   (it "reports valid? true and 1 match for a unique-search edit (no write)"

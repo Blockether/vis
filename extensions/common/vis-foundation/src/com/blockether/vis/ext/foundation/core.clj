@@ -34,11 +34,6 @@
    [com.blockether.vis.ext.foundation.introspection :as introspection]
    [com.blockether.vis.ext.foundation.nudges :as nudges]))
 
-(def ^:private answer-ir-prompt
-  "Answer IR grammar lives in the core system prompt.
-Always emit `(turn-answer! [:ir ...])`. Do not emit Markdown/text strings in `(turn-answer! ...)`.
-Do not render Markdown as IR; build IR nodes directly. Channels render IR at their boundary.")
-
 (defn- combined-prompt
   "Stitch the per-area prompt fragments together. The environment
    fragment is a fn (it renders the live snapshot every time the
@@ -49,9 +44,7 @@ Do not render Markdown as IR; build IR nodes directly. Channels render IR at the
     "\n\n"
     introspection/introspection-prompt
     "\n\n"
-    (editing/available-editing-prompt)
-    "\n\n"
-    answer-ir-prompt))
+    (editing/available-editing-prompt)))
 
 (defn- call-resolved!
   [sym & args]

@@ -924,6 +924,7 @@ All `clojure.core` vars are interned, for the other namespaces the following are
 
 λREPL_RECOVERY.
   *1 *2 *3 *e := last values/errors for sandbox recovery; ordinary prompt context uses rendered values, not named runtime-var indirection.
+  Use repl/doc and repl/source for function docs/source instead of relying on extension prompt docs.
 
 λDISCIPLINE.
   separate_observe_code_blocks from mutation e.g. reads then (turn-answer! ...)/mutations like write file/patches in the same iteration are BANNED

@@ -32,16 +32,14 @@
       (expect (contains? syms 'file-link))
       (expect (contains? syms 'join))))
 
-  (it "includes the markdown prompt fragment in the unified prompt"
+  (it "keeps the unified prompt strategy-only"
     (let [prompt ((:ext/prompt foundation/vis-extension) {})]
-      (expect (str/includes? prompt "v/h1"))
-      (expect (str/includes? prompt "v/file-link"))
-      (expect (str/includes? prompt "v/join"))))
-
-  (it "answer-IR prompt forbids Markdown answers and Markdown-to-IR rendering"
-    (let [prompt ((:ext/prompt foundation/vis-extension) {})]
-      (expect (str/includes? prompt "Do not emit Markdown/text strings"))
-      (expect (str/includes? prompt "Do not render Markdown as IR"))))
+      (expect (str/includes? prompt "`v/` strategy"))
+      (expect (str/includes? prompt "combine v/rg/v/glob/v/ls"))
+      (expect (not (str/includes? prompt "clojure.repl/doc")))
+      (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
+      (expect (not (str/includes? prompt "Do not render Markdown as IR")))
+      (expect (< (count prompt) 1600))))
 
   (it "contributes environment info through the dedicated hook"
     (expect (fn? (:ext/environment-info-fn foundation/vis-extension))))
