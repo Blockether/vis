@@ -43,4 +43,19 @@
                  :answer-form-idx 1})
       (let [entry (first (get-timeline))]
         (expect (= ["(+ 1 2)"] (:code entry)))
-        (expect (= [false] (:silents entry)))))))
+        (expect (= [false] (:silents entry))))))
+
+  (it "retains provider fallback notices for live bubbles"
+    (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)
+          notice {:phase :provider-fallback
+                  :iteration 1
+                  :reason :transient-error
+                  :failed-provider {:id :anthropic-coding-plan
+                                    :model "claude-opus-4-7"
+                                    :error "HTTP 529 overloaded"}
+                  :new-provider {:id :zai-coding-plan
+                                 :model "glm-5.1"}}]
+      (on-chunk notice)
+      (let [entry (first (get-timeline))]
+        (expect (= [(select-keys notice [:reason :failed-provider :new-provider :fallback])]
+                  (:provider-fallbacks entry)))))))

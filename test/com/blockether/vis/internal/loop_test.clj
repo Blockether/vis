@@ -42,7 +42,30 @@
       (expect (= :zai-coding-plan (provider guessed result)))
       (expect (= "glm-5.1" (model guessed result)))
       (expect (= :anthropic-coding-plan (provider guessed {})))
-      (expect (= "claude-opus-4-7" (model guessed {}))))))
+      (expect (= "claude-opus-4-7" (model guessed {})))))
+
+  (it "builds selected/actual/fallback metadata for persistence and UI"
+    (let [metadata #'loop/llm-routing-metadata
+          attach   #'loop/attach-llm-routing-summary
+          selected {:provider :anthropic-coding-plan
+                    :name "claude-opus-4-7"}
+          result   {:llm-provider :zai-coding-plan
+                    :llm-model "glm-5.1"
+                    :llm-fallback-trace [{:provider-id :anthropic-coding-plan
+                                          :model "claude-opus-4-7"
+                                          :reason :transient-error
+                                          :error "HTTP 529 overloaded"}]
+                    :cost {:total-cost 0.01}}]
+      (expect (= {:selected {:provider "anthropic-coding-plan" :model "claude-opus-4-7"}
+                  :actual {:provider "zai-coding-plan" :model "glm-5.1"}
+                  :fallback? true
+                  :fallback-trace [{:provider-id :anthropic-coding-plan
+                                    :model "claude-opus-4-7"
+                                    :reason :transient-error
+                                    :error "HTTP 529 overloaded"}]}
+                (metadata selected result)))
+      (expect (= "zai-coding-plan" (get-in (attach {:cost {:total-cost 0.01}} selected result) [:cost :provider])))
+      (expect (= "glm-5.1" (get-in (attach {:cost {:total-cost 0.01}} selected result) [:cost :model]))))))
 
 (defdescribe preserved-thinking-replay-test
   (it "does not replay z.ai thinking into an Anthropic provider/model call"

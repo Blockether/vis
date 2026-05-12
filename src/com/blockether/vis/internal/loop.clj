@@ -2014,6 +2014,39 @@
   (or (:routed/model ask-result)
     (some-> (:name resolved-model) str)))
 
+(defn- llm-id
+  [provider model]
+  (cond-> {}
+    provider (assoc :provider (name (keyword provider)))
+    model    (assoc :model (str model))))
+
+(defn- llm-routing-metadata
+  [selected-model iteration-result]
+  (let [selected (llm-id (:provider selected-model) (some-> (:name selected-model) str))
+        actual   (llm-id (or (:llm-provider iteration-result) (:provider selected-model))
+                   (or (:llm-model iteration-result) (some-> (:name selected-model) str)))
+        fallback-trace (vec (or (:llm-fallback-trace iteration-result) []))]
+    (cond-> {:selected selected
+             :actual   actual
+             :fallback? (or (not= selected actual) (seq fallback-trace))}
+      (seq fallback-trace) (assoc :fallback-trace fallback-trace))))
+
+(defn- attach-llm-routing-summary
+  [result selected-model iteration-result]
+  (let [routing  (llm-routing-metadata selected-model iteration-result)
+        actual   (:actual routing)
+        selected (:selected routing)]
+    (cond-> (assoc result
+              :provider (:provider actual)
+              :model    (:model actual)
+              :llm-selected selected
+              :llm-actual actual
+              :llm-fallback? (:fallback? routing))
+      (seq (:fallback-trace routing))
+      (assoc :llm-fallback-trace (:fallback-trace routing))
+      (:cost result)
+      (update :cost merge (select-keys actual [:provider :model])))))
+
 (defn- compatible-preserved-thinking-journal-iters
   [journal-iters target]
   (let [{target-provider :provider target-model :model} target]
@@ -2118,8 +2151,17 @@
           ;;   :iteration-final - iteration complete (final-result
           ;;                      or normal end-of-iteration marker)
           streaming-fn (when on-chunk
-                         (fn [{:keys [reasoning done?]}]
-                           (when (or (some? reasoning) done?)
+                         (fn [{:keys [reasoning done? reset? reason failed-provider new-provider] :as chunk}]
+                           (cond
+                             reset?
+                             (on-chunk {:phase           :provider-fallback
+                                        :iteration       iteration-position
+                                        :reason          reason
+                                        :failed-provider failed-provider
+                                        :new-provider    new-provider
+                                        :fallback        (select-keys chunk [:reason :failed-provider :new-provider])})
+
+                             (or (some? reasoning) done?)
                              (on-chunk {:phase     :reasoning
                                         :iteration iteration-position
                                         :thinking  (some-> reasoning str)
@@ -2473,6 +2515,11 @@
              :duration-ms (or (:duration-ms ask-result) 0)
              :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
+             :llm-selected-provider (:provider resolved-model)
+             :llm-selected-model (some-> (:name resolved-model) str)
+             :llm-actual-provider provider
+             :llm-actual-model model-name
+             :llm-fallback-trace (:routed/fallback-trace ask-result)
              :llm-raw-response (:raw ask-result)
              :llm-executable-code (:result ask-result)
              :llm-executable-blocks (:blocks ask-result)
@@ -2494,6 +2541,11 @@
                :duration-ms (or (:duration-ms ask-result) 0)
                :silent-form-idxs silent-form-idxs
                :llm-messages messages :llm-provider provider :llm-model model-name
+               :llm-selected-provider (:provider resolved-model)
+               :llm-selected-model (some-> (:name resolved-model) str)
+               :llm-actual-provider provider
+               :llm-actual-model model-name
+               :llm-fallback-trace (:routed/fallback-trace ask-result)
                :llm-raw-response (:raw ask-result)
                :llm-executable-code (:result ask-result)
                :llm-executable-blocks (:blocks ask-result)
@@ -2507,6 +2559,11 @@
          :llm-messages messages
          :llm-provider (actual-llm-provider resolved-model ask-result)
          :llm-model    (actual-llm-model resolved-model ask-result)
+         :llm-selected-provider (:provider resolved-model)
+         :llm-selected-model (some-> (:name resolved-model) str)
+         :llm-actual-provider (actual-llm-provider resolved-model ask-result)
+         :llm-actual-model (actual-llm-model resolved-model ask-result)
+         :llm-fallback-trace (:routed/fallback-trace ask-result)
          :llm-raw-response (:raw ask-result)
          :llm-executable-code (:result ask-result)
          :llm-executable-blocks (:blocks ask-result)
@@ -3349,19 +3406,21 @@
         ;; created_at DESC LIMIT 1` to compare against current state.
         ;; Subsequent iterations omit them - cuts ~99 % redundant DB
         ;; volume vs every-iteration. See plan Q15.
-        iteration-metadata (fn [iter-pos]
-                             (when (seq active-exts)
-                               {:extensions (mapv (fn [ext]
-                                                    (let [ns-sym  (:ext/namespace ext)
-                                                          markers (when (zero? (long iter-pos))
-                                                                    (extension/extension-source-markers-of ns-sym))]
-                                                      (cond-> {:namespace (str ns-sym)}
-                                                        (:ext/version ext) (assoc :version (:ext/version ext))
-                                                        markers            (merge (select-keys markers
-                                                                                    [:source-paths
-                                                                                     :source-mtime-max
-                                                                                     :source-hash-sha256])))))
-                                              active-exts)}))]
+        iteration-metadata (fn [iter-pos llm-meta]
+                             (cond-> {}
+                               (seq llm-meta) (assoc :llm llm-meta)
+                               (seq active-exts)
+                               (assoc :extensions (mapv (fn [ext]
+                                                          (let [ns-sym  (:ext/namespace ext)
+                                                                markers (when (zero? (long iter-pos))
+                                                                          (extension/extension-source-markers-of ns-sym))]
+                                                            (cond-> {:namespace (str ns-sym)}
+                                                              (:ext/version ext) (assoc :version (:ext/version ext))
+                                                              markers            (merge (select-keys markers
+                                                                                          [:source-paths
+                                                                                           :source-mtime-max
+                                                                                           :source-hash-sha256])))))
+                                                    active-exts))))]
     ;; -----------------------------------------------------------------
     ;; Turn-start SYSTEM-var bindings.
     ;;
@@ -3655,7 +3714,13 @@
                                                           :llm-messages effective-messages
                                                           :llm-provider (:provider resolved-model)
                                                           :llm-model (str (:name resolved-model))
-                                                          :metadata (iteration-metadata iteration)}
+                                                          :metadata (iteration-metadata iteration
+                                                                      (cond-> {:selected (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
+                                                                               :actual   (llm-id (:provider resolved-model) (some-> (:name resolved-model) str))
+                                                                               :fallback? false}
+                                                                        (seq (get-in iteration-error-data [:data :routed/fallback-trace]))
+                                                                        (assoc :fallback? true
+                                                                          :fallback-trace (vec (get-in iteration-error-data [:data :routed/fallback-trace])))))}
                                                    tc (assoc :tokens (:tokens tc)
                                                         :cost-usd (:cost-usd tc)))))]
                         (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
@@ -3767,7 +3832,8 @@
                                                     :llm-executable-code (:llm-executable-code iteration-result)
                                                     :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                     :llm-assistant-message (:assistant-message iteration-result)
-                                                    :metadata (iteration-metadata iteration)}
+                                                    :metadata (iteration-metadata iteration
+                                                                (llm-routing-metadata pre-resolved-model iteration-result))}
                                              tc (assoc :tokens (:tokens tc)
                                                   :cost-usd (:cost-usd tc)))))
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
@@ -3812,9 +3878,10 @@
                                        :answer-form-idx  (:answer-form-idx final-result)
                                        :silent-form-idxs (:silent-form-idxs iteration-result)
                                        :done?            true}))
-                          (let [result (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
-                                               :iteration-count (inc iteration)}
-                                         (finalize-cost))]
+                          (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
+                                                   :iteration-count (inc iteration)}
+                                             (finalize-cost))
+                                         (attach-llm-routing-summary pre-resolved-model iteration-result))]
                             (emit-post-hooks! :turn/stop
                               {:status          :final
                                :iteration       (long (or iteration 0))
@@ -3861,8 +3928,8 @@
                                                  {:thinking thinking
                                                   :blocks   blocks
                                                   :llm-executable-code (:llm-executable-code iteration-result)
-                                                  :llm-provider (:provider resolved-model)
-                                                  :llm-model    (some-> (:name resolved-model) str)
+                                                  :llm-provider (:llm-provider iteration-result)
+                                                  :llm-model    (:llm-model iteration-result)
                                                   ;; svar's canonical replay handle for this
                                                   ;; iteration. Re-emitted into messages on
                                                   ;; the next iteration via

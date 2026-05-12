@@ -60,6 +60,7 @@
       :successes [bool ...]
       :started-at-ms [int-ms ...] ;; running form start timestamps
       :silents   [bool ...]       ;; per-form :vis/silent visibility marker
+      :provider-fallbacks [map ...] ;; routed provider fallback notices
       :error     nil-or-iteration-error
       :final     nil-or-{:answer :iteration-count :status}
       :done?     bool}
@@ -87,6 +88,7 @@
    :successes []
    :started-at-ms []
    :silents   []
+   :provider-fallbacks []
    :elided-form-idxs #{}
    :error     nil
    :final     nil
@@ -304,6 +306,10 @@
     (let [next-thinking (or (normalize-thinking-text (:thinking chunk))
                           (normalize-thinking-text (:thinking entry)))]
       (assoc entry :thinking next-thinking))
+
+    :provider-fallback
+    (update entry :provider-fallbacks conj
+      (select-keys chunk [:reason :failed-provider :new-provider :fallback]))
 
     :form-start
     (write-form-start-slot entry chunk)
