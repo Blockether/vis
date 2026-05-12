@@ -5,6 +5,5 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe extension-api-export-test
-  (it "exports raw callable symbol builders"
-    (expect (identical? extension/helper vis/helper))
-    (expect (identical? extension/raw-var vis/raw-var))))
+  (it "exports symbol as the callable symbol builder"
+    (expect (identical? extension/symbol vis/symbol))))

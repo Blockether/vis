@@ -81,33 +81,45 @@
   [sym _v]
   (str "rewrite-clj.zip/" sym))
 
-(defn- raw-rewrite-var
-  [sym v opts]
-  (vis/raw-var v (merge {:sym sym :doc-fn rewrite-doc-fallback} opts)))
+(defn- raw-opts
+  [sym]
+  {:sym sym :raw? true :doc-fn rewrite-doc-fallback})
 
 (defn- macro-entry
   "Build a value entry for an SCI-callable macro shim. The shim's value is
-   the marker map `{:vis.sci/macro-fn ...}`; docs/arglists and raw binding
-   shape are normalized by Vis' internal raw-var converter."
+   the marker map `{:vis.sci/macro-fn ...}`."
   [sym v macro-fn]
-  (raw-rewrite-var sym v {:val {:vis.sci/macro-fn macro-fn}}))
+  (vis/value v {:sym sym
+                :val {:vis.sci/macro-fn macro-fn}
+                :doc-fn rewrite-doc-fallback}))
 
 (defn- var->symbol-entry
   "Convert a rewrite-clj.zip public var into a raw SDK entry.
 
-   Vis core owns the raw-var conversion: functions become raw helpers,
-   values stay values, and macros are skipped unless we supply an SCI macro
-   marker. Four threading helpers are macros; expose SCI-local macro shims
-   that expand to same-namespace helper calls so `(z/subedit-> ...)` works
-   inside the sandbox."
+   Functions use `vis/symbol` with `:raw? true`, so they compose as plain
+   Clojure values instead of observed tool envelopes. Values stay values, and
+   macros are skipped unless we supply an SCI macro marker. Four threading
+   helpers are macros; expose SCI-local macro shims that expand to
+   same-namespace helper calls so `(z/subedit-> ...)` works inside the sandbox."
   [sym v]
-  (if (contains? macro-symbols sym)
-    (macro-entry sym v (get macro-symbols sym))
-    (raw-rewrite-var sym v nil)))
+  (let [m      (meta v)
+        target @v]
+    (cond
+      (contains? macro-symbols sym)
+      (macro-entry sym v (get macro-symbols sym))
+
+      (:macro m)
+      nil
+
+      (fn? target)
+      (vis/symbol v (raw-opts sym))
+
+      :else
+      (vis/value v {:sym sym :doc-fn rewrite-doc-fallback}))))
 
 (def ^:private rewrite-clj-zip-symbols
   ;; Top-level :require already loaded rewrite-clj.zip. Walk its publics
-  ;; and convert each one into a raw helper, macro value, or plain value entry.
+  ;; and convert each one into a raw symbol, macro value, or plain value entry.
   (->> (ns-publics 'rewrite-clj.zip)
     (sort-by key)
     (keep (fn [[sym v]] (var->symbol-entry sym v)))

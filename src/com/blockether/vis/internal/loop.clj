@@ -2569,7 +2569,7 @@
       :else
       "WHAT HAPPENED: provider rejected the request before the model ran.")))
 
-(defn- format-provider-error
+(defn- provider-error-ir
   [err]
   (let [message          (or (:message err) (str err))
         data             (:data err)
@@ -2578,19 +2578,24 @@
         request-id       (or (:request-id data) (:request_id data))
         provider-message (provider-body-message body-raw)
         provider-body    (when (and body-raw (not (str/blank? body-raw)))
-                           (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))]
-    (str "## 🚨 PROVIDER_ERROR"
-      "\n\n"
-      "Provider call failed before the model could run."
-      "\n\n"
-      "**" (provider-error-explanation err) "**"
-      "\n\n"
-      "- Wrapper: `" message "`"
-      (when status (str "\n- HTTP: `" status "`"))
-      (when request-id (str "\n- Request id: `" request-id "`"))
-      (when provider-message (str "\n- Provider message: `" provider-message "`"))
-      (when provider-body
-        (str "\n\nProvider response:\n\n```json\n" provider-body "\n```")))))
+                           (truncate body-raw CHAT_ERROR_BODY_RENDER_CHARS))
+        facts            (cond-> [[:li {} [:p {} [:span {} "Wrapper: "] [:c {} message]]]]
+                           status (conj [:li {} [:p {} [:span {} "HTTP: "] [:c {} (str status)]]])
+                           request-id (conj [:li {} [:p {} [:span {} "Request id: "] [:c {} (str request-id)]]])
+                           provider-message (conj [:li {} [:p {} [:span {} "Provider message: "] [:c {} provider-message]]]))
+        ir               (render/->ast
+                           (cond-> [:ir {}
+                                    [:h {:level 2} [:span {} "🚨 PROVIDER_ERROR"]]
+                                    [:p {} [:strong {} [:span {} "Provider call failed before the model could run."]]]
+                                    [:p {} [:strong {} [:span {} (provider-error-explanation err)]]]
+                                    (into [:ul {}] facts)]
+                             provider-body (conj [:p {} [:span {} "Provider response:"]]
+                                             [:code {:lang "json"} provider-body])))]
+    (assoc ir 1 (assoc (second ir) :vis/provider-error true))))
+
+(defn- format-provider-error
+  [err]
+  (render/render (provider-error-ir err) :plain))
 
 (defn- format-iteration-error
   "Render one trace `:error` map as a Markdown bullet for the user.
@@ -2650,19 +2655,14 @@
         (str/join "\n\n" errs)
         "\n\n"))))
 
-(defn- recent-provider-errors-block
-  "Fatal provider failures should not be visually mixed with old local
-   form/eval failures. Show the provider block alone so the user sees
-   the real blocker first."
-  [trace n]
-  (let [errs (->> trace
-               reverse
-               (keep :error)
-               (filter provider-error-data?)
-               (map format-provider-error)
-               (take n))]
-    (when (seq errs)
-      (str/join "\n\n" errs))))
+(defn- recent-provider-error-ir
+  [trace]
+  (some->> trace
+    reverse
+    (keep :error)
+    (filter provider-error-data?)
+    first
+    provider-error-ir))
 
 ;; -----------------------------------------------------------------------------
 ;; Router lifecycle + model helpers (turn single-file API)
@@ -3640,10 +3640,10 @@
                           "on-chunk (iteration error)")
                         (if (::fatal-iteration-error iteration-result)
                           (let [trace' (conj trace trace-entry)
-                                errors-block (or (recent-provider-errors-block trace' 1)
-                                               (recent-errors-block trace' 3))
-                                fallback (or errors-block
-                                           "## 🚨 PROVIDER_ERROR\n\nProvider call failed before the model could run.")
+                                fallback (or (recent-provider-error-ir trace')
+                                           (render/->ast [:ir {}
+                                                          [:h {:level 2} [:span {} "🚨 PROVIDER_ERROR"]]
+                                                          [:p {} [:span {} "Provider call failed before the model could run."]]]))
                                 result (merge {:answer fallback
                                                :status :error
                                                :status-id (status->id :error)

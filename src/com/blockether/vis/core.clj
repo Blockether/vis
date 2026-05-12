@@ -283,8 +283,6 @@
 ;; =============================================================================
 (def extension                           extension/extension)
 (def symbol                              extension/symbol)
-(def helper                              extension/helper)
-(def raw-var                             extension/raw-var)
 (def value                               extension/value)
 (def render-prompt                       extension/render-prompt)
 (def journal-render-tool-result         extension/journal-render-tool-result)

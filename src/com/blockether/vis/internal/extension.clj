@@ -566,6 +566,11 @@
 ;; build the model-facing call form (e.g. `(v/cat path)`).
 (s/def :ext.symbol/arglists (s/and vector? seq))
 
+;; Raw callable helpers compose as normal Clojure values. They bypass the
+;; observed-tool envelope/journal/channel wrapper and return their function's
+;; value directly inside SCI.
+(s/def :ext.symbol/raw? boolean?)
+
 ;; Entry decorator: (fn [env f args] -> map). Wraps :fn on the way in.
 (s/def :ext.symbol/before-fn fn?)
 
@@ -624,10 +629,11 @@
 
 (s/def ::fn-symbol-entry
   (s/keys :req [:ext.symbol/sym :ext.symbol/fn :ext.symbol/doc
-                :ext.symbol/arglists
-                :ext.symbol/journal-render-fn
-                :ext.symbol/channel-render-fn]
-    :opt [:ext.symbol/before-fn :ext.symbol/after-fn
+                :ext.symbol/arglists]
+    :opt [:ext.symbol/raw?
+          :ext.symbol/journal-render-fn
+          :ext.symbol/channel-render-fn
+          :ext.symbol/before-fn :ext.symbol/after-fn
           :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn
           :ext.symbol/source-rewrite-fn
           :ext.symbol/journal-render-error-fn
@@ -1007,59 +1013,72 @@
    var lacks a non-blank docstring or non-empty arglists - extension symbols
    carry their canonical surface from the underlying defn, not from a side
    map. Without these, the SCI sandbox cannot expose `(doc v/sym)` to the
-   model and the prompt-listing has no doc line to render."
-  [v require-arglists?]
-  (when-not (var? v)
-    (anomaly/incorrect! "vis/symbol and vis/value require a Clojure var (e.g. #'my-tool)"
-      {:type :extension/symbol-not-a-var :given v}))
-  (let [m   (meta v)
-        nm  (:name m)
-        doc (:doc m)
-        al  (:arglists m)]
-    (when-not (non-blank-string? doc)
-      (anomaly/incorrect!
-        (str "Var " v " is missing a docstring; extension symbols inherit "
-          ":doc from the underlying defn (no side maps).")
-        {:type :extension/missing-doc :var v}))
-    ;; defn auto-attaches :arglists as a LIST (e.g. '([x] [x y])); manual
+   model and the prompt-listing has no doc line to render.
+
+   Opts can supply `:doc`, `:doc-fn`, or `:arglists` for third-party vars
+   whose metadata is incomplete. Raw helpers default missing arglists to
+   `([& args])` so library APIs can still be surfaced without per-var glue."
+  ([v require-arglists?]
+   (var-meta v require-arglists? nil))
+  ([v require-arglists? opts]
+   (when-not (var? v)
+     (anomaly/incorrect! "vis/symbol and vis/value require a Clojure var (e.g. #'my-tool)"
+       {:type :extension/symbol-not-a-var :given v}))
+   (let [m      (meta v)
+         nm     (:name m)
+         doc-fn (:doc-fn opts)
+         doc    (or (:doc opts)
+                  (:doc m)
+                  (when doc-fn (doc-fn (or (:sym opts) nm) v)))
+         al     (or (:arglists opts)
+                  (:arglists m)
+                  (when (:raw? opts) '([& args])))]
+     (when-not (non-blank-string? doc)
+       (anomaly/incorrect!
+         (str "Var " v " is missing a docstring; extension symbols inherit "
+           ":doc from the underlying defn (no side maps).")
+         {:type :extension/missing-doc :var v}))
+     ;; defn auto-attaches :arglists as a LIST (e.g. '([x] [x y])); manual
      ;; ^{:arglists ...} likewise. The downstream spec requires vector?.
      ;; Accept any non-empty sequential and coerce to a vector here so the
      ;; spec stays strict at the storage boundary while callers stay free
      ;; to use either shape.
-    (when (and require-arglists?
-            (not (and (sequential? al) (seq al))))
-      (anomaly/incorrect!
-        (str "Var " v " is missing :arglists in its metadata; extension fn "
-          "symbols inherit :arglists from the underlying defn.")
-        {:type :extension/missing-arglists :var v}))
-    {:sym      nm
-     :doc      doc
-     :arglists (when (seq al) (vec al))}))
+     (when (and require-arglists?
+             (not (and (sequential? al) (seq al))))
+       (anomaly/incorrect!
+         (str "Var " v " is missing :arglists in its metadata; extension fn "
+           "symbols inherit :arglists from the underlying defn.")
+         {:type :extension/missing-arglists :var v}))
+     {:sym      nm
+      :doc      doc
+      :arglists (when (seq al) (vec al))})))
 
 (defn- build-symbol-entry
   "Shared core that turns `{:sym :fn :doc :arglists}` plus opts into
    a validated `::fn-symbol-entry`. Used by both the var-based public API
    and the test-friendly direct-args form below."
   [{:keys [sym fn doc arglists]} opts]
-  (let [journal-render-fn (:journal-render-fn opts)
+  (let [raw? (true? (:raw? opts))
+        journal-render-fn (:journal-render-fn opts)
         channel-render-fn (:channel-render-fn opts)]
-    (when-not (clojure.core/fn? journal-render-fn)
+    (when (and (not raw?) (not (clojure.core/fn? journal-render-fn)))
       (anomaly/incorrect!
-        (str "Symbol '" sym "' is missing :journal-render-fn. Every fn-symbol must "
-          "declare a journal renderer (fn [result] -> string).")
+        (str "Symbol '" sym "' is missing :journal-render-fn. Observed tool symbols must "
+          "declare a journal renderer (fn [result] -> string), or set :raw? true for plain helpers.")
         {:type :extension/missing-journal-render-fn :sym sym}))
-    (when-not (clojure.core/fn? channel-render-fn)
+    (when (and (not raw?) (not (clojure.core/fn? channel-render-fn)))
       (anomaly/incorrect!
-        (str "Symbol '" sym "' is missing :channel-render-fn. Every fn-symbol must "
-          "declare a channel renderer (fn [result] -> string).")
+        (str "Symbol '" sym "' is missing :channel-render-fn. Observed tool symbols must "
+          "declare a channel renderer (fn [result] -> string), or set :raw? true for plain helpers.")
         {:type :extension/missing-channel-render-fn :sym sym}))
     (validate-symbol-entry!
-      (cond-> #:ext.symbol{:sym               sym
-                           :fn                fn
-                           :doc               doc
-                           :arglists          arglists
-                           :journal-render-fn journal-render-fn
-                           :channel-render-fn channel-render-fn}
+      (cond-> #:ext.symbol{:sym      sym
+                           :fn       fn
+                           :doc      doc
+                           :arglists arglists}
+        raw?                       (assoc :ext.symbol/raw? true)
+        journal-render-fn          (assoc :ext.symbol/journal-render-fn journal-render-fn)
+        channel-render-fn          (assoc :ext.symbol/channel-render-fn channel-render-fn)
         (:journal-render-error-fn opts) (assoc :ext.symbol/journal-render-error-fn (:journal-render-error-fn opts))
         (:channel-render-error-fn opts) (assoc :ext.symbol/channel-render-error-fn (:channel-render-error-fn opts))
         (:before-fn opts)               (assoc :ext.symbol/before-fn (:before-fn opts))
@@ -1080,34 +1099,36 @@
    `:arglists` (read from var metadata - i.e. the underlying defn's
    docstring + arglists). Pass it as `#'my-tool`.
 
-   REQUIRED opts:
+   Observed tools (default) must pass:
      :journal-render-fn   - (fn [result] string). Renders the unwrapped
-                            `:result` value into the model-facing
+                            internal envelope `:result` into model-facing
                             <journal>. Plaintext, terse, ≤~1500 chars.
      :channel-render-fn   - (fn [result] string). Renders the unwrapped
-                            `:result` as markdown. UNIFORM across every
-                            channel (TUI, telegram, ...) - channel
-                            adapters apply their own flavor tweaks if
-                            needed.
+                            result as markdown. UNIFORM across every channel.
+
+   Raw helpers pass `:raw? true` and return plain values directly, with no
+   envelope enforcement, journal/channel sink, or tool metadata.
 
    Optional opts:
      :sym                       - override the SCI sandbox name (default: var name).
+     :doc / :doc-fn / :arglists - metadata fallback for third-party vars.
+     :raw?                      - true for plain composable helpers.
      :journal-render-error-fn   - (fn [error] string). Override journal
                                   failure render.
      :channel-render-error-fn   - (fn [error] string). Override channel
                                   failure render. Uniform across channels.
      :before-fn :after-fn :on-error-fn :on-parse-error-fn :source-rewrite-fn
 
-   Every function symbol must return a canonical `:envelope` map.
-   The wrapper enforces this globally; per-symbol result specs are not
-   part of the API.
+   Observed tool functions return canonical internal envelope maps. The
+   wrapper records the envelope, then returns only its payload to SCI; failure
+   envelopes are converted into thrown ex-info so SCI reports normal errors.
 
    See `docs/src/extensions/hooks.md` for hook semantics."
   ([v] (symbol v nil))
   ([v opts-or-fn]
    (if (var? v)
-     (let [{:keys [sym doc arglists]} (var-meta v true)
-           opts opts-or-fn
+     (let [opts opts-or-fn
+           {:keys [sym doc arglists]} (var-meta v true opts)
            sym      (or (:sym opts) sym)
            f        @v]
        (when-not (fn? f)
@@ -1141,80 +1162,34 @@
          {:type :extension/missing-arglists :sym sym-name}))
      (build-symbol-entry
        {:sym sym-name :fn f :doc doc :arglists (vec arglists)}
-       (merge {:journal-render-fn (constantly "")
-               :channel-render-fn (constantly "")}
-         opts)))))
+       (if (:raw? opts)
+         opts
+         (merge {:journal-render-fn (constantly "")
+                 :channel-render-fn (constantly "")}
+           opts))))))
 
 (defn helper
   "Build a raw callable helper entry FROM A CLOJURE VAR.
 
-   Helpers are installed into SCI as plain functions: no envelope
-   enforcement, no journal/channel sink, no tool metadata. Use helpers
-   for composable library functions (`z/of-string`, `z/down`, ...). Use
-   `symbol` for observable tools that return canonical envelopes.
-
-   The var supplies `:sym`, `:val`, `:doc`, and `:arglists`.
-
-   Opts:
-     :sym - override the SCI sandbox name (default: var name)."
+   Helpers are bound as plain values in SCI, not observed tools: no envelope
+   validation, no journal renderer, no channel renderer. Use for composable
+   host helper functions such as `snapshot`, not for user-observable tool
+   calls."
   ([v] (helper v nil))
   ([v opts]
    (if (var? v)
-     (let [{:keys [sym doc arglists]} (var-meta v true)
+     (let [{:keys [sym doc arglists]} (var-meta v true (assoc opts :raw? true))
            sym (or (:sym opts) sym)
-           f   @v]
-       (when-not (fn? f)
+           val @v]
+       (when-not (fn? val)
          (anomaly/incorrect!
            (str "Var " v " does not hold a function; use vis/value for plain values.")
            {:type :extension/helper-not-a-fn :var v}))
        (validate-symbol-entry!
-         #:ext.symbol{:sym sym :val f :doc doc :arglists arglists}))
+         #:ext.symbol{:sym sym :val val :doc doc :arglists arglists}))
      (anomaly/incorrect!
-       "vis/helper expects a Clojure var (e.g. #'raw-helper)."
+       "vis/helper expects a Clojure var (e.g. #'my-helper)."
        {:type :extension/helper-not-a-var :given v}))))
-
-(defn raw-var
-  "Convert a Clojure var into a raw SCI binding entry.
-
-   Function vars become helper entries; non-function vars become value entries;
-   macro vars are skipped unless opts supplies `:val` (used by SCI macro marker
-   shims like `{:vis.sci/macro-fn ...}`). This is for library surfaces that
-   must compose as normal Clojure values, not observable Vis tools.
-
-   Opts:
-     :sym      override the SCI sandbox name
-     :doc      override/supply doc when third-party metadata is missing
-     :arglists override/supply arglists for function helpers
-     :val      expose this value instead of derefing the var
-     :doc-fn   fallback `(fn [sym var] string)` when metadata has no doc"
-  ([v] (raw-var v nil))
-  ([v opts]
-   (when-not (var? v)
-     (anomaly/incorrect! "vis/raw-var expects a Clojure var"
-       {:type :extension/raw-var-not-a-var :given v}))
-   (let [m         (meta v)
-         sym       (or (:sym opts) (:name m))
-         val-given? (contains? opts :val)
-         val       (if val-given? (:val opts) @v)
-         doc-fn    (or (:doc-fn opts)
-                     (fn [sym' v']
-                       (str (some-> v' meta :ns ns-name) "/" sym')))
-         doc       (or (:doc opts) (:doc m) (doc-fn sym v))
-         arglists  (or (:arglists opts)
-                     (some-> (:arglists m) vec)
-                     (when (fn? val) '([& args])))]
-     (cond
-       (and (:macro m) (not val-given?))
-       nil
-
-       (fn? val)
-       (validate-symbol-entry!
-         #:ext.symbol{:sym sym :val val :doc doc :arglists (vec arglists)})
-
-       :else
-       (validate-symbol-entry!
-         (cond-> #:ext.symbol{:sym sym :val val :doc doc}
-           (seq arglists) (assoc :ext.symbol/arglists (vec arglists))))))))
 
 (defn value
   "Build a value symbol entry FROM A CLOJURE VAR - a plain constant/data binding.
@@ -1233,8 +1208,8 @@
   ([v] (value v nil))
   ([v opts-or-val]
    (if (var? v)
-     (let [{:keys [sym doc]} (var-meta v false)
-           opts opts-or-val
+     (let [opts opts-or-val
+           {:keys [sym doc]} (var-meta v false opts)
            sym (or (:sym opts) sym)
            val (if (contains? opts :val) (:val opts) @v)
            entry #:ext.symbol{:sym sym :val val :doc doc}]
@@ -1544,18 +1519,31 @@
 (defn current-extension-id []
   (some-> *current-extension* :ext/namespace str))
 
+(defn- tool-result->public-value
+  [result]
+  (if (:success? result)
+    (:result result)
+    (let [err (:error result)]
+      (throw (ex-info (or (:message err) "Tool failed")
+               {:type :vis/tool-failure
+                :symbol (:symbol result)
+                :error err
+                :tool-result result})))))
+
 (defn invoke-symbol-wrapper
-  "Full invocation pipeline for a function symbol entry:
+  "Full invocation pipeline for an observed tool symbol entry:
    before-fn -> fn -> after-fn, with on-error-fn catching :fn errors.
 
    Every hook can override :fn, :args, :env via its return map.
    :before-fn can return {:result val} to short-circuit.
    :on-error-fn can return {:result val}, {:error err}, or {:fn :args :env} to retry.
 
-   The FINAL public return value must be a canonical `:envelope`.
-   The wrapper enforces this globally for every function symbol.
+   The implementation's final value must be a canonical internal envelope.
+   The wrapper records journal/channel/provenance from that envelope, then
+   returns only the payload `:result` to SCI. Failure envelopes are converted
+   into thrown ex-info so ordinary SCI error reporting handles them.
 
-   Returns the final result. Throws on any unrecoverable error."
+   Raw helper symbols (`:ext.symbol/raw? true`) bypass this function entirely."
   [ext sym-entry args env]
   (binding [*current-extension* ext
             *current-symbol* (:ext.symbol/sym sym-entry)]
@@ -1571,7 +1559,7 @@
                        (assert-symbol-envelope! sym))]
           (write-sink-entries! ext sym-entry args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms "short-circuited")
-          result)
+          (tool-result->public-value result))
         (let [{env  :env
                f    :fn
                args :args} before-out
@@ -1603,7 +1591,7 @@
                           ;; when the form bubbles up the exception.
                           (write-sink-entries! ext sym-entry args
                             (failure {:result    nil
-                                      :info      {:op (keyword (tool-call-name ext sym))}
+                                      :op        (keyword (tool-call-name ext sym))
                                       :throwable e2}))
                           (throw e2)))))))
 
@@ -1614,7 +1602,7 @@
               ms (elapsed-ms t0)]
           (write-sink-entries! ext sym-entry args result)
           (log-hook! :debug ::invoke-done ext-ns sym nil ms nil)
-          result)))))
+          (tool-result->public-value result))))))
 
 (def ^:private ^:dynamic *log-writer*
   "Writer that sends output to the log file instead of stdout/stderr.
@@ -1644,12 +1632,16 @@
     (map (fn [sym-entry]
            (let [sym (:ext.symbol/sym sym-entry)]
              (if (contains? sym-entry :ext.symbol/fn)
-               [sym (fn [& args]
-                      (let [w (get-log-writer)]
-                        (binding [*out* w
-                                  *err* w
-                                  workspace/*workspace-root* (workspace/workspace-root env)]
-                          (invoke-symbol-wrapper ext sym-entry (vec args) env))))]
+               [sym (if (:ext.symbol/raw? sym-entry)
+                      (fn [& args]
+                        (binding [workspace/*workspace-root* (workspace/workspace-root env)]
+                          (apply (:ext.symbol/fn sym-entry) args)))
+                      (fn [& args]
+                        (let [w (get-log-writer)]
+                          (binding [*out* w
+                                    *err* w
+                                    workspace/*workspace-root* (workspace/workspace-root env)]
+                            (invoke-symbol-wrapper ext sym-entry (vec args) env)))))]
                [sym (:ext.symbol/val sym-entry)]))))
     (:ext/symbols ext)))
 
