@@ -67,7 +67,7 @@
       blank?
       {:importance :low
        :text (str "CONVERSATION_TITLE is currently empty. "
-               "Set it via `(set-conversation-title \"...\")` (3-7-word noun phrase, "
+               "Set it via `(set-conversation-title! \"...\")` (3-7-word noun phrase, "
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
                "the conversation is discoverable in the sidebar.")}
 
@@ -75,7 +75,7 @@
       {:importance :low
        :text (str "Current CONVERSATION_TITLE is \"" conversation-title "\". "
                "If this turn changes the conversation focus, refresh the title via "
-               "`(set-conversation-title \"...\")`.")}
+               "`(set-conversation-title! \"...\")`.")}
 
       (and (integer? iteration)
         (pos? iteration)
@@ -83,7 +83,7 @@
       {:importance :low
        :text (str "You're " iteration " iterations into this turn. "
                "If the conversation's focus has shifted from \"" conversation-title "\", "
-               "refresh the title via `(set-conversation-title \"...\")`.")})))
+               "refresh the title via `(set-conversation-title! \"...\")`.")})))
 
 (defn context-pressure-nudge
   "Return a `:high`-importance nudge when the estimated input tokens

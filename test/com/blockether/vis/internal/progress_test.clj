@@ -8,7 +8,7 @@
       (on-chunk {:phase :form-result
                  :iteration 1
                  :form-idx 0
-                 :code "(set-conversation-title \"Greeting\")"
+                 :code "(set-conversation-title! \"Greeting\")"
                  :result :vis/silent
                  :execution-time-ms 1})
       (on-chunk {:phase :form-result
@@ -18,7 +18,7 @@
                  :result 3
                  :execution-time-ms 1})
       (let [entry (first (get-timeline))]
-        (expect (= ["(set-conversation-title \"Greeting\")" "(+ 1 2)"] (:code entry)))
+        (expect (= ["(set-conversation-title! \"Greeting\")" "(+ 1 2)"] (:code entry)))
         (expect (= [true false] (:silents entry)))
         (expect (= [":vis/silent" "3"] (:results entry))))))
 
