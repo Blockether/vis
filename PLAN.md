@@ -46,7 +46,7 @@ Built by:
 ```text
 prompt/assemble-stable-prompt-messages
   -> prompt/build-system-prompt
-  -> separate system-role messages for environment_info / extension prompt / skills summary / provider prompt
+  -> separate system-role messages for environment / extension prompt / provider prompt
 ```
 
 Role:
@@ -105,7 +105,6 @@ Shape:
 
 ```xml
 <current_turn_context>...</current_turn_context>
-<active_skills>...</active_skills>
 <journal>...</journal>
 <bindings>...</bindings>
 <current_engine_start_nudges>...</current_engine_start_nudges>
@@ -136,11 +135,11 @@ ENGINE:
 </system_prompt>
 
 [1] role=system
-<environment_info>
+<environment>
 CWD: /Users/fierycod/vis
 Git branch: main
 ...
-</environment_info>
+</environment>
 
 [2] role=system
 <extensions>
@@ -150,12 +149,6 @@ z/... clojure structural editing available
 </extensions>
 
 [3] role=system
-<skills>
-- find-skills: Helps discover skills...
-- autoresearch-create: Set up autonomous experiments...
-</skills>
-
-[4] role=system
 <llm_model_prompt>
 Provider/model-specific stable advice, if any.
 </llm_model_prompt>
@@ -193,12 +186,6 @@ previous_persisted_iteration_id: 37b6f7d5-9999-8888-7777-666655554444
 previous_persisted_iteration_position: 2
 prompt_role: user
 </current_turn_context>
-
-<active_skills count="1">
-<skill name="diagnose" source="repo">
-...loaded skill body...
-</skill>
-</active_skills>
 
 <journal>
 i1.1  (v/rg "system_nudge" {:path "src"}) -> found matches in prompt.clj and loop.clj

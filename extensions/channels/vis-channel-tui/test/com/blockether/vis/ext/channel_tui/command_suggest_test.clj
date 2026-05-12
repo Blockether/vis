@@ -39,20 +39,6 @@
       (expect (= "/worktree [<branch>]"
                 (:slash/usage (first (suggest/suggestions "/work" commands))))))
 
-    (it "prepends skill commands with /skill:"
-      (let [skill-cmds [{:id :diagnose
-                         :label "/skill:diagnose"
-                         :doc "Debug broken behavior"
-                         :skill? true
-                         :args [{:name "request" :kind :positional :required false}]}]]
-        (expect (= "skill:diagnose"
-                  (:slash/name (first (suggest/suggestions "/skill:d" skill-cmds)))))
-        (expect (= "/skill:diagnose [<request>]"
-                  (:slash/usage (first (suggest/suggestions "/skill:d" skill-cmds)))))
-        (expect (= "/skill:diagnose "
-                  (suggest/completion-text
-                    (first (suggest/suggestions "/skill:d" skill-cmds)))))))
-
     (it "tracks the selected suggestion for arrow keys and tab completion"
       (let [suggestions (suggest/suggestions "/" commands {:limit 3 :selected-index 1})]
         (expect (= "new-tab" (:slash/name (suggest/selected-suggestion suggestions))))

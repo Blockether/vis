@@ -47,7 +47,6 @@
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
    [com.blockether.vis.internal.registry :as registry]
-   [com.blockether.vis.internal.skills :as skills]
    [edamame.core :as edamame]
    [sci.core :as sci]
    [taoensso.telemere :as tel])
@@ -1340,7 +1339,7 @@
 ;; embedded in their source, which the fence-leak preflight then rejects -
 ;; burning an entire iteration on a parser-recoverable error.
 ;;
-;; Repair pass: at the line level, drop every <journal>/<bindings>/<active_skills>
+;; Repair pass: at the line level, drop every <journal>/<bindings>
 ;; /<current_turn_context>/<current_engine_start_nudge[s]> opener through its closer. Closer matches `</tag>` (proper),
 ;; a bare ``` line (LLM fumble), or another opener (implicit close), or EOF.
 ;; A ```lang line implicitly closes the envelope without itself being dropped
@@ -1350,7 +1349,7 @@
 (def ^:private vis-engine-xml-echo-tags
   ;; Vis -> LLM ONLY. The model must never emit these. See
   ;; `com.blockether.vis.internal.prompt` for the renderers that own them.
-  #{"journal" "bindings" "active_skills" "current_turn_context"
+  #{"journal" "bindings" "current_turn_context"
     "current_engine_start_nudges" "current_engine_start_nudge"
     ;; Backward-compatible echo cleanup for older transcripts / model habits.
     "system_vars" "system_var" "system_nudges" "system_nudge"})
@@ -2867,8 +2866,7 @@
 
    Yes, turn-frozen vars (TURN_ID, TURN_POSITION,
    TURN_CONVERSATION_STATE_ID, TURN_SYSTEM_PROMPT,
-   TURN_ACTIVE_EXTENSIONS, TURN_ACCESSIBLE_SKILLS,
-   CONVERSATION_STATE_ID) repeat verbatim across
+   TURN_ACTIVE_EXTENSIONS, CONVERSATION_STATE_ID) repeat verbatim across
    iterations of the same turn - that is the intentional contract:
    \"every iteration carries a snapshot of every SYSTEM var\". The
    dedup-on-unchanged optimization the previous version did was a
@@ -2883,7 +2881,7 @@
                          iteration-id iteration-position
                          conversation-state-id
                          system-prompt
-                         extensions-snapshot accessible-skills-snapshot
+                         extensions-snapshot
                          conversation-title]}]
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
@@ -2893,7 +2891,6 @@
       (stamp "TURN_CONVERSATION_STATE_ID"   (or conversation-state-id ""))
       (stamp "TURN_SYSTEM_PROMPT"           (or system-prompt ""))
       (stamp "TURN_ACTIVE_EXTENSIONS"       (or extensions-snapshot []))
-      (stamp "TURN_ACCESSIBLE_SKILLS"       (or accessible-skills-snapshot []))
       (stamp "TURN_ITERATION_ID"            (or iteration-id ""))
       (stamp "TURN_ITERATION_POSITION"      (or iteration-position 0))
       (stamp "CONVERSATION_STATE_ID"        (or conversation-state-id ""))
@@ -3069,53 +3066,29 @@
       (select-keys acc cost-map-keys)
       (select-keys extra-cost cost-map-keys))))
 
-(def ^:private auto-diagnose-request-pattern
-  #"(?i)\b(fix|bug|broken|failing|failure|duplicate|wrong|stuck|debug|diagnose|regression|throwing|crash|error)\b")
+(defn- previous-turn-context
+  "Latest completed prior turn answer for short follow-up disambiguation.
 
-(defn- auto-skill-names
-  [user-request]
-  (cond-> []
-    (re-find auto-diagnose-request-pattern (str user-request))
-    (conj "diagnose")))
-
-(do
-  (defn- activate-auto-skills!
-    [environment user-request]
-    (when-let [active-skills-atom (:active-skills-atom environment)]
-      (doseq [skill-name (auto-skill-names user-request)]
-        (try
-          (let [skill (skills/lookup skill-name)]
-            (when (:found? skill)
-              (swap! active-skills-atom assoc (:name skill) (assoc skill :auto? true))))
-          (catch Throwable t
-            (tel/log! {:level :warn :id ::auto-skill-activation-failed
-                       :data {:skill skill-name
-                              :error (ex-message t)}}))))
-      @active-skills-atom))
-
-  (defn- previous-turn-context
-    "Latest completed prior turn answer for short follow-up disambiguation.
-
-     Full chat replay stays out of provider messages. This bounded map is
-     passed to prompt/assemble-initial-messages so `A`, `yes`, and `do it` can
-     resolve against the immediately previous final answer instead of only the
-     token-budgeted journal."
-    [{:keys [db-info conversation-id]} current-turn-id]
-    (try
-      (when (and db-info conversation-id)
-        (some->> (persistance/db-list-conversation-turns db-info conversation-id)
-          (remove #(= (str (:id %)) (str current-turn-id)))
-          (filter #(and (= :complete (:prior-outcome %))
-                     (not (str/blank? (str (:answer %))))))
-          (sort-by (fn [turn]
-                     [(long (or (:position turn) 0))
-                      (str (or (:created-at turn) ""))]))
-          last
-          (#(select-keys % [:id :position :user-request :answer]))))
-      (catch Throwable t
-        (tel/log! {:level :warn :id ::previous-turn-context-failed
-                   :data {:error (ex-message t)}})
-        nil))))
+   Full chat replay stays out of provider messages. This bounded map is
+   passed to prompt/assemble-initial-messages so `A`, `yes`, and `do it` can
+   resolve against the immediately previous final answer instead of only the
+   token-budgeted journal."
+  [{:keys [db-info conversation-id]} current-turn-id]
+  (try
+    (when (and db-info conversation-id)
+      (some->> (persistance/db-list-conversation-turns db-info conversation-id)
+        (remove #(= (str (:id %)) (str current-turn-id)))
+        (filter #(and (= :complete (:prior-outcome %))
+                   (not (str/blank? (str (:answer %))))))
+        (sort-by (fn [turn]
+                   [(long (or (:position turn) 0))
+                    (str (or (:created-at turn) ""))]))
+        last
+        (#(select-keys % [:id :position :user-request :answer]))))
+    (catch Throwable t
+      (tel/log! {:level :warn :id ::previous-turn-context-failed
+                 :data {:error (ex-message t)}})
+      nil)))
 
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
@@ -3147,9 +3120,6 @@
         ;; per-iteration ext nudge collector - activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         _             (sync-active-extension-symbols! environment active-exts)
-        _             (when-let [a (:active-skills-atom environment)]
-                        (reset! a {}))
-        _             (activate-auto-skills! environment user-request)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts})
@@ -3311,14 +3281,6 @@
     ;; surface.
     (env/bind-and-bump! environment 'TURN_ACTIVE_EXTENSIONS
       (prompt/extensions-snapshot active-exts))
-    ;; TURN_ACCESSIBLE_SKILLS = frozen vec of skill summaries the model
-    ;; can filter/map/some over. Bodies are NOT included; loading one
-    ;; is the internal activation step via (load-skill! name). See
-    ;; prompt/accessible-skills-snapshot for the per-element shape.
-    ;; The lazy `(skills)` sandbox fn (internal.skills/sandbox-bindings)
-    ;; returns the same shape on demand; both surfaces stay in sync.
-    (env/bind-and-bump! environment 'TURN_ACCESSIBLE_SKILLS
-      (prompt/accessible-skills-snapshot))
     ;; Reset TURN_ITERATION_ID + TURN_ITERATION_POSITION at turn start;
     ;; rebound by
     ;; `update-iteration-id!` after each iteration row commits.
@@ -3620,7 +3582,6 @@
                                          ;; transcript data returns one row per
                                          ;; iter, not just iter 0.
                                            :extensions-snapshot        (prompt/extensions-snapshot active-exts)
-                                           :accessible-skills-snapshot (prompt/accessible-skills-snapshot)
                                          ;; Live conversation title; same value
                                          ;; the SCI sandbox sees as CONVERSATION_TITLE.
                                            :conversation-title    (some-> (:conversation-title-atom environment)
@@ -4563,7 +4524,6 @@
   (let [depth-atom               (atom 0)
         db-info                  (persistance/db-create-connection! db)
         bindings-atom           (atom {:index nil :revision -1 :current-revision 0})
-        active-skills-atom       (atom {})
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
                                         :conversation-id nil})
@@ -4704,11 +4664,10 @@
         ;; `(v/conversation-state)` -> :current-turn :user-request (and through
         ;; :transcript :turns for cross-turn history), so a separate
         ;; sandbox primitive would just duplicate the surface.
-        env-bindings             (merge {'var-history          var-history-fn
-                                         'var-history-timeline var-history-timeline-fn
-                                         'turn-answer!         answer-fn
-                                         'set-conversation-title! conversation-title-fn}
-                                   (skills/sandbox-bindings active-skills-atom))
+        env-bindings             {'var-history          var-history-fn
+                                  'var-history-timeline var-history-timeline-fn
+                                  'turn-answer!         answer-fn
+                                  'set-conversation-title! conversation-title-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
@@ -4718,7 +4677,6 @@
              :depth-atom      depth-atom
              :db-info         db-info
              :bindings-atom  bindings-atom
-             :active-skills-atom active-skills-atom
              :state-atom      state-atom
              :sci-ctx         sci-ctx
              :sandbox-ns      sandbox-ns

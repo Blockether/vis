@@ -672,47 +672,62 @@
               (keep #(llm-diagnostic-row turn %) (:iterations turn)))
       (:turns transcript-data))))
 
-(defn- foundation-inspect
+(defn- foundation-inspect-data
   "Canonical conversation-state data surface. One read returns the
    navigation summary, live current turn, classified failures,
    diagnosis, fork/retry metadata, raw LLM diagnostics, and the full
    transcript payload. Default target is the current conversation;
    pass a conversation id or unambiguous prefix to inspect another
    conversation."
+  [env conversation-id]
+  (let [target-id            (or conversation-id (:conversation-id env))
+        transcript-data      (safe-call #(transcript/transcript (:db-info env) target-id) nil)
+        resolved-id          (or (get-in transcript-data [:conversation :id]) target-id)
+        conversation-summary (safe-call #(foundation-conversation env resolved-id) nil)
+        failures             (safe-call #(foundation-failures env resolved-id) [])
+        diagnosis            (safe-call #(foundation-diagnose env resolved-id) {})
+        forks                (safe-call #(foundation-conversation-forks env resolved-id) [])
+        turn-retries         (safe-call #(retries-by-turn env (:turns transcript-data)) {})]
+    {:schema-version      1
+     :scope               :conversation
+     :conversation-id     resolved-id
+     :conversation-index  (safe-call #(foundation-conversations env) [])
+     :conversation        conversation-summary
+     :current-turn        (safe-call #(foundation-turn env) nil)
+     :failures            failures
+     :diagnosis           diagnosis
+     :conversation-forks  forks
+     :turn-retries        turn-retries
+     :llm-diagnostics    (safe-call #(llm-diagnostics transcript-data) [])
+     :transcript          transcript-data}))
+
+(defn- conversation-envelope
+  [op result]
+  (extension/success {:op op
+                      :result result
+                      :metadata {:kind :conversation-state}}))
+
+(defn- foundation-inspect
+  "Canonical conversation-state data surface. Returns a Vis tool envelope;
+   SCI callers receive the unwrapped data map."
   ([env]
    (foundation-inspect env (:conversation-id env)))
   ([env conversation-id]
-   (let [target-id            (or conversation-id (:conversation-id env))
-         transcript-data      (safe-call #(transcript/transcript (:db-info env) target-id) nil)
-         resolved-id          (or (get-in transcript-data [:conversation :id]) target-id)
-         conversation-summary (safe-call #(foundation-conversation env resolved-id) nil)
-         failures             (safe-call #(foundation-failures env resolved-id) [])
-         diagnosis            (safe-call #(foundation-diagnose env resolved-id) {})
-         forks                (safe-call #(foundation-conversation-forks env resolved-id) [])
-         turn-retries         (safe-call #(retries-by-turn env (:turns transcript-data)) {})]
-     {:schema-version      1
-      :scope               :conversation
-      :conversation-id     resolved-id
-      :conversation-index  (safe-call #(foundation-conversations env) [])
-      :conversation        conversation-summary
-      :current-turn        (safe-call #(foundation-turn env) nil)
-      :failures            failures
-      :diagnosis           diagnosis
-      :conversation-forks  forks
-      :turn-retries        turn-retries
-      :llm-diagnostics    (safe-call #(llm-diagnostics transcript-data) [])
-      :transcript          transcript-data})))
+   (conversation-envelope :v/conversation-state
+     (foundation-inspect-data env conversation-id))))
 
 (defn- foundation-report
   "Render the same canonical data returned by `foundation-inspect` as
-   Markdown. Returns a string and never throws."
+   Markdown. Returns a Vis tool envelope; SCI callers receive the
+   unwrapped string."
   ([env]
    (foundation-report env (:conversation-id env)))
   ([env conversation-id]
-   (let [data (foundation-inspect env conversation-id)]
-     (if-let [transcript-data (:transcript data)]
-       (transcript/transcript->md transcript-data)
-       (str "Conversation not found: " (:conversation-id data) "\n")))))
+   (let [data (foundation-inspect-data env conversation-id)
+         report (if-let [transcript-data (:transcript data)]
+                  (transcript/transcript->md transcript-data)
+                  (str "Conversation not found: " (:conversation-id data) "\n"))]
+     (conversation-envelope :v/conversation-report report))))
 
 ;; Removed extra workflow surfaces.
 

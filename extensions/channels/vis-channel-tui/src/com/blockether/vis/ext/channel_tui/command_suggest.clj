@@ -54,10 +54,7 @@
 
 (defn- command-name
   [cmd]
-  (let [name (command-id->name (:id cmd))]
-    (if (:skill? cmd)
-      (str "skill:" name)
-      name)))
+  (command-id->name (:id cmd)))
 
 (defn usage
   "Return compact slash-command usage, including extension-provided args."

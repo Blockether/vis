@@ -53,9 +53,9 @@
       (expect (contains? syms 'main-agent-instructions))
       (expect (not (contains? syms 'load-skill!)))
       (expect (not (contains? syms 'load-skill)))
+      (expect (not (contains? syms 'reload-skills!)))
       (expect (contains? syms 'scan-warnings))
       (expect (contains? syms 'reload-instructions!))
-      (expect (contains? syms 'reload-skills!))
       (expect (contains? syms 'reload-extensions!))))
 
   (it "renders a prompt fragment for the unified v/ alias"
@@ -63,6 +63,7 @@
       (expect (string? prompt))
       (expect (str/includes? prompt "(v/snapshot)"))
       (expect (not (str/includes? prompt "v/load-skill")))
+      (expect (not (str/includes? prompt "reload-skills")))
       (expect (str/includes? prompt "(v/reload-extensions!)"))
       (expect (not (str/includes? prompt "`md/`")))))
 

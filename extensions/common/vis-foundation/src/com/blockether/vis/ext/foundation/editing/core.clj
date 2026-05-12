@@ -323,6 +323,7 @@
      :hidden? (boolean (:hidden? spec))
      :respect-gitignore? (get spec :respect-gitignore? true)}))
 
+
 (defn- grep-files
   "Search with the one public v/rg spec map. Exactly one of :all or
    :any is required. :paths defaults to the current directory.
@@ -809,26 +810,29 @@
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
-  "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; bind the result and slice for display. Returns {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
-  [spec]
-  (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
-        out (grep-files spec)]
-    (tool-success
-      {:op :v/rg
-       :path (if (= 1 (count paths))
-               (first paths)
-               ".")
-       :kind :dir
-       :result out
-       :info {:spec spec
-              :query-op (:op coerced)
-              :paths paths
-              :include include
-              :exclude exclude
-              :hit-count (count (:hits out))
-              :truncated-by (:truncated-by out)}
-       :presentation {:kind :search-hits
-                      :row-keys [:path :line :text]}})))
+  "Search file contents. Canonical grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Legacy-friendly shorthand also works: (v/rg \"foo|bar\" {:glob \"src/**/*.clj\"}). Spec-map fields are literal strings, never regexes; shorthand splits `|` into an explicit OR. :paths defaults to [\".\"]. Optional filters: :include/:exclude glob vectors, :glob shorthand, plus :hidden? and :respect-gitignore?. Acquisition has a private hard cap; bind the result and slice for display. Returns {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
+  ([spec-or-query]
+   (rg-tool spec-or-query nil))
+  ([spec-or-query opts]
+   (let [spec (rg-spec spec-or-query opts)
+         {:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
+         out (grep-files spec)]
+     (tool-success
+       {:op :v/rg
+        :path (if (= 1 (count paths))
+                (first paths)
+                ".")
+        :kind :dir
+        :result out
+        :info {:spec spec
+               :query-op (:op coerced)
+               :paths paths
+               :include include
+               :exclude exclude
+               :hit-count (count (:hits out))
+               :truncated-by (:truncated-by out)}
+        :presentation {:kind :search-hits
+                       :row-keys [:path :line :text]}}))))
 
 (defn- patch-tool
   "Canonical exact text patch. Takes one edit map or a vector of maps with required keys `:path`, `:search`, `:replace`. Every `:search` must match exactly once in the current file; all edits validate before any write. Returns changed path summaries."

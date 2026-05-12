@@ -57,14 +57,14 @@
 (def vis-extension
   (vis/extension
     {:ext/namespace      'com.blockether.vis.ext.foundation.core
-     :ext/doc            "Foundation `v/`: conversation-state/conversation-report, file I/O (cat/ls/rg/patch/bash), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, skills, scan warnings, doctor/reproduction CLI."
+     :ext/doc            "Foundation `v/`: conversation-state/conversation-report, file I/O (cat/ls/rg/patch/bash), markdown answer builders (h1/p/table/file-link/join/code-block), env snapshot, project guidance, scan warnings, doctor/reproduction CLI."
      :ext/version        "0.7.0"
      :ext/author         "Blockether"
      :ext/owner          "vis"
      :ext/license        "Apache-2.0"
      :ext/alias       {:ns 'vis.ext.v :alias 'v}
      :ext/kind           "foundation"
-     :ext/environment-info-fn environment/environment-info
+     :ext/environment-prompt-fn environment/environment-info
      :ext/hooks          nudges/hooks
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols

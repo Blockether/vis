@@ -51,7 +51,6 @@
   ;;   zprint       - sandbox pretty-printer + format-clojure (sdk.clj).
   ;;   fast-edn     - sandbox-exposed EDN reader (env.clj).
   ;;   charred      - fast JSON for spec/router payloads + sandbox.
-  ;;   yamlstar     - internal SKILL.md frontmatter parser.
   ;;   java.net.http / JDK HttpServer - OpenAI Codex OAuth provider.
   ;;
   ;; Extension-specific deps live in each extension's deps.edn:
@@ -84,8 +83,7 @@
   com.cnuernber/charred            {:mvn/version "1.038"}
   ;; JGit is now used by root-internal picker plumbing too, not just the
   ;; foundation extension.
-  org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}
-  org.yamlstar/yamlstar             {:mvn/version "0.1.3"}}
+  org.eclipse.jgit/org.eclipse.jgit {:mvn/version "7.6.0.202603022253-r"}}
 
  :aliases
  {  ;; Primary alias - the `vis` CLI.

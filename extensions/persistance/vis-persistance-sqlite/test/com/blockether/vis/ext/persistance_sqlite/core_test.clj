@@ -2177,7 +2177,6 @@
                   TURN_CONVERSATION_STATE_ID
                   TURN_SYSTEM_PROMPT
                   TURN_ACTIVE_EXTENSIONS
-                  TURN_ACCESSIBLE_SKILLS
                   TURN_ITERATION_ID
                   TURN_ITERATION_POSITION
                   CONVERSATION_STATE_ID
@@ -2198,7 +2197,7 @@
       (expect (true?  (system-var-sym? 'TURN_CONVERSATION_STATE_ID)))
       (expect (true?  (system-var-sym? 'TURN_SYSTEM_PROMPT)))
       (expect (true?  (system-var-sym? 'TURN_ACTIVE_EXTENSIONS)))
-      (expect (true?  (system-var-sym? 'TURN_ACCESSIBLE_SKILLS)))
+      (expect (false? (system-var-sym? 'TURN_ACCESSIBLE_SKILLS)))
       (expect (true?  (system-var-sym? 'TURN_ITERATION_ID)))
       (expect (true?  (system-var-sym? 'TURN_ITERATION_POSITION)))
       (expect (false? (system-var-sym? 'ITERATION_ID)))
