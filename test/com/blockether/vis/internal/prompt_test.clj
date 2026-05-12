@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.prompt-test
   (:require [clojure.string :as str]
             [com.blockether.svar.internal.llm :as svar-llm]
+            [com.blockether.vis.internal.env :as env]
             [com.blockether.vis.internal.prompt :as prompt]
             [com.blockether.vis.internal.skills :as skills]
             [lazytest.core :refer [defdescribe expect it]]))
@@ -37,7 +38,7 @@
           (expect (= stable-messages (subvec messages 0 (count stable-messages))))
           (expect (every? #(= "system" (:role %)) stable-messages))
           (expect (contains-tag? (nth messages 0) "system_prompt"))
-          (expect (contains-tag? (nth messages 1) "environment-info"))
+          (expect (contains-tag? (nth messages 1) "environment_info"))
           (expect (contains-tag? (nth messages 2) "extensions"))
           (expect (contains-tag? (nth messages 3) "skills"))
           (expect (contains-tag? (nth messages 4) "llm_model_prompt"))
@@ -51,39 +52,75 @@
       (expect (str/includes? content "TURN := USER_GOAL × WORK(ITERATIONS)* × FINAL"))
       (expect (str/includes? content "λSTATIC_CONTEXT."))
       (expect (str/includes? content "system-role stable prefix, built once at turn start"))
-      (expect (str/includes? content "<environment-info>   := turn-start host/project facts from active extension callbacks."))
+      (expect (str/includes? content "<environment_info>   := turn-start host/project facts from active extension callbacks."))
       (expect (str/includes? content "λDYNAMIC_CONTEXT."))
       (expect (str/includes? content "<journal>                     := token-budgeted iteration evidence; newest at bottom; may carry prior conversation iterations."))
       (expect (str/includes? content "<bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings."))
+      (expect (str/includes? content "direct turn/conversation values"))
       (expect (str/includes? content "FINAL forbids:"))
-      (expect (str/includes? content "load-skill name)           ; load skill body for next iteration, never FINAL"))
+      (expect (str/includes? content "load-skill! name)          ; load skill body for next iteration, never FINAL"))
       (expect (str/includes? content "required_evidence_observed?"))
+      (expect (not (str/includes? content "tool-events")))
+      (expect (not (str/includes? content "λSYSTEM_VARS.")))
+      (expect (not (str/includes? content "read_only :=")))
+      (expect (not (str/includes? content "TURN_ID")))
+      (expect (not (str/includes? content "CONVERSATION_PREVIOUS_ANSWER")))
       (expect (not (str/includes? content "cached host/project facts")))
       (expect (not (str/includes? content "NO ERRORS IN PREVIOUS ITERATION")))
       (expect (not (str/includes? content "reload-extensions")))))
 
-  (it "current turn context renders dynamic telemetry without static lifecycle policy"
+  (it "current turn context renders dynamic telemetry and direct runtime values without static lifecycle policy"
     (let [turn-id #uuid "11111111-1111-1111-1111-111111111111"
           prev-id #uuid "22222222-2222-2222-2222-222222222222"
-          content (prompt/build-iteration-context
-                    {:conversation-id #uuid "00000000-0000-0000-0000-000000000000"
-                     :current-conversation-turn-id-atom (atom turn-id)
-                     :current-turn-position-atom (atom 7)
-                     :current-iteration-id-atom (atom prev-id)}
-                    {:active-extensions []
-                     :iteration 2
-                     :model "unknown-model"
-                     :current-user-content "Do the thing."
-                     :stable-prompt-content "stable"
-                     :max-iterations 12})]
-      (expect (str/includes? content "<current_turn_context>"))
-      (expect (str/includes? content "engine_state: :turn.iteration/start"))
-      (expect (str/includes? content "engine_phase: :model_think"))
-      (expect (str/includes? content "engine_turn_position: 7"))
-      (expect (str/includes? content "engine_iteration_position: 3"))
-      (expect (str/includes? content "previous_persisted_iteration_id: 22222222-2222-2222-2222-222222222222"))
-      (expect (not (str/includes? content "engine_state_machine")))
-      (expect (not (str/includes? content "idle -> receive_user_turn")))))
+          sci-state (env/create-sci-context {})
+          environment (merge sci-state
+                        {:conversation-id #uuid "00000000-0000-0000-0000-000000000000"
+                         :current-conversation-turn-id-atom (atom turn-id)
+                         :current-turn-position-atom (atom 7)
+                         :current-iteration-id-atom (atom prev-id)
+                         :conversation-title-atom (atom "Prompt stack cleanup")})]
+      (env/bind-and-bump! environment 'CONVERSATION_STATE_ID
+        #uuid "33333333-3333-3333-3333-333333333333")
+      (env/bind-and-bump! environment 'CONVERSATION_PREVIOUS_ANSWER
+        "Previous final answer.")
+      (let [content (with-redefs-fn {#'skills/list-all
+                                     (constantly [{:name "diagnose"
+                                                   :description "Debug failures."
+                                                   :path "/skills/diagnose/SKILL.md"
+                                                   :source :repo}])}
+                      (fn []
+                        (prompt/build-iteration-context
+                          environment
+                          {:active-extensions [{:ext/namespace 'test.ext
+                                                :ext/ns-alias {:alias 't}
+                                                :ext/doc "Test extension."
+                                                :ext/symbols [{:ext.symbol/sym 'demo}]}]
+                           :iteration 2
+                           :model "unknown-model"
+                           :current-user-content "Do the thing."
+                           :stable-prompt-content "stable prompt"
+                           :max-iterations 12})))]
+        (expect (str/includes? content "<current_turn_context>"))
+        (expect (str/includes? content "engine_state: :turn.iteration/start"))
+        (expect (str/includes? content "engine_phase: :model_think"))
+        (expect (str/includes? content "engine_turn_position: 7"))
+        (expect (str/includes? content "engine_iteration_position: 3"))
+        (expect (str/includes? content "previous_persisted_iteration_id: 22222222-2222-2222-2222-222222222222"))
+        (expect (str/includes? content "turn_id: #uuid \"11111111-1111-1111-1111-111111111111\""))
+        (expect (str/includes? content "turn_position: 7"))
+        (expect (str/includes? content "turn_conversation_state_id: #uuid \"33333333-3333-3333-3333-333333333333\""))
+        (expect (str/includes? content "turn_system_prompt: \"stable prompt\""))
+        (expect (str/includes? content "turn_active_extensions:"))
+        (expect (str/includes? content "turn_accessible_skills:"))
+        (expect (str/includes? content "turn_iteration_id: #uuid \"22222222-2222-2222-2222-222222222222\""))
+        (expect (str/includes? content "turn_iteration_position: 2"))
+        (expect (str/includes? content "conversation_state_id: #uuid \"33333333-3333-3333-3333-333333333333\""))
+        (expect (str/includes? content "conversation_title: \"Prompt stack cleanup\""))
+        (expect (str/includes? content "conversation_previous_answer: \"Previous final answer.\""))
+        (expect (not (str/includes? content "TURN_ID")))
+        (expect (not (str/includes? content "CONVERSATION_PREVIOUS_ANSWER")))
+        (expect (not (str/includes? content "engine_state_machine")))
+        (expect (not (str/includes? content "idle -> receive_user_turn"))))))
 
   (it "provider serializers preserve many system prompts before user content"
     (let [messages [{:role "system" :content "core rules"}

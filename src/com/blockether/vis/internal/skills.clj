@@ -259,7 +259,7 @@
    :extra?}`. Same shape the retired `TURN_ACCESSIBLE_SKILLS` SYSTEM var
    carried; now surfaced lazily through the sandbox `(skills)` fn so the
    model only pays the cost when it actually queries. Bodies are NOT
-   included - load via `(load-skill name)` (the activation step).
+   included - load via `(load-skill! name)` (the activation step).
 
    Degrades to `[]` on any scan failure so a partial filesystem never
    throws into the sandbox."
@@ -273,7 +273,7 @@
 
 (defn lookup
   "Find one skill by `:name`. Always returns a map; `:found?` flag
-   discriminates present vs absent (plan Q6). Used by the internal `(load-skill \"name\")` sandbox binding -
+   discriminates present vs absent (plan Q6). Used by the internal `(load-skill! \"name\")` sandbox binding -
    the activation step that materialises the SKILL.md body into a
    sandbox value (TURN_ACCESSIBLE_SKILLS carries only the summary)."
   [^String skill-name]
@@ -289,21 +289,24 @@
 
 (defn sandbox-bindings
   "Return internal sandbox bindings for skill activation. These are host
-   primitives, not extension symbols: `(load-skill \"name\")` loads the
+   primitives, not extension symbols: `(load-skill! \"name\")` loads the
    full body and records it in `active-skills-atom` for the next
-   `<active_skills>` trailer; `(reload-skills!)` cache-busts the scanner."
+   `<active_skills>` trailer; `(reload-skills!)` cache-busts the scanner.
+   `(load-skill \"name\")` remains as a compatibility alias, but prompts
+   teach only the bang form because it mutates the active-skill set."
   [active-skills-atom]
-  {'load-skill
-   (fn load-skill [skill-name]
-     (let [result (lookup skill-name)]
-       (when (and (:found? result) (string? (:name result)) active-skills-atom)
-         (swap! active-skills-atom assoc (:name result) result))
-       result))
-   'reload-skills!
-   (fn reload-skills! []
-     (reload!))
-   ;; (skills) - lazy replacement for the retired TURN_ACCESSIBLE_SKILLS
-   ;; SYSTEM var. Returns the same compact summary vec; the model uses
-   ;; plain Clojure (filter, some, map) over the result.
-   'skills
-   (fn skills [] (list-summaries))})
+  (let [load-skill!* (fn load-skill! [skill-name]
+                       (let [result (lookup skill-name)]
+                         (when (and (:found? result) (string? (:name result)) active-skills-atom)
+                           (swap! active-skills-atom assoc (:name result) result))
+                         result))]
+    {'load-skill! load-skill!*
+     'load-skill  load-skill!*
+     'reload-skills!
+     (fn reload-skills! []
+       (reload!))
+     ;; (skills) - lazy replacement for the retired TURN_ACCESSIBLE_SKILLS
+     ;; SYSTEM var. Returns the same compact summary vec; the model uses
+     ;; plain Clojure (filter, some, map) over the result.
+     'skills
+     (fn skills [] (list-summaries))}))
