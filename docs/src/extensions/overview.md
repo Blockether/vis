@@ -223,7 +223,7 @@ Every active extension can contribute two system-prompt surfaces at
 turn start:
 
 - `:ext/environment-info-fn` - live facts rendered inside the shared
-  `<environment-info>` block. Use this for cwd, repository state,
+  `<environment_info>` block. Use this for cwd, repository state,
   runtime flags, external service status, or other changing context.
 - `:ext/prompt` - static or semi-static tool guidance rendered as an
   extension prompt block. The runtime does **not** auto-render every
@@ -235,8 +235,8 @@ builds the complete system message. It:
 
 1. Builds the core system prompt (`build-system-prompt` + optional
    caller instructions)
-2. Collects environment-info sections from active extensions and wraps
-   them in `<environment-info>`
+2. Collects environment_info sections from active extensions and wraps
+   them in `<environment_info>`
 3. Collects active extension prompt blocks by evaluating `(:ext/prompt ext)`
    when present
 4. Joins all active prompt blocks with `\n\n` and appends to the core prompt

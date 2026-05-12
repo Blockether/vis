@@ -107,13 +107,13 @@
 (s/def ::source (s/keys :req-un [::paths ::mtime-max ::hash-sha256]))
 
 ;; ---- envelope leaf specs (op/*) ----
-(s/def :symbol     keyword?)        ; e.g. :v/cat ; nil for raw user code
-(s/def :tag        keyword?)        ; #{:op.tag/observation :op.tag/action}
-(s/def :result     any?)            ; the actual SCI eval value; shape varies per tool
-(s/def :success?   boolean?)
-(s/def :stdout     (s/nilable string?))
-(s/def :stderr     (s/nilable string?))
-(s/def :metadata   (s/map-of keyword? any?))   ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
+(s/def ::symbol     keyword?)        ; e.g. :v/cat ; nil for raw user code
+(s/def ::tag        keyword?)        ; #{:op.tag/observation :op.tag/action}
+(s/def ::result     any?)            ; the actual SCI eval value; shape varies per tool
+(s/def ::success?   boolean?)
+(s/def ::stdout     (s/nilable string?))
+(s/def ::stderr     (s/nilable string?))
+(s/def ::metadata   (s/map-of keyword? any?))   ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
 
 ;; ---- structured op/error sub-specs ----
 (s/def :op.error/message  (s/and string? #(not (str/blank? %))))
@@ -134,16 +134,16 @@
                                     :op.error.block/col
                                     :op.error.block/opened-loc])))
 
-(s/def :error
+(s/def ::error
   (s/nilable
     (s/keys :req-un [:op.error/message]
       :opt-un [:op.error/trace :op.error/hint :op.error/block])))
 
 ;; ---- the envelope ----
-(s/def :envelope
+(s/def ::envelope
   (s/and
-    (s/keys :opt [:symbol :tag :result :success? :error
-                  :stdout :stderr :metadata])
+    (s/keys :opt-un [::symbol ::tag ::result ::success? ::error
+                     ::stdout ::stderr ::metadata])
     ;; Distinguishing-marker requirement: a real envelope MUST carry
     ;; the canonical boolean `:success?` field. Without this gate,
     ;; plain maps (e.g. user data, results from non-envelope code)
@@ -164,7 +164,7 @@
 (s/def :ext.sink/form      non-blank-string?)
 (s/def :ext.sink/success?  boolean?)
 (s/def :ext.sink/result    (s/nilable string?))
-(s/def :ext.sink/error     :error)            ; :error is itself nilable per its spec
+(s/def :ext.sink/error     ::error)           ; ::error is itself nilable per its spec
 
 (s/def ::sink-entry
   (s/and
@@ -271,7 +271,7 @@
   "True when `x` is a valid `:envelope` map. Renamed conceptually;
    name kept for caller compatibility."
   [x]
-  (s/valid? :envelope x))
+  (s/valid? ::envelope x))
 
 (defn assert-tool-result!
   [x]
@@ -279,7 +279,7 @@
     (throw (ex-info "Invalid tool result"
              {:type :vis/invalid-tool-result
               :value x
-              :explain (s/explain-data :envelope x)})))
+              :explain (s/explain-data ::envelope x)})))
   x)
 
 (defn normalize-metadata
@@ -666,7 +666,7 @@
 ;; Optional extra LLM-facing documentation appended when the extension is active.
 (s/def :ext/prompt fn?)
 
-;; Optional system-prompt environment-info contributor. Called once at
+;; Optional system-prompt environment_info contributor. Called once at
 ;; system-prompt assembly with the live environment. Any active extension
 ;; can add repo/runtime/project facts here without taking over the whole
 ;; `:ext/prompt` fragment.
@@ -1356,7 +1356,7 @@
               :symbol  sym
               :spec    :envelope
               :value   result
-              :explain (s/explain-data :envelope result)})))
+              :explain (s/explain-data ::envelope result)})))
   result)
 
 (defn- tool-call-name

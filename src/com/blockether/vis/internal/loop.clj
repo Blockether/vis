@@ -3282,7 +3282,7 @@
       (prompt/extensions-snapshot active-exts))
     ;; TURN_ACCESSIBLE_SKILLS = frozen vec of skill summaries the model
     ;; can filter/map/some over. Bodies are NOT included; loading one
-    ;; is the internal activation step via (load-skill name). See
+    ;; is the internal activation step via (load-skill! name). See
     ;; prompt/accessible-skills-snapshot for the per-element shape.
     ;; The lazy `(skills)` sandbox fn (internal.skills/sandbox-bindings)
     ;; returns the same shape on demand; both surfaces stay in sync.

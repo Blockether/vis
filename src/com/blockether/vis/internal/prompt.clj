@@ -18,6 +18,7 @@
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.skills :as skills]
+   [sci.core :as sci]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -509,6 +510,46 @@
   [turn-id iteration-position]
   (str "turn/" (short-ref (or turn-id "unknown")) "/iteration/" iteration-position))
 
+(defn- sandbox-value
+  [environment sym default]
+  (try
+    (if-let [sci-ctx (:sci-ctx environment)]
+      (if-let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
+        (:val (sci/eval-string+ sci-ctx (str sym) {:ns ns-obj}))
+        default)
+      default)
+    (catch Throwable _
+      default)))
+
+(defn- context-value-str
+  [v]
+  (safe-pr-str v {:max-chars 2000
+                  :print-length 32
+                  :print-level 5}))
+
+(defn- active-extensions-context-value
+  [active-extensions]
+  (mapv (fn [ext]
+          (cond-> {:namespace (:ext/namespace ext)
+                   :symbols   (mapv :ext.symbol/sym (:ext/symbols ext))}
+            (get-in ext [:ext/ns-alias :alias])
+            (assoc :alias (get-in ext [:ext/ns-alias :alias]))
+            (:ext/doc ext)
+            (assoc :doc (:ext/doc ext))
+            (:ext/kind ext)
+            (assoc :kind (:ext/kind ext))))
+    (or active-extensions [])))
+
+(defn- accessible-skills-context-value
+  []
+  (try
+    (mapv (fn [s]
+            (cond-> (select-keys s [:name :description :path :source])
+              (seq (:extra s)) (assoc :extra (:extra s))))
+      (skills/list-all))
+    (catch Throwable _
+      [])))
+
 (defn- current-turn-context-block
   "Render dynamic engine telemetry into the user-role iteration trailer.
 
@@ -518,12 +559,23 @@
    `current_engine_iteration_id` is a logical engine id for the in-flight
    iteration; the DB UUID appears only after persistence, so the previous
    persisted DB id is exposed separately."
-  [environment {:keys [iteration max-iterations engine-state engine-phase]}]
-  (let [iteration-position (inc (long (or iteration 0)))
-        previous-position  (max 0 (dec iteration-position))
-        turn-id            (some-> (:current-conversation-turn-id-atom environment) deref)
-        turn-position      (some-> (:current-turn-position-atom environment) deref)
-        previous-iter-id   (some-> (:current-iteration-id-atom environment) deref)]
+  [environment {:keys [iteration max-iterations engine-state engine-phase
+                       active-extensions system-prompt]}]
+  (let [iteration-position  (inc (long (or iteration 0)))
+        previous-position   (max 0 (dec iteration-position))
+        turn-id             (or (some-> (:current-conversation-turn-id-atom environment) deref)
+                              (sandbox-value environment 'TURN_ID nil))
+        turn-position       (or (some-> (:current-turn-position-atom environment) deref)
+                              (sandbox-value environment 'TURN_POSITION nil))
+        previous-iter-id    (or (some-> (:current-iteration-id-atom environment) deref)
+                              (sandbox-value environment 'TURN_ITERATION_ID nil))
+        conversation-state-id (or (sandbox-value environment 'CONVERSATION_STATE_ID nil)
+                                (sandbox-value environment 'TURN_CONVERSATION_STATE_ID nil))
+        conversation-title  (or (some-> (:conversation-title-atom environment) deref)
+                              (sandbox-value environment 'CONVERSATION_TITLE ""))
+        previous-answer     (sandbox-value environment 'CONVERSATION_PREVIOUS_ANSWER "")
+        turn-system-prompt  (or system-prompt
+                              (sandbox-value environment 'TURN_SYSTEM_PROMPT ""))]
     (prompt-block
       "current_turn_context"
       (str "engine_state: " (or engine-state "turn.iteration/start") "\n"
@@ -536,6 +588,17 @@
         "engine_iteration_max: " (or max-iterations "unknown") "\n"
         "previous_persisted_iteration_id: " previous-iter-id "\n"
         "previous_persisted_iteration_position: " previous-position "\n"
+        "turn_id: " (context-value-str (or turn-id "")) "\n"
+        "turn_position: " (context-value-str (or turn-position 0)) "\n"
+        "turn_conversation_state_id: " (context-value-str (or conversation-state-id "")) "\n"
+        "turn_system_prompt: " (context-value-str (or turn-system-prompt "")) "\n"
+        "turn_active_extensions: " (context-value-str (active-extensions-context-value active-extensions)) "\n"
+        "turn_accessible_skills: " (context-value-str (accessible-skills-context-value)) "\n"
+        "turn_iteration_id: " (context-value-str (or previous-iter-id "")) "\n"
+        "turn_iteration_position: " (context-value-str previous-position) "\n"
+        "conversation_state_id: " (context-value-str (or conversation-state-id "")) "\n"
+        "conversation_title: " (context-value-str (or conversation-title "")) "\n"
+        "conversation_previous_answer: " (context-value-str (or previous-answer "")) "\n"
         "prompt_role: user"))))
 
 (defn- format-active-skill
@@ -650,7 +713,9 @@
                                 {:iteration iteration
                                  :max-iterations max-iterations
                                  :engine-state :turn.iteration/start
-                                 :engine-phase :model_think})
+                                 :engine-phase :model_think
+                                 :active-extensions active-extensions
+                                 :system-prompt stable-prompt-content})
         active-skills-block (active-skills-block environment)
         pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block active-skills-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
@@ -798,11 +863,11 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
   TURN := USER_GOAL × WORK(ITERATIONS)* × FINAL
 
   WORK (ITERATIONS) :=
-    MODEL_REPLY{form*}
+    MODEL_REPLY_IN_CODE_FENCES{form*}
     → ENGINE_SCI_EVAL(form*)
-    → new-vars(def|defn) → <bindings>
-    → {result|error, stdout, stderr, tool-events} → <journal>
-    → decide_next
+    → NEW_VARS(def|defn) → <bindings>
+    → {result|error, stdout, stderr, journal sink entries} → <journal>
+    → DECIDE_NEXT: READY? or WORK MORE
 
   READY? :=
     required_evidence_observed?
@@ -810,7 +875,7 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
     ∧ user_goal_satisfiable_from(<journal>, <bindings>)
     ∧ no errors in the last iteration journal entry
 
-  if ¬READY? → WORK MORE = ITERATE -> EMIT CODE + ENGINE EVALS + OBSERVE THE RESULTS IN THE NEXT ITERATION'S <journal> + <bindings> => decide_next
+  if ¬READY? → WORK MORE = ITERATE -> MODEL_REPLY_IN_CODE_FENCES + ENGINE_SCI_EVAL + OBSERVE THE RESULTS IN THE NEXT ITERATION'S <journal> + <bindings> => DECIDE_NEXT
   if READY?  → EMIT FINAL
 
   FINAL :=
@@ -827,7 +892,7 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
 λSTATIC_CONTEXT.
   system-role stable prefix, built once at turn start; provider may cache it.
   <system_prompt>      := core RLM rules + caller addendum.
-  <environment-info>   := turn-start host/project facts from active extension callbacks.
+  <environment_info>   := turn-start host/project facts from active extension callbacks.
   <extensions>         := turn-start active extension prompt fragments.
   <skills>             := accessible skill summaries (names/descriptions only).
   <llm_model_prompt>   := provider/model-specific prompt fragment.
@@ -836,29 +901,23 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
   user-role turn/iteration context; initial user message plus per-iteration trailer.
   <user_turn_request_main_goal> := current user goal; initial user message.
   <previous_turn_context>       := optional immediately previous exchange only; initial user message.
-  <current_turn_context>        := per-iteration engine ids/positions/state; no user intent; no policy.
+  <current_turn_context>        := per-iteration engine ids/positions/state + direct turn/conversation values; no user intent; no policy; no named runtime-var indirection.
   <journal>                     := token-budgeted iteration evidence; newest at bottom; may carry prior conversation iterations.
   <bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings.
-  <active_skills>               := loaded skill bodies; appears after `(load-skill ...)`.
+  <active_skills>               := loaded skill bodies; appears after `(load-skill! ...)`.
   <current_engine_start_nudges> := extension hook runtime hints for this iteration.
 
 λHOST.
   (answer ir)                 ; finalize turn, ir must be [:ir ...]
   (conversation-title s)      ; set conversation title
-  (load-skill name)           ; load skill body for next iteration, never FINAL
+  (load-skill! name)          ; load skill body for next iteration, never FINAL
   (reload-skills!)            ; refresh skill cache, never FINAL
   (skills)                    ; list accessible skill summaries
   (var-history ...)           ; inspect persisted vars
   (var-history-timeline ...)  ; inspect var timeline
 
-λSYSTEM_VARS.
-  read_only :=
-    TURN_ID TURN_POSITION TURN_CONVERSATION_STATE_ID TURN_SYSTEM_PROMPT
-    TURN_ACTIVE_EXTENSIONS TURN_ACCESSIBLE_SKILLS
-    TURN_ITERATION_ID TURN_ITERATION_POSITION
-    CONVERSATION_STATE_ID CONVERSATION_TITLE CONVERSATION_PREVIOUS_ANSWER
-
-  repl_recovery := *1 *2 *3 *e
+λREPL_RECOVERY.
+  *1 *2 *3 *e := last values/errors for sandbox recovery; ordinary prompt context uses rendered values, not named runtime-var indirection.
 
 λDISCIPLINE.
   separate_observe_code_blocks from mutation e.g. reads then (answer ...)/mutations like write file/patches in the same iteration are BANNED
@@ -984,7 +1043,7 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
    without paying for the full SKILL.md body.
 
    Per element: `{:name :description :path :source :extra}`. The `:body`
-   field is INTENTIONALLY omitted - it lazy-loads via `(load-skill name)`,
+   field is INTENTIONALLY omitted - it lazy-loads via `(load-skill! name)`,
    the canonical internal activation surface. Pulling every body into a
    SYSTEM var would balloon turn-start memory for a value the model rarely
    needs in full (the internal `<skills>` block already shows name +
@@ -1005,10 +1064,10 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
       [])))
 
 (defn- environment-info-block
-  "Collect `<environment-info>` from every active extension that declares
+  "Collect `<environment_info>` from every active extension that declares
    `:ext/environment-info-fn`. Each fn receives the live environment and
    returns a string or nil. Non-blank results are joined and wrapped in
-   `<environment-info>...</environment-info>`."
+   `<environment_info>...</environment_info>`."
   [environment active-extensions]
   (let [fragments (keep (fn [ext]
                           (when-let [f (:ext/environment-info-fn ext)]
@@ -1025,7 +1084,7 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
                                 nil))))
                     active-extensions)]
     (when (seq fragments)
-      (prompt-block "environment-info" (str/join "\n\n" fragments)))))
+      (prompt-block "environment_info" (str/join "\n\n" fragments)))))
 
 (defn- extensions-prompt-block
   "Collect `<extensions>` from every active extension that declares
@@ -1053,7 +1112,7 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
 (defn- skills-summary-block
   "Render `<skills>` with name + description for every accessible skill.
    Full bodies are NOT included; they arrive only after the model calls
-   `(load-skill ...)`."
+   `(load-skill! ...)`."
   []
   (let [all-skills (skills/list-all)]
     (when (seq all-skills)
@@ -1102,18 +1161,18 @@ Sandbox surface := SCI Clojure core + active EXTENSIONS + host primitives.
    Each tagged block becomes its own system-role message so provider prompt
    caching can catch stable boundaries independently:
      `<system_prompt>`      - CORE_SYSTEM_PROMPT + caller addendum
-     `<environment-info>`   - host/git/project facts from extensions
+     `<environment_info>`   - host/git/project facts from extensions
      `<extensions>`         - extension `:ext/prompt` fragments
      `<skills>`             - skill name + description summaries
      `<llm_model_prompt>`   - provider/model-specific prompt hook
 
    Full skill bodies are not in the cached prefix; they arrive only after
-   the model calls `(load-skill ...)` and are rendered in user-role
+   the model calls `(load-skill! ...)` and are rendered in user-role
    `<active_skills>`.
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Drives
-        environment-info, extension prompt, and nudge collection.
+        environment_info, extension prompt, and nudge collection.
 
    Optional opts:
      `:system-prompt`            - caller addendum appended to CORE.

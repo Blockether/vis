@@ -232,7 +232,7 @@
 ;; SYSTEM var. ONE source of truth wins; the redundant call goes.
 ;;
 ;; Surfaces still exposed: TURN_ACCESSIBLE_SKILLS for filtering,
-;; `(v/load-skill "name")` for activation (loads body),
+;; `(v/load-skill! "name")` for activation (loads body),
 ;; `(v/reload-skills!)` for the cache-bust after editing on disk.
 
 (defn- remember-active-skill!
@@ -242,13 +242,13 @@
       (swap! active-skills-atom assoc (:name result) result)))
   {:result result})
 
-(defn load-skill
+(defn load-skill!
   "Load skill body by name. Returns {:found? true :body ...} or {:found? false}. Loaded skills appear in <active_skills> with full body on the next iteration."
   [skill-name]
   (skills/lookup skill-name))
 
-(def load-skill-symbol
-  (env-data-symbol #'load-skill
+(def load-skill!-symbol
+  (env-data-symbol #'load-skill!
     {:after-fn remember-active-skill!}))
 
 (defn- combined-scan-warnings []
@@ -311,7 +311,7 @@
 (def environment-symbols
   [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol
-   main-agent-instructions-symbol load-skill-symbol
+   main-agent-instructions-symbol load-skill!-symbol
    scan-warnings-symbol
    reload-instructions!-symbol reload-skills!-symbol
    reload-extensions!-symbol])
@@ -324,11 +324,11 @@
    `com.blockether.vis.internal.prompt/render-extension-prompt-block`
    for the rationale."
   (str "`v/` env: (v/snapshot) full map; shortcuts (v/repositories) (v/git) (v/languages) (v/monorepo); (v/render) prints env block; (v/refresh!) refreshes cache. "
-    "Guidance/skills: (v/main-agent-instructions), (v/load-skill \"name\"), (v/scan-warnings). "
+    "Guidance/skills: (v/main-agent-instructions), (v/load-skill! \"name\"), (v/scan-warnings). "
     "Reload: (v/reload-instructions!), (v/reload-skills!), (v/reload-extensions!)."))
 
 (defn environment-info
-  "Render the foundation-owned environment-info contribution. The
+  "Render the foundation-owned environment_info contribution. The
    internal prompt assembler owns placement; this function owns the
    host/git/language/monorepo/multirepo snapshot text."
   [_environment]
@@ -343,12 +343,12 @@
   "Renders the live foundation prompt extras: <project-guidance> (when
    present) → <scan-warnings> (when issues exist) → FN_INDEX. The
    <environment> block flows through `:ext/environment-info-fn` so
-   other extensions can add sibling environment-info sections without
+   other extensions can add sibling environment_info sections without
    owning the whole prompt fragment.
 
    The previous `<skills>` block was removed when skills moved to the
    internal sandbox path: discovery now flows through
-   `TURN_ACCESSIBLE_SKILLS` + `(load-skill name)`."
+   `TURN_ACCESSIBLE_SKILLS` + `(load-skill! name)`."
   [_environment]
   (try
     (let [pg-block       (render/format-project-guidance-block (agents/instructions))
