@@ -153,6 +153,17 @@
   [stage iteration data]
   (tel/log! {:level :info :data (merge {:stage stage :iteration iteration} data)}))
 
+(defn- elapsed-ms
+  [started-ns]
+  (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
+
+(def ^:private parse-repair-timeout-ms
+  "Hard wall-clock budget for one parser repair attempt. A malformed model
+   response must not trap the turn in parinfer/quote repair for many seconds;
+   after this budget the repair is cancelled and the next repair (or normal
+   parse error path) proceeds."
+  1000)
+
 (defn normalize-reasoning-level [v]
   (svar/normalize-reasoning-level v))
 
@@ -253,14 +264,6 @@
     (= :needs-input (:vis/answer-mode v))
     (string? (:answer/text v))
     (not (str/blank? (:answer/text v)))))
-
-(defn answer-value-string
-  "Render the raw value passed to `(turn-answer! ...)` into persisted answer text."
-  [v]
-  (cond
-    (needs-input-answer? v) (:answer/text v)
-    (string? v) v
-    :else (str v)))
 
 (defn answer-str
   "Render the answer value to a flat string for legacy callers (logs,
@@ -456,6 +459,61 @@
             rebalanced))))
     (catch Throwable _ nil)))
 
+(defn- try-repair-with-timeout
+  "Run one parser repair with a hard wall-clock budget. Returns the repaired
+   source string, or nil on no-op/error/timeout. The worker is cancelled on
+   timeout so a bad response cannot keep the iteration stuck in repair code."
+  [repair-name repair-fn src parse-error]
+  (let [started-ns (System/nanoTime)
+        fut        (future
+                     (try
+                       {:status :ok :value (repair-fn src parse-error)}
+                       (catch Throwable t
+                         {:status :error :error t})))
+        out        (deref fut parse-repair-timeout-ms ::timeout)
+        ms         (elapsed-ms started-ns)]
+    (cond
+      (= ::timeout out)
+      (do
+        (future-cancel fut)
+        (log-stage! :parse-repair/timeout nil
+          {:repair repair-name
+           :timeout-ms parse-repair-timeout-ms
+           :duration-ms ms
+           :source-length (count (or src ""))
+           :parse-error parse-error})
+        nil)
+
+      (= :error (:status out))
+      (do
+        (log-stage! :parse-repair/error nil
+          {:repair repair-name
+           :duration-ms ms
+           :source-length (count (or src ""))
+           :parse-error parse-error
+           :error (format-exception-short (:error out))})
+        nil)
+
+      (string? (:value out))
+      (do
+        (log-stage! :parse-repair/applied nil
+          {:repair repair-name
+           :duration-ms ms
+           :source-length (count (or src ""))
+           :result-length (count (:value out))
+           :parse-error parse-error})
+        (:value out))
+
+      :else
+      (do
+        (when (> ms 100.0)
+          (log-stage! :parse-repair/noop nil
+            {:repair repair-name
+             :duration-ms ms
+             :source-length (count (or src ""))
+             :parse-error parse-error}))
+        nil))))
+
 (defn split-top-level-forms
   "Parse `code` (a Clojure source string) into top-level forms. Returns a
    vector of `{:expr str :repaired? bool}` maps, one per form, where
@@ -533,7 +591,8 @@
                                     (binding [*print-meta* false] (pr-str form)))
                          comment  (comment-slice idx)
                          bnd      (nth form-bounds idx nil)]
-                     (cond-> {:expr (str/trim (str expr-src))}
+                     (cond-> {:expr (str/trim (str expr-src))
+                              :form form}
                        comment    (assoc :comment comment)
                        repaired?  (assoc :repaired? true)
                        bnd        (assoc :start-row (:start-row bnd)
@@ -549,14 +608,17 @@
          ;; another parser error remains; the outer loop will re-parse.
          (parse-diagnose/try-answer-escape-rescue src parse-error (constantly true)))
        (first-repair-candidate [src parse-error seen repair-fns]
-         (some (fn [repair-fn]
-                 (when-let [fixed (repair-fn src parse-error)]
+         (some (fn [{:keys [name f]}]
+                 (when-let [fixed (try-repair-with-timeout name f src parse-error)]
                    (when-not (or (= fixed src) (contains? seen fixed))
                      fixed)))
            repair-fns))]
-      (let [repair-fns [answer-escape-repair
-                        (fn [src _parse-error] (parinfer-rebalance src))
-                        (fn [src _parse-error] (quote-rebalance src))]]
+      (let [repair-fns [{:name :answer-escape-e
+                         :f answer-escape-repair}
+                        {:name :parinfer
+                         :f (fn [src _parse-error] (parinfer-rebalance src))}
+                        {:name :quote-rebalance
+                         :f (fn [src _parse-error] (quote-rebalance src))}]]
         (loop [src       code-str
                repaired? false
                seen      #{code-str}
@@ -1066,162 +1128,51 @@
     (:error (nth block-results form-idx))))
 
 ;; ---------------------------------------------------------------------------
-;; Answer-position contract (latency-aware terminal form)
-;;
-;; A final answer may be the only top-level form OR the last top-level
-;; form after earlier setup/helper forms. This avoids burning a
-;; recovery iteration when the model already put `(turn-answer! ...)` last.
-;;
-;; Sibling forms AFTER an answer are still rejected before evaluation:
-;; once the model commits a terminal answer, no later top-level work may
-;; mutate state, run tools, or alter the evidence surface.
-;;
-;; Structural wrappers - `(let [...] (turn-answer! ...))`, `(do ... (turn-answer! ...))`,
-;; `(turn-answer! (build))` - stay legal in every iteration because they are
-;; still ONE top-level form.
+;; Parsed form helpers
 ;; ---------------------------------------------------------------------------
 
-(defn answer-position-violation?
-  "True when `(turn-answer! ...)` fired from a disallowed top-level position.
-   `form-idx` is the 0-based index of the form that set `answer-atom`;
-   `total-forms` is the count of parsed top-level blocks;
-   `iteration-position` is 1-based. Pure; public so loop + tests share
-   the rule. Returns false when `form-idx` is nil (no answer fired).
+(defn- parsed-entry-form
+  "Return the parsed Clojure form for a code entry/form/source string.
+   `split-top-level-forms` already parses once and stores `:form`; helpers
+   use that instead of reparsing the same `:expr` over and over. String
+   parsing remains only as a fallback for older/synthetic call sites."
+  [entry-or-form-or-source]
+  (try
+    (cond
+      (and (map? entry-or-form-or-source)
+        (contains? entry-or-form-or-source :form))
+      (:form entry-or-form-or-source)
 
-   Rules:
-   - any iteration: one top-level answer-bearing form is accepted;
-   - any iteration: answer may be the last form after earlier setup;
-   - any iteration: answer with later sibling forms is rejected."
-  ([form-idx total-forms]
-   (answer-position-violation? form-idx total-forms nil))
-  ([form-idx total-forms _iteration-position]
-   (let [valid-answer-form? (and form-idx
-                              (integer? form-idx)
-                              (not (neg? form-idx))
-                              (pos? total-forms))
-         last-form?         (and valid-answer-form?
-                              (= form-idx (dec total-forms)))]
-     (boolean (and valid-answer-form?
-                (not last-form?))))))
+      (map? entry-or-form-or-source)
+      (when-let [expr (:expr entry-or-form-or-source)]
+        (edamame/parse-string (str expr) edamame-opts))
 
-(defn answer-position-error-message
-  "Validation-error string surfaced when `answer-position-violation?`
-   fires. Tells the model where its answer call landed and states the
-   hard completion contract: the final answer must be the last
-   top-level form of its iteration."
-  [form-idx total-forms]
-  (let [actual-1 (inc (or form-idx 0))]
-    (str "(turn-answer! ...) must be the LAST top-level form of its final iteration. "
-      "This iteration had " total-forms " top-level forms; answer "
-      "fired from form " actual-1 ". Recovery: move any later sibling work "
-      "before the answer or omit `(turn-answer! ...)` so the host loops, then finish "
-      "with an answer-bearing final form such as `(turn-answer! ...)` or "
-      "`(let [...] (turn-answer! ...))`.")))
+      (string? entry-or-form-or-source)
+      (edamame/parse-string entry-or-form-or-source edamame-opts)
 
-(defn- answer-call-form?
+      :else
+      entry-or-form-or-source)
+    (catch Throwable _
+      nil)))
+
+(defn- turn-answer-call-form?
   [form]
   (and (seq? form)
     (symbol? (first form))
     (= "turn-answer!" (name (first form)))
     (nil? (namespace (first form)))))
 
-(defn- form-contains-answer-call?
-  [expr]
-  (try
-    (let [form (edamame/parse-string (str expr) edamame-opts)]
-      (boolean (some answer-call-form? (tree-seq coll? seq form))))
-    (catch Throwable _
-      false)))
+(defn- form-contains-turn-answer-call?
+  [entry-or-form-or-source]
+  (let [form (parsed-entry-form entry-or-form-or-source)]
+    (boolean (some turn-answer-call-form? (tree-seq coll? seq form)))))
 
-(defn- answer-compatible-meta-form?
-  [expr]
-  (try
-    (let [form (edamame/parse-string (str expr) edamame-opts)]
-      (and (seq? form)
-        (symbol? (first form))
-        (= 'set-conversation-title! (first form))))
-    (catch Throwable _
-      false)))
-
-(defn- answer-alone-preflight-violation
-  "Return a map describing the violation when an iteration contains an
-   `(turn-answer! ...)` call AND illegal sibling top-level forms. The contract:
-   `(turn-answer! ...)` is its OWN iteration; the iteration that produces the
-   answer evaluates EXACTLY ONE top-level form, and that form contains
-   the answer call (optionally wrapping prose / inline expressions, but
-   no other top-level work).
-
-   Narrow exception: a sibling top-level `(set-conversation-title! \"...\")`
-   meta form is allowed because it does not depend on observing a tool
-   result before the answer is composed.
-
-   This is stricter than the legacy `answer-position-preflight`
-   (which only required answer-last) and the `answer-with-mutation`
-   gate (which only forbade action ops). Pi / Codex / SWE-bench all
-   enforce a strict observe-then-answer split: tool calls in one
-   step, answer in the NEXT step with no other work mixed in. We
-   adopt the same separation so the model can never accidentally
-   claim success on top of un-observed work.
-
-   Returns nil when the iteration is fine. Shape on violation:
-   `{:answer-idx N :total-forms M}`."
-  [code-entries]
-  (when (< 1 (count code-entries))
-    (let [answer-idxs (vec (keep-indexed (fn [idx {:keys [expr]}]
-                                           (when (form-contains-answer-call? expr)
-                                             idx))
-                             code-entries))
-          answer-idx (first answer-idxs)
-          illegal-sibling? (fn [idx]
-                             (let [{:keys [expr]} (nth code-entries idx)]
-                               (not (answer-compatible-meta-form? expr))))
-          sibling-idxs (when (some? answer-idx)
-                         (concat (range 0 answer-idx)
-                           (range (inc answer-idx) (count code-entries))))]
-      (when (and (some? answer-idx)
-              (or (< 1 (count answer-idxs))
-                (some illegal-sibling? sibling-idxs)))
-        {:answer-idx answer-idx
-         :total-forms (count code-entries)}))))
-
-(defn- answer-alone-preflight-error-message
-  [{:keys [answer-idx total-forms]}]
-  (str "Answer-alone preflight rejected this iteration before evaluation: "
-    "(turn-answer! ...) MUST be the ONLY top-level form in its iteration, except "
-    "for an optional sibling `(set-conversation-title! \"...\")` meta form. "
-    "This iteration had " total-forms " top-level forms; a `(turn-answer! ...)` "
-    "call appears in form " (inc (or answer-idx 0)) ". "
-    "Contract: observe (tool calls) in one iteration; the engine evaluates "
-    "and populates `<journal>`; observe the journal; THEN emit a separate "
-    "iteration whose single top-level form is `(turn-answer! ...)` (or title + "
-    "answer only). No other mixing. Recovery: drop the answer from this "
-    "iteration so the host loops, then emit it once the journal carries every "
-    "value cited by the answer."))
-
-(defn- answer-position-preflight-form-idx
-  "Legacy gate. Kept for the answer-second-to-last edge case the
-   stricter `answer-alone` rule already covers; both produce a
-   preflight error so either firing is fine."
-  [_iteration-position code-entries]
-  (when (< 1 (count code-entries))
-    (let [answer-idxs (vec (keep-indexed (fn [idx {:keys [expr]}]
-                                           (when (form-contains-answer-call? expr)
-                                             idx))
-                             code-entries))]
-      (when (and (seq answer-idxs)
-              (not= (peek answer-idxs) (dec (count code-entries))))
-        (first answer-idxs)))))
-
-(defn- answer-position-preflight-error-message
-  [form-idx total-forms]
-  (let [actual-1 (inc (or form-idx 0))]
-    (str "Answer-position preflight rejected this iteration before evaluation: "
-      "(turn-answer! ...) must be the LAST top-level form. "
-      "This iteration had " total-forms " top-level forms; an answer call "
-      "appears in form " actual-1 " with later sibling work after it. "
-      "Move any required sibling work before the answer, or omit `(turn-answer! ...)` "
-      "so the host loops. Intent resolution may be inside the final wrapper "
-      "only when all cited refs are already observed.")))
+(defn- conversation-title-meta-form?
+  [entry-or-form-or-source]
+  (let [form (parsed-entry-form entry-or-form-or-source)]
+    (and (seq? form)
+      (symbol? (first form))
+      (= 'set-conversation-title! (first form)))))
 
 (defn- call-symbol->op-keyword
   "Convert a head symbol like `v/patch` or `spit` to the canonical
@@ -1256,12 +1207,9 @@
       (= :op.tag/action (extension/op-tag op-kw)))))
 
 (defn- form-contains-mutating-call?
-  [expr]
-  (try
-    (let [form (edamame/parse-string (str expr) edamame-opts)]
-      (boolean (some mutating-call-form? (tree-seq coll? seq form))))
-    (catch Throwable _
-      false)))
+  [entry-or-form-or-source]
+  (let [form (parsed-entry-form entry-or-form-or-source)]
+    (boolean (some mutating-call-form? (tree-seq coll? seq form)))))
 
 (defn- answer-with-mutation-preflight-mismatch
   "When an iteration contains BOTH a top-level form that holds an
@@ -1275,13 +1223,12 @@
    model has no chance to observe the mutation result before the answer
    is composed."
   [code-entries]
-  (let [exprs        (mapv :expr code-entries)
-        answer-idx   (first (keep-indexed (fn [idx e]
-                                            (when (form-contains-answer-call? e) idx))
-                              exprs))
-        mutating-idx (first (keep-indexed (fn [idx e]
-                                            (when (form-contains-mutating-call? e) idx))
-                              exprs))]
+  (let [answer-idx   (first (keep-indexed (fn [idx entry]
+                                            (when (form-contains-turn-answer-call? entry) idx))
+                              code-entries))
+        mutating-idx (first (keep-indexed (fn [idx entry]
+                                            (when (form-contains-mutating-call? entry) idx))
+                              code-entries))]
     (when (and (some? answer-idx) (some? mutating-idx))
       {:answer-idx   answer-idx
        :mutating-idx mutating-idx
@@ -1352,26 +1299,17 @@
     (= "needs-input" (name (first form)))))
 
 (defn- form-contains-needs-input-call?
-  [expr]
-  (try
-    (let [form (edamame/parse-string (str expr) edamame-opts)]
-      (boolean (some needs-input-call-form? (tree-seq coll? seq form))))
-    (catch Throwable _
-      false)))
+  [entry-or-form-or-source]
+  (let [form (parsed-entry-form entry-or-form-or-source)]
+    (boolean (some needs-input-call-form? (tree-seq coll? seq form)))))
 
 (defn- direct-answer-entry?
-  [{:keys [expr]}]
-  (try
-    (answer-call-form? (edamame/parse-string (str expr) edamame-opts))
-    (catch Throwable _
-      false)))
+  [entry-or-form-or-source]
+  (turn-answer-call-form? (parsed-entry-form entry-or-form-or-source)))
 
 (defn- bare-symbol-entry?
-  [{:keys [expr]}]
-  (try
-    (symbol? (edamame/parse-string (str expr) edamame-opts))
-    (catch Throwable _
-      false)))
+  [entry-or-form-or-source]
+  (symbol? (parsed-entry-form entry-or-form-or-source)))
 
 (defn- plain-prose-code-error
   [raw-code code-entries]
@@ -1562,7 +1500,7 @@
 (defn- code-entries-preflight
   ([iteration-position raw-code]
    (code-entries-preflight iteration-position raw-code nil))
-  ([iteration-position raw-code opts]
+  ([_iteration-position raw-code opts]
    (let [raw-code (or raw-code "")
          duplicate-blocks-normalized? (duplicate-fenced-blocks? (:blocks opts))
          raw-code (dedupe-fenced-block-code raw-code (:blocks opts))
@@ -1588,32 +1526,8 @@
          normalized-code (normalized-code-source parsed-code-entries)
          code-hash (when-not (str/blank? normalized-code)
                      (sha256-hex normalized-code))
-         answer-preflight-form-idx (when (and (not raw-fence-error)
-                                           (not plain-prose-error)
-                                           (pos? parsed-total-blocks))
-                                     (answer-position-preflight-form-idx
-                                       iteration-position
-                                       parsed-code-entries))
-         answer-preflight-error (when (some? answer-preflight-form-idx)
-                                  (answer-position-preflight-error-message
-                                    answer-preflight-form-idx
-                                    parsed-total-blocks))
-         ;; Strictest gate: `(turn-answer! ...)` must be the ONLY top-level
-         ;; form in its iteration. Pi / Codex / SWE-bench style hard
-         ;; observe/answer split. Runs FIRST so its error wins over
-         ;; the weaker answer-position / answer-with-mutation gates.
-         answer-alone-violation (when (and (not raw-fence-error)
-                                        (not plain-prose-error)
-                                        (pos? parsed-total-blocks))
-                                  (answer-alone-preflight-violation
-                                    parsed-code-entries))
-         answer-alone-error (when answer-alone-violation
-                              (answer-alone-preflight-error-message
-                                answer-alone-violation))
          answer-with-mutation-mismatch (when (and (not raw-fence-error)
                                                (not plain-prose-error)
-                                               (not answer-alone-error)
-                                               (not answer-preflight-error)
                                                (pos? parsed-total-blocks))
                                          (answer-with-mutation-preflight-mismatch
                                            parsed-code-entries))
@@ -1626,22 +1540,12 @@
                         :comment (prose->comment raw-code)
                         :vis/preflight-error plain-prose-error}]
 
-                      answer-alone-error
-                      [{:expr "(vis/preflight-error :answer-alone)"
-                        :vis/preflight-error answer-alone-error}]
-
-                      answer-preflight-error
-                      [{:expr "(vis/preflight-error :answer-position)"
-                        :vis/preflight-error answer-preflight-error}]
-
                       answer-with-mutation-error
                       [{:expr "(vis/preflight-error :answer-with-mutation)"
                         :vis/preflight-error answer-with-mutation-error}]
 
                       :else
                       parsed-code-entries)
-      :answer-alone-preflight-error answer-alone-error
-      :answer-preflight-error answer-preflight-error
       :answer-with-mutation-preflight-error answer-with-mutation-error
       :plain-prose-preflight-error plain-prose-error
       :raw-fence-preflight-error raw-fence-error
@@ -2063,37 +1967,6 @@
      (cond-> messages*
        (seq replays) (into replays)))))
 
-(def ^:private MAX_TURN_ITERATIONS
-  "Hard cap on iterations per turn. Vis used to have NO cap (\"if a
-   buggy model never finalizes, the user cancels\"). In practice that
-   reads as an infinite loop to the user — see conversation 1db62d10
-   where GLM-5.1 ran 3 research iterations without committing and the
-   user pressed Esc. The cap fires the same `:cancelled` lifecycle
-   path as Esc so persistence/UI are uniform."
-  20)
-
-(def ^:private CONVERGENCE_NUDGE_AT
-  "Iteration index (0-based, so iteration `8` means the 9th run) at
-   which we start prepending a convergence reminder to every
-   subsequent iteration's `<journal>` trailer. Nudge does NOT escalate;
-   the hard cap at `MAX_TURN_ITERATIONS` is what eventually stops the
-   turn."
-  8)
-
-(defn- convergence-nudge-line
-  "Caveman-style reminder to commit. Inlined as the LAST user message
-   on iter ≥ `CONVERGENCE_NUDGE_AT`, after any iteration-context body.
-   Reads naturally to the model and is cheap (~50 tokens)."
-  [iteration max-iterations]
-  (str "<vis_convergence_reminder>\n"
-    "You have run " iteration " iterations of research/exploration without "
-    "calling `(turn-answer! ...)`. Hard cap is " max-iterations " iterations — after "
-    "that the turn auto-cancels with no answer recorded. Either call "
-    "`(turn-answer! \"...\")` NOW with what you already know, or take the SMALLEST "
-    "possible next step (one tool call, one read) and then commit. Do not "
-    "start a new research thread.\n"
-    "</vis_convergence_reminder>"))
-
 (defn run-iteration
   "Runs a single RLM iteration: ask! -> check final -> execute code.
    Returns map with :thinking :blocks :final-result :api-usage etc."
@@ -2152,6 +2025,12 @@
           _ (install-copilot-header-patch!)
           copilot-initiator (or (:copilot-initiator extra-body)
                               (copilot-initiator-for-iteration iteration))
+          provider-started-at-ms (System/currentTimeMillis)
+          _ (when on-chunk
+              (on-chunk {:phase :provider-call
+                         :iteration iteration-position
+                         :started-at-ms provider-started-at-ms}))
+          provider-start-ns (System/nanoTime)
           ask-result-raw (binding [svar-llm/*log-context* (assoc svar-llm/*log-context*
                                                             :conversation-turn-id (:environment-id environment)
                                                             :iteration iteration-position
@@ -2165,10 +2044,28 @@
                                effective-reasoning (assoc :reasoning effective-reasoning)
                                streaming-fn        (assoc :on-chunk streaming-fn)
                                extra-body          (assoc :extra-body (dissoc extra-body :copilot-initiator)))))
+          provider-duration-ms (elapsed-ms provider-start-ns)
+          _ (log-stage! :provider-call/stop iteration
+              {:duration-ms provider-duration-ms
+               :raw-length (count (or (:raw ask-result-raw) ""))
+               :block-count (count (or (:blocks ask-result-raw) []))
+               :tokens (:tokens ask-result-raw)
+               :fallback? (boolean (seq (:routed/fallback-trace ask-result-raw)))})
+          parse-started-at-ms (System/currentTimeMillis)
+          _ (when on-chunk
+              (on-chunk {:phase :response-parse
+                         :status :start
+                         :iteration iteration-position
+                         :started-at-ms parse-started-at-ms
+                         :provider-duration-ms provider-duration-ms
+                         :raw-length (count (or (:raw ask-result-raw) ""))
+                         :block-count (count (or (:blocks ask-result-raw) []))}))
           ;; Repair pass: strip hallucinated <journal>/<bindings>/...
           ;; envelopes from raw LLM text before downstream fence-block
           ;; consumers see them. See `strip-vis-engine-xml-echo`.
+          normalize-start-ns (System/nanoTime)
           ask-result (normalize-ask-result-vis-engine-xml-echo ask-result-raw)
+          normalize-duration-ms (elapsed-ms normalize-start-ns)
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
           _ (log-stage! :llm-response iteration
@@ -2176,6 +2073,8 @@
                :raw-length    (count (or (:raw ask-result) ""))
                :block-count   (count (or (:blocks ask-result) []))
                :duration-ms   (:duration-ms ask-result)
+               :provider-duration-ms provider-duration-ms
+               :normalize-duration-ms normalize-duration-ms
                :tokens        (:tokens ask-result)
                :thinking      thinking
                :vis-engine-xml-echo-stripped? (boolean (:vis/normalized-from-raw? ask-result))})
@@ -2184,17 +2083,35 @@
           ;; Parse it into top-level forms; each form becomes one
           ;; expression_state row.
           raw-code (or (:result ask-result) "")
-          {:keys [code-entries answer-preflight-error]}
-          (code-entries-preflight iteration-position raw-code
-            {:blocks (:blocks ask-result)})
+          preflight-start-ns (System/nanoTime)
+          preflight-result (code-entries-preflight iteration-position raw-code
+                             {:blocks (:blocks ask-result)})
+          preflight-duration-ms (elapsed-ms preflight-start-ns)
+          {:keys [code-entries]} preflight-result
+          _ (log-stage! :response-preflight/stop iteration
+              {:duration-ms preflight-duration-ms
+               :code-length (count raw-code)
+               :forms (count code-entries)
+               :parse-error? (boolean (:parse-error (first code-entries)))
+               :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))
+               :plain-prose-preflight? (boolean (:plain-prose-preflight-error preflight-result))})
+          _ (when on-chunk
+              (on-chunk {:phase :response-parse
+                         :status :done
+                         :iteration iteration-position
+                         :duration-ms preflight-duration-ms
+                         :code-length (count raw-code)
+                         :forms (count code-entries)}))
+          engine-timing {:provider-call-ms provider-duration-ms
+                         :response-normalize-ms normalize-duration-ms
+                         :response-preflight-ms preflight-duration-ms}
           direct-answer-entry (when (= 1 (count code-entries))
                                 (first code-entries))
           final-answer-preflight-error
           (when (and direct-answer-entry
-                  (not answer-preflight-error)
                   (not (:vis/preflight-error direct-answer-entry))
                   (direct-answer-entry? direct-answer-entry)
-                  (not (form-contains-needs-input-call? (:expr direct-answer-entry))))
+                  (not (form-contains-needs-input-call? direct-answer-entry)))
             (final-answer-gate-error environment iteration-position [] nil))
           code-entries (if final-answer-preflight-error
                          [{:expr "(vis/preflight-error :final-answer-gate)"
@@ -2211,13 +2128,13 @@
           ;; structured preflight error in place of the answer instead
           ;; of a fabricated success-claim.
           prior-error-atom (atom nil)
-          executed (mapv (fn [idx {:keys [expr parse-error] :vis/keys [preflight-error] form-repaired? :repaired? form-comment :comment}]
+          executed (mapv (fn [idx {:keys [expr parse-error] :vis/keys [preflight-error] form-repaired? :repaired? form-comment :comment :as entry}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
                            (when (and on-chunk
                                    (not suppress-form-start?)
-                                   (not (answer-compatible-meta-form? expr))
-                                   (not (form-contains-answer-call? expr)))
+                                   (not (conversation-title-meta-form? entry))
+                                   (not (form-contains-turn-answer-call? entry)))
                              (on-chunk {:phase         :form-start
                                         :iteration     iteration-position
                                         :form-idx      idx
@@ -2239,12 +2156,6 @@
                                                         {:code expr :phase :vis/preflight})
                                                :stdout "" :stderr "" :execution-time-ms 0
                                                :op :vis/guard}
-                                              answer-preflight-error
-                                              {:result nil
-                                               :error (op-error answer-preflight-error
-                                                        {:code expr :phase :vis/preflight})
-                                               :stdout "" :stderr "" :execution-time-ms 0
-                                               :op :vis/guard}
                                               parse-error
                                               {:result nil
                                                :error (op-error (str "Parse error: " parse-error)
@@ -2257,9 +2168,7 @@
                                               ;; before eval so the answer can't claim
                                               ;; success on top of an unobserved failure.
                                               (and @prior-error-atom
-                                                (form-contains-answer-call?
-                                                  (try (edamame/parse-string (str expr) edamame-opts)
-                                                    (catch Throwable _ nil))))
+                                                (form-contains-turn-answer-call? entry))
                                               {:result nil
                                                :error  (op-error
                                                          (str "Answer-after-error gate: form "
@@ -2282,8 +2191,8 @@
                                                  :op :vis/guard}
                                                 (let [tool-event-fn (when (and on-chunk
                                                                             (not suppress-form-start?)
-                                                                            (not (answer-compatible-meta-form? expr))
-                                                                            (not (form-contains-answer-call? expr)))
+                                                                            (not (conversation-title-meta-form? entry))
+                                                                            (not (form-contains-turn-answer-call? entry)))
                                                                       (fn [tool-event]
                                                                         (on-chunk {:phase :tool-start
                                                                                    :iteration iteration-position
@@ -2360,8 +2269,8 @@
                                           :role        (:role result*)
                                           :silent?     (boolean (or (:vis/silent result*)
                                                                   (= :vis/silent (:result result*))
-                                                                  (answer-compatible-meta-form? expr)
-                                                                  (form-contains-answer-call? expr)))
+                                                                  (conversation-title-meta-form? entry)
+                                                                  (form-contains-turn-answer-call? entry)))
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))}))
                              {:block expr :result result* :form-comment form-comment}))
@@ -2403,22 +2312,14 @@
                              blocks)]
       (if-let [{:keys [value form-idx]} @answer-atom]
           ;; FINAL path: model called `(turn-answer! "...")` during this
-          ;; iteration. Atom payload is `{:value :form-idx}`. Two
-          ;; gates fire in order:
-          ;;
-          ;;   1. Rule b' (turn-answer! position): `(turn-answer! ...)` must be the
-          ;;      only top-level form in the final iteration. Any
-          ;;      sibling form means the model mixed finishing with
-          ;;      exploration/action/verification, so the answer is
-          ;;      rejected and the host loops.
-          ;;
-          ;;   2. Option C (form-scoped error gate): if the answer-
-          ;;      bearing form's own evaluation errored anyway
+          ;; iteration. Atom payload is `{:value :form-idx}`. The
+          ;; form-scoped error gate fires if the answer-bearing form's
+          ;; own evaluation errored anyway
           ;;      (e.g. `(do (v/edit ...throws...) (turn-answer! "x"))` -
           ;;      the form had inner work that crashed), the answer
-          ;;      is discarded with the form's own error. Sibling
-          ;;      forms BEFORE the answer-form may error freely; that
-          ;;      doesn't gate termination.
+          ;; answer is discarded with the form's own error. Sibling
+          ;; forms before the answer-form may error freely; that
+          ;; doesn't gate termination.
           ;;
           ;; `resolved-model` is a MAP - `{:name str :provider kw
           ;; :reasoning? bool}` - not a string. Persisting `(str
@@ -2431,14 +2332,10 @@
         ;; their boundary via `:channel/messages-renderer-fn`.
         (let [final-answer    value
               total-forms     (count code-entries)
-              position-bad?   (answer-position-violation? form-idx total-forms iteration-position)
-              own-form-error  (when-not position-bad?
-                                (answer-form-error block-results form-idx))
-              gate-error      (when (and (not position-bad?) (nil? own-form-error))
+              own-form-error  (answer-form-error block-results form-idx)
+              gate-error      (when (nil? own-form-error)
                                 (final-answer-gate-error environment iteration-position blocks value active-extensions answer-validation-context))
               validation-error (cond
-                                 position-bad?
-                                 (answer-position-error-message form-idx total-forms)
                                  own-form-error
                                  (error/final-answer-code-error-message own-form-error)
                                  gate-error
@@ -2480,8 +2377,8 @@
                                :role        (:role b)
                                :silent?     (boolean (or (:vis/silent b)
                                                        (= :vis/silent (:result b))
-                                                       (answer-compatible-meta-form? (:code b))
-                                                       (form-contains-answer-call? (:code b))))
+                                                       (conversation-title-meta-form? (:code b))
+                                                       (form-contains-turn-answer-call? (:code b))))
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))
               model-name       (actual-llm-model resolved-model ask-result)
@@ -2496,6 +2393,7 @@
                                    :phase :vis/final-answer-validation})}])
              :final-result nil :api-usage api-usage
              :duration-ms (or (:duration-ms ask-result) 0)
+             :engine-timing engine-timing
              :silent-form-idxs silent-form-idxs
              :llm-messages messages :llm-provider provider :llm-model model-name
              :llm-selected-provider (:provider resolved-model)
@@ -2522,6 +2420,7 @@
                               :answer-form-idx  form-idx}
                :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)
+               :engine-timing engine-timing
                :silent-form-idxs silent-form-idxs
                :llm-messages messages :llm-provider provider :llm-model model-name
                :llm-selected-provider (:provider resolved-model)
@@ -2538,6 +2437,7 @@
          :blocks blocks
          :final-result nil :api-usage api-usage
          :duration-ms (or (:duration-ms ask-result) 0)
+         :engine-timing engine-timing
          :silent-form-idxs silent-form-idxs
          :llm-messages messages
          :llm-provider (actual-llm-provider resolved-model ask-result)
@@ -3250,8 +3150,7 @@
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer`, the user cancels, or the
-   consecutive-error budget is exhausted. There is NO iteration cap.
-   If a buggy model never finalizes, the user cancels."
+   consecutive-error budget is exhausted."
   [environment user-request
    {:keys [system-prompt
            conversation-turn-id
@@ -3518,31 +3417,6 @@
                                      :trace trace :iteration-count iteration} (finalize-cost))]
                   result))
 
-              ;; Hard iteration cap. Soft nudge (CONVERGENCE_NUDGE_AT)
-              ;; reminds the model to commit; if it still hasn't called
-              ;; `(turn-answer! ...)` by MAX_TURN_ITERATIONS we stop the turn
-              ;; the same way Esc would. Status :cancelled keeps
-              ;; persistence + lifecycle uniform with user-cancel.
-              (>= (long iteration) (long MAX_TURN_ITERATIONS))
-              (do (log-stage! :error iteration {:reason :iteration-cap-exceeded
-                                                :max-iterations MAX_TURN_ITERATIONS})
-                (tel/log! {:level :warn :id ::iteration-cap-exceeded
-                           :data  {:iteration iteration
-                                   :max-iterations MAX_TURN_ITERATIONS
-                                   :conversation-turn-id conversation-turn-id}
-                           :msg   "Iteration cap reached; auto-cancelling turn"})
-                (let [reason (str "Stopped after " iteration
-                               " iterations without `(turn-answer! ...)`. Hard cap is "
-                               MAX_TURN_ITERATIONS ". Re-prompt with a tighter "
-                               "goal or partial-progress acknowledgement.")
-                      result (merge {:answer reason
-                                     :status :cancelled
-                                     :status-id (status->id :cancelled)
-                                     :trace trace
-                                     :iteration-count iteration}
-                               (finalize-cost))]
-                  result))
-
               :else
               (if (>= consecutive-errors max-consecutive-errors)
                 (if (< restarts max-restarts)
@@ -3584,7 +3458,6 @@
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
                                            :stable-prompt-content stable-prompt-content
-                                           :max-iterations      MAX_TURN_ITERATIONS
                                            ;; One low-importance turn-boundary check keeps
                                            ;; titles live across topic shifts. The old
                                            ;; iteration-only cadence never fired for a
@@ -3616,21 +3489,9 @@
                       ;; goal every iter and restarting its plan.
                       provider-messages (append-preserved-thinking-replay
                                           messages journal-iters (replay-context pre-resolved-model))
-                      ;; Soft convergence nudge after CONVERGENCE_NUDGE_AT
-                      ;; — appended INSIDE the iteration-context user
-                      ;; trailer so we don't add an extra wire message.
-                      ;; Compatible with the existing journal-renderer
-                      ;; budget (still one trailer, just slightly longer).
-                      nudge-text (when (>= (long iteration) (long CONVERGENCE_NUDGE_AT))
-                                   (convergence-nudge-line (long iteration)
-                                     MAX_TURN_ITERATIONS))
-                      trailer-text (let [body (or iteration-context "")]
-                                     (cond-> body
-                                       (and nudge-text (not (str/blank? body))) (str "\n\n")
-                                       nudge-text                                (str nudge-text)))
                       effective-messages (cond-> provider-messages
-                                           (not (str/blank? trailer-text))
-                                           (conj {:role "user" :content trailer-text}))
+                                           (not (str/blank? (or iteration-context "")))
+                                           (conj {:role "user" :content iteration-context}))
                       resolved-model pre-resolved-model
                       effective-routing (or routing {})
                       iteration-result
@@ -3815,8 +3676,10 @@
                                                     :llm-executable-code (:llm-executable-code iteration-result)
                                                     :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                     :llm-assistant-message (:assistant-message iteration-result)
-                                                    :metadata (iteration-metadata iteration
-                                                                (llm-routing-metadata pre-resolved-model iteration-result))}
+                                                    :metadata (cond-> (iteration-metadata iteration
+                                                                        (llm-routing-metadata pre-resolved-model iteration-result))
+                                                                (seq (:engine-timing iteration-result))
+                                                                (assoc :engine-timing (:engine-timing iteration-result)))}
                                              tc (assoc :tokens (:tokens tc)
                                                   :cost-usd (:cost-usd tc)))))
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
@@ -3927,13 +3790,6 @@
                                         :consecutive-errors next-errors
                                         :journal-iters       next-recent})))))))))))))))))
 
-(defn- ->prior-outcome
-  [result]
-  (case (:status result)
-    :cancelled :cancelled
-    :error     :error
-    :complete))
-
 (defn run-turn!
   "Store turn -> iteration-loop -> update turn -> return result.
 
@@ -3952,7 +3808,7 @@
                                 :messages nil
                                 :status :running})
         result (iteration-loop env user-request (assoc loop-opts :conversation-turn-id conversation-turn-id))
-        prior-outcome (->prior-outcome result)
+        prior-outcome (:status result)
         _ (persistance/db-update-conversation-turn! (:db-info env) conversation-turn-id
             {;; Coerce through `answer-str` so the persisted answer is
              ;; ALWAYS the plain-text rendering, never a stringified

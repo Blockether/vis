@@ -344,7 +344,7 @@
    - :model       - Override default model selection
 
    The iteration loop runs until the model emits `:answer` or the
-   user cancels. There is no per-agent budget and no iteration cap.
+   user cancels.
 
    Example:
      (agent {:name \"code-reviewer\"

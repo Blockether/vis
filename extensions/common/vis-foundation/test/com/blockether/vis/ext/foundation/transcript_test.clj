@@ -82,7 +82,6 @@
                                                            "engine_turn_position: 1\n"
                                                            "current_engine_iteration_id: turn/turn-fix/iteration/1\n"
                                                            "engine_iteration_position: 1\n"
-                                                           "engine_iteration_max: 20\n"
                                                            "prompt_role: user\n"
                                                            "</current_turn_context>\n\n"
                                                            "<current_engine_start_nudges>\n"

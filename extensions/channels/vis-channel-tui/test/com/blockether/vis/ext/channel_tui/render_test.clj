@@ -231,6 +231,15 @@
       (expect (= "" (first lines)))
       (expect (str/includes? (second lines) "Vis is calling the provider"))))
 
+  (it "distinguishes response parsing from provider waiting"
+    (let [payload (render/progress->lines-data
+                    {:iterations [{:iteration 1 :activity :response-parse}]}
+                    80
+                    {:show-thinking true :show-iterations true}
+                    {:now-ms 1000 :turn-start-ms 0})
+          body    (strip-ansi (str/join "\n" (:lines payload)))]
+      (expect (str/includes? body "Vis is parsing model response (iter 1)"))))
+
   (it "live progress renders every iteration instead of hiding history"
     (let [mk-entry (fn [n]
                      {:code      [(str "(+ " n " 1)")]

@@ -3455,6 +3455,7 @@
   (let [n              (count iterations)
         last-iteration (last iterations)
         err            (:error last-iteration)
+        activity       (:activity last-iteration)
         errored?       (some? err)
         thinking?      (and (not errored?)
                          (some? (:thinking last-iteration))
@@ -3467,6 +3468,8 @@
                       (when label (str " after " label))
                       " (iter " n ")"))
       (zero? n)   "Vis is calling the provider"
+      (= :provider-call activity) (str "Vis is calling the provider (iter " n ")")
+      (= :response-parse activity) (str "Vis is parsing model response (iter " n ")")
       thinking?   (str "Vis is thinking (iter " n ")")
       executing?  (str "Vis is running code (iter " n ")")
       :else       (str "Vis is working (iter " n ")"))))

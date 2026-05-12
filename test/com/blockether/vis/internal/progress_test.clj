@@ -57,5 +57,17 @@
                                  :model "glm-5.1"}}]
       (on-chunk notice)
       (let [entry (first (get-timeline))]
+        (expect (= :provider-call (:activity entry)))
         (expect (= [(select-keys notice [:reason :failed-provider :new-provider :fallback])]
-                  (:provider-fallbacks entry)))))))
+                  (:provider-fallbacks entry))))))
+
+  (it "tracks provider and response-parse activity separately from code execution"
+    (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+      (on-chunk {:phase :provider-call :iteration 1})
+      (expect (= :provider-call (:activity (first (get-timeline)))))
+      (on-chunk {:phase :response-parse :status :start :iteration 1})
+      (expect (= :response-parse (:activity (first (get-timeline)))))
+      (on-chunk {:phase :form-start :iteration 1 :form-idx 0 :code "(+ 1 2)"})
+      (let [entry (first (get-timeline))]
+        (expect (nil? (:activity entry)))
+        (expect (= ["(+ 1 2)"] (:code entry)))))))
