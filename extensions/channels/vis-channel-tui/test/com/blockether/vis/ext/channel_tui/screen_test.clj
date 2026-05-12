@@ -383,8 +383,8 @@
 
 (defdescribe selectable-ranges-test
   (it "clips transcript selection to message content rows only"
-    (expect (= [{:row 4 :col 4 :width 11}
-                {:row 5 :col 4 :width 11}]
+    (expect (= [{:row 4 :col 2 :width 11}
+                {:row 5 :col 2 :width 11}]
               (bubble-selectable-ranges
                 {:visible [{:top -1
                             :height 4
@@ -395,6 +395,17 @@
                             :projected {:role :assistant
                                         :prewrapped-lines ["below viewport"]}}]}
                 4 5 20))))
+
+  (it "keeps assistant code selection one column inside and answers aligned with Vis"
+    (expect (= [{:row 5 :col 3 :width 11}
+                {:row 6 :col 2 :width 11}]
+              (bubble-selectable-ranges
+                {:visible [{:top 0
+                            :height 3
+                            :projected {:role :assistant
+                                        :prewrapped-lines [(str p/MARKER_CODE "(+ 1 2)")
+                                                           (str p/MARKER_ANSWER_TXT "done")]}}]}
+                4 6 20))))
 
   (it "does not mark role banners, padding, provider footers, or gap rows as selectable"
     (expect (= [{:row 6 :col 4 :width 11}]
@@ -439,9 +450,9 @@
                                                               (str p/MARKER_ANSWER_TXT "hi there")]}}]}
                    0 6 40)
           rows   ["  Vis                                   "
-                  "    (turn-answer! (v/p \"hi\"))        "
+                  "  (turn-answer! (v/p \"hi\"))          "
                   "────────────────────────────────────────"
-                  "    hi there                            "
+                  "  hi there                              "
                   "                    zai/glm / 1 iter    "
                   "                                        "]]
       (expect (= "(turn-answer! (v/p \"hi\"))\nhi there"

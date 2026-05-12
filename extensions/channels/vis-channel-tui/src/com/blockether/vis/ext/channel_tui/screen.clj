@@ -456,8 +456,38 @@
                       (recur (+ pos n-len)))))))))))))
 
 (def ^:private bubble-content-h-pad
-  "Horizontal text inset inside `render/draw-chat-bubble!` content rows."
+  "Horizontal text inset inside `render/draw-chat-bubble!` user content rows."
   2)
+
+(def ^:private assistant-code-text-inset-markers
+  #{p/MARKER_CODE p/MARKER_CODE_OK p/MARKER_CODE_ERR p/MARKER_CODE_STATUS
+    p/MARKER_RESULT p/MARKER_ERR_RESULT p/MARKER_STDOUT p/MARKER_STDERR
+    p/MARKER_STDOUT_SEP p/MARKER_MD_CODE p/MARKER_TH_MD_CODE})
+
+(def ^:private selection-output-indent "  ")
+
+(def ^:private selection-output-indent-markers
+  #{p/MARKER_STDOUT p/MARKER_STDERR p/MARKER_STDOUT_SEP})
+
+(defn- assistant-code-text-row?
+  [line]
+  (let [line (or line "")]
+    (some #(str/starts-with? line %) assistant-code-text-inset-markers)))
+
+(defn- output-indented-row?
+  [line]
+  (let [line (or line "")]
+    (some #(str/starts-with? line (str % selection-output-indent))
+      selection-output-indent-markers)))
+
+(defn- bubble-line-text-col
+  [role bubble-left line]
+  (cond
+    (= :user role) (+ bubble-left bubble-content-h-pad)
+    (assistant-code-text-row? line) (+ bubble-left 1 (if (output-indented-row? line)
+                                                       (p/display-width selection-output-indent)
+                                                       0))
+    :else bubble-left))
 
 (def ^:private transcript-copy-skip-markers
   "Line markers that paint TUI chrome rather than message content.
@@ -505,7 +535,6 @@
   [layout text-top inner-h cols]
   (let [bubble-left  (long render/MESSAGE_MARGIN_LEFT)
         bubble-w     (long (max 0 (- (long cols) render/MESSAGE_SIDE_PAD)))
-        text-left    (+ bubble-left bubble-content-h-pad)
         content-w    (long (max 0 (- bubble-w (* 2 bubble-content-h-pad))))
         top-limit    (long text-top)
         bottom-limit (+ top-limit (long (max 0 inner-h)))]
@@ -522,7 +551,9 @@
               :when (and (<= top-limit row)
                       (< row bottom-limit)
                       (copyable-transcript-line? line))]
-          {:row row :col text-left :width content-w})))))
+          {:row row
+           :col (bubble-line-text-col (:role message) bubble-left line)
+           :width content-w})))))
 
 (defn- copyable-bubble-text
   "Whole-bubble copy hands the user complete text, not the collapsed viewport.

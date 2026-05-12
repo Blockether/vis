@@ -1050,7 +1050,7 @@
   "Tail line on every bounded read renderer. Tells the model exactly how to
    reach the values that didn't fit."
   [bound-name]
-  (str "… (bound to `" bound-name "`; slice with subvec/get-in to see more)"))
+  (str "… (bound to `" bound-name "`; slice raw payload fields with subvec/get-in to see more)"))
 
 ;; ---------------------------------------------------------------------------
 ;; Per-symbol renderers
@@ -1059,7 +1059,7 @@
 ;;   journal-render-fn -> (fn [result] string)
 ;;   channel-render-fn -> (fn [result] string)
 ;;
-;; `result` is the unwrapped `(:result tool-result)`. Engine handles
+;; `result` is the raw payload returned to SCI. Engine handles
 ;; `:success? false` separately - error fns are optional and fall back to
 ;; `default-{journal,channel}-error-text`.
 ;; ---------------------------------------------------------------------------
@@ -1406,19 +1406,19 @@
     "`v/` files: Use structured tools for discovery and reads: (v/cat path), (v/rg spec), (v/glob root pat opts?), (v/ls path opts?). "
     "v/rg has one spec-map grammar: {:all [\"a\" \"b\"]} requires ALL literals on the same line; {:any [\"a\" \"b\"]} is explicit OR; :paths defaults to [\".\"] and must be a vector; use :include [\"*.clj\" \"*.cljc\"] / :exclude [...] for file filters; no regex, no positional args, no public limit. "
     "v/rg strategy: use :all to find definitions or narrow noisy searches, e.g. {:all [\"defn\" \"target-name\"] :include [\"*.clj\"]}; use :any to find any of several related names; if :truncated-by is :internal-cap, narrow :all/:paths/:include instead of asking for a limit. "
-    "`v/cat` reads the whole file into [:result :lines]. The journal renders a BOUNDED preview (first 50 + last 50 lines) plus a hint; bind the full result so you can slice further on a later iteration with plain Clojure: (def file (v/cat \"src/foo.clj\")) then (subvec (get-in file [:result :lines]) 100 200). Never use [:result :lines] - that path is nil and `subvec` will crash. "
-    "Same pattern for v/rg / v/glob / v/ls: bind the result, slice with get-in/subvec/take/drop. If the var is already the payload vector, slice it directly; `(get-in vector)` is an arity error. Do not echo a var to \"see\" it - the journal entry the engine appended is your preview. "
-    "`v/glob` returns cwd-relative path strings under `:result`. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. "
-    "Example child listing: (->> (v/glob \"src\" \"*.clj\") :result sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") :result sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. "
+    "`v/cat` returns the whole file payload with :lines. The journal renders a BOUNDED preview (first 50 + last 50 lines) plus a hint; bind the full result so you can slice further on a later iteration with plain Clojure: (def file (v/cat \"src/foo.clj\")) then (subvec (:lines file) 100 200). "
+    "Same pattern for v/rg / v/glob / v/ls: bind the raw payload, slice with get-in/subvec/take/drop. If the var is already a vector, slice it directly; `(get-in vector)` is an arity error. Do not echo a var to \"see\" it - the journal entry the engine appended is your preview. "
+    "`v/glob` returns cwd-relative path strings directly. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. "
+    "Example child listing: (->> (v/glob \"src\" \"*.clj\") sort vec). Example recursive search: (->> (v/glob \"extensions\" \"**/*.clj\") sort vec). Use `:scope :children` or `:scope :recursive` when you want to force the behavior. "
     "Edit text with canonical (v/patch [{:path p :search old :replace new} ...]); every :search must match exactly once and all edits validate before write. Use (v/patch-check edits) to preflight match counts without writing. Read exact bytes first; keep searches small and unique; do not invent long paragraphs. Read back after writes only when exact persisted bytes matter, external writers may interfere, or user explicitly asks for verification; otherwise use the tool diff/result and avoid duplicate reads. "
     "Path ops: (v/create-dirs path), (v/copy src dest), (v/move src dest), (v/delete path), (v/delete-if-exists path), (v/exists? path).\n"
     (if (config/bash-disabled?)
       "`v/` shell: v/bash is disabled by config. Use non-shell tools for file edits and Clojure introspection helpers.\n"
       "`v/` shell: Use `v/bash` for process boundaries like git, verify.sh, CLI entrypoints, or external commands: (v/bash cmd {:cwd \".\" :timeout-ms 30000 :max-output-chars 20000 :stdin s}). It always prepends `set -euo pipefail`, so multi-step scripts stop on failed commands, unset variables, and failed pipeline stages. `v/bash` refuses shell-driven Clojure/EDN source edits; use z/patch for those.\n")
-    "Tool results are envelopes and expose their payload under `:result`. Examples: (get-in (v/cat \"IDEAS.md\") [:result :lines]), "
+    "Tool calls return raw payloads to SCI while Vis records journal/provenance internally. Examples: (:lines (v/cat \"IDEAS.md\")), "
     (when-not (config/bash-disabled?)
-      "(get-in (v/bash \"pwd\") [:result :stdout]), ")
-    "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits). "
+      "(:stdout (v/bash \"pwd\")), ")
+    "(:hits (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]})). "
     "For Clojure/EDN source edits prefer z/patch when `z/` is active; it uses zipper locators. Use z/locators or z/symbols to discover locator snippets. Use v/patch for generic raw text."))
 
 (def editing-symbols
