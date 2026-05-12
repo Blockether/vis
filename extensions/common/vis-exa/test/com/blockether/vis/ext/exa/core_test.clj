@@ -52,7 +52,7 @@
           readme   (get-in manifest ['exa :docs "README.md" :content])]
       (expect (= '[com.blockether.vis.ext.exa.core] (get-in manifest ['exa :nses])))
       (expect (str/includes? readme "\"url\""))
-      (expect (str/includes? readme ":op/result"))
+      (expect (str/includes? readme ":result"))
       (expect (not (str/includes? readme "[:result :content]")))))
 
   (it "exposes Exa symbols, renderers, and a compact prompt"
@@ -63,7 +63,7 @@
     (expect (str/includes? exa/exa-prompt "EXA_API_KEY"))
     (expect (str/includes? exa/exa-prompt ":max-bytes"))
     (expect (not (str/includes? exa/exa-prompt (str ":" (apply str [\p \i]) "-max"))))
-    (expect (str/includes? exa/exa-prompt "get-in r [:op/result :content]")))
+    (expect (str/includes? exa/exa-prompt "get-in r [:result :content]")))
 
   (it "exports a valid Vis extension"
     (expect (= 'com.blockether.vis.ext.exa.core (:ext/namespace exa/vis-extension)))
@@ -121,8 +121,8 @@
                                 (json/read-json (:body request) :key-fn keyword))
                           requests)]
            (expect (extension/tool-result? out))
-           (expect (true? (:op/success? out)))
-           (expect (= "Result 1\nResult 2" (get-in out [:op/result :content])))
+           (expect (true? (:success? out)))
+           (expect (= "Result 1\nResult 2" (get-in out [:result :content])))
            (expect (= ["initialize" "notifications/initialized" "tools/call"]
                      (mapv :method payloads)))
            (expect (= "web_search_exa" (get-in (nth payloads 2) [:params :name])))
@@ -141,8 +141,8 @@
                                                    :body "boom"})}
       #(let [out (exa/code-context "HoneySQL examples")]
          (expect (extension/tool-result? out))
-         (expect (false? (:op/success? out)))
-         (expect (str/includes? (get-in out [:op/error :message]) "MCP HTTP 500"))))))
+         (expect (false? (:success? out)))
+         (expect (str/includes? (get-in out [:error :message]) "MCP HTTP 500"))))))
 
 (defdescribe exa-truncation-test
   (it "truncates large output and records truncation metadata"
@@ -157,5 +157,5 @@
                        #'exa/env (constantly nil)
                        #'exa/*http-send-fn* (fake-mcp-send seen)}
         #(let [out (exa/web-search "latest Clojure" {:max-lines 1})]
-           (expect (= "Result 1" (get-in out [:op/result :content])))
-           (expect (= :lines (get-in out [:op/result :truncation :truncated-by]))))))))
+           (expect (= "Result 1" (get-in out [:result :content])))
+           (expect (= :lines (get-in out [:result :truncation :truncated-by]))))))))

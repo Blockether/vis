@@ -17,13 +17,13 @@ Normal source installs keep the Vis checkout at `~/.vis/sourcecode`. When an age
 ## File I/O and tools
 
 ```clojure
-(def file (v/cat path)) ; whole file -> [:op/result :lines]
-(subvec (get-in file [:op/result :lines]) 40 120)
+(def file (v/cat path)) ; whole file -> [:result :lines]
+(subvec (get-in file [:result :lines]) 40 120)
 ;; Never use [:result :lines]; that is nil. If you already bound the
 ;; lines vector, call subvec on the vector directly, not (get-in vector).
 
 (def hits (v/rg {:all [\"literal\"]})) ; literal search, paths default to [\".\"]
-(-> hits :op/result :hits (subvec 0 12))
+(-> hits :result :hits (subvec 0 12))
 
 (v/ls path)
 (v/rg {:all [\"defn\" \"name\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) ; all terms same line

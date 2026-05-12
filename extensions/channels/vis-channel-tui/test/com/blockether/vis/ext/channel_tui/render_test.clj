@@ -1024,7 +1024,7 @@
                   :results ["1 file changed"]
                   :result-kinds [:tool]
                   :result-details [{:op :v/patch
-                                    :op/tag :op.tag/action
+                                    :tag :op.tag/action
                                     :color-role :tool-color/edit}]
                   :stdouts [""]
                   :durations [1]
@@ -1043,7 +1043,7 @@
                         :results [huge-result]
                         :result-kinds [:tool]
                         :result-details [{:op :v/patch
-                                          :op/tag :op.tag/action
+                                          :tag :op.tag/action
                                           :color-role :tool-color/edit}]
                         :stdouts [""]
                         :durations [1]
@@ -1066,7 +1066,7 @@
                         :results [huge-result]
                         :result-kinds [:tool]
                         :result-details [{:op :v/bash
-                                          :op/tag :op.tag/action
+                                          :tag :op.tag/action
                                           :color-role :tool-color/shell}]
                         :stdouts [""]
                         :durations [1]
@@ -1084,7 +1084,7 @@
                                          :results        ["Ran bash in `.` - exit `1`, 1 ms.\n\nstderr:\n\n```text\nExecution error\n```"]
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
-                                                           :op/tag :op.tag/action
+                                                           :tag :op.tag/action
                                                            :color-role :tool-color/shell
                                                            :stderr "Execution error"}]
                                          :stdouts        [""]
@@ -1103,7 +1103,7 @@
                                          :results        ["Ran bash in `.` - exit `0`, 1 ms.\n\nstdout:\n\n```text\nhello\nworld\n```"]
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
-                                                           :op/tag :op.tag/action
+                                                           :tag :op.tag/action
                                                            :color-role :tool-color/shell
                                                            :stdout "hello\nworld"
                                                            :stderr ""}]
@@ -1134,7 +1134,7 @@
                     :results ["Ran bash in `.` - exit `0`, 1 ms.\n\nstdout:\n\n```text\nstdout-line\n```"]
                     :result-kinds [:tool]
                     :result-details [{:op :v/bash
-                                      :op/tag :op.tag/action
+                                      :tag :op.tag/action
                                       :color-role :tool-color/shell
                                       :stdout "stdout-line"}]
                     :stdouts [""]
@@ -1196,7 +1196,7 @@
                                          :results        [""]
                                          :result-kinds   [:tool]
                                          :result-details [{:op :v/bash
-                                                           :op/tag :op.tag/action
+                                                           :tag :op.tag/action
                                                            :color-role :tool-color/shell
                                                            :stdout ""
                                                            :stderr ""}]
@@ -1216,7 +1216,7 @@
                     :results ["Searched `[\"src\"]` with `{:any [\"alpha\" \"beta\"], :paths [\"src\"]}` - 0 hit(s)."]
                     :result-kinds [:tool]
                     :result-details [{:op :any
-                                      :op/tag :op.tag/observation
+                                      :tag :op.tag/observation
                                       :color-role :tool-color/search
                                       :spec {:any ["alpha" "beta"] :paths ["src"]}
                                       :paths ["src"]}]
@@ -1421,7 +1421,7 @@
             trace [{:code ["(v/bash \"echo hi\")"]
                     :results [big-body]
                     :result-kinds [:tool]
-                    :result-details [{:op :v/bash :op/tag :op.tag/action
+                    :result-details [{:op :v/bash :tag :op.tag/action
                                       :color-role :tool-color/shell}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
@@ -1442,7 +1442,7 @@
             trace [{:code ["(v/bash \"echo hi\")"]
                     :results [big-body]
                     :result-kinds [:tool]
-                    :result-details [{:op :v/bash :op/tag :op.tag/action
+                    :result-details [{:op :v/bash :tag :op.tag/action
                                       :color-role :tool-color/shell}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"

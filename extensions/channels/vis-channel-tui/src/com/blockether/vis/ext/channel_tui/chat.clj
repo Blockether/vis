@@ -217,9 +217,9 @@
                                              tool-result-detail
                                              (fn [result]
                                                (when (extension/tool-result? result)
-                                                 (let [metadata (:op/metadata result)
-                                                       payload  (:op/result result)]
-                                                   (cond-> (merge (select-keys result [:op/symbol :op/tag])
+                                                 (let [metadata (:metadata result)
+                                                       payload  (:result result)]
+                                                   (cond-> (merge (select-keys result [:symbol :tag])
                                                              (select-keys metadata [:spec :paths :hit-count :truncated-by
                                                                                     :command :cwd :target]))
                                                      (:stdout payload)

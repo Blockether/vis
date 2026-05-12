@@ -209,15 +209,15 @@
   (extension/journal-render-tool-result v))
 
 (defn- format-sink-error-text
-  "Render a sink failure entry's `:op/error` map via the same
+  "Render a sink failure entry's `:error` map via the same
    default-journal-error-text path the engine uses for whole-form
-   failures, but synthesizing a tiny `:op/envelope` so the formatter
+   failures, but synthesizing a tiny `:envelope` so the formatter
    sees the new flat shape (PLAN §2.1)."
   [entry]
   (extension/default-journal-error-text
-    {:op/success? false
-     :op/symbol   (when-let [f (:form entry)] (keyword f))
-     :op/error    (:error entry)}))
+    {:success? false
+     :symbol   (when-let [f (:form entry)] (keyword f))
+     :error    (:error entry)}))
 
 (defn- format-sink-sub-row
   "One `iN.K.M` sub-row per :journal sink entry. Success entries surface

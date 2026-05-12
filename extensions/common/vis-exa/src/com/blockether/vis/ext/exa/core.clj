@@ -506,7 +506,7 @@
     (kw-get opts :tokens-num :tokensNum) (assoc :tokensNum (kw-get opts :tokens-num :tokensNum))))
 
 (defn web-search
-  "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Tool result; payload under :op/result."
+  "Search the web through Exa MCP. Basic use needs no key; set EXA_API_KEY for higher limits. Tool result; payload under :result."
   ([query] (web-search query {}))
   ([query opts]
    (let [query (str query)
@@ -528,7 +528,7 @@
          (tool-failure :exa/web-search "web_search_exa" query ep t))))))
 
 (defn code-context
-  "Search code/docs through Exa MCP for API usage/examples. Tool result; payload under :op/result."
+  "Search code/docs through Exa MCP for API usage/examples. Tool result; payload under :result."
   ([query] (code-context query {}))
   ([query opts]
    (let [query (str query)
@@ -564,7 +564,7 @@
    code-context-symbol])
 
 (def exa-prompt
-  "`exa/` web search: (exa/web-search query opts?) for current web facts; (exa/code-context query opts?) for code/docs/API examples. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :max-bytes, :max-lines. code-context supports :tokens-num, :max-bytes, :max-lines. Tool results are envelopes; read payload with (get-in r [:op/result :content]), not (:content r) or [:result ...].")
+  "`exa/` web search: (exa/web-search query opts?) for current web facts; (exa/code-context query opts?) for code/docs/API examples. Basic Exa MCP use needs no key; set EXA_API_KEY or EXA_MCP_API_KEY for higher limits. Opts: web-search supports :num-results, :type (:auto/:fast/:deep), :livecrawl (:fallback/:preferred), :context-max-characters, :max-bytes, :max-lines. code-context supports :tokens-num, :max-bytes, :max-lines. Tool results are envelopes; read payload with (get-in r [:result :content]), not (:content r) or [:result ...].")
 
 (def exa-env
   [{:name "EXA_API_KEY"
