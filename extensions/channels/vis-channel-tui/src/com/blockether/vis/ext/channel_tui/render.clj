@@ -103,7 +103,7 @@
   (boolean
     (or (#{\u200B \u200C \u200D \uFEFF} ch)
       (<= (int \u2060) (int ch) (int \u206F))
-      (<= (int \uE001) (int ch) (int \uE02C)))))
+      (<= (int \uE001) (int ch) (int \uE02D)))))
 
 (defn- split-structural-line-marker
   [^String line]
@@ -963,6 +963,7 @@
 (def ^:private code-ok-pad-marker p/MARKER_CODE_OK_PAD)
 (def ^:private code-err-pad-marker p/MARKER_CODE_ERR_PAD)
 (def ^:private iteration-pad-marker   p/MARKER_ITERATION_PAD)
+(def ^:private provider-fallback-marker p/MARKER_PROVIDER_FALLBACK)
 (def ^:private answer-hdr-marker p/MARKER_ANSWER_HDR)
 (def ^:private answer-txt-marker p/MARKER_ANSWER_TXT)
 (def ^:private answer-pad-marker p/MARKER_ANSWER_PAD)
@@ -1807,6 +1808,13 @@
                     (str/starts-with? line iteration-hdr-marker)
                     (do (p/set-colors! g t/iteration-header-fg bg-color)
                       (p/put-str! g x y (subs line 1)))
+
+              ;; ── Provider fallback - yellow warning band ──
+                    (str/starts-with? line provider-fallback-marker)
+                    (let [raw (subs line 1)]
+                      (p/set-colors! g t/warning-fg t/warning-bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/put-str! g x y raw))
 
               ;; ── Thinking - dimmed bg, italic ──
               ;; Inline span sentinels (**bold** etc.) embedded in
@@ -3392,8 +3400,8 @@
         fallback-lines (when (seq provider-fallbacks)
                          (vec (concat [(line-entry "")]
                                 (mapcat (fn [notice]
-                                          (map #(line-entry (str thinking-marker %))
-                                            (wrap-text (format-fallback-notice notice) fill-w)))
+                                          (map #(line-entry (str provider-fallback-marker " " %))
+                                            (wrap-text (format-fallback-notice notice) (max 1 (dec fill-w)))))
                                   provider-fallbacks))))
         trailing-errors (error-lines)]
     ;; Layout: header (with optional ITERATION-N label) + provider fallback

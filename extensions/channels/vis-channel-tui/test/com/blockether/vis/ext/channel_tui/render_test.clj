@@ -84,6 +84,61 @@
       ;; instead of a strict equality.
       (expect (some #(str/includes? % "3") bodies)))))
 
+(defdescribe provider-fallback-notice-test
+  (it "formats provider fallback notices as yellow-band rows with one left space"
+    (let [lines (format-iteration-entry
+                  {:provider-fallbacks
+                   [{:failed-provider {:id :anthropic-coding-plan
+                                       :model "claude-opus-4-7"
+                                       :error "Exceptional status code: 429"}}]}
+                  120 1 {})
+          fallback-lines (filter #(str/includes? % "provider fallback") lines)
+          first-line     (first fallback-lines)]
+      (expect (seq fallback-lines))
+      (expect (every? #(= p/MARKER_PROVIDER_FALLBACK (marker-of %)) fallback-lines))
+      (expect (str/starts-with? (body-of first-line) " ↪ provider fallback:"))
+      (expect (str/includes? (body-of first-line)
+                "anthropic-coding-plan/claude-opus-4-7"))
+      (expect (str/includes? (body-of first-line)
+                "Exceptional status code: 429"))))
+
+  (it "paints provider fallback rows with warning yellow background"
+    (let [captured (atom [])
+          active   (atom #{})
+          fg       (atom nil)
+          bg       (atom nil)
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers []
+                       (reset! active #{})
+                       this)
+                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (swap! active into (seq arr))
+                       this)
+                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
+                       (apply swap! active disj (seq arr))
+                       this)
+                     (getActiveModifiers []
+                       (if (empty? @active)
+                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
+                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
+                     (setForegroundColor [c] (reset! fg c) this)
+                     (setBackgroundColor [c] (reset! bg c) this)
+                     (fillRectangle [_pos _size _ch] this)
+                     (setCharacter [_col _row _ch] this)
+                     (putString
+                       ([_col _row text]
+                        (swap! captured conj {:text text :fg @fg :bg @bg})
+                        this)))
+          line     (str p/MARKER_PROVIDER_FALLBACK
+                     " ↪ provider fallback: anthropic-coding-plan/claude-opus-4-7 — Exceptional status code: 429")]
+      (render/draw-chat-bubble! graphics
+        {:role :assistant :timestamp nil :prewrapped-lines [line]}
+        0 0 120)
+      (let [fallback (first (filter #(str/starts-with? (:text %) " ↪ provider fallback:") @captured))]
+        (expect (some? fallback))
+        (expect (= t/warning-bg (:bg fallback)))
+        (expect (= t/warning-fg (:fg fallback)))))))
+
 (defn- visually-blank?
   "True when a rendered line carries no visible glyphs — either truly
    empty, plain whitespace, or made up entirely of the invisible
@@ -1504,66 +1559,23 @@
       (expect (not-any? #(str/includes? % "A[Start] --> B[Done]") visible)))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
-;; Details with Markdown body - markdown inside <details> renders fully.
-;; Regression test for the user-facing `<details>` block in answers:
-;; bullets, headings, and inline emphasis must render as such, not as
-;; raw markdown text.
+;; Retired answer disclosure tags must not create collapsible output.
 ;; ─────────────────────────────────────────────────────────────────────────
 
-(defdescribe details-with-markdown-body-test
-  ;; `format-answer-markdown-data` requires canonical answer-IR.
-  ;; `vis/text->ir` does NOT lift inline `<details>`/`<summary>` HTML
-  ;; into structured `[:details ...]` IR (commonmark treats them as
-  ;; inline HTML and folds them into the surrounding paragraph). The
-  ;; lift happens upstream of these tests, so the tests construct
-  ;; canonical details IR directly.
-  (let [body-ir [:details {:open? true}
-                 [:summary {} [:span {} "Plan"]]
-                 [:h {:level 2} [:span {} "Step 1"]]
-                 [:ul {}
-                  [:li {} [:p {} [:span {} "alpha"]]]
-                  [:li {} [:p {} [:span {} "beta"]]]]
-                 [:p {}
-                  [:span {} "Then "]
-                  [:strong {} [:span {} "bold"]]
-                  [:span {} " word."]]]]
-    (it "<details> with markdown body renders the body as markdown when expanded"
-      ;; Inside an expanded `:details` block, the renderer emits inner
-      ;; block rows on plain answer-text bands rather than the
-      ;; standalone `MARKER_MD_H2` / `MARKER_MD_BULLET` lanes. Inline
-      ;; styling is encoded with per-character PUA sentinels (U+E110..),
-      ;; so the visible text only matches after stripping them.
-      (let [payload (render/format-answer-markdown-data [:ir {} body-ir] 80
-                      {:conversation-id "cid"
-                       :detail-expansions {["cid" "answer:details:d1"] true}})
-            lines   (:lines payload)
-            visible (mapv strip-sentinels lines)
-            text    (:text payload)]
-        (expect (some #(str/includes? % "Step 1") visible))
-        (expect (some #(str/includes? % "alpha") visible))
-        (expect (some #(str/includes? % "beta") visible))
-        (expect (some #(str/includes? % p/INLINE_BOLD_ON) lines))
-        (expect (not (str/includes? text p/INLINE_BOLD_ON)))
-        (expect (not (str/includes? text "**bold**")))))
-
-    (it "collapsed <details> hides body but keeps summary visible"
-      (let [collapsed-ir [:ir {}
-                          [:details {:open? false}
-                           [:summary {} [:span {} "Plan"]]
-                           [:ul {}
-                            [:li {} [:p {} [:span {} "alpha"]]]
-                            [:li {} [:p {} [:span {} "beta"]]]]]]
-            payload (render/format-answer-markdown-data collapsed-ir 80
-                      {:conversation-id "cid"
-                       :detail-expansions {["cid" "answer:details:d1"] false}})
-            lines (:lines payload)
-            summary-line (first (filter #(and (= p/MARKER_MD_SUMMARY (marker-of %))
-                                           (str/includes? % "Plan"))
-                                  lines))]
-        (expect (some? summary-line))
-        (expect (str/includes? summary-line "▸"))
-        (expect (not-any? #(str/includes? % "alpha") lines))
-        (expect (not-any? #(str/includes? % "beta") lines))))))
+(defdescribe retired-answer-disclosure-test
+  (it "ignores :details/:summary as structure and emits no summary lane"
+    (let [answer  [:ir {}
+                   [:details {:open? false}
+                    [:summary {} [:span {} "Plan"]]
+                    [:p {} [:span {} "alpha"]]
+                    [:p {} [:span {} "beta"]]]]
+          payload (render/format-answer-markdown-data answer 80
+                    {:conversation-id "cid"
+                     :detail-expansions {["cid" "answer:details:d1"] false}})
+          lines   (:lines payload)
+          visible (str/join "\n" (map strip-sentinels lines))]
+      (expect (not-any? #(= p/MARKER_MD_SUMMARY (marker-of %)) lines))
+      (expect (str/includes? visible "Planalphabeta")))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Provider-error / system-call / tool-call presentation contract - these

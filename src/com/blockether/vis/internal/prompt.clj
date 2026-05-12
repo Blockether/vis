@@ -895,9 +895,6 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   FINAL forbids:
     defs, tools, mutation, reloads, skill loads, extra work.
 
-λCONTEXT.
-  truth_source := prompt.clj assembly code; tags below are actual render surfaces.
-
 λSTATIC_CONTEXT.
   system-role stable prefix, built once at turn start; provider may cache it.
   <system_prompt>      := core RLM rules + caller addendum.
@@ -936,9 +933,10 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   Build IR directly; do not render Markdown into IR.
   root   := [:ir block*]
   block  := :p | :h{:level 1-6} | :code{:lang} | :ul | :ol{:start} | :li
-          | :quote | :table | :tr | :th | :td | :details{:open?} | :summary
+          | :quote | :table | :tr | :th | :td
   inline := :span{:preserve-ws? :nowrap?} | :br | :strong | :em | :c
           | :a{:href} | :img{:src :alt} | :kbd | :mark | :sup | :sub
+  forbidden := :details | :summary | HTML <details>/<summary> | collapsible answer widgets
   text   := string shorthand
   preserve_ws := :code | :c | :kbd
 

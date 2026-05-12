@@ -1,0 +1,61 @@
+(ns com.blockether.vis.internal.env-test
+  (:require
+   [clojure.string :as str]
+   [com.blockether.vis.internal.env :as env]
+   [com.blockether.vis.internal.persistance :as persistance]
+   [lazytest.core :refer [defdescribe expect it]]
+   [sci.core :as sci]))
+
+(defn- eval-sci
+  [{:keys [sci-ctx sandbox-ns]} code]
+  (:val (sci/eval-string+ sci-ctx code {:ns sandbox-ns})))
+
+(defdescribe repl-helper-test
+  (it "preinstalls the repl alias promised by the sandbox prompt"
+    (let [ctx (env/create-sci-context nil)]
+      (expect (some? (eval-sci ctx "(resolve 'repl/apropos)")))
+      (expect (some #(= 'clojure.repl/source-fn %)
+                (eval-sci ctx "(repl/apropos \"source-fn\")")))))
+
+  (it "keeps clojure.repl/source printing Source not found when no source metadata exists"
+    (let [ctx (env/create-sci-context nil)
+          w   (java.io.StringWriter.)]
+      (sci/binding [sci/out w sci/err w]
+        (eval-sci ctx "(repl/source definitely-missing-symbol)"))
+      (expect (str/includes? (str w) "Source not found")))))
+
+(defdescribe build-bindings-test
+  (it "renders persisted def source with a Malli shape comment"
+    (let [{:keys [sci-ctx initial-ns-keys]}
+          (env/create-sci-context {})
+          source "(def file-data (v/cat \"deps.edn\"))"
+          value  {:path "deps.edn"
+                  :lines ["a" "b"]}]
+      (env/sci-update-binding! sci-ctx 'file-data value)
+      (with-redefs [persistance/db-latest-var-registry
+                    (fn [_ _]
+                      {'file-data {:code source
+                                   :version 2
+                                   :created-at #inst "2026-05-12T00:00:00.000-00:00"}})]
+        (let [bindings (env/build-bindings sci-ctx initial-ns-keys nil ::db ::conversation)]
+          (expect (str/includes? bindings ";; shape: [:map"))
+          (expect (str/includes? bindings "[:path :string]"))
+          (expect (str/includes? bindings "[:lines [:vector :string]]"))
+          (expect (str/includes? bindings source))
+          (expect (not (str/includes? bindings "{:keys")))
+          (expect (not (str/includes? bindings "scope=live")))))))
+
+  (it "renders persisted defn source instead of a synthetic signature"
+    (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]}
+          (env/create-sci-context {})
+          source "(defn twice [x] (* 2 x))"]
+      (sci/eval-string+ sci-ctx source {:ns sandbox-ns})
+      (with-redefs [persistance/db-latest-var-registry
+                    (fn [_ _]
+                      {'twice {:code source
+                               :version 1
+                               :created-at #inst "2026-05-12T00:00:00.000-00:00"}})]
+        (let [bindings (env/build-bindings sci-ctx initial-ns-keys nil ::db ::conversation)]
+          (expect (str/includes? bindings ";; shape:"))
+          (expect (str/includes? bindings source))
+          (expect (not (str/includes? bindings "..."))))))))

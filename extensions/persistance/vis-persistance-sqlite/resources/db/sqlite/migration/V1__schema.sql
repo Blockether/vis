@@ -617,7 +617,7 @@ CREATE INDEX idx_extension_aggregate_iteration_block_id
   WHERE conversation_turn_iteration_block_id IS NOT NULL;
 
 -- Supports metadata JSON field filtering for extension aggregate queries.
--- Extensions pass {:metadata {:field value}} to ext-list/ext-delete!;
+-- Extensions pass {:metadata {:field value}} to extension-list-aggregates/extension-delete-aggregate!;
 -- the clause layer generates json_extract WHERE conditions on these paths.
 CREATE INDEX idx_extension_aggregate_metadata
   ON extension_aggregate(extension_id, kind, json_extract(metadata, '$.kind'))

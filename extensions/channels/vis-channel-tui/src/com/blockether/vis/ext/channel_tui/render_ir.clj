@@ -263,9 +263,9 @@
 ;; =============================================================================
 
 ;; Mutual recursion: `block->lines` (final dispatch) calls
-;; `blocks->lines`/`list->lines`/`quote->lines`/`details->lines` for
-;; nested children; each of those calls back into `block->lines`.
-;; The cycle is structural (markdown blocks nest), can't be sorted.
+;; `blocks->lines`/`list->lines`/`quote->lines` for nested children;
+;; each of those calls back into `block->lines`. The cycle is structural
+;; (markdown blocks nest), can't be sorted.
 (declare block->lines)
 
 (defn- blocks->lines
@@ -412,43 +412,6 @@
         bar   {:text "│ " :style #{:quote} :node nil}]
     (mapv (fn [l] (update l :runs #(into [bar] %))) inner)))
 
-(defn- details->lines
-  "Render a `[:details]` block:
-   - one summary line tagged `:summary` carrying `:meta
-     {:kind :toggle-details :node-id <stable id>}` so the bubble
-     painter can register a click region;
-   - body lines tagged `:details-body`.
-   Whether the body is rendered or replaced with a placeholder is
-   the painter's call (it knows the live `:detail-expansions` map).
-   The walker emits both forms, the painter picks one."
-  [node width opts]
-  (let [attrs    (node-attrs node)
-        open?    (boolean (:open? attrs))
-        children (vec (node-children node))
-        summary  (first children)
-        body     (rest children)
-        node-id  (or (:node-id attrs) (str "details:" (hash node)))
-        ;; summary line: triangle indicator + summary text, indent body 2
-        marker   {:text (if open? "▾ " "▸ ") :style #{:marker} :node summary}
-        sum-runs (inlines->runs (node-children summary) #{:bold} nil)
-        sum-lines (wrap-runs sum-runs width [marker])
-        sum-tagged (mapv (fn [l]
-                           (-> l
-                             (assoc :block-tag :summary)
-                             (assoc :meta {:kind     :toggle-details
-                                           :node-id  node-id
-                                           :open?    open?})))
-                     sum-lines)
-        body-lines (when (or open? (nil? (:open? attrs)))
-                     (let [inner (blocks->lines body (max 1 (- width 2)) opts)
-                           pad   {:text "  " :style #{} :node nil}]
-                       (mapv (fn [l]
-                               (-> l
-                                 (update :runs #(into [pad] %))
-                                 (assoc :block-tag :details-body)))
-                         inner)))]
-    (vec (concat sum-tagged body-lines))))
-
 (defn- tag-lines
   "Stamp every produced line with `:block-tag` so downstream adapters
    (sentinel-string emitter, click/select region builder) can map
@@ -499,12 +462,6 @@
       :quote
       (conj (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
         (assoc (empty-line) :block-tag :quote))
-
-      :details
-      ;; details->lines already stamps per-line block tags + click meta;
-      ;; just pad with a trailing blank for visual spacing.
-      (conj (vec (details->lines node width opts))
-        (assoc (empty-line) :block-tag :details-body))
 
       ;; tables fall back to plain projection for v1; truncate lines
       ;; to width so they don't blow past the terminal
@@ -707,7 +664,6 @@
    :bullet  p/MARKER_MD_BULLET
    :quote   p/MARKER_MD_QUOTE
    :table   p/MARKER_MD_TABLE_ROW
-   :summary p/MARKER_MD_SUMMARY
    :plain   p/MARKER_ANSWER_TXT})
 
 (def ^:private thinking-marker-set
@@ -718,7 +674,6 @@
    :bullet  p/MARKER_TH_MD_BULLET
    :quote   p/MARKER_TH_MD_QUOTE
    :table   p/MARKER_TH_MD_TABLE_ROW
-   :summary p/MARKER_TH_MD_SUMMARY
    :plain   p/MARKER_THINKING})
 
 (defn- marker-set-for [mode]
@@ -741,8 +696,6 @@
     :li           (:bullet marker-set)
     :quote        (:quote marker-set)
     :table        (:table marker-set)
-    :summary      (:summary marker-set)
-    :details-body (:plain marker-set)
     ;; :p, nil, anything else → plain text marker
     (:plain marker-set)))
 
@@ -789,8 +742,8 @@
    suitable for chrome-row labels. NO block markers — just inline
    sentinels (`INLINE_BOLD_ON/OFF`, `INLINE_CODE_ON/OFF`, etc.) wrapping
    styled runs. Hard breaks `[:br]` become spaces (single line
-   contract). Used by detail-summary chrome and other label
-   surfaces that previously ran through `markdown->inline`."
+   contract). Used by chrome labels and other surfaces that previously
+   ran through `markdown->inline`."
   ^String [ir]
   (let [;; pass huge width so walker never wraps; we want one flat run
         lines (ir->lines ir Integer/MAX_VALUE)
@@ -804,8 +757,7 @@
   "Drop-in replacement for the legacy `render/markdown->entries`.
    Returns a vector of `{:line :meta}` maps where `:line` is the
    sentinel-prefixed string the bubble painter consumes, and `:meta`
-   is per-line click-region metadata (e.g. `{:kind :toggle-details
-   :node-id ...}` for `:summary` lines).  `nil` `:meta` for content
+   is per-line click-region metadata. `nil` `:meta` for ordinary content
    lines.
 
    `:mode` selects the marker set:

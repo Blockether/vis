@@ -1633,7 +1633,7 @@
     ;; :metadata in a query is a map of {field-key expected-value} pairs.
     ;; Each pair becomes a json_extract WHERE clause. This lets extensions
     ;; run structured queries over their metadata without custom tables.
-    ;; Example: (ext-list env {:kind :bridge/edge :metadata {:source "core/run"}})
+    ;; Example: (extension-list-aggregates env {:kind :bridge/edge :metadata {:source "core/run"}})
     (and (map? (:metadata opts)) (seq (:metadata opts)))
     (into (for [[k v] (:metadata opts)]
             [:= [:json_extract :metadata (str "$." (name k))] (str v)]))))
