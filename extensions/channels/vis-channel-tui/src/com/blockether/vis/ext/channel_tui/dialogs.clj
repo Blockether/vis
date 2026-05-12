@@ -1075,6 +1075,10 @@
     :type :toggle
     :label "Show full execution trace"
     :description "Blocks, eval results, stdout, errors - the whole iteration history"}
+   {:key :show-silent
+    :type :toggle
+    :label "Show silent system calls"
+    :description "Include successful :vis/silent forms such as title/system bookkeeping in traces"}
    {:key :show-timestamps
     :type :toggle
     :label "Show per-message timestamps"

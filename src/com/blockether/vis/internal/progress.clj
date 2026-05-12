@@ -23,8 +23,9 @@
                        tracker writes per-form data into the
                        iteration entry's parallel vectors at index
                        `:form-idx`. Chunks tagged `:silent?` (or
-                       returning `:vis/silent`) are elided when they
-                       succeeded.
+                       returning `:vis/silent`) are retained with a
+                       parallel `:silents` marker so channels can
+                       toggle their visibility.
 
      :iteration-final  Iteration is complete. Carries `:final` (nil
                        when the turn isn't done yet) and `:done?`
@@ -58,6 +59,7 @@
       :durations [int-ms ...]
       :successes [bool ...]
       :started-at-ms [int-ms ...] ;; running form start timestamps
+      :silents   [bool ...]       ;; per-form :vis/silent visibility marker
       :error     nil-or-iteration-error
       :final     nil-or-{:answer :iteration-count :status}
       :done?     bool}
@@ -84,6 +86,7 @@
    :durations []
    :successes []
    :started-at-ms []
+   :silents   []
    :elided-form-idxs #{}
    :error     nil
    :final     nil
@@ -172,6 +175,12 @@
       (- idx (count (filter #(< % idx) elided))))
     idx))
 
+(defn- silent-chunk?
+  [chunk]
+  (boolean
+    (or (:silent? chunk)
+      (= :vis/silent (:result chunk)))))
+
 (defn- write-form-start-slot
   "Per-form start chunks land at `:form-idx` before eval completes.
    Only `:code` / `:comments` / `:started-at-ms` are populated; result-
@@ -183,7 +192,8 @@
     (-> entry
       (update :code     #(assoc (pad-to % need) idx (:code chunk)))
       (update :comments #(assoc (pad-to % need) idx (:comment chunk)))
-      (update :started-at-ms #(assoc (pad-to % need) idx (:started-at-ms chunk))))))
+      (update :started-at-ms #(assoc (pad-to % need) idx (:started-at-ms chunk)))
+      (update :silents  #(assoc (pad-to % need) idx (silent-chunk? chunk))))))
 
 (defn- write-form-slot
   "Per-form chunks land at `:form-idx`. Pad parallel vectors with
@@ -202,7 +212,9 @@
       (update :stdouts   #(assoc (pad-to % need) idx (or (:stdout chunk) "")))
       (update :stderrs   #(assoc (pad-to % need) idx (or (:stderr chunk) "")))
       (update :durations #(assoc (pad-to % need) idx (or (:execution-time-ms chunk) 0)))
-      (update :successes #(assoc (pad-to % need) idx (nil? (:error chunk)))))))
+      (update :successes #(assoc (pad-to % need) idx (nil? (:error chunk))))
+      (update :silents   #(assoc (pad-to % need) idx (and (nil? (:error chunk))
+                                                       (silent-chunk? chunk)))))))
 
 (defn- drop-slot
   "Drop index `idx` from `v`. Out-of-bounds idx returns `v` unchanged.
@@ -242,7 +254,8 @@
         (update :stderrs   drop-slot idx)
         (update :durations drop-slot idx)
         (update :successes drop-slot idx)
-        (update :started-at-ms drop-slot idx)))
+        (update :started-at-ms drop-slot idx)
+        (update :silents drop-slot idx)))
     entry
     (sort > idx-set)))
 
@@ -278,7 +291,8 @@
         (update :stderrs   insert-slot display-idx)
         (update :durations insert-slot display-idx)
         (update :successes insert-slot display-idx)
-        (update :started-at-ms insert-slot display-idx)))))
+        (update :started-at-ms insert-slot display-idx)
+        (update :silents insert-slot display-idx)))))
 
 (defn- update-entry
   "Apply a single chunk to its iteration's timeline entry. Dispatches
@@ -292,15 +306,10 @@
       (assoc entry :thinking next-thinking))
 
     :form-start
-    (if (:silent? chunk)
-      (hide-form-slot entry (:form-idx chunk))
-      (write-form-start-slot entry chunk))
+    (write-form-start-slot entry chunk)
 
     :form-result
-    (if (and (not (:error chunk))
-          (or (:silent? chunk)
-            (= :vis/silent (:result chunk))
-            (= :vis/answer (:result chunk))))
+    (if (and (not (:error chunk)) (= :vis/answer (:result chunk)))
       (hide-form-slot entry (:form-idx chunk))
       (write-form-slot (unhide-form-slot entry (:form-idx chunk)) chunk))
 
@@ -311,31 +320,21 @@
                              (normalize-thinking-text (:thinking entry)))
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
-          ;; Elide forms that are visual noise:
-          ;;   (a) `(answer ...)` — the answer text already renders
-          ;;       below; the call source is redundant.
-          ;;   (b) `(conversation-title ...)` — the title is shown
-          ;;       in the channel chrome (header bar); the call
-          ;;       source is redundant.
-          ;; Duplicate final chunks must not elide again after
-          ;; indices have shifted; keep the already-elided entry
-          ;; stable.
+          ;; Elide `(answer ...)`: the answer text already renders below;
+          ;; showing the answer call itself in the trace is redundant.
+          ;; Other successful `:vis/silent` forms stay in the timeline and
+          ;; are marked in `:silents`; channel settings decide whether to
+          ;; render them.
           answer-idx   (when-not duplicate-final?
                          (when (:final chunk) (:answer-form-idx chunk)))
           silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
-          title-idxs   (when-not duplicate-final?
-                         (->> (or (:code base) [])
-                           (keep-indexed
-                             (fn [idx code]
-                               (when (and (string? code)
-                                       (re-find #"^\s*\(conversation-title\b"
-                                         code))
-                                 idx)))
-                           set))
-          elide-set    (cond-> (into (or title-idxs #{}) silent-idxs)
-                         (some? answer-idx) (conj answer-idx))]
-      (if (seq elide-set)
-        (reduce hide-form-slot base (sort elide-set))
+          base         (reduce (fn [e idx]
+                                 (let [display-idx (display-form-idx e idx)]
+                                   (update e :silents #(assoc (pad-to % (inc display-idx)) display-idx true))))
+                         base
+                         (sort silent-idxs))]
+      (if (some? answer-idx)
+        (hide-form-slot base answer-idx)
         base))
 
     :iteration-error

@@ -345,15 +345,19 @@
 ;; =============================================================================
 
 (defdescribe goal-slash-command-registration-test
-  (it "registers exactly one channel-hook on :tui with a commands-fn"
+  (it "registers one slash command hook on :tui with a commands-fn"
     (let [hooks (:ext/channel-hooks goal/vis-extension)
-          tui   (filterv #(= :tui (:channel-id %)) hooks)]
-      (expect (= 1 (count tui)))
-      (expect (some? (:commands-fn (first tui))))))
+          slash (filterv #(and (= :tui (:channel-id %))
+                            (= :goal/slash (:hook-id %)))
+                  hooks)]
+      (expect (= 1 (count slash)))
+      (expect (some? (:commands-fn (first slash))))))
 
   (it "exposes a single :goal command with the documented usage"
     (let [hook   (->> (:ext/channel-hooks goal/vis-extension)
-                   (some #(when (= :tui (:channel-id %)) %)))
+                   (some #(when (and (= :tui (:channel-id %))
+                                  (= :goal/slash (:hook-id %)))
+                            %)))
           cmds   ((:commands-fn hook) {})]
       (expect (= 1 (count cmds)))
       (expect (= :goal (:id (first cmds))))

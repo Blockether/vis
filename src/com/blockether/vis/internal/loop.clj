@@ -3113,23 +3113,24 @@
         has-reasoning? (reasoning-effort-configurable? resolved-model)
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per turn. Threaded through both the
-        ;; system-prompt assembler (cacheable prefix) and the per-iteration
-        ;; ext nudge collector - activation-fn never re-fires inside the loop.
+        ;; stable prompt message assembler (cacheable prefix) and the
+        ;; per-iteration ext nudge collector - activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         _             (sync-active-extension-symbols! environment active-exts)
         _             (when-let [a (:active-skills-atom environment)]
                         (reset! a {}))
         _             (activate-auto-skills! environment user-request)
-        system-prompt (prompt/assemble-system-prompt environment
-                        {:system-prompt            system-prompt
-                         :active-extensions        active-exts
-                         :provider-prompt-context (provider-prompt-context environment resolved-model)})
+        stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
+                                 {:system-prompt           system-prompt
+                                  :active-extensions       active-exts
+                                  :provider-prompt-context (provider-prompt-context environment resolved-model)})
+        stable-prompt-content (prompt/stable-prompt-text stable-prompt-messages)
         initial-user-content user-request
         previous-turn-ctx (previous-turn-context environment conversation-turn-id)
         initial-messages (prompt/assemble-initial-messages
-                           {:system-prompt system-prompt
-                            :initial-user-content initial-user-content
-                            :previous-turn-context previous-turn-ctx})
+                           {:stable-prompt-messages stable-prompt-messages
+                            :initial-user-content   initial-user-content
+                            :previous-turn-context  previous-turn-ctx})
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0
                           :cache-creation-tokens 0})
         accumulate-usage! (fn [api-usage]
@@ -3268,12 +3269,10 @@
                                   (:db-info environment) (:conversation-id environment))]
       (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID conversation-state-id)
       (env/bind-and-bump! environment 'CONVERSATION_STATE_ID conversation-state-id))
-    ;; The full assembled system prompt that drives THIS turn. SYSTEM
-    ;; vars are excluded from `<bindings>` (see `env/build-bindings`)
-    ;; so binding a multi-KB string here does NOT enter per-iteration
-    ;; prompt context - it is only paid for if the model evaluates the
-    ;; symbol explicitly (e.g. to verify what rules it is bound by).
-    (env/bind-and-bump! environment 'TURN_SYSTEM_PROMPT system-prompt)
+    ;; The stable prompt prefix that drives THIS turn, joined only for
+    ;; debug/SYSTEM-var visibility. Provider send path keeps the original
+    ;; separate messages for cache boundaries.
+    (env/bind-and-bump! environment 'TURN_SYSTEM_PROMPT stable-prompt-content)
     ;; TURN_ACTIVE_EXTENSIONS = frozen, fully-realized vec describing
     ;; every extension that activated for THIS turn. Built off the same
     ;; `active-exts` we hand to the prompt assembler / nudge collector,
@@ -3386,7 +3385,7 @@
                                  (str/join "\n"))
                         hint (str "Previous attempts failed with these errors:\n" failed
                                "\n\nStart fresh with a DIFFERENT strategy.\n\nOriginal request: " user-request)
-                        messages [{:role "system" :content system-prompt} {:role "user" :content hint}]]
+                        messages (conj stable-prompt-messages {:role "user" :content hint})]
                     (recur (assoc loop-state
                              :iteration (inc iteration) :messages messages
                              :trace trace :consecutive-errors 0 :restarts (inc restarts))))
@@ -3418,7 +3417,7 @@
                                            :model               (some-> pre-resolved-model :name str)
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
-                                           :system-prompt       system-prompt
+                                           :stable-prompt-content stable-prompt-content
                                            :max-iterations      MAX_TURN_ITERATIONS
                                            ;; One low-importance turn-boundary check keeps
                                            ;; titles live across topic shifts. The old
@@ -3612,7 +3611,7 @@
                                            :conversation-state-id (persistance/db-latest-conversation-state-id
                                                                     (:db-info environment)
                                                                     (:conversation-id environment))
-                                           :system-prompt      system-prompt
+                                           :system-prompt      stable-prompt-content
                                          ;; Same frozen snapshots bound in SCI.
                                          ;; Re-stamped every iteration so inspect
                                          ;; transcript data returns one row per
@@ -4597,7 +4596,7 @@
         root-provider            (:provider root-resolved-model)
         ;; Snapshot a base system prompt for the conversation row so the
         ;; sidebar / DB inspectors have something stable to display.
-        ;; Real per-turn assembly goes through `prompt/assemble-system-prompt`
+        ;; Real per-turn assembly goes through `prompt/assemble-stable-prompt-messages`
         ;; with `:active-extensions`, so this snapshot is just metadata.
         system-prompt            (prompt/build-system-prompt {})
         resolved-conversation-id (persistance/db-resolve-conversation-id db-info conversation)

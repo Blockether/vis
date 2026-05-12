@@ -460,7 +460,7 @@
         (expect (zero? (virtual/height-cache-size)))))))
 
 (defdescribe turn-separator-test
-  (it "marks a You bubble after a Vis bubble when turn differentiation is enabled"
+  (it "marks a You bubble after a Vis bubble without adding spacer rows"
     (let [msgs [(user-msg "first")
                 (plain-assistant-msg "answer")
                 (user-msg "next")]
@@ -474,7 +474,7 @@
                                      nil 100 {}))]
       (expect (true? (:turn-separator? marked)))
       (expect (nil? (:turn-separator? (first projected))))
-      (expect (= 2 (- total-h unmarked-total)))))
+      (expect (= 0 (- total-h unmarked-total)))))
 
   (it "does not mark turn separators when disabled"
     (let [msgs [(plain-assistant-msg "answer") (user-msg "next")]

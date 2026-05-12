@@ -289,7 +289,31 @@
           body      (strip-ansi (:text payload))]
       (expect (str/includes? body "showing all 12 iterations"))
       (expect (str/includes? body "(+ 0 1)"))
-      (expect (str/includes? body "(+ 11 1)")))))
+      (expect (str/includes? body "(+ 11 1)"))))
+
+  (it "toggles :vis/silent forms in live progress traces"
+    (let [progress {:iterations [{:code ["(conversation-title \"Greeting\")" "(+ 1 2)"]
+                                  :comments [nil nil]
+                                  :results [":vis/silent" "3"]
+                                  :result-kinds [:value :value]
+                                  :result-details [nil nil]
+                                  :stdouts ["" ""]
+                                  :stderrs ["" ""]
+                                  :durations [1 1]
+                                  :successes [true true]
+                                  :silents [true false]}]}
+          hidden-body (strip-ansi
+                        (render/progress->text progress 80
+                          {:show-thinking true :show-iterations true :show-silent false}
+                          {:now-ms 1000 :turn-start-ms 0}))
+          shown-body  (strip-ansi
+                        (render/progress->text progress 80
+                          {:show-thinking true :show-iterations true :show-silent true}
+                          {:now-ms 1000 :turn-start-ms 0}))]
+      (expect (not (str/includes? hidden-body "conversation-title")))
+      (expect (str/includes? hidden-body "(+ 1 2)"))
+      (expect (str/includes? shown-body "conversation-title"))
+      (expect (str/includes? shown-body ":vis/silent")))))
 
 (defdescribe progress-streaming-perf-test
   (it "per-iteration cache keeps live-stream tick under 50 ms with 15 iterations"
@@ -1599,6 +1623,32 @@
       (expect (some #(str/includes? (:text %) "↑100 (cached 70) ↓20")
                 @puts))))
 
+  (it "renders hidden silent form count next to iteration count in the footer"
+    (let [puts    (atom [])
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers [] this)
+                     (enableModifiers [_] this)
+                     (disableModifiers [_] this)
+                     (getActiveModifiers []
+                       (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString [_col row text]
+                       (swap! puts conj {:row row :text text})
+                       this)
+                     (fillRectangle [_ _ _] this)
+                     (setCharacter [_ _ _] this))
+          height   (render/draw-chat-bubble! graphics
+                     {:role :assistant
+                      :text "hello"
+                      :iteration-count 3
+                      :traces [{:silents [true false]}
+                               {:silents [true]}]}
+                     4 2 60 {:viewport-h 40})]
+      (expect (= 4 height))
+      (expect (some #(str/includes? (:text %) "3 iters (2 silent)")
+                @puts))))
+
   (it "keeps turn separators as blank spacer rows, not a border on You"
     (let [puts    (atom [])
           fg      (atom nil)
@@ -1628,11 +1678,9 @@
           height   (render/draw-chat-bubble! graphics
                      {:role :user :text "hello" :turn-separator? true}
                      4 2 30 {:viewport-h 40})]
-      (expect (= 7 height))
+      (expect (= 5 height))
       (expect (not-any? #(str/includes? (:text %) "──") @puts))
-      (expect (not-any? #(= 4 (:row %)) @puts))
-      (expect (not-any? #(= 5 (:row %)) @puts))
-      (expect (some #(and (= 6 (:row %))
+      (expect (some #(and (= 4 (:row %))
                        (= "You" (:text %))
                        (contains? (:sgr %) com.googlecode.lanterna.SGR/BOLD))
                 @puts))))

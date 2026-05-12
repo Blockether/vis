@@ -54,7 +54,7 @@
         (expect (= :ir (first ir)))
         (expect (str/includes? (vis/render ir :markdown) "Stopped after 20 iterations")))))
 
-  (it "rebuild-history elides persisted silent system calls"
+  (it "rebuild-history marks persisted silent system calls for the TUI visibility toggle"
     (with-redefs [vis/db-info (fn [] :db)
                   vis/db-list-conversation-turns
                   (fn [_db _cid]
@@ -72,8 +72,9 @@
                       :result :vis/answer}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)]
-        (expect (= [] (:code trace)))
-        (expect (= [] (:results trace))))))
+        (expect (= ["(conversation-title \"Greeting\")"] (:code trace)))
+        (expect (= [true] (:silents trace)))
+        (expect (= [":vis/silent"] (:results trace))))))
 
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
     ;; `(def x (v/cat ...))` persists the live var value as
