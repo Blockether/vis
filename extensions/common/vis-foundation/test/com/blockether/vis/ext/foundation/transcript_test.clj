@@ -69,7 +69,25 @@
                                 :llm-provider :blockether
                                 :llm-model    "gpt-4o"
                                 :llm-messages [{:role "system" :content "SYS_PROMPT_TEXT_FIXTURE"}
-                                               {:role "user"   :content "USER_TURN_TEXT_FIXTURE"}]
+                                               {:role "user"
+                                                :content "<user_turn_request_main_goal>\nUSER_TURN_TEXT_FIXTURE\n</user_turn_request_main_goal>"}
+                                               {:role "assistant"
+                                                :content "ASSISTANT_REPLAY_FIXTURE"}
+                                               {:role "user"
+                                                :content (str "<current_turn_context>\n"
+                                                           "engine_state: turn.iteration/start\n"
+                                                           "engine_phase: model_think\n"
+                                                           "conversation_id: conv-fixture\n"
+                                                           "engine_turn_id: turn-fixture\n"
+                                                           "engine_turn_position: 1\n"
+                                                           "current_engine_iteration_id: turn/turn-fix/iteration/1\n"
+                                                           "engine_iteration_position: 1\n"
+                                                           "engine_iteration_max: 20\n"
+                                                           "prompt_role: user\n"
+                                                           "</current_turn_context>\n\n"
+                                                           "<current_engine_start_nudges>\n"
+                                                           "<current_engine_start_nudge importance=\"high\">observe before answer</current_engine_start_nudge>\n"
+                                                           "</current_engine_start_nudges>")}]
                                 :llm-raw-response "```clojure\n(+ 1 1)\n```"
                                 :llm-executable-code "(+ 1 1)"
                                 :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
@@ -401,10 +419,15 @@
               data (transcript/transcript s cid)
               out  (transcript/transcript->md data {:mode :prompts})]
           (expect (str/includes? out "# Provider prompt snapshots"))
-          (expect (str/includes? out "_system prompt:_"))
-          (expect (str/includes? out "_message 0 / system"))
-          (expect (str/includes? out "_message 1 / user"))
+          (expect (str/includes? out "_system prompt snapshot:_"))
+          (expect (str/includes? out "_full provider message envelope:_"))
+          (expect (str/includes? out "[0] role=system - stable system prompt"))
+          (expect (str/includes? out "[1] role=user - user goal"))
+          (expect (str/includes? out "[2] role=assistant - assistant optional replay"))
+          (expect (str/includes? out "[3] role=user - per-iteration trailer"))
           (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
+          (expect (str/includes? out "<current_turn_context>"))
+          (expect (str/includes? out "<current_engine_start_nudges>"))
           (expect (not (str/includes? out "##### Block 0"))))
         (finally (vis/db-dispose-connection! s)))))
 
@@ -459,7 +482,13 @@
           ;; bodies and message envelopes render by default. No flags.
           (expect (str/includes? out "SYS_PROMPT_TEXT_FIXTURE"))
           (expect (str/includes? out "<details><summary>LLM messages ("))
-          (expect (str/includes? out "USER_TURN_TEXT_FIXTURE")))
+          (expect (str/includes? out "[0] role=system - stable system prompt"))
+          (expect (str/includes? out "[1] role=user - user goal"))
+          (expect (str/includes? out "[2] role=assistant - assistant optional replay"))
+          (expect (str/includes? out "[3] role=user - per-iteration trailer"))
+          (expect (str/includes? out "USER_TURN_TEXT_FIXTURE"))
+          (expect (str/includes? out "<current_turn_context>"))
+          (expect (str/includes? out "<current_engine_start_nudges>")))
         (finally (vis/db-dispose-connection! s))))))
 
 ;; ---------------------------------------------------------------------------

@@ -191,8 +191,22 @@
                                                               (keep-indexed
                                                                 (fn [i b] (when (:vis/preflight? b) i)))
                                                               all-exprs)
-                                             elide-idxs  (cond-> preflight-idxs
-                                                           answer-here? (conj (dec (count all-exprs))))
+                                             silent-idxs (into #{}
+                                                           (keep-indexed
+                                                             (fn [i b]
+                                                               (when (or (:vis/silent b)
+                                                                       (= :vis/silent (:result b)))
+                                                                 i)))
+                                                           all-exprs)
+                                             answer-idx  (when answer-here?
+                                                           (let [idx (or (:answer-form-idx it)
+                                                                       (dec (count all-exprs)))]
+                                                             (when (and (integer? idx)
+                                                                     (not (neg? idx))
+                                                                     (< idx (count all-exprs)))
+                                                               idx)))
+                                             elide-idxs  (cond-> (into preflight-idxs silent-idxs)
+                                                           (some? answer-idx) (conj answer-idx))
                                              exprs       (into []
                                                            (keep-indexed
                                                              (fn [idx expr]

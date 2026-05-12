@@ -54,6 +54,27 @@
         (expect (= :ir (first ir)))
         (expect (str/includes? (vis/render ir :markdown) "Stopped after 20 iterations")))))
 
+  (it "rebuild-history elides persisted silent system calls"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-conversation-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "siema"
+                      :answer [:ir {} [:p {} [:span {} "Siema!"]]]}])
+                  vis/db-list-conversation-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1 :answer-form-idx 1}])
+                  vis/db-list-iteration-blocks
+                  (fn [_db _iteration-id]
+                    [{:code "(conversation-title \"Greeting\")"
+                      :result :vis/silent}
+                     {:code "(answer [:ir [:p \"Siema!\"]])"
+                      :result :vis/answer}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            trace   (-> history second :traces first)]
+        (expect (= [] (:code trace)))
+        (expect (= [] (:results trace))))))
+
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
     ;; `(def x (v/cat ...))` persists the live var value as
     ;; `{:vis/ref :expr}` (not safely serializable), but the tool call's
