@@ -12,7 +12,7 @@
 (defdescribe symbol-builder-test
   (it "builds raw callable symbols without renderers"
     (let [entry (extension/symbol #'raw-add {:raw? true})]
-      (expect (= 'raw-add (:ext.symbol/sym entry)))
+      (expect (= 'raw-add (:ext.symbol/symbol entry)))
       (expect (identical? raw-add (:ext.symbol/fn entry)))
       (expect (true? (:ext.symbol/raw? entry)))
       (expect (= "Raw helper used by symbol builder tests." (:ext.symbol/doc entry)))
@@ -23,11 +23,11 @@
       (expect (nil? (:ext.symbol/channel-render-fn entry)))))
 
   (it "raw symbols can use fallback metadata for third-party vars"
-    (let [entry (extension/symbol #'raw-add {:sym 'plus2
+    (let [entry (extension/symbol #'raw-add {:symbol 'plus2
                                              :raw? true
                                              :doc "plus helper"
                                              :arglists '([x y])})]
-      (expect (= 'plus2 (:ext.symbol/sym entry)))
+      (expect (= 'plus2 (:ext.symbol/symbol entry)))
       (expect (= "plus helper" (:ext.symbol/doc entry)))
       (expect (= '([x y]) (:ext.symbol/arglists entry)))
       (expect (true? (:ext.symbol/raw? entry))))))

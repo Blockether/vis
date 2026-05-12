@@ -531,9 +531,9 @@
   [active-extensions]
   (mapv (fn [ext]
           (cond-> {:namespace (:ext/namespace ext)
-                   :symbols   (mapv :ext.symbol/sym (:ext/symbols ext))}
-            (get-in ext [:ext/ns-alias :alias])
-            (assoc :alias (get-in ext [:ext/ns-alias :alias]))
+                   :symbols   (mapv :ext.symbol/symbol (:ext/symbols ext))}
+            (get-in ext [:ext/alias :alias])
+            (assoc :alias (get-in ext [:ext/alias :alias]))
             (:ext/doc ext)
             (assoc :doc (:ext/doc ext))
             (:ext/kind ext)
@@ -854,7 +854,6 @@ All `clojure.core` vars are interned, for the other namespaces the following are
   - `clojure.pprint` as `pp`
   - `clojure.edn` as `edn`
   - `clojure.spec.alpha` as `s`
-  - `clojure.repl` as `repl`
    
 λOUTPUT.
   ∀ model replies: emit only ```clojure code fences```.
@@ -924,7 +923,7 @@ All `clojure.core` vars are interned, for the other namespaces the following are
 
 λREPL_RECOVERY.
   *1 *2 *3 *e := last values/errors for sandbox recovery; ordinary prompt context uses rendered values, not named runtime-var indirection.
-  Use repl/doc and repl/source for function docs/source instead of relying on extension prompt docs.
+  When `v/` is active, use `v/clojure-symbol-documentation`, `v/clojure-symbol-source-code`, `v/clojure-symbol-metadata`, and `v/clojure-symbol-apropos` for function docs/source/metadata so results land in <journal>.
 
 λDISCIPLINE.
   separate_observe_code_blocks from mutation e.g. reads then (turn-answer! ...)/mutations like write file/patches in the same iteration are BANNED
@@ -1003,7 +1002,7 @@ All `clojure.core` vars are interned, for the other namespaces the following are
    Per element:
      :alias     - short symbol the model calls under (`'v`, `'z`,
                   `'git`, ...). nil when the extension didn't declare
-                  an `:ext/ns-alias`.
+                  an `:ext/alias`.
      :namespace - fully-qualified ns symbol of the extension.
      :doc       - one-line LLM description from `:ext/doc` (when set).
      :kind      - categorical bucket (providers, channels, foundation,
@@ -1042,7 +1041,7 @@ All `clojure.core` vars are interned, for the other namespaces the following are
                        :doc         (:doc info)
                        :kind        (:kind info)
                        :registry-id registry-id
-                       :symbols     (mapv :ext.symbol/sym (:ext/symbols ext))
+                       :symbols     (mapv :ext.symbol/symbol (:ext/symbols ext))
                        :docs        (vec doc-names)}
                 (nil? (:alias info)) (dissoc :alias)
                 (nil? (:doc info)) (dissoc :doc)

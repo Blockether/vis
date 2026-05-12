@@ -97,9 +97,9 @@
                         (prompt/build-iteration-context
                           environment
                           {:active-extensions [{:ext/namespace 'test.ext
-                                                :ext/ns-alias {:alias 't}
+                                                :ext/alias {:alias 't}
                                                 :ext/doc "Test extension."
-                                                :ext/symbols [{:ext.symbol/sym 'demo}]}]
+                                                :ext/symbols [{:ext.symbol/symbol 'demo}]}]
                            :iteration 2
                            :model "unknown-model"
                            :current-user-content "Do the thing."

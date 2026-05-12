@@ -42,7 +42,7 @@
 
 (defdescribe environment-core-test
   (it "exports the expected environment symbol surface"
-    (let [syms (set (map :ext.symbol/sym env-core/environment-symbols))]
+    (let [syms (set (map :ext.symbol/symbol env-core/environment-symbols))]
       (expect (contains? syms 'snapshot))
       (expect (contains? syms 'git))
       (expect (contains? syms 'repositories))

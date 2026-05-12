@@ -15,3 +15,20 @@
     (expect (nil? (parse-diagnose/try-answer-string-restitch
                     "(answer Hi there)"
                     "Hi")))))
+
+(defdescribe turn-answer-escape-rescue-test
+  (it "rewrites terminal \\e notation only inside turn-answer strings"
+    (let [src   "(turn-answer! [:ir [:p \"paste markers \" [:c \"\\e[200~\"] [:c \"\\e[201~\"]]])"
+          fixed (parse-diagnose/try-answer-escape-rescue
+                  src
+                  "Unsupported escape character: \\e."
+                  (constantly true))]
+      (expect (some? fixed))
+      (expect (str/includes? fixed "[:c \"\\\\e[200~\"]"))
+      (expect (str/includes? fixed "[:c \"\\\\e[201~\"]"))))
+
+  (it "does not relax Clojure strings outside turn-answer"
+    (expect (nil? (parse-diagnose/try-answer-escape-rescue
+                    "(println \"\\e[200~\")"
+                    "Unsupported escape character: \\e."
+                    (constantly true))))))

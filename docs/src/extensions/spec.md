@@ -37,7 +37,7 @@ Two conditional rules apply on top of the spec:
   by `kind-required-when-symbols?`). For pure non-symbol extensions
   (channels-only / providers-only / persistence-only) the `extension`
   builder auto-derives `:ext/kind` - see the table row below.
-- `:ext/ns-alias` is required when `:ext/symbols` is non-empty
+- `:ext/alias` is required when `:ext/symbols` is non-empty
   (enforced by `ns-alias-required-when-symbols?`).
 
 | Key                      | Required        | Default              | Description |
@@ -57,10 +57,10 @@ Two conditional rules apply on top of the spec:
 | `:ext/author`            | ✗              | -                    | Author / creator of the extension itself - the entity that wrote the code. e.g. `"Blockether"`. |
 | `:ext/owner`             | ✗              | -                    | Owner of the *package* / distribution that ships this extension. Distinct from `:ext/author`: a Blockether-authored extension may be vendored by another distribution. Every extension bundled in this repo declares `:ext/owner "vis"`. Surfaces as the `Owner` column in `vis extensions list`. |
 | `:ext/license`           | ✗              | -                    | SPDX license identifier, e.g. `"MIT"`, `"Apache-2.0"`, `"EPL-2.0"`. |
-| `:ext/symbols`           | ✗              | `[]`                  | Vector of symbol entries (from `symbol` / `value`). When non-empty, `:ext/kind` and `:ext/ns-alias` become required. |
+| `:ext/symbols`           | ✗              | `[]`                  | Vector of symbol entries (from `symbol` / `value`). When non-empty, `:ext/kind` and `:ext/alias` become required. |
 | `:ext/classes`           | ✗              | `{}`                  | `{fq-symbol -> Class}` - Java classes exposed in the SCI sandbox (`(java.time.LocalDate/now)` style). |
 | `:ext/imports`           | ✗              | `{}`                  | `{short-symbol -> fq-symbol}` - short-name imports for sandbox interop (`(LocalDate/now)` style). |
-| `:ext/ns-alias`          | conditional     | -                    | `{:ns 'vis.ext.tools :alias 'vis}` - **required when `:ext/symbols` is non-empty**. Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(v/cat ...)` - bare `(cat ...)` does not resolve. |
+| `:ext/alias`          | conditional     | -                    | `{:ns 'vis.ext.tools :alias 'vis}` - **required when `:ext/symbols` is non-empty**. Creates a dedicated SCI namespace with that alias. Symbols are bound **only** into this namespace, never into `sandbox` directly. The alias is auto-required in the sandbox. The LLM must use `(v/cat ...)` - bare `(cat ...)` does not resolve. |
 | `:ext/cli`               | ✗              | `[]`                  | Vector of [`com.blockether.vis.core`](../architecture/packages.md#auto-discovery) command maps (`{:cmd/name ... :cmd/doc ... :cmd/run-fn ... :cmd/args? :cmd/usage? :cmd/subcommands? :cmd/parent?}`). **Always auto-mounted under `vis extensions <cmd>`** - the dispatcher defaults `:cmd/parent` to `["extensions"]` for omitted values, and rejects entries whose `:cmd/parent` starts with anything other than `"extensions"` (`:type :ext/cli-bad-parent`). Top-level commands like `vis run` live outside the extension tree; they call `register-cmd!` directly. See the [CLI command slot](#cli-command-slot) section below for the three accepted forms. |
 | `:ext/channels`          | ✗              | `[]`                  | Vector of channel descriptors (`{:channel/id :channel/cmd :channel/doc :channel/main-fn :channel/usage? :channel/owns-tty?}`). Each entry is forwarded to `register-channel!`; it appears under `vis channels <cmd>`. See [Channels](../architecture/channels.md). |
 | `:ext/providers`         | ✗              | `[]`                  | Vector of LLM provider descriptors (`{:provider/id :provider/label :provider/auth-fn :provider/get-token-fn ...}`). Each entry is forwarded to `register-provider!`. |
@@ -267,7 +267,7 @@ will look in the system prompt.
 | Opt | Required | Description |
 |-----|----------|-------------|
 | `:ext/doc` or `:heading` | ✓ | Prompt heading |
-| `:ext/ns-alias` | ✗ | If present, emits `use alias/ prefix` in the heading and renders calls as `(alias/fn ...)` |
+| `:ext/alias` | ✗ | If present, emits `use alias/ prefix` in the heading and renders calls as `(alias/fn ...)` |
 | `:ext/symbols` | ✓ | Vector of `sdk/symbol` / `sdk/value` entries to render |
 | `:usage-note` | ✗ | Extra heading note, e.g. `"positional args only"` |
 | `:notes` | ✗ | String or seq of extra lines appended verbatim |
@@ -277,7 +277,7 @@ Example:
 ```clojure
 (sdk/render-prompt
   {:ext/doc "Filesystem tools"
-   :ext/ns-alias {:ns 'vis.ext.tools :alias 'vis}
+   :ext/alias {:ns 'vis.ext.tools :alias 'vis}
    :ext/symbols [read-file-sym patch-sym]
    :usage-note "positional args only"})
 ```
@@ -407,7 +407,7 @@ Called internally by `extension`; safe to call standalone.
      :ext/owner         "vis"
      :ext/license       "Apache-2.0"
      :ext/kind          "knowledge"
-     :ext/ns-alias      {:ns 'vis.ext.docs :alias 'docs}
+     :ext/alias      {:ns 'vis.ext.docs :alias 'docs}
      :ext/requires      ['com.blockether.vis.ext.foundation.editing.core]
      :ext/prompt        "Prefer narrow searches before broad scans."
      :ext/environment-info-fn

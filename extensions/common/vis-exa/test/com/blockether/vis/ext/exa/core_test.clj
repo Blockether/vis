@@ -57,7 +57,7 @@
 
   (it "exposes Exa symbols, renderers, and a compact prompt"
     (expect (= '[web-search code-context]
-              (mapv :ext.symbol/sym exa/exa-symbols)))
+              (mapv :ext.symbol/symbol exa/exa-symbols)))
     (expect (every? :ext.symbol/journal-render-fn exa/exa-symbols))
     (expect (every? :ext.symbol/channel-render-fn exa/exa-symbols))
     (expect (str/includes? exa/exa-prompt "EXA_API_KEY"))
@@ -67,7 +67,7 @@
 
   (it "exports a valid Vis extension"
     (expect (= 'com.blockether.vis.ext.exa.core (:ext/namespace exa/vis-extension)))
-    (expect (= {:ns 'vis.ext.exa :alias 'exa} (:ext/ns-alias exa/vis-extension)))
+    (expect (= {:ns 'vis.ext.exa :alias 'exa} (:ext/alias exa/vis-extension)))
     (expect (= "EXA_API_KEY" (-> exa/vis-extension :ext/env first :name)))
     (expect (= 2 (count (:ext/symbols exa/vis-extension))))))
 

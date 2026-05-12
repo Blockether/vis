@@ -277,15 +277,15 @@
   (it "exposes 6 symbols (status / set / pause / resume / clear / mark) under goal/"
     (let [syms (:ext/symbols goal/vis-extension)]
       (expect (= #{'status 'set 'pause 'resume 'clear 'mark}
-                (set (map :ext.symbol/sym syms))))))
+                (set (map :ext.symbol/symbol syms))))))
 
   (it "declares a `goal/` ns-alias"
-    (expect (= 'goal (-> goal/vis-extension :ext/ns-alias :alias))))
+    (expect (= 'goal (-> goal/vis-extension :ext/alias :alias))))
 
   (it "strips `env` from the model-facing arglists (so the rendered
       prompt shows `(goal/set objective)` not `(goal/set env objective)`)"
     (let [out (ext/render-prompt {:heading "Goal"
-                                  :ext/ns-alias (:ext/ns-alias goal/vis-extension)
+                                  :ext/alias (:ext/alias goal/vis-extension)
                                   :ext/symbols  (:ext/symbols goal/vis-extension)})]
       (expect (str/includes? out "(goal/status)"))
       (expect (str/includes? out "(goal/set objective)"))

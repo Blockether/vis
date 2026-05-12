@@ -35,11 +35,11 @@
     (expect (not (str/includes? patch/z-prompt "z/zedit")))
     (expect (< (count patch/z-prompt) 700))
     (expect (= (quote com.blockether.vis.ext.lang-clojure.core) (:ext/namespace clj-ext/clojure-extension)))
-    (expect (= (quote source) (:ext.symbol/sym patch/source-symbol)))
-    (expect (= (quote lit) (:ext.symbol/sym patch/lit-symbol)))
-    (expect (= (quote patch) (:ext.symbol/sym patch/patch-symbol)))
-    (expect (= (quote forms) (:ext.symbol/sym patch/forms-symbol)))
-    (expect (= (quote inspect) (:ext.symbol/sym patch/inspect-symbol)))
+    (expect (= (quote source) (:ext.symbol/symbol patch/source-symbol)))
+    (expect (= (quote lit) (:ext.symbol/symbol patch/lit-symbol)))
+    (expect (= (quote patch) (:ext.symbol/symbol patch/patch-symbol)))
+    (expect (= (quote forms) (:ext.symbol/symbol patch/forms-symbol)))
+    (expect (= (quote inspect) (:ext.symbol/symbol patch/inspect-symbol)))
     (expect (str/includes? (:ext.symbol/doc patch/patch-symbol) "Same input shape as v/patch"))))
 
 (defdescribe zpatch-check-test
@@ -61,7 +61,7 @@
       (expect (= 0 (:matches (first (:failures out)))))))
 
   (it "is exposed as a registered z/patch-check symbol"
-    (expect (= 'patch-check (:ext.symbol/sym patch/patch-check-symbol)))))
+    (expect (= 'patch-check (:ext.symbol/symbol patch/patch-check-symbol)))))
 
 (defdescribe zpatch-behavior-test
   (it "patch replaces the form found by a zipper locator when search is unique"

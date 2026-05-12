@@ -464,14 +464,12 @@
    model's natural `;; what this does\n(def ...)` paragraphing
    survives into `<journal>` instead of getting silently stripped).
 
-   Repair pipeline when the raw source fails edamame:
-     1. parinfer indent-mode rebalance -> re-parse via edamame;
-        on success every form gets `:repaired? true` so the channel
-        can see the repair happened.
-     2. quote rebalance for unbalanced string delimiters.
-     3. on final failure return `[nil parse-error]` and let the
-        caller (`execute-code`) dispatch to the extension rescue
-        chain (`try-extension-parse-rescue`).
+   Repair pipeline when source fails edamame: bounded loop over small,
+   deterministic repairs, re-parsing after every successful rewrite. This lets
+   independent fixes compose (e.g. answer-string `\\e` rescue, then parinfer).
+   On final failure return `[nil parse-error]` and let the caller
+   (`execute-code`) dispatch to the extension rescue chain
+   (`try-extension-parse-rescue`).
 
    Empty / whitespace-only / comment-only input returns `[[] nil]`."
   [code]
@@ -542,34 +540,41 @@
                                     :start-col (:start-col bnd)
                                     :end-row   (:end-row   bnd)
                                     :end-col   (:end-col   bnd)))))
-             (range) forms)))]
-      (try
-        ;; Attempt 1: edamame on raw source.
-        [(parse-and-slice code-str false) nil]
-        (catch Throwable raw-err
-          ;; Attempt 2: parinfer rebalance (parens / brackets),
-          ;; then edamame on rebalanced.
-          (if-let [rebalanced (parinfer-rebalance code-str)]
-            (try
-              [(parse-and-slice rebalanced true) nil]
-              (catch Throwable _
-                ;; Defensive: rebalance was \"clean\" per edamame in
-                ;; the inner check, but slicing failed. Fall back to
-                ;; the raw error so the caller can try the
-                ;; extension chain on the original source.
-                [nil (ex-message raw-err)]))
-            ;; Attempt 3: quote rebalance (extra/missing `\"` chars).
-            ;; Same contract as parinfer-rebalance - returns the
-            ;; rebalanced source iff it parses cleanly via edamame,
-            ;; else nil.
-            (if-let [rebalanced (quote-rebalance code-str)]
-              (try
-                [(parse-and-slice rebalanced true) nil]
-                (catch Throwable _
-                  [nil (ex-message raw-err)]))
-              ;; Both repair passes gave up. Surface the original
-              ;; error so the extension rescue chain can have a go.
-              [nil (ex-message raw-err)])))))))
+             (range) forms)))
+       (answer-escape-repair [src parse-error]
+         ;; Models often write terminal notation like `\\e[200~` in
+         ;; final-answer prose. Clojure rejects that before IR exists,
+         ;; so rewrite to a literal visible `\\\\e[200~` only inside
+         ;; `(turn-answer! ...)`. Accept this partial repair even when
+         ;; another parser error remains; the outer loop will re-parse.
+         (parse-diagnose/try-answer-escape-rescue src parse-error (constantly true)))
+       (first-repair-candidate [src parse-error seen repair-fns]
+         (some (fn [repair-fn]
+                 (when-let [fixed (repair-fn src parse-error)]
+                   (when-not (or (= fixed src) (contains? seen fixed))
+                     fixed)))
+           repair-fns))]
+      (let [repair-fns [answer-escape-repair
+                        (fn [src _parse-error] (parinfer-rebalance src))
+                        (fn [src _parse-error] (quote-rebalance src))]]
+        (loop [src       code-str
+               repaired? false
+               seen      #{code-str}
+               budget    (count repair-fns)]
+          (let [parsed (try
+                         {:entries (parse-and-slice src repaired?)}
+                         (catch Throwable err
+                           {:error (ex-message err)}))]
+            (if-let [entries (:entries parsed)]
+              [entries nil]
+              (let [parse-error (:error parsed)]
+                (if (zero? budget)
+                  [nil parse-error]
+                  (if-let [fixed (first-repair-candidate src parse-error seen repair-fns)]
+                    ;; After each accepted repair, go back to parse. If parsing
+                    ;; still fails, scan repairs again from the first fixer.
+                    (recur fixed true (conj seen fixed) (dec budget))
+                    [nil parse-error]))))))))))
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
@@ -4551,7 +4556,7 @@
 (defn- extension-aliases
   [exts]
   (->> (or exts [])
-    (keep :ext/ns-alias)
+    (keep :ext/alias)
     (distinct)
     vec))
 
@@ -4596,7 +4601,7 @@
            owners    {}]
       (if-let [ext (first remaining)]
         (let [wrapped (extension/wrap-extension ext environment)
-              entry-by-sym (into {} (map (juxt :ext.symbol/sym identity)) (:ext/symbols ext))
+              entry-by-sym (into {} (map (juxt :ext.symbol/symbol identity)) (:ext/symbols ext))
               ns-bindings (into {}
                             (map (fn [[sym val]]
                                    [sym (sci-binding-var ext-ns sym val
@@ -4636,7 +4641,7 @@
        (doseq [{ns-sym :ns alias-sym :alias :as alias} (extension-aliases installed)]
          (let [active-for-alias (filterv (fn [ext]
                                            (and (contains? active-set (:ext/namespace ext))
-                                             (= alias (:ext/ns-alias ext))))
+                                             (= alias (:ext/alias ext))))
                                   installed)]
            (if (seq active-for-alias)
              (let [bindings (extension-namespace-bindings environment ns-sym alias-sym active-for-alias)]

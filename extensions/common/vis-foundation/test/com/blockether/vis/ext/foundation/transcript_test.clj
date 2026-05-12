@@ -26,7 +26,7 @@
             :stdout-truncated? false
             :stdout stdout}
    :info {:op :v/bash
-          :tool {:sym 'bash :call "v/bash" :alias 'v}
+          :tool {:symbol 'bash :call "v/bash" :alias 'v}
           :command command
           :duration-ms 5
           :started-at-ms 10
