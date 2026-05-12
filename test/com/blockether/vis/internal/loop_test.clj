@@ -8,11 +8,17 @@
             [sci.core :as sci]))
 
 (defdescribe host-final-surface-test
-  (it "recognizes only the new final-answer and title host forms"
-    (let [answer-call? #'loop/turn-answer-call-form?
-          title-form?  #'loop/conversation-title-meta-form?]
+  (it "recognizes final-answer and title host forms, including guarded answers"
+    (let [answer-call?      #'loop/turn-answer-call-form?
+          contains-answer? #'loop/form-contains-turn-answer-call?
+          direct-answer?   #'loop/direct-answer-entry?
+          title-form?      #'loop/conversation-title-meta-form?]
       (expect (true? (answer-call? '(turn-answer! [:ir [:p "Done"]]))))
       (expect (false? (answer-call? '(answer [:ir [:p "Done"]]))))
+      (expect (true? (contains-answer? "(when ok? (turn-answer! [:ir [:p \"Done\"]]))")))
+      (expect (false? (direct-answer? "(when ok? (turn-answer! [:ir [:p \"Done\"]]))")))
+      (expect (nil? (#'loop/answer-with-mutation-preflight-mismatch
+                     [{:expr "(when ok? (turn-answer! [:ir [:p \"Done\"]]))"}])))
       (expect (true? (title-form? "(set-conversation-title! \"Prompt cleanup\")")))
       (expect (false? (title-form? "(conversation-title \"Prompt cleanup\")")))))
 
@@ -72,6 +78,16 @@
           elapsed-ms (/ (double (- (System/nanoTime) start)) 1000000.0)]
       (expect (nil? fixed))
       (expect (< elapsed-ms 1500.0)))))
+
+(defdescribe copilot-headers-test
+  (it "builds Copilot X-Initiator headers only for Copilot providers"
+    (let [headers #'loop/copilot-llm-headers]
+      (expect (= {"X-Initiator" "agent"}
+                (headers {:provider :github-copilot-individual} "agent")))
+      (expect (= {"X-Initiator" "user"}
+                (headers {:provider :github-copilot-business} "user")))
+      (expect (nil? (headers {:provider :anthropic-coding-plan} "agent")))
+      (expect (nil? (headers {:provider :github-copilot-individual} "other"))))))
 
 (defdescribe routed-provider-metadata-test
   (it "uses svar routed provider/model over pre-call routing guess"
@@ -185,7 +201,7 @@
       (expect (str/includes? rendered "preserved-thinking replay crossed")))))
 
 (defdescribe sci-extension-symbol-introspection-test
-  (it "makes v/clojure-symbol-* work for extension alias symbols"
+  (it "makes v/engine-symbol-* work for extension alias symbols"
     (let [{:keys [sci-ctx sandbox-ns initial-ns-keys]} (vis/create-sci-context nil)
           env {:sci-ctx sci-ctx
                :sandbox-ns sandbox-ns
@@ -195,13 +211,13 @@
                   (:val (sci/eval-string+ sci-ctx code {:ns sandbox-ns})))]
       (vis/install-extension! env foundation/vis-extension)
       (vis/install-extension! env clj-ext/clojure-extension)
-      (let [matches (eval* "(v/clojure-symbol-apropos \"source\")")]
+      (let [matches (eval* "(v/engine-symbol-apropos \"source\")")]
         (expect (some #(= 'z/source (:symbol %)) (:matches matches))))
-      (let [doc (eval* "(v/clojure-symbol-documentation 'z/source)")]
+      (let [doc (eval* "(v/engine-symbol-documentation 'z/source)")]
         (expect (= 'z/source (:symbol doc)))
         (expect (str/includes? (:doc doc) "Parse exact Clojure/EDN source")))
-      (let [source (eval* "(v/clojure-symbol-source-code 'z/source)")]
+      (let [source (eval* "(v/engine-symbol-source-code 'z/source)")]
         (expect (str/includes? (:source source) "(defn source")))
-      (let [metadata (eval* "(v/clojure-symbol-metadata 'z/source)")]
+      (let [metadata (eval* "(v/engine-symbol-metadata 'z/source)")]
         (expect (true? (get-in metadata [:metadata :has-source?])))
         (expect (seq (get-in metadata [:metadata :arglists])))))))

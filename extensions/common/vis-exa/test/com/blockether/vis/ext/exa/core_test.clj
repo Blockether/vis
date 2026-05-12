@@ -63,7 +63,8 @@
     (expect (str/includes? exa/exa-prompt "EXA_API_KEY"))
     (expect (str/includes? exa/exa-prompt ":max-bytes"))
     (expect (not (str/includes? exa/exa-prompt (str ":" (apply str [\p \i]) "-max"))))
-    (expect (str/includes? exa/exa-prompt "get-in r [:result :content]")))
+    (expect (str/includes? exa/exa-prompt "get-in r [:result :content]"))
+    (expect (str/includes? exa/exa-prompt "before answering current web facts")))
 
   (it "exports a valid Vis extension"
     (expect (= 'com.blockether.vis.ext.exa.core (:ext/namespace exa/vis-extension)))
