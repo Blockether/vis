@@ -72,8 +72,26 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.error :as error]
-   [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.prompt :as prompt]))
+   [com.blockether.vis.internal.extension :as extension]))
+
+(def ^:private max-plain-result-chars 20000)
+
+(defn- plain-pr-str
+  "Render live channel values without zprint/pretty-printing.
+
+   The LLM journal owns pretty data formatting. Streaming UI result rows
+   should show ordinary Clojure `pr-str` text only, bounded for safety."
+  [v]
+  (try
+    (binding [*print-length* 64
+              *print-level*  6]
+      (let [s (pr-str v)]
+        (if (> (count s) max-plain-result-chars)
+          (str (subs s 0 max-plain-result-chars)
+            " ...<+" (- (count s) max-plain-result-chars) " chars>")
+          s)))
+    (catch Throwable t
+      (str "<unprintable: " (.getMessage t) ">"))))
 
 (defn- empty-iteration-entry [iteration]
   {:iteration iteration
@@ -165,7 +183,7 @@
         (extension/channel-render-tool-result (:result chunk))
 
         :else
-        (prompt/safe-pr-str (:result chunk))))))
+        (plain-pr-str (:result chunk))))))
 
 (defn- normalize-thinking-text [thinking]
   (some-> thinking str str/trim))

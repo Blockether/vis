@@ -501,7 +501,7 @@
 ;;                                 the sandbox `(turn-request)` primitive - a
 ;;                                 closure over `:current-user-request-atom` -
 ;;                                 so the value is not pumped into per-iteration
-;;                                 var-history rows. For richer history use
+;;                                 persisted var rows. For richer history use
 ;;                                 `(v/conversation-state)` -> `:current-turn`/`:transcript`.)
 ;;     TURN_CONVERSATION_STATE_ID  UUID of the latest conversation_state row at
 ;;                                 turn start. Stable for the whole turn even if a
@@ -676,9 +676,8 @@
   (name (or status :unknown)))
 
 (defn- binding-comment
-  [{:keys [version status val]}]
-  (str ";; version=" (or version 0)
-    " scope=" (scope-label status)
+  [{:keys [status val]}]
+  (str ";; scope=" (scope-label status)
     " shape=" (bounded-pr-str (malli-shape val))))
 
 (defn- fallback-source-form
@@ -731,7 +730,7 @@
 
    Returns nil when no user vars exist; otherwise a multi-line string
    with one entry per live user `(def ...)` / `(defn ...)`: one comment with
-   version, scope, and Malli-derived shape followed by the persisted source form. SYSTEM vars
+   scope and Malli-derived shape followed by the persisted source form. SYSTEM vars
    (every name in `SYSTEM_VAR_NAMES` - `TURN_*`, `ITERATION_*`,
    `CONVERSATION_*`) and initial-ns bindings (tools, helpers) are excluded -
    the model reads SYSTEM vars by name directly from the sandbox.
@@ -759,7 +758,6 @@
                        [s {:val      (if (instance? clojure.lang.IDeref v) @v v)
                            :arglists (:arglists (meta v))
                            :doc      (:doc (meta v))
-                           :version  (get-in var-registry [s :version] 1)
                            :code     (get-in var-registry [s :code])}]))
          keep? (fn [[sym _]]
                  (and (not (contains? initial-ns-keys sym))
@@ -768,9 +766,8 @@
                         (filter keep?)
                         (sort-by (fn [[sym _]]
                                    [(- (long (recency-of sym))) (str sym)]))
-                        (mapv (fn [[sym {:keys [val arglists doc version code]}]]
+                        (mapv (fn [[sym {:keys [val arglists doc code]}]]
                                 {:symbol sym
-                                 :version version
                                  :status (var-status-keyword {:system? false :persisted? false})
                                  :type (var-type-keyword val false)
                                  :val val
@@ -818,7 +815,7 @@
                      :restored-via :unavailable
                      :success? false
                      :reason :unsafe-restore
-                     :guidance "Recreate intentionally to persist a new version."})
+                     :guidance "Recreate intentionally to persist a restorable value."})
                   ;; Data value -> bind directly
                   (do (sci-update-binding! sci-ctx sym result)
                     {:name name :restored-via :data :success? true}))

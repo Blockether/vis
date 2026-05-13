@@ -141,12 +141,13 @@
     (expect (= "" ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/render-answer)) nil))))
 
   (it "rebuilds tool-result details from canonical op envelope keys"
+    ;; Generic envelope shaped like a tool result with stdout/stderr/command
+    ;; metadata. Asserts chat layer extracts the canonical keys regardless
+    ;; of which extension emitted them.
     (let [tool-out (extension/success
-                     {:op :v/bash
-                      :result {:exit 0 :stdout "ok\n" :stderr ""}
-                      :metadata {:command "echo ok"
-                                 :cwd "."
-                                 :target {:path "."}}})]
+                     {:op :v/cat
+                      :result {:path "x.txt" :lines ["ok"]}
+                      :metadata {:target {:path "x.txt"}}})]
       (with-redefs [extension/channel-render-tool-result (fn [_] "rendered tool")
                     vis/db-info (fn [] :db)
                     vis/db-list-conversation-turns
@@ -159,18 +160,14 @@
                       [{:id :iter-1}])
                     vis/db-list-iteration-blocks
                     (fn [_db _iteration-id]
-                      [{:code "(v/bash \"echo ok\")"
+                      [{:code "(v/cat \"x.txt\")"
                         :result tool-out}])]
         (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
               trace   (-> history second :traces first)]
           (expect (= [:tool] (:result-kinds trace)))
-          (expect (= {:symbol :v/bash
-                      :tag :op.tag/action
-                      :command "echo ok"
-                      :cwd "."
-                      :target {:path "."}
-                      :stdout "ok\n"
-                      :stderr ""}
+          (expect (= {:symbol :v/cat
+                      :tag :op.tag/observation
+                      :target {:path "x.txt"}}
                     (first (:result-details trace)))))))))
 
 (defdescribe turn-options-test

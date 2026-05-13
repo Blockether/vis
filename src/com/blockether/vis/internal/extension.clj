@@ -83,28 +83,12 @@
 ;;    :metadata {:paths [...] :duration-ms 5 ...}}
 ;; ============================================================
 
-(s/def ::alias symbol?)
-(s/def ::call (s/and string? #(not (str/blank? %))))
-(s/def ::tool (s/keys :req-un [::symbol ::call]
-                :opt-un [::alias]))
-
-(s/def ::namespace symbol?)
-(s/def ::registry-id symbol?)
-(s/def ::kind (s/and string? #(not (str/blank? %))))
-(s/def ::doc (s/and string? #(not (str/blank? %))))
-(s/def ::version (s/and string? #(not (str/blank? %))))
-(s/def ::author (s/and string? #(not (str/blank? %))))
-(s/def ::owner (s/and string? #(not (str/blank? %))))
-(s/def ::license (s/and string? #(not (str/blank? %))))
-(s/def ::tool-result-extension
-  (s/keys :req-un [::namespace]
-    :opt-un [::registry-id ::kind ::doc ::version
-             ::author ::owner ::license]))
-
-(s/def ::paths (s/coll-of string? :kind vector?))
-(s/def ::mtime-max integer?)
-(s/def ::hash-sha256 (s/nilable (s/and string? #(= 64 (count %)))))
-(s/def ::source (s/keys :req-un [::paths ::mtime-max ::hash-sha256]))
+;; Live extension-info / source-markers shape lives near `::extension-info`
+;; further down. The old `::tool-result-extension` / `::tool` / `::source`
+;; cluster was removed when the `::info` envelope flattened into `::envelope`
+;; (commit 30e57b3e); leaf primitives `::alias`, `::namespace`, `::doc`,
+;; `::kind`, `::version`, `::author`, `::owner`, `::license`, `::registry-id`
+;; are defined alongside `::extension-info`.
 
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
@@ -174,9 +158,6 @@
       (if success?
         (and (string? result) (nil? error))    ; success -> rendered text, no error
         (and (nil? result) (some? error))))))  ; failure -> raw error map, no text
-
-(s/def :ext.sink/journal (s/coll-of ::sink-entry :kind vector?))
-(s/def :ext.sink/channel (s/coll-of ::sink-entry :kind vector?))
 
 (defn assert-sink-entry!
   "Throw on shape drift before a sink write. Cheap; runs inside
@@ -583,14 +564,6 @@
 ;; Error decorator: (fn [err env f args] -> map). Called when :fn throws.
 (s/def :ext.symbol/on-error-fn fn?)
 
-;; Optional parse-error rescue: (fn [{:keys [code error sym environment]}] -> string|nil).
-;; Runs BEFORE dispatch when SCI/edamame cannot parse the source.
-(s/def :ext.symbol/on-parse-error-fn fn?)
-
-;; Optional parsed-source normalizer: (fn [{:keys [code sym environment]}] -> string|nil).
-;; Runs before SCI eval when source already parses. Use for symbol-local sugar / repair.
-(s/def :ext.symbol/source-rewrite-fn fn?)
-
 ;; Renderer for this symbol's result inside <journal>. Receives ONLY the
 ;; unwrapped `:result` value (engine extracts before calling). Returns a
 ;; plaintext string. MANDATORY on every fn-symbol; no engine default.
@@ -637,8 +610,7 @@
           :ext.symbol/journal-render-fn
           :ext.symbol/channel-render-fn
           :ext.symbol/before-fn :ext.symbol/after-fn
-          :ext.symbol/on-error-fn :ext.symbol/on-parse-error-fn
-          :ext.symbol/source-rewrite-fn
+          :ext.symbol/on-error-fn
           :ext.symbol/source
           :ext.symbol/journal-render-error-fn
           :ext.symbol/channel-render-error-fn]))
@@ -733,10 +705,6 @@
   [phase]
   (contains? canonical-hook-phases phase))
 
-(def hook-nudge-importances
-  "Allowed importance levels for pre-phase system nudge hook hits."
-  #{:low :normal :high :critical})
-
 (s/def :ext.hook/id keyword?)
 (s/def :ext.hook/doc non-blank-string?)
 (s/def :ext.hook/phase (s/and keyword? hook-phase?))
@@ -745,26 +713,11 @@
 (s/def :ext/hooks (s/coll-of ::hook :kind vector?))
 
 (s/def :ext.hook.return/hint non-blank-string?)
-(s/def :ext.hook.return/importance hook-nudge-importances)
-(s/def ::system-nudge-hit
-  (s/keys :req-un [:ext.hook.return/hint]
-    :opt-un [:ext.hook.return/importance]))
-
 (s/def :ext.hook.return/reject true?)
 (s/def :ext.hook.return/message non-blank-string?)
 (s/def ::answer-validation-reject
   (s/keys :req-un [:ext.hook.return/reject]
     :opt-un [:ext.hook.return/message :ext.hook.return/hint]))
-(s/def ::answer-validation-result (s/nilable ::answer-validation-reject))
-
-;; Optional source-code rewriter for SCI/edamame parse errors.
-(s/def :ext/on-parse-error-fn fn?)
-
-;; Optional pre-eval source normalizer. Runs after source parses but before SCI
-;; eval, so extensions can repair source-shape footguns that are valid Clojure
-;; syntax but would fail during evaluation (for example unquoted prose in
-;; markdown helper calls).
-(s/def :ext/source-rewrite-fn fn?)
 
 ;; Channel-local hooks let extensions contribute UI commands/status behavior to
 ;; concrete channels without requiring those channel namespaces. The TUI uses
@@ -854,6 +807,7 @@
 (let [or-nil-or-fn (fn [k] #(let [v (get % k ::absent)] (or (= v ::absent) (ifn? v))))]
   (s/def ::provider-entry
     (s/and map?
+      #(not (contains? % :provider/prompt-fn))
       #(keyword? (:provider/id %))
       #(non-blank-string? (:provider/label %))
       (or-nil-or-fn :provider/status-fn)
@@ -862,8 +816,7 @@
       (or-nil-or-fn :provider/auth-fn)
       (or-nil-or-fn :provider/get-token-fn)
       (or-nil-or-fn :provider/limits-fn)
-      (or-nil-or-fn :provider/on-selected-fn)
-      (or-nil-or-fn :provider/prompt-fn))))
+      (or-nil-or-fn :provider/on-selected-fn))))
 (s/def :ext/providers (s/coll-of ::provider-entry :kind vector?))
 
 ;; Persistence backends exported by this extension.
@@ -886,7 +839,7 @@
 ;; Authors who don't ship checks just omit the field.
 ;;
 ;; Naming follows the `:ext/<surface>-fn` convention already used for
-;; `:ext/activation-fn`, `:ext/on-parse-error-fn` - ONE fn,
+;; `:ext/activation-fn` and `:ext/environment-prompt-fn` - ONE fn,
 ;; called by the host, returns data.
 ;;
 ;; Per-message expectations (host coerces missing/invalid):
@@ -937,9 +890,6 @@
   (s/nilable (s/and string? #(= 64 (count %)))))
 (s/def ::registry-id symbol?)
 
-(s/def ::source-markers
-  (s/keys :req-un [::source-paths ::source-mtime-max ::source-hash-sha256]))
-
 (s/def ::extension-info
   (s/keys :req-un [::namespace ::source-paths ::source-mtime-max ::source-hash-sha256]
     :opt-un [::alias ::doc ::kind ::version ::author ::owner ::license ::registry-id]))
@@ -960,7 +910,7 @@
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
             :ext/alias :ext/prompt :ext/environment-prompt-fn
-            :ext/on-parse-error-fn :ext/source-rewrite-fn :ext/fenced-renderers
+            :ext/fenced-renderers
             :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
@@ -1105,9 +1055,7 @@
         (:channel-render-error-fn opts) (assoc :ext.symbol/channel-render-error-fn (:channel-render-error-fn opts))
         (:before-fn opts)               (assoc :ext.symbol/before-fn (:before-fn opts))
         (:after-fn opts)                (assoc :ext.symbol/after-fn (:after-fn opts))
-        (:on-error-fn opts)             (assoc :ext.symbol/on-error-fn (:on-error-fn opts))
-        (:on-parse-error-fn opts)       (assoc :ext.symbol/on-parse-error-fn (:on-parse-error-fn opts))
-        (:source-rewrite-fn opts)       (assoc :ext.symbol/source-rewrite-fn (:source-rewrite-fn opts))))))
+        (:on-error-fn opts)             (assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
 
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
@@ -1139,7 +1087,7 @@
                                   failure render.
      :channel-render-error-fn   - (fn [error] string). Override channel
                                   failure render. Uniform across channels.
-     :before-fn :after-fn :on-error-fn :on-parse-error-fn :source-rewrite-fn
+     :before-fn :after-fn :on-error-fn
 
    Observed tool functions return canonical internal envelope maps. The
    wrapper records the envelope, then returns only its payload to SCI; failure
@@ -1671,153 +1619,16 @@
     (:ext/symbols ext)))
 
 ;; =============================================================================
-;; Parse-error rescue - walked by the iteration loop
-;; =============================================================================
-
-(defn- code-mentions-symbol?
-  [^String code ^String sym-name alias-name]
-  (let [esc-name (java.util.regex.Pattern/quote sym-name)
-        bare     (re-pattern (str "\\(\\s*" esc-name "(?:[\\s)\\[]|$)"))
-        prefixed (when (and alias-name (seq alias-name))
-                   (re-pattern (str "\\(\\s*"
-                                 (java.util.regex.Pattern/quote alias-name)
-                                 "/" esc-name "(?:[\\s)\\[]|$)")))]
-    (boolean (or (re-find bare code)
-               (and prefixed (re-find prefixed code))))))
-
-(defn- run-parse-rescue-hook
-  [id hook ctx]
-  (try
-    (hook ctx)
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::on-parse-error-fn-threw
-                 :data {:source id :error (ex-message t)}
-                 :msg   (str ":on-parse-error-fn (" id ") threw: "
-                          (ex-message t))})
-      nil)))
-
-(defn- try-symbol-parse-rescue
-  [extensions code error environment]
-  (loop [exts (seq extensions)]
-    (when exts
-      (let [ext   (first exts)
-            alias (some-> (:ext/alias ext) :alias clojure.core/name)
-            hit
-            (loop [syms (seq (:ext/symbols ext))]
-              (when syms
-                (let [entry (first syms)
-                      sym   (:ext.symbol/symbol entry)
-                      hook  (:ext.symbol/on-parse-error-fn entry)]
-                  (if (and hook sym (code-mentions-symbol? code (str sym) alias))
-                    (let [out (run-parse-rescue-hook
-                                (str (:ext/namespace ext) "/" sym)
-                                hook
-                                {:code        code
-                                 :error       error
-                                 :symbol         sym
-                                 :environment environment})]
-                      (if (and (string? out) (not= out code))
-                        out
-                        (recur (next syms))))
-                    (recur (next syms))))))]
-        (or hit (recur (next exts)))))))
-
-(defn- try-extension-parse-rescue
-  [extensions code error environment]
-  (loop [exts (seq extensions)]
-    (when exts
-      (let [ext  (first exts)
-            hook (:ext/on-parse-error-fn ext)
-            out  (when hook
-                   (run-parse-rescue-hook (str (:ext/namespace ext))
-                     hook
-                     {:code        code
-                      :error       error
-                      :environment environment}))]
-        (if (and (string? out) (not= out code))
-          out
-          (recur (next exts)))))))
-
-(defn try-rescue-parse-error
-  "Walk `extensions` and produce a rewritten source string for a
-   broken `code`, or nil when nothing wants to rescue.
-
-   Resolution order:
-     1. Per-symbol `:ext.symbol/on-parse-error-fn` of any registered
-        symbol whose name appears in `code`.
-     2. Extension-level `:ext/on-parse-error-fn` as a fallback.
-
-   Hooks that throw or return non-strings or the unchanged code are
-   skipped."
-  [extensions code error environment]
-  (or (try-symbol-parse-rescue extensions code error environment)
-    (try-extension-parse-rescue extensions code error environment)))
-
-(defn- try-symbol-source-rewrite
-  [extensions code environment]
-  (loop [exts (seq extensions)]
-    (when exts
-      (let [ext   (first exts)
-            alias (some-> (:ext/alias ext) :alias clojure.core/name)
-            hit
-            (loop [syms (seq (:ext/symbols ext))]
-              (when syms
-                (let [entry (first syms)
-                      sym   (:ext.symbol/symbol entry)
-                      hook  (:ext.symbol/source-rewrite-fn entry)]
-                  (if (and hook sym (code-mentions-symbol? code (str sym) alias))
-                    (let [out (run-parse-rescue-hook
-                                (str (:ext/namespace ext) "/" sym "/source-rewrite")
-                                hook
-                                {:code        code
-                                 :symbol         sym
-                                 :environment environment})]
-                      (if (and (string? out) (not= out code))
-                        out
-                        (recur (next syms))))
-                    (recur (next syms))))))]
-        (or hit (recur (next exts)))))))
-
-(defn- try-extension-source-rewrite
-  [extensions code environment]
-  (loop [exts (seq extensions)]
-    (when exts
-      (let [ext  (first exts)
-            hook (:ext/source-rewrite-fn ext)
-            out  (when hook
-                   (run-parse-rescue-hook (str (:ext/namespace ext) "/source-rewrite")
-                     hook
-                     {:code code :environment environment}))]
-        (if (and (string? out) (not= out code))
-          out
-          (recur (next exts)))))))
-
-(defn try-rewrite-source
-  "Walk active extensions and let source-rewrite hooks normalize parsed source
-   before SCI eval. This is not parse-error rescue: callers use it for valid
-   Clojure source that is likely to fail during eval because of extension-local
-   surface syntax.
-
-   Resolution order mirrors parse rescue:
-     1. Per-symbol `:ext.symbol/source-rewrite-fn` whose symbol appears in code.
-     2. Extension-level `:ext/source-rewrite-fn` fallback.
-
-   Hooks are pure source->source; throw/non-string/unchanged results are skipped."
-  [extensions code environment]
-  (or (try-symbol-source-rewrite extensions code environment)
-    (try-extension-source-rewrite extensions code environment)))
-
-;; =============================================================================
 ;; Public API - extension builder
 ;; =============================================================================
 
 (defn- derive-kind
   "Auto-derive `:ext/kind` for the categorical cases when the author
-   didn't set one. Extensions that contribute providers, channels, or
-   persistence backends (and nothing forcing a different label) get
-   bucketed under `\"providers\"` / `\"channels\"` / `\"persistance\"`
-   so `vis extensions list` reads as a clean grouped table instead
-   of a column of blanks.
+   didn't set one. Extensions that contribute providers, channels,
+   channel hooks, or persistence backends (and nothing forcing a different
+   label) get bucketed under `\"providers\"` / `\"channels\"` /
+   `\"persistance\"` so `vis extensions list` reads as a clean grouped
+   table instead of a column of blanks.
 
    Explicit `:ext/kind` always wins. Extensions that fit no
    categorical bucket (and don't set a kind themselves) stay
@@ -1827,6 +1638,7 @@
     (some? (:ext/kind spec))            (:ext/kind spec)
     (seq (:ext/providers spec))         "providers"
     (seq (:ext/channels spec))          "channels"
+    (seq (:ext/channel-hooks spec))     "channels"
     (seq (:ext/persistance spec))       "persistance"
     :else                               nil))
 
@@ -2651,7 +2463,7 @@
    granular enum collapses into these two:
 
      :op.tag/observation   reads state without changing it — cat,
-                           ls, glob, exists?, locators, rg, env
+                           ls, exists?, locators, rg, env
                            queries, registry lookups
 
      :op.tag/action        mutates state — patch, write, append,

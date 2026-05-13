@@ -1046,9 +1046,9 @@
    coloring. The TUI painter translates those ANSI SGR codes to
    Lanterna colors; raw ANSI is never written to the terminal.
 
-   Used for CODE blocks (the user's authored source). Result bodies
-   render via `format-clojure-plain` instead so vec/map literals
-   don't pick up syntax-highlight ANSI/PUA noise on copy.
+   Used for CODE blocks only (the user's authored source). Result
+   bodies use `format-clojure-plain` instead: still pretty-printed,
+   but with no ANSI syntax coloring.
 
    The source may be a complete file or fenced block with leading
    comments and multiple top-level forms. `fmt/format-clojure-ansi`
@@ -1066,18 +1066,20 @@
 
 (defn- format-clojure-plain
   "Pretty-print Clojure/EDN source via zprint WITHOUT ANSI syntax
-   coloring. Used for tool RESULT bodies in `:raw` preview mode —
-   the value is whatever the tool returned (often a vec/map literal
-   from `:editing` ops); pretty indentation is helpful, but layered
-   syntax colors fight with the surrounding result-block bg and
-   leak ANSI/PUA markers into clipboard copies.
-
-   Same source/file contract + cache pattern as `format-clojure-ansi`."
+   coloring. This is the result-body formatter: pretty layout is OK,
+   ANSI syntax highlighting is not."
   [code-text width]
   (let [code-text (str code-text)
         width     (long width)]
     (cached* [:clojure-plain width code-text]
       #(fmt/format-clojure code-text width))))
+
+(defn- raw-result-lines
+  "Pretty-print TUI result text without ANSI syntax coloring. Width
+   handling remains visual wrapping if zprint falls back to raw text."
+  [text width]
+  (mapcat #(wrap-text % width)
+    (str/split-lines (format-clojure-plain text width))))
 
 (defn- paint-ansi-line!
   "Paint a possibly ANSI-colored zprint line onto a Lanterna surface.
@@ -1515,6 +1517,18 @@
         (when-not (str/blank? (or why ""))
           (str " — " why))))))
 
+(defn- assistant-meta-line
+  [{:keys [iteration-count duration-ms tokens cost] :as message}]
+  (let [line (vis/format-meta-line
+               {:iteration-count iteration-count
+                :silent-count (silent-form-count message)
+                :duration-ms duration-ms
+                :tokens tokens
+                :cost cost}
+               {:suffix (when-let [fallback (fallback-summary message)]
+                          [fallback])})]
+    (when-not (str/blank? line) line)))
+
 (defn draw-chat-bubble!
   "Draw a chat message at the given row. No border, no bubble container.
    `message` is a map: {:role :user|:assistant, :text str, :timestamp #inst}
@@ -1544,7 +1558,7 @@
      Callers that paint outside `draw-messages-area!` (tests, REPL
      exploration) can pass `0 / 0` to disable click registration."
   [^TextGraphics g
-   {:keys [role text timestamp duration-ms iteration-count tokens cost status] :as message}
+   {:keys [role text timestamp status] :as message}
    start-row left max-w
    & [{:keys [viewport-top viewport-h]
        :or   {viewport-top 0 viewport-h 0}}]]
@@ -1624,15 +1638,7 @@
         ;; attribute and "0 iters / no model" reads as clutter under
         ;; a "Cancelled" placeholder.
         meta-str   (when (and (not user?) (not cancelled?))
-                     (let [line (vis/format-meta-line
-                                  {:iteration-count iteration-count
-                                   :silent-count (silent-form-count message)
-                                   :duration-ms duration-ms
-                                   :tokens tokens
-                                   :cost cost}
-                                  {:suffix (when-let [fallback (fallback-summary message)]
-                                             [fallback])})]
-                       (when-not (str/blank? line) line)))
+                     (assistant-meta-line message))
         refs       (extract-link-refs message bubble-w)]
 
     ;; Role label (bold, role-colored) + optional resources badge +
@@ -2340,7 +2346,7 @@
    + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
-  [{:keys [text role prewrapped-lines iteration-count duration-ms tokens cost status] :as message} max-w]
+  [{:keys [text role prewrapped-lines status] :as message} max-w]
   (let [bubble-w   max-w
         top-sep-h  0
         h-pad      2
@@ -2358,13 +2364,7 @@
         bottom-pad (if (= role :user) 1 0)
         cancelled? (= :cancelled status)
         meta-str   (when (and (not= role :user) (not cancelled?))
-                     (let [line (vis/format-meta-line
-                                  {:iteration-count iteration-count
-                                   :silent-count (silent-form-count message)
-                                   :duration-ms duration-ms
-                                   :tokens tokens
-                                   :cost cost})]
-                       (when-not (str/blank? line) line)))
+                     (assistant-meta-line message))
         footer?    (some? meta-str)]
     (+ top-sep-h 1 top-pad (count lines) bottom-pad (if footer? 1 0) 1)))
 
@@ -2375,7 +2375,8 @@
    assistant footer is part of the key; otherwise a no-usage render can
    stale-cache the shorter height before usage arrives."
   [{:keys [text role prewrapped-lines turn-separator?
-           iteration-count duration-ms tokens cost status] :as message} max-w]
+           iteration-count duration-ms tokens cost status
+           llm-selected llm-actual llm-fallback? llm-fallback-trace] :as message} max-w]
   (cached* [::bh
             (System/identityHashCode text)
             (System/identityHashCode prewrapped-lines)
@@ -2386,6 +2387,10 @@
             tokens
             cost
             status
+            llm-selected
+            llm-actual
+            llm-fallback?
+            llm-fallback-trace
             (long max-w)]
     #(bubble-height* message max-w)))
 
@@ -3241,13 +3246,10 @@
                                                                :else (:lines preview-window))
                                         mode-lines           (if (= :preview active-mode)
                                                                (mapcat #(wrap-text % fill-w) visible-source-lines)
-                                                               ;; :raw mode of a :preview result — the value
-                                                               ;; is whatever the tool returned. Pretty-print
-                                                               ;; without ANSI colors so vec/map literals
-                                                               ;; don't pick up syntax-highlight noise that
-                                                               ;; leaks into copy-paste; plain zprint is what
-                                                               ;; the user asked for here.
-                                                               (str/split-lines (format-clojure-plain mode-text fill-w)))
+                                                               ;; :raw mode of a :preview result — pretty-print
+                                                               ;; via the plain formatter. No ANSI syntax
+                                                               ;; coloring is allowed in result rows.
+                                                               (raw-result-lines mode-text fill-w))
                                         hidden-count         (when collapsed?
                                                                (max 0 (- preview-source-count preview-limit)))
                                         summary-left         (when collapsible? (if collapsed? (str "▸ " hidden-count " lines hidden") (str "▾ showing all " preview-source-count " lines")))
@@ -3315,16 +3317,14 @@
                                      c-lines
                                      (when status-line [status-line])
                                      [(line-entry (str c-pad ""))]))
-                stdout-str    (when-not (= :v/bash (:op result-detail))
-                                (or (when-let [s (when stdouts (get stdouts idx))]
-                                      (when-not (str/blank? (str s)) s))
-                                  (when-let [s (:stdout result-detail)]
-                                    (when-not (str/blank? (str s)) s))))
-                stderr-str    (when-not (= :v/bash (:op result-detail))
-                                (or (when-let [s (when stderrs (get stderrs idx))]
-                                      (when-not (str/blank? (str s)) s))
-                                  (when-let [s (:stderr result-detail)]
-                                    (when-not (str/blank? (str s)) s))))
+                stdout-str    (or (when-let [s (when stdouts (get stdouts idx))]
+                                    (when-not (str/blank? (str s)) s))
+                                (when-let [s (:stdout result-detail)]
+                                  (when-not (str/blank? (str s)) s)))
+                stderr-str    (or (when-let [s (when stderrs (get stderrs idx))]
+                                    (when-not (str/blank? (str s)) s))
+                                (when-let [s (:stderr result-detail)]
+                                  (when-not (str/blank? (str s)) s)))
                 stdout-block  (when (and stdout-str (not (str/blank? (str stdout-str))))
                                 (let [text-lines      (wrap-text (str/trim (str stdout-str)) output-fill-w)
                                       plain-entries   (mapv #(line-entry (str stdout-marker %)) text-lines)

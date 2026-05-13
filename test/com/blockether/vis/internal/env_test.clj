@@ -19,7 +19,7 @@
       (expect (some? (eval-sci ctx "IOException"))))))
 
 (defdescribe build-bindings-test
-  (it "renders persisted def source with version, scope, and Malli shape comment"
+  (it "renders persisted def source with scope and Malli shape comment"
     (let [{:keys [sci-ctx initial-ns-keys]}
           (env/create-sci-context {})
           source "(def file-data (v/cat \"deps.edn\"))"
@@ -29,10 +29,10 @@
       (with-redefs [persistance/db-latest-var-registry
                     (fn [_ _]
                       {'file-data {:code source
-                                   :version 2
                                    :created-at #inst "2026-05-12T00:00:00.000-00:00"}})]
         (let [bindings (env/build-bindings sci-ctx initial-ns-keys nil ::db ::conversation)]
-          (expect (str/includes? bindings ";; version=2 scope=live shape=[:map"))
+          (expect (str/includes? bindings ";; scope=live shape=[:map"))
+          (expect (not (str/includes? bindings "version=")))
           (expect (str/includes? bindings "[:path :string]"))
           (expect (str/includes? bindings "[:lines [:vector :string]]"))
           (expect (str/includes? bindings source))
@@ -46,9 +46,9 @@
       (with-redefs [persistance/db-latest-var-registry
                     (fn [_ _]
                       {'twice {:code source
-                               :version 1
                                :created-at #inst "2026-05-12T00:00:00.000-00:00"}})]
         (let [bindings (env/build-bindings sci-ctx initial-ns-keys nil ::db ::conversation)]
-          (expect (str/includes? bindings ";; version=1 scope=live shape="))
+          (expect (str/includes? bindings ";; scope=live shape="))
+          (expect (not (str/includes? bindings "version=")))
           (expect (str/includes? bindings source))
           (expect (not (str/includes? bindings "..."))))))))

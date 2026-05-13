@@ -16,14 +16,11 @@
         (v/cat path)
         (v/patch [{:path path :search old :replace new}])
         (v/create-dirs path)
-        (v/glob root pattern)
         (v/copy src dest)
         (v/move src dest)
         (v/delete path)
         (v/delete-if-exists path)
         (v/exists? path)
-        (v/bash command)
-        (v/bash command opts)
         (v/cwd)
         (v/parent path)
         (v/file-name path)
@@ -41,12 +38,10 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
-   [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
-   (java.io File InputStream Reader Writer)
-   (java.util.concurrent TimeUnit)
+   (java.io File)
    (org.eclipse.jgit.ignore IgnoreNode IgnoreNode$MatchResult)))
 
 ;; =============================================================================
@@ -55,8 +50,6 @@
 
 (def ^:private default-grep-limit 50)
 (def ^:private default-list-depth 5)
-(def ^:private default-bash-timeout-ms 30000)
-(def ^:private default-bash-max-output-chars 20000)
 (def ^:private journal-render-chars 3000)
 
 ;; =============================================================================
@@ -85,26 +78,10 @@
              {:type :ext.foundation.editing/path-is-dir :path (.getPath f)})))
   f)
 
-(defn- ensure-existing-dir! [^File f]
-  (when-not (.exists f)
-    (throw (ex-info (str "Directory not found: " (.getPath f))
-             {:type :ext.foundation.editing/dir-not-found :path (.getPath f)})))
-  (when-not (.isDirectory f)
-    (throw (ex-info (str "Path is a file, not a directory: " (.getPath f))
-             {:type :ext.foundation.editing/path-is-file :path (.getPath f)})))
-  f)
-
 (defn- rel-path [^File f]
   (let [cwd (.toAbsolutePath (fs/path (workspace/cwd)))
         p   (.toAbsolutePath (.toPath f))]
     (str (.relativize cwd p))))
-
-(defn- display-path [p]
-  (let [cwd  (.normalize (.toAbsolutePath (fs/path (workspace/cwd))))
-        path (.normalize (.toAbsolutePath (fs/path p)))]
-    (if (= path cwd)
-      "."
-      (str (.relativize cwd path)))))
 
 (defn- ensure-parent-dirs! [^File f]
   (when-let [parent (.getParentFile f)]
@@ -153,9 +130,7 @@
 (defn- tool-failure-on-error
   [op kind _render-fn]
   (fn [err _env _f args]
-    (let [bash?        (= :v/bash op)
-          bash-opts    (when bash? (second args))
-          path         (if bash? (or (:cwd bash-opts) ".") (first args))
+    (let [path         (first args)
           target       (path->target path kind)
           interrupted? (instance? InterruptedException err)
           t            (now-ms)
@@ -169,10 +144,6 @@
                                       :started-at-ms  t
                                       :finished-at-ms t
                                       :duration-ms    0}
-                               bash?
-                               (assoc :command (first args)
-                                 :cwd path
-                                 :opts (dissoc bash-opts :stdin))
                                interrupted?
                                (assoc :interrupted? true
                                  :status :interrupted))
@@ -322,7 +293,6 @@
      :exclude (or exclude [])
      :hidden? (boolean (:hidden? spec))
      :respect-gitignore? (get spec :respect-gitignore? true)}))
-
 
 (defn- grep-files
   "Search with the one public v/rg spec map. Exactly one of :all or
@@ -538,81 +508,6 @@
     (fs/create-dirs f)
     (rel-path f)))
 
-(defn- glob-matcher
-  [pattern]
-  (.getPathMatcher (java.nio.file.FileSystems/getDefault)
-    (str "glob:" pattern)))
-
-(defn- glob-matchers
-  [pattern scope]
-  (cond-> [(glob-matcher pattern)]
-    (and (= scope :recursive)
-      (str/starts-with? pattern "**/"))
-    (conj (glob-matcher (subs pattern 3)))))
-
-(defn- glob-scope
-  [pattern opts]
-  (let [scope (:scope opts)]
-    (cond
-      (nil? scope)
-      (if (or (str/includes? pattern "/")
-            (str/includes? pattern "**"))
-        :recursive
-        :children)
-
-      (#{:children :recursive} scope)
-      scope
-
-      :else
-      (throw (ex-info "v/glob :scope must be :children or :recursive"
-               {:type :ext.foundation.editing/invalid-glob-opts
-                :scope scope
-                :opts opts})))))
-
-(defn- visible-path?
-  [^File f {:keys [hidden? respect-gitignore? ignore-node root]}]
-  (and (or hidden? (not (.isHidden f)))
-    (or (not respect-gitignore?)
-      (not (ignored? ignore-node f root)))))
-
-(defn- visible-descendants
-  [^File root opts]
-  (letfn [(walk [^File f]
-            (when (visible-path? f opts)
-              (if (.isDirectory f)
-                (let [kids (sort-by (juxt #(if (.isDirectory %) 0 1) #(.getName %))
-                             (or (.listFiles f) []))]
-                  (into [] (mapcat walk) kids))
-                [f])))]
-    (vec (mapcat walk (sort-by (juxt #(if (.isDirectory %) 0 1) #(.getName %))
-                        (or (.listFiles root) []))))))
-
-(defn- glob-safe
-  ([root pattern]
-   (glob-safe root pattern nil))
-  ([root pattern opts]
-   (let [root-file (ensure-existing-dir! (safe-path root))
-         {:keys [hidden? respect-gitignore?]
-          :or {hidden? false respect-gitignore? true}} (or opts {})
-         scope    (glob-scope pattern opts)
-         opts*    {:hidden? hidden?
-                   :respect-gitignore? respect-gitignore?
-                   :ignore-node (when respect-gitignore? (load-ignore-node root-file))
-                   :root root-file}
-         matchers (glob-matchers pattern scope)
-         rel*     (fn [^File f]
-                    (str (.relativize (.toPath root-file) (.toPath f))))
-         matches? (fn [^File f]
-                    (let [p (java.nio.file.Paths/get (rel* f) (make-array String 0))]
-                      (some #(.matches ^java.nio.file.PathMatcher % p) matchers)))
-         candidates (case scope
-                      :children (visible-children root-file opts*)
-                      :recursive (visible-descendants root-file opts*))]
-     {:paths (->> candidates
-               (filter matches?)
-               (mapv display-path))
-      :scope scope})))
-
 (defn- copy-safe
   ([src dest]
    (copy-safe src dest nil))
@@ -642,126 +537,6 @@
 
 (defn- exists-safe? [path]
   (fs/exists? (safe-path path)))
-
-(defn- coerce-bash-opts [opts]
-  (when (and (some? opts) (not (map? opts)))
-    (throw (ex-info "v/bash opts must be a map"
-             {:type :ext.foundation.editing/invalid-bash-opts :opts opts})))
-  (let [timeout-ms       (long (or (:timeout-ms opts) default-bash-timeout-ms))
-        max-output-chars (long (or (:max-output-chars opts) default-bash-max-output-chars))
-        cwd              (or (:cwd opts) ".")
-        stdin            (:stdin opts)]
-    (when-not (pos? timeout-ms)
-      (throw (ex-info "v/bash :timeout-ms must be a positive integer"
-               {:type :ext.foundation.editing/invalid-bash-opts
-                :opt  :timeout-ms :got (:timeout-ms opts)})))
-    (when-not (pos? max-output-chars)
-      (throw (ex-info "v/bash :max-output-chars must be a positive integer"
-               {:type :ext.foundation.editing/invalid-bash-opts
-                :opt  :max-output-chars :got (:max-output-chars opts)})))
-    (when (and (some? stdin) (not (string? stdin)))
-      (throw (ex-info "v/bash :stdin must be a string when provided"
-               {:type :ext.foundation.editing/invalid-bash-opts
-                :opt  :stdin :got (type stdin)})))
-    {:timeout-ms       timeout-ms
-     :max-output-chars max-output-chars
-     :cwd              cwd
-     :stdin            stdin}))
-
-(defn- read-stream-limited
-  [^InputStream in max-output-chars]
-  (let [limit (long max-output-chars)]
-    (with-open [^Reader reader (io/reader in)]
-      (let [^StringBuilder out (StringBuilder.)
-            ^chars buffer (char-array 4096)]
-        (loop [total 0]
-          (let [n (.read reader buffer 0 (alength buffer))]
-            (if (neg? n)
-              {:text       (str out)
-               :chars      total
-               :truncated? (> total limit)}
-              (do
-                (let [appended (.length out)
-                      remaining (- limit appended)
-                      take-n (int (max 0 (min n remaining)))]
-                  (when (pos? take-n)
-                    (.append out buffer 0 take-n)))
-                (recur (+ total n))))))))))
-
-(defn- write-stdin-and-close!
-  [^Process process stdin]
-  (with-open [^Writer writer (io/writer (.getOutputStream process))]
-    (when (some? stdin)
-      (.write writer ^String stdin))))
-
-(defn- bash-warnings
-  [exit stderr]
-  (cond-> []
-    (and (zero? (long exit))
-      (string? stderr)
-      (re-find #"(?m)^Traceback \(most recent call last\):" stderr))
-    (conj {:type :stderr-traceback-with-zero-exit
-           :message "stderr contains a Python Traceback even though bash exited 0; a swallowed script error may have occurred. v/bash runs with set -euo pipefail; inspect the child command for swallowed failures."})))
-
-(defn- run-bash-safe
-  ([command]
-   (run-bash-safe command nil))
-  ([command opts]
-   (when-not (string? command)
-     (throw (ex-info "v/bash command must be a string"
-              {:type :ext.foundation.editing/invalid-bash-command
-               :got (type command)})))
-   (when (str/blank? command)
-     (throw (ex-info "v/bash command must be non-blank"
-              {:type :ext.foundation.editing/invalid-bash-command})))
-   (when (and (re-find #"(?i)\.(clj|cljc|cljs|edn)(['\"\s]|$)" command)
-           (or (re-find #"(?i)\bpython3?\b|\bperl\b|\bruby\b" command)
-             (re-find #"(?i)\bsed\s+-i\b" command))
-           (re-find #"(?is)(write_text|open\s*\([^)]*['\"]w|perl\s+-p?i|ruby\s+-p?i|sed\s+-i|>\s*[^\n]*\.(clj|cljc|cljs|edn))" command))
-     (throw (ex-info "Refusing v/bash shell edit of Clojure/EDN source; use z/patch after z/locators or z/symbols."
-              {:type :ext.foundation.editing/bash-clojure-source-edit-blocked
-               :reason :use-z-patch
-               :command-preview (subs command 0 (min 240 (count command)))})))
-   (let [{:keys [cwd timeout-ms max-output-chars stdin]} (coerce-bash-opts opts)
-         cwd-file (ensure-existing-dir! (safe-path cwd))
-         cwd-rel (display-path cwd-file)
-         argv (java.util.ArrayList. ^java.util.Collection ["/usr/bin/env" "bash" "-lc" command])
-         pb (doto (ProcessBuilder. ^java.util.List argv)
-              (.directory cwd-file))
-         started (now-ms)
-         ^Process process (.start pb)
-         stdout-f (future (read-stream-limited (.getInputStream process) max-output-chars))
-         stderr-f (future (read-stream-limited (.getErrorStream process) max-output-chars))
-         stdin-f (future (write-stdin-and-close! process stdin))]
-     (try
-       (let [done? (.waitFor process timeout-ms TimeUnit/MILLISECONDS)
-             _ (when-not done?
-                 (.destroyForcibly process)
-                 (.waitFor process 1000 TimeUnit/MILLISECONDS))
-             finished (now-ms)
-             stdout @stdout-f
-             stderr @stderr-f
-             exit (if done? (.exitValue process) 124)
-             _ (try @stdin-f (catch Throwable _ nil))]
-         {:command command
-          :cwd cwd-rel
-          :exit exit
-          :timed-out? (not done?)
-          :timeout-ms timeout-ms
-          :duration-ms (long (max 0 (- finished started)))
-          :stdout (:text stdout)
-          :stderr (:text stderr)
-          :stdout-chars (:chars stdout)
-          :stderr-chars (:chars stderr)
-          :stdout-truncated? (:truncated? stdout)
-          :stderr-truncated? (:truncated? stderr)
-          :warnings (bash-warnings exit (:text stderr))})
-       (catch InterruptedException e
-         (.destroyForcibly process)
-         (future-cancel stdout-f)
-         (future-cancel stderr-f)
-         (future-cancel stdin-f)
-         (throw e))))))
 
 (defn- bounded-render-text
   [s]
@@ -810,12 +585,9 @@
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
-  "Search file contents. Canonical grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Legacy-friendly shorthand also works: (v/rg \"foo|bar\" {:glob \"src/**/*.clj\"}). Spec-map fields are literal strings, never regexes; shorthand splits `|` into an explicit OR. :paths defaults to [\".\"]. Optional filters: :include/:exclude glob vectors, :glob shorthand, plus :hidden? and :respect-gitignore?. Acquisition has a private hard cap; bind the result and slice for display. Returns {:hits [...] :truncated-by ...}. Use `v/glob` for path matching."
-  ([spec-or-query]
-   (rg-tool spec-or-query nil))
-  ([spec-or-query opts]
-   (let [spec (rg-spec spec-or-query opts)
-         {:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
+  "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; bind the result and slice for display. Returns {:hits [...] :truncated-by ...}. For pure path discovery without content matching, use a vacuous spec like (v/rg {:any [\"\"] :include [\"**/*.clj\"]}) or `v/ls`."
+  ([spec]
+   (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
          out (grep-files spec)]
      (tool-success
        {:op :v/rg
@@ -832,7 +604,11 @@
                :hit-count (count (:hits out))
                :truncated-by (:truncated-by out)}
         :presentation {:kind :search-hits
-                       :row-keys [:path :line :text]}}))))
+                       :row-keys [:path :line :text]}})))
+  ([_spec _opts]
+   (throw (ex-info "v/rg takes exactly one spec map: {:all [\"literal\"] :paths [\"src\"] :include [\"**/*.clj\"]}. Use :any for OR. No query+opts shorthand."
+            {:type :ext.foundation.editing/invalid-rg-arity
+             :expected '([spec-map])}))))
 
 (defn- patch-tool
   "Canonical exact text patch. Takes one edit map or a vector of maps with required keys `:path`, `:search`, `:replace`. Every `:search` must match exactly once in the current file; all edits validate before any write. Returns changed path summaries."
@@ -877,22 +653,6 @@
        :result out
        :info {:created? (not before)
               :already-existed? before}})))
-
-(defn- glob-tool
-  "Path matching. Returns matching cwd-relative path strings. Simple patterns like `*` and `*.clj` match immediate children; recursive patterns like `**/*.clj` walk descendants. Opts may include `:scope :children|:recursive`, `:hidden?`, and `:respect-gitignore?`."
-  ([root pattern]
-   (glob-tool root pattern nil))
-  ([root pattern opts]
-   (let [{:keys [paths scope]} (glob-safe root pattern opts)]
-     (tool-success
-       {:op :v/glob
-        :path root
-        :kind :dir
-        :result paths
-        :info {:pattern pattern
-               :scope scope
-               :match-count (count paths)
-               :opts opts}}))))
 
 (defn- copy-tool
   "Copy path. Tool result."
@@ -956,40 +716,6 @@
        :kind :path
        :result exists?
        :info {:exists? exists?}})))
-
-(defn- strict-bash-command
-  [command]
-  (str "set -euo pipefail\n" command))
-
-(defn- bash-tool-result
-  [op command opts]
-  (let [out (run-bash-safe (strict-bash-command command) opts)]
-    (tool-success
-      {:op op
-       :path (:cwd out)
-       :kind :dir
-       :result (assoc out :strict? true :original-command command)
-       :info {:command command
-              :cwd (:cwd out)
-              :exit (:exit out)
-              :status (if (:timed-out? out) :timeout :done)
-              :timed-out? (:timed-out? out)
-              :timeout-ms (:timeout-ms out)
-              :duration-ms (:duration-ms out)
-              :stdout-truncated? (:stdout-truncated? out)
-              :stderr-truncated? (:stderr-truncated? out)
-              :warnings (:warnings out)
-              :opts (dissoc opts :stdin)
-              :strict? true
-              :strict-command (:command out)}
-       :presentation {:kind :diagnostic}})))
-
-(defn- bash-tool
-  "Run bounded `/usr/bin/env bash -lc` in worktree with `set -euo pipefail` prepended. Returns shell payload map with :stdout, :stderr, :exit, :warnings, etc. Refuses shell-driven Clojure/EDN source edits; use z/patch for those. Emits :warnings when stderr looks like a swallowed failure."
-  ([command]
-   (bash-tool command nil))
-  ([command opts]
-   (bash-tool-result :v/bash command opts)))
 
 ;; =============================================================================
 ;; Structured renderers
@@ -1169,24 +895,6 @@
   [result]
   (md-p "Ensured dir" (md-code result) "."))
 
-(defn- journal-render-glob
-  [result]
-  (let [matches (vec (or result []))
-        n (count matches)
-        shown (vec (take 40 matches))]
-    (str "v/glob — " n " match(es)\n"
-      (str/join "\n" shown)
-      (when (> n (count shown))
-        (str "\n… (" (- n (count shown)) " more; bind result and slice)")))))
-
-(defn- channel-render-glob
-  [result]
-  (let [matches (vec (or result []))]
-    (md-join
-      (md-p "Glob —" (count matches) "match(es).")
-      (when (seq matches)
-        (md-code-block "text" (bounded-render-text (str/join "\n" matches)))))))
-
 (defn- journal-render-copy
   [result]
   (str "v/copy — wrote " result))
@@ -1229,44 +937,6 @@
 (defn- channel-render-exists?
   [result]
   (md-p "Exists?" (md-code (pr-str result))))
-
-(defn- journal-render-bash
-  [result]
-  (let [{:keys [command exit duration-ms stdout stderr stdout-truncated? stderr-truncated?]} result
-        head (fn [s n] (let [s (or s "")]
-                         (if (<= (count s) n) s
-                           (str (subs s 0 n) "…<+" (- (count s) n) " chars>"))))]
-    (str "v/bash — exit " exit ", " duration-ms "ms"
-      (when stdout-truncated? " (stdout truncated)")
-      (when stderr-truncated? " (stderr truncated)")
-      "\ncmd: " (head command 200)
-      (when-not (str/blank? stdout)
-        (str "\nstdout: " (head stdout 600)))
-      (when-not (str/blank? stderr)
-        (str "\nstderr: " (head stderr 600))))))
-
-(defn- channel-render-bash
-  [result]
-  (let [{:keys [command cwd exit timed-out? timeout-ms duration-ms stdout stderr
-                stdout-truncated? stderr-truncated? warnings]} result
-        warning-text (when (seq warnings)
-                       (md-join "warnings:"
-                         (md-ul (map :message warnings))))
-        out (cond-> []
-              (seq warning-text)
-              (conj warning-text)
-              (not (str/blank? stdout))
-              (conj (md-join "stdout:" (md-code-block "text" (bounded-render-text stdout))))
-              (not (str/blank? stderr))
-              (conj (md-join "stderr:" (md-code-block "text" (bounded-render-text stderr)))))]
-    (md-join
-      (md-p "Ran bash in" (md-code cwd) "- exit" (md-code exit) "," duration-ms "ms"
-        (when timed-out? (str ", timed out after " timeout-ms "ms"))
-        (when (or stdout-truncated? stderr-truncated?) ", output truncated")
-        (when (seq warnings) (str ", " (count warnings) " warning(s)"))
-        ".")
-      (md-p "Command:" (md-code command))
-      (when (seq out) (apply md-join out)))))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -1331,14 +1001,6 @@
      :channel-render-fn channel-render-create-dirs
      :on-error-fn (tool-failure-on-error :v/create-dirs :dir nil)}))
 
-(def glob-symbol
-  (vis/symbol #'glob-tool
-    {:symbol 'glob
-
-     :journal-render-fn journal-render-glob
-     :channel-render-fn channel-render-glob
-     :on-error-fn (tool-failure-on-error :v/glob :dir nil)}))
-
 (def copy-symbol
   (vis/symbol #'copy-tool
     {:symbol 'copy
@@ -1379,48 +1041,32 @@
      :channel-render-fn channel-render-exists?
      :on-error-fn (tool-failure-on-error :v/exists? :path nil)}))
 
-(def bash-symbol
-  (vis/symbol #'bash-tool
-    {:symbol 'bash
-
-     :journal-render-fn journal-render-bash
-     :channel-render-fn channel-render-bash
-     :on-error-fn (tool-failure-on-error :v/bash :dir nil)}))
-
 (defn available-editing-symbols
   []
-  (cond-> [cat-symbol
-           ls-symbol
-           rg-symbol
-           patch-symbol
-           patch-check-symbol
-           create-dirs-symbol
-           glob-symbol
-           copy-symbol
-           move-symbol
-           delete-symbol
-           delete-if-exists-symbol
-           exists?-symbol]
-    (not (config/bash-disabled?))
-    (into [bash-symbol])))
+  [cat-symbol
+   ls-symbol
+   rg-symbol
+   patch-symbol
+   patch-check-symbol
+   create-dirs-symbol
+   copy-symbol
+   move-symbol
+   delete-symbol
+   delete-if-exists-symbol
+   exists?-symbol])
 
 (defn available-editing-prompt
   []
   (str
-    "`v/` strategy: combine v/rg/v/glob/v/ls to locate, v/cat to read, then bind raw payloads and slice with normal Clojure. "
+    "`v/` strategy: combine v/rg and v/ls to locate (v/rg :include/:exclude take glob vectors), v/cat to read, then bind raw payloads and slice with normal Clojure. "
     "Use v/patch for exact raw-text edits and v/patch-check when uniqueness is uncertain; use z/patch for Clojure/EDN when `z/` is active. "
     "Use path ops for filesystem moves/deletes/copies. "
-    (if (config/bash-disabled?)
-      "v/bash is disabled; stay in tools/REPL. "
-      "Use v/bash only for process boundaries (git, verify, CLI); it runs pipefail and refuses shell Clojure/EDN edits. ")))
+    "No shell tool: process boundaries (git, verify, CLI) are outside the sandbox; stay in tools/REPL."))
 
 (def editing-symbols
-  "Default editing symbol set for docs/tests. Runtime extension registration calls
-   `available-editing-symbols` so project-local config can disable bash symbols
-   before the sandbox is assembled."
+  "Default editing symbol set for docs/tests."
   (available-editing-symbols))
 
 (def editing-prompt
-  "Default editing prompt for docs/tests. Runtime prompt assembly calls
-   `available-editing-prompt` so bash guidance matches project-local config."
+  "Default editing prompt for docs/tests."
   (available-editing-prompt))

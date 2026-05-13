@@ -161,13 +161,14 @@
 (s/def :provider/limits-fn    ifn?)  ;; () -> normalized limits envelope/map
 (s/def :provider/preset map?)         ;; extension-owned UI/runtime defaults: :base-url, :default-models, :api-style, :hidden?
 (s/def :provider/on-selected-fn ifn?) ;; ({:provider :previous-provider :config :source}) -> nil
-(s/def :provider/prompt-fn ifn?)      ;; ({:provider :model :environment}) -> string/nil
 
 (s/def ::provider
-  (s/keys :req [:provider/id :provider/label]
-    :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn
-          :provider/auth-fn :provider/get-token-fn :provider/limits-fn
-          :provider/preset :provider/on-selected-fn :provider/prompt-fn]))
+  (s/and
+    #(not (contains? % :provider/prompt-fn))
+    (s/keys :req [:provider/id :provider/label]
+      :opt [:provider/status-fn :provider/logout-fn :provider/detect-fn
+            :provider/auth-fn :provider/get-token-fn :provider/limits-fn
+            :provider/preset :provider/on-selected-fn])))
 
 (defn provider
   "Build and validate a provider descriptor."

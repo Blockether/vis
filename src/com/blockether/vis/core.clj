@@ -308,7 +308,6 @@
 (def extension-doc-names                 extension/extension-doc-names)
 (def registered-extensions-summary       extension/registered-extensions-summary)
 (def invoke-symbol-wrapper               extension/invoke-symbol-wrapper)
-(def try-rescue-parse-error              extension/try-rescue-parse-error)
 (def discover-extensions!                extension/discover-extensions!)
 (def rediscover!                         manifest/rediscover!)
 (def extension-load-failures             manifest/load-failures)
@@ -404,7 +403,7 @@
 (def set-provider!                lp/set-provider!)
 (def remove-provider!             lp/remove-provider!)
 
-;; SCI execution helpers (used by extensions for parse-rescue)
+;; SCI execution helpers.
 (def extract-defining-name        lp/extract-defining-name)
 (def answer-form-error              lp/answer-form-error)
 (def parinfer-rebalance             lp/parinfer-rebalance)

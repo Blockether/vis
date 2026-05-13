@@ -160,7 +160,7 @@
      :hint (str "The user request looks like an investigation (verbs like "
              "'why', 'fix', 'check', 'find', 'debug', 'show me' …). "
              "You MUST call at least one tool (v/cat, v/rg, z/locators, "
-             "v/bash …) to observe the actual state before composing "
+             "v/ls …) to observe the actual state before composing "
              "`(turn-answer! …)`. Answering from memory on an investigation "
              "request is a hallucination. If the request is truly "
              "trivial chat (greeting, ack), ignore this nudge.")}))

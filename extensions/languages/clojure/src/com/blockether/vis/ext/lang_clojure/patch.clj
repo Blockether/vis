@@ -12,83 +12,24 @@
    rewrite-clj zippers so comments/spacing around the edited form survive.
 
    Hard guard: every path stays inside the conversation's working
-   directory (`fs/cwd`); `..` traversal is rejected before any I/O."
+   directory (Vis workspace cwd); `..` traversal is rejected before any I/O."
   (:require
-   [babashka.fs :as fs]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.lang-clojure.path :as lang-path]
    [com.blockether.vis.internal.extension :as extension]
-
-   [com.blockether.vis.internal.workspace :as workspace]
    [rewrite-clj.node :as node]
    [rewrite-clj.parser :as parser]
-   [rewrite-clj.zip :as z])
-  (:import
-   (java.io File)))
+   [rewrite-clj.zip :as z]))
 
 ;; =============================================================================
-;; Path safety (mirrors vis-foundation; kept local so this extension
-;; has no implicit dependency on the editing extension's internals).
+;; Shared path safety
 ;; =============================================================================
 
-(defn- safe-path
-  ^File [p]
-  ;; Resolve `p` against `(fs/cwd)` and reject any traversal that escapes
-  ;; the working directory.
-  (let [cwd        (workspace/cwd)
-        resolved   (.toAbsolutePath (fs/path cwd (str p)))
-        normalized (.normalize resolved)
-        cwd-norm   (.normalize (.toAbsolutePath (fs/path cwd)))]
-    (when-not (.startsWith normalized cwd-norm)
-      (throw (ex-info (str "Path '" p "' escapes the working directory")
-               {:type :ext.lang-clojure/path-escape :path (str p)})))
-    (.toFile normalized)))
-
-(def ^:private clojure-file-extensions
-  "File extensions whose contents `z/` zipper tools can safely parse via
-   rewrite-clj. Anything else (Markdown, SQL, YAML, JSON, shell) breaks
-   the zipper parser at runtime on perfectly-valid non-Clojure bytes
-   (regression: ANALYSIS.md §1 — z/patch on AGENTS.md crashed on Unicode
-   math symbols inside a fenced code block)."
-  #{"clj" "cljc" "cljs" "edn"})
-
-(defn- file-extension
-  "Lowercased extension of the path's basename, without the dot. Empty
-   string when the basename has no `.`."
-  [path]
-  (let [s    (str path)
-        base (.getName (java.io.File. s))
-        idx  (.lastIndexOf base ".")]
-    (if (pos? idx)
-      (str/lower-case (subs base (inc idx)))
-      "")))
-
-(defn- ensure-clojure-file-ext! [path]
-  (let [ext (file-extension path)]
-    (when-not (contains? clojure-file-extensions ext)
-      (throw (ex-info
-               (str "z/ tools only operate on Clojure/EDN files ("
-                 (str/join ", " (sort (map #(str "." %) clojure-file-extensions)))
-                 "). Got '" path "' (extension " (pr-str ext)
-                 "). Use v/patch / v/write for plain-text files.")
-               {:type      :ext.lang-clojure/non-clojure-file
-                :path      (str path)
-                :extension ext
-                :allowed   clojure-file-extensions})))))
-
-(defn- ensure-existing-file! [^File f]
-  (when-not (.exists f)
-    (throw (ex-info (str "File not found: " (.getPath f))
-             {:type :ext.lang-clojure/file-not-found :path (.getPath f)})))
-  (when (.isDirectory f)
-    (throw (ex-info (str "Path is a directory, not a file: " (.getPath f))
-             {:type :ext.lang-clojure/path-is-dir :path (.getPath f)})))
-  f)
-
-(defn- rel-path [^File f]
-  (let [cwd (.toAbsolutePath (fs/path (workspace/cwd)))
-        p   (.toAbsolutePath (.toPath f))]
-    (str (.relativize cwd p))))
+(def ^:private safe-path lang-path/safe-path)
+(def ^:private ensure-clojure-file-ext! lang-path/ensure-clojure-file-ext!)
+(def ^:private ensure-existing-file! lang-path/ensure-existing-file!)
+(def ^:private rel-path lang-path/rel-path)
 
 (defn- now-ms []
   (System/currentTimeMillis))
@@ -203,8 +144,8 @@
 (defn- locator-row?
   [x]
   (and (map? x)
-    (contains? x :value)
-    (some #(contains? x %) [:span :source :locator :tag])))
+    (not (node/node? x))
+    (some #(contains? x %) [:span :source :locator :tag :digest :value])))
 
 (defn- row-edit->patch-edit
   [edit]
@@ -212,7 +153,7 @@
         (contains? edit :path)
         (contains? edit :replace)
         (not (contains? edit :search)))
-    (assoc edit :search (select-keys edit [:path :index :tag :value :locator :source :span]))
+    (assoc edit :search (select-keys edit [:path :index :tag :kind :value :locator :source :span :digest :sexpr-able? :include-hidden?]))
     edit))
 
 (defn- coerce-patch-edits
@@ -256,8 +197,8 @@
     {:value (node/sexpr search)}
 
     (locator-row? search)
-    {:value (:value search)
-     :span  (:span search)}
+    (cond-> (select-keys search [:span :source :tag :digest :value :locator :sexpr-able? :include-hidden?])
+      (not (contains? search :value)) (dissoc :value))
 
     :else
     {:value search}))
@@ -275,26 +216,56 @@
 
     :else replace))
 
+(defn- safe-z
+  [f zloc]
+  (try
+    [(f zloc) nil]
+    (catch Throwable t [nil t])))
+
+(defn- target-move
+  [target]
+  (if (:include-hidden? target) z/next* z/next))
+
+(defn- target-root
+  [source target]
+  ((if (:include-hidden? target) z/of-string* z/of-string)
+   source
+   {:track-position? true}))
+
 (defn- matching-loc?
-  [{:keys [value span]} zloc]
-  (and (z/sexpr-able? zloc)
-    (try
-      (if span
-        (= span (z/position-span zloc))
-        (= value (z/sexpr zloc)))
-      (catch Throwable _ false))))
+  [target zloc]
+  (let [[span]   (safe-z z/position-span zloc)
+        [tag]    (safe-z z/tag zloc)
+        [source] (safe-z z/string zloc)]
+    (cond
+      (:span target)
+      (and (= (:span target) span)
+        (or (not (contains? target :tag)) (= (:tag target) tag))
+        (or (not (contains? target :source)) (= (:source target) source)))
+
+      (:source target)
+      (and (= (:source target) source)
+        (or (not (contains? target :tag)) (= (:tag target) tag)))
+
+      (contains? target :value)
+      (and (z/sexpr-able? zloc)
+        (try (= (:value target) (z/sexpr zloc))
+          (catch Throwable _ false)))
+
+      :else false)))
 
 (defn- count-matches
   [zloc target]
-  (loop [loc zloc
-         n   0]
-    (if-let [hit (z/find loc z/next #(matching-loc? target %))]
-      (recur (z/next hit) (inc n))
-      n)))
+  (let [move (target-move target)]
+    (loop [loc zloc
+           n   0]
+      (if-let [hit (z/find loc move #(matching-loc? target %))]
+        (recur (move hit) (inc n))
+        n))))
 
 (defn- replace-one
   [zloc target replacement]
-  (if-let [hit (z/find zloc z/next #(matching-loc? target %))]
+  (if-let [hit (z/find zloc (target-move target) #(matching-loc? target %))]
     (z/replace hit replacement)
     zloc))
 
@@ -317,8 +288,8 @@
 
 (defn- zipper-patch-source
   [source search replace]
-  (let [zloc        (z/of-string source {:track-position? true})
-        target      (locator-target search)
+  (let [target      (locator-target search)
+        zloc        (target-root source target)
         replacement (replacement-value replace)
         matches     (count-matches zloc target)]
     (when-not (= 1 matches)
@@ -365,28 +336,40 @@
 
 (defn- check-single-edit
   "Dry-run one zipper edit against `current` source. Returns a tuple
-   [next-source check-map failure-map-or-nil]. `next-source` is the
-   original `current` if the edit fails so subsequent checks in the
-   same file see the same baseline as the failing edit."
+   [next-source check-map failure-map-or-nil warning-maps]. `next-source`
+   is the original `current` if the edit fails so subsequent checks in
+   the same file see the same baseline as the failing edit."
   [path current edit-index {:keys [search replace]}]
-  (let [zloc      (z/of-string current {:track-position? true})
-        [target target-err]
+  (let [[target target-err]
         (try [(locator-target search) nil]
           (catch Throwable e [nil e]))
+        zloc      (when-not target-err (target-root current target))
         matches   (cond target-err 0
                     :else      (count-matches zloc target))
-        check     {:edit-index     edit-index
-                   :path           path
-                   :matches        matches
-                   :search-preview (search-preview-for-check search)
-                   :locator-error  (some-> target-err ex-message)}
-        valid?    (and (not target-err) (= 1 matches))]
+        [replacement replacement-err]
+        (try [(replacement-value replace) nil]
+          (catch Throwable e [nil e]))
+        valid?    (and (not target-err) (not replacement-err) (= 1 matches))
+        next-src  (when valid?
+                    (z/root-string (replace-one zloc target replacement)))
+        changed?  (when valid? (not= current next-src))
+        warnings  (cond-> []
+                    (and valid? (not changed?))
+                    (conj {:type :ext.lang-clojure/patch-no-op
+                           :message "replacement renders identical source; z/patch would leave the file unchanged"
+                           :edit-index edit-index
+                           :path path}))
+        check     (cond-> {:edit-index       edit-index
+                           :path             path
+                           :matches          matches
+                           :changed?         (boolean changed?)
+                           :search-preview   (search-preview-for-check search)
+                           :locator-error    (some-> target-err ex-message)
+                           :replacement-error (some-> replacement-err ex-message)}
+                    (seq warnings) (assoc :warnings warnings))]
     (if valid?
-      [(z/root-string
-         (replace-one zloc target (replacement-value replace)))
-       check
-       nil]
-      [current check check])))
+      [next-src check nil warnings]
+      [current check check warnings])))
 
 (defn- patch-analysis
   [edits]
@@ -396,35 +379,39 @@
         indexed    (into {} (map-indexed (fn [i e] [(System/identityHashCode e) i]) edits))]
     (loop [paths    path-order
            checks   []
-           failures []]
+           failures []
+           warnings []]
       (if-let [path (first paths)]
         (let [file    (ensure-existing-file! (safe-path path))
               rel     (rel-path file)
               before  (slurp file)
               ordered (locator-row-edit-order (get by-path path))
-              [_ pcs pfs]
+              [_ pcs pfs pws]
               (reduce
-                (fn [[current cs fs] edit]
+                (fn [[current cs fs ws] edit]
                   (let [idx (get indexed (System/identityHashCode edit))
-                        [next-src ck fl] (check-single-edit rel current idx edit)]
-                    [next-src (conj cs ck) (cond-> fs fl (conj fl))]))
-                [before [] []]
+                        [next-src ck fl warn] (check-single-edit rel current idx edit)]
+                    [next-src (conj cs ck) (cond-> fs fl (conj fl)) (into ws warn)]))
+                [before [] [] []]
                 ordered)]
           (recur (next paths)
             (into checks pcs)
-            (into failures pfs)))
+            (into failures pfs)
+            (into warnings pws)))
         {:checks   checks
          :failures failures
+         :warnings warnings
          :valid?   (empty? failures)}))))
 
 (defn patch-check
   "Dry-run zipper patch edits without writing. Returns
    {:valid? :checks :failures} mirroring v/patch-check semantics."
   [edits]
-  (let [{:keys [checks failures valid?]} (patch-analysis edits)]
+  (let [{:keys [checks failures warnings valid?]} (patch-analysis edits)]
     {:valid?   valid?
      :checks   checks
-     :failures failures}))
+     :failures failures
+     :warnings warnings}))
 
 (defn- patch-check-tool
   "Preflight zipper patches without writing. Use before z/patch when locators may be stale or multi-edit risk is high; mirrors v/patch-check."
@@ -437,7 +424,8 @@
        :result out
        :info   {:valid?        (:valid? out)
                 :edit-count    (count (:checks out))
-                :failure-count (count (:failures out))}})))
+                :failure-count (count (:failures out))
+                :warning-count (count (:warnings out))}})))
 
 (defn- journal-render-patch-check
   [result]
@@ -445,14 +433,19 @@
 
 (defn- channel-render-patch-check
   [result]
-  (let [{:keys [valid? checks failures]} (or result {})]
-    (str (if valid? "All zipper edits valid." (str (count failures) " zipper edit(s) failed.")) "\n\n"
+  (let [{:keys [valid? checks failures warnings]} (or result {})]
+    (str (if valid? "All zipper edits valid." (str (count failures) " zipper edit(s) failed."))
+      (when (seq warnings)
+        (str " " (count warnings) " warning(s)."))
+      "\n\n"
       (when (seq checks)
         (str "```text\n"
           (str/join "\n"
-            (map (fn [{:keys [edit-index path matches locator-error]}]
-                   (str "#" edit-index " " path " matches=" matches
-                     (when locator-error (str " locator-error=" locator-error))))
+            (map (fn [{:keys [edit-index path matches changed? locator-error replacement-error warnings]}]
+                   (str "#" edit-index " " path " matches=" matches " changed=" changed?
+                     (when locator-error (str " locator-error=" locator-error))
+                     (when replacement-error (str " replacement-error=" replacement-error))
+                     (when (seq warnings) " WARNING no-op")))
               checks))
           "\n```")))))
 
@@ -663,35 +656,61 @@
       (contains? definition-heads head) (str "(" head " " name " …)")
       :else (compact-source source))))
 
+(defn- tag-kind
+  [tag]
+  (case tag
+    :comment :comment
+    :whitespace :whitespace
+    :newline :whitespace
+    :uneval :reader-discard
+    :forms :forms
+    tag))
+
 (defn- locator-row
   [zloc]
-  (when (z/sexpr-able? zloc)
-    (try
-      (let [v      (z/sexpr zloc)
-            source (z/string zloc)]
-        (cond-> {:tag            (z/tag zloc)
-                 :kind           (form-kind v)
-                 :name           (form-name v)
-                 :digest         (form-digest v source)
-                 :source-preview (compact-source source)
-                 :value          v
-                 :locator        (pr-str v)
-                 :source         source
-                 :span           (z/position-span zloc)}
-          (seq (defn-arities v)) (assoc :arities (defn-arities v))
-          (docstring? v) (assoc :doc? true)))
-      (catch Throwable _ nil))))
+  (let [[tag tag-err]       (safe-z z/tag zloc)
+        [source source-err] (safe-z z/string zloc)
+        [span span-err]     (safe-z z/position-span zloc)
+        sexpr-able?         (try (boolean (z/sexpr-able? zloc)) (catch Throwable _ false))
+        [v sexpr-err]       (if sexpr-able?
+                              (safe-z z/sexpr zloc)
+                              [nil nil])]
+    (when (and (not tag-err) (not source-err) (not span-err) span)
+      (cond-> {:tag            tag
+               :kind           (if sexpr-err (tag-kind tag) (form-kind v))
+               :name           (when-not sexpr-err (form-name v))
+               :digest         (if sexpr-err (compact-source source) (form-digest v source))
+               :source-preview (compact-source source)
+               :source         source
+               :span           span
+               :sexpr-able?    sexpr-able?}
+        (and sexpr-able? (not sexpr-err)) (assoc :value v :locator (pr-str v))
+        (and sexpr-able? sexpr-err) (assoc :value-error (ex-message sexpr-err))
+        (and (not sexpr-err) (seq (defn-arities v))) (assoc :arities (defn-arities v))
+        (and (not sexpr-err) (docstring? v)) (assoc :doc? true)))))
+
+(defn- parse-context
+  [{:keys [include-hidden? depth]}]
+  {:create          (if include-hidden? :of-string* :of-string)
+   :move            (if include-hidden? :next* (if (= :top depth) :right :next))
+   :track-position? true
+   :position        "1-based row/col, end-col exclusive"
+   :sexpr           "best-effort; :value/:locator omitted or :value-error set when rewrite-clj sexpr is unsupported/misleading"
+   :hidden?         (boolean include-hidden?)})
 
 (defn- source-locators
-  [source]
-  (loop [loc (z/of-string source {:track-position? true})
-         out []]
-    (if (z/end? loc)
-      out
-      (recur (z/next loc)
-        (if-let [row (locator-row loc)]
-          (conj out row)
-          out)))))
+  ([source] (source-locators source nil))
+  ([source opts]
+   (let [include-hidden? (:include-hidden? opts)
+         move            (if include-hidden? z/next* z/next)]
+     (loop [loc ((if include-hidden? z/of-string* z/of-string) source {:track-position? true})
+            out []]
+       (if (or (nil? loc) (z/end? loc))
+         out
+         (recur (move loc)
+           (if-let [row (locator-row loc)]
+             (conj out (assoc row :include-hidden? (boolean include-hidden?)))
+             out)))))))
 
 (defn- source-top-level-locators
   [source]
@@ -701,15 +720,16 @@
       out
       (recur (z/right loc)
         (if-let [row (locator-row loc)]
-          (conj out row)
+          (conj out (assoc row :include-hidden? false))
           out)))))
 
 (defn- with-locator-row-context
-  [path rows]
+  [path rows parse]
   (mapv (fn [idx row]
           (assoc row
             :path path
-            :index idx))
+            :index idx
+            :parse parse))
     (range)
     rows))
 
@@ -736,8 +756,8 @@
 
 (defn- locator-source-rows
   [source opts]
-  (if (or (= :all (:depth opts)) (:symbol opts))
-    (source-locators source)
+  (if (or (= :all (:depth opts)) (:symbol opts) (:include-hidden? opts))
+    (source-locators source opts)
     (source-top-level-locators source)))
 
 (defn- locators-file
@@ -748,7 +768,8 @@
    (let [opts  (or opts {})
          f     (ensure-existing-file! (safe-path path))
          path  (rel-path f)
-         all   (with-locator-row-context path (locator-source-rows (slurp f) opts))
+         parse (parse-context opts)
+         all   (with-locator-row-context path (locator-source-rows (slurp f) opts) parse)
          {:keys [rows total-count limit truncated?]} (apply-locator-filters all opts)]
      (tool-success
        {:op :z/locators
@@ -759,7 +780,8 @@
                :total-count total-count
                :limit limit
                :truncated? truncated?
-               :filters (select-keys opts [:depth :kind :name :symbol :source-contains :limit])}}))))
+               :parse parse
+               :filters (select-keys opts [:depth :kind :name :symbol :source-contains :limit :include-hidden?])}}))))
 
 (defn forms-file
   "List top-level Clojure/EDN forms as semantic locator rows. Defaults to limit 50; pass filters like {:kind :defn}, {:name 'foo}, {:name #\"^format-\"}, {:source-contains \"swap!\"}. Rows can become z/patch edits by adding :replace."
@@ -780,7 +802,8 @@
    (let [opts  (or opts {})
          f     (ensure-existing-file! (safe-path path))
          path  (rel-path f)
-         all   (->> (with-locator-row-context path (source-locators (slurp f)))
+         parse (parse-context (assoc opts :depth :all))
+         all   (->> (with-locator-row-context path (source-locators (slurp f) opts) parse)
                  (filterv #(symbol? (:value %))))
          {:keys [rows total-count limit truncated?]} (apply-locator-filters all opts)]
      (tool-success
@@ -792,6 +815,7 @@
                :total-count total-count
                :limit limit
                :truncated? truncated?
+               :parse parse
                :filters (select-keys opts [:name :symbol :source-contains :limit])}}))))
 
 (defn- locator-for-symbol-file
@@ -868,10 +892,16 @@
 ;; =============================================================================
 
 (def source-symbol
-  (vis/symbol #'source {:raw? true}))
+  (vis/symbol #'source
+    {:raw? true
+     :journal-render-fn render-node
+     :channel-render-fn render-node}))
 
 (def lit-symbol
-  (vis/symbol #'lit {:raw? true}))
+  (vis/symbol #'lit
+    {:raw? true
+     :journal-render-fn render-node
+     :channel-render-fn render-node}))
 
 (def patch-check-symbol
   (vis/symbol #'patch-check-tool
