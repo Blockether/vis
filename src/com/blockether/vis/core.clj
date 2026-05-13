@@ -397,8 +397,10 @@
 ;; SCI execution helpers.
 (def extract-defining-name        lp/extract-defining-name)
 (def answer-form-error              lp/answer-form-error)
-(def parinfer-rebalance             lp/parinfer-rebalance)
-(def split-top-level-forms          lp/split-top-level-forms)
+;; Removed:
+;;   `parinfer-rebalance` + `split-top-level-forms` — the per-block-eval
+;;   architecture passes each svar block source verbatim into SCI, which
+;;   parses + evals as one unit. No edamame splitter, no parinfer repair.
 
 ;; Environment lifecycle
 (def create-environment           lp/create-environment)

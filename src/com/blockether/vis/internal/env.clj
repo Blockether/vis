@@ -557,11 +557,14 @@
 ;;                                   raw *_SOUL_ID variants were retired — they
 ;;                                   were aliases / immutable-identity duplicates
 ;;                                   with no consumers.)
-;;     CONVERSATION_TITLE            current conversation title ("" until set).
-;;                                   The model writes via the host primitive
-;;                                   `(set-conversation-title! "...")`, never by
-;;                                   `def`-ing it directly - the SYSTEM-var write
-;;                                   guard in `loop.clj` rejects that on principle.
+;;     (CONVERSATION_TITLE was retired as a SYSTEM var. Setting still
+;;     flows through `(set-conversation-title! "...")`, but the title
+;;     is no longer a sandbox binding the model reads — it is sidebar /
+;;     channel-chrome metadata, surfaced to the model only through the
+;;     foundation `title-nudge` when blank or stale. Removed because
+;;     stamping it every iteration produced N identical rows in
+;;     `expression_state` for a value that changes ~once per
+;;     conversation, and the model never used the read path.)
 ;;     CONVERSATION_PREVIOUS_ANSWER  previous turn's final answer string ("" on
 ;;                                   the very first turn). Despite being scoped
 ;;                                   to the conversation, it is rebound at every
@@ -590,7 +593,6 @@
      TURN_ITERATION_ID
      TURN_ITERATION_POSITION
      CONVERSATION_STATE_ID
-     CONVERSATION_TITLE
      CONVERSATION_PREVIOUS_ANSWER})
 
 (defn system-var-sym?

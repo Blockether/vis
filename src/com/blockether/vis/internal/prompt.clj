@@ -558,8 +558,10 @@
                               (sandbox-value environment 'TURN_ITERATION_ID nil))
         conversation-state-id (or (sandbox-value environment 'CONVERSATION_STATE_ID nil)
                                 (sandbox-value environment 'TURN_CONVERSATION_STATE_ID nil))
-        conversation-title  (or (some-> (:conversation-title-atom environment) deref)
-                              (sandbox-value environment 'CONVERSATION_TITLE ""))
+        ;; Title lives only on `:conversation-title-atom` + the DB now;
+        ;; the `CONVERSATION_TITLE` SCI binding was retired (see
+        ;; `inject-system-var-snapshots` docstring for rationale).
+        conversation-title  (some-> (:conversation-title-atom environment) deref)
         previous-answer     (sandbox-value environment 'CONVERSATION_PREVIOUS_ANSWER "")
         turn-system-prompt  (or system-prompt
                               (sandbox-value environment 'TURN_SYSTEM_PROMPT ""))]
@@ -802,20 +804,33 @@
 
 ARCHITECTURE
   Conversation : persisted sequence of turns.
-  Turn         : one user<->vis exchange. You iterate internally.
-  Iteration    : one model reply of many ```clojure``` prompts → λVis evaluates → evidence returns.
-                 Many iterations per turn.
+  Turn         : one user<->vis exchange. You iterate internally
+                 until you emit `(turn-answer! <IR>)` and the
+                 harness accepts it (see EMIT_FINAL).
+  Iteration    : one model reply with one or more ```clojure```
+                 blocks. λVis evaluates each block, records
+                 evidence, and asks you again until a turn-answer!
+                 is accepted.
   Block        : one ```clojure fenced form. Unit of evaluation
-                 and attribution.
+                 and attribution. Keep each block focused and
+                 self-contained for best visibility into your
+                 model's evolving understanding. The block's
+                 return value is the value of its last expression.
+
+                 ```clojure
+                 (def x 1)
+                 (def y 2)
+                 (+ x y) ; block return value is 3
+                 ```
+
+                 Blocks can mix code and ;; comments; stdout via
+                 println / pr / pr-str / throw etc. is captured
+                 — everything is persisted to <journal>.
 
   <journal>  : append-only log of block evaluations.
                Persists across iterations and turns.
   <bindings> : namespace state (defs).
                Persists across iterations and turns.
-
-  A turn ends when you emit
-    (when (turn-converges?) (turn-answer! <IR>))
-  and turn-converges? returns true.
 
 ENV
   Aliases: walk, str, set, pp, edn, s
