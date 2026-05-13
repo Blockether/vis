@@ -14,7 +14,7 @@
   (str/includes? (:content message) (str "<" tag)))
 
 (defdescribe prompt-test
-  (it "sends core and extensions as separate messages before the user message"
+  (it "sends core and turn system context as separate messages before the user message"
     (let [active-extensions [{:ext/namespace 'test.env
                               :ext/prompt (fn [_] "<environment>\nhost facts\n</environment>")}
                              {:ext/namespace 'test.ext
@@ -31,6 +31,7 @@
       (expect (= stable-messages (subvec messages 0 (count stable-messages))))
       (expect (every? #(= "system" (:role %)) stable-messages))
       (expect (contains-tag? (nth messages 0) "system_prompt"))
+      (expect (contains-tag? (nth messages 1) "turn_system_context"))
       (expect (contains-tag? (nth messages 1) "extensions"))
       (expect (str/includes? (get-in messages [1 :content]) "<extension id=\"test.env\">"))
       (expect (str/includes? (get-in messages [1 :content]) "<extension id=\"test.ext\">"))
@@ -135,8 +136,13 @@
         (expect (str/includes? content "turn_id: #uuid \"11111111-1111-1111-1111-111111111111\""))
         (expect (str/includes? content "turn_position: 7"))
         (expect (str/includes? content "turn_conversation_state_id: #uuid \"33333333-3333-3333-3333-333333333333\""))
-        (expect (str/includes? content "turn_system_prompt: \"stable prompt\""))
-        (expect (str/includes? content "turn_active_extensions:"))
+        (expect (not (str/includes? content "turn_system_prompt:")))
+        (expect (not (str/includes? content "stable prompt")))
+        (expect (not (str/includes? content "turn_active_extensions:")))
+        (expect (not (str/includes? content ":namespace test.ext")))
+        (expect (not (str/includes? content ":alias t")))
+        (expect (not (str/includes? content "Test extension.")))
+        (expect (not (str/includes? content "demo")))
         (expect (not (str/includes? content "turn_accessible_skills:")))
         (expect (str/includes? content "turn_iteration_id: #uuid \"22222222-2222-2222-2222-222222222222\""))
         (expect (str/includes? content "turn_iteration_position: 2"))
