@@ -177,6 +177,21 @@
       :journal-render-fn vis/render-pr-str-journal
       :channel-render-fn vis/render-pr-str-channel})])
 
+(doseq [[op tag] [[:z/patch-check :op.tag/observation]
+                  [:z/locators :op.tag/observation]
+                  [:z/forms :op.tag/observation]
+                  [:z/symbols :op.tag/observation]
+                  [:z/locator-for-symbol :op.tag/observation]
+                  [:z/inspect :op.tag/observation]
+                  [:z/diagnostics :op.tag/observation]
+                  [:z/rename-plan :op.tag/observation]
+                  [:z/clean-ns-plan :op.tag/observation]
+                  [:z/patch :op.tag/mutation]
+                  [:z/repair-range :op.tag/mutation]
+                  [:z/repair-locator :op.tag/mutation]
+                  [:z/repair-file :op.tag/mutation]]]
+  (vis/register-op! op {:tag tag}))
+
 (def clojure-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.lang-clojure.core

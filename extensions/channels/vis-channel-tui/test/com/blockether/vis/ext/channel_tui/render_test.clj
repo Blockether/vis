@@ -1135,7 +1135,7 @@
                   :results ["1 file changed"]
                   :result-kinds [:tool]
                   :result-details [{:op :v/patch
-                                    :tag :op.tag/action
+                                    :tag :op.tag/mutation
                                     :color-role :tool-color/edit}]
                   :stdouts [""]
                   :durations [1]
@@ -1144,7 +1144,7 @@
                     nil trace 96 {:show-iterations true} nil false
                     {:conversation-id "conversation"
                      :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
-      (expect (str/includes? (:text payload) "ACTION patch"))
+      (expect (str/includes? (:text payload) "MUTATION patch"))
       (expect (some #(= :tool-color/edit (:color-role %)) (:line-meta payload)))))
 
   (it "does not duplicate edit badges when tool results auto-collapse"
@@ -1154,7 +1154,7 @@
                         :results [huge-result]
                         :result-kinds [:tool]
                         :result-details [{:op :v/patch
-                                          :tag :op.tag/action
+                                          :tag :op.tag/mutation
                                           :color-role :tool-color/edit}]
                         :stdouts [""]
                         :durations [1]
@@ -1164,9 +1164,9 @@
                         {:conversation-id "conversation"
                          :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           body        (strip-ansi (:text payload))]
-      (expect (= 1 (count (re-seq #"ACTION patch" body))))
-      (expect (some #(str/starts-with? (body-of %) "▸ ACTION patch") (:lines payload)))
-      (expect (not-any? #(str/starts-with? (body-of %) "  ▸ ACTION patch") (:lines payload)))))
+      (expect (= 1 (count (re-seq #"MUTATION patch" body))))
+      (expect (some #(str/starts-with? (body-of %) "▸ MUTATION patch") (:lines payload)))
+      (expect (not-any? #(str/starts-with? (body-of %) "  ▸ MUTATION patch") (:lines payload)))))
 
   (it "does not emit vague duplicate search-any rows"
     (render/invalidate-cache!)
@@ -1323,7 +1323,7 @@
             trace [{:code ["(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"]
                     :results [big-body]
                     :result-kinds [:tool]
-                    :result-details [{:op :v/patch :tag :op.tag/action
+                    :result-details [{:op :v/patch :tag :op.tag/mutation
                                       :color-role :tool-color/edit}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
@@ -1344,7 +1344,7 @@
             trace [{:code ["(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"]
                     :results [big-body]
                     :result-kinds [:tool]
-                    :result-details [{:op :v/patch :tag :op.tag/action
+                    :result-details [{:op :v/patch :tag :op.tag/mutation
                                       :color-role :tool-color/edit}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"

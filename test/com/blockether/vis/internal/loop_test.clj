@@ -33,8 +33,11 @@
       (expect (false? (answer-call? '(answer [:ir [:p "Done"]]))))
       (expect (true? (contains-answer? "(when ok? (turn-answer! [:ir [:p \"Done\"]]))")))
       (expect (false? (direct-answer? "(when ok? (turn-answer! [:ir [:p \"Done\"]]))")))
-      (expect (nil? (#'loop/answer-with-mutation-preflight-mismatch
+      (expect (nil? (#'loop/answer-with-extension-preflight-mismatch
                      [{:expr "(when ok? (turn-answer! [:ir [:p \"Done\"]]))"}])))
+      (expect (some? (#'loop/answer-with-extension-preflight-mismatch
+                      [{:expr "(v/cat \"README.md\")"}
+                       {:expr "(turn-answer! [:ir [:p \"Done\"]])"}])))
       (expect (true? (title-form? "(set-conversation-title! \"Prompt cleanup\")")))
       (expect (false? (title-form? "(conversation-title \"Prompt cleanup\")")))))
 
@@ -161,7 +164,7 @@
                                         :thinking "claude reasoning"
                                         :thinking-signature "anthropic-hmac"}
                                        {:type "text" :text "done"}]}
-          journal      [[1 {:llm-provider :zai-coding
+          journal      [[1 {:llm-provider :zai-coding-plan
                             :llm-model "glm-5.1"
                             :assistant-message zai-message}]
                         [2 {:llm-provider :anthropic-coding-plan

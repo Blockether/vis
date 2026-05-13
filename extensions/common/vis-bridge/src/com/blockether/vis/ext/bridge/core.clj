@@ -414,6 +414,17 @@
       :channel-render-fn (fn [result]
                            [:ir {} [:code {:lang "clojure"} (pr-str result)]])})])
 
+(doseq [[op tag] [[:bridge/extract :op.tag/observation]
+                  [:bridge/extract-file :op.tag/observation]
+                  [:bridge/extract-markdown :op.tag/observation]
+                  [:bridge/clojure-lsp-status :op.tag/observation]
+                  [:bridge/extract-clojure :op.tag/observation]
+                  [:bridge/aggregate-rows :op.tag/observation]
+                  [:bridge/fill! :op.tag/mutation]
+                  [:bridge/extract-and-fill! :op.tag/mutation]
+                  [:bridge/backfill! :op.tag/mutation]]]
+  (vis/register-op! op {:tag tag}))
+
 (defn- prompt [_env]
   (str (vis/render-prompt
          {:ext/doc "Bridge codebase graph tools"

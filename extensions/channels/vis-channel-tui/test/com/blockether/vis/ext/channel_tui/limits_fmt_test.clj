@@ -25,31 +25,33 @@
 
   (it "derives a label from :label, stripping ` Quota` / ` Quota (%)` suffixes"
     (expect (= "Z.ai Coding 5h token"
-              (lfmt/generic-limit-label {:id :zai-coding-5h
+              (lfmt/generic-limit-label {:id :zai-coding-plan-5h
                                          :label "Z.ai Coding 5h token quota"})))
     (expect (= "Something"
               (lfmt/generic-limit-label {:id :other :label "Something Quota (%)"}))))
 
   (it "falls back to the :id when no :label is supplied"
-    (expect (= "Zai coding 5h"
-              (lfmt/generic-limit-label {:id :zai-coding-5h})))))
+    ;; Generic label generator capitalizes the first segment and lower-cases
+    ;; the rest — :zai-coding-plan-5h → "Zai coding plan 5h".
+    (expect (= "Zai coding plan 5h"
+              (lfmt/generic-limit-label {:id :zai-coding-plan-5h})))))
 
 (defdescribe percentage-limit-row?-test
   (it "true for well-known percentage plan rows"
-    (expect (lfmt/percentage-limit-row? {:id :zai-coding-5h :remaining 47}))
+    (expect (lfmt/percentage-limit-row? {:id :zai-coding-plan-5h :remaining 47}))
     (expect (lfmt/percentage-limit-row? {:id :codex-7d :remaining 12})))
 
   (it "true for generic :rate rows scaled to 100"
     (expect (lfmt/percentage-limit-row? {:id :other :kind :rate :limit 100.0 :remaining 30})))
 
   (it "false when :remaining is absent or :limit isn't 100"
-    (expect (not (lfmt/percentage-limit-row? {:id :zai-coding-5h})))
+    (expect (not (lfmt/percentage-limit-row? {:id :zai-coding-plan-5h})))
     (expect (not (lfmt/percentage-limit-row? {:id :other :kind :rate :limit 500 :remaining 30})))))
 
 (defdescribe format-limit-usage-test
   (it "renders percentage-style rows as `N% left`"
     (expect (= "47% left"
-              (lfmt/format-limit-usage {:id :zai-coding-5h :remaining 47}))))
+              (lfmt/format-limit-usage {:id :zai-coding-plan-5h :remaining 47}))))
 
   (it "renders the full triple `used/limit used (remaining left)` when available"
     (expect (= "3/5 used (2 left)"
@@ -85,8 +87,8 @@
 
 (defdescribe dynamic-summary-test
   (it "renders the Z.ai Coding 5h + 7d rows compactly"
-    (let [limits {:dynamic {:limits [{:id :zai-coding-5h :remaining 47}
-                                     {:id :zai-coding-7d :remaining 80}]}}
+    (let [limits {:dynamic {:limits [{:id :zai-coding-plan-5h :remaining 47}
+                                     {:id :zai-coding-plan-7d :remaining 80}]}}
           out    (lfmt/dynamic-summary limits)]
       (expect (str/includes? out "47% left"))
       (expect (str/includes? out "80% left"))

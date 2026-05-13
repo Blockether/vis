@@ -100,8 +100,8 @@
   (it "shows Z.ai Coding Plan quota windows as percentages on the second footer line"
     (let [build-limits-segments @#'footer/build-limits-segments
           now-ms                1000000000000
-          report                {:provider-id :zai-coding
-                                 :dynamic {:limits [{:id :zai-coding-5h
+          report                {:provider-id :zai-coding-plan
+                                 :dynamic {:limits [{:id :zai-coding-plan-5h
                                                      :label "Z.ai Coding 5h token quota"
                                                      :kind :tokens
                                                      :used 25.0
@@ -109,7 +109,7 @@
                                                      :remaining 75.0
                                                      :unlimited? false
                                                      :window {:resets-at-ms (+ now-ms (* 90 60 1000))}}
-                                                    {:id :zai-coding-7d
+                                                    {:id :zai-coding-plan-7d
                                                      :label "Z.ai Coding 7d token quota"
                                                      :kind :tokens
                                                      :used 50.0
@@ -118,11 +118,11 @@
                                                      :unlimited? false
                                                      :window {:resets-at-ms (+ now-ms (* 3 24 60 60 1000))}}]}}]
       (with-redefs-fn {#'footer/chosen-model-info (fn [] {:name "glm-5.1"
-                                                          :provider :zai-coding})}
+                                                          :provider :zai-coding-plan})}
         (fn []
           (let [text (->> (build-limits-segments {:messages []
                                                   :settings {}
-                                                  :provider-limits {:provider-id :zai-coding
+                                                  :provider-limits {:provider-id :zai-coding-plan
                                                                     :report report}}
                             now-ms)
                        (filter #(= :left (:region %)))

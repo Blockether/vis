@@ -79,7 +79,7 @@
                     :detail {:op op
                              :tag (case op
                                     (:v/cat :z/locators :v/rg :v/ls) :op.tag/observation
-                                    :v/patch :op.tag/action
+                                    :v/patch :op.tag/mutation
                                     :op.tag/observation)
                              :presentation-kind (case op
                                                   (:v/cat :z/locators) :tool/read

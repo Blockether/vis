@@ -110,7 +110,7 @@
    first. Anything not in this vec lands at the end."
   [:openai :anthropic :anthropic-coding-plan :openai-codex
    :github-copilot-business :github-copilot-individual
-   :zai :zai-coding :ollama :lmstudio])
+   :zai :zai-coding-plan :ollama :lmstudio])
 
 (defn- registered-provider-metadata
   "Provider-owned preset metadata. First-party provider extensions put
@@ -232,7 +232,7 @@
 
 (defn- zai-provider-id?
   [provider-id]
-  (contains? #{:zai :zai-coding} provider-id))
+  (contains? #{:zai :zai-coding-plan} provider-id))
 
 (defn- zai-thinking-model?
   [model-name]

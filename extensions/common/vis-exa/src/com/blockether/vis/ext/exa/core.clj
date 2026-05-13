@@ -599,6 +599,9 @@
     :label "Exa MCP config file"
     :description "Optional JSON config file path. Lower priority than explicit vars."}])
 
+(doseq [op [:exa/web-search :exa/code-context]]
+  (vis/register-op! op {:tag :op.tag/observation}))
+
 (def vis-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.exa.core

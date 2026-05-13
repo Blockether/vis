@@ -189,7 +189,7 @@
       (expect (= ["  Z.ai (Coding Plan) requires a static API key."
                   ""
                   "  Endpoint: https://api.z.ai/api/coding/paas/v4"]
-                (@#'provider/provider-auth-prompt-body {:id :zai-coding})))))
+                (@#'provider/provider-auth-prompt-body {:id :zai-coding-plan})))))
 
   (it "prefers pure prompt guidance over running the auth flow"
     (let [auth-called? (atom false)]
@@ -197,7 +197,7 @@
                                                     :provider/auth-fn (fn [_]
                                                                         (reset! auth-called? true))})]
         (expect (= ["static guidance"]
-                  (@#'provider/provider-auth-prompt-body {:id :zai-coding})))
+                  (@#'provider/provider-auth-prompt-body {:id :zai-coding-plan})))
         (expect (= false @auth-called?)))))
 
   (it "treats Esc from the API-key prompt as cancel instead of showing guidance afterward"
@@ -211,7 +211,7 @@
                                              nil)
                     dlg/text-viewer-dialog! (fn [& _]
                                               (reset! viewer-called? true))]
-        (expect (nil? (provider/authenticate-provider! nil {:id :zai-coding})))
+        (expect (nil? (provider/authenticate-provider! nil {:id :zai-coding-plan})))
         (let [opts (apply hash-map (drop 3 @input-args))]
           (expect (= ["  Z.ai (Coding Plan) requires a static API key."]
                     (:body opts))))
@@ -460,7 +460,7 @@
 
   (it "generic api-key provider (zai-coding-style) shows no success toast when auth-fn is silent"
     (let [popups   (atom [])
-          provider {:id :zai-coding :api-key nil}]
+          provider {:id :zai-coding-plan :api-key nil}]
       (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn (fn [_print!] :ok)})
                     vis/display-label       (fn [_] "Z.AI Coding")
                     dlg/text-view-dialog!   (text-view-recorder popups)
@@ -475,7 +475,7 @@
     ;; vetoed for typical/standard providers. Now success keywords suppress
     ;; printed output regardless.
     (let [popups   (atom [])
-          provider {:id :zai-coding :api-key nil}]
+          provider {:id :zai-coding-plan :api-key nil}]
       (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
                                                          (fn [print!]
                                                            (print! "  Already authenticated with Z.AI Coding.")
@@ -489,7 +489,7 @@
 
   (it "zai-coding-style :ok success (env-var persisted) stays silent even with printed lines"
     (let [popups   (atom [])
-          provider {:id :zai-coding :api-key nil}]
+          provider {:id :zai-coding-plan :api-key nil}]
       (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
                                                          (fn [print!]
                                                            (print! "  Persisted Z.ai key from env var.")
@@ -505,7 +505,7 @@
     ;; The mirror case: when auth-fn cannot complete on its own, the user must
     ;; read what to do next. Keep that path live.
     (let [popups   (atom [])
-          provider {:id :zai-coding :api-key nil}]
+          provider {:id :zai-coding-plan :api-key nil}]
       (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
                                                          (fn [print!]
                                                            (print! "Set ZAI_CODING_API_KEY=... and re-run.")
@@ -519,7 +519,7 @@
 
   (it "generic api-key provider failure still surfaces a dialog"
     (let [popups   (atom [])
-          provider {:id :zai-coding :api-key nil}]
+          provider {:id :zai-coding-plan :api-key nil}]
       (with-redefs [vis/provider-by-id      (constantly {:provider/auth-fn
                                                          (fn [_print!] (throw (ex-info "boom" {})))})
                     vis/display-label       (fn [_] "Z.AI Coding")
