@@ -77,7 +77,7 @@
 (def ^:private generated-file-suffixes
   "Filename suffixes that indicate a generated / minified asset. The
    matching files are still visited but excluded from the language
-   roll-up so a single 3 MB bundled `mermaid.min.js` cannot pretend
+   roll-up so a single 3 MB bundled `app.min.js` cannot pretend
    to be the project's primary language."
   [".min.js" ".min.css" ".min.mjs"
    ".bundle.js" ".bundle.css" ".chunk.js"
@@ -115,7 +115,7 @@
 
    Sort key is **file count first, bytes as tiebreaker**. File count
    is a more robust primary-language signal than total bytes: a
-   single 3 MB bundled `mermaid.min.js` cannot drown out 50 source
+   single 3 MB bundled `app.min.js` cannot drown out 50 source
    files. Generated assets are filtered upstream in the visitor; the
    sort here defends against the residual edge cases."
   [buckets]

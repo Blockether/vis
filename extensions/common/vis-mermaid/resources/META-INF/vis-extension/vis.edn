@@ -1,6 +1,0 @@
-{vis-mermaid
- {:nses [com.blockether.vis.ext.mermaid.core]
-  :docs {"README.md"
-         {:created-at #inst "2026-05-06"
-          :description "Pure-JVM Mermaid fenced-code renderer for the TUI."
-          :content "# vis-mermaid\n\nRenders ```mermaid fenced blocks as terminal-safe ASCII through Vis fenced renderer extensions. Pure JVM/Clojure; no Node, browser, or JavaScript runtime."}}}}

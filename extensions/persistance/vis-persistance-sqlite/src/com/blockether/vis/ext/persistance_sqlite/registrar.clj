@@ -32,6 +32,7 @@
 (vis/register-extension!
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.persistance-sqlite.core
+     :ext/nses      ['com.blockether.vis.ext.persistance-sqlite.registrar]
      :ext/doc       "SQLite + Flyway persistence backend."
      :ext/version   "0.3.0"
      :ext/author    "Blockether"

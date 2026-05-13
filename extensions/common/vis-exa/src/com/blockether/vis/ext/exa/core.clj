@@ -447,10 +447,12 @@
 (defn- channel-render-exa
   [result]
   (let [{:keys [tool query content truncated? temp-file]} result]
-    (str "Exa `" tool "`: `" query "`\n\n"
-      content
-      (when truncated?
-        (str "\n\nOutput truncated; full output saved to `" temp-file "`.")))))
+    (cond-> [:ir {}
+             [:p {} [:span {} "Exa "] [:c {} tool] [:span {} ": "] [:c {} query]]
+             [:code {:lang "text"} (str content)]]
+      truncated? (conj [:p {} [:span {} "Output truncated; full output saved to "]
+                        [:c {} temp-file]
+                        [:span {} "."]]))))
 
 (defn- tool-success
   [{:keys [tool-name op query args mcp endpoint limits]}]

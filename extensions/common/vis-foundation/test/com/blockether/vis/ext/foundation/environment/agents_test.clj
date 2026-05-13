@@ -109,6 +109,21 @@
                    (expect (false? (:found? result)))
                    (expect (some? result))))))
 
+  (it "conditional reload rereads only when guidance file marker changes"
+    (with-tmp* (fn [root]
+                 (let [file (java.io.File. root "AGENTS.md")]
+                   (spit file "# first\n")
+                   (binding [workspace/*workspace-root* (.getCanonicalPath root)]
+                     (let [first-result (:result (agents/reload!))
+                           second-result (:result (agents/reload!))]
+                       (expect (= "# first\n" (:content first-result)))
+                       (expect (identical? first-result second-result)))
+                     (Thread/sleep 5)
+                     (spit file "# second\n")
+                     (.setLastModified file (+ 10000 (.lastModified file)))
+                     (let [changed-result (:result (agents/reload!))]
+                       (expect (= "# second\n" (:content changed-result)))))))))
+
   (it "placeholder for render-prompt-block coverage - covered via render_test.clj"
     (expect true)))
 

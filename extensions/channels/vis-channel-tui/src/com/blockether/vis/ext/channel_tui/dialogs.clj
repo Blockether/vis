@@ -1203,7 +1203,7 @@
    We split on dots, drop vendor / 'core' / 'bot' / 'main' noise, and
    return the last surviving segment. Caller is expected to feed it
    through `titleize-label` for normal Title-Case rendering, so e.g.
-   `voice` -> `Voice`, `mermaid` -> `Mermaid`, `channel-tui` ->
+   `voice` -> `Voice`, `goal` -> `Goal`, `channel-tui` ->
    `Channel Tui`. Falls back to the full string if nothing useful
    survives."
   [sym-or-str]
@@ -1234,8 +1234,8 @@
         ;; Take the meaningful tail segment of the namespace (drop
         ;; `com.blockether.vis.ext` vendor prefix and the trailing
         ;; `core` / `bot` / `main` registrar entry-point convention)
-        ;; and titleize THAT, so `voice` -> `Voice`, `mermaid` ->
-        ;; `Mermaid`, `channel-tui` -> `Channel Tui` instead of the
+        ;; and titleize THAT, so `voice` -> `Voice`, `goal` ->
+        ;; `Goal`, `channel-tui` -> `Channel Tui` instead of the
         ;; previous `Com.blockether.vis.ext.voice.core`.
         ns-label       (some-> (:ext/namespace ext)
                          meaningful-namespace-segment

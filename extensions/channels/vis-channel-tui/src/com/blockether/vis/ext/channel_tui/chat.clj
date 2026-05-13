@@ -230,10 +230,10 @@
                                                                  (let [restored (when (history-restore/runtime-ref? result)
                                                                                   (history-restore/restored-def-result restored-values code))]
                                                                    (cond
-                                                                     error (vis/format-error error)
+                                                                     error (extension/default-channel-error-ir {:success? false :error error})
                                                                      (seq channel)
                                                                      ;; Per-form sink entries: walk each, surface
-                                                                     ;; pre-rendered markdown on success, format the
+                                                                     ;; pre-rendered IR on success, format the
                                                                      ;; error map on failure. Same shape as the live
                                                                      ;; progress path in `internal/progress.clj`. Sort
                                                                      ;; by :position so racy futures land in canonical
@@ -241,11 +241,11 @@
                                                                      ;; `(def x (v/cat ...))` cannot persist the live var value,
                                                                      ;; but its tool-rendered channel text is durable and should
                                                                      ;; be shown when resuming history.
-                                                                     (str/join "\n\n"
+                                                                     (extension/combine-channel-render-values
                                                                        (map (fn [{:keys [success? result error]}]
                                                                               (if success?
                                                                                 result
-                                                                                (extension/default-channel-error-text
+                                                                                (extension/default-channel-error-ir
                                                                                   {:success? false :result nil :info {} :error error})))
                                                                          (sort-by :position channel)))
                                                                      restored restored

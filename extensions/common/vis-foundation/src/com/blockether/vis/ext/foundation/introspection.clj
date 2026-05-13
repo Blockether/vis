@@ -899,10 +899,6 @@
   [ir]
   (vis/render ir :plain))
 
-(defn- render-ir-markdown
-  [ir]
-  (vis/render ir :markdown))
-
 (defn- arglists-text
   [arglists]
   (when (seq arglists)
@@ -959,14 +955,49 @@
                                 (str " — " (truncate-text line 180))))))])
            (take apropos-render-limit matches)))])))
 
+(defn- conversation-state-ir
+  [{:keys [conversation-id conversation-index conversation current-turn failures diagnosis
+           conversation-forks turn-retries llm-diagnostics transcript]}]
+  (let [turns      (vec (:turns transcript))
+        iterations (reduce + 0 (map (comp count :iterations) turns))
+        total-cost (get-in transcript [:totals :cost-usd])
+        tokens     (get-in transcript [:totals :tokens])]
+    [:ir {}
+     (ir-p (ir-code "v/conversation-state")
+       (ir-text " returned full data; rendered summary only."))
+     [:ul {}
+      [:li {} (ir-p (ir-code ":conversation-id") (ir-text (str " " conversation-id)))]
+      [:li {} (ir-p (ir-code ":conversation-index") (ir-text (str " " (count conversation-index) " conversation(s)")))]
+      [:li {} (ir-p (ir-code ":conversation") (ir-text (str " " (or (:title conversation) "<none>"))))]
+      [:li {} (ir-p (ir-code ":current-turn") (ir-text (str " " (or (:id current-turn) "<none>"))))]
+      [:li {} (ir-p (ir-code ":transcript") (ir-text (str " " (count turns) " turn(s), " iterations " iteration(s)")))]
+      [:li {} (ir-p (ir-code ":failures") (ir-text (str " " (count failures))))]
+      [:li {} (ir-p (ir-code ":diagnosis") (ir-text (str " " (count diagnosis) " key(s)")))]
+      [:li {} (ir-p (ir-code ":conversation-forks") (ir-text (str " " (count conversation-forks))))]
+      [:li {} (ir-p (ir-code ":turn-retries") (ir-text (str " " (count turn-retries) " turn(s)")))]
+      [:li {} (ir-p (ir-code ":llm-diagnostics") (ir-text (str " " (count llm-diagnostics) " row(s)")))]
+      (when tokens
+        [:li {} (ir-p (ir-code ":tokens") (ir-text (str " " (pr-str tokens))))])
+      (when total-cost
+        [:li {} (ir-p (ir-code ":cost-usd") (ir-text (str " " total-cost)))])]
+     (ir-p (ir-text "Full value is still bound. Use ")
+       (ir-code "get-in")
+       (ir-text " / ")
+       (ir-code "select-keys")
+       (ir-text " or ")
+       (ir-code "v/conversation-report")
+       (ir-text " for the full dump."))]))
+
+(defn- conversation-state-journal [result] (render-ir-plain (conversation-state-ir result)))
+(defn- conversation-state-channel [result] (conversation-state-ir result))
 (defn- symbol-doc-journal [result] (render-ir-plain (symbol-doc-ir result)))
-(defn- symbol-doc-channel [result] (render-ir-markdown (symbol-doc-ir result)))
+(defn- symbol-doc-channel [result] (symbol-doc-ir result))
 (defn- symbol-source-journal [result] (render-ir-plain (symbol-source-ir result)))
-(defn- symbol-source-channel [result] (render-ir-markdown (symbol-source-ir result)))
+(defn- symbol-source-channel [result] (symbol-source-ir result))
 (defn- symbol-meta-journal [result] (render-ir-plain (symbol-meta-ir result)))
-(defn- symbol-meta-channel [result] (render-ir-markdown (symbol-meta-ir result)))
+(defn- symbol-meta-channel [result] (symbol-meta-ir result))
 (defn- apropos-journal [result] (render-ir-plain (apropos-ir result)))
-(defn- apropos-channel [result] (render-ir-markdown (apropos-ir result)))
+(defn- apropos-channel [result] (apropos-ir result))
 
 (defn- inject-environment
   [env f args]
@@ -985,8 +1016,8 @@
 (def conversation-state-symbol
   (vis/symbol #'conversation-state
     {:before-fn inject-environment
-     :journal-render-fn vis/render-pr-str-journal
-     :channel-render-fn vis/render-pr-str-channel}))
+     :journal-render-fn conversation-state-journal
+     :channel-render-fn conversation-state-channel}))
 
 (def conversation-report-symbol
   (vis/symbol #'conversation-report

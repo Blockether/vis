@@ -2660,26 +2660,42 @@
       (or (and (>= (int c) (int \uE000)) (<= (int c) (int \uE0FF)))
         (= c \u200B) (= c \u200C) (= c \u200D) (= c \uFEFF)))))
 
+(defn- channel-ir?
+  [x]
+  (and (vector? x) (= :ir (first x))))
+
+(defn- channel-body-blank?
+  [x]
+  (cond
+    (nil? x) true
+    (channel-ir? x) (<= (count (vis/->ast x)) 2)
+    :else (str/blank? (str x))))
+
+(defn- channel-body-plain-text
+  [x]
+  (if (channel-ir? x) (vis/render x :plain) (str x)))
+
+(defn- channel-body-copy-text
+  [x]
+  (if (channel-ir? x) (vis/render x :markdown) (str x)))
+
 (defn- ir-body-entries
-  "Render `text` into painter entries via canonical IR only
-   (`vis/text->ir` → `ir-tui/ir->entries`).
+  "Render canonical channel IR into painter entries. This path is IR-only:
+   channel-render-fn output must already be `[:ir ...]`; strings belong to
+   raw value/stdout fallback paths, not tool/channel rendering.
 
    For each emitted line:
 
-   - If the line already starts with a markdown structural marker
-     (`MARKER_MD_H1`, `MARKER_MD_BULLET`, fenced-code marker, etc.),
-     keep it verbatim. Headings/bullets/code blocks own their row
-     paint; stacking another structural marker would either steal the
-     row or lose the heading/code rendering.
+   - If the line already starts with a structural marker emitted by the IR
+     walker (`MARKER_MD_H1`, `MARKER_MD_BULLET`, fenced-code marker, etc.),
+     keep it verbatim. Headings/bullets/code blocks own their row paint.
    - Otherwise prepend `body-marker` so plain prose still picks up the
      surrounding details bg (e.g. result-bg).
 
-   Returns `nil` for blank input so the caller can fall back to the
-   plain `wrap-text` path."
-  [text body-marker max-w]
-  (when-not (str/blank? text)
-    (let [ir      (vis/text->ir (str/trim text))
-          entries (ir-tui/ir->entries ir max-w)]
+   Returns `nil` for empty IR."
+  [ir body-marker max-w]
+  (when (and (channel-ir? ir) (not (channel-body-blank? ir)))
+    (let [entries (ir-tui/ir->entries (vis/->ast ir) max-w)]
       (when (seq entries)
         (mapv (fn [{:keys [line meta]}]
                 {:line (if (markdown-marker-prefix? line)
@@ -2758,15 +2774,16 @@
 (defn- maybe-collapse-block
   [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
            block-number kind summary summary-marker body-marker lines max-w color-role
-           render-as raw-text]}]
-  (let [ir-entries (when (= :ir render-as)
-                     (ir-body-entries (or raw-text (str/join "\n" lines))
-                       body-marker max-w))
+           raw-text]}]
+  (let [body-value (or raw-text (str/join "\n" lines))
+        ir-entries (when (channel-ir? body-value)
+                     (ir-body-entries body-value body-marker max-w))
         entries (or ir-entries
                   (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines))
-        size-text (or raw-text (str/join "\n" lines))]
+        size-lines (or lines (mapv :line entries))
+        size-text (channel-body-plain-text body-value)]
     (if (or (nil? conversation-id)
-          (not (auto-collapse-needed? lines size-text)))
+          (not (auto-collapse-needed? size-lines size-text)))
       entries
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
@@ -2788,7 +2805,7 @@
                                          :node-id node-id))
                (when-not collapsed?
                  (tag-copy-block-body entries node-id
-                   (or raw-text (str/join "\n" lines))))))))))
+                   (channel-body-copy-text body-value)))))))))
 
 (defn- maybe-collapse-thinking-entries
   "Collapse completed reasoning behind one clickable disclosure row.
@@ -2826,6 +2843,26 @@
                  (tag-copy-block-body entries node-id
                    (entries->body-text entries)))))))))
 
+(defn- markdown-fence-marker-line?
+  "True for standalone Markdown fence opener/closer lines. Tool
+   results are output, not prose; TUI result panes must not parse or
+   paint these as Markdown. We drop only the fence marker rows, keeping
+   the payload lines literal."
+  [line]
+  (let [s (str/triml (str line))]
+    (or (str/starts-with? s "```")
+      (str/starts-with? s "~~~"))))
+
+(defn- strip-markdown-fence-marker-lines
+  "Remove Markdown fence marker rows from result text while preserving
+   the fenced body exactly. Applied to successful result bodies before
+   wrapping so ` ```diagram ` / ` ```diff ` never trigger TUI Markdown
+   structural rendering in result panes."
+  [text]
+  (->> (str/split-lines (str text))
+    (remove markdown-fence-marker-line?)
+    (str/join "\n")))
+
 (defn- maybe-collapse-raw-text-block
   "Render a result/stdout-like block without wrapping huge collapsed
    bodies first. `wrap-text` is intentionally display-width-aware and
@@ -2834,8 +2871,9 @@
   [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
            block-number kind summary summary-marker raw-text max-w color-role]
     :as opts}]
-  (let [raw-text (str/trim (str raw-text))]
-    (when-not (str/blank? raw-text)
+  (let [raw-value (if (channel-ir? raw-text) raw-text (str/trim (str raw-text)))
+        raw-size-text (channel-body-plain-text raw-value)]
+    (when-not (channel-body-blank? raw-value)
       (let [detail-ctx {:conversation-id conversation-id
                         :conversation-turn-id conversation-turn-id
                         :iteration-number iteration-number
@@ -2848,16 +2886,17 @@
             collapsed? (not (detail-expanded? detail-expansions conversation-id node-id false))]
         (if (and conversation-id
               collapsed?
-              (> (count raw-text) auto-collapse-char-threshold))
+              (> (count raw-size-text) auto-collapse-char-threshold))
           (detail-summary-entries (assoc detail-ctx
                                     :marker summary-marker
                                     :max-w max-w
                                     :summary summary
-                                    :hidden-entries [{:line raw-text :meta nil}]
+                                    :hidden-entries [{:line raw-size-text :meta nil}]
                                     :collapsed? true
                                     :node-id node-id))
-          (let [lines (wrap-text raw-text max-w)]
-            (maybe-collapse-block (assoc opts :lines lines :raw-text raw-text))))))))
+          (let [lines (when-not (channel-ir? raw-value)
+                        (wrap-text raw-size-text max-w))]
+            (maybe-collapse-block (assoc opts :lines lines :raw-text raw-value))))))))
 
 (defn- strip-paint-markers-line
   "Return user-visible text for a prewrapped internal painter line.
@@ -3116,12 +3155,15 @@
                                 (mapv #(line-entry (str c-marker %)) code-lines)
                                 code-node-id
                                 code-text)
-                result-str    (when results (get results idx))
-                result-kind   (when result-kinds (get result-kinds idx))
-                result-text   (if (and (= :value result-kind) (not is-error?))
-                                (format-clojure-plain result-str fill-w)
-                                result-str)
-                result-detail (when result-details (get result-details idx))
+                result-str      (when results (get results idx))
+                result-kind     (when result-kinds (get result-kinds idx))
+                raw-result-text (if (and (= :value result-kind) (not is-error?))
+                                  (format-clojure-plain result-str fill-w)
+                                  result-str)
+                result-text     (if (and raw-result-text (not is-error?) (string? raw-result-text))
+                                  (strip-markdown-fence-marker-lines raw-result-text)
+                                  raw-result-text)
+                result-detail   (when result-details (get result-details idx))
                 tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
                 output-fill-w (max 1 (- fill-w tool-output-indent-cols))
@@ -3139,15 +3181,7 @@
                                                         :summary-marker      md-summary-marker
                                                         :body-marker         r-marker
                                                         :raw-text            result-text
-                                                        :max-w               fill-w
-                                                        ;; Tool channel-render-fns return text that may
-                                                        ;; contain Markdown syntax. Convert it once to
-                                                        ;; canonical IR and render from IR. No Markdown
-                                                        ;; renderer path and no ANSI result coloring.
-                                                        ;; Errors stay raw because err-result-marker
-                                                        ;; carries its own styling and error payloads
-                                                        ;; are rarely structured prose.
-                                                        :render-as           (when-not is-error? :ir)})
+                                                        :max-w               fill-w})
                                       summary-entry?  (= :toggle-details (get-in (first detail-entries) [:meta :kind]))
                                       badge-entry     (when (and tool-badge
                                                               (not summary-entry?)

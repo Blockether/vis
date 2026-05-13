@@ -315,7 +315,7 @@
   [result]
   ;; `result` is the inner repair payload only (no :info access from
   ;; the new contract). Show the canonical pr-str inside a clojure block.
-  (str "```clojure\n" (pr-str result) "\n```"))
+  [:ir {} [:code {:lang "clojure"} (pr-str result)]])
 
 (def repair-range-symbol
   (vis/symbol #'repair-range

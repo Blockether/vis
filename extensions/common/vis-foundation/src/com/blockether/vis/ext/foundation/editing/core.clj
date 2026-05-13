@@ -5,7 +5,9 @@
 
    1. Structured helpers for read / tree / search:
 
-        (v/cat path)            ; -> {:path :offset :total-lines :truncated-by :lines ...}
+        (v/cat path)            ; -> {:path :offset :returned :limit :next-offset :eof? :truncated-by :lines}
+        (v/cat path n)          ; first n lines from line 1
+        (v/cat path offset n)   ; n lines starting at line `offset` (1-based)
         (v/ls path)             ; -> nested {:name :path :type :size :children} tree
         (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
         (v/rg spec)            ; -> {:hits :truncated-by}; spec = {:all|:any [...] :paths [...]}
@@ -51,6 +53,16 @@
 (def ^:private default-grep-limit 50)
 (def ^:private default-list-depth 5)
 (def ^:private journal-render-chars 3000)
+
+;; v/cat pagination contract:
+;;   `default-cat-limit`     - lines per window when the model omits `n`.
+;;   `max-cat-window-bytes`  - hard ceiling on a single window's bytes.
+;;                             Doubles as the persistence-blob ceiling:
+;;                             each call writes one Nippy blob to
+;;                             `expression_state.result`, bounded by this.
+;;                             Not user-tunable; it is the storage contract.
+(def ^:private default-cat-limit 200)
+(def ^:private max-cat-window-bytes 65536)
 
 ;; =============================================================================
 ;; Path safety
@@ -173,29 +185,80 @@
 ;; cat
 ;; =============================================================================
 
-(defn- unsupported-cat-opts!
-  [opts]
-  (when (some? opts)
-    (throw (ex-info "v/cat reads the whole file; bind the result and slice with plain Clojure for ranges"
-             {:type :ext.foundation.editing/invalid-cat-opts
-              :opts opts}))))
+(defn- validate-cat-args!
+  [offset n]
+  (when-not (and (integer? offset) (pos? offset))
+    (throw (ex-info "v/cat offset must be a positive integer (1-based line number)."
+             {:type :ext.foundation.editing/invalid-cat-args
+              :offset offset})))
+  (when-not (and (integer? n) (pos? n))
+    (throw (ex-info "v/cat limit must be a positive integer line count."
+             {:type :ext.foundation.editing/invalid-cat-args
+              :limit n}))))
 
 (defn- read-file
-  "Read the whole text file as pure structured data.
+  "Read a window of a text file as pure structured data.
 
-   Returns :path, :offset, :total-lines, :truncated-by, and raw :lines.
-   No prose footer, no line-number prefix, no display limit. Bind the
-   result and slice with `subvec`/`get-in` for ranges."
-  ([path] (read-file path nil))
-  ([path opts]
-   (unsupported-cat-opts! opts)
-   (let [f         (ensure-existing-file! (safe-path path))
-         all-lines (str/split-lines (slurp f))]
-     {:path         (rel-path f)
-      :offset       1
-      :total-lines  (count all-lines)
-      :truncated-by :end-of-file
-      :lines        (vec all-lines)})))
+   Arities:
+     (read-file path)              ; first `default-cat-limit` lines from line 1
+     (read-file path n)            ; first n lines from line 1
+     (read-file path offset n)     ; n lines starting at line `offset` (1-based)
+
+   Returns {:path :offset :returned :limit :next-offset :eof? :truncated-by :lines}.
+   :truncated-by ∈ #{:limit :bytes :eof}.
+   Each call's :lines payload is bounded by `max-cat-window-bytes`; that
+   is also the persistence-blob ceiling (one Nippy row per call).
+   Streaming: never slurps the whole file. Lines outside the window are
+   discarded after a single `.readLine` pass."
+  ([path] (read-file path 1 default-cat-limit))
+  ([path n] (read-file path 1 n))
+  ([path offset n]
+   (validate-cat-args! offset n)
+   (let [f        (ensure-existing-file! (safe-path path))
+         byte-cap (long max-cat-window-bytes)
+         skip     (dec (long offset))
+         limit    (long n)]
+     (with-open [^java.io.BufferedReader rdr (io/reader f)]
+       (loop [skipped 0]
+         (when (and (< skipped skip)
+                 (some? (.readLine rdr)))
+           (recur (inc skipped))))
+       (loop [acc        (transient [])
+              bytes-used 0
+              read-count 0
+              stop       nil]
+         (cond
+           stop
+           (let [lines    (persistent! acc)
+                 returned (count lines)
+                 eof?     (= stop :eof)
+                 next-off (when-not eof?
+                            (+ (long offset) returned))]
+             {:path         (rel-path f)
+              :offset       (long offset)
+              :returned     returned
+              :limit        limit
+              :next-offset  next-off
+              :eof?         eof?
+              :truncated-by stop
+              :lines        lines})
+
+           (>= read-count limit)
+           (recur acc bytes-used read-count :limit)
+
+           :else
+           (let [line (.readLine rdr)]
+             (if (nil? line)
+               (recur acc bytes-used read-count :eof)
+               (let [^String s line
+                     line-bytes (+ 1 (alength (.getBytes s "UTF-8")))
+                     new-bytes  (+ bytes-used line-bytes)]
+                 (if (and (pos? read-count) (> new-bytes byte-cap))
+                   (recur acc bytes-used read-count :bytes)
+                   (recur (conj! acc s)
+                     new-bytes
+                     (inc read-count)
+                     nil)))))))))))
 
 ;; =============================================================================
 ;; ls
@@ -551,17 +614,23 @@
 ;; =============================================================================
 
 (defn- cat-tool
-  "Read the whole text file into `:lines`. `v/cat` has no display or pagination opts; the journal renders a bounded preview (first 50 + last 50 lines) and the full vector stays bound for slicing. Returns {:path :offset :total-lines :truncated-by :lines}."
+  "Read a window of a text file. Streams the file: never slurps the whole thing; each call writes one bounded Nippy blob to `expression_state.result`. Arities: `(v/cat path)` -> first 200 lines from line 1; `(v/cat path n)` -> first n lines; `(v/cat path offset n)` -> n lines starting at 1-based line `offset`. Page forward with `(:next-offset prev)`; stop when `(:eof? prev)`. Returns {:path :offset :returned :limit :next-offset :eof? :truncated-by :lines}; `:truncated-by` is `:limit | :bytes | :eof`. Each window is byte-capped at 64KB (the persistence contract)."
   ([path]
-   (let [out (read-file path)]
+   (cat-tool path 1 default-cat-limit))
+  ([path n]
+   (cat-tool path 1 n))
+  ([path offset n]
+   (let [out (read-file path offset n)]
      (tool-success
        {:op :v/cat
         :path path
         :kind :file
         :result out
-        :info {:lines-returned (count (:lines out))
+        :info {:lines-returned (:returned out)
                :offset (:offset out)
-               :total-lines (:total-lines out)
+               :limit (:limit out)
+               :next-offset (:next-offset out)
+               :eof? (:eof? out)
                :truncated-by (:truncated-by out)}
         :presentation {:kind :source
                        :path (:path out)
@@ -721,15 +790,18 @@
 ;; Structured renderers
 ;; =============================================================================
 
-;; Inline markdown string-builder helpers (replaced the v/ DSL).
-(defn- md-code       ^String [s] (str "`" s "`"))
-(defn- md-code-block ^String [lang body] (str "```" (or lang "") "\n" body "\n```"))
-(defn- md-p          ^String [& parts]
-  (str/join " " (filter some? (map str parts))))
-(defn- md-join       ^String [& parts]
-  (str/join "\n\n" (filter some? (map str parts))))
-(defn- md-ul         ^String [items]
-  (str/join "\n" (map #(str "- " %) (filter some? items))))
+;; Channel IR builders. No Markdown string round-trip on tool display.
+(defn- md-code [s] [:c {} (str s)])
+(defn- md-code-block [lang body] [:code (cond-> {} lang (assoc :lang lang)) (str body)])
+(defn- md-inline [x] (if (vector? x) x [:span {} (str x)]))
+(defn- md-p [& parts]
+  (into [:p {}]
+    (map md-inline (filter some? parts))))
+(defn- md-join [& blocks]
+  (into [:ir {}] (filter some? blocks)))
+(defn- md-ul [items]
+  (into [:ul {}]
+    (map (fn [item] [:li {} (md-p item)]) (filter some? items))))
 
 (defn- render-edn-block
   ([value]
@@ -738,7 +810,7 @@
    (let [text (bounded-render-text (pr-str value))]
      (case surface
        :journal text
-       (md-code-block "edn" text)))))
+       (md-join (md-code-block "edn" text))))))
 
 (defn- tree-entry-line
   [depth {:keys [name path type size] :as entry}]
@@ -795,20 +867,28 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- journal-render-cat
-  "v/cat journal preview: first 50 + last 50 lines, total counts, read-more
+  "v/cat journal preview: window head/tail with line numbers + pagination
    hint. Plaintext for token-budgeted <journal>."
   [result]
-  (let [{:keys [path lines total-lines offset truncated-by]} result
-        n   (count lines)
-        head (vec (take journal-head-tail-lines lines))
-        tail (vec (drop (max (- n journal-head-tail-lines) 0) lines))
-        head-block (numbered-line-block (inc offset) head)
-        tail-block (numbered-line-block
-                     (+ offset (max 0 (- n journal-head-tail-lines)) 1)
-                     tail)
-        elided (max 0 (- n (* 2 journal-head-tail-lines)))]
-    (str "v/cat " path " — " n " line(s), total " total-lines
-      ", truncated-by " (name (or truncated-by :none)) "\n"
+  (let [{:keys [path lines offset returned limit next-offset eof? truncated-by]} result
+        n          (or returned (count lines))
+        head       (vec (take journal-head-tail-lines lines))
+        tail-skip  (max 0 (- n journal-head-tail-lines))
+        tail       (vec (drop tail-skip lines))
+        head-block (numbered-line-block offset head)
+        tail-block (numbered-line-block (+ offset tail-skip) tail)
+        elided     (max 0 (- n (* 2 journal-head-tail-lines)))
+        last-line  (+ offset (max 0 (dec n)))
+        hint       (cond
+                     eof?        "(eof)"
+                     next-offset (str "(more: (v/cat \"" path "\" " next-offset " " limit "))")
+                     :else       "")
+        header     (if (zero? n)
+                     (str "v/cat " path " — empty window at offset " offset " (eof)")
+                     (str "v/cat " path " — lines " offset "–" last-line
+                       " (" n "/" limit "), truncated-by "
+                       (name (or truncated-by :none)) " " hint))]
+    (str header "\n"
       head-block
       (when (pos? elided) (str "\n… (" elided " line(s) elided)\n"))
       (when (pos? elided) tail-block)
@@ -816,10 +896,15 @@
 
 (defn- channel-render-cat
   [result]
-  (let [{:keys [path lines]} result
-        body (numbered-line-block (inc (:offset result)) (vec lines))]
+  (let [{:keys [path lines offset returned next-offset eof?]} result
+        body (numbered-line-block offset (vec lines))]
     (md-join
-      (md-p "Read" (md-code path) "—" (count lines) "line(s).")
+      (md-p "Read" (md-code path) "—" (or returned (count lines))
+        "line(s) from line" offset
+        (cond
+          eof?        "(eof)."
+          next-offset (str "(next-offset " next-offset ").")
+          :else       "."))
       (md-code-block "text" (bounded-render-text body)))))
 
 (defn- journal-render-ls
@@ -830,8 +915,9 @@
 
 (defn- channel-render-ls
   [result]
-  (md-p "Directory tree of" (md-code (:path result)) "-"
-    (count (:children result)) "top-level entries."))
+  (md-join
+    (md-p "Directory tree of" (md-code (:path result)) "-"
+      (count (:children result)) "top-level entries.")))
 
 (defn- journal-render-rg
   [result]
@@ -893,7 +979,7 @@
 
 (defn- channel-render-create-dirs
   [result]
-  (md-p "Ensured dir" (md-code result) "."))
+  (md-join (md-p "Ensured dir" (md-code result) ".")))
 
 (defn- journal-render-copy
   [result]
@@ -901,7 +987,7 @@
 
 (defn- channel-render-copy
   [result]
-  (md-p "Copied to" (md-code result) "."))
+  (md-join (md-p "Copied to" (md-code result) ".")))
 
 (defn- journal-render-move
   [result]
@@ -909,7 +995,7 @@
 
 (defn- channel-render-move
   [result]
-  (md-p "Moved to" (md-code result) "."))
+  (md-join (md-p "Moved to" (md-code result) ".")))
 
 (defn- journal-render-delete
   [result]
@@ -917,7 +1003,7 @@
 
 (defn- channel-render-delete
   [result]
-  (md-p "Deleted." (md-code (pr-str result))))
+  (md-join (md-p "Deleted." (md-code (pr-str result)))))
 
 (defn- journal-render-delete-if-exists
   [result]
@@ -927,8 +1013,8 @@
 (defn- channel-render-delete-if-exists
   [result]
   (if result
-    (md-p "Deleted.")
-    (md-p "Already absent.")))
+    (md-join (md-p "Deleted."))
+    (md-join (md-p "Already absent."))))
 
 (defn- journal-render-exists?
   [result]
@@ -936,7 +1022,7 @@
 
 (defn- channel-render-exists?
   [result]
-  (md-p "Exists?" (md-code (pr-str result))))
+  (md-join (md-p "Exists?" (md-code (pr-str result)))))
 
 ;; =============================================================================
 ;; Symbol declarations
@@ -1058,8 +1144,10 @@
 (defn available-editing-prompt
   []
   (str
-    "`v/` strategy: combine v/rg and v/ls to locate (v/rg :include/:exclude take glob vectors), v/cat to read, then bind raw payloads and slice with normal Clojure. "
-    "Use v/patch for exact raw-text edits and v/patch-check when uniqueness is uncertain; use z/patch for Clojure/EDN when `z/` is active. "
+    "`v/` strategy: combine v/rg and v/ls to locate (v/rg :include/:exclude take glob vectors), v/cat to read a window, then bind raw payloads and slice with normal Clojure. "
+    "`v/cat` reads the whole file in one call only when it fits one window; for larger files, page with `(v/cat path offset n)` and advance via `(:next-offset prev)` until `(:eof? prev)`. Bind windows, not whole files: each call persists one bounded Nippy blob keyed by `[:result :lines]`. "
+    "Edit text with canonical (v/patch [{:path :search :replace}]); every :search must match exactly once or the whole batch fails. Use v/patch-check when uniqueness is uncertain; use z/patch for Clojure/EDN when `z/` is active. "
+    "Read back after writes only when exact persisted bytes matter; otherwise rely on the patch result. "
     "Use path ops for filesystem moves/deletes/copies. "
     "No shell tool: process boundaries (git, verify, CLI) are outside the sandbox; stay in tools/REPL."))
 
