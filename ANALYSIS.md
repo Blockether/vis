@@ -118,6 +118,17 @@ Pinpoint: patch planned local use before verifying local binding context.
 
 ## 6. Host correctly blocked answer-with-mutation
 
+> **Note (post P0.2, commit 87acfe1c):** the gate described here has since
+> been broadened. It used to fire only when a **mutating** tool call
+> (`v/patch`, `z/patch`, ...) coexisted with `(turn-answer! ...)`. The
+> stricter `answer-with-extension-preflight-mismatch` now fires when **any**
+> registered extension call (observation OR mutation, e.g. `v/cat`, `v/rg`,
+> `z/locators`) shares an iteration with the answer. Pure Clojure forms
+> (`def`, `set-conversation-title!`, host primitives) still coexist with
+> `(turn-answer! ...)` freely. The original section below documents the
+> turn-11 incident under the old name; the underlying invariant
+> ("observe before answer") is identical — the scope just widened.
+
 Turn 11 hit a structural guard:
 
 ```text

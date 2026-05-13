@@ -993,14 +993,31 @@
         ;; guard — if a single block's source still carries a literal
         ;; ```, reject just that block; sibling blocks keep their chance
         ;; to run.
+        ;; Each block becomes one code-entry. The entry carries:
+        ;;   :expr             — verbatim block source (fed to SCI as-is)
+        ;;   :block-lang       — svar's detected lang ("clojure" / nil)
+        ;;   :render-segments  — per-form structural split for channel
+        ;;                       rendering (P1.1; see
+        ;;                       `render/code-block-segments`)
+        ;;   :vis/structurally-silent?
+        ;;                     — true iff the block contains ONLY structural
+        ;;                       forms (`(turn-answer! ...)` / `(set-
+        ;;                       conversation-title! ...)`); channels that
+        ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
                                              (let [src (:source b)]
                                                (if-let [err (raw-markdown-fence-leak-error src)]
                                                  {:expr "(vis/preflight-error :raw-markdown-fence-leak)"
                                                   :vis/preflight-error err
                                                   :block-lang (:lang b)}
-                                                 {:expr src
-                                                  :block-lang (:lang b)})))
+                                                 (let [segments        (render/code-block-segments src)
+                                                       structurally-silent?
+                                                       (and (seq segments)
+                                                         (not-any? #(= :code (:kind %)) segments))]
+                                                   {:expr       src
+                                                    :block-lang (:lang b)
+                                                    :render-segments segments
+                                                    :vis/structurally-silent? structurally-silent?}))))
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
@@ -1680,7 +1697,10 @@
           ;; structured preflight error in place of the answer instead
           ;; of a fabricated success-claim.
           prior-error-atom (atom nil)
-          executed (mapv (fn [idx {:keys [expr parse-error] :vis/keys [preflight-error] form-repaired? :repaired? form-comment :comment :as entry}]
+          executed (mapv (fn [idx {:keys [expr parse-error render-segments]
+                                   :vis/keys [preflight-error structurally-silent?]
+                                   form-repaired? :repaired?
+                                   :as entry}]
                            (log-stage! :code-exec iteration
                              {:idx (inc idx) :total total-blocks :code expr})
                            (when (and on-chunk
@@ -1693,7 +1713,8 @@
                                         :form-of       total-blocks
                                         :iteration-id  (form-ref idx)
                                         :code          expr
-                                        :comment       form-comment
+                                        :render-segments render-segments
+                                        :vis/structurally-silent? (boolean structurally-silent?)
                                         :started-at-ms (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
                            ;; `(turn-answer! ...)` call inside this form
@@ -1743,8 +1764,7 @@
                                                  :op :vis/guard}
                                                 (let [tool-event-fn (when (and on-chunk
                                                                             (not suppress-form-start?)
-                                                                            (not (conversation-title-meta-form? entry))
-                                                                            (not (form-contains-turn-answer-call? entry)))
+                                                                            (not structurally-silent?))
                                                                       (fn [tool-event]
                                                                         (on-chunk {:phase :tool-start
                                                                                    :iteration iteration-position
@@ -1752,7 +1772,8 @@
                                                                                    :form-of total-blocks
                                                                                    :iteration-id iteration-id
                                                                                    :code expr
-                                                                                   :comment form-comment
+                                                                                   :render-segments render-segments
+                                                                                   :vis/structurally-silent? (boolean structurally-silent?)
                                                                                    :tool-event tool-event})))
                                                       r (if tool-event-fn
                                                           (execute-code environment expr :tool-event-fn tool-event-fn)
@@ -1809,7 +1830,8 @@
                                           :form-of           total-blocks
                                           :iteration-id      iteration-id
                                           :code              expr
-                                          :comment           form-comment
+                                          :render-segments   render-segments
+                                          :vis/structurally-silent? (boolean structurally-silent?)
                                           :result            (:result result*)
                                           :journal           (:journal result*)
                                           :channel           (:channel result*)
@@ -1819,17 +1841,27 @@
                                           :execution-time-ms (:execution-time-ms result*)
                                           :info        (:info result*)
                                           :role        (:role result*)
+                                          ;; :silent? is the channel-facing hide flag. Now the union of:
+                                          ;;   - SCI runtime `:vis/silent` sentinel (legacy host primitives)
+                                          ;;   - block-level structurally-silent? (block contains only
+                                          ;;     answer / title forms; no useful code segments)
+                                          ;; Mixed blocks (`(def x 1)` alongside `(turn-answer! …)`)
+                                          ;; are NOT silent; the channel reads :render-segments and
+                                          ;; hides only the structural sub-forms.
                                           :silent?     (boolean (or (:vis/silent result*)
                                                                   (= :vis/silent (:result result*))
-                                                                  (conversation-title-meta-form? entry)
-                                                                  (form-contains-turn-answer-call? entry)))
+                                                                  structurally-silent?))
                                           :timeout?          (boolean (:timeout? result*))
                                           :repaired?         (boolean (:repaired? result*))}))
-                             {:block expr :result result* :form-comment form-comment}))
+                             {:block expr
+                              :result result*
+                              :render-segments render-segments
+                              :vis/structurally-silent? (boolean structurally-silent?)}))
                      (range) code-entries)
-          code-blocks (mapv :block executed)
-          block-results (mapv :result executed)
-          block-comments (mapv :form-comment executed)
+          code-blocks    (mapv :block executed)
+          block-results  (mapv :result executed)
+          block-segments (mapv :render-segments executed)
+          block-silents  (mapv :vis/structurally-silent? executed)
           ;; Preflight gate → synthetic block carries `:vis/preflight? true`
           ;; so channels can suppress the model-facing-only error box. Keep
           ;; the block in the persisted/journal stream so the model still
@@ -1838,7 +1870,7 @@
                                                   (boolean preflight-error))
                                              code-entries))
           blocks (validate-iteration-blocks!
-                   (mapv (fn [idx code result form-comment]
+                   (mapv (fn [idx code result segments structurally-silent?]
                            (cond-> {:id idx
                                     :code code
                                     :result (:result result)
@@ -1852,14 +1884,22 @@
                                     :role (:role result)
                                     :timeout? (:timeout? result)
                                     :repaired? (:repaired? result)}
-                             form-comment (assoc :comment form-comment)
+                             ;; Per-form render breakdown for channel display.
+                             ;; Channels that read :render-segments hide
+                             ;; (turn-answer! …) / (set-conversation-title! …)
+                             ;; forms while keeping the prelude visible.
+                             ;; Legacy channels that only read :code fall
+                             ;; back to the full block source.
+                             (seq segments) (assoc :render-segments segments)
+                             structurally-silent? (assoc :vis/structurally-silent? true)
                              (:vis/silent result) (assoc :vis/silent true)
                              (get preflight-by-idx idx) (assoc :vis/preflight? true)))
-                     (range) code-blocks block-results block-comments))
+                     (range) code-blocks block-results block-segments block-silents))
           silent-form-idxs (into #{}
                              (keep-indexed (fn [idx block]
                                              (when (or (:vis/silent block)
-                                                     (= :vis/silent (:result block)))
+                                                     (= :vis/silent (:result block))
+                                                     (:vis/structurally-silent? block))
                                                idx)))
                              blocks)]
       (if-let [{:keys [value form-idx]} @answer-atom]
@@ -1922,7 +1962,8 @@
                                :form-of           total-forms
                                :iteration-id      (form-ref form-idx)
                                :code              (:code b)
-                               :comment           (get block-comments form-idx)
+                               :render-segments   (:render-segments b)
+                               :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
                                :result            (:result b)
                                :error             (:error b)
                                :stdout            (:stdout b)
@@ -1932,8 +1973,7 @@
                                :role        (:role b)
                                :silent?     (boolean (or (:vis/silent b)
                                                        (= :vis/silent (:result b))
-                                                       (conversation-title-meta-form? (:code b))
-                                                       (form-contains-turn-answer-call? (:code b))))
+                                                       (:vis/structurally-silent? b)))
                                :timeout?          (boolean (:timeout? b))
                                :repaired?         (boolean (:repaired? b))})))
               model-name       (actual-llm-model resolved-model ask-result)

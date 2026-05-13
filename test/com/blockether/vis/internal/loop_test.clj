@@ -77,6 +77,35 @@
       (expect (= 2 (count code-entries)))
       (expect (true? duplicate-blocks-normalized?))))
 
+  ;; ============================================================================
+  ;; P1.1 — each code-entry carries render segments so channels can hide
+  ;; structural forms (answer / title) without losing the prelude in a mixed
+  ;; block. Streaming + persisted paths both consume the same field.
+  ;; ============================================================================
+
+  (it "stamps :render-segments on each code-entry derived from the block source"
+    (let [preflight #'loop/code-entries-preflight
+          blocks    [{:lang "clojure"
+                      :source (str "(def helper-x 1)\n"
+                                "(set-conversation-title! \"Mixed forms\")\n"
+                                "(turn-answer! [:ir [:p \"Done\"]])")}]
+          {:keys [code-entries]} (preflight 1 blocks)]
+      (expect (= 1 (count code-entries)))
+      (let [segs (:render-segments (first code-entries))]
+        (expect (= 3 (count segs)))
+        (expect (= [:code :title :answer-ref] (mapv :kind segs)))
+        (expect (= "Mixed forms" (:value (second segs)))))))
+
+  (it "stamps :vis/structurally-silent? true on a pure-answer block, false on mixed"
+    (let [preflight  #'loop/code-entries-preflight
+          pure       [{:lang "clojure" :source "(turn-answer! [:ir [:p \"done\"]])"}]
+          mixed      [{:lang "clojure"
+                       :source (str "(def x 1)\n(turn-answer! [:ir [:p \"done\"]])")}]]
+      (expect (true? (:vis/structurally-silent?
+                      (first (:code-entries (preflight 1 pure))))))
+      (expect (false? (:vis/structurally-silent?
+                       (first (:code-entries (preflight 1 mixed))))))))
+
   (it "canonicalizes final answer IR and caps lazy children at the persistence boundary"
     (let [answer (loop/append-runtime-appendices
                    nil

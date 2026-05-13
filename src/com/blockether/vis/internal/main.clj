@@ -726,7 +726,7 @@
       (< cp 32) 0
       :else 1)))
 
-(defn- display-cols ^long [s]
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} display-cols ^long [s]
   (let [^String s (strip-ansi s)
         n (.length s)]
     (loop [i 0 cols 0]
@@ -796,7 +796,7 @@
         "\n"
         (trace-dim "  └")))))
 
-(defn- print-pretty-trace-chunk! [chunk]
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} print-pretty-trace-chunk! [chunk]
   (let [phase (:phase chunk)
         iter  (:iteration chunk)
         head  (str (trace-dim "\n╭─") " "
@@ -911,6 +911,38 @@
 
 (defn- render-pretty-trace-timeline [timeline]
   (str/join "\n" (map render-pretty-trace-entry timeline)))
+
+(defn- trace-final-summary-prose
+  "Human prose for the pretty terminal trace footer. Keep raw maps for the
+   EDN/JSON stream modes; the terminal trace should read like a tiny run
+   report, not like dumped data."
+  [result]
+  (let [failed?    (boolean (:error result))
+        iters      (fmt/format-iterations (:iteration-count result))
+        duration   (fmt/format-duration (:duration-ms result))
+        tokens     (fmt/format-tokens (:tokens result))
+        cost       (fmt/format-cost (:cost result))
+        confidence (some-> (:confidence result) name)
+        status     (some-> (:status result) name)
+        where      (str/join " in " (remove str/blank? [iters duration]))
+        opener     (str (if failed?
+                          "The run stopped with an error"
+                          "The run completed successfully")
+                     (when-not (str/blank? where) (str " after " where))
+                     ".")]
+    (str/join "\n"
+      (remove str/blank?
+        [opener
+         (when tokens
+           (str "It used " tokens "."))
+         (when cost
+           (str "Estimated cost: " cost "."))
+         (when confidence
+           (str "Confidence was " confidence "."))
+         (when status
+           (str "Final status: " status "."))
+         (when-let [err (:error result)]
+           (str "Error: " err))]))))
 
 (defn- terminal-erase-lines! [n]
   (when (and (trace-terminal?) (pos? n))
@@ -1209,8 +1241,7 @@
               "CLI trace result")
           (stdout! (str "\n" (trace-dim "╰────────────────────────────────────────────────────────")))
           (stdout! (str "\n" (trace-title "◆" "final result")
-                     (pretty-block "summary" (trace-pr-str (select-keys result [:iteration-count :duration-ms :tokens
-                                                                                :cost :confidence :status :error :type])))))
+                     (pretty-block "summary" (trace-final-summary-prose result))))
           (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
           (stdout! (render/render (:answer result) :markdown))
           (when (:error result)
