@@ -866,13 +866,15 @@ EMIT_FINAL
   Gated. The call is refused (failing criteria recorded in
   <journal>) unless ALL hold:
     - no error in the latest iteration
-    - latest iteration ran no action-tagged tool call and no
-      reload (intermediate defs are fine)
+    - latest iteration ran no extension tool call (observation or
+      mutation) and no reload (intermediate defs are fine)
     - <journal> carries evidence for this turn
     - turn-answer! itself evaluated without throwing
 
-  Structural only. Grounding every claim in <journal>/<bindings>
-  with no memory-sourced assumptions is on you, not the gate.
+  Structural only. Extension calls gather evidence; answers happen
+  in a later clean iteration after <journal> is visible. Grounding
+  every claim in <journal>/<bindings> with no memory-sourced
+  assumptions is on you, not the gate.
 
 ANSWER_IR
   EDN hiccup: [:ir block*]

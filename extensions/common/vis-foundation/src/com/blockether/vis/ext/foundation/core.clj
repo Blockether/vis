@@ -27,6 +27,34 @@
                      :symbol sym})))
     args))
 
+(doseq [[op tag] [[:v/conversation-state :op.tag/observation]
+                  [:v/conversation-report :op.tag/observation]
+                  [:v/engine-symbol-documentation :op.tag/observation]
+                  [:v/engine-symbol-source-code :op.tag/observation]
+                  [:v/engine-symbol-metadata :op.tag/observation]
+                  [:v/engine-symbol-apropos :op.tag/observation]
+                  [:v/cat :op.tag/observation]
+                  [:v/ls :op.tag/observation]
+                  [:v/rg :op.tag/observation]
+                  [:v/patch-check :op.tag/observation]
+                  [:v/exists? :op.tag/observation]
+                  [:v/snapshot :op.tag/observation]
+                  [:v/repositories :op.tag/observation]
+                  [:v/git :op.tag/observation]
+                  [:v/languages :op.tag/observation]
+                  [:v/monorepo :op.tag/observation]
+                  [:v/main-agent-instructions :op.tag/observation]
+                  [:v/scan-warnings :op.tag/observation]
+                  [:v/patch :op.tag/mutation]
+                  [:v/create-dirs :op.tag/mutation]
+                  [:v/copy :op.tag/mutation]
+                  [:v/move :op.tag/mutation]
+                  [:v/delete :op.tag/mutation]
+                  [:v/delete-if-exists :op.tag/mutation]
+                  [:v/refresh! :op.tag/mutation]
+                  [:v/reload-extensions! :op.tag/mutation]]]
+  (vis/register-op! op {:tag tag}))
+
 (defn- lazy-doctor-check-fn
   [env]
   (call-resolved! 'com.blockether.vis.ext.foundation.doctor/check-fn env))

@@ -1,7 +1,7 @@
 {:paths ["src" "resources"]
  ;; Z.ai (ZhipuAI) provider - covers BOTH Z.ai endpoints in one
  ;; classpath plug-in:
- ;;   - `:zai-coding` -> coding-plan subscription
+ ;;   - `:zai-coding-plan` -> coding-plan subscription
  ;;   - `:zai`        -> pay-as-you-go / "Pass" gateway
  ;; The two endpoints share the GLM model family (`glm-5-turbo`,
  ;; `glm-5.1`, `glm-4.7`, ...) but bill against different quotas, so

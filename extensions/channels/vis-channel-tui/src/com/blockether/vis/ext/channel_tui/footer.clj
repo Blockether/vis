@@ -286,9 +286,9 @@
      :premium_interactions 0
      :premium-interactions 0
      :codex-5h 1
-     :zai-coding-5h 1
+     :zai-coding-plan-5h 1
      :codex-7d 2
-     :zai-coding-7d 2
+     :zai-coding-plan-7d 2
      3)
    (if (lfmt/generic-limit-has-signal? row) 0 1)
    (or (:label row) (name (:id row)))])

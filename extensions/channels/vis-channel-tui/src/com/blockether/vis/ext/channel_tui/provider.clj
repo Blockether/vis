@@ -517,7 +517,7 @@
         suffix         (if (<= model-count 1)
                          "(1 model)"
                          (str "(+" (dec model-count) " models)"))
-        ;; Dynamic per-account rows (e.g. `:zai-coding-5h`, `:codex-7d`)
+        ;; Dynamic per-account rows (e.g. `:zai-coding-plan-5h`, `:codex-7d`)
         ;; come from `[:dynamic :limits]`; they're what the footer shows
         ;; and what the user actually cares about. Static `:rpm`/`:tpm`
         ;; are svar catalog defaults (`{:rpm 500 :tpm 2000000}`), the

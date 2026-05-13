@@ -1,7 +1,7 @@
 (ns com.blockether.vis.ext.provider-zai
   "Z.ai (ZhipuAI) static-API-key provider helpers. Each plan is registered as its own extension:
 
-     :zai-coding -> coding-plan subscription
+     :zai-coding-plan -> coding-plan subscription
                    (https://api.z.ai/api/coding/paas/v4).
                    Env var: `ZAI_CODING_API_KEY`.
 
@@ -54,7 +54,7 @@
 
    `:env-keys` is plan-specific. Keep the coding and pass credentials
    separate so one plan never silently authenticates as the other."
-  {:coding {:provider-id :zai-coding
+  {:coding {:provider-id :zai-coding-plan
             :label       "Z.ai (Coding Plan)"
             :base-url    "https://api.z.ai/api/coding/paas/v4"
             :default-models ["glm-5-turbo" "glm-4.7" "glm-5.1"]
@@ -251,8 +251,8 @@
         unit   (field limit :unit)
         number (field limit :number)]
     (cond
-      (and (= :tokens kind) (= 3 unit) (= 5 number)) :zai-coding-5h
-      (and (= :tokens kind) (= 6 unit) (= 7 number)) :zai-coding-7d
+      (and (= :tokens kind) (= 3 unit) (= 5 number)) :zai-coding-plan-5h
+      (and (= :tokens kind) (= 6 unit) (= 7 number)) :zai-coding-plan-7d
       :else                                          (keyword (str "zai-coding-limit-" idx)))))
 
 (defn- limit-window
@@ -446,7 +446,7 @@
 ;; Provider registration
 ;;
 ;; Loading this namespace registers ONE extension entry per plan.
-;; `:zai-coding` and `:zai` are independent first-class providers -
+;; `:zai-coding-plan` and `:zai` are independent first-class providers -
 ;; `vis providers auth zai-coding`, `vis providers status zai`,
 ;; per-plan logout, etc. all work. The TUI's add-provider picker shows
 ;; them as two separate cards driven by each provider's preset metadata.

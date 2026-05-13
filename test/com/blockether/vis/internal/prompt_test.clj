@@ -68,7 +68,7 @@
 
       ;; The four structural gate criteria are surfaced to the model.
       (expect (str/includes? content "no error in the latest iteration"))
-      (expect (str/includes? content "no action-tagged tool call"))
+      (expect (str/includes? content "no extension tool call"))
       (expect (str/includes? content "<journal> carries evidence for this turn"))
       (expect (str/includes? content "turn-answer! itself evaluated without throwing"))
 

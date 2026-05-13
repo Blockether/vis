@@ -604,6 +604,171 @@
   (.println ^java.io.PrintStream config/original-stdout s)
   (.flush ^java.io.PrintStream config/original-stdout))
 
+(def ^:private trace-max-inline-chars 4000)
+
+(defn- trace-safe
+  "Make trace frames printable/readable for CLI streaming. Runtime values can
+   contain Throwables, sets, lazy seqs, map entries, or other objects that are
+   awkward in EDN/JSON output; keep the useful data and avoid unserializable
+   exception objects."
+  [x]
+  (cond
+    (instance? Throwable x)
+    {:type    (str (type x))
+     :message (.getMessage ^Throwable x)}
+
+    (map? x)
+    (into {}
+      (map (fn [[k v]] [k (trace-safe v)]))
+      x)
+
+    (map-entry? x)
+    [(trace-safe (.getKey ^java.util.Map$Entry x))
+     (trace-safe (.getValue ^java.util.Map$Entry x))]
+
+    (vector? x) (mapv trace-safe x)
+    (set? x)    (mapv trace-safe x)
+    (seq? x)    (mapv trace-safe x)
+
+    (or (nil? x) (string? x) (number? x) (keyword? x)
+      (symbol? x) (boolean? x) (char? x))
+    x
+
+    :else
+    (str x)))
+
+(defn- trace-safe-pr-str [x]
+  (try
+    (pr-str (trace-safe x))
+    (catch Throwable t
+      (str "#<unprintable " (type t) ": " (.getMessage t) ">"))))
+
+(defn- trace-pr-str [x]
+  (let [s (trace-safe-pr-str x)]
+    (if (> (count s) trace-max-inline-chars)
+      (str (subs s 0 trace-max-inline-chars) "… [truncated " (- (count s) trace-max-inline-chars) " chars]")
+      s)))
+
+(defn- trace-indent [s]
+  (->> (str/split-lines (str s))
+    (map #(str "    " %))
+    (str/join "\n")))
+
+(defn- trace-error-summary [err]
+  (cond
+    (map? err)
+    (str (or (:message err) (:reason err) (:type err) "error")
+      (when-let [phase (:phase err)] (str " [" phase "]"))
+      (when-let [hint (:hint err)] (str "\n" (trace-indent (str "hint: " hint))))
+      (when-let [trace (:trace err)] (str "\n" (trace-indent trace))))
+
+    (some? err) (trace-pr-str err)
+    :else       nil))
+
+(defn- print-full-trace-edn-frame! [event payload]
+  (stdout! (trace-safe-pr-str {:event event :payload payload})))
+
+(defn- print-full-trace-json-frame! [event payload]
+  (stdout! (json/write-json-str (json-safe (trace-safe {:event event :payload payload})))))
+
+(defn- ansi
+  [code s]
+  (if (System/getenv "NO_COLOR")
+    (str s)
+    (str "\u001b[" code "m" s "\u001b[0m")))
+
+(defn- trace-title [icon label]
+  (ansi "1;36" (str icon " " label)))
+
+(defn- trace-dim [s] (ansi "2" s))
+(defn- trace-ok [s] (ansi "32" s))
+(defn- trace-warn [s] (ansi "33" s))
+(defn- trace-bad [s] (ansi "31" s))
+(defn- trace-code [s] (ansi "36" s))
+
+(defn- pretty-block [label body]
+  (when-not (str/blank? (str body))
+    (str "\n" (trace-dim (str "  ┌─ " label))
+      "\n"
+      (->> (str/split-lines (str body))
+        (map #(str (trace-dim "  │ ") %))
+        (str/join "\n"))
+      "\n"
+      (trace-dim "  └"))))
+
+(defn- print-pretty-trace-chunk! [chunk]
+  (let [phase (:phase chunk)
+        iter  (:iteration chunk)
+        head  (str (trace-dim "\n╭─") " "
+                (trace-title "λ" "trace")
+                (when iter (str " " (trace-dim (str "iteration " iter))))
+                " ")]
+    (case phase
+      :provider-call
+      (stdout! (str head (trace-title "↗" "provider call")
+                 (when-let [t (:started-at-ms chunk)] (str " " (trace-dim (str "started=" t))))))
+
+      :provider-fallback
+      (stdout! (str head (trace-warn "↷ provider fallback") " "
+                 (or (:failed-provider chunk) "?") " → "
+                 (or (:new-provider chunk) "?")
+                 (when-let [reason (:reason chunk)] (str " " (trace-dim (str "(" reason ")"))))))
+
+      :reasoning
+      (when-not (str/blank? (str (:thinking chunk)))
+        (stdout! (str head (trace-title "🧠" "reasoning")
+                   (pretty-block "thinking" (:thinking chunk)))))
+
+      :response-parse
+      (stdout! (if (= :start (:status chunk))
+                 (str head (trace-title "⌁" "response parse") " " (trace-dim "started")
+                   (when-let [n (:raw-length chunk)] (str " " (trace-dim (str "raw=" n " chars"))))
+                   (when-let [n (:block-count chunk)] (str " " (trace-dim (str "blocks=" n)))))
+                 (str head (trace-ok "✓ response parsed")
+                   (when-let [n (:forms chunk)] (str " forms=" n))
+                   (when-let [n (:code-length chunk)] (str " " (trace-dim (str "code=" n " chars"))))
+                   (when-let [n (:duration-ms chunk)] (str " " (trace-dim (str n "ms")))))))
+
+      :form-start
+      (stdout! (str head (trace-title "▶" (str "form " (inc (long (or (:form-idx chunk) 0)))
+                                            (when-let [of (:form-of chunk)] (str "/" of))))
+                 " " (trace-dim "started")
+                 (pretty-block "code" (trace-code (:code chunk)))))
+
+      :tool-start
+      (stdout! (str head (trace-title "⚙" "tool")
+                 (pretty-block "event" (trace-pr-str (:tool-event chunk)))))
+
+      :form-result
+      (stdout! (str head
+                 (if (:error chunk)
+                   (trace-bad "✗ form failed")
+                   (trace-ok "✓ form finished"))
+                 " #" (inc (long (or (:form-idx chunk) 0)))
+                 (when-let [of (:form-of chunk)] (str "/" of))
+                 (when-let [ms (:execution-time-ms chunk)] (str " " (trace-dim (str ms "ms"))))
+                 (when (:repaired? chunk) (str " " (trace-warn "repaired")))
+                 (when (:timeout? chunk) (str " " (trace-bad "timeout")))
+                 (pretty-block "stdout" (:stdout chunk))
+                 (pretty-block "stderr" (:stderr chunk))
+                 (if-let [err (trace-error-summary (:error chunk))]
+                   (pretty-block "error" (trace-bad err))
+                   (pretty-block "result" (trace-pr-str (:result chunk))))))
+
+      :iteration-final
+      (stdout! (str head (if (:done? chunk)
+                           (trace-ok "✓ turn complete")
+                           (trace-title "·" "iteration complete"))
+                 (when-let [final (:final chunk)]
+                   (pretty-block "final" (trace-pr-str (select-keys final [:status :iteration-count]))))))
+
+      :iteration-error
+      (stdout! (str head (trace-bad "✗ iteration error")
+                 (pretty-block "error" (or (trace-error-summary (:error chunk)) (trace-pr-str chunk)))))
+
+      (stdout! (str head (trace-title "•" (name (or phase :unknown)))
+                 (pretty-block "chunk" (trace-pr-str chunk)))))))
+
 (defn- wrap-str
   "Word-wrap `s` into a vector of lines, each <= `width` chars. Splits on
    whitespace; tokens longer than `width` are hard-broken so a single
@@ -776,7 +941,12 @@
           "--json"           (recur more (assoc opts :json? true) prompt-parts)
           "--edn"            (recur more (assoc opts :edn? true) prompt-parts)
           "--code"           (recur more (assoc opts :code? true) prompt-parts)
-          "--trace"          (recur more (assoc opts :trace? true) prompt-parts)
+          ("--full-trace-stream" "--trace")
+          (recur more (assoc opts :full-trace-stream? true) prompt-parts)
+          ("--full-trace-edn-stream" "--trace-stream")
+          (recur more (assoc opts :full-trace-edn-stream? true) prompt-parts)
+          ("--full-trace-json-stream" "--full-trace-json-stream-raw")
+          (recur more (assoc opts :full-trace-json-stream? true) prompt-parts)
           ("--help" "-h")    (assoc opts :help? true :prompt "")
           "--debug"          (recur more (assoc opts :debug? true) prompt-parts)
           "--provider"       (recur (next more) (assoc opts :provider (first more)) prompt-parts)
@@ -797,7 +967,13 @@
   (stdout! "                    no fences, no language tags. Pipes cleanly")
   (stdout! "                    into editors / interpreters. Errors when")
   (stdout! "                    the answer contains no [:code] blocks.")
-  (stdout! "  --trace           Log the full iteration trace via Telemere.")
+  (stdout! "  --full-trace-stream")
+  (stdout! "                    Stream a pretty terminal trace while the run is")
+  (stdout! "                    happening, then print the answer.")
+  (stdout! "  --full-trace-edn-stream")
+  (stdout! "                    Stream raw EDN trace frames (:trace-chunk, :result).")
+  (stdout! "  --full-trace-json-stream")
+  (stdout! "                    Stream raw JSON trace frames, one object per line.")
   (stdout! "  --debug           Enable verbose debug logging.")
   (stdout! "  --provider PROVIDER  Use this provider (e.g. openai, anthropic).")
   (stdout! "  --model MODEL        Override the configured model. Also accepts")
@@ -818,19 +994,67 @@
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
-  (let [{:keys [prompt json? edn? code? trace? help? agent-name db] :as opts}
+  (let [{:keys [prompt json? edn? code? full-trace-stream?
+                full-trace-edn-stream? full-trace-json-stream?
+                help? agent-name db] :as opts}
         (parse-run-args residual)]
     (when (or help? (str/blank? prompt))
       (print-run-usage!)
       (System/exit 0))
     (let [agent-def (agent {:name (or agent-name "cli")})
-          run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code? :trace? :compact?
-                              :agent-name :db)
+          trace-on-chunk (cond
+                           full-trace-json-stream?
+                           #(print-full-trace-json-frame! :trace-chunk %)
+
+                           full-trace-edn-stream?
+                           #(print-full-trace-edn-frame! :trace-chunk %)
+
+                           full-trace-stream?
+                           print-pretty-trace-chunk!)
+          run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code?
+                              :full-trace-stream? :full-trace-edn-stream?
+                              :full-trace-json-stream? :compact? :agent-name :db)
+                      trace-on-chunk (assoc :on-chunk trace-on-chunk)
                       db (assoc :db (config/resolve-db-spec
                                       (if (= db ":memory") :memory
                                         {:backend :sqlite :path db}))))
-          result    (run! agent-def prompt run-opts)]
+          result    (run! agent-def prompt run-opts)
+          trace-result (select-keys result [:conversation-id :answer :trace
+                                            :iteration-count :duration-ms
+                                            :tokens :cost :confidence
+                                            :status :error :type])]
       (cond
+        full-trace-json-stream?
+        (do
+          (print-full-trace-json-frame! :result trace-result)
+          (when (:error result)
+            (shutdown-agents)
+            (System/exit 1)))
+
+        full-trace-edn-stream?
+        (do
+          (print-full-trace-edn-frame! :result trace-result)
+          (when (:error result)
+            (shutdown-agents)
+            (System/exit 1)))
+
+        full-trace-stream?
+        (do (tel/log! {:level :info :id ::cli-trace
+                       :data  trace-result}
+              "CLI trace result")
+          (stdout! (str "\n" (trace-dim "╰────────────────────────────────────────────────────────")))
+          (stdout! (str "\n" (trace-title "◆" "final result")
+                     (pretty-block "summary" (trace-pr-str (select-keys result [:iteration-count :duration-ms :tokens
+                                                                                :cost :confidence :status :error :type])))))
+          (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
+          (stdout! (render/render (:answer result) :markdown))
+          (when (:error result)
+            (when-let [ex (:exception result)]
+              (stdout! "\nStack trace:")
+              (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))
+            (shutdown-agents)
+            (System/exit 1)))
+
         json? (stdout! (result->json result))
         edn?  (stdout! (result->edn result))
 
@@ -849,20 +1073,6 @@
 
             :else
             (stdout! (str/join "\n\n" blocks))))
-
-        trace?
-        (do (tel/log! {:level :info :id ::cli-trace
-                       :data  (select-keys result [:answer :trace :iteration-count
-                                                   :duration-ms :tokens :cost
-                                                   :error :type])}
-              "CLI trace result")
-          (stdout! (render/render (:answer result) :markdown))
-          (when (:error result)
-            (when-let [ex (:exception result)]
-              (stdout! "\nStack trace:")
-              (.printStackTrace ^Throwable ex ^java.io.PrintStream config/original-stdout))
-            (shutdown-agents)
-            (System/exit 1)))
 
         (:error result)
         (do (stdout! (error/format-error (:error result)))
@@ -1549,7 +1759,9 @@
           :cmd/usage "vis run [FLAGS] \"prompt\""
           :cmd/args  [{:name "json"       :kind :flag :type :boolean :doc "Output result as JSON."}
                       {:name "edn"        :kind :flag :type :boolean :doc "Output result as EDN."}
-                      {:name "trace"      :kind :flag :type :boolean :doc "Show full execution trace."}
+                      {:name "full-trace-stream" :kind :flag :type :boolean :doc "Stream a pretty terminal trace."}
+                      {:name "full-trace-edn-stream" :kind :flag :type :boolean :doc "Stream raw EDN trace frames."}
+                      {:name "full-trace-json-stream" :kind :flag :type :boolean :doc "Stream raw JSON trace frames."}
                       {:name "debug"      :kind :flag :type :boolean :doc "Enable svar debug logging."}
                       {:name "model"      :kind :flag :type :string  :doc "Override the LLM model (accepts provider/name syntax)."}
                       {:name "provider"   :kind :flag :type :string  :doc "Override the LLM provider (e.g. openai, anthropic)."}

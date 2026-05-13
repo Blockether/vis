@@ -121,12 +121,25 @@
 ;; Engine contract lives in `com.blockether.vis.internal.extension`:
 ;;   `extension/op-tag`          - canonical op-keyword -> :op.tag/... value.
 ;;   `extension/op-presentation` - `:info` metadata `{:tag ...}` embedded in tool envelopes.
-;; The iteration loop's mutating-call gate inlines
-;; `(= :op.tag/action (extension/op-tag op-kw))` directly
-;; (no separate `side-effect-op?` helper).
+;; The iteration loop's final-answer gate rejects any registered extension op
+;; in the same iteration as `(turn-answer! ...)`; op tags remain mandatory for
+;; audit/permission policy.
 ;; Editing used to keep its own copies; they were thin shims and crossed
 ;; the abstraction boundary (color-role lived here too). Use the engine
 ;; functions directly.
+
+(doseq [[op tag] [[:v/cat :op.tag/observation]
+                  [:v/ls :op.tag/observation]
+                  [:v/rg :op.tag/observation]
+                  [:v/patch-check :op.tag/observation]
+                  [:v/exists? :op.tag/observation]
+                  [:v/patch :op.tag/mutation]
+                  [:v/create-dirs :op.tag/mutation]
+                  [:v/copy :op.tag/mutation]
+                  [:v/move :op.tag/mutation]
+                  [:v/delete :op.tag/mutation]
+                  [:v/delete-if-exists :op.tag/mutation]]]
+  (extension/register-op! op {:tag tag}))
 
 (defn- tool-success
   [{:keys [op path kind result info]}]

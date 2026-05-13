@@ -12,7 +12,7 @@
    only `[:static :rpm]` and `[:static :tpm]`, which are the svar
    catalog defaults (`{:rpm 500 :tpm 2000000}`) - the same numbers
    for every provider. The interesting account-level rows
-   (`:zai-coding-5h`, `:zai-coding-7d`, `:codex-5h`, `:codex-7d`,
+   (`:zai-coding-plan-5h`, `:zai-coding-plan-7d`, `:codex-5h`, `:codex-7d`,
    `:premium_interactions`, ...) live under `[:dynamic :limits]`,
    were rendered by the footer, and were silently dropped on the
    provider list cards. This namespace owns the row → text mapping
@@ -57,7 +57,7 @@
    `:rate` + `:limit 100` heuristic catches generic percentage rows."
   [{:keys [id kind limit remaining]}]
   (and (number? remaining)
-    (or (contains? #{:codex-5h :codex-7d :zai-coding-5h :zai-coding-7d} id)
+    (or (contains? #{:codex-5h :codex-7d :zai-coding-plan-5h :zai-coding-plan-7d} id)
       (and (= :rate kind)
         (number? limit)
         (== 100.0 (double limit))))))

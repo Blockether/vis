@@ -651,7 +651,7 @@
    With per-block eval, `code-entries-preflight` builds entries directly
    from svar's `:blocks` and the `:expr` field is the block's `:source`
    string verbatim — no `:form` pre-parse is cached on the entry. The
-   preflight gates that need a parsed form (turn-answer / mutation /
+   preflight gates that need a parsed form (turn-answer / extension-call /
    needs-input / direct-answer detection) pay one edamame parse per
    gate per block here. That's cheap; blocks are short.
 
@@ -707,53 +707,42 @@
         (keyword ns* nm)
         (keyword nm)))))
 
-(defn- mutating-call-form?
-  "True when `form` is a call whose head symbol classifies as an
-   action op via the engine contract (`extension/op-tag` returns
-   `:op.tag/action`). Source of truth lives in
-   `src/com/blockether/vis/internal/extension.clj`; tools register
-   or override their op-tag via `extension/register-op-tag!`.
-
-   Reproduced from convo `73f3d325` turn 5: `(z/patch ...) ...
-   (turn-answer! \"Now fixed\")` in one iteration; z/patch failed
-   `matched 4 time(s)` but the answer claimed success because the
-   model never saw the failure result before the answer was
-   composed. Read-only tools (v/cat, v/rg, z/locators,
-   z/patch-check, v/patch-check, ...) classify as
-   `:op.tag/observation` and stay legal alongside the answer;
-   action ops (`:op.tag/action`) are gated."
+(defn- extension-call-form?
+  "True when `form` is a call whose head is a registered extension op.
+   The final-answer rule is intentionally strict: ANY observed extension
+   tool call (observation or mutation) makes the
+   current iteration an evidence-gathering iteration, so `(turn-answer! ...)`
+   must wait for the next clean iteration after the journal is rendered."
   [form]
   (and (seq? form)
     (when-let [op-kw (call-symbol->op-keyword (first form))]
-      (= :op.tag/action (extension/op-tag op-kw)))))
+      (extension/registered-op? op-kw))))
 
-(defn- form-contains-mutating-call?
+(defn- form-contains-extension-call?
   [entry-or-form-or-source]
   (let [form (parsed-entry-form entry-or-form-or-source)]
-    (boolean (some mutating-call-form? (tree-seq coll? seq form)))))
+    (boolean (some extension-call-form? (tree-seq coll? seq form)))))
 
-(defn- answer-with-mutation-preflight-mismatch
+(defn- answer-with-extension-preflight-mismatch
   "When an iteration contains BOTH a top-level form that holds an
-   `(turn-answer! ...)` call AND a top-level form that holds a mutating tool
-   call (anywhere in its tree), return a map describing the violation
-   so the engine can reject the iteration before any evaluation runs.
-   Returns nil when the iteration is fine.
+   `(turn-answer! ...)` call AND a top-level form that holds any registered
+   extension tool call (anywhere in its tree), return a map describing the
+   violation so the engine can reject the iteration before evaluation.
 
-   The two forms may be the same form (e.g. `(do (z/patch ...) (turn-answer!
-   ...))`) or different forms in the same iteration. Either way the
-   model has no chance to observe the mutation result before the answer
-   is composed."
+   The two forms may be the same form (e.g. `(do (v/cat ...) (turn-answer!
+   ...))`) or different forms. Either way the model has no chance to observe
+   the tool's final journal entry before the answer is composed."
   [code-entries]
-  (let [answer-idx   (first (keep-indexed (fn [idx entry]
-                                            (when (form-contains-turn-answer-call? entry) idx))
-                              code-entries))
-        mutating-idx (first (keep-indexed (fn [idx entry]
-                                            (when (form-contains-mutating-call? entry) idx))
-                              code-entries))]
-    (when (and (some? answer-idx) (some? mutating-idx))
-      {:answer-idx   answer-idx
-       :mutating-idx mutating-idx
-       :total-forms  (count code-entries)})))
+  (let [answer-idx    (first (keep-indexed (fn [idx entry]
+                                             (when (form-contains-turn-answer-call? entry) idx))
+                               code-entries))
+        extension-idx (first (keep-indexed (fn [idx entry]
+                                             (when (form-contains-extension-call? entry) idx))
+                               code-entries))]
+    (when (and (some? answer-idx) (some? extension-idx))
+      {:answer-idx    answer-idx
+       :extension-idx extension-idx
+       :total-forms   (count code-entries)})))
 
 (defn- block-result-error-summary
   "Return a short string describing the error in a per-form result map
@@ -773,22 +762,18 @@
                 (str "tool failure in " (pr-str (:form j))))))
       (:journal result))))
 
-(defn- answer-with-mutation-preflight-error-message
-  [{:keys [answer-idx mutating-idx total-forms]}]
-  (str "Answer/mutation preflight rejected this iteration before evaluation: "
+(defn- answer-with-extension-preflight-error-message
+  [{:keys [answer-idx extension-idx total-forms]}]
+  (str "Answer/extension preflight rejected this iteration before evaluation: "
     "(turn-answer! ...) at top-level form " (inc (or answer-idx 0))
-    " and a mutating tool call (e.g. v/patch, z/patch, v/copy, v/move, "
-    "v/delete, v/delete-if-exists, v/create-dirs, z/repair-*) at top-level form "
-    (inc (or mutating-idx 0))
+    " and an extension tool call (observation or mutation, e.g. v/cat, v/rg, "
+    "z/locators, exa/web-search, v/patch, z/patch) at top-level form "
+    (inc (or extension-idx 0))
     " appeared together in the same " total-forms "-form iteration. "
-    "This is structurally unobservable: the SCI loop is write-then-read, "
-    "so you cannot see the mutation's success/failure tool result before "
-    "the answer is composed. Recovery: keep the mutating call in THIS "
-    "iteration, drop the (turn-answer! ...). The host will loop; the next "
-    "iteration's <journal> will carry the mutation's :success?/:error "
-    "sink entry. Inspect it (and the file bytes via v/cat / z/locators) "
-    "before claiming success. Use (z/patch-check edits) or (v/patch-check "
-    "edits) to dry-run when locators may be stale."))
+    "This is structurally unobservable: the SCI loop must first gather all "
+    "tool evidence and render it into <journal>. Recovery: keep the extension "
+    "call in THIS iteration, drop the (turn-answer! ...). The host will loop; "
+    "answer in the next clean iteration with no extension calls."))
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
@@ -985,9 +970,9 @@
      - `raw-markdown-fence-leak-error` per block. A nested ``` inside the
        extracted source means svar's normalizer fell into a recursive shape;
        structured rejection beats a JVM crash.
-     - `answer-with-mutation-preflight-mismatch` across blocks. An iteration
-       containing both `(turn-answer! …)` and a mutating tool call is
-       structurally unobservable (write-then-read race).
+     - `answer-with-extension-preflight-mismatch` across blocks. An iteration
+       containing both `(turn-answer! …)` and any extension tool call is
+       structurally unobservable; gather evidence first, answer next.
      - Duplicate-block dedup. Some providers stutter and emit the same
        block twice; we keep the first copy and drop the rest."
   [_iteration-position blocks]
@@ -1028,25 +1013,25 @@
                                        (str/join "\n"))
         code-hash                    (when-not (str/blank? normalized-code)
                                        (sha256-hex normalized-code))
-        ;; Answer-with-mutation gate — fires when BOTH an answer and a
-        ;; mutating tool call exist in the same iteration's block set.
+        ;; Answer-with-extension gate — fires when BOTH an answer and any
+        ;; extension tool call exist in the same iteration's block set.
         ;; Operates on `:expr` strings; the helper parses each lazily via
         ;; `parsed-entry-form`. Skip when any block already flagged a
         ;; fence-leak so the first error stays the primary one.
-        answer-with-mutation-mismatch (when (and (not raw-fence-error)
-                                              (pos? parsed-total-blocks))
-                                        (answer-with-mutation-preflight-mismatch raw-entries))
-        answer-with-mutation-error    (when answer-with-mutation-mismatch
-                                        (answer-with-mutation-preflight-error-message
-                                          answer-with-mutation-mismatch))]
+        answer-with-extension-mismatch (when (and (not raw-fence-error)
+                                               (pos? parsed-total-blocks))
+                                         (answer-with-extension-preflight-mismatch raw-entries))
+        answer-with-extension-error    (when answer-with-extension-mismatch
+                                         (answer-with-extension-preflight-error-message
+                                           answer-with-extension-mismatch))]
     {:code-entries                  (cond
-                                      answer-with-mutation-error
-                                      [{:expr "(vis/preflight-error :answer-with-mutation)"
-                                        :vis/preflight-error answer-with-mutation-error}]
+                                      answer-with-extension-error
+                                      [{:expr "(vis/preflight-error :answer-with-extension)"
+                                        :vis/preflight-error answer-with-extension-error}]
 
                                       :else
                                       raw-entries)
-     :answer-with-mutation-preflight-error answer-with-mutation-error
+     :answer-with-extension-preflight-error answer-with-extension-error
      :raw-fence-preflight-error     raw-fence-error
      :duplicate-blocks-normalized?  duplicate-blocks-normalized?
      :normalized-code               normalized-code
@@ -1101,8 +1086,8 @@
         Sibling errors in the same iteration as `turn-answer!` mean
         the model has not yet observed a clean state to derive from.
 
-     #2 No action-tagged tool call in the latest iteration.
-        Belt-and-suspenders for `answer-with-mutation-preflight-mismatch`
+     #2 No extension tool call in the latest iteration.
+        Belt-and-suspenders for `answer-with-extension-preflight-mismatch`
         (which rejects this shape at parse time before SCI eval). If a
         refactor ever shifts ordering, this gate still catches it.
 
@@ -1117,9 +1102,9 @@
                                                  (some? (:error b)))
                                            i)))
                          vec)
-        mutating-idxs  (->> (or code-entries [])
+        extension-idxs (->> (or code-entries [])
                          (keep-indexed (fn [i e]
-                                         (when (form-contains-mutating-call? e) i)))
+                                         (when (form-contains-extension-call? e) i)))
                          vec)
         evidence-this? (boolean
                          (some (fn [i]
@@ -1133,10 +1118,10 @@
               (str/join ", " (map (comp str inc) errored-idxs))
               " — resolve before turn-answer!"))
 
-      (seq mutating-idxs)
-      (conj (str "latest iteration contains action-tagged tool call(s) in form(s) "
-              (str/join ", " (map (comp str inc) mutating-idxs))
-              " — observe the mutation in a later read-only iteration before turn-answer!"))
+      (seq extension-idxs)
+      (conj (str "latest iteration contains extension tool call(s) in form(s) "
+              (str/join ", " (map (comp str inc) extension-idxs))
+              " — gather evidence first; answer in a later clean iteration with no extension calls"))
 
       (and (not evidence-this?) (not evidence-prior?))
       (conj "<journal> contains no evidence for this turn yet — probe before turn-answer!"))))

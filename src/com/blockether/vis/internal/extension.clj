@@ -82,11 +82,11 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-(declare op-tag)
+(declare op-tag op-tags registered-op? tool-call-name)
 
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
-(s/def ::tag        keyword?)        ; #{:op.tag/observation :op.tag/action}
+(s/def ::tag        keyword?)        ; #{:op.tag/observation :op.tag/mutation}
 (s/def ::result     any?)            ; the actual SCI eval value; shape varies per tool
 (s/def ::success?   boolean?)
 (s/def ::stdout     (s/nilable string?))
@@ -1220,6 +1220,33 @@
     :else (throw (ex-info ":ext/prompt must be a string or (fn [env] string)"
                    {:got (type prompt)}))))
 
+(defn- extension-symbol-op-keyword
+  [ext sym-entry]
+  (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
+
+(defn- validate-symbol-op-tags!
+  "Fail closed: every observed extension tool must have a registered
+   observation/mutation tag for its canonical alias call. Raw helpers are not
+   observed tools and remain untagged plain functions/values. Returns `ext`
+   unchanged on success; throws `:extension/missing-op-tag` otherwise."
+  [ext]
+  (doseq [sym-entry (:ext/symbols ext)
+          :when    (and (:ext.symbol/fn sym-entry)
+                     (not (:ext.symbol/raw? sym-entry)))]
+    (let [op (extension-symbol-op-keyword ext sym-entry)]
+      (when-not (registered-op? op)
+        (anomaly/incorrect!
+          (str "Extension '" (:ext/namespace ext) "' symbol '"
+            (:ext.symbol/symbol sym-entry) "' is missing mandatory op tag for " op
+            "; register it with (vis/register-op! " (pr-str op)
+            " {:tag :op.tag/observation}) or {:tag :op.tag/mutation}.")
+          {:type      :extension/missing-op-tag
+           :extension (:ext/namespace ext)
+           :symbol    (:ext.symbol/symbol sym-entry)
+           :op        op
+           :allowed   op-tags}))))
+  ext)
+
 (defn validate!
   "Normalize and assert that an extension map conforms to ::extension.
    Normalizes `:ext/prompt` (string -> fn) before checking the spec
@@ -1237,7 +1264,7 @@
                {:type      :extension/invalid-spec
                 :namespace (:ext/namespace ext)
                 :explain   (s/explain-data ::extension ext)})))
-    ext))
+    (validate-symbol-op-tags! ext)))
 
 ;; =============================================================================
 ;; Hook execution - runtime wrappers with output validation + logging
@@ -1356,12 +1383,28 @@
   [ext]
   ((requiring-resolve 'com.blockether.vis.internal.extension/extension-info) ext))
 
+(defn- default-tool-op-keyword
+  [ext sym-entry]
+  (keyword (tool-call-name ext (:ext.symbol/symbol sym-entry))))
+
+(defn- ensure-tool-result-op
+  "Observed extension tools must carry canonical op metadata. Tool functions may
+   set `:op` explicitly via `extension/success`; otherwise the wrapper derives
+   it deterministically from the active alias and symbol (`v/cat`, `z/patch`,
+   ...). Either path must resolve to a registered op tag, so missing extension
+   tags fail closed instead of silently becoming observations."
+  [ext sym-entry result]
+  (if (and (tool-result? result) (nil? (:symbol result)))
+    (let [op (default-tool-op-keyword ext sym-entry)]
+      (assoc result :symbol op :tag (op-tag op)))
+    result))
+
 (defn- enrich-tool-result-info
   [ext sym-entry result]
   (if (tool-result? result)
     (let [ext-prov (extension-info-now ext)]
       (merge-into-metadata
-        result
+        (ensure-tool-result-op ext sym-entry result)
         {:tool      (cond-> {:symbol  (:ext.symbol/symbol sym-entry)
                              :call (tool-call-name ext (:ext.symbol/symbol sym-entry))}
                       (get-in ext [:ext/alias :alias])
@@ -2327,32 +2370,31 @@
 
 (def op-tags
   "Closed set of operation tags a tool can declare. The two values
-   map to the observation/action half of the OODA loop — see
-   PLAN.md §2.1. Renamed from `op-classes`; the prior 8-value
-   granular enum collapses into these two:
+   map to the observation/mutation half of the OODA loop — see
+   PLAN.md §2.1. The prior granular enum collapses into these two:
 
      :op.tag/observation   reads state without changing it — cat,
                            ls, exists?, locators, rg, env
                            queries, registry lookups
 
-     :op.tag/action        mutates state — patch, write, append,
+     :op.tag/mutation      mutates state — patch, write, append,
                            mkdir, touch, delete, move, copy.
 
    Channels that want to color tools by tag look it up themselves;
    the engine never carries presentation in the tool envelope."
-  #{:op.tag/observation :op.tag/action})
+  #{:op.tag/observation :op.tag/mutation})
 
 (def ^:private op-keyword->meta
   "Canonical op-keyword -> op-metadata table.
 
-     {:tag              :op.tag/observation | :op.tag/action  (required)
-      :self-describing? true | false                          (optional)}
+     {:tag              :op.tag/observation | :op.tag/mutation  (required)
+      :self-describing? true | false                            (optional)}
 
    `:self-describing?` true means the tool's body output is its own
    summary (shell stdout, search hits, file listings) so channels
    SHOULD skip the redundant badge row.
 
-   Badge label is derived from `:tag` (`OBSERVATION` / `ACTION`); no
+   Badge label is derived from `:tag` (`OBSERVATION` / `MUTATION`); no
    per-op badge field. Channels compose `(str tag-label \" \" op-name)`.
 
    Each extension owns its own ops via `register-op!`."
@@ -2371,16 +2413,21 @@
   (swap! op-keyword->meta assoc op-keyword meta)
   op-keyword)
 
-(defn register-op-tag!
-  "Back-compat shim. Prefer `register-op!`."
-  [op-keyword tag]
-  (register-op! op-keyword {:tag tag}))
+(defn registered-op?
+  "True when `op-keyword` has mandatory operation metadata."
+  [op-keyword]
+  (contains? @op-keyword->meta op-keyword))
 
 (defn op-tag
-  "Return the `:op.tag/...` value for `op-keyword`. Defaults to
-   `:op.tag/observation` for unregistered ops."
+  "Return the registered `:op.tag/...` value for `op-keyword`. Unknown ops
+   fail closed; extensions must declare observation/mutation explicitly."
   [op-keyword]
-  (get-in @op-keyword->meta [op-keyword :tag] :op.tag/observation))
+  (if-let [tag (get-in @op-keyword->meta [op-keyword :tag])]
+    tag
+    (anomaly/incorrect!
+      (str "Unregistered extension op " (pr-str op-keyword)
+        " has no mandatory observation/mutation tag")
+      {:type :extension/unregistered-op :op op-keyword :allowed op-tags})))
 
 (defn op-presentation
   "Engine-owned metadata for a tool's `:op` keyword:
@@ -2390,9 +2437,12 @@
    Badge LABEL is derived from `:tag` by the channel, not stored
    here. Color / glyph / layout remain pure channel concerns."
   [op]
-  (let [m (get @op-keyword->meta op :op.tag/observation)
-        m (if (map? m) m {:tag m})]
-    (cond-> {:tag (:tag m :op.tag/observation)}
+  (let [m (or (get @op-keyword->meta op)
+            (anomaly/incorrect!
+              (str "Unregistered extension op " (pr-str op)
+                " has no mandatory presentation metadata")
+              {:type :extension/unregistered-op :op op :allowed op-tags}))]
+    (cond-> {:tag (:tag m)}
       (:self-describing? m) (assoc :self-describing? true))))
 
 (defn registered-extensions-summary
