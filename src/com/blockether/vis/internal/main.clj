@@ -604,6 +604,15 @@
   (.println ^java.io.PrintStream config/original-stdout s)
   (.flush ^java.io.PrintStream config/original-stdout))
 
+(defn- write-stdout!
+  "Write to the real terminal without appending a newline. Used by the
+   live trace renderer for cursor-back/redraw frames."
+  [^String s]
+  (.print ^java.io.PrintStream config/original-stdout s)
+  (.flush ^java.io.PrintStream config/original-stdout))
+
+(declare terminal-width)
+
 (def ^:private trace-max-inline-chars 4000)
 
 (defn- trace-safe
@@ -671,30 +680,121 @@
 (defn- print-full-trace-json-frame! [event payload]
   (stdout! (json/write-json-str (json-safe (trace-safe {:event event :payload payload})))))
 
+(defn- trace-terminal?
+  []
+  (boolean (and (System/console)
+             (str/blank? (System/getenv "NO_COLOR"))
+             (not= "dumb" (System/getenv "TERM")))))
+
 (defn- ansi
   [code s]
-  (if (System/getenv "NO_COLOR")
-    (str s)
-    (str "\u001b[" code "m" s "\u001b[0m")))
+  (if (trace-terminal?)
+    (str "\u001b[" code "m" s "\u001b[0m")
+    (str s)))
 
 (defn- trace-title [icon label]
-  (ansi "1;36" (str icon " " label)))
+  (ansi "1;96" (str icon " " label)))
 
-(defn- trace-dim [s] (ansi "2" s))
+;; Use bright-black, not ANSI dim (2): dim is unreadable on many themes.
+(defn- trace-dim [s] (ansi "90" s))
 (defn- trace-ok [s] (ansi "32" s))
 (defn- trace-warn [s] (ansi "33" s))
 (defn- trace-bad [s] (ansi "31" s))
 (defn- trace-code [s] (ansi "36" s))
 
+(def ^:private ansi-sgr-re #"\u001B\[[0-9;]*m")
+
+(defn- strip-ansi [s]
+  (str/replace (str s) ansi-sgr-re ""))
+
+(defn- codepoint-width ^long [^long cp]
+  (let [t (Character/getType (int cp))]
+    (cond
+      (= cp 9) 4
+      (or (= t Character/NON_SPACING_MARK)
+        (= t Character/COMBINING_SPACING_MARK)
+        (= t Character/ENCLOSING_MARK)) 0
+      (or (<= 0x1100 cp 0x115F)
+        (<= 0x2E80 cp 0xA4CF)
+        (<= 0xAC00 cp 0xD7A3)
+        (<= 0xF900 cp 0xFAFF)
+        (<= 0xFE10 cp 0xFE19)
+        (<= 0xFE30 cp 0xFE6F)
+        (<= 0xFF00 cp 0xFF60)
+        (<= 0xFFE0 cp 0xFFE6)
+        (<= 0x1F300 cp 0x1FAFF)) 2
+      (< cp 32) 0
+      :else 1)))
+
+(defn- display-cols ^long [s]
+  (let [^String s (strip-ansi s)
+        n (.length s)]
+    (loop [i 0 cols 0]
+      (if (>= i n)
+        cols
+        (let [cp (.codePointAt s i)]
+          (recur (+ i (Character/charCount cp))
+            (+ cols (codepoint-width cp))))))))
+
+(defn- expand-tabs [s]
+  (let [^String s (str s)
+        n (.length s)
+        sb (StringBuilder.)]
+    (loop [i 0 col 0]
+      (if (>= i n)
+        (.toString sb)
+        (let [cp (.codePointAt s i)
+              step (Character/charCount cp)]
+          (cond
+            (= cp 9)
+            (let [spaces (- 4 (mod col 4))]
+              (.append sb (apply str (repeat spaces \space)))
+              (recur (+ i step) (+ col spaces)))
+
+            (= cp 10)
+            (do (.append sb \newline)
+              (recur (+ i step) 0))
+
+            (< cp 32)
+            (do (.append sb \space)
+              (recur (+ i step) (inc col)))
+
+            :else
+            (let [piece (String. (Character/toChars cp))]
+              (.append sb piece)
+              (recur (+ i step) (+ col (codepoint-width cp))))))))))
+
+(defn- wrap-plain-line [s max-cols]
+  (let [^String s (str s)
+        n (.length s)
+        max-cols (max 8 (long max-cols))]
+    (loop [i 0 col 0 line (StringBuilder.) acc []]
+      (if (>= i n)
+        (cond-> acc (pos? (.length line)) (conj (.toString line)))
+        (let [cp (.codePointAt s i)
+              step (Character/charCount cp)
+              piece (String. (Character/toChars cp))
+              w (codepoint-width cp)]
+          (if (and (pos? (.length line)) (> (+ col w) max-cols))
+            (recur i 0 (StringBuilder.) (conj acc (.toString line)))
+            (do
+              (.append line piece)
+              (recur (+ i step) (+ col w) line acc))))))))
+
 (defn- pretty-block [label body]
-  (when-not (str/blank? (str body))
-    (str "\n" (trace-dim (str "  ┌─ " label))
-      "\n"
-      (->> (str/split-lines (str body))
-        (map #(str (trace-dim "  │ ") %))
-        (str/join "\n"))
-      "\n"
-      (trace-dim "  └"))))
+  (when-not (str/blank? (strip-ansi body))
+    (let [cols (max 40 (- (terminal-width) 4))
+          lines (->> (str/split-lines (expand-tabs body))
+                  (mapcat (fn [line]
+                            (let [wrapped (wrap-plain-line line cols)]
+                              (if (seq wrapped) wrapped [""])))))]
+      (str "\n" (trace-dim (str "  ┌─ " label))
+        "\n"
+        (->> lines
+          (map #(str (trace-dim "  │ ") %))
+          (str/join "\n"))
+        "\n"
+        (trace-dim "  └")))))
 
 (defn- print-pretty-trace-chunk! [chunk]
   (let [phase (:phase chunk)
@@ -768,6 +868,71 @@
 
       (stdout! (str head (trace-title "•" (name (or phase :unknown)))
                  (pretty-block "chunk" (trace-pr-str chunk)))))))
+
+(defn- trace-entry-header [entry]
+  (str (trace-dim "╭─") " "
+    (trace-title "λ" "trace") " "
+    (trace-dim (str "iteration " (:iteration entry)))
+    (when-let [activity (:activity entry)]
+      (str " " (trace-warn (name activity))))))
+
+(defn- render-trace-form [entry idx]
+  (let [code      (get (:code entry) idx)
+        comment   (get (:comments entry) idx)
+        result    (get (:results entry) idx)
+        success?  (get (:successes entry) idx)
+        duration  (get (:durations entry) idx)
+        started?  (some? (get (:started-at-ms entry) idx))
+        kind      (get (:result-kinds entry) idx)
+        title     (str (if (some? success?)
+                         (if success? (trace-ok "✓") (trace-bad "✗"))
+                         (if started? (trace-warn "▶") (trace-dim "·")))
+                    " form " (inc idx)
+                    (when duration (str " " (trace-dim (str duration "ms"))))
+                    (when kind (str " " (trace-dim (name kind)))))]
+    (str "\n" title
+      (pretty-block "comment" comment)
+      (pretty-block "code" code)
+      (pretty-block (if success? "result" "error") result))))
+
+(defn- render-pretty-trace-entry [entry]
+  (str (trace-entry-header entry)
+    (pretty-block "thinking" (:thinking entry))
+    (when (seq (:provider-fallbacks entry))
+      (pretty-block "provider fallback" (trace-pr-str (:provider-fallbacks entry))))
+    (apply str
+      (map #(render-trace-form entry %)
+        (range (count (:code entry)))))
+    (when-let [err (:error entry)]
+      (pretty-block "iteration error" (trace-error-summary err)))
+    (when-let [final (:final entry)]
+      (pretty-block (if (:done? entry) "turn complete" "iteration complete")
+        (trace-pr-str (select-keys final [:status :iteration-count]))))))
+
+(defn- render-pretty-trace-timeline [timeline]
+  (str/join "\n" (map render-pretty-trace-entry timeline)))
+
+(defn- terminal-erase-lines! [n]
+  (when (and (trace-terminal?) (pos? n))
+    (write-stdout! (apply str (repeat n "\u001b[1A\u001b[2K")))))
+
+(defn- make-pretty-trace-printer []
+  (let [printed-lines (atom 0)
+        tracker (progress/make-progress-tracker
+                  {:on-update
+                   (fn [timeline _chunk]
+                     (let [frame (render-pretty-trace-timeline timeline)
+                           line-count (max 1 (count (str/split-lines frame)))]
+                       (if (trace-terminal?)
+                         (do
+                           (terminal-erase-lines! @printed-lines)
+                           (write-stdout! (str frame "\n"))
+                           (reset! printed-lines line-count))
+                         ;; Non-TTY: don't spam repeated reasoning snapshots.
+                         ;; Use --full-trace-edn-stream/--full-trace-json-stream
+                         ;; for pipe-friendly raw streaming.
+                         nil)))})]
+    (:on-chunk tracker)))
 
 (defn- wrap-str
   "Word-wrap `s` into a vector of lines, each <= `width` chars. Splits on
@@ -1010,7 +1175,7 @@
                            #(print-full-trace-edn-frame! :trace-chunk %)
 
                            full-trace-stream?
-                           print-pretty-trace-chunk!)
+                           (make-pretty-trace-printer))
           run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code?
                               :full-trace-stream? :full-trace-edn-stream?
                               :full-trace-json-stream? :compact? :agent-name :db)

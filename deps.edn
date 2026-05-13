@@ -59,10 +59,8 @@
   ;;   org.babashka/http-client -> vis-channel-telegram + vis-provider-github-copilot + vis-exa
   ;;   rewrite-clj              -> vis-language-clojure
   ;;   lanterna                 -> vis-channel-tui
-  ;; LOCAL svar checkout — tracks unreleased BREAKING changes
-  ;; (strict :lang on ask-code!, :blocks-only return, drop :result).
-  ;; Switch back to `{:mvn/version "0.5.3"}` once svar publishes.
-  com.blockether/svar                             {:local/root "/Users/fierycod/svar"}
+
+  com.blockether/svar                             {:mvn/version "0.5.3"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into

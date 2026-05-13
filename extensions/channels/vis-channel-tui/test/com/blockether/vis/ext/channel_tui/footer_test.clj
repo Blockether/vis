@@ -97,12 +97,12 @@
             (expect (re-find #"Codex 5h 76% left ↺1h55m @" text))
             (expect (re-find #"Codex 7d 85% left ↺3d18h @" text)))))))
 
-  (it "shows Z.ai Coding Plan quota windows as percentages on the second footer line"
+  (it "shows Z.ai coding plan quota windows as percentages on the second footer line"
     (let [build-limits-segments @#'footer/build-limits-segments
           now-ms                1000000000000
           report                {:provider-id :zai-coding-plan
                                  :dynamic {:limits [{:id :zai-coding-plan-5h
-                                                     :label "Z.ai Coding 5h token quota"
+                                                     :label "Z.ai coding plan 5h token quota"
                                                      :kind :tokens
                                                      :used 25.0
                                                      :limit 100.0
@@ -110,7 +110,7 @@
                                                      :unlimited? false
                                                      :window {:resets-at-ms (+ now-ms (* 90 60 1000))}}
                                                     {:id :zai-coding-plan-7d
-                                                     :label "Z.ai Coding 7d token quota"
+                                                     :label "Z.ai coding plan 7d token quota"
                                                      :kind :tokens
                                                      :used 50.0
                                                      :limit 100.0
@@ -128,8 +128,8 @@
                        (filter #(= :left (:region %)))
                        first
                        :text)]
-            (expect (re-find #"Z\.ai Coding 5h token 75% left ↺1h30m" text))
-            (expect (re-find #"Z\.ai Coding 7d token 50% left ↺3d0h" text)))))))
+            (expect (re-find #"Z\.ai coding plan 5h 75% left ↺1h30m" text))
+            (expect (re-find #"Z\.ai coding plan 7d 50% left ↺3d0h" text)))))))
 
   (it "shows GitHub Copilot premium interaction utilization on the second footer line"
     (let [build-limits-segments @#'footer/build-limits-segments
