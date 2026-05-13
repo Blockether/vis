@@ -63,7 +63,7 @@
    dumps, and one answer bubble. Payload text is synthetic; operation mix and
    cardinality are the regression signal."
   []
-  (let [ops      (vec (take 304 (cycle [:v/cat :v/cat :v/bash :v/patch :z/locators :v/rg])))
+  (let [ops      (vec (take 304 (cycle [:v/cat :v/cat :v/ls :v/patch :z/locators :v/rg])))
         huge     (str/join "\n" (map #(str "locator-" % " (defn huge-fixture [] :ok)") (range 240)))
         preview  (str/join "\n" (map #(str % ": selected preview line") (range 1 61)))
         mk-form  (fn [idx op]
@@ -71,27 +71,27 @@
                     :result (case op
                               :v/cat preview
                               :z/locators huge
-                              :v/bash "exit 0\nran fixture command"
+                              :v/ls "directory listing"
                               :v/patch "1 file changed"
                               :v/rg "12 matches"
                               "read 20 lines")
                     :kind (if (= op :v/cat) :preview :tool)
                     :detail {:op op
                              :tag (case op
-                                    (:v/cat :z/locators :v/rg) :op.tag/observation
-                                    (:v/patch :v/bash) :op.tag/action
+                                    (:v/cat :z/locators :v/rg :v/ls) :op.tag/observation
+                                    :v/patch :op.tag/action
                                     :op.tag/observation)
                              :presentation-kind (case op
                                                   (:v/cat :z/locators) :tool/read
                                                   :v/rg :tool/search
                                                   :v/patch :tool/edit
-                                                  :v/bash :tool/shell
+                                                  :v/ls :tool/read
                                                   :tool/meta)
                              :color-role (case op
                                            (:v/cat :z/locators) :tool-color/read
                                            :v/rg :tool-color/search
                                            :v/patch :tool-color/edit
-                                           :v/bash :tool-color/shell
+                                           :v/ls :tool-color/read
                                            :tool-color/meta)
                              :raw (when (= op :v/cat) (pr-str preview))}})
         forms    (mapv mk-form (range) ops)

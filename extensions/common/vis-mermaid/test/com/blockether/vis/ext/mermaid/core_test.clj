@@ -63,7 +63,7 @@
       (expect (not-any? #(str/includes? % "...") out))))
 
   (it "renders complex/cyclic flowcharts as readable wrapped adjacency instead of broken box routing"
-    (let [source "flowchart TD\n  A[User request] --> B[Assistant emits Clojure forms]\n  B --> C[Journal updated<br/>tool results, errors, previews]\n  B --> D[Bindings<br/>named vars, *1 *2 *3 *e]\n  B --> E[System vars<br/>TURN_*, CONVERSATION_*]\n  B --> F[SQLite persistence]\n  C --> G[Assistant reads journal]\n  G --> H{Need more observation?}\n  H -- No --> I[Emit answer as single form]\n  H --> J[Call tools<br/>v/cat v/rg z/locators z/patch v/bash]\n  J --> K[SCI sandbox evaluates]\n  K --> C\n  I --> L[Rendered to user]"
+    (let [source "flowchart TD\n  A[User request] --> B[Assistant emits Clojure forms]\n  B --> C[Journal updated<br/>tool results, errors, previews]\n  B --> D[Bindings<br/>named vars, *1 *2 *3 *e]\n  B --> E[System vars<br/>TURN_*, CONVERSATION_*]\n  B --> F[SQLite persistence]\n  C --> G[Assistant reads journal]\n  G --> H{Need more observation?}\n  H -- No --> I[Emit answer as single form]\n  H --> J[Call tools<br/>v/cat v/rg z/locators z/patch]\n  J --> K[SCI sandbox evaluates]\n  K --> C\n  I --> L[Rendered to user]"
           out (:lines (mermaid/render-mermaid {:width 100 :source source}))]
       (expect (some #(str/includes? % "Assistant emits Clojure forms") out))
       (expect (some #(str/includes? % "tool results, errors, previews") out))

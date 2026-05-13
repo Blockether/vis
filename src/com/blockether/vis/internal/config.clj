@@ -501,16 +501,6 @@
       :environment)
     (extension-env-status name')))
 
-(defn bash-disabled?
-  "True when config disables the sandbox bash symbols. Either global
-   `~/.vis/config.edn` or project-local `.vis/config.edn` may set:
-
-     {:tools {:bash {:enabled? false}}}
-
-   Project-local config wins via `load-config-raw`."
-  []
-  (false? (get-in (load-config-raw) [:tools :bash :enabled?])))
-
 (defn resolve-db-spec
   "Resolve DB spec: explicit -> VIS_DB_PATH env -> `:db-spec` from
    config.edn -> default sqlite at `~/.vis/vis.mdb`."

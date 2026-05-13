@@ -8,17 +8,15 @@
    Public tools work on files and on rewrite-clj ranges (`:span` rows from
    z/locators/z/symbols/xref locator bridges)."
   (:require
-   [babashka.fs :as fs]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.lang-clojure.path :as lang-path]
    [com.blockether.vis.internal.extension :as extension]
 
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
-   [com.blockether.vis.internal.workspace :as workspace]
    [edamame.core :as edamame])
   (:import
-   (com.oakmac.parinfer Parinfer ParinferResult)
-   (java.io File)))
+   (com.oakmac.parinfer Parinfer ParinferResult)))
 
 (def ^:private edamame-opts
   {:all true
@@ -102,32 +100,9 @@
 ;; Path/range handling
 ;; =============================================================================
 
-(defn- safe-path
-  ^File [p]
-  (let [cwd        (workspace/cwd)
-        resolved   (.toAbsolutePath (fs/path cwd (str p)))
-        normalized (.normalize resolved)
-        cwd-norm   (.normalize (.toAbsolutePath (fs/path cwd)))]
-    (when-not (.startsWith normalized cwd-norm)
-      (throw (ex-info (str "Path '" p "' escapes the working directory")
-               {:type :ext.lang-clojure.repair/path-escape :path (str p)})))
-    (.toFile normalized)))
-
-(defn- ensure-existing-file!
-  [^File f]
-  (when-not (.exists f)
-    (throw (ex-info (str "File not found: " (.getPath f))
-             {:type :ext.lang-clojure.repair/file-not-found :path (.getPath f)})))
-  (when (.isDirectory f)
-    (throw (ex-info (str "Path is a directory, not a file: " (.getPath f))
-             {:type :ext.lang-clojure.repair/path-is-dir :path (.getPath f)})))
-  f)
-
-(defn- rel-path
-  [^File f]
-  (let [cwd (.toAbsolutePath (fs/path (workspace/cwd)))
-        p   (.toAbsolutePath (.toPath f))]
-    (str (.relativize cwd p))))
+(def ^:private safe-path lang-path/safe-path)
+(def ^:private ensure-existing-file! lang-path/ensure-existing-file!)
+(def ^:private rel-path lang-path/rel-path)
 
 (defn- line-starts
   [^String source]
@@ -246,14 +221,31 @@
     (throw (ex-info "repair-range requires :range or :span"
              {:type :ext.lang-clojure.repair/missing-range
               :path path})))
-  (let [file       (ensure-existing-file! (safe-path path))
-        path       (rel-path file)
-        before-all (slurp file)
-        selection  (range-slice before-all range)
-        repaired   (repair-source (:source selection))
-        after-all  (if (:changed? repaired)
-                     (replace-slice before-all selection (:source repaired))
-                     before-all)]
+  (let [file                    (ensure-existing-file! (safe-path path))
+        path                    (rel-path file)
+        before-all              (slurp file)
+        before-all-error        (parse-error-message before-all)
+        selection               (range-slice before-all range)
+        before-selection-error  (parse-error-message (:source selection))
+        repaired                (repair-source (:source selection))
+        after-selection-error   (parse-error-message (:source repaired))
+        after-all               (if (:changed? repaired)
+                                  (replace-slice before-all selection (:source repaired))
+                                  before-all)
+        after-all-error         (parse-error-message after-all)
+        file-info               {:path path
+                                 :range (:range selection)
+                                 :dry-run? (boolean dry-run?)
+                                 :changed? (:changed? repaired)
+                                 :engine (:engine repaired)
+                                 :before (:source selection)
+                                 :after (:source repaired)
+                                 :parse-error-before before-selection-error
+                                 :parse-error-after after-selection-error
+                                 :whole-file-parseable-before? (nil? before-all-error)
+                                 :whole-file-parseable-after? (nil? after-all-error)
+                                 :whole-file-parse-error-before before-all-error
+                                 :whole-file-parse-error-after after-all-error}]
     (when (and (:changed? repaired) (not dry-run?))
       (spit file after-all))
     (tool-success
@@ -266,15 +258,17 @@
                 :engine (:engine repaired)
                 :parseable-before? (:parseable-before? repaired)
                 :parseable-after? (:parseable-after? repaired)
+                :parse-error-before before-selection-error
+                :parse-error-after after-selection-error
+                :whole-file-parseable-before? (nil? before-all-error)
+                :whole-file-parseable-after? (nil? after-all-error)
+                :whole-file-parse-error-before before-all-error
+                :whole-file-parse-error-after after-all-error
+                :selection {:before (:source selection)
+                            :after (:source repaired)}
                 :error (:error repaired)
                 :diagnostic (:diagnostic repaired)}
-       :info {:files [{:path path
-                       :range (:range selection)
-                       :dry-run? (boolean dry-run?)
-                       :changed? (:changed? repaired)
-                       :engine (:engine repaired)
-                       :before (:source selection)
-                       :after (:source repaired)}]}})))
+       :info {:files [file-info]}})))
 
 (defn- repair-range
   "Repair a Clojure/EDN file range using Vis' parse repair pipeline. Accepts {:path p :range [[sr sc] [er ec]]} or a locator row with :span. Writes by default; pass :dry-run? true to preview."

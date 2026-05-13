@@ -779,15 +779,15 @@
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:conversation-turn-id qid
-                                  :blocks [{:code "(v/bash \"sleep 10\")"
+                                  :blocks [{:code "(v/tool \"sleep 10\")"
                                             :error "Timeout (120s)"
                                             :timeout? true
                                             :execution-time-ms 120000
                                             :tool-events [{:phase :tool-start
-                                                           :op :v/bash
+                                                           :op :v/tool
                                                            :status :running
                                                            :started-at-ms 123
-                                                           :tool {:symbol 'bash :call "v/bash"}}]}]
+                                                           :tool {:symbol 'tool :call "v/tool"}}]}]
                                   :duration-ms 120000})
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             [exec] (vis/db-list-iteration-blocks s (:id iteration))]
