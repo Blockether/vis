@@ -65,6 +65,23 @@
       (expect (= p/MARKER_CODE (marker-of code-line)))
       (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))))
 
+  (it "renders mixed-block render segments as visible code plus title banner while hiding answer call"
+    (let [lines (format-iteration-entry {:iteration 0
+                                         :code [(str "(def x 1)\n"
+                                                  "(set-conversation-title! \"Mixed forms\")\n"
+                                                  "(turn-answer! [:ir [:p \"Done\"]])")]
+                                         :render-segments [[{:kind :code :source "(def x 1)"}
+                                                            {:kind :title :value "Mixed forms"}
+                                                            {:kind :answer-ref}]]
+                                         :successes [true]
+                                         :durations [1]}
+                  60 1 {})
+          body (str/join "\n" (map (comp strip-ansi body-of) lines))]
+      (expect (str/includes? body "(def x 1)"))
+      (expect (str/includes? body "conversation title: Mixed forms"))
+      (expect (not (str/includes? body "turn-answer!")))
+      (expect (not (str/includes? body "set-conversation-title!")))))
+
   (it "renders IR tool results without EDN dumping"
     (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
           lines (format-iteration-entry {:iteration 0

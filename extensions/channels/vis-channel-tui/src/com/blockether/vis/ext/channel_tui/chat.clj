@@ -187,21 +187,36 @@
                                              ;; 2. any block tagged `:vis/preflight?` — those are
                                              ;;    synthetic gate rejections, model-facing only,
                                              ;;    never displayed to the user.
-                                             ;; Successful `:vis/silent` forms are retained and
-                                             ;; marked in `:silents`; the TUI setting decides
+                                             ;; 3. structurally-silent host bookkeeping such as
+                                             ;;    `(set-conversation-title! ...)` and answer
+                                             ;;    emission forms. They affect chrome/final answer,
+                                             ;;    but should never render as trace code/results.
+                                             ;; Other successful `:vis/silent` forms are retained
+                                             ;; and marked in `:silents`; the TUI setting decides
                                              ;; whether to render them.
+                                             visible-code-segments?
+                                             (fn [b]
+                                               (boolean (some #(= :code (:kind %)) (:render-segments b))))
                                              preflight-idxs (into #{}
                                                               (keep-indexed
                                                                 (fn [i b] (when (:vis/preflight? b) i)))
                                                               all-exprs)
+                                             structural-silent-idxs
+                                             (into #{}
+                                               (keep-indexed
+                                                 (fn [i b]
+                                                   (when (:vis/structurally-silent? b) i)))
+                                               all-exprs)
                                              answer-idx  (when answer-here?
                                                            (let [idx (or (:answer-form-idx it)
-                                                                       (dec (count all-exprs)))]
-                                                             (when (and (integer? idx)
-                                                                     (not (neg? idx))
-                                                                     (< idx (count all-exprs)))
+                                                                       (dec (count all-exprs)))
+                                                                 block (when (and (integer? idx)
+                                                                               (not (neg? idx))
+                                                                               (< idx (count all-exprs)))
+                                                                         (get all-exprs idx))]
+                                                             (when (and block (not (visible-code-segments? block)))
                                                                idx)))
-                                             elide-idxs  (cond-> preflight-idxs
+                                             elide-idxs  (cond-> (into preflight-idxs structural-silent-idxs)
                                                            (some? answer-idx) (conj answer-idx))
                                              exprs       (into []
                                                            (keep-indexed
@@ -249,6 +264,7 @@
                                                                                   {:success? false :result nil :info {} :error error})))
                                                                          (sort-by :position channel)))
                                                                      restored restored
+                                                                     (= :vis/answer result) nil
                                                                      (history-restore/runtime-ref? result)
                                                                      "<runtime value; re-evaluate expression to restore>"
                                                                      (extension/tool-result? result)
@@ -270,6 +286,7 @@
                                           :provider-fallbacks (get-in it [:metadata :llm :fallback-trace])
                                           :code      (mapv :code exprs)
                                           :comments  (mapv :comment exprs)
+                                          :render-segments (mapv :render-segments exprs)
                                           :results   result-strs
                                           :result-kinds (mapv result-kind exprs)
                                           :result-details result-details

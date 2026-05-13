@@ -805,17 +805,17 @@
 ;; =============================================================================
 
 ;; Channel IR builders. No Markdown string round-trip on tool display.
-(defn- md-code [s] [:c {} (str s)])
-(defn- md-code-block [lang body] [:code (cond-> {} lang (assoc :lang lang)) (str body)])
-(defn- md-inline [x] (if (vector? x) x [:span {} (str x)]))
-(defn- md-p [& parts]
+(defn- ir-code [s] [:c {} (str s)])
+(defn- ir-code-block [lang body] [:code (cond-> {} lang (assoc :lang lang)) (str body)])
+(defn- ir-inline [x] (if (vector? x) x [:span {} (str x)]))
+(defn- ir-p [& parts]
   (into [:p {}]
-    (map md-inline (filter some? parts))))
-(defn- md-join [& blocks]
+    (map ir-inline (filter some? parts))))
+(defn- ir-root [& blocks]
   (into [:ir {}] (filter some? blocks)))
-(defn- md-ul [items]
+(defn- ir-ul [items]
   (into [:ul {}]
-    (map (fn [item] [:li {} (md-p item)]) (filter some? items))))
+    (map (fn [item] [:li {} (ir-p item)]) (filter some? items))))
 
 (defn- render-edn-block
   ([value]
@@ -824,7 +824,7 @@
    (let [text (bounded-render-text (pr-str value))]
      (case surface
        :journal text
-       (md-join (md-code-block "edn" text))))))
+       (ir-root (ir-code-block "edn" text))))))
 
 (defn- tree-entry-line
   [depth {:keys [name path type size] :as entry}]
@@ -912,14 +912,14 @@
   [result]
   (let [{:keys [path lines offset returned next-offset eof?]} result
         body (numbered-line-block offset (vec lines))]
-    (md-join
-      (md-p "Read" (md-code path) "—" (or returned (count lines))
-        "line(s) from line" offset
+    (ir-root
+      (ir-p "Read " (ir-code path) " — " (or returned (count lines))
+        " line(s) from line " offset
         (cond
-          eof?        "(eof)."
-          next-offset (str "(next-offset " next-offset ").")
+          eof?        " (eof)."
+          next-offset (str " (next-offset " next-offset ").")
           :else       "."))
-      (md-code-block "text" (bounded-render-text body)))))
+      (ir-code-block "text" (bounded-render-text body)))))
 
 (defn- journal-render-ls
   [result]
@@ -929,9 +929,9 @@
 
 (defn- channel-render-ls
   [result]
-  (md-join
-    (md-p "Directory tree of" (md-code (:path result)) "-"
-      (count (:children result)) "top-level entries.")))
+  (ir-root
+    (ir-p "Directory tree of " (ir-code (:path result)) " — "
+      (count (:children result)) " top-level entries.")))
 
 (defn- journal-render-rg
   [result]
@@ -951,11 +951,11 @@
 (defn- channel-render-rg
   [result]
   (let [hits (or (:hits result) [])]
-    (md-join
-      (md-p "Searched —" (count hits) "hit(s), truncated-by"
-        (md-code (name (or (:truncated-by result) :none))) ".")
+    (ir-root
+      (ir-p "Searched — " (count hits) " hit(s), truncated-by "
+        (ir-code (name (or (:truncated-by result) :none))) ".")
       (when (seq hits)
-        (md-code-block "text"
+        (ir-code-block "text"
           (bounded-render-text
             (str/join "\n"
               (map (fn [{:keys [path line text]}]
@@ -975,9 +975,9 @@
   ;; renderers. Show the per-file paths; full diff is recoverable via
   ;; (get-in tool-result [:info :files]) when the model binds the result.
   (let [files (if (sequential? result) result [result])]
-    (md-join
-      (md-p "Patched" (count files) "file(s).")
-      (md-ul (map (fn [{:keys [path]}] (md-code path)) files)))))
+    (ir-root
+      (ir-p "Patched " (count files) " file(s).")
+      (ir-ul (map (fn [{:keys [path]}] (ir-code path)) files)))))
 
 (defn- journal-render-patch-check
   [result]
@@ -993,7 +993,7 @@
 
 (defn- channel-render-create-dirs
   [result]
-  (md-join (md-p "Ensured dir" (md-code result) ".")))
+  (ir-root (ir-p "Ensured dir " (ir-code result) ".")))
 
 (defn- journal-render-copy
   [result]
@@ -1001,7 +1001,7 @@
 
 (defn- channel-render-copy
   [result]
-  (md-join (md-p "Copied to" (md-code result) ".")))
+  (ir-root (ir-p "Copied to " (ir-code result) ".")))
 
 (defn- journal-render-move
   [result]
@@ -1009,7 +1009,7 @@
 
 (defn- channel-render-move
   [result]
-  (md-join (md-p "Moved to" (md-code result) ".")))
+  (ir-root (ir-p "Moved to " (ir-code result) ".")))
 
 (defn- journal-render-delete
   [result]
@@ -1017,7 +1017,7 @@
 
 (defn- channel-render-delete
   [result]
-  (md-join (md-p "Deleted." (md-code (pr-str result)))))
+  (ir-root (ir-p "Deleted. " (ir-code (pr-str result)))))
 
 (defn- journal-render-delete-if-exists
   [result]
@@ -1027,8 +1027,8 @@
 (defn- channel-render-delete-if-exists
   [result]
   (if result
-    (md-join (md-p "Deleted."))
-    (md-join (md-p "Already absent."))))
+    (ir-root (ir-p "Deleted."))
+    (ir-root (ir-p "Already absent."))))
 
 (defn- journal-render-exists?
   [result]
@@ -1036,7 +1036,7 @@
 
 (defn- channel-render-exists?
   [result]
-  (md-join (md-p "Exists?" (md-code (pr-str result)))))
+  (ir-root (ir-p "Exists? " (ir-code (pr-str result)))))
 
 ;; =============================================================================
 ;; Symbol declarations

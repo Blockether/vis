@@ -1029,6 +1029,9 @@
             (some? (:result exec))             (assoc :result (freeze-safe (:result exec)))
             (seq (:journal exec))              (assoc :journal (freeze-safe (:journal exec)))
             (seq (:channel exec))              (assoc :channel (freeze-safe (:channel exec)))
+            (seq (:render-segments exec))      (assoc :render-segments (freeze-safe (:render-segments exec)))
+            (:vis/structurally-silent? exec)   (assoc :vis/structurally-silent? true)
+            (:vis/silent exec)                 (assoc :vis/silent true)
 ;; Per PLAN §2.1 + §7.3.5: :error is the structured :error map
             ;; (Nippy serialises maps natively). Was previously stringified via
             ;; (str ...) which produced unreadable Clojure-map literal text.

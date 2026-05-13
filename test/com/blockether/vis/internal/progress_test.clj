@@ -3,7 +3,7 @@
             [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe progress-test
-  (it "retains successful :vis/silent forms with a visibility marker"
+  (it "elides structurally-silent title forms from live progress"
     (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
       (on-chunk {:phase :form-result
                  :iteration 1
@@ -18,9 +18,22 @@
                  :result 3
                  :execution-time-ms 1})
       (let [entry (first (get-timeline))]
-        (expect (= ["(set-conversation-title! \"Greeting\")" "(+ 1 2)"] (:code entry)))
-        (expect (= [true false] (:silents entry)))
-        (expect (= [":vis/silent" "3"] (:results entry))))))
+        (expect (= ["(+ 1 2)"] (:code entry)))
+        (expect (= [false] (:silents entry)))
+        (expect (= ["3"] (:results entry))))))
+
+  (it "retains non-structural successful :vis/silent forms with a visibility marker"
+    (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
+      (on-chunk {:phase :form-result
+                 :iteration 1
+                 :form-idx 0
+                 :code "(some-silent-helper!)"
+                 :result :vis/silent
+                 :execution-time-ms 1})
+      (let [entry (first (get-timeline))]
+        (expect (= ["(some-silent-helper!)"] (:code entry)))
+        (expect (= [true] (:silents entry)))
+        (expect (= [":vis/silent"] (:results entry))))))
 
   (it "renders live values with plain zprint pretty-printing"
     (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
@@ -44,6 +57,24 @@
                  :execution-time-ms 1})
       (let [entry (first (get-timeline))]
         (expect (= [ir] (:results entry))))))
+
+  (it "retains visible code from a mixed answer block and carries render segments"
+    (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)
+          segments [{:kind :code :source "(def x 1)"}
+                    {:kind :title :value "Mixed"}
+                    {:kind :answer-ref}]]
+      (on-chunk {:phase :form-result
+                 :iteration 1
+                 :form-idx 0
+                 :code "(def x 1)\n(set-conversation-title! \"Mixed\")\n(turn-answer! [:ir [:p \"Done\"]])"
+                 :render-segments segments
+                 :result :vis/answer
+                 :execution-time-ms 1})
+      (let [entry (first (get-timeline))]
+        (expect (= 1 (count (:code entry))))
+        (expect (= [segments] (:render-segments entry)))
+        (expect (= [nil] (:results entry)))
+        (expect (= [false] (:silents entry))))))
 
   (it "still elides the final answer form"
     (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]

@@ -413,6 +413,33 @@
           (expect (not (str/includes? out "##### Block 0"))))
         (finally (vis/db-dispose-connection! s)))))
 
+  (it "renders persisted render-segments instead of raw mixed-block structural forms"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid (vis/db-store-conversation! s {:channel :tui :title "Mixed"})
+              qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                      :user-request "mixed"
+                                                      :status :running})]
+          (vis/db-store-iteration! s {:conversation-turn-id qid
+                                      :blocks [{:code (str "(def x 1)\n"
+                                                        "(set-conversation-title! \"Mixed\")\n"
+                                                        "(turn-answer! [:ir [:p \"Done\"]])")
+                                                :render-segments [{:kind :code :source "(def x 1)"}
+                                                                  {:kind :title :value "Mixed"}
+                                                                  {:kind :answer-ref}]
+                                                :result :vis/answer
+                                                :execution-time-ms 1}]
+                                      :answer "Done"
+                                      :answer-form-idx 0})
+          (vis/db-update-conversation-turn! s qid {:status :done :answer "Done"})
+          (let [out (transcript/transcript-md s cid)]
+            (expect (str/includes? out "```clojure\n(def x 1)\n```"))
+            (expect (str/includes? out "_conversation title:_ `Mixed`"))
+            (expect (not (str/includes? out "turn-answer!")))
+            (expect (not (str/includes? out "set-conversation-title!")))
+            (expect (not (str/includes? out "Result: `:vis/answer`")))))
+        (finally (vis/db-dispose-connection! s)))))
+
   ;; Removed: "renders header + per-turn block + per-iteration block
   ;; dump". The full diagnostic-md header text drifted from this
   ;; fixture (top-level conversation backtick block).
