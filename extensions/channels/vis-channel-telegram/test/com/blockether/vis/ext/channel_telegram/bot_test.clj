@@ -26,6 +26,18 @@
                     :data data
                     :message {:chat {:id chat-id}}}})
 
+(defdescribe live-bubble-render-segments-test
+  (it "uses render-segments for the running form preview and hides answer/title source"
+    (let [status-line (private-var 'bubble-form-status-line)]
+      (expect (= "⏳ Running form #1 — (def x 1)"
+                (status-line {:form-idx 0
+                              :code (str "(def x 1)\n"
+                                      "(set-conversation-title! \"Mixed\")\n"
+                                      "(turn-answer! [:ir [:p \"Done\"]])")
+                              :render-segments [{:kind :code :source "(def x 1)"}
+                                                {:kind :title :value "Mixed"}
+                                                {:kind :answer-ref}]}))))))
+
 (defdescribe bot-menu-test
   (it "installs every Telegram command in the bot menu"
     (let [installed (atom nil)

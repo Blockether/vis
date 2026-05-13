@@ -541,6 +541,21 @@
     "<runtime value; re-evaluate expression to restore>"
     (pr-str result)))
 
+(defn- render-block-code-segments
+  [code render-segments]
+  (if (seq render-segments)
+    (let [body (apply str
+                 (keep (fn [{:keys [kind source value]}]
+                         (case kind
+                           :code (when-not (str/blank? (str source))
+                                   (render-fenced "clojure" source))
+                           :title (str "_conversation title:_ `" (or value "") "`\n")
+                           :answer-ref nil
+                           nil))
+                   render-segments))]
+      (when-not (str/blank? body) body))
+    (render-fenced "clojure" code)))
+
 (defn- render-block-section
   "Per-block forensic dump: status header, optional comment, full code
    in a fenced ```clojure block, result line, fenced stdout/stderr,
@@ -551,7 +566,7 @@
    Truncation budgets stay generous (4KB stdout / stderr, 800 chars
    on the display string of result) so the report is forensic, not a
    one-pager."
-  [idx answer? {:keys [code comment result error stdout stderr] :as block}]
+  [idx answer? {:keys [code comment render-segments result error stdout stderr] :as block}]
   (let [marker      (if error "✗" "✓")
         flags       (cond-> []
                       answer?            (conj "answer")
@@ -559,11 +574,11 @@
                       (:repaired? block) (conj "repaired")
                       error              (conj "error"))
         suffix      (if (seq flags) (str " [" (str/join ", " flags) "]") "")
-        has-result? (and (not error) (contains? block :result))]
+        has-result? (and (not error) (contains? block :result) (not= :vis/answer result))]
     (str "##### Block " idx " - " marker " "
       (long (or (:duration-ms block) 0)) "ms" suffix "\n"
       (when (not (str/blank? comment)) (str comment "\n"))
-      (render-fenced "clojure" code)
+      (render-block-code-segments code render-segments)
       (when has-result?
         (str "\nResult: `" (truncate (display-result result) 800) "`\n"))
       (when (not (str/blank? stdout))

@@ -1864,17 +1864,17 @@
                       (p/fill-rect! g fbx y iw 1)
                       (p/put-str! g x y (subs line 1)))
 
-              ;; ── Result (success) - dim on success bg ──
+              ;; ── Result (success) - neutral code-block bg ──
                     (str/starts-with? line result-marker)
-                    (do (p/set-colors! g t/code-result-fg t/code-ok-bg)
+                    (do (p/set-colors! g t/code-result-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-ok-bg))
+                      (paint-ansi-line! g x y (subs line 1) t/code-result-fg t/code-block-bg))
 
-              ;; ── Result (error) - red on light red bg ──
+              ;; ── Result (error) - neutral code-block bg ──
                     (str/starts-with? line err-result-marker)
-                    (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
+                    (do (p/set-colors! g t/code-error-result-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
-                      (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-err-bg))
+                      (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-block-bg))
 
               ;; ── Stdout text - distinct stdout bg, italic ──
                     (str/starts-with? line stdout-marker)
@@ -2437,7 +2437,7 @@
         (reduce (fn [e k]
                   (update e k drop-indexes hidden-idxs))
           entry
-          [:code :comments :results :result-kinds :result-details
+          [:code :comments :render-segments :results :result-kinds :result-details
            :stdouts :stderrs :durations :successes :started-at-ms :silents])))))
 
 (defn- iteration-fingerprint
@@ -2447,12 +2447,13 @@
    so completed iterations hit the cache forever even when the parent
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
-  [{:keys [thinking code comments results result-kinds result-details
+  [{:keys [thinking code comments render-segments results result-kinds result-details
            stdouts stderrs durations successes started-at-ms silents
            provider-fallbacks error repeat-count]}]
   [(text-fingerprint thinking)
    (mapv text-fingerprint code)
    (mapv text-fingerprint comments)
+   render-segments
    (mapv text-fingerprint results)
    result-kinds
    ;; result-details are small op-metadata maps; the few that carry
@@ -2965,8 +2966,30 @@
       (when to (str " → " to))
       " — " why)))
 
+(defn- code-source-from-render-segments
+  [segments fallback-code]
+  (let [sources (keep (fn [{:keys [kind source]}]
+                        (when (and (= :code kind) (not (str/blank? (str source))))
+                          (str/trim (str source))))
+                  segments)]
+    (if (seq sources)
+      (str/join "\n" sources)
+      fallback-code)))
+
+(defn- render-segment-title-entries
+  [line-entry segments fill-w]
+  (vec
+    (mapcat (fn [{:keys [kind value]}]
+              (when (= :title kind)
+                (let [title (if (str/blank? (str value))
+                              "conversation title updated"
+                              (str "conversation title: " value))]
+                  (map #(line-entry (str iteration-hdr-marker %))
+                    (wrap-text title fill-w)))))
+      segments)))
+
 (defn- format-iteration-entry-entries
-  [{:keys [thinking code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms provider-fallbacks error repeat-count]}
+  [{:keys [thinking code comments render-segments results result-kinds result-details stdouts stderrs durations successes started-at-ms provider-fallbacks error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms live-preview?]
        :or   {show-header? false live-preview? false}}]]
@@ -3121,7 +3144,9 @@
                                       wrapped (mapcat (fn [line] (wrap-text line comment-w))
                                                 (str/split-lines trimmed))]
                                   (mapv #(line-entry (str thinking-marker " " %)) wrapped)))
-                code-text     (str/trim (or form ""))
+                segments      (when render-segments (get render-segments idx))
+                title-lines   (render-segment-title-entries line-entry segments fill-w)
+                code-text     (str/trim (or (code-source-from-render-segments segments form) ""))
                 formatted     (format-clojure-ansi code-text fill-w)
                 code-lines    (str/split-lines formatted)
                 code-node-id  (when conversation-id
@@ -3174,6 +3199,9 @@
                                          (when badge-entry [badge-entry])
                                          detail-entries))))
                 code-block    (vec (concat
+                                     title-lines
+                                     (when (and (seq title-lines) (not (str/blank? code-text)))
+                                       [(line-entry (str iteration-pad-marker ""))])
                                      (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
                                      (when (seq comment-lines)
                                        (concat [(line-entry (str thinking-marker ""))]
@@ -3249,7 +3277,7 @@
                                                [(line-entry (str code-err-pad-marker ""))]
                                                plain-entries
                                                [(line-entry (str code-err-pad-marker ""))])))))))
-                result-margin (when (seq result-lines) [(line-entry (str iteration-pad-marker ""))])
+                result-margin nil
                 margin        (when (or (seq stdout-block) (seq stderr-block)) [(line-entry (str iteration-pad-marker ""))])
                 stderr-margin (when (and (seq stdout-block) (seq stderr-block)) [(line-entry (str iteration-pad-marker ""))])]
             (vec (concat code-block result-margin result-lines margin stdout-block stderr-margin stderr-block))))

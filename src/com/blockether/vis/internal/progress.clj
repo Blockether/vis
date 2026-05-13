@@ -51,6 +51,7 @@
      {:iteration N
       :thinking  str-or-nil
       :code      [str ...]            ;; per-form, idx-aligned
+      :render-segments [[{:kind ...}] ...] ;; optional per-block display split
       :results   [str-or-IR-or-formatted-error ...]
       :result-kinds [keyword ...] ;; :tool, :value, or :error
       :result-details [map-or-str ...] ;; extra result metadata
@@ -79,6 +80,7 @@
    :thinking  nil
    :code      []
    :comments  []
+   :render-segments []
    :results   []
    :result-kinds []
    :result-details []
@@ -184,6 +186,36 @@
     (or (:silent? chunk)
       (= :vis/silent (:result chunk)))))
 
+(defn- visible-code-segments?
+  [chunk]
+  (let [segments (:render-segments chunk)]
+    (if (seq segments)
+      (boolean (some #(= :code (:kind %)) segments))
+      (let [code (str/trim (str (:code chunk)))]
+        (and (not (str/blank? code))
+          (not (or (str/starts-with? code "(set-conversation-title!")
+                 (str/starts-with? code "(turn-answer!"))))))))
+
+(defn- structurally-silent-chunk?
+  "True for host-bookkeeping forms that should never appear in user traces:
+   conversation-title updates and answer-emission forms. They may still execute
+   and affect channel chrome/final answer, but the code/result row itself is
+   noise in both TUI and CLI trace views. Mixed blocks with visible code
+   segments are not silent; channels consume :render-segments to hide only the
+   structural subforms."
+  [chunk]
+  (boolean
+    (or (:vis/structurally-silent? chunk)
+      (and (not (visible-code-segments? chunk))
+        (let [code (str (:code chunk))]
+          (or (str/includes? code "(set-conversation-title!")
+            (str/includes? code "(turn-answer!"))))
+      (and (= :vis/silent (:result chunk))
+        (not (seq (:render-segments chunk)))
+        (let [code (str (:code chunk))]
+          (or (str/includes? code "(set-conversation-title!")
+            (str/includes? code "(turn-answer!")))))))
+
 (defn- write-form-start-slot
   "Per-form start chunks land at `:form-idx` before eval completes.
    Only `:code` / `:comments` / `:started-at-ms` are populated; result-
@@ -195,6 +227,7 @@
     (-> entry
       (update :code     #(assoc (pad-to % need) idx (:code chunk)))
       (update :comments #(assoc (pad-to % need) idx (:comment chunk)))
+      (update :render-segments #(assoc (pad-to % need) idx (:render-segments chunk)))
       (update :started-at-ms #(assoc (pad-to % need) idx (:started-at-ms chunk)))
       (update :silents  #(assoc (pad-to % need) idx (silent-chunk? chunk))))))
 
@@ -209,7 +242,10 @@
     (-> entry
       (update :code      #(assoc (pad-to % need) idx (:code chunk)))
       (update :comments  #(assoc (pad-to % need) idx (:comment chunk)))
-      (update :results   #(assoc (pad-to % need) idx (format-form-result chunk)))
+      (update :render-segments #(assoc (pad-to % need) idx (:render-segments chunk)))
+      (update :results   #(assoc (pad-to % need) idx (when-not (and (= :vis/answer (:result chunk))
+                                                                 (visible-code-segments? chunk))
+                                                       (format-form-result chunk))))
       (update :result-kinds #(assoc (pad-to % need) idx (form-result-kind chunk)))
       (update :result-details #(assoc (pad-to % need) idx (form-result-detail chunk)))
       (update :stdouts   #(assoc (pad-to % need) idx (or (:stdout chunk) "")))
@@ -250,6 +286,7 @@
       (-> e
         (update :code      drop-slot idx)
         (update :comments  drop-slot idx)
+        (update :render-segments drop-slot idx)
         (update :results   drop-slot idx)
         (update :result-kinds drop-slot idx)
         (update :result-details drop-slot idx)
@@ -287,6 +324,7 @@
         (update :elided-form-idxs disj idx)
         (update :code      insert-slot display-idx)
         (update :comments  insert-slot display-idx)
+        (update :render-segments insert-slot display-idx)
         (update :results   insert-slot display-idx)
         (update :result-kinds insert-slot display-idx)
         (update :result-details insert-slot display-idx)
@@ -327,7 +365,10 @@
 
     :form-result
     (assoc
-      (if (and (not (:error chunk)) (= :vis/answer (:result chunk)))
+      (if (and (not (:error chunk))
+            (or (and (= :vis/answer (:result chunk))
+                  (not (visible-code-segments? chunk)))
+              (structurally-silent-chunk? chunk)))
         (hide-form-slot entry (:form-idx chunk))
         (write-form-slot (unhide-form-slot entry (:form-idx chunk)) chunk))
       :activity nil)
@@ -342,9 +383,10 @@
                  :done?    (boolean (:done? chunk)))
           ;; Elide `(turn-answer! ...)`: the answer text already renders below;
           ;; showing the answer call itself in the trace is redundant.
-          ;; Other successful `:vis/silent` forms stay in the timeline and
-          ;; are marked in `:silents`; channel settings decide whether to
-          ;; render them.
+          ;; Structurally-silent bookkeeping forms (answer emission / title
+          ;; updates) are hidden as chunks arrive. Other successful
+          ;; `:vis/silent` forms stay in the timeline and are marked in
+          ;; `:silents`; channel settings decide whether to render them.
           answer-idx   (when-not duplicate-final?
                          (when (:final chunk) (:answer-form-idx chunk)))
           silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))

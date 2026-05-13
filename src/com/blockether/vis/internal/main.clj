@@ -902,7 +902,8 @@
       (pretty-block "provider fallback" (trace-pr-str (:provider-fallbacks entry))))
     (apply str
       (map #(render-trace-form entry %)
-        (range (count (:code entry)))))
+        (remove #(true? (get (:silents entry) %))
+          (range (count (:code entry))))))
     (when-let [err (:error entry)]
       (pretty-block "iteration error" (trace-error-summary err)))
     (when-let [final (:final entry)]

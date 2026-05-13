@@ -297,6 +297,18 @@
         (expect (= 1 (count code-blocks)))
         (expect (string/includes? body "1: only-line")))))
 
+  (it "v/cat channel renderer separates inline text/code tokens with spaces"
+    (let [channel-render-cat (private-fn "channel-render-cat")
+          result {:path "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
+                  :offset 1898 :returned 30 :limit 30
+                  :next-offset 1928 :eof? false :truncated-by :limit
+                  :lines ["x"]}
+          out (channel-render-cat result)
+          paragraph (nth out 2)
+          text (apply str (filter string? (tree-seq sequential? seq paragraph)))]
+      (expect (string/includes? text
+                "Read extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj — 30 line(s) from line 1898 (next-offset 1928)."))))
+
   (it "v/cat channel renderer respects :offset for mid-file windows"
     (let [channel-render-cat (private-fn "channel-render-cat")
           result {:path "f.txt" :offset 100 :returned 2 :limit 200
