@@ -51,7 +51,7 @@
       (expect (contains? syms 'languages))
       (expect (contains? syms 'monorepo))
       (expect (contains? syms 'refresh!))
-      (expect (contains? syms 'render))
+      (expect (not (contains? syms 'render)))
       (expect (contains? syms 'main-agent-instructions))
       (expect (not (contains? syms 'load-skill!)))
       (expect (not (contains? syms 'load-skill)))

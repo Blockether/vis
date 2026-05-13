@@ -71,8 +71,8 @@
       (expect (contains? symbols 'rename-plan))
       (expect (contains? symbols 'clean-ns-plan))))
 
-  (it "adds minimal Clojure structural-editing strategy to environment info"
-    (let [info ((:ext/environment-prompt-fn clj-ext/clojure-extension) {})]
+  (it "adds minimal Clojure structural-editing strategy to its extension prompt"
+    (let [info ((:ext/prompt clj-ext/clojure-extension) {})]
       (expect (string? info))
       (expect (str/includes? info "Clojure/EDN"))
       (expect (str/includes? info "z/forms"))
@@ -82,7 +82,7 @@
       (expect (str/includes? info "z/patch-check"))
       (expect (str/includes? info "v/patch outside"))
       (expect (not (str/includes? info "clojure.repl/doc")))
-      (expect (< (count info) 300))))
+      (expect (< (count info) 700))))
 
   (it "exposes rewrite-clj zipper API as raw composable SCI symbols"
     (let [entry (first (filter #(= 'of-string (:ext.symbol/symbol %))

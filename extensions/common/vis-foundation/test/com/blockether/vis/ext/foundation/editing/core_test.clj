@@ -96,6 +96,12 @@
     (expect (string/includes? editing/editing-prompt "v/cat"))
     nil)
 
+  (it "documents v/rg's exact single spec-map grammar, not the old shorthand"
+    (expect (string/includes? editing/editing-prompt
+              "(v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]})"))
+    (expect (string/includes? editing/editing-prompt "no regex/query+opts shorthand"))
+    (expect (not (string/includes? editing/editing-prompt "(v/rg :include/:exclude"))))
+
   (it "registers journal + channel renderers on every fn-symbol"
     (doseq [sym-name '[cat ls rg patch patch-check create-dirs copy move delete delete-if-exists exists?]]
       (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)

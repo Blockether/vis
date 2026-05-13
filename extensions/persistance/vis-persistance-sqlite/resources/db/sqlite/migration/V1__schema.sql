@@ -98,7 +98,13 @@ CREATE TABLE conversation_turn_soul (
   conversation_state_id  TEXT NOT NULL
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
   position               INTEGER NOT NULL CHECK (position >= 1),
-  title                  TEXT,
+  -- No `title` column. The single canonical title lives on
+  -- `conversation_state.title` (set via `(set-conversation-title! ...)`
+  -- and mirrored to the CONVERSATION_TITLE SCI var). A per-turn title
+  -- column previously existed but was auto-populated with a literal
+  -- slice of `user_request` — useless labels for trivial turns and
+  -- never written by any model-facing primitive. Removed by design;
+  -- turn rows carry `user_request` for display, nothing else.
   user_request           TEXT,
   metadata               TEXT,             -- JSON-encoded object/string
   created_at             INTEGER NOT NULL,

@@ -32,17 +32,20 @@
       (expect (contains? syms 'file-link))
       (expect (contains? syms 'join))))
 
-  (it "keeps the unified prompt strategy-only"
+  (it "keeps the unified prompt compact with environment owned by the extension"
     (let [prompt ((:ext/prompt foundation/vis-extension) {})]
+      (expect (str/includes? prompt "<environment>"))
       (expect (str/includes? prompt "`v/` strategy"))
       (expect (str/includes? prompt "combine v/rg and v/ls"))
       (expect (not (str/includes? prompt "clojure.repl/doc")))
       (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
       (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-      (expect (< (count prompt) 1600))))
+      (expect (< (count prompt) 3000))))
 
-  (it "contributes environment info through the dedicated hook"
-    (expect (fn? (:ext/environment-prompt-fn foundation/vis-extension))))
+  (it "contributes environment info through its extension prompt"
+    (let [prompt ((:ext/prompt foundation/vis-extension) {})]
+      (expect (str/includes? prompt "<environment>"))
+      (expect (str/includes? prompt "git.summary"))))
 
   (it "does not leave a standalone md extension registered"
     (expect (contains? (set (vis/registered-extension-ids)) 'v))

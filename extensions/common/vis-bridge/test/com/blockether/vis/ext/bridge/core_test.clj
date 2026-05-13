@@ -2,7 +2,6 @@
   (:require
    [clojure.edn :as edn]
    [clojure.java.io :as io]
-   [clojure.string :as str]
    [com.blockether.vis.ext.bridge.core :as bridge]
    [com.blockether.vis.ext.bridge.languages.schema :as schema]
    [com.blockether.vis.internal.workspace :as workspace]

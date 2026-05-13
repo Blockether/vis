@@ -125,9 +125,11 @@
     (keep (fn [[sym v]] (var->symbol-entry sym v)))
     vec))
 
-(defn- clojure-environment-info
+(defn- clojure-prompt
   [_environment]
-  "Clojure/EDN: use z/forms, z/locators, or z/symbols to pick rows; add :replace and call z/patch. Use data replacements by default, z/source only for exact bytes, z/patch-check for risky batches, and v/patch outside Clojure/EDN.")
+  (str "Clojure/EDN: use z/forms, z/locators, or z/symbols to pick rows; add :replace and call z/patch. Use data replacements by default, z/source only for exact bytes, z/patch-check for risky batches, and v/patch outside Clojure/EDN."
+    "\n\n"
+    patch/z-prompt))
 
 (defn- lazy-lsp-call
   [sym & args]
@@ -186,8 +188,7 @@
      :ext/alias  {:ns 'vis.ext.clj :alias 'z}
      :ext/kind      "languages"
      :ext/activation-fn (fn [_] (clojure-project?))
-     :ext/environment-prompt-fn clojure-environment-info
-     :ext/prompt    patch/z-prompt
+     :ext/prompt    clojure-prompt
      :ext/symbols   (into [patch/source-symbol patch/lit-symbol patch/patch-symbol patch/patch-check-symbol patch/forms-symbol patch/locators-symbol patch/symbols-symbol patch/locator-for-symbol-symbol patch/inspect-symbol]
                       (concat repair/symbols lsp-symbols rewrite-clj-zip-symbols))}))
 
