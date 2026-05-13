@@ -111,23 +111,16 @@
       (expect (= [:ir {} [:p {} [:span {} "rendered "] [:c {} ":payload"]]]
                 (:result (first @channel)))))))
 
-(defdescribe extension-docs-test
-  (it "returns authored doc links without computed backlinks"
-    (let [registry-var (resolve 'com.blockether.vis.internal.extension/extension-docs-registry)
+(defdescribe extension-manifest-registry-test
+  (it "tracks manifest ids and namespaces without docs"
+    (let [registry-var (resolve 'com.blockether.vis.internal.extension/extension-manifest-registry)
           registry     @registry-var
-          before       @registry
-          backlink-key (keyword (str "ref" "links"))]
+          before       @registry]
       (try
-        (reset! registry
-          {'demo {:nses ['demo.core]
-                  :docs {"README.md" {:description "demo"
-                                      :content "body"
-                                      :links [{:to-doc "OTHER.md"}]}}}})
-        (let [doc     (extension/extension-doc 'demo "README.md")
-              summary (extension/extension-doc-summary 'demo "README.md")]
-          (expect (= [{:to-doc "OTHER.md"}] (:links doc)))
-          (expect (not (contains? doc backlink-key)))
-          (expect (not (contains? summary :content)))
-          (expect (not (contains? summary backlink-key))))
+        (reset! registry {'demo {:nses ['demo.core 'demo.extra]}})
+        (expect (= ['demo.core 'demo.extra] (extension/extension-namespaces 'demo)))
+        (expect (= 'demo (extension/extension-id-of-ns 'demo.extra)))
+        (expect (= {'demo {:nses ['demo.core 'demo.extra]}}
+                  (extension/registered-extensions-summary)))
         (finally
           (reset! registry before))))))

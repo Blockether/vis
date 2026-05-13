@@ -15,10 +15,10 @@
       (io/file "resources/META-INF/vis-extension/vis.edn"))))
 
 (defdescribe bridge-extension-test
-  (it "ships a parseable vis.edn manifest"
+  (it "ships a namespace-only vis.edn manifest"
     (let [manifest (edn/read-string (slurp (manifest-file)))]
       (expect (= '[com.blockether.vis.ext.bridge.core] (get-in manifest ['bridge :nses])))
-      (expect (str/includes? (get-in manifest ['bridge :docs "README.md" :content]) "bridge/extract-markdown"))))
+      (expect (not (contains? (get manifest 'bridge) :docs)))))
 
   (it "exports a valid extension surface"
     (expect (= 'com.blockether.vis.ext.bridge.core (:ext/namespace bridge/vis-extension)))

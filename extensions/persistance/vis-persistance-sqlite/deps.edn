@@ -40,13 +40,7 @@
   ;; thrash and giving us a single dispose hook that actually
   ;; releases handles.
   com.zaxxer/HikariCP                       {:mvn/version "6.2.1"}
-  ;; Flyway core - owns schema migration. The previous arrangement
-  ;; declared flyway-core in the root vis package and shipped a
-  ;; generic `migrate!` helper from `com.blockether.vis.sdk`. That
-  ;; helper had exactly one caller - this extension - so the dep and
-  ;; the helper now live together here. Other backends (none yet)
-  ;; ship their own migration entry point, which is the right shape
-  ;; for a per-backend concern.
+  ;; Flyway core - owns schema migration for this backend.
   org.flywaydb/flyway-core                  {:mvn/version "12.4.0"}
   ;; SQLite-specific Flyway driver. Split out of flyway-core in 10.x+
   ;; - without this jar Flyway can't recognize a `jdbc:sqlite:` URL.

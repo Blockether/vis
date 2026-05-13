@@ -21,7 +21,6 @@
   ;;      font configs) actually paint. Removes the per-cell padding
   ;;      hack the markdown-table prettifier carried.
   ;; Drop-in replacement - same com.googlecode.lanterna.* package namespace.
-  ;; Source: https://github.com/Blockether/lanterna (tag vis-3.1.5)
   ;; Retire when upstream ships equivalent fixes.
   com.blockether/lanterna          {:mvn/version "3.1.5-vis.3"}
   com.blockether/vis-provider-anthropic {:local/root "../../providers/vis-provider-anthropic"}

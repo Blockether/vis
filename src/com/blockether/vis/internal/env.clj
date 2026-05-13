@@ -531,8 +531,7 @@
 ;;                                    :source-paths       ["..."]
 ;;                                    :source-mtime-max   1714403520000
 ;;                                    :source-hash-sha256 "abc..."|nil
-;;                                    :symbols            [sym1 sym2 ...]
-;;                                    :docs               ["README.md" ...]}
+;;                                    :symbols            [sym1 sym2 ...]}
 ;;
 ;;   ITERATION_*    rebound at every iteration boundary
 ;;     TURN_ITERATION_POSITION       1-based int position of THIS iteration

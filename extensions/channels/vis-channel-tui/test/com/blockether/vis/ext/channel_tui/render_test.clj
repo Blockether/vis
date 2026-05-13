@@ -79,6 +79,23 @@
       (expect (str/includes? body "result"))
       (expect (not (str/includes? body ":ir")))))
 
+  (it "renders channel sink IR stored as a value without EDN dumping"
+    (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
+          lines (format-iteration-entry {:iteration 0
+                                         :code ["(def t (z/forms \"x.clj\"))"]
+                                         :results [ir]
+                                         :result-kinds [:value]
+                                         :successes [true]
+                                         :durations [1]}
+                  60 1 {})
+          visible-lines (mapv (comp strip-sentinels strip-ansi) lines)
+          body (str/join "\n" visible-lines)
+          ir-line (first (filter #(str/includes? (strip-sentinels %) "bold result") lines))]
+      (expect (str/includes? body "bold result"))
+      (expect (not (str/includes? body ":ir")))
+      (expect (not (str/starts-with? ir-line p/MARKER_RESULT)))
+      (expect (not (str/starts-with? ir-line p/MARKER_ANSWER_TXT)))))
+
   (it "puts success status on its own bottom line and keeps bottom padding"
     ;; Layout (post header-band removal):
     ;;   iteration-pad

@@ -1,10 +1,4 @@
 {:paths ["src" "resources"]
- ;; vis-foundation merges the legacy vis-common-foundation + vis-common-editing
- ;; + vis-common-environment extensions into one classpath entry. Two SCI
- ;; aliases register from this single jar:
- ;;   v/           introspection + filesystem (cat, preview, ls, rg,
- ;;                patch, path ops, ...)
- ;;   md/          markdown builders for answer bodies
  :deps {com.blockether/vis                {:local/root "../../.."}
         ;; babashka.fs - backing implementation for the thin cwd-safe `v/`
         ;; filesystem wrappers.

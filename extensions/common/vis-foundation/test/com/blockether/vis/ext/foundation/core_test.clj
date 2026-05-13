@@ -53,14 +53,11 @@
       (expect (str/includes? doc "markdown answer builders"))
       (expect (str/includes? doc "file-link"))))
 
-  (it "ships manifest docs with current envelope syntax only"
+  (it "ships a namespace-only manifest"
     (let [manifest (edn/read-string {:readers {} :default (fn [_ form] form)}
-                     (slurp (foundation-manifest-file)))
-          readme   (get-in manifest ['v :docs "README.md" :content])]
-      (expect (str/includes? readme "[:result :lines]"))
-      (expect (str/includes? readme "Never use [:result :lines]"))
-      (expect (not (str/includes? readme "[:info :files]")))
-      (expect (not (str/includes? readme "v/preview")))))
+                     (slurp (foundation-manifest-file)))]
+      (expect (= '[com.blockether.vis.ext.foundation.core] (get-in manifest ['v :nses])))
+      (expect (not (contains? (get manifest 'v) :docs)))))
 
   (it "defers doctor and reproduction command namespaces until command execution"
     (let [commands (into {} (map (juxt :cmd/name identity) (:ext/cli foundation/vis-extension)))

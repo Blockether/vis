@@ -1,5 +1,4 @@
 {;; cljfmt configuration for spel
- ;; See: https://github.com/weavejester/cljfmt/blob/master/docs/INDENTS.md
  :indents {#re ".*" [[:inner 0]]}
  :extra-indents
  {;; Lazytest (testing framework)

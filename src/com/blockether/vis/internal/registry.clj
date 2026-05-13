@@ -45,9 +45,8 @@
    Parsing / help rendering / dispatch utilities live in
    `com.blockether.vis.internal.commandline`. Classpath manifest
    scanning lives in `com.blockether.vis.internal.manifest`; the
-   docs-registry layer that wraps it (and re-exports
-   `discover-extensions!`) lives in
-   `com.blockether.vis.internal.extension`."
+   extension layer that wraps it (and re-exports `discover-extensions!`)
+   lives in `com.blockether.vis.internal.extension`."
   (:require
    [clojure.spec.alpha :as s]
    [clojure.string :as str]
