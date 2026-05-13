@@ -2,9 +2,7 @@
  ;; Z.ai (ZhipuAI) provider - covers BOTH Z.ai endpoints in one
  ;; classpath plug-in:
  ;;   - `:zai-coding` -> coding-plan subscription
- ;;     (https://api.z.ai/api/coding/paas/v4)
  ;;   - `:zai`        -> pay-as-you-go / "Pass" gateway
- ;;     (https://api.z.ai/api/paas/v4)
  ;; The two endpoints share the GLM model family (`glm-5-turbo`,
  ;; `glm-5.1`, `glm-4.7`, ...) but bill against different quotas, so
  ;; users typically have one API key per plan. This extension ships a

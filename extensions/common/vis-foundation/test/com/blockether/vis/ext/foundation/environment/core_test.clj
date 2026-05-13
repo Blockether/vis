@@ -63,10 +63,11 @@
   (it "renders a prompt fragment for the unified v/ alias"
     (let [prompt (env-core/environment-prompt {})]
       (expect (string? prompt))
-      (expect (str/includes? prompt "(v/snapshot)"))
+      (expect (str/includes? prompt "v/snapshot"))
       (expect (not (str/includes? prompt "v/load-skill")))
       (expect (not (str/includes? prompt "reload-skills")))
-      (expect (str/includes? prompt "(v/reload-extensions!)"))
+      (expect (not (str/includes? prompt "reload-instructions!")))
+      (expect (str/includes? prompt "v/reload-extensions!"))
       (expect (not (str/includes? prompt "`md/`")))))
 
   (it "binds reload helper to an explicit envelope-returning tool fn"

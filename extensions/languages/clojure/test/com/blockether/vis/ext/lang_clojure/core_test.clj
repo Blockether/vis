@@ -110,11 +110,8 @@
       (expect (= "(x b)"
                 (eval* "(z/root-string (z/edit->> (z/of-string \"(a b)\") (#(z/down %)) (#(z/replace % (quote x)))))"))))))
 
-(it "ships manifest docs with current envelope syntax only"
+(it "ships a namespace-only manifest"
   (let [manifest (edn/read-string {:readers {} :default (fn [_ form] form)}
-                   (slurp (clj-manifest-file)))
-        readme   (get-in manifest ['clj :docs "README.md" :content])]
-    (expect (str/includes? readme ":result :files"))
-    (expect (str/includes? readme "(get-in (z/locators \"src/foo.clj\") [:result])"))
-    (expect (not (str/includes? readme "[:result]")))
-    (expect (not (str/includes? readme "[:info :files]")))))
+                   (slurp (clj-manifest-file)))]
+    (expect (= '[com.blockether.vis.ext.lang-clojure.core] (get-in manifest ['clj :nses])))
+    (expect (not (contains? (get manifest 'clj) :docs)))))

@@ -953,13 +953,9 @@ BANNED:
                   languages, persistance, ...) used as the section
                   label both in this snapshot and in `vis extensions
                   list` (when set).
-     :registry-id - canonical manifest/docs id, usually the alias symbol.
+     :registry-id - canonical manifest id, usually the alias symbol.
      :symbols   - vec of bare symbol names the extension intern'd into
-                  the sandbox (just the names; signatures + doc come
-                  from `(v/symbol-doc ...)` if the model wants them).
-     :docs      - vec of doc-name strings (e.g. `\"README.md\"`) the
-                  extension ships in its `vis.edn` registry. Reachable
-                  via `(v/extension-doc 'id)`.
+                  the sandbox.
 
    The vec is bound ONCE at turn start (see `iteration-loop`) and
    stays frozen for the rest of the turn - every iteration sees the
@@ -968,25 +964,13 @@ BANNED:
   (->> (or active-extensions [])
     (mapv (fn [ext]
             (let [info (extension/extension-info ext)
-                  registry-id (:registry-id info)
-                  ;; Resolve doc names through the global extension
-                  ;; registry. Same mapping `(v/extensions)` uses;
-                  ;; we duplicate the lookup here (instead of calling
-                  ;; the meta extension) because the loop layer is
-                  ;; upstream of every ext, including meta itself -
-                  ;; TURN_ACTIVE_EXTENSIONS must work even when vis-foundation
-                  ;; isn't on the classpath.
-                  doc-names   (try (if registry-id
-                                     (extension/extension-doc-names registry-id)
-                                     [])
-                                (catch Throwable _ []))]
+                  registry-id (:registry-id info)]
               (cond-> {:namespace   (:namespace info)
                        :alias       (:alias info)
                        :doc         (:doc info)
                        :kind        (:kind info)
                        :registry-id registry-id
-                       :symbols     (mapv :ext.symbol/symbol (:ext/symbols ext))
-                       :docs        (vec doc-names)}
+                       :symbols     (mapv :ext.symbol/symbol (:ext/symbols ext))}
                 (nil? (:alias info)) (dissoc :alias)
                 (nil? (:doc info)) (dissoc :doc)
                 (nil? (:kind info)) (dissoc :kind)

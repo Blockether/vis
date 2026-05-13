@@ -170,9 +170,8 @@
 
   ;; Development entry path. Starts an nREPL on `$NREPL_PORT` (default
   ;; 7888), writes `.nrepl-port` for `clj-nrepl-eval --discover-ports`,
-  ;; and exposes helpers for launching entry points. `tui` opens
-  ;; Terminal.app running `terminal-tui`, where nREPL and the TUI live
-  ;; in the same JVM/process.
+  ;; and can launch entry points. `tui` opens Terminal.app running
+  ;; `terminal-tui`, where nREPL and the TUI live in the same JVM/process.
   ;;
   ;;   clojure -M:dev              # nREPL + wait
   ;;   clojure -M:dev tui          # Terminal.app attached nREPL+TUI JVM

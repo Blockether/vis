@@ -19,8 +19,7 @@
      - Environment runtime: create-environment, dispose-environment!,
        get-router, rebuild-router!, resolve-effective-model.
      - Extension contract: extension, symbol, value, render-prompt,
-       register-extension!, registered-extensions, extension docs,
-       discovery, reload.
+       register-extension!, registered-extensions, discovery, reload.
      - Registries: command, channel, provider, and backend registration
        helpers for host-owned and embedded use.
      - Persistence facade: db-* functions and connection helpers. The
@@ -298,12 +297,6 @@
 (def registered-extension-ids            extension/registered-extension-ids)
 (def extension-namespaces                extension/extension-namespaces)
 (def extension-id-of-ns                  extension/extension-id-of-ns)
-(def extension-doc                       extension/extension-doc)
-(def extension-docs                      extension/extension-docs)
-(def extension-doc-content               extension/extension-doc-content)
-(def extension-doc-abstract              extension/extension-doc-abstract)
-(def extension-doc-summary               extension/extension-doc-summary)
-(def extension-doc-names                 extension/extension-doc-names)
 (def registered-extensions-summary       extension/registered-extensions-summary)
 (def invoke-symbol-wrapper               extension/invoke-symbol-wrapper)
 (def discover-extensions!                extension/discover-extensions!)

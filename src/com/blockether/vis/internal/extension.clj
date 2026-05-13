@@ -1,6 +1,6 @@
 (ns com.blockether.vis.internal.extension
   "Extension subsystem: spec, builders, hook execution, the global
-   registry, parse-error rescue, and the inline-docs catalog.
+   registry, parse-error rescue, and manifest namespace catalog.
 
    An extension is the SINGLE entry point for everything a third-party
    bundle contributes to vis. Whatever surfaces it populates - SCI
@@ -13,8 +13,7 @@
      - the system-prompt block rendered from `:ext/symbols`
      - the per-iteration `:ext/hooks` checks
      - the parse-error rescue chain
-     - the `(v/extensions)` / `(v/extension-doc id name)`
-       catalog the agent reads to discover its own surface
+     - the manifest id/namespace catalog used for extension metadata
 
    Channel and provider registries live in `internal.registry` (the
    sub-registry that lights up when this module dispatches their
@@ -1956,14 +1955,10 @@
                    :data  {:ext ns-sym :error (ex-message t)}})))
     ext))
 
-;; Extension-docs registry. Moved here from the inline-extension-docs
-;; catalog section ~400 lines down so `extension-info` (right below)
-;; can reverse-lookup an extension id from a namespace without a
-;; forward declare. The rest of the catalog (registered-extension-ids,
-;; extension-namespaces, extension-doc, etc.) lives in its original
-;; section and continues to reference this defonce — it's just
-;; defined earlier now.
-(defonce ^:private extension-docs-registry (atom {}))
+;; Manifest id -> namespaces registry. Defined here so `extension-info`
+;; can reverse-lookup an extension id from a namespace without a forward
+;; declare.
+(defonce ^:private extension-manifest-registry (atom {}))
 
 (defn extension-id-of-ns
   "Reverse lookup: given a namespace symbol, return the extension id
@@ -1971,7 +1966,7 @@
   [ns-sym]
   (some (fn [[id {nses :nses}]]
           (when (some #(= ns-sym %) nses) id))
-    @extension-docs-registry))
+    @extension-manifest-registry))
 
 (def ^:private empty-source-markers
   {:source-paths       []
@@ -2345,88 +2340,31 @@
      ext)))
 
 ;; =============================================================================
-;; Inline extension docs catalog
+;; Extension manifest catalog
 ;;
 ;; Filled by `discover-extensions!` from every
 ;; `META-INF/vis-extension/vis.edn` on the classpath. Multiple jars
-;; that declare the same id are merged: `:nses` deduped (preserving
-;; first-occurrence order); `:docs` map-merged (later wins per name).
-;; Authored `:links` stay on each descriptor; no backlink index is built.
+;; that declare the same id are merged with `:nses` deduped while
+;; preserving first-occurrence order.
 ;; =============================================================================
 
-;; `extension-docs-registry` and `extension-id-of-ns` were defined
-;; further up so `extension-info` can use them without a forward
-;; declare. The rest of the catalog uses them as before.
-
 (defn registered-extension-ids
-  "Sorted vector of every extension id known to the docs registry."
+  "Sorted vector of every extension id known to the manifest registry."
   []
-  (vec (sort (keys @extension-docs-registry))))
+  (vec (sort (keys @extension-manifest-registry))))
 
 (defn extension-namespaces
   "Vector of namespaces declared under `:nses` for an id. Empty when
    the id is unknown."
   [id]
-  (vec (get-in @extension-docs-registry [id :nses] [])))
-
-(defn extension-doc
-  "Return the full descriptor map for a declared extension doc:
-   `{:name :created-at :abstract :content :links}`. Returns `nil`
-   when the id is unknown or no doc by that name was declared."
-  [id doc-name]
-  (when-let [descriptor (and id doc-name
-                          (get-in @extension-docs-registry [id :docs doc-name]))]
-    (assoc descriptor :name doc-name)))
-
-(defn extension-doc-content
-  "Plain `:content` body (Markdown string) of a declared doc, or `nil`
-   when the doc is unknown."
-  [id doc-name]
-  (:content (extension-doc id doc-name)))
-
-(defn extension-doc-abstract
-  "Return the `:abstract` field of a declared extension doc, or `nil`
-   when the doc is unknown."
-  [id doc-name]
-  (:abstract (extension-doc id doc-name)))
-
-(defn extension-doc-summary
-  "Lightweight doc descriptor (no `:content`):
-   `{:name :created-at :abstract :links}`. Returns `nil` when the doc
-   is unknown."
-  [id doc-name]
-  (when-let [descriptor (and id doc-name
-                          (get-in @extension-docs-registry [id :docs doc-name]))]
-    (-> descriptor
-      (dissoc :content)
-      (assoc :name doc-name))))
-
-(defn extension-docs
-  "With one arg, return a vector of doc summaries for every doc
-   declared by `id`. With no arg, return the full registry as
-   `{<id-sym> [<summary> ...]}`. Sorted by doc name within each id."
-  ([]
-   (into {}
-     (map (fn [[id {docs :docs}]]
-            [id (mapv #(extension-doc-summary id %) (sort (keys docs)))]))
-     @extension-docs-registry))
-  ([id]
-   (let [docs (get-in @extension-docs-registry [id :docs])]
-     (mapv #(extension-doc-summary id %) (sort (keys docs))))))
-
-(defn extension-doc-names
-  "Plain sorted vector of doc names declared by `id`."
-  [id]
-  (vec (sort (keys (get-in @extension-docs-registry [id :docs])))))
+  (vec (get-in @extension-manifest-registry [id :nses] [])))
 
 (defn- merge-manifest-entry!
   [id entry]
-  (swap! extension-docs-registry
+  (swap! extension-manifest-registry
     update id
     (fn [existing]
-      (let [merged-nses (vec (distinct (concat (:nses existing) (:nses entry))))
-            merged-docs (merge (or (:docs existing) {}) (or (:docs entry) {}))]
-        {:nses merged-nses :docs merged-docs}))))
+      {:nses (vec (distinct (concat (:nses existing) (:nses entry))))})))
 
 (def op-tags
   "Closed set of operation tags a tool can declare. The two values
@@ -2499,17 +2437,12 @@
       (:self-describing? m) (assoc :self-describing? true))))
 
 (defn registered-extensions-summary
-  "Pure data view of the docs registry: returns
-   `{<id> {:nses [...] :docs {<name> <summary>}}}` for every loaded
-   extension."
+  "Pure data view of the manifest registry: returns `{<id> {:nses [...]}}`
+   for every loaded extension."
   []
-  (reduce-kv
-    (fn [acc id entry]
-      (assoc acc id
-        {:nses (:nses entry)
-         :docs (reduce-kv (fn [d name _] (assoc d name (extension-doc-summary id name)))
-                 {} (:docs entry))}))
-    {} @extension-docs-registry))
+  (into {}
+    (map (fn [[id entry]] [id {:nses (:nses entry)}]))
+    @extension-manifest-registry))
 
 (defn discover-extensions!
   "Public entry point for vis's classpath auto-discovery.
@@ -2517,9 +2450,9 @@
    Runs `manifest/scan-extensions!` (which scans every
    `META-INF/vis-extension/vis.edn`, `require`s every namespace
    listed under each manifest's `:nses` key, and returns the merged
-   parsed manifests) and then merges every loaded extension's inline
-   docs into this namespace's docs registry. Returns the count of
-   namespaces declared under `:nses` across the merged manifests.
+   parsed manifests) and then merges those manifests into this
+   namespace's manifest registry. Returns the count of namespaces
+   declared under `:nses` across the merged manifests.
 
    Idempotent on both layers."
   []
