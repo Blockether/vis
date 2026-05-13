@@ -5,33 +5,64 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe title-nudge-test
-  (it "nudges when CONVERSATION_TITLE is blank"
-    (let [n (nudges/title-nudge {:conversation-title nil
-                                 :title-refresh? false
-                                 :iteration 1})]
-      (expect (= :low (:importance n)))
-      (expect (str/includes? (:text n) "CONVERSATION_TITLE is currently empty"))))
+  (it "nudges when CONVERSATION_TITLE is blank (regardless of turn position)"
+    (doseq [tp [1 2 5 10 17 100]]
+      (let [n (nudges/title-nudge {:conversation-title nil
+                                   :title-refresh? false
+                                   :turn-position tp
+                                   :iteration 1})]
+        (expect (= :low (:importance n)))
+        (expect (str/includes? (:text n) "CONVERSATION_TITLE is currently empty")))))
 
-  (it "nudges with current title on turn-boundary refresh"
+  (it "fires on turn 1 (first turn) when host flags :title-refresh?"
     (let [n (nudges/title-nudge {:conversation-title "Refactor auth flow"
                                  :title-refresh? true
+                                 :turn-position 1
                                  :iteration 1})]
       (expect (= :low (:importance n)))
       (expect (str/includes? (:text n) "Refactor auth flow"))
-      (expect (str/includes? (:text n) "refresh the title"))))
+      (expect (str/includes? (:text n) "refresh the title"))
+      (expect (str/includes? (:text n) "1 turn(s)"))))
 
-  (it "fires on iteration cadence (multiple of TITLE_REFRESH_NUDGE_PERIOD)"
-    (let [n (nudges/title-nudge {:conversation-title "Triage 148 path failures"
-                                 :title-refresh? false
-                                 :iteration nudges/TITLE_REFRESH_NUDGE_PERIOD})]
-      (expect (some? n))
-      (expect (str/includes? (:text n) "iterations into this turn"))
-      (expect (str/includes? (:text n) "Triage 148 path failures"))))
+  (it "fires on every TITLE_REFRESH_TURN_PERIOD-th turn when host flags :title-refresh?"
+    (doseq [tp [nudges/TITLE_REFRESH_TURN_PERIOD
+                (* 2 nudges/TITLE_REFRESH_TURN_PERIOD)
+                (* 5 nudges/TITLE_REFRESH_TURN_PERIOD)]]
+      (let [n (nudges/title-nudge {:conversation-title "Triage 148 path failures"
+                                   :title-refresh? true
+                                   :turn-position tp
+                                   :iteration 1})]
+        (expect (some? n))
+        (expect (str/includes? (:text n) (str tp " turn(s)")))
+        (expect (str/includes? (:text n) "Triage 148 path failures")))))
 
-  (it "stays silent on non-cadence iteration with non-blank title and no refresh hint"
-    (expect (nil? (nudges/title-nudge {:conversation-title "Stable"
-                                       :title-refresh? false
-                                       :iteration 3})))))
+  (it "stays silent on non-cadence turns even when refresh is flagged"
+    (doseq [tp [2 3 4 5 6 7 8 9 11 19 21 99]]
+      (expect (nil? (nudges/title-nudge {:conversation-title "Stable"
+                                         :title-refresh? true
+                                         :turn-position tp
+                                         :iteration 1})))))
+
+  (it "stays silent on cadence turn when host did not flag :title-refresh?"
+    ;; :title-refresh? is a single boolean from the host signalling that
+    ;; THIS iteration is the start of a turn. Without it, even the
+    ;; cadence turn is silent — mid-turn iterations never re-fire.
+    (doseq [tp [1 nudges/TITLE_REFRESH_TURN_PERIOD
+                (* 2 nudges/TITLE_REFRESH_TURN_PERIOD)]]
+      (expect (nil? (nudges/title-nudge {:conversation-title "Stable"
+                                         :title-refresh? false
+                                         :turn-position tp
+                                         :iteration 1})))))
+
+  (it "never fires on iteration cadence (the old mod-N-iterations rule is gone)"
+    ;; Old behavior: iteration 12 (TITLE_REFRESH_NUDGE_PERIOD) re-fired.
+    ;; New behavior: iteration position is ignored for cadence; only
+    ;; turn-position matters.
+    (doseq [it [3 6 9 12 24 36 100]]
+      (expect (nil? (nudges/title-nudge {:conversation-title "Stable"
+                                         :title-refresh? false
+                                         :turn-position 5
+                                         :iteration it}))))))
 
 (defdescribe context-pressure-nudge-test
   (it "stays silent below the threshold"
@@ -73,20 +104,22 @@
     (doseq [h nudges/hooks]
       (expect (keyword? (:id h)))
       (expect (string? (:doc h)))
-      (expect (contains? #{:session/start :turn/start :turn.iteration/start :turn.iteration/stop :turn.answer/validate :turn/stop}
+      (expect (contains? #{:turn.iteration/start :turn.answer/validate}
                 (:phase h)))
       (expect (fn? (:fn h)))))
 
   (it "title hook adapts title-nudge into the {:hint :importance} shape"
     (let [h (some #(when (= :vis.foundation/conversation-title (:id %)) %) nudges/hooks)
-          hit ((:fn h) {:conversation-title nil :title-refresh? false :iteration 1})]
+          hit ((:fn h) {:conversation-title nil :title-refresh? false
+                        :turn-position 1 :iteration 1})]
       (expect (string? (:hint hit)))
       (expect (= :low (:importance hit)))))
 
   (it "hooks return nil when their underlying condition is absent"
     (let [title-h    (some #(when (= :vis.foundation/conversation-title (:id %)) %) nudges/hooks)
           pressure-h (some #(when (= :vis.foundation/context-pressure (:id %)) %) nudges/hooks)]
-      (expect (nil? ((:fn title-h)    {:conversation-title "Set" :title-refresh? false :iteration 1})))
+      (expect (nil? ((:fn title-h)    {:conversation-title "Set" :title-refresh? false
+                                       :turn-position 5 :iteration 1})))
       (expect (nil? ((:fn pressure-h) {:input-tokens 100 :context-limit 200000})))))
 
   (it "hard guard hooks are registered on the answer-validation phase"

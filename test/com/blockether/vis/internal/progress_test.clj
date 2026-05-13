@@ -22,7 +22,7 @@
         (expect (= [true false] (:silents entry)))
         (expect (= [":vis/silent" "3"] (:results entry))))))
 
-  (it "renders plain live values without zprint pretty-printing"
+  (it "renders live values with plain zprint pretty-printing"
     (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
       (on-chunk {:phase :form-result
                  :iteration 1
@@ -31,7 +31,7 @@
                  :result {:b 2 :a [1 2 3]}
                  :execution-time-ms 1})
       (let [entry (first (get-timeline))]
-        (expect (= ["{:b 2, :a [1 2 3]}"] (:results entry))))))
+        (expect (= ["{:a [1 2 3], :b 2}"] (:results entry))))))
 
   (it "still elides the final answer form"
     (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]

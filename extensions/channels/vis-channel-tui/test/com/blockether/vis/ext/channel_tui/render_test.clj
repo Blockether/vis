@@ -1032,101 +1032,42 @@
       (expect (str/includes? body "line-50")))))
 
 (defdescribe auto-collapse-rendering-test
-  (it "collapses preview results to four lines by default and expands on demand"
+  (it "renders legacy preview-kind entries as ordinary results without PREVIEW/RAW switchers"
     (render/invalidate-cache!)
-    (let [preview-text (str/join "\n" (map #(str % ": selected line") (range 1 31)))
-          detail {:raw "{:secret \"raw-only\"}"}
-          trace [{:code ["(v/preview file {:result [[:lines {:from 0 :to 30}]]})"]
-                  :results [preview-text]
+    (let [body "only line of preview output"
+          trace [{:code ["(v/cat file)"]
+                  :results [body]
                   :result-kinds [:preview]
-                  :result-details [detail]
-                  :stdouts [""]
-                  :durations [1]
-                  :successes [true]}]
-          opts {:conversation-id "conversation"
-                :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"}
-          payload (render/format-answer-with-thinking-data
-                    nil trace 96 {:show-iterations true} nil false opts)
-          expanded (render/format-answer-with-thinking-data
-                     nil trace 96 {:show-iterations true} nil false
-                     (assoc opts :detail-expansions
-                       {["conversation" "iteration:t123e4567:i1:b1:preview-body"] true}))
-          raw-view (render/format-answer-with-thinking-data
-                     nil trace 96 {:show-iterations true} nil false
-                     (assoc opts :detail-expansions
-                       {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}))]
-      (expect (not (str/includes? (:text payload) "Preview.")))
-      (expect (str/includes? (:text payload) "1: selected line"))
-      (expect (str/includes? (:text payload) "4: selected line"))
-      (expect (not (str/includes? (:text payload) "5: selected line")))
-      (expect (not (str/includes? (:text payload) "30: selected line")))
-      (expect (str/includes? (:text payload) "▸ 26 lines hidden"))
-      (let [preview-rows    (filter (fn [line] (str/includes? (body-of line) "PREVIEW")) (:lines payload))
-            preview-row-idx (.indexOf (:lines payload) (first preview-rows))
-            first-body-idx  (.indexOf (:lines payload)
-                              (first (filter (fn [line] (str/includes? (body-of line) "1: selected line")) (:lines payload))))]
-        (expect (= 1 (count preview-rows)))
-        (expect (str/includes? (body-of (first preview-rows)) "▸ 26 lines hidden"))
-        (expect (not (str/includes? (body-of (first preview-rows)) "▸ PREVIEW")))
-        (expect (str/includes? (body-of (first preview-rows)) "● PREVIEW  ○ RAW"))
-        (expect (< preview-row-idx first-body-idx)))
-      (expect (some #(= :preview-switcher (:kind %)) (:line-meta payload)))
-      (expect (str/includes? (:text expanded) "30: selected line"))
-      (expect (str/includes? (:text payload) "● PREVIEW  ○ RAW"))
-      (expect (not (str/includes? (:text payload) "SHAPE")))
-      (expect (not (str/includes? (:text payload) ":source-shape")))
-      (expect (not (str/includes? (:text payload) "raw-only")))
-      (expect (str/includes? (:text raw-view) "▾ showing all 30 lines"))
-      ;; The verbose `Turn: <uuid>, Iteration: N, Block: M` summary
-      ;; suffix was replaced with the compact `[iteration N · block M]`
-      ;; label band, matching the live-progress header style.
-      (expect (str/includes? (:text raw-view) "[iteration 1 · block 1]"))
-      (expect (str/includes? (:text raw-view) "raw-only"))
-      (expect (not (str/includes? (:text raw-view) "src/demo.clj")))
-      (expect (not (str/includes? (:text raw-view) ":info")))
-      (expect (not (str/includes? (:text payload) "RESULT")))
-      (let [wrap-text*   @#'render/wrap-text
-            wrap-calls   (atom 0)
-            preview-text (str/join "\n" (map #(str % ": selected line xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-                                          (range 1 2001)))
-            trace        {:code ["(v/preview huge)"]
-                          :results [preview-text]
-                          :result-kinds [:preview]
-                          :result-details [{:raw "{:raw true}"}]
-                          :stdouts [""]
-                          :durations [1]
-                          :successes [true]}]
-        (with-redefs-fn {(resolve 'com.blockether.vis.ext.channel-tui.render/wrap-text)
-                         (fn [& args]
-                           (swap! wrap-calls inc)
-                           (apply wrap-text* args))}
-          (fn []
-            (let [payload (render/format-answer-with-thinking-data
-                            nil [trace] 96 {:show-iterations true} nil false opts)]
-              (expect (str/includes? (:text payload) "1: selected line"))
-              (expect (str/includes? (:text payload) "4: selected line"))
-              (expect (not (str/includes? (:text payload) "5: selected line")))
-              (expect (< @wrap-calls 80))))))))
-
-  (it "renders raw preview results without pretty-printing or ANSI syntax colors"
-    (render/invalidate-cache!)
-    (let [raw "{:b 2 :a [1 2 3]}"
-          trace [{:code ["(v/preview data)"]
-                  :results ["preview"]
-                  :result-kinds [:preview]
-                  :result-details [{:raw raw}]
+                  :result-details [{:raw "{:secret \"raw-only\"}"}]
                   :stdouts [""]
                   :durations [1]
                   :successes [true]}]
           payload (render/format-answer-with-thinking-data
                     nil trace 96 {:show-iterations true} nil false
                     {:conversation-id "conversation"
-                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                     :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}})
+                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})]
+      (expect (str/includes? (:text payload) body))
+      (expect (not (str/includes? (:text payload) "raw-only")))
+      (expect (not (str/includes? (:text payload) "PREVIEW")))
+      (expect (not (str/includes? (:text payload) "● RAW")))
+      (expect (not-any? #(= :preview-switcher (:kind %)) (:line-meta payload)))))
+
+  (it "pretty-prints Clojure result text without ANSI syntax colors"
+    (render/invalidate-cache!)
+    (let [raw "{:b 2 :a [1 2 3]}"
+          trace [{:code ["{:b 2 :a [1 2 3]}"]
+                  :results [raw]
+                  :result-kinds [:value]
+                  :stdouts [""]
+                  :durations [1]
+                  :successes [true]}]
+          payload (render/format-answer-with-thinking-data
+                    nil trace 96 {:show-iterations true} nil false
+                    {:conversation-id "conversation"
+                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
           text (:text payload)
-          result-lines (filter #(str/includes? % raw) (:lines payload))]
-      (expect (str/includes? text raw))
-      (expect (not (str/includes? text "{:a [1 2 3], :b 2}")))
+          result-lines (filter #(str/includes? % "{:a [1 2 3], :b 2}") (:lines payload))]
+      (expect (str/includes? text "{:a [1 2 3], :b 2}"))
       (expect (seq result-lines))
       (expect (not-any? #(re-find #"\u001b\[[0-9;]*m" %) result-lines))))
 
@@ -1189,61 +1130,6 @@
           body    (strip-ansi (:text payload))]
       (expect (not (str/includes? body "SEARCH any")))
       (expect (= 1 (count (re-seq #"Searched" body))))))
-
-  (it "paints preview raw controls on the right with underline and translated ANSI"
-    (render/invalidate-cache!)
-    (let [preview-text (str/join "\n" (map #(str % ": selected line") (range 1 31)))
-          detail {:raw "{:secret \"raw-only\"}"}
-          trace [{:code ["(v/preview file {:result [[:lines {:from 0 :to 30}]]})"]
-                  :results [preview-text]
-                  :result-kinds [:preview]
-                  :result-details [detail]
-                  :stdouts [""]
-                  :durations [1]
-                  :successes [true]}]
-          opts {:conversation-id "conversation"
-                :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
-                :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}}
-          payload (render/format-answer-with-thinking-data
-                    nil trace 96 {:show-iterations true} nil false opts)
-          puts (atom [])
-          active (atom #{})
-          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                     (clearModifiers []
-                       (reset! active #{})
-                       this)
-                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                       (swap! active into (seq arr))
-                       this)
-                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                       (apply swap! active disj (seq arr))
-                       this)
-                     (getActiveModifiers []
-                       (if (empty? @active)
-                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-                     (setForegroundColor [_] this)
-                     (setBackgroundColor [_] this)
-                     (putString [_col _row text]
-                       (swap! puts conj {:text text :sgr @active})
-                       this)
-                     (fillRectangle [_ _ _] this)
-                     (setCharacter [_ _ _] this))]
-      (render/draw-chat-bubble! graphics
-        {:role :assistant
-         :text (:text payload)
-         :prewrapped-lines (:lines payload)
-         :line-meta (:line-meta payload)}
-        0 2 96 {:viewport-h 50})
-      (expect (some #(str/includes? (:text %) "showing all 30 lines") @puts))
-      (expect (some #(str/includes? (:text %) "raw-only") @puts))
-      (expect (not-any? #(str/includes? (:text %) "\\space") @puts))
-      (expect (not-any? #(str/includes? (:text %) ":info") @puts))
-      (expect (not-any? #(str/includes? (:text %) "src/demo.clj") @puts))
-      (expect (not-any? #(str/includes? (:text %) "\u001b[") @puts))
-      (expect (some #(and (= "● RAW" (:text %))
-                       (contains? (:sgr %) com.googlecode.lanterna.SGR/UNDERLINE))
-                @puts))))
 
   (it "does not wrap collapsed huge result bodies before rendering the summary"
     (render/invalidate-cache!)
@@ -1426,9 +1312,9 @@
 
     (it "errors keep raw rendering - error formatting handles its own marker"
       ;; Errors come through err-result-marker; we explicitly opt OUT
-      ;; of `:render-as :markdown` for them in `form-lines`. This test
-      ;; pins that contract: the error body still appears verbatim and
-      ;; does NOT pick up bullet markers from accidental Markdown re-parse.
+      ;; of `:render-as :ir` for them in `form-lines`. This test pins
+      ;; that contract: the error body still appears verbatim and does
+      ;; NOT pick up bullet markers from accidental IR conversion.
       (render/invalidate-cache!)
       (let [trace [{:code ["(boom)"]
                     :results ["- pretend-bullet"]
