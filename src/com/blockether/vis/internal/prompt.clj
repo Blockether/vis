@@ -6,10 +6,11 @@
    OUT of CORE_SYSTEM_PROMPT; active extensions own their model-facing blocks
    (including foundation's `<environment>`) inside the extension message.
 
-   Per-iteration user-role context carries dynamic engine telemetry
+   Per-iteration user-role context carries tiny live coordinates
    (<current_turn_context>), fresh evidence (<journal>), live bindings,
-   and iteration hints. `<current_turn_context>` reports only live ids,
-   positions, and state labels."
+   and iteration hints. `<current_turn_context>` intentionally excludes
+   system prompt text, extension inventory, engine internals, and prior
+   answers."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.router :as svar-router]
@@ -504,15 +505,6 @@
   [v]
   (attr-str (if (keyword? v) (name v) v)))
 
-(defn- short-ref
-  [v]
-  (let [s (str v)]
-    (if (> (count s) 8) (subs s 0 8) s)))
-
-(defn- current-engine-iteration-id
-  [turn-id iteration-position]
-  (str "turn/" (short-ref (or turn-id "unknown")) "/iteration/" iteration-position))
-
 (defn- sandbox-value
   [environment sym default]
   (try
@@ -533,47 +525,31 @@
 (defn- current-turn-context-block
   "Render dynamic engine telemetry into the user-role iteration trailer.
 
-   These are live state facts, not policy. They stay out of the cached system
-   prompt. Static lifecycle shape lives in `CORE_SYSTEM_PROMPT` / λENGINE;
-   this block only reports the current turn and iteration coordinates.
-   `current_engine_iteration_id` is a logical engine id for the in-flight
-   iteration; the DB UUID appears only after persistence, so the previous
-   persisted DB id is exposed separately."
-  [environment {:keys [iteration engine-state engine-phase]}]
+   These are minimal live coordinates, not policy and not a transcript.
+   Static lifecycle shape lives in `CORE_SYSTEM_PROMPT`; capability context
+   lives in `<turn_system_context>`; prior answers live in the previous-turn
+   context/tooling. Keep this block tiny because it is appended every
+   iteration."
+  [environment {:keys [iteration]}]
   (let [iteration-position  (inc (long (or iteration 0)))
-        previous-position   (max 0 (dec iteration-position))
         turn-id             (or (some-> (:current-conversation-turn-id-atom environment) deref)
                               (sandbox-value environment 'TURN_ID nil))
         turn-position       (or (some-> (:current-turn-position-atom environment) deref)
                               (sandbox-value environment 'TURN_POSITION nil))
-        previous-iter-id    (or (some-> (:current-iteration-id-atom environment) deref)
-                              (sandbox-value environment 'TURN_ITERATION_ID nil))
         conversation-state-id (or (sandbox-value environment 'CONVERSATION_STATE_ID nil)
                                 (sandbox-value environment 'TURN_CONVERSATION_STATE_ID nil))
         ;; Title lives only on `:conversation-title-atom` + the DB now;
         ;; the `CONVERSATION_TITLE` SCI binding was retired (see
         ;; `inject-system-var-snapshots` docstring for rationale).
-        conversation-title  (some-> (:conversation-title-atom environment) deref)
-        previous-answer     (sandbox-value environment 'CONVERSATION_PREVIOUS_ANSWER "")]
+        conversation-title  (some-> (:conversation-title-atom environment) deref)]
     (prompt-block
       "current_turn_context"
-      (str "engine_state: " (or engine-state "turn.iteration/start") "\n"
-        "engine_phase: " (or engine-phase "model_think") "\n"
-        "conversation_id: " (:conversation-id environment) "\n"
-        "engine_turn_id: " turn-id "\n"
-        "engine_turn_position: " turn-position "\n"
-        "current_engine_iteration_id: " (current-engine-iteration-id turn-id iteration-position) "\n"
-        "engine_iteration_position: " iteration-position "\n"
-        "previous_persisted_iteration_id: " previous-iter-id "\n"
-        "previous_persisted_iteration_position: " previous-position "\n"
+      (str "conversation_id: " (:conversation-id environment) "\n"
         "turn_id: " (context-value-str (or turn-id "")) "\n"
         "turn_position: " (context-value-str (or turn-position 0)) "\n"
-        "turn_conversation_state_id: " (context-value-str (or conversation-state-id "")) "\n"
-        "turn_iteration_id: " (context-value-str (or previous-iter-id "")) "\n"
-        "turn_iteration_position: " (context-value-str previous-position) "\n"
+        "iteration_position: " iteration-position "\n"
         "conversation_state_id: " (context-value-str (or conversation-state-id "")) "\n"
         "conversation_title: " (context-value-str (or conversation-title "")) "\n"
-        "conversation_previous_answer: " (context-value-str (or previous-answer "")) "\n"
         "prompt_role: user"))))
 
 (defn- normalize-system-nudge
@@ -668,9 +644,7 @@
              {:type :vis/missing-active-extensions})))
   (let [ctx-limit (effective-context-limit model context-limit)
         current-context-block (current-turn-context-block environment
-                                {:iteration iteration
-                                 :engine-state :turn.iteration/start
-                                 :engine-phase :model_think})
+                                {:iteration iteration})
         pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
         budget-after-pinned (max 1 (- ctx-limit (long pinned-tokens)))
@@ -809,9 +783,8 @@ ARCHITECTURE
                  (+ x y) ; block return value is 3
                  ```
 
-                 Blocks can mix code and ;; comments; stdout via
-                 println / pr / pr-str / throw etc. is captured
-                 — everything is persisted to <journal>.
+                 Stdout via println / pr / pr-str / throw etc. is
+                 captured — everything is persisted to <journal>.
 
   <journal>  : append-only log of block evaluations.
                Persists across iterations and turns.
@@ -825,7 +798,7 @@ ENV
 
 TURN PROTOCOL
   Emit one or more ```clojure blocks per turn, as needed.
-  Narration is ;; comments only.
+  No prose outside executable clojure blocks.
   Each block evaluates; its result, error, stdout, stderr attach
   to that block in <journal>. New defs accumulate in <bindings>.
   Both persist across turns.
@@ -834,11 +807,9 @@ TURN PROTOCOL
   Errors are evidence — adjust and continue.
 
 LOOP DISCIPLINE
-  Before each probe, name in ;; comments the weakest assumption
-  in your current model. Before emitting, disprove at least one
-  plausible alternative from <journal>. Every claim in the final
-  answer must trace to a <journal> or <bindings> entry — never
-  memory.
+  Before emitting, disprove at least one plausible alternative from
+  <journal>. Every claim in the final answer must trace to a
+  <journal> or <bindings> entry — never memory.
 
 EMIT_FINAL
   (turn-answer! <IR>)

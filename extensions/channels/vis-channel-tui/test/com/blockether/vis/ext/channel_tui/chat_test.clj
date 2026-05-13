@@ -76,6 +76,34 @@
         (expect (= [true] (:silents trace)))
         (expect (= [":vis/silent"] (:results trace))))))
 
+  (it "rebuild-history preserves mixed-block render segments instead of eliding the answer block"
+    (with-redefs [vis/db-info (fn [] :db)
+                  vis/db-list-conversation-turns
+                  (fn [_db _cid]
+                    [{:id :turn-1
+                      :user-request "mixed"
+                      :answer [:ir {} [:p {} [:span {} "Done"]]]}])
+                  vis/db-list-conversation-turn-iterations
+                  (fn [_db _turn-id]
+                    [{:id :iter-1 :answer-form-idx 0}])
+                  vis/db-list-iteration-blocks
+                  (fn [_db _iteration-id]
+                    [{:code (str "(def x 1)\n"
+                              "(set-conversation-title! \"Mixed\")\n"
+                              "(turn-answer! [:ir [:p \"Done\"]])")
+                      :render-segments [{:kind :code :source "(def x 1)"}
+                                        {:kind :title :value "Mixed"}
+                                        {:kind :answer-ref}]
+                      :result :vis/answer}])]
+      (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
+            trace   (-> history second :traces first)]
+        (expect (= 1 (count (:code trace))))
+        (expect (= [[{:kind :code :source "(def x 1)"}
+                     {:kind :title :value "Mixed"}
+                     {:kind :answer-ref}]]
+                  (:render-segments trace)))
+        (expect (= [nil] (:results trace))))))
+
   (it "rebuild-history prefers durable channel render over runtime-ref placeholder"
     ;; `(def x (v/cat ...))` persists the live var value as
     ;; `{:vis/ref :expr}` (not safely serializable), but the tool call's

@@ -384,6 +384,26 @@
                 (seq status-line)  (conj (str "<i>" status-line "</i>")))]
     (str/join "\n\n" parts)))
 
+(defn- chunk-display-code
+  [chunk]
+  (let [segments (:render-segments chunk)
+        code     (if (seq segments)
+                   (some (fn [{:keys [kind source]}]
+                           (when (and (= :code kind) (not (str/blank? (str source))))
+                             source))
+                     segments)
+                   (:code chunk))]
+    (when-not (str/blank? (str code))
+      (let [first-line (-> code str/split-lines first str/trim)]
+        (when (seq first-line)
+          first-line)))))
+
+(defn- bubble-form-status-line
+  [chunk]
+  (str "⏳ Running form #" (inc (or (:form-idx chunk) 0))
+    (when-let [first-line (chunk-display-code chunk)]
+      (str " — " (subs first-line 0 (min 60 (count first-line)))))))
+
 (defn- bubble-state-for [chat-id]
   (get-in @chat-state [chat-id :live-bubble]))
 
@@ -514,11 +534,7 @@
         (= phase :form-start)
         (do
           (update-bubble-state! chat-id assoc :status-line
-            (str "⏳ Running form #" (inc (or (:form-idx chunk) 0))
-              (when-let [code (:code chunk)]
-                (let [first-line (-> code str/split-lines first str/trim)]
-                  (when (seq first-line)
-                    (str " — " (subs first-line 0 (min 60 (count first-line)))))))))
+            (bubble-form-status-line chunk))
           (update-live-bubble! token chat-id :flush? true))
 
         (= phase :form-result)

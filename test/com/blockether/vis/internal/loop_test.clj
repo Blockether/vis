@@ -225,7 +225,50 @@
       (expect (= messages
                 (append-replay messages journal
                   {:provider :anthropic-coding-plan
-                   :model "claude-opus-4-7"}))))))
+                   :model "claude-opus-4-7"})))))
+
+  (it "replays only the immediately previous compatible iteration"
+    (let [append-replay #'loop/append-preserved-thinking-replay
+          messages      [{:role "user" :content "continue"}]
+          older-message {:role "assistant"
+                         :content [{:type "thinking"
+                                    :thinking "older reasoning"
+                                    :thinking-signature "older reasoning"}
+                                   {:type "text" :text "older"}]}
+          newest-message {:role "assistant"
+                          :content [{:type "thinking"
+                                     :thinking "newest reasoning"
+                                     :thinking-signature "newest reasoning"}
+                                    {:type "text" :text "newest"}]}
+          journal      [[1 {:llm-provider :zai-coding-plan
+                            :llm-model "glm-5.1"
+                            :assistant-message older-message
+                            :preserved-thinking/replay? true}]
+                        [2 {:llm-provider :zai-coding-plan
+                            :llm-model "glm-5.1"
+                            :assistant-message newest-message
+                            :preserved-thinking/replay? true}]]]
+      (expect (= (conj messages newest-message)
+                (append-replay messages journal
+                  {:provider :zai-coding-plan
+                   :model "glm-5.1"})))))
+
+  (it "does not replay cross-turn journal seeds"
+    (let [append-replay #'loop/append-preserved-thinking-replay
+          messages      [{:role "user" :content "new turn"}]
+          prior-turn-message {:role "assistant"
+                              :content [{:type "thinking"
+                                         :thinking "old turn reasoning"
+                                         :thinking-signature "old turn reasoning"}
+                                        {:type "text" :text "old answer"}]}
+          journal      [[1 {:llm-provider :zai-coding-plan
+                            :llm-model "glm-5.1"
+                            :assistant-message prior-turn-message
+                            :preserved-thinking/replay? false}]]]
+      (expect (= messages
+                (append-replay messages journal
+                  {:provider :zai-coding-plan
+                   :model "glm-5.1"}))))))
 
 (defdescribe provider-error-rendering-test
   (it "uses one stable provider error code and still includes provider body"

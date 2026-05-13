@@ -1333,26 +1333,6 @@
     (not= false (:reasoning-effort? resolved-model))
     (not= :zai-thinking (:reasoning-style resolved-model))))
 
-(def ^:private preserved-thinking-replay-token-budget
-  "Approximate max tokens of preserved `reasoning_content` carried
-   across iter assistant replays. Resolves to
-   `(long (* PRESERVED_THINKING_REPLAY_FRACTION MAX_ITERATION_CONTEXT_TOKENS))`
-   = 30000 today (0.15 × 200000), and auto-tracks the cap if it changes.
-
-   Z.ai's preserved-thinking contract requires CONSECUTIVE
-   `reasoning_content` blocks (newest run, contiguous, verbatim).
-   We always keep the most recent prior iter — even if its reasoning
-   alone exceeds the budget — and walk newest→oldest until adding
-   the next iter's reasoning would push total over the budget; we
-   stop there (do NOT skip-and-continue, that would create a gap
-   and break the contiguity rule).
-
-   Char-count proxy: `chars / 4 ≈ tokens`. Conservative upper bound;
-   real GLM tokens are slightly denser, so the actual carried budget
-   sits somewhat under this number."
-  (long (* prompt/PRESERVED_THINKING_REPLAY_FRACTION
-          prompt/MAX_ITERATION_CONTEXT_TOKENS)))
-
 (defn- ^:private replay-reasoning-chars
   "Total `:thinking-signature` (or `:thinking` fallback) char count for
    the canonical thinking blocks on `assistant-message`. 0 when nil.
@@ -1365,57 +1345,30 @@
     (reduce + 0)))
 
 (defn- preserved-thinking-replay-messages
-  "Provider-agnostic preserved-thinking replay. Returns the canonical
-   `:assistant-message` of the most-recent prior iterations whose
-   cumulative reasoning_content fits inside
-   `preserved-thinking-replay-token-budget`, in chronological order
-   (oldest kept → newest); empty vec when none.
+  "Provider-agnostic preserved-thinking replay. Returns at most the single
+   canonical `:assistant-message` from the immediately previous compatible
+   iteration; empty vec when none.
 
-   Z.ai requires the kept block run to be CONTIGUOUS from the latest
-   iter back; if iter K-2's reasoning would push total over budget,
-   we stop and DO NOT skip past it to grab K-3 (that would create a
-   gap → contract violation, model loops). The most recent iter is
-   always kept, even when it alone exceeds budget, because dropping
-   it breaks single-step continuity which all preserving providers
-   need.
+   This is intentionally conservative for Z.ai/GLM. Conversation
+   a9389e1d showed that replaying a long run of assistant messages can
+   contaminate the next step, amplify token usage, and make GLM believe a
+   previous answer is still active. If preserved thinking is useful, the
+   only state we trust is the last model step inside the same live user
+   turn. Older iterations remain visible through `<journal>`.
 
-   The wire serializer for the active model translates each canonical
-   message to its native shape; iteration-loop never branches on
-   provider. Anthropic / OpenAI Responses don't carry `reasoning_content`
-   at all in their canonical shape, so the budget walk just trims by
-   thinking-block size and the per-provider serializer ignores anything
-   it can't carry."
+   The wire serializer for the active model translates the canonical
+   message to its native shape; iteration-loop never branches on provider."
   [journal-iters]
-  ;; Walks newest→oldest via `reverse`, sizes each non-nil assistant-message,
-  ;; then folds with `reduced` to short-circuit at the first over-budget
-  ;; older iter. The `kept` list is built front-prepended in newest-first
-  ;; order during the fold; the newest message lands at the FRONT of the
-  ;; list, the oldest kept message at the BACK — so when we `cons` in
-  ;; reverse-time order during the fold, the final `:kept` already reads
-  ;; oldest→newest (chronological), matching the contract.
-  (let [budget-chr (* 4 preserved-thinking-replay-token-budget)
-        sized      (->> journal-iters
-                     reverse
-                     (keep #(some-> % second :assistant-message))
-                     (map (juxt identity #(long (replay-reasoning-chars %)))))
-        {:keys [kept]}
-        (reduce (fn [{:keys [used kept] :as acc} [msg size]]
-                  (let [used' (+ (long used) (long size))]
-                    (cond
-                      ;; First (newest) kept iter: always keep, even when
-                      ;; it alone exceeds the budget. Continuity > budget
-                      ;; on the latest turn; preserved-thinking breaks
-                      ;; otherwise.
-                      (empty? kept)            {:used used' :kept (cons msg kept)}
-                      (<= used' budget-chr)    {:used used' :kept (cons msg kept)}
-                      ;; Adding this older iter would push us over budget.
-                      ;; STOP — do not skip-and-continue (that creates a
-                      ;; gap in the consecutive run that z.ai's contract
-                      ;; forbids).
-                      :else                    (reduced acc))))
-          {:used 0 :kept ()}
-          sized)]
-    (vec kept)))
+  (if-let [msg (some->> journal-iters
+                 reverse
+                 (keep #(some-> % second :assistant-message))
+                 first)]
+    ;; Keep this call so oversized single-step reasoning is still observable
+    ;; to future budget instrumentation. We intentionally do not drop the
+    ;; immediately previous step by size: single-step continuity beats replay.
+    (do (replay-reasoning-chars msg)
+      [msg])
+    []))
 
 (defn- replay-context
   "Small identity map for deciding whether preserved-thinking can be
@@ -1504,10 +1457,22 @@
       (update :cost merge (select-keys actual [:provider :model])))))
 
 (defn- compatible-preserved-thinking-journal-iters
+  "Keep only iterations whose provider-native thinking may be replayed into
+   the next provider call.
+
+   Cross-turn journal seeds explicitly carry
+   `:preserved-thinking/replay? false`; those iterations remain visible in
+   `<journal>` as durable evidence, but their opaque provider-native thinking
+   state is not replayed into a different user turn. Within a live turn,
+   freshly-produced iterations opt in by setting the flag to true. Historical
+   in-memory test fixtures that omit the flag are treated as replayable for
+   backward compatibility."
   [journal-iters target]
   (let [{target-provider :provider target-model :model} target]
-    (filterv (fn [[_ {:keys [assistant-message llm-provider llm-model]}]]
-               (and assistant-message
+    (filterv (fn [[_ {:keys [assistant-message llm-provider llm-model]
+                      replay? :preserved-thinking/replay?}]]
+               (and (not= false replay?)
+                 assistant-message
                  (= target-provider llm-provider)
                  (= target-model llm-model)
                  (assistant-message-compatible-with-replay-target?
@@ -2891,6 +2856,13 @@
     ;; budget, so carry is not capped by iteration count. Each entry is
     ;; `[iter-position {:thinking :blocks}]` matching the in-memory shape
     ;; the renderer expects. Failures degrade silently to an empty seed.
+    ;;
+    ;; IMPORTANT: cross-turn entries are JOURNAL ONLY. Do not replay their
+    ;; provider-native preserved-thinking assistant messages into the new
+    ;; user turn. In conversation a9389e1d, Z.ai/GLM received prior-turn
+    ;; assistant replay and opened the next request with "answer already
+    ;; accepted", then burned >100k input tokens. Durable cross-turn memory
+    ;; must flow through <journal>/<bindings>, not hidden reasoning state.
     (let [seeded-journal-iters
           (try
             (when-let [conv-id (:conversation-id environment)]
@@ -2909,11 +2881,12 @@
                                       (catch Throwable _ []))
                           :llm-provider (:provider it)
                           :llm-model    (some-> (:model it) str)
-                          ;; svar canonical assistant message persisted on the
-                          ;; iteration row; rehydrating here keeps preserved-thinking
-                          ;; replay alive across vis restarts, but only for the
-                          ;; same provider/model that produced it.
-                          :assistant-message (:llm-assistant-message it)}])
+                          ;; Persisted assistant messages are intentionally NOT
+                          ;; replayed across user turns. Keep the row metadata for
+                          ;; diagnostics, but `compatible-preserved-thinking-journal-iters`
+                          ;; rejects this entry before replay.
+                          :assistant-message (:llm-assistant-message it)
+                          :preserved-thinking/replay? false}])
                   iters)))
             (catch Throwable t
               (tel/log! {:level :warn :id ::cross-turn-journal-seed-failed
@@ -3263,12 +3236,13 @@
                                                   :llm-provider (:llm-provider iteration-result)
                                                   :llm-model    (:llm-model iteration-result)
                                                   ;; svar's canonical replay handle for this
-                                                  ;; iteration. Re-emitted into messages on
-                                                  ;; the next iteration via
-                                                  ;; `append-preserved-thinking-replay`; the
-                                                  ;; per-provider wire serializer translates
-                                                  ;; it to native shapes.
-                                                  :assistant-message (:assistant-message iteration-result)}])]
+                                                  ;; iteration. Re-emitted only within this
+                                                  ;; live user turn via
+                                                  ;; `append-preserved-thinking-replay`; cross-turn
+                                                  ;; seeds opt out with
+                                                  ;; `:preserved-thinking/replay? false`.
+                                                  :assistant-message (:assistant-message iteration-result)
+                                                  :preserved-thinking/replay? true}])]
                               (recur (merge loop-state
                                        {:iteration          (inc iteration)
                                         :messages           messages
