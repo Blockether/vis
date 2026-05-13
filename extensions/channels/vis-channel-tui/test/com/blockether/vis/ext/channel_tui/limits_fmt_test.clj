@@ -21,20 +21,21 @@
   (it "hard-coded labels for well-known plan rows"
     (expect (= "Codex 5h" (lfmt/generic-limit-label {:id :codex-5h})))
     (expect (= "Codex 7d" (lfmt/generic-limit-label {:id :codex-7d})))
+    (expect (= "Z.ai coding plan 5h" (lfmt/generic-limit-label {:id :zai-coding-plan-5h})))
+    (expect (= "Z.ai coding plan 7d" (lfmt/generic-limit-label {:id :zai-coding-plan-7d})))
     (expect (= "Premium interactions" (lfmt/generic-limit-label {:id :premium_interactions}))))
 
   (it "derives a label from :label, stripping ` Quota` / ` Quota (%)` suffixes"
-    (expect (= "Z.ai Coding 5h token"
+    (expect (= "Z.ai coding plan 5h"
               (lfmt/generic-limit-label {:id :zai-coding-plan-5h
-                                         :label "Z.ai Coding 5h token quota"})))
+                                         :label "Z.ai coding plan 5h token quota"})))
     (expect (= "Something"
               (lfmt/generic-limit-label {:id :other :label "Something Quota (%)"}))))
 
   (it "falls back to the :id when no :label is supplied"
-    ;; Generic label generator capitalizes the first segment and lower-cases
-    ;; the rest — :zai-coding-plan-5h → "Zai coding plan 5h".
-    (expect (= "Zai coding plan 5h"
-              (lfmt/generic-limit-label {:id :zai-coding-plan-5h})))))
+    ;; Unknown ids still use the generic id-derived label path.
+    (expect (= "Some provider window"
+              (lfmt/generic-limit-label {:id :some-provider-window})))))
 
 (defdescribe percentage-limit-row?-test
   (it "true for well-known percentage plan rows"
@@ -86,7 +87,7 @@
     (expect (not (lfmt/generic-limit-has-signal? {:remaining 0 :limit 0 :used 0})))))
 
 (defdescribe dynamic-summary-test
-  (it "renders the Z.ai Coding 5h + 7d rows compactly"
+  (it "renders the Z.ai coding plan 5h + 7d rows compactly"
     (let [limits {:dynamic {:limits [{:id :zai-coding-plan-5h :remaining 47}
                                      {:id :zai-coding-plan-7d :remaining 80}]}}
           out    (lfmt/dynamic-summary limits)]

@@ -4,7 +4,7 @@
    Originally these helpers lived as private fns in
    `channel_tui/footer.clj`, but the provider-list dialog
    (`channel_tui/provider.clj`) needed the same compact one-line
-   summary so users can see their Z.ai Coding 5h / 7d quota (and
+   summary so users can see their Z.ai coding plan 5h / 7d quota (and
    equivalents on other providers) on the provider card itself, not
    only in the footer or the `Show Status + Limits` dialog.
 
@@ -43,6 +43,8 @@
     :premium-interactions "Premium interactions"
     :codex-5h "Codex 5h"
     :codex-7d "Codex 7d"
+    :zai-coding-plan-5h "Z.ai coding plan 5h"
+    :zai-coding-plan-7d "Z.ai coding plan 7d"
     (let [label (or (:label row)
                   (some-> (:id row) name (str/replace #"[_-]" " ") str/capitalize)
                   "Limit")]
