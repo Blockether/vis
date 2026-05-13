@@ -6,10 +6,10 @@
 (defdescribe provider-registration-test
   (it "registers both Z.ai plans as separate provider extension entries"
     (require 'com.blockether.vis.ext.provider-zai :reload)
-    (let [coding (vis/provider-by-id :zai-coding)
+    (let [coding (vis/provider-by-id :zai-coding-plan)
           pass   (vis/provider-by-id :zai)
           ext-nses (set (map :ext/namespace (vis/registered-extensions)))]
-      (expect (= :zai-coding (:provider/id coding)))
+      (expect (= :zai-coding-plan (:provider/id coding)))
       (expect (= :zai (:provider/id pass)))
       (expect (contains? ext-nses 'com.blockether.vis.ext.provider-zai.coding))
       (expect (contains? ext-nses 'com.blockether.vis.ext.provider-zai.pass))
@@ -23,7 +23,7 @@
 (defdescribe auth-prompt-test
   (it "exposes static API-key guidance for the coding plan"
     (require 'com.blockether.vis.ext.provider-zai :reload)
-    (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :zai-coding)))]
+    (let [lines ((:provider/auth-prompt-fn (vis/provider-by-id :zai-coding-plan)))]
       (expect (some #(= "  Z.ai (Coding Plan) requires a static API key." %) lines))
       (expect (some #(= "         export ZAI_CODING_API_KEY=<your-zai-api-key>" %) lines))
       (expect (some #(= "  Endpoint: https://api.z.ai/api/coding/paas/v4" %) lines)))))
@@ -33,7 +33,7 @@
     (require 'com.blockether.vis.ext.provider-zai :reload)
     (with-redefs-fn {#'zai/load-auth-file (constantly nil)
                      #'zai/env-key-for-plan (constantly nil)
-                     #'vis/current-config (constantly {:providers [{:id :zai-coding
+                     #'vis/current-config (constantly {:providers [{:id :zai-coding-plan
                                                                     :api-key "config-key"}]})}
       (fn []
         (expect (= {:api-key "config-key" :source :config}
@@ -65,10 +65,10 @@
                                                             :percentage 50
                                                             :nextResetTime 1770848402389}]}})}
       (fn []
-        (let [report (vis/provider-limits :zai-coding)]
-          (expect (= :zai-coding (:provider-id report)))
+        (let [report (vis/provider-limits :zai-coding-plan)]
+          (expect (= :zai-coding-plan (:provider-id report)))
           (expect (= :ok (:status report)))
-          (expect (= [:zai-coding-5h :zai-coding-7d]
+          (expect (= [:zai-coding-plan-5h :zai-coding-plan-7d]
                     (mapv :id (get-in report [:dynamic :limits]))))
           (expect (= 25.0 (get-in report [:dynamic :limits 0 :used])))
           (expect (= 100.0 (get-in report [:dynamic :limits 0 :limit])))
@@ -82,7 +82,7 @@
     (require 'com.blockether.vis.ext.provider-zai :reload)
     (with-redefs-fn {#'zai/detect-key (constantly nil)}
       (fn []
-        (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding)))]
-          (expect (= :zai-coding (:provider-id report)))
+        (let [report ((:provider/limits-fn (vis/provider-by-id :zai-coding-plan)))]
+          (expect (= :zai-coding-plan (:provider-id report)))
           (expect (= :unauthenticated (:status report)))
           (expect (= [] (get-in report [:dynamic :limits]))))))))

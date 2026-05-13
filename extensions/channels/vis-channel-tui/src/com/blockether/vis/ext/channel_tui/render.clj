@@ -1432,14 +1432,14 @@
    binds the engine contract to its own theme vocabulary.
 
    Tags collapsed from 8 (read/search/edit/create/delete/move/
-   shell/meta) to 2 (observation/action) per PLAN.md §2.1. The
+   shell/meta) to 2 (observation/mutation) per PLAN.md §2.1. The
    TUI keeps its 8 color roles for visual richness; renderers can
    look at `:op` (the symbol) for finer-grained painting if
    needed, but the canonical mapping below uses just the tag."
   [op-tag]
   (case op-tag
     :op.tag/observation :tool-color/read
-    :op.tag/action      :tool-color/edit
+    :op.tag/mutation    :tool-color/edit
     nil))
 
 (defn- tool-color-role->fg
@@ -2597,13 +2597,13 @@
 
 (defn- tool-detail-badge
   "Compose the short summary line painted on tool-result rows.
-   Label = OBSERVATION/ACTION (derived from `:tag`); suffix =
+   Label = OBSERVATION/MUTATION (derived from `:tag`); suffix =
    op-name. No per-op badge field anywhere."
   [detail]
   (when-let [tag (some-> detail :tag)]
     (let [label (case tag
                   :op.tag/observation "OBSERVATION"
-                  :op.tag/action      "ACTION"
+                  :op.tag/mutation    "MUTATION"
                   nil)
           op    (:op detail)]
       (when label

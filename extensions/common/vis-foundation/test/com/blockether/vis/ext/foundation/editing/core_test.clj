@@ -114,18 +114,21 @@
   ;; `com.blockether.vis.internal.extension` (`op-tag`,
   ;; `op-presentation`). Editing used to keep a thin shim; that
   ;; shim is gone and callers go straight to the engine. Tags
-  ;; collapsed to 2 values per PLAN.md §2.11; ops not in the
-  ;; registration table get the safe default :op.tag/observation.
+  ;; collapsed to observation/mutation values; ops not in the
+  ;; registration table fail closed instead of defaulting to observation.
   (doseq [[op tag] [[:v/cat         :op.tag/observation]
                     [:z/locators    :op.tag/observation]
                     [:v/rg          :op.tag/observation]
-                    [:v/patch       :op.tag/action]
-                    [:v/create-dirs :op.tag/action]
-                    [:v/delete      :op.tag/action]
-                    [:v/move        :op.tag/action]
-                    [:v/extensions  :op.tag/observation]]] ; unregistered -> default
+                    [:v/patch       :op.tag/mutation]
+                    [:v/create-dirs :op.tag/mutation]
+                    [:v/delete      :op.tag/mutation]
+                    [:v/move        :op.tag/mutation]]]
     (expect (= tag (extension/op-tag op)))
-    (expect (= {:tag tag} (extension/op-presentation op)))))
+    (expect (= {:tag tag} (extension/op-presentation op))))
+  (let [thrown (try (extension/op-tag :v/extensions)
+                 nil
+                 (catch clojure.lang.ExceptionInfo e e))]
+    (expect (= :extension/unregistered-op (:type (ex-data thrown))))))
 
 (defdescribe editing-prompt-read-policy-test
   (it "teaches full-read vars, canonical patching, and no duplicate rereads by default"

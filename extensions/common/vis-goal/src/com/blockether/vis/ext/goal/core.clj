@@ -702,6 +702,14 @@
 (def ^:private goal-symbols
   [status-symbol set-symbol pause-symbol resume-symbol clear-symbol mark-symbol])
 
+(doseq [[op tag] [[:goal/status :op.tag/observation]
+                  [:goal/set :op.tag/mutation]
+                  [:goal/pause :op.tag/mutation]
+                  [:goal/resume :op.tag/mutation]
+                  [:goal/clear :op.tag/mutation]
+                  [:goal/mark :op.tag/mutation]]]
+  (vis/register-op! op {:tag tag}))
+
 ;; =============================================================================
 ;; TUI slash command — `/goal ...`
 ;;
