@@ -3105,25 +3105,6 @@
                        (try (hook-fn payload)
                          (catch Exception e
                            (tel/log! {:level :warn :data (format-exception-short e)} log-message)))))
-        ;; Post-phase `:ext/hooks` invocation. Walks every active
-        ;; extension's hooks vector, filters by namespaced :phase, calls :fn
-        ;; with the post-eval ctx. Return value is IGNORED — these are
-        ;; side-effect-only telemetry / logging / external-resource hooks.
-        ;; Pre-phase hooks fire from prompt/build-iteration-context.
-        emit-post-hooks! (fn [target-phase ctx]
-                           (doseq [ext (or active-exts [])
-                                   {:keys [id phase] hook-fn :fn} (or (:ext/hooks ext) [])
-                                   :when (= phase target-phase)]
-                             (binding [extension/*current-extension* ext
-                                       extension/*current-symbol* nil]
-                               (try (hook-fn (assoc ctx :phase target-phase))
-                                 (catch Throwable t
-                                   (tel/log! {:level :warn
-                                              :id ::hook-threw
-                                              :data {:ext (:ext/namespace ext)
-                                                     :hook id
-                                                     :phase target-phase
-                                                     :error (ex-message t)}}))))))
         ;; Metadata persisted on each iteration row - reuses the
         ;; precomputed `active-exts` (no second activation pass).
         ;;
@@ -3283,9 +3264,9 @@
                       reasoning-level (copilot-claude-safe-reasoning-level
                                         resolved-model user-request raw-reasoning-level
                                         {:allow-copilot-claude-deep? allow-copilot-claude-deep?})
-                      _ (log-stage! :turn.iteration/start iteration {:message-count (count messages)
-                                                                     :reasoning reasoning-level
-                                                                     :requested-reasoning raw-reasoning-level})
+                      _ (log-stage! :iteration/start iteration {:message-count (count messages)
+                                                                :reasoning reasoning-level
+                                                                :requested-reasoning raw-reasoning-level})
                       pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
                       iteration-context (prompt/build-iteration-context environment
                                           {:blocks-by-iteration journal-iters
@@ -3404,15 +3385,6 @@
                                                         :cost-usd (:cost-usd tc)))))]
                         (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
                         (update-iteration-id! environment err-iteration-id (long (or iteration 0)))
-                        ;; Post-phase :turn.iteration/stop hook (error path).
-                        (emit-post-hooks! :turn.iteration/stop
-                          {:iteration       (inc (long (or iteration 0)))
-                           :iteration-id    err-iteration-id
-                           :status          :error
-                           :thinking        empty-reasoning
-                           :blocks          nil
-                           :error           iteration-error-data
-                           :duration-ms     0})
                       ;; Live error chunk - `:phase :iteration-error`
                       ;; signals the iteration aborted before any
                       ;; forms could run. No per-form chunks fired
@@ -3519,21 +3491,13 @@
                           _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
                           _ (update-iteration-id! environment iteration-id (long (or iteration 0)))
                           trace-entry {:iteration iteration :thinking thinking
-                                       :blocks blocks :final? (boolean final-result)}
-                          _ (emit-post-hooks! :turn.iteration/stop
-                              {:iteration       (inc (long (or iteration 0)))
-                               :iteration-id    iteration-id
-                               :status          (if final-result :final :continue)
-                               :thinking        thinking
-                               :blocks          blocks
-                               :error           nil
-                               :duration-ms     (or (:duration-ms iteration-result) 0)})]
+                                       :blocks blocks :final? (boolean final-result)}]
                       (cond
                         final-result
                         (do (log-stage! :final iteration
                               {:answer (truncate (answer-str (:answer final-result)) 200)
                                :iteration-count (inc iteration)})
-                          (log-stage! :turn.iteration/stop iteration
+                          (log-stage! :iteration/stop iteration
                             {:blocks (count blocks) :errors (count (filter :error blocks))
                              :times (mapv :execution-time-ms blocks)})
                         ;; Iteration-final chunk (`:phase :iteration-final`).
@@ -3562,25 +3526,17 @@
                                                    :iteration-count (inc iteration)}
                                              (finalize-cost))
                                          (attach-llm-routing-summary pre-resolved-model iteration-result))]
-                            (emit-post-hooks! :turn/stop
-                              {:status          :final
-                               :iteration       (long (or iteration 0))
-                               :iteration-count (inc iteration)
-                               :tokens          (:tokens result)
-                               :cost-usd        (:cost result)
-                               :answer          (:answer final-result)
-                               :error           nil})
                             (auto-archive-hot-symbols! environment)
                             result))
 
                         :else
                         (if (empty? blocks)
                           (do (log-stage! :empty iteration {})
-                            (log-stage! :turn.iteration/stop iteration {:blocks 0 :errors 0 :times []})
+                            (log-stage! :iteration/stop iteration {:blocks 0 :errors 0 :times []})
                             (recur (merge loop-state
                                      {:iteration (inc iteration) :trace (conj trace trace-entry)})))
 
-                          (do (log-stage! :turn.iteration/stop iteration
+                          (do (log-stage! :iteration/stop iteration
                                 {:blocks (count blocks) :errors (count (filter :error blocks))
                                  :times (mapv :execution-time-ms blocks)})
                           ;; Non-terminal iteration-final chunk: per-form
@@ -3996,7 +3952,7 @@
       ;; :answer nil here meant the web bubble rendered blank even though
       ;; we had diagnostic text ready.
       (do
-        (log-stage! :turn/stop 0
+        (log-stage! :turn/complete 0
           {:duration-ms duration-ms :iteration-count iteration-count :status status})
         (let [fallback-answer (:result answer answer)]
           (try
@@ -4021,7 +3977,7 @@
             (some? locals) (assoc :locals locals))))
       ;; success path
       (do
-        (log-stage! :turn/stop 0
+        (log-stage! :turn/complete 0
           {:duration-ms duration-ms :iteration-count iteration-count
            :cost (str (:total-cost cost-with-model))})
         (try
@@ -4099,7 +4055,7 @@
                *concurrency*      merged-concurrency]
        (tel/with-ctx+ {:db-info db-info
                        :conversation-soul-id (:conversation-id environment)}
-         (log-stage! :turn/start 0
+         (log-stage! :turn/open 0
            {:model root-model
             :reasoning? (boolean (:reasoning? (first (mapcat :models (:providers (:router environment))))))
             :user-request user-request})

@@ -236,7 +236,7 @@
   ^String [s]
   (str/replace (str s) #"\u001B\[[0-9;]*m" ""))
 
-(defn- visible-width
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} visible-width
   ^long [s]
   (p/display-width (strip-ansi-sgr s)))
 
@@ -1074,7 +1074,7 @@
     (cached* [:clojure-plain width code-text]
       #(fmt/format-clojure code-text width))))
 
-(defn- raw-result-lines
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} raw-result-lines
   "Pretty-print TUI result text without ANSI syntax coloring. Width
    handling remains visual wrapping if zprint falls back to raw text."
   [text width]
@@ -1461,35 +1461,6 @@
    source of truth: the engine-derived tag (PLAN §2.1, 2-value enum)."
   [m]
   (op-tag->color-role (:tag m)))
-
-(defn- paint-preview-switcher!
-  [g x y fbx iw abs-row meta bg fg inactive-fg base-styles]
-  (p/set-bg! g bg)
-  (p/fill-rect! g fbx y iw 1)
-  (when-let [summary-text (some-> (:summary-text meta) str not-empty)]
-    (p/set-colors! g fg bg)
-    (p/styled g (vec base-styles)
-      (p/paint-styled-line! g x y summary-text
-        fg bg t/code-block-fg t/code-block-bg))
-    (when (:toggle? meta)
-      (let [first-control-col (or (:start (first (:options meta))) iw)
-            toggle-width      (max 1 (- (+ x first-control-col) fbx))]
-        (cr/register!
-          {:bounds {:row abs-row :col fbx :width toggle-width}
-           :kind :toggle-details
-           :conversation-id (:conversation-id meta)
-           :node-id (:toggle-node-id meta)
-           :collapsed? (:collapsed? meta)}))))
-  (doseq [{:keys [mode active? label start width]} (:options meta)]
-    (p/set-colors! g (if active? fg inactive-fg) bg)
-    (p/styled g (cond-> (vec base-styles) active? (conj p/UNDERLINE))
-      (p/put-str! g (+ x start) y label))
-    (cr/register!
-      {:bounds {:row abs-row :col (+ x start) :width width}
-       :kind :preview-switcher
-       :conversation-id (:conversation-id meta)
-       :node-id (:node-id meta)
-       :mode mode})))
 
 (defn- silent-form-count
   [message]
@@ -2022,7 +1993,7 @@
                   ;; right edge, not just the text width.
                     (str/starts-with? line md-summary-marker)
                     (let [abs-row (+ (long viewport-top) y)
-                          hovered? (and (contains? #{:toggle-details :preview-switcher} (:kind meta))
+                          hovered? (and (= :toggle-details (:kind meta))
                                      (= abs-row (:row (:bounds (cr/hovered)))))
                           bg       (if hovered? t/link-chrome-hover-bg t/md-summary-bg)
                           tool-fg  (tool-color-role->fg (:color-role meta))
@@ -2030,25 +2001,22 @@
                                      hovered? t/link-chrome-hover-fg
                                      tool-fg  tool-fg
                                      :else    t/md-summary-fg)]
-                      (if (seq (:options meta))
-                        (paint-preview-switcher! g x y fbx iw abs-row meta bg fg t/dialog-hint [p/BOLD])
-                        (do
-                          (p/set-colors! g fg bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/styled g [p/BOLD]
-                            (p/paint-styled-line! g x y (subs line 1)
-                              fg bg
-                              t/code-block-fg t/code-block-bg))
-                          (case (:kind meta)
-                            :toggle-details
-                            (cr/register!
-                              {:bounds {:row abs-row :col fbx :width iw}
-                               :kind :toggle-details
-                               :conversation-id (:conversation-id meta)
-                               :node-id (:node-id meta)
-                               :collapsed? (:collapsed? meta)})
+                      (p/set-colors! g fg bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g [p/BOLD]
+                        (p/paint-styled-line! g x y (subs line 1)
+                          fg bg
+                          t/code-block-fg t/code-block-bg))
+                      (case (:kind meta)
+                        :toggle-details
+                        (cr/register!
+                          {:bounds {:row abs-row :col fbx :width iw}
+                           :kind :toggle-details
+                           :conversation-id (:conversation-id meta)
+                           :node-id (:node-id meta)
+                           :collapsed? (:collapsed? meta)})
 
-                            nil))))
+                        nil))
 
                     (str/starts-with? line md-code-marker)
                     (do
@@ -2170,7 +2138,7 @@
                   ;; whole reasoning block reads as one cohesive zone.
                     (str/starts-with? line th-md-summary-marker)
                     (let [abs-row (+ (long viewport-top) y)
-                          hovered? (and (contains? #{:toggle-details :preview-switcher} (:kind meta))
+                          hovered? (and (= :toggle-details (:kind meta))
                                      (= abs-row (:row (:bounds (cr/hovered)))))
                           bg       (if hovered? t/link-chrome-hover-bg t/th-md-summary-bg)
                           tool-fg  (tool-color-role->fg (:color-role meta))
@@ -2178,25 +2146,22 @@
                                      hovered? t/link-chrome-hover-fg
                                      tool-fg  tool-fg
                                      :else    t/th-md-summary-fg)]
-                      (if (seq (:options meta))
-                        (paint-preview-switcher! g x y fbx iw abs-row meta bg fg t/dialog-hint [p/BOLD p/ITALIC])
-                        (do
-                          (p/set-colors! g fg bg)
-                          (p/fill-rect! g fbx y iw 1)
-                          (p/styled g [p/BOLD p/ITALIC]
-                            (p/paint-styled-line! g x y (subs line 1)
-                              fg bg
-                              t/code-result-fg t/code-block-bg))
-                          (case (:kind meta)
-                            :toggle-details
-                            (cr/register!
-                              {:bounds {:row abs-row :col fbx :width iw}
-                               :kind :toggle-details
-                               :conversation-id (:conversation-id meta)
-                               :node-id (:node-id meta)
-                               :collapsed? (:collapsed? meta)})
+                      (p/set-colors! g fg bg)
+                      (p/fill-rect! g fbx y iw 1)
+                      (p/styled g [p/BOLD p/ITALIC]
+                        (p/paint-styled-line! g x y (subs line 1)
+                          fg bg
+                          t/code-result-fg t/code-block-bg))
+                      (case (:kind meta)
+                        :toggle-details
+                        (cr/register!
+                          {:bounds {:row abs-row :col fbx :width iw}
+                           :kind :toggle-details
+                           :conversation-id (:conversation-id meta)
+                           :node-id (:node-id meta)
+                           :collapsed? (:collapsed? meta)})
 
-                            nil))))
+                        nil))
 
               ;; Thinking fenced code: visible code-block bg, italic dim text.
               ;; Clojure/EDN fences can carry zprint ANSI syntax color;
@@ -2521,11 +2486,6 @@
          [(str conversation-id) (str node-id)]
          default-expanded?)))))
 
-(defn- preview-mode
-  [detail-expansions conversation-id node-id]
-  (let [mode (get detail-expansions [(str conversation-id) (str node-id)] :preview)]
-    (if (contains? #{:preview :raw} mode) mode :preview)))
-
 (defn- hidden-size-hint
   ^String [entries]
   (let [line-count (count entries)
@@ -2658,56 +2618,6 @@
   [detail]
   (true? (:self-describing? detail)))
 
-(defn- preview-switcher-entry
-  [{:keys [marker active-mode conversation-id node-id max-w summary-left summary-suffix
-           toggle-node-id toggle? collapsed?]}]
-  (let [tokens        (mapv (fn [[mode label]]
-                              {:mode mode
-                               :active? (= active-mode mode)
-                               :label (str (if (= active-mode mode) "●" "○") " " label)})
-                        [[:preview "PREVIEW"] [:raw "RAW"]])
-        sep           "  "
-        controls      (str/join sep (map :label tokens))
-        max-w         (long (or max-w 0))
-        controls-w    (visible-width controls)
-        summary-gap-w (if (seq summary-left) 2 0)
-        summary-max-w (max 0 (- max-w controls-w summary-gap-w))
-        summary-text  (when (seq summary-left)
-                        (ellipsize-cols
-                          (if (seq summary-suffix)
-                            (format-detail-summary-line summary-left summary-suffix summary-max-w)
-                            summary-left)
-                          summary-max-w))
-        summary-w     (visible-width (or summary-text ""))
-        controls-col  (if (seq summary-text)
-                        (max (+ summary-w summary-gap-w) (- max-w controls-w))
-                        (max 0 (- max-w controls-w)))
-        pad-w         (if (seq summary-text)
-                        (max summary-gap-w (- controls-col summary-w))
-                        controls-col)
-        line          (str (or summary-text "") (repeat-str \space pad-w) controls)
-        spans         (loop [acc [] col controls-col remaining tokens]
-                        (if-let [{:keys [mode active? label]} (first remaining)]
-                          (recur (conj acc {:mode mode
-                                            :active? active?
-                                            :label label
-                                            :start col
-                                            :width (visible-width label)})
-                            (+ col (visible-width label) (if (next remaining) (visible-width sep) 0))
-                            (next remaining))
-                          acc))]
-    {:line (str marker line)
-     :meta {:kind :preview-switcher
-            :conversation-id (str conversation-id)
-            :summary-text summary-text
-            :summary-width summary-w
-            :node-id (str node-id)
-            :active-mode active-mode
-            :options spans
-            :toggle-node-id (str toggle-node-id)
-            :toggle? (boolean toggle?)
-            :collapsed? collapsed?}}))
-
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} detail-summary-entries
   [{:keys [marker max-w summary hidden-entries collapsed? conversation-id node-id color-role]
     :as detail-ctx}]
@@ -2750,8 +2660,8 @@
       (or (and (>= (int c) (int \uE000)) (<= (int c) (int \uE0FF)))
         (= c \u200B) (= c \u200C) (= c \u200D) (= c \uFEFF)))))
 
-(defn- markdown-body-entries
-  "Render `text` as markdown into painter entries via the IR walker
+(defn- ir-body-entries
+  "Render `text` into painter entries via canonical IR only
    (`vis/text->ir` → `ir-tui/ir->entries`).
 
    For each emitted line:
@@ -2794,8 +2704,8 @@
   "Stamp every body row of an expanded disclosure with copy metadata so a
    single click on the body lines copies the WHOLE disclosure body, not
    the entire enclosing assistant message. Rows that already carry meta
-   (preview-switcher chrome, nested toggle-details, ...) keep theirs -
-   those have their own click handling and must not be hijacked."
+   (nested toggle-details, links, ...) keep theirs - those have their
+   own click handling and must not be hijacked."
   [entries node-id text]
   (if (or (nil? node-id) (str/blank? (str text)))
     entries
@@ -2819,21 +2729,19 @@
       (int (Character/getType (.charAt line 0))))))
 
 (def ^:private chrome-meta-kinds
-  ;; Row kinds that paint display-only chrome (`▾ SUMMARY [Turn: ...]`,
-  ;; preview-mode switcher chips). Skipped when reconstructing the
-  ;; user-facing body text so nested disclosure copy doesn't drag the
-  ;; visual summary glyph + `[Turn:..., Details:...]` suffix into the
-  ;; clipboard.
-  #{:toggle-details :preview-switcher})
+  ;; Row kinds that paint display-only chrome (`▾ SUMMARY [Turn: ...]`).
+  ;; Skipped when reconstructing the user-facing body text so nested
+  ;; disclosure copy doesn't drag the visual summary glyph + details
+  ;; suffix into the clipboard.
+  #{:toggle-details})
 
 (defn- entries->body-text
   "Reconstruct the user-readable body text from a vec of `{:line :meta}`
    entries. Strips the leading paint marker (one zero-width / format
    codepoint) ONLY when present; plain answer-markdown rows have no
-   prefix and stay intact. Skips chrome rows (disclosure summaries,
-   preview switcher chips) so a nested-details copy carries body text
-   only - not the toggle glyph. Used as the copy payload for
-   disclosure body rows."
+   prefix and stay intact. Skips chrome rows (disclosure summaries) so
+   a nested-details copy carries body text only - not the toggle glyph.
+   Used as the copy payload for disclosure body rows."
   [entries]
   (->> entries
     (remove (fn [{:keys [meta]}]
@@ -2851,10 +2759,10 @@
   [{:keys [conversation-id detail-expansions conversation-turn-id iteration-number
            block-number kind summary summary-marker body-marker lines max-w color-role
            render-as raw-text]}]
-  (let [md-entries (when (= :markdown render-as)
-                     (markdown-body-entries (or raw-text (str/join "\n" lines))
+  (let [ir-entries (when (= :ir render-as)
+                     (ir-body-entries (or raw-text (str/join "\n" lines))
                        body-marker max-w))
-        entries (or md-entries
+        entries (or ir-entries
                   (mapv (fn [line] {:line (str body-marker line) :meta nil}) lines))
         size-text (or raw-text (str/join "\n" lines))]
     (if (or (nil? conversation-id)
@@ -3042,8 +2950,8 @@
 (defn- format-iteration-entry-entries
   [{:keys [thinking code comments results result-kinds result-details stdouts stderrs durations successes started-at-ms provider-fallbacks error repeat-count]}
    code-width iteration-number
-   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms preview-default-lines live-preview?]
-       :or   {show-header? false preview-default-lines 4 live-preview? false}}]]
+   & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms live-preview?]
+       :or   {show-header? false live-preview? false}}]]
   ;; Iteration / block header labels removed per user directive. The
   ;; `show-header?` argument is retained as a no-op for callers; we
   ;; never paint the right-aligned ITERATION N band any more.
@@ -3210,103 +3118,46 @@
                                 code-text)
                 result-str    (when results (get results idx))
                 result-kind   (when result-kinds (get result-kinds idx))
+                result-text   (if (and (= :value result-kind) (not is-error?))
+                                (format-clojure-plain result-str fill-w)
+                                result-str)
                 result-detail (when result-details (get result-details idx))
                 tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
                 output-fill-w (max 1 (- fill-w tool-output-indent-cols))
-                result-lines  (when (and result-str (not (str/blank? (str result-str))))
-                                (if (= :preview result-kind)
-                                  (let [switch-id            (detail-node-id {:conversation-turn-id conversation-turn-id
-                                                                              :iteration-number iteration-number
-                                                                              :block-number block-number
-                                                                              :section :iteration
-                                                                              :kind :preview-switch})
-                                        body-id              (detail-node-id {:conversation-turn-id conversation-turn-id
-                                                                              :iteration-number iteration-number
-                                                                              :block-number block-number
-                                                                              :section :iteration
-                                                                              :kind :preview-body})
-                                        active-mode          (preview-mode detail-expansions conversation-id switch-id)
-                                        detail-text          (fn [k]
-                                                               (when (map? result-detail) (get result-detail k)))
-                                        mode-text            (case active-mode
-                                                               :preview (str/trim (str result-str))
-                                                               :raw (or (some-> (detail-text :raw) str) ""))
-                                        preview-limit        (max 1 (long (or preview-default-lines 4)))
-                                        preview-window       (let [s (str/trim (str result-str)) n (.length ^{:tag String} s) limit preview-limit] (if (zero? n) {:lines [], :line-count 0} (loop [i 0 line-start 0 line-count 0 lines []] (if (>= i n) (let [line-open? (< line-start n) lines (if (and line-open? (< (count lines) limit)) (conj lines (subs s line-start n)) lines) line-count (if line-open? (inc line-count) line-count)] {:lines lines, :line-count line-count}) (let [ch (.charAt ^{:tag String} s i)] (if (or (= ch \newline) (= ch \return)) (let [next-i (if (and (= ch \return) (< (inc i) n) (= (.charAt ^{:tag String} s (inc i)) \newline)) (+ i 2) (inc i)) lines (if (< (count lines) limit) (conj lines (subs s line-start i)) lines)] (recur next-i next-i (inc line-count) lines)) (recur (inc i) line-start line-count lines)))))))
-                                        preview-source-count (long (or (:line-count preview-window) 0))
-                                        collapsible?         (and conversation-id (> preview-source-count preview-limit))
-                                        body-expanded?       (and collapsible?
-                                                               (detail-expanded? detail-expansions conversation-id body-id false))
-                                        collapsed?           (and collapsible? (= :preview active-mode) (not body-expanded?))
-                                        visible-source-lines (cond
-                                                               (not= :preview active-mode) nil
-                                                               collapsed? (:lines preview-window)
-                                                               collapsible? (str/split-lines mode-text)
-                                                               :else (:lines preview-window))
-                                        mode-lines           (if (= :preview active-mode)
-                                                               (mapcat #(wrap-text % fill-w) visible-source-lines)
-                                                               ;; :raw mode of a :preview result — pretty-print
-                                                               ;; via the plain formatter. No ANSI syntax
-                                                               ;; coloring is allowed in result rows.
-                                                               (raw-result-lines mode-text fill-w))
-                                        hidden-count         (when collapsed?
-                                                               (max 0 (- preview-source-count preview-limit)))
-                                        summary-left         (when collapsible? (if collapsed? (str "▸ " hidden-count " lines hidden") (str "▾ showing all " preview-source-count " lines")))
-                                        switcher-entry       (preview-switcher-entry
-                                                               {:conversation-id conversation-id
-                                                                :max-w fill-w
-                                                                :marker md-summary-marker
-                                                                :node-id switch-id
-                                                                :active-mode active-mode
-                                                                :summary-left summary-left
-                                                                :toggle? collapsible?
-                                                                :summary-suffix (when collapsible?
-                                                                                  (detail-id-suffix {:conversation-turn-id conversation-turn-id
-                                                                                                     :iteration-number iteration-number
-                                                                                                     :block-number block-number
-                                                                                                     :section :iteration
-                                                                                                     :kind :preview}))
-                                                                :collapsed? collapsed?
-                                                                :toggle-node-id body-id})
-                                        body-entries         (mapv #(line-entry (str r-marker %)) mode-lines)]
-                                    (vec (concat [switcher-entry] body-entries)))
-                                  (let [color-role     (when (map? result-detail) (meta->color-role result-detail))
-                                        detail-entries (maybe-collapse-raw-text-block
-                                                         {:conversation-id      conversation-id
-                                                          :detail-expansions   detail-expansions
-                                                          :conversation-turn-id conversation-turn-id
-                                                          :iteration-number    iteration-number
-                                                          :block-number        block-number
-                                                          :kind                :result
-                                                          :summary             (or tool-badge "RESULT")
-                                                          :color-role          color-role
-                                                          :summary-marker      md-summary-marker
-                                                          :body-marker         r-marker
-                                                          :raw-text            result-str
-                                                          :max-w               fill-w
-                                                          ;; Tool channel-render-fns return Markdown by
-                                                          ;; the extension contract (see
-                                                          ;; `internal/extension.clj` `channel-render-tool-result`).
-                                                          ;; Render the body via the markdown
-                                                          ;; pipeline so headings/bullets/code
-                                                          ;; fences inside details paint as
-                                                          ;; markdown instead of as raw text.
-                                                          ;; Errors stay raw because
-                                                          ;; err-result-marker carries its own
-                                                          ;; styling and error payloads are
-                                                          ;; rarely full markdown.
-                                                          :render-as           (when-not is-error? :markdown)})
-                                        summary-entry?  (= :toggle-details (get-in (first detail-entries) [:meta :kind]))
-                                        badge-entry     (when (and tool-badge
-                                                                (not summary-entry?)
-                                                                (not (self-describing-tool-result? result-detail)))
-                                                          {:line (str md-summary-marker tool-badge)
-                                                           :meta {:kind :tool-badge
-                                                                  :color-role color-role}})]
-                                    (vec (concat
-                                           (when badge-entry [badge-entry])
-                                           detail-entries)))))
+                result-lines  (when (and result-text (not (str/blank? (str result-text))))
+                                (let [color-role     (when (map? result-detail) (meta->color-role result-detail))
+                                      detail-entries (maybe-collapse-raw-text-block
+                                                       {:conversation-id      conversation-id
+                                                        :detail-expansions   detail-expansions
+                                                        :conversation-turn-id conversation-turn-id
+                                                        :iteration-number    iteration-number
+                                                        :block-number        block-number
+                                                        :kind                :result
+                                                        :summary             (or tool-badge "RESULT")
+                                                        :color-role          color-role
+                                                        :summary-marker      md-summary-marker
+                                                        :body-marker         r-marker
+                                                        :raw-text            result-text
+                                                        :max-w               fill-w
+                                                        ;; Tool channel-render-fns return text that may
+                                                        ;; contain Markdown syntax. Convert it once to
+                                                        ;; canonical IR and render from IR. No Markdown
+                                                        ;; renderer path and no ANSI result coloring.
+                                                        ;; Errors stay raw because err-result-marker
+                                                        ;; carries its own styling and error payloads
+                                                        ;; are rarely structured prose.
+                                                        :render-as           (when-not is-error? :ir)})
+                                      summary-entry?  (= :toggle-details (get-in (first detail-entries) [:meta :kind]))
+                                      badge-entry     (when (and tool-badge
+                                                              (not summary-entry?)
+                                                              (not (self-describing-tool-result? result-detail)))
+                                                        {:line (str md-summary-marker tool-badge)
+                                                         :meta {:kind :tool-badge
+                                                                :color-role color-role}})]
+                                  (vec (concat
+                                         (when badge-entry [badge-entry])
+                                         detail-entries))))
                 code-block    (vec (concat
                                      (when show-header? [(line-entry (str iteration-hdr-marker expr-hdr))])
                                      (when (seq comment-lines)
@@ -3519,7 +3370,6 @@
          ;; status row; no right-aligned label band is painted.
          show-iteration-headers?  false
          static-limit     (max 1 (long (get settings :progress/live-iteration-limit 24)))
-         preview-default-lines (get settings :preview/default-lines 4)
          {:keys [now-ms turn-start-ms cancelling? conversation-id
                  conversation-turn-id detail-expansions viewport-rows]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
@@ -3626,7 +3476,6 @@
                                      show-iteration-headers?
                                      (boolean show-thinking?)
                                      (boolean show-silent?)
-                                     preview-default-lines
                                      conversation-id
                                      conversation-turn-id
                                      (relevant-detail-expansions-key detail-scope-opts)
@@ -3636,7 +3485,6 @@
                                               :conversation-id      conversation-id
                                               :conversation-turn-id conversation-turn-id
                                               :detail-expansions   detail-expansions
-                                              :preview-default-lines preview-default-lines
                                               :live-preview?        true}]
                               (cached* k
                                 #(format-iteration-entry-entries
@@ -3721,8 +3569,7 @@
                                                   {:show-header?         show-iteration-headers?
                                                    :conversation-id      (:conversation-id opts)
                                                    :detail-expansions   (:detail-expansions opts)
-                                                   :conversation-turn-id (:conversation-turn-id opts)
-                                                   :preview-default-lines (get settings :preview/default-lines 4)}))))
+                                                   :conversation-turn-id (:conversation-turn-id opts)}))))
                                     (collapse-repeated-error-runs trace)))
         fa-label                (label-text "final answer")
         conf-str                (when confidence (str " / " (name confidence)))
