@@ -89,3 +89,29 @@ turn_active_extensions: [...]
 Therefore the bug is not OpenAI/Codex-specific and not a TUI-only persistence artifact. It is in shared prompt assembly (`current-turn-context-block`) and affects `vis run --persist` with `zai-coding-plan/glm-5.1` too.
 
 Important nuance: plain `vis run --json` does **not** expose the prompt in JSON output; it only exposes result/trace/tokens. To inspect actual prompt, use `--persist` and query `conversation_turn_iteration.llm_user_prompt`, or add explicit debug instrumentation.
+
+## Fix applied — `turn_system_prompt` removed from dynamic context
+
+Changed `src/com/blockether/vis/internal/prompt.clj` so `<current_turn_context>` no longer includes `turn_system_prompt`. The stable/core system prompt remains only in the system message.
+
+Also compacted `turn_active_extensions`: it now includes only extension identity/routing coordinates (`:namespace`, optional `:alias`, optional `:kind`) and no longer repeats docs or symbol catalogs. Detailed extension docs still live in the stable extension/system message and can be queried via runtime tools when needed.
+
+Validation:
+
+```bash
+clojure -M:test -n com.blockether.vis.internal.prompt-test
+cljfmt check src/com/blockether/vis/internal/prompt.clj test/com/blockether/vis/internal/prompt_test.clj
+vis run --persist --provider zai-coding-plan --model glm-5.1 --json "Siema"
+```
+
+New persisted validation conversation: `7b650263-fc56-46fb-8421-ba6b1059686f`.
+
+DB inspection of `conversation_turn_iteration.llm_user_prompt` after the fix:
+
+- iteration 1: `turn_system_prompt:` count = `0`
+- iteration 1: `<system_prompt>` count in full serialized prompt = `1` (only the real system message)
+- iteration 1 per-iteration trailer size dropped from about `5085` chars before the fix to `2427` chars after the fix
+- iteration 1 total prompt chars dropped from about `15321` to `12571`
+- iteration 1 input tokens dropped from about `3785` to `3201`
+
+Remaining known issue from validation: trivial greetings still often trigger the final-answer evidence gate and require a pointless probe before answering. That is separate from this duplication fix.

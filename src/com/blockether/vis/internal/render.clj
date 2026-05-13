@@ -50,7 +50,8 @@
   (:require
    [clojure.string :as str]
    [clojure+.walk :as cwalk]
-   [com.blockether.vis.internal.persistance :as persistance])
+   [com.blockether.vis.internal.persistance :as persistance]
+   [edamame.core :as edamame])
   (:import
    [org.commonmark.ext.gfm.strikethrough Strikethrough StrikethroughExtension]
    [org.commonmark.ext.gfm.tables TableBlock TableCell TablesExtension]
@@ -1110,3 +1111,161 @@
        (when conversation
          (str (render-export-header conversation (count turns))
            (str/join "\n" (map (partial render-export-turn opts) turns))))))))
+
+;; ============================================================================
+;; Per-form silent rendering inside a mixed block (P1.1).
+;;
+;; With per-block eval (Phase B), one Markdown code block can contain multiple
+;; top-level forms — including a `(turn-answer! …)` or a
+;; `(set-conversation-title! …)` mixed with regular `(def …)` work. Without a
+;; per-form split the channel either over-hides (whole block disappears when
+;; the answer call is anywhere inside) or over-shows (raw `(turn-answer! …)`
+;; source appears above the rendered IR answer, redundant).
+;;
+;; `code-block-segments` is a pure helper that parses the block source via
+;; edamame and splits it into ordered structural segments. Channels read the
+;; segments at display time and render each :kind appropriately.
+;; ============================================================================
+
+(def ^:private code-block-edamame-opts
+  {:all true
+   :readers (fn [_tag] (fn [val] (list 'do val)))})
+
+(defn- top-level-form-kind
+  "Classify a parsed top-level form into a render segment kind:
+     :answer-ref  —  (turn-answer! …)
+     :title       —  (set-conversation-title! …)
+     :code        —  anything else (def, fn call, nested do/let/when, etc.)
+   Match is namespace-agnostic by NAME; engine forms come unqualified."
+  [form]
+  (if (and (seq? form) (symbol? (first form)))
+    (case (name (first form))
+      "turn-answer!"             :answer-ref
+      "set-conversation-title!"  :title
+      :code)
+    :code))
+
+(defn- form-bounds-by-meta
+  "Build a parallel vector of {:start :end} byte offsets for each form by
+   reading edamame's `:row :col :end-row :end-col` meta. Returns nil-entries
+   for forms without locator meta (rare; e.g. reader-tag expansions)."
+  [^String src forms]
+  (let [lines       (str/split src #"\n" -1)
+        line-starts (->> lines
+                      (reductions (fn [acc line] (+ acc (count line) 1)) 0)
+                      vec)
+        n           (count line-starts)
+        offset-of   (fn [row col]
+                      (when (and row col)
+                        (let [line (max 0 (dec row))]
+                          (when (< line n)
+                            (+ (nth line-starts line) (max 0 (dec col)))))))]
+    (mapv (fn [f]
+            (when-let [m (and (instance? clojure.lang.IObj f) (meta f))]
+              (let [s (offset-of (:row m) (:col m))
+                    e (offset-of (:end-row m) (:end-col m))]
+                (when (and s e (>= s 0) (<= e (count src)) (<= s e))
+                  {:start s :end e}))))
+      forms)))
+
+(defn- slice-with-leading-prose
+  "Return the source slice for the form at `idx`, including any leading
+   comments / blank lines / `#_(...)` discards in the gap between the
+   previous form and this one. Keeps the model's authored paragraphing
+   alongside the form it annotates."
+  [^String src bounds idx]
+  (when-let [bnd (nth bounds idx nil)]
+    (let [end      (:end bnd)
+          prev-end (or (some-> (nth bounds (dec idx) nil) :end) 0)]
+      (subs src prev-end end))))
+
+(defn- title-value-from-form
+  "Extract the literal title string from a `(set-conversation-title! \"X\")`
+   form. Returns the raw string when shape matches; nil for dynamic args
+   (rare)."
+  [form]
+  (when (and (seq? form)
+          (= 2 (count form))
+          (string? (second form)))
+    (second form)))
+
+(defn code-block-segments
+  "Parse `block-source` into ordered render segments — each top-level form
+   classified as `{:kind :code|:title|:answer-ref ...}`. Consecutive `:code`
+   forms collapse into a single `:code` segment so a prelude of `(def …)`
+   lines renders as one code block instead of N.
+
+   Segment shapes:
+     `{:kind :code        :source \"\u2026\"}`   visible code, with leading prose
+     `{:kind :title       :value  \"X\"}`   `(set-conversation-title! \"X\")` form
+     `{:kind :answer-ref}`                  `(turn-answer! …)` form (hide; answer below)
+
+   Compound bodies (`(do …)` / `(let …)` / `(when …)`) are treated opaquely:
+   only TOP-LEVEL forms are classified, so an answer call buried inside a `do`
+   body stays inside the surrounding `:code` segment. Engine-side preflight
+   catches embedded extension calls; this layer doesn't rewrite source.
+
+   Pure helper. Never throws — parser failure degrades to one `:code`
+   segment with the full source. Empty / blank / nil input returns `[]`."
+  [block-source]
+  (let [src (str (or block-source ""))]
+    (cond
+      (str/blank? src) []
+
+      :else
+      (let [parsed (try {:forms (edamame/parse-string-all src code-block-edamame-opts)}
+                     (catch Throwable _ {:error true}))]
+        (cond
+          (:error parsed)
+          [{:kind :code :source src}]
+
+          (empty? (:forms parsed))
+          []
+
+          :else
+          (let [forms  (:forms parsed)
+                bounds (form-bounds-by-meta src forms)
+                ;; Per-form classified entries (already with source slices).
+                raw    (mapv (fn [idx form]
+                               (let [kind  (top-level-form-kind form)
+                                     slice (or (slice-with-leading-prose src bounds idx)
+                                             (binding [*print-meta* false] (pr-str form)))
+                                     trimmed (str/trim slice)]
+                                 (case kind
+                                   :answer-ref {:kind :answer-ref}
+                                   :title      {:kind :title
+                                                :value (title-value-from-form form)}
+                                   :code       {:kind :code :source trimmed})))
+                         (range) forms)
+                ;; Coalesce consecutive :code segments. The bounds-based slice
+                ;; for the LATER code form already includes the gap from the
+                ;; previous code form (because slice-with-leading-prose extends
+                ;; back to prev-end), but only when the previous form was ALSO
+                ;; a :code segment surviving into the same group. Rebuild the
+                ;; merged source by reading from the FIRST form's prev-end
+                ;; through the LAST form's end.
+                coalesce (fn [groups]
+                           (reduce
+                             (fn [acc seg]
+                               (let [prev (peek acc)]
+                                 (if (and prev (= :code (:kind prev)) (= :code (:kind seg)))
+                                   (let [merged-source (str (:source prev) "\n" (:source seg))]
+                                     (conj (pop acc) (assoc prev :source merged-source)))
+                                   (conj acc seg))))
+                             []
+                             groups))]
+            (coalesce raw)))))))
+
+(defn block-structurally-silent?
+  "True when the block source contains ONLY structural forms (`:title`
+   and/or `:answer-ref`) — no `:code` segments to display. Engine stamps
+   the persisted block + stream chunk with `:vis/silent? true` based on
+   this so channels that don't parse segments still drop the entry from
+   default display.
+
+   Pure-code blocks and mixed blocks (any `:code` segment present) are
+   NOT structurally silent: the prelude is genuinely useful work to show."
+  [block-source]
+  (let [segs (code-block-segments block-source)]
+    (and (seq segs)
+      (not-any? #(= :code (:kind %)) segs))))

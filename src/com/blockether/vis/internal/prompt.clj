@@ -530,19 +530,6 @@
                   :print-length 32
                   :print-level 5}))
 
-(defn- active-extensions-context-value
-  [active-extensions]
-  (mapv (fn [ext]
-          (cond-> {:namespace (:ext/namespace ext)
-                   :symbols   (mapv :ext.symbol/symbol (:ext/symbols ext))}
-            (get-in ext [:ext/alias :alias])
-            (assoc :alias (get-in ext [:ext/alias :alias]))
-            (:ext/doc ext)
-            (assoc :doc (:ext/doc ext))
-            (:ext/kind ext)
-            (assoc :kind (:ext/kind ext))))
-    (or active-extensions [])))
-
 (defn- current-turn-context-block
   "Render dynamic engine telemetry into the user-role iteration trailer.
 
@@ -552,8 +539,7 @@
    `current_engine_iteration_id` is a logical engine id for the in-flight
    iteration; the DB UUID appears only after persistence, so the previous
    persisted DB id is exposed separately."
-  [environment {:keys [iteration engine-state engine-phase
-                       active-extensions system-prompt]}]
+  [environment {:keys [iteration engine-state engine-phase]}]
   (let [iteration-position  (inc (long (or iteration 0)))
         previous-position   (max 0 (dec iteration-position))
         turn-id             (or (some-> (:current-conversation-turn-id-atom environment) deref)
@@ -568,9 +554,7 @@
         ;; the `CONVERSATION_TITLE` SCI binding was retired (see
         ;; `inject-system-var-snapshots` docstring for rationale).
         conversation-title  (some-> (:conversation-title-atom environment) deref)
-        previous-answer     (sandbox-value environment 'CONVERSATION_PREVIOUS_ANSWER "")
-        turn-system-prompt  (or system-prompt
-                              (sandbox-value environment 'TURN_SYSTEM_PROMPT ""))]
+        previous-answer     (sandbox-value environment 'CONVERSATION_PREVIOUS_ANSWER "")]
     (prompt-block
       "current_turn_context"
       (str "engine_state: " (or engine-state "turn.iteration/start") "\n"
@@ -585,8 +569,6 @@
         "turn_id: " (context-value-str (or turn-id "")) "\n"
         "turn_position: " (context-value-str (or turn-position 0)) "\n"
         "turn_conversation_state_id: " (context-value-str (or conversation-state-id "")) "\n"
-        "turn_system_prompt: " (context-value-str (or turn-system-prompt "")) "\n"
-        "turn_active_extensions: " (context-value-str (active-extensions-context-value active-extensions)) "\n"
         "turn_iteration_id: " (context-value-str (or previous-iter-id "")) "\n"
         "turn_iteration_position: " (context-value-str previous-position) "\n"
         "conversation_state_id: " (context-value-str (or conversation-state-id "")) "\n"
@@ -688,9 +670,7 @@
         current-context-block (current-turn-context-block environment
                                 {:iteration iteration
                                  :engine-state :turn.iteration/start
-                                 :engine-phase :model_think
-                                 :active-extensions active-extensions
-                                 :system-prompt stable-prompt-content})
+                                 :engine-phase :model_think})
         pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
         budget-after-pinned (max 1 (- ctx-limit (long pinned-tokens)))
@@ -990,6 +970,19 @@ ANSWER_IR
     (when (seq fragments)
       (prompt-block "extensions" (str/join "\n\n" fragments)))))
 
+(defn- turn-system-context-block
+  "Turn-scoped system context that can be rebuilt/replaced as runtime
+   capabilities change.
+
+   Keep this as ONE provider system message. Extension prompts belong here,
+   not in every per-iteration `<current_turn_context>` trailer. When a future
+   reload path recomputes active extensions mid-turn, it should replace this
+   message in the rebuilt stateless provider message vector rather than append
+   a second extension/context message."
+  [environment active-extensions]
+  (when-let [extensions-block (extensions-prompt-block environment active-extensions)]
+    (prompt-block "turn_system_context" extensions-block)))
+
 (defn- stable-prompt-message
   [content]
   (when (and (string? content) (not (str/blank? content)))
@@ -1005,12 +998,14 @@ ANSWER_IR
   "Assemble provider-prefix messages.
 
    Send order is explicit and tested:
-     `<system_prompt>` - CORE_SYSTEM_PROMPT + caller addendum
-     `<extensions>`    - extension-owned prompt fragments. Foundation emits
-                         `<environment>` inside its own fragment.
+     `<system_prompt>`       - CORE_SYSTEM_PROMPT + caller addendum
+     `<turn_system_context>` - turn-scoped runtime capability context. Today it
+                               contains the single `<extensions>` block; future
+                               extension reloads should replace this one message,
+                               never append a second extension context.
 
-   Extension fragments are separate messages, not content inside the core system
-   prompt.
+   Extension fragments are separate from the core system prompt and are not
+   repeated in per-iteration `<current_turn_context>` trailers.
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Drives
@@ -1024,10 +1019,10 @@ ANSWER_IR
              {:type :vis/missing-active-extensions})))
   (let [core-block (prompt-block "system_prompt"
                      (build-system-prompt {:system-prompt system-prompt}))
-        ext-block  (extensions-prompt-block environment active-extensions)]
+        turn-system-block (turn-system-context-block environment active-extensions)]
     (vec
       (keep stable-prompt-message
-        [core-block ext-block]))))
+        [core-block turn-system-block]))))
 
 (defn assemble-system-prompt
   "Backward-compatible joined-text view of `assemble-stable-prompt-messages`.
