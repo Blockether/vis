@@ -46,14 +46,11 @@
         {:status 500 :headers {"content-type" "text/plain"} :body method}))))
 
 (defdescribe exa-extension-loads-test
-  (it "ships a parseable vis.edn manifest"
+  (it "ships a namespace-only vis.edn manifest"
     (let [manifest (edn/read-string {:readers {} :default (fn [_ form] form)}
-                     (slurp (exa-manifest-file)))
-          readme   (get-in manifest ['exa :docs "README.md" :content])]
+                     (slurp (exa-manifest-file)))]
       (expect (= '[com.blockether.vis.ext.exa.core] (get-in manifest ['exa :nses])))
-      (expect (str/includes? readme "\"url\""))
-      (expect (str/includes? readme ":result"))
-      (expect (not (str/includes? readme "[:result :content]")))))
+      (expect (not (contains? (get manifest 'exa) :docs)))))
 
   (it "exposes Exa symbols, renderers, and a compact prompt"
     (expect (= '[web-search code-context]

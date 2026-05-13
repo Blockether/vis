@@ -7,25 +7,16 @@
      {git
       {:nses [com.acme.ext.git.core
               com.acme.channel.web.bot
-              ...]
-       :docs {\"README.md\" {:created-at  #inst \"...\"
-                              :description \"...\"
-                              :content     \"...\"
-                              :links       [...]}}}}
+              ...]}}
 
    `scan-extensions!` is the primitive: it walks every URL, parses
-   each map, normalizes the doc descriptors (rejecting entries that
-   miss `:description` or `:content`), `require`s every namespace listed
-   under `:nses` exactly once across all URLs (so registrar side
-   effects in those namespaces fire), and returns the merged manifest
-   map `{<id> {:nses [...] :docs {...}}}`. Idempotent and memoized.
+   each map, `require`s every namespace listed under `:nses` exactly
+   once across all URLs (so registrar side effects in those namespaces
+   fire), and returns the merged manifest map `{<id> {:nses [...]}}`.
+   Idempotent and memoized.
 
    `rediscover!` is a test/REPL helper that drops the cache and
-   re-scans.
-
-   The docs-registry merge (which exposes `(v/extension-doc id name)`
-   etc.) lives one layer up in `com.blockether.vis.internal.extension`.
-   This namespace just produces parsed-and-normalized manifests."
+   re-scans."
   (:require
    [clojure.edn :as edn]
    [clojure.string :as str]
@@ -37,81 +28,25 @@
    already-shipped extension jars."
   "META-INF/vis-extension/vis.edn")
 
-(defn- non-blank-string? [x]
-  (and (string? x) (not (str/blank? x))))
-
-(defn- valid-link? [link]
-  (and (map? link)
-    (or (and (symbol? (:to-id link)) (string? (:to-doc link)))
-      (string? (:to-doc link))
-      (string? (:url link))
-      (string? (:file link)))))
-
-(defn- normalize-doc-descriptor
-  "Validate one `[doc-name descriptor]` pair from a vis.edn `:docs`
-   map. Returns the descriptor with empty defaults filled in, or
-   `nil` when the entry is malformed (missing :description, missing
-   :content, etc.). Logs the rejection reason at `:warn`."
-  [doc-name descriptor]
-  (cond
-    (not (string? doc-name))
-    (do (tel/log! {:level :warn :id ::doc-bad-name
-                   :data {:doc-name doc-name}
-                   :msg  (str "Doc name must be a string, got " (pr-str doc-name))})
-      nil)
-
-    (not (map? descriptor))
-    (do (tel/log! {:level :warn :id ::doc-bad-shape
-                   :data {:doc-name doc-name :type (some-> descriptor class .getName)}
-                   :msg  (str "Doc descriptor must be a map: " doc-name)})
-      nil)
-
-    (not (non-blank-string? (:description descriptor)))
-    (do (tel/log! {:level :warn :id ::doc-missing-description
-                   :data {:doc-name doc-name}
-                   :msg  (str "Doc " doc-name " missing required :description string")})
-      nil)
-
-    (not (non-blank-string? (:content descriptor)))
-    (do (tel/log! {:level :warn :id ::doc-missing-content
-                   :data {:doc-name doc-name}
-                   :msg  (str "Doc " doc-name " missing required :content string")})
-      nil)
-
-    :else
-    {:created-at  (:created-at descriptor)
-     :description (:description descriptor)
-     :content     (:content descriptor)
-     :links       (vec (filter valid-link? (:links descriptor)))}))
-
 (defn- normalize-vis-edn
   "Coerce a parsed `vis.edn` payload into the canonical map shape
-   `{<id-sym> {:nses [<ns-sym> ...] :docs {<doc-name> <descriptor>}}}`.
-   Drops malformed entries silently; returns `{}` for unrecognized
-   shapes."
+   `{<id-sym> {:nses [<ns-sym> ...]}}`. Drops malformed entries
+   silently; returns `{}` for unrecognized shapes."
   [parsed]
   (when (map? parsed)
     (into {}
       (keep (fn [[id entry]]
               (when (and (symbol? id) (map? entry))
-                (let [nses (vec (filter symbol? (:nses entry)))
-                      docs (when (map? (:docs entry))
-                             (into {}
-                               (keep (fn [[doc-name descriptor]]
-                                       (when-let [norm (normalize-doc-descriptor doc-name descriptor)]
-                                         [doc-name norm])))
-                               (:docs entry)))]
+                (let [nses (vec (filter symbol? (:nses entry)))]
                   (when (seq nses)
-                    [id {:nses nses :docs (or docs {})}])))))
+                    [id {:nses nses}])))))
       parsed)))
 
 (defn- merge-manifest-entry
   "Merge two parsed manifest entries for the same id. `:nses` are
-   deduped (existing order preserved); `:docs` is a map merge with
-   later entries winning per name."
+   deduped with existing order preserved."
   [existing entry]
-  {:nses (vec (distinct (concat (:nses existing) (:nses entry))))
-   :docs (merge (or (:docs existing) {}) (or (:docs entry) {}))})
+  {:nses (vec (distinct (concat (:nses existing) (:nses entry))))})
 
 (defonce ^:private cached-manifests (atom nil))
 (defonce ^:private discovered? (atom false))
@@ -248,17 +183,12 @@
 
 (defn scan-extensions!
   "Idempotent classpath scan + namespace requires. Returns the merged
-   parsed manifests as `{<id-sym> {:nses [...] :docs {...}}}`. Memoized
-   on first success; subsequent calls return the cache.
-
-   Callers that want the docs-registry side effect (the
-   `(v/extension-doc ...)` index) should call
-   `com.blockether.vis.internal.extension/discover-extensions!`
-   instead - which wraps this primitive with the docs merge.
+   parsed manifests as `{<id-sym> {:nses [...]}}`. Memoized on first
+   success; subsequent calls return the cache.
 
    Callers that just need the require side effect to drive their own
    registrar (e.g. the persistence facade lazy-discovering backends
-   on first connect) can call this directly and skip the docs work."
+   on first connect) can call this directly."
   []
   (if @discovered?
     (do

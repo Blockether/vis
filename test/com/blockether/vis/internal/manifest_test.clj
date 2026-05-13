@@ -3,20 +3,12 @@
    [com.blockether.vis.internal.manifest :as manifest]
    [lazytest.core :refer [defdescribe expect it]]))
 
-(defdescribe manifest-doc-normalization-test
-  (it "normalizes docs without adding computed backlinks"
-    (let [normalize    (deref (resolve 'com.blockether.vis.internal.manifest/normalize-doc-descriptor))
-          backlink-key (keyword (str "ref" "links"))
-          out          (normalize "README.md" {:description "demo"
-                                               :content "body"
-                                               :links [{:to-doc "OTHER.md"}
-                                                       {:bad true}]})]
-      (expect (= {:created-at nil
-                  :description "demo"
-                  :content "body"
-                  :links [{:to-doc "OTHER.md"}]}
-                out))
-      (expect (not (contains? out backlink-key)))))
+(defdescribe manifest-normalization-test
+  (it "normalizes manifests to namespaces only"
+    (let [normalize (deref (resolve 'com.blockether.vis.internal.manifest/normalize-vis-edn))]
+      (expect (= {'demo {:nses ['demo.core]}}
+                (normalize {'demo {:nses ['demo.core]
+                                   :ignored "not part of the manifest contract"}})))))
 
   (it "exposes public load failure state as a vector"
     (expect (vector? (manifest/load-failures)))))

@@ -2647,19 +2647,6 @@
   (or (> (count lines) auto-collapse-line-threshold)
     (> (count (str (or raw-text ""))) auto-collapse-char-threshold)))
 
-(defn- markdown-marker-prefix?
-  "True when the line starts with a markdown structural marker emitted
-   by `markdown->lines-plain` (`MARKER_MD_H1`, `MARKER_MD_BULLET`, etc.).
-   Such a line owns its row paint; we must not steal its first character
-   with the body-marker (e.g. result-bg) or we lose heading/bullet/code
-   rendering. Inline-marker codepoints (\\uE110-style sentinels) are
-   embedded mid-line, never as a first character on a structural row."
-  [^String line]
-  (and (string? line) (pos? (count line))
-    (let [c (.charAt line 0)]
-      (or (and (>= (int c) (int \uE000)) (<= (int c) (int \uE0FF)))
-        (= c \u200B) (= c \u200C) (= c \u200D) (= c \uFEFF)))))
-
 (defn- channel-ir?
   [x]
   (and (vector? x) (= :ir (first x))))
@@ -2684,25 +2671,17 @@
    channel-render-fn output must already be `[:ir ...]`; strings belong to
    raw value/stdout fallback paths, not tool/channel rendering.
 
-   For each emitted line:
-
-   - If the line already starts with a structural marker emitted by the IR
-     walker (`MARKER_MD_H1`, `MARKER_MD_BULLET`, fenced-code marker, etc.),
-     keep it verbatim. Headings/bullets/code blocks own their row paint.
-   - Otherwise prepend `body-marker` so plain prose still picks up the
-     surrounding details bg (e.g. result-bg).
+   Channel IR renders in place. Do not stringify it and do not prepend
+   generic result/body markers: plain IR paragraphs should inherit the
+   surrounding assistant background, while explicit IR structure (code,
+   headings, lists, tables) owns its own row styling.
 
    Returns `nil` for empty IR."
-  [ir body-marker max-w]
+  [ir _body-marker max-w]
   (when (and (channel-ir? ir) (not (channel-body-blank? ir)))
-    (let [entries (ir-tui/ir->entries (vis/->ast ir) max-w)]
+    (let [entries (ir-tui/ir->entries (vis/->ast ir) max-w {:mode :channel})]
       (when (seq entries)
-        (mapv (fn [{:keys [line meta]}]
-                {:line (if (markdown-marker-prefix? line)
-                         line
-                         (str body-marker line))
-                 :meta meta})
-          entries)))))
+        entries))))
 
 (defn- indent-output-entry
   [entry]
@@ -3157,7 +3136,9 @@
                                 code-text)
                 result-str      (when results (get results idx))
                 result-kind     (when result-kinds (get result-kinds idx))
-                raw-result-text (if (and (= :value result-kind) (not is-error?))
+                raw-result-text (if (and (= :value result-kind)
+                                      (not is-error?)
+                                      (not (channel-ir? result-str)))
                                   (format-clojure-plain result-str fill-w)
                                   result-str)
                 result-text     (if (and raw-result-text (not is-error?) (string? raw-result-text))

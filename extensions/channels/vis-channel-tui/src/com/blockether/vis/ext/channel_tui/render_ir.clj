@@ -665,9 +665,23 @@
    :table   p/MARKER_TH_MD_TABLE_ROW
    :plain   p/MARKER_THINKING})
 
+(def ^:private channel-marker-set
+  ;; Channel/tool IR renders in place inside the surrounding bubble.
+  ;; Structural IR (headings, code, lists, tables) keeps explicit row
+  ;; styling; plain paragraphs get no hidden answer/result background.
+  {:h1      p/MARKER_MD_H1
+   :h2      p/MARKER_MD_H2
+   :h3      p/MARKER_MD_H3
+   :code    p/MARKER_MD_CODE
+   :bullet  p/MARKER_MD_BULLET
+   :quote   p/MARKER_MD_QUOTE
+   :table   p/MARKER_MD_TABLE_ROW
+   :plain   ""})
+
 (defn- marker-set-for [mode]
   (case mode
     :thinking thinking-marker-set
+    (:channel :tool) channel-marker-set
     answer-marker-set))
 
 (defn- block-marker-for
@@ -707,7 +721,7 @@
   "Convert walker output (vector of `{:runs :block-tag :block-level?}`
    maps) into the painter's sentinel-prefixed string contract. Each
    line: `<block-marker><inline-sentinel-wrapped body>`. `:mode`
-   selects the marker set (`:answer` (default) or `:thinking`)."
+   selects the marker set (`:answer` default, `:thinking`, or `:channel`)."
   ([lines] (lines->sentinel-strings lines nil))
   ([lines opts]
    (let [ms (marker-set-for (:mode opts))]
@@ -720,8 +734,8 @@
 (defn ir->sentinel-strings
   "One-shot helper: canonical IR → vector of sentinel-prefixed strings
    ready for the existing bubble painter. Composes `ir->lines` with
-   the sentinel adapter. `:mode` (`:answer` or `:thinking`) selects
-   the marker set."
+   the sentinel adapter. `:mode` (`:answer`, `:thinking`, or `:channel`)
+   selects the marker set."
   ([ir width] (ir->sentinel-strings ir width nil))
   ([ir width opts]
    (lines->sentinel-strings (ir->lines ir width opts) opts)))
@@ -752,6 +766,8 @@
    `:mode` selects the marker set:
      `:answer`   (default) — answer-zone PUA chars (answer-bg paint)
      `:thinking` — thinking-zone PUA chars (iter-header-bg + italic)
+     `:channel`  — in-place channel/tool IR; plain paragraphs use no
+                   background marker, structural rows keep explicit styling
 
    This is the IR-side analogue of `markdown->entries`. Every
    bubble rendering path that used to parse the rendered markdown

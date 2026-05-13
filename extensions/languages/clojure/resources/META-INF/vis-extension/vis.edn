@@ -1,14 +1,2 @@
 {clj
- {:nses [com.blockether.vis.ext.lang-clojure.core]
-  :docs
-  {"README.md"
-   {:created-at #inst "2026-04-29T00:00:00.000-00:00"
-    :description
-    "Clojure/EDN zipper patching for the SCI sandbox under the single `z/` alias. `(z/patch edits)` keeps the same map/vector shape as `v/patch`: `:path`, `:search`, and `:replace`; `:search` is a parsed Clojure/EDN locator."
-    :content
-    "# Clojure language extension\n\nPkg: `com.blockether/vis-language-clojure`. Src: `extensions/languages/clojure/`.\n\nSingle alias: `z/`. Single edit operation: `z/patch`.\n\n## z/patch\n\n`z/patch` performs zipper-based replacement for Clojure/EDN source files. It deliberately keeps the same map shape as `v/patch`:\n\n```clojure\n(z/patch {:path \"src/foo.clj\"\n          :search \"old-sym\"\n          :replace \"new-sym\"})\n\n(z/patch [{:path \"src/foo.clj\"\n           :search \"(def x 1)\"\n           :replace \"(def x 2)\"}\n          {:path \"src/bar.clj\"\n           :search \":old-key\"\n           :replace \":new-key\"}])\n```\n\nRules:\n\n- Required keys: `:path`, `:search`, `:replace`.\n- `:search` is a locator: a Clojure/EDN form value or a source string parsed as one form.\n- `:replace` is a replacement: a Clojure/EDN form value or a source string parsed as one form.\n- Each `:search` locator must match exactly once in the current zipper state.\n- All edits validate before any file is written.\n- Multiple edits to the same file are applied in order and written once.\n- Return value is a tool envelope; changed file diffs live under `[:result :files]`; totals live under `[:result :total-files]` and `[:result :total-changes]`.\n\n## Locator discovery\n\n```clojure\n(get-in (z/locators \"src/foo.clj\") [:result]) ; locator rows: :tag :value :locator :source :span\n(get-in (z/symbols \"src/foo.clj\") [:result])  ; symbol locator rows only\n```\n\nThe full rewrite-clj zipper API is also available under `z/`, including SCI-callable `z/subedit->`, `z/edit->`, `z/subedit->>`, and `z/edit->>`.\n\n## Why zippers\n\nThe API shape is simple like `v/patch`, but matching is structural. Source around the edited node (comments, indentation, sibling whitespace) survives because replacement is done through rewrite-clj zippers, not regex text replacement.\n\n## Use when\n\n- Editing `.clj`, `.cljc`, `.cljs`, or `.edn`.\n- You can identify the target as a Clojure/EDN form, symbol, keyword, string literal, map, vector, etc.\n- You want the same map/vector patch shape as `v/patch`, but zipper semantics under the Clojure `z/` alias.\n\n## Use other tools when\n\n- Not Clojure/EDN source -> `v/patch`.\n- Editing comments/plain text that is not a Clojure form -> `v/patch`.\n- Need discovery/read -> `v/rg`, `v/ls`, or `v/cat`."
-    :links
-    [{:to-id vis :to-doc "README.md"
-      :context "Generic filesystem surface - v/cat, v/rg, v/ls, v/patch"}
-     {:file "extensions/languages/clojure/src/com/blockether/vis/ext/lang_clojure/patch.clj"
-      :context "Source: z/patch"}]}}}}
+ {:nses [com.blockether.vis.ext.lang-clojure.core]}}
