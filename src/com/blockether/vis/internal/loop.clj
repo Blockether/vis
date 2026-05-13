@@ -49,7 +49,6 @@
    [sci.core :as sci]
    [taoensso.telemere :as tel])
   (:import
-   [com.oakmac.parinfer Parinfer ParinferResult]
    [java.security MessageDigest]
    [java.util.concurrent ConcurrentHashMap Semaphore]))
 
@@ -154,12 +153,9 @@
   [started-ns]
   (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
 
-(def ^:private parse-repair-timeout-ms
-  "Hard wall-clock budget for one parser repair attempt. A malformed model
-   response must not trap the turn in parinfer/quote repair for many seconds;
-   after this budget the repair is cancelled and the next repair (or normal
-   parse error path) proceeds."
-  1000)
+;; `parse-repair-timeout-ms` removed with the splitter chain. No
+;; parinfer/quote-rebalance repair runs anymore — SCI parses each block as
+;; one chunk and surfaces its own error.
 
 (defn normalize-reasoning-level [v]
   (svar/normalize-reasoning-level v))
@@ -261,328 +257,32 @@
   {:all true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
-(defn- check-syntax [code]
-  (edamame/parse-string-all code edamame-opts))
+;; ---------------------------------------------------------------------------
+;; Removed Phase B — the entire splitter / lint / repair stack:
+;;
+;;   check-syntax, check-bare-list, parse-clojure-syntax,
+;;   string-as-fn-call?, answer-form?, find-string-as-fn-in-answer,
+;;   string-as-fn-mistake-message, detect-common-mistakes,
+;;   quote-rebalance, parinfer-rebalance, try-repair-with-timeout,
+;;   split-top-level-forms.
+;;
+;; Vis no longer parses, lints, or repairs Clojure source before SCI eval.
+;; Each Markdown code block svar extracts becomes one code-entry; the entry's
+;; :expr is fed verbatim to `sci/eval-string+` and SCI's parse / runtime
+;; error surfaces as the block's :error map. The model self-corrects from
+;; that error next iteration.
+;;
+;; Forward declare for `raw-markdown-fence-leak-error` no longer needed —
+;; the only caller that ran before it was `detect-common-mistakes` (gone).
+;; The fn is now defined in source order alongside the other preflight
+;; helpers and called directly from `code-entries-preflight`.
+;; ---------------------------------------------------------------------------
 
-(defn- check-bare-list [forms]
-  (let [first-form (first forms)]
-    (when (and (= 1 (count forms))
-            (list? first-form) (seq first-form)
-            (let [head (first first-form)]
-              (not (or (symbol? head) (keyword? head)
-                     (list? head) (set? head) (map? head) (vector? head)))))
-      (str "Bare list literal: " (pr-str first-form)
-        ". Quote it: '(" (str/join " " first-form) ")"))))
-
-(defn- parse-clojure-syntax [code]
-  (try
-    (let [forms (check-syntax code)]
-      (or (check-bare-list forms)
-        nil))
-    (catch Throwable e
-      (ex-message e))))
-
-(defn- string-as-fn-call?
-  "True when `form` is a list whose head is a String literal -- a structural
-   shape that has no legitimate use in Clojure (strings are not IFns) and
-   produces a runtime ClassCastException at the call site. Conv 0d25a3e1
-   shipped `(v/bold (\"...\"))` from JS/Python paren leakage; the reader
-   accepts it but eval crashes."
-  [form]
-  (and (seq? form)
-    (string? (first form))))
-
-(defn- answer-form?
-  "True for `(turn-answer! ...)` calls, regardless of namespace. The lint pass
-   below only walks INSIDE these forms because (turn-answer! ...) is the
-   user-facing answer surface where shapes like `(v/bold (\"x\"))`
-   are unambiguously broken. Outside (turn-answer! ...), Clojure source can
-   legitimately call into anything, so we don't second-guess it."
-  [form]
-  (and (seq? form)
-    (symbol? (first form))
-    (= "turn-answer!" (name (first form)))
-    (nil? (namespace (first form)))))
-
-(defn- find-string-as-fn-in-answer
-  "Walk every `(turn-answer! ...)` subtree in `forms` and return the first list
-   whose head is a String literal, or nil. The walk is scoped to answer
-   bodies only -- regular Clojure code outside (turn-answer! ...) is left
-   alone."
-  [forms]
-  (some (fn [top]
-          (some (fn [node]
-                  (when (string-as-fn-call? node) node))
-            (when (coll? top) (tree-seq coll? seq top))))
-    (filter answer-form?
-      (mapcat #(tree-seq coll? seq %) forms))))
-
-(defn- string-as-fn-mistake-message
-  [forms]
-  (when-let [bad (find-string-as-fn-in-answer forms)]
-    (str "String-as-fn lint rejected this iteration before evaluation: "
-      "inside (turn-answer! ...) a Clojure list has a String literal as its head -- "
-      (pr-str bad)
-      " -- which would throw ClassCastException (String cannot be cast to IFn) at runtime. "
-      "Most often this is JS/Python call-paren syntax leaking in: write "
-      "`(v/bold \"text\")`, not `(v/bold(\"text\"))`. Recovery: drop the inner "
-      "parentheses around the string literal so the helper receives the "
-      "string directly.")))
-
-;; Forward declare — `raw-markdown-fence-leak-error` is defined ~900
-;; lines below in the preflight section. `detect-common-mistakes`
-;; (just below) needs it on the lint path; sorting defs would push
-;; the lint section past the preflight, splitting two related
-;; iteration-loop pieces. The declare is the cleaner exception per
-;; AGENTS.md S4.
-(declare raw-markdown-fence-leak-error)
-
-(defn- detect-common-mistakes
-  "Pre-eval lint pass. Returns an error STRING when the source carries
-   a structural shape that would crash at SCI eval time. Returns nil
-   when source is clean enough to hand to the parser. Currently:
-
-     - Raw Markdown fence leaked into :code (` ``` ... `). The reader
-       would fall into a re-parse loop and StackOverflow; rejecting
-       early gives a typed engine error instead of a JVM crash.
-
-     - String-as-fn calls, e.g. `(v/bold (\"x\"))` from JS/Python paren
-       leakage — runtime would throw `String cannot be cast to IFn`.
-
-   Reader / parser errors stay the responsibility of
-   `parse-clojure-syntax`; this lint only fires on cleanly-parsed
-   source for the string-as-fn check, but the fence check matches
-   raw text first since it short-circuits the parser entirely."
-  [code]
-  (when (string? code)
-    (or (raw-markdown-fence-leak-error code)
-      (try
-        (let [forms (check-syntax code)]
-          (string-as-fn-mistake-message forms))
-        (catch Throwable _
-          ;; Reader failure — defer to parse-clojure-syntax / extension rescue.
-          nil)))))
-
-;; Removed: `edamame-parses?` — only consumer was
-;; `parse-diagnose/try-quote-rebalance`, which is gone with the rest of
-;; the parse-diagnose ns.
-
-(defn quote-rebalance
-  "Stub. The previous implementation delegated to `parse-diagnose/
-   try-quote-rebalance`; that ns was deleted as part of the per-block-eval
-   pivot. Kept as a no-op so the repair chain in `split-top-level-forms`
-   still composes during the transitional state, then this defn + its
-   call site go away with the rest of the splitter."
-  ^String [^String _source]
-  nil)
-
-(defn parinfer-rebalance
-  "First-line repair for malformed Clojure source. Calls parinfer's
-   indent-mode auto-balancer (a battle-tested 1100-line algo from
-   the parinfer.kt port) and returns the rebalanced source iff:
-
-     1. Parinfer reports `success`, AND
-     2. The result is actually different from the input, AND
-     3. The rebalanced source NOW parses cleanly via edamame
-        (parinfer's `success` flag means \"the algorithm finished\";
-        we still need edamame to confirm the result is a valid
-        program).
-
-   Returns `nil` when parinfer can't help. Pure; no side effects.
-   Public so tests can pin behavior on the three observed real-world
-   failure cases (extra-close, delim-type-swap, missing-close)."
-  ^String [^String source]
-  (try
-    (let [^ParinferResult r (Parinfer/indentMode source nil nil nil false)]
-      (when (.success r)
-        (let [rebalanced (.text r)]
-          (when (and rebalanced
-                  (not= rebalanced source)
-                  ;; Re-feed to edamame; only accept the repair if
-                  ;; it actually produces a valid program. Parinfer
-                  ;; is permissive about what counts as \"success\";
-                  ;; edamame is the authoritative arbiter.
-                  (try (edamame/parse-string-all rebalanced edamame-opts) true
-                    (catch Throwable _ false)))
-            rebalanced))))
-    (catch Throwable _ nil)))
-
-(defn- try-repair-with-timeout
-  "Run one parser repair with a hard wall-clock budget. Returns the repaired
-   source string, or nil on no-op/error/timeout. The worker is cancelled on
-   timeout so a bad response cannot keep the iteration stuck in repair code."
-  [repair-name repair-fn src parse-error]
-  (let [started-ns (System/nanoTime)
-        fut        (future
-                     (try
-                       {:status :ok :value (repair-fn src parse-error)}
-                       (catch Throwable t
-                         {:status :error :error t})))
-        out        (deref fut parse-repair-timeout-ms ::timeout)
-        ms         (elapsed-ms started-ns)]
-    (cond
-      (= ::timeout out)
-      (do
-        (future-cancel fut)
-        (log-stage! :parse-repair/timeout nil
-          {:repair repair-name
-           :timeout-ms parse-repair-timeout-ms
-           :duration-ms ms
-           :source-length (count (or src ""))
-           :parse-error parse-error})
-        nil)
-
-      (= :error (:status out))
-      (do
-        (log-stage! :parse-repair/error nil
-          {:repair repair-name
-           :duration-ms ms
-           :source-length (count (or src ""))
-           :parse-error parse-error
-           :error (format-exception-short (:error out))})
-        nil)
-
-      (string? (:value out))
-      (do
-        (log-stage! :parse-repair/applied nil
-          {:repair repair-name
-           :duration-ms ms
-           :source-length (count (or src ""))
-           :result-length (count (:value out))
-           :parse-error parse-error})
-        (:value out))
-
-      :else
-      (do
-        (when (> ms 100.0)
-          (log-stage! :parse-repair/noop nil
-            {:repair repair-name
-             :duration-ms ms
-             :source-length (count (or src ""))
-             :parse-error parse-error}))
-        nil))))
-
-(defn split-top-level-forms
-  "Parse `code` (a Clojure source string) into top-level forms. Returns a
-   vector of `{:expr str :repaired? bool}` maps, one per form, where
-   `:expr` is the verbatim source slice for that form INCLUDING any
-   leading `;; comments` and `#_` discards on prior lines (so the
-   model's natural `;; what this does\n(def ...)` paragraphing
-   survives into `<journal>` instead of getting silently stripped).
-
-   Repair pipeline when source fails edamame: bounded loop over small,
-   deterministic repairs, re-parsing after every successful rewrite. This lets
-   independent fixes compose (e.g. answer-string `\\e` rescue, then parinfer).
-   On final failure return `[nil parse-error]`; `execute-code` surfaces the
-   structured parse error directly.
-
-   Empty / whitespace-only / comment-only input returns `[[] nil]`."
-  [code]
-  (let [code-str (or code "")]
-    (letfn
-      [(parse-and-slice [src repaired?]
-         (let [forms (edamame/parse-string-all src edamame-opts)
-               line-starts (let [lines (str/split src #"\n" -1)]
-                             (->> lines
-                               (reductions (fn [acc l] (+ acc (count l) 1)) 0)
-                               vec))
-               n (count line-starts)
-               offset-of (fn [row col]
-                           (when (and row col)
-                             (let [line (max 0 (dec row))]
-                               (when (< line n)
-                                 (+ (nth line-starts line) (max 0 (dec col)))))))
-               ;; Per-form bounds. Map shape (extended PLAN §2.6 +
-               ;; §7.3.7) so callers needing block-global coordinate
-               ;; translation (ex->op-error) can read `:start-row` /
-               ;; `:start-col` / `:end-row` / `:end-col` directly.
-               ;; Byte offsets remain for slice extraction.
-               form-bounds (mapv (fn [f]
-                                   (when-let [m (and (instance? clojure.lang.IObj f) (meta f))]
-                                     (let [s (offset-of (:row m) (:col m))
-                                           e (offset-of (:end-row m) (:end-col m))]
-                                       (when (and s e (>= s 0) (<= e (count src)) (<= s e))
-                                         {:start     s
-                                          :end       e
-                                          :start-row (:row m)
-                                          :start-col (:col m)
-                                          :end-row   (:end-row m)
-                                          :end-col   (:end-col m)}))))
-                             forms)
-               ;; For form K, two slices:
-               ;;   `:comment` = the GAP (end-of-K-1 .. start-of-K).
-               ;;     Captures any `;; ...` / `#_(...)` / blank lines
-               ;;     that sat between the previous form and this
-               ;;     one. Trimmed; nil when empty.
-               ;;   `:expr`    = the form's own bounds. The actual
-               ;;     Clojure code, no preamble.
-               ;; Persisting these as TWO fields (instead of glued
-               ;; into one `:expr` blob) keeps the executable code
-               ;; clean for display while still preserving the
-               ;; model's authored prose alongside each form.
-               comment-slice (fn [idx]
-                               (when-let [bnd (nth form-bounds idx nil)]
-                                 (let [start    (:start bnd)
-                                       prev-end (or (some-> (nth form-bounds (dec idx) nil)
-                                                      :end)
-                                                  0)]
-                                   (when (> start prev-end)
-                                     (let [trimmed (str/trim (subs src prev-end start))]
-                                       (when (pos? (count trimmed))
-                                         trimmed))))))
-               expr-slice (fn [idx]
-                            (when-let [{:keys [start end]} (nth form-bounds idx nil)]
-                              (subs src start end)))]
-           (mapv (fn [idx form]
-                   (let [expr-src (or (expr-slice idx)
-                                    (binding [*print-meta* false] (pr-str form)))
-                         comment  (comment-slice idx)
-                         bnd      (nth form-bounds idx nil)]
-                     (cond-> {:expr (str/trim (str expr-src))
-                              :form form}
-                       comment    (assoc :comment comment)
-                       repaired?  (assoc :repaired? true)
-                       bnd        (assoc :start-row (:start-row bnd)
-                                    :start-col (:start-col bnd)
-                                    :end-row   (:end-row   bnd)
-                                    :end-col   (:end-col   bnd)))))
-             (range) forms)))
-       (answer-escape-repair [_src _parse-error]
-         ;; No-op: `parse-diagnose/try-answer-escape-rescue` was deleted
-         ;; with the parse-diagnose ns. Slot is kept so the repair-fns
-         ;; chain still composes; the per-block-eval pivot will retire
-         ;; the whole splitter shortly.
-         nil)
-       (first-repair-candidate [src parse-error seen repair-fns]
-         (some (fn [{:keys [name f]}]
-                 (when-let [fixed (try-repair-with-timeout name f src parse-error)]
-                   (when-not (or (= fixed src) (contains? seen fixed))
-                     fixed)))
-           repair-fns))]
-      (let [repair-fns [{:name :answer-escape-e
-                         :f answer-escape-repair}
-                        {:name :parinfer
-                         :f (fn [src _parse-error] (parinfer-rebalance src))}
-                        {:name :quote-rebalance
-                         :f (fn [src _parse-error] (quote-rebalance src))}]]
-        (loop [src       code-str
-               repaired? false
-               seen      #{code-str}
-               budget    (count repair-fns)]
-          (let [parsed (try
-                         {:entries (parse-and-slice src repaired?)}
-                         (catch Throwable err
-                           {:error (ex-message err)}))]
-            (if-let [entries (:entries parsed)]
-              [entries nil]
-              (let [parse-error (:error parsed)]
-                (if (zero? budget)
-                  [nil parse-error]
-                  (if-let [fixed (first-repair-candidate src parse-error seen repair-fns)]
-                    ;; After each accepted repair, go back to parse. If parsing
-                    ;; still fails, scan repairs again from the first fixer.
-                    (recur fixed true (conj seen fixed) (dec budget))
-                    [nil parse-error]))))))))))
+;; The pre-Phase-B splitter (and its parinfer / quote-rebalance /
+;; answer-escape-e repair pipeline) was a ~140-line edamame-based slicer
+;; that lived here. With per-block eval the splitter is never called — SCI
+;; parses each Markdown code block's source directly. Body removed; commit
+;; history (`split-top-level-forms`) preserves the original.
 
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
@@ -776,56 +476,17 @@
   [{:keys [sci-ctx sandbox-ns] :as environment} code
    & {:keys [timeout-ms doc tool-event-fn]}]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
+    ;; Per-block-eval contract: feed the block source to SCI verbatim.
+    ;; SCI parses + evaluates as one chunk; parse / runtime errors surface
+    ;; as the block's structured `:error` map. No pre-eval lint, no
+    ;; pre-parse check, no answer-string restitch — the model self-corrects
+    ;; from SCI's error next iteration.
     (let [start-time (System/currentTimeMillis)
-          lint-error (detect-common-mistakes code)]
-      (if lint-error
-        ;; Per PLAN §2.1 + §7.3.5: :error is the structured
-        ;; :error map. Wrap engine-internal string errors
-        ;; (lint, parse) into the same shape with :phase :preflight.
-        {:result nil :stdout "" :stderr ""
-         :error  {:message lint-error
-                  :block   {:source code :phase :preflight}}
-         :execution-time-ms 0 :timeout? false}
-        (let [parse-error (parse-clojure-syntax code)]
-          (if parse-error
-            {:result nil :stdout "" :stderr ""
-             :error {:message parse-error
-                     :block   {:source code :phase :edamame/parse}}
-             :execution-time-ms 0 :timeout? false}
-            (let [eval-code      code
-                  initial-exec   (run-with-timing sci-ctx eval-code sandbox-ns timeout-ms start-time tool-event-fn environment)
-                  initial-ok?    (nil? (:error initial-exec))
-                  ;; Eval-time auto-repair scoped to `(turn-answer! ...)`
-                  ;; forms. SCI surfaces `Unable to resolve symbol:
-                  ;; X` when the model wrote a bare prose word
-                  ;; inside a vector of strings (the iter-0/iter-1
-                  ;; pattern in conv ec64266c-...). Only fires when
-                  ;; the source carries `(turn-answer!`, X is prose-shaped,
-                  ;; and X sits in a missing-quote-shaped context.
-                  ;; Each candidate is re-evaluated; first that
-                  ;; succeeds wins. A failed restitch falls through
-                  ;; to the hint-enrichment path below.
-                  ;; Eval-time restitch (was: `parse-diagnose/
-                  ;; try-answer-string-restitch`) and prose-as-symbol
-                  ;; hint enrichment (was: `parse-diagnose/
-                  ;; unresolved-symbol-hint`) were both deleted with the
-                  ;; parse-diagnose ns. SCI's error surfaces verbatim;
-                  ;; the model self-corrects next iteration.
-                  restitched     nil
-                  original-error nil
-                  exec           initial-exec
-                  eval-ok?       initial-ok?
-                  enriched-error nil]
-              (when eval-ok?
-                (attach-doc-meta! environment
-                  (or (:candidate restitched) eval-code) doc))
-              (cond-> exec
-                enriched-error              (assoc :error enriched-error)
-                restitched
-                (assoc :repaired? true
-                  :original-code code
-                  :original-error original-error
-                  :repair :answer-string-restitch)))))))))
+          exec       (run-with-timing sci-ctx code sandbox-ns timeout-ms
+                       start-time tool-event-fn environment)]
+      (when (nil? (:error exec))
+        (attach-doc-meta! environment code doc))
+      exec)))
 
 ;; Print-cap defaults for `prompt/safe-pr-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
