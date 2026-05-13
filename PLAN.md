@@ -238,12 +238,8 @@ Why: DB iteration UUID does not exist before model call + eval + persist.
 
 | phase | kind | integration point | timing | return handling |
 |---|---|---|---|---|
-| `:session/start` | start nudge | `prompt/build-iteration-context` | first iteration of first turn, before eval | `{:hint ...}` becomes `<current_engine_start_nudge>` |
-| `:turn/start` | start nudge | `prompt/build-iteration-context` | first iteration of each turn, before eval | `{:hint ...}` becomes `<current_engine_start_nudge>` |
 | `:turn.iteration/start` | start nudge | `prompt/build-iteration-context` | every iteration before eval | `{:hint ...}` becomes `<current_engine_start_nudge>` |
-| `:turn.iteration/stop` | post hook | `loop/emit-post-hooks!` | every iteration after eval | return ignored |
 | `:turn.answer/validate` | hard guard | `loop/final-answer-gate-error` | when `(turn-answer! ...)` produced candidate answer | `nil` accepts; `{:reject true :message ... :hint ...}` rejects |
-| `:turn/stop` | post hook | `loop/emit-post-hooks!` | after answer/cancel/error | return ignored |
 
 ## Rendered nudge tags
 
@@ -386,7 +382,7 @@ Change:
 ```text
 show <current_turn_context>
 show <current_engine_start_nudges>
-phase table says start nudge / post hook / hard guard
+phase table says start nudge / hard guard
 ```
 
 Why: docs explain integration points and guard split.
@@ -434,7 +430,7 @@ system prompt = policy + semantics, cacheable
 user trailer = dynamic runtime state, not policy
 start nudges = advisory before model call
 hard guards = final-answer rejection path
-post hooks = telemetry/side effects only
+:turn.answer/validate = final-answer rejection path
 ```
 
 ## Verification target

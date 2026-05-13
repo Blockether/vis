@@ -658,28 +658,18 @@
 ;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
 ;; A hook is a named callback that fires at a declared `:phase`; its `:fn`
-;; receives a phase-shaped context map and either returns a model-facing hint
-;; (pre-phases) or runs a side effect (post-phases).
+;; receives a phase-shaped context map.
 ;;
-;; Canonical phase keywords are namespaced by lifecycle level:
-;;   :session/start        — first iteration of the first turn, BEFORE eval.
-;;                           fn returns nil | {:hint :importance?}; hint flows
-;;                           into <current_engine_start_nudges>.
-;;   :turn/start           — first iteration of each turn, BEFORE eval. Same
-;;                           return contract as :session/start.
-;;   :turn.iteration/start — every iteration, BEFORE eval. Same return contract.
-;;   :turn.iteration/stop  — every iteration, AFTER eval. ctx includes the
-;;                           iteration result (status, blocks, error,
-;;                           duration-ms, tokens, cost). Return is IGNORED;
-;;                           use for telemetry, logging, side effects.
+;; Canonical phase keywords:
+;;   :turn.iteration/start — every iteration, BEFORE the model call. Returns
+;;                           nil | {:hint :importance?}; hint flows into
+;;                           <current_engine_start_nudges>.
 ;;   :turn.answer/validate — when a `(turn-answer! ...)` form produced a candidate
 ;;                           final answer. Return nil to accept or
 ;;                           {:reject true :message ... :hint ...} to reject.
-;;   :turn/stop            — after the turn closes (answer, cancel, or error).
-;;                           ctx includes the final result. Return ignored.
 ;;
-;; Legacy dash phases are intentionally rejected. Use the namespaced keywords
-;; above; no compatibility shim hides stale extension code.
+;; Legacy / unused phases are intentionally rejected. No compatibility shim hides
+;; stale extension code.
 ;;
 ;; Every hook declares :id, :doc, :phase, :fn — the contract is explicit
 ;; and the failure surface reviewable. One extension can ship many
@@ -687,18 +677,14 @@
 ;; caught + logged via Telemere; a misbehaving hook never blocks the
 ;; loop or starves siblings.
 ;;
-;; Hooks do NOT block evaluation. Pre-phase hooks emit advisory <current_engine_start_nudge>
-;; entries; post-phase hooks side-effect only. For HARD preflight rejection,
-;; use the preflight gates in loop.clj.
+;; Start hooks do NOT block evaluation. They emit advisory
+;; <current_engine_start_nudge> entries. For HARD final-answer rejection, use
+;; :turn.answer/validate.
 ;; ----------------------------------------------------------------------------
 (def canonical-hook-phases
   "Canonical namespaced lifecycle phases accepted by `:ext/hooks`."
-  #{:session/start
-    :turn/start
-    :turn.iteration/start
-    :turn.iteration/stop
-    :turn.answer/validate
-    :turn/stop})
+  #{:turn.iteration/start
+    :turn.answer/validate})
 
 (defn hook-phase?
   "True when `phase` is a canonical namespaced hook phase."

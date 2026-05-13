@@ -1,48 +1,20 @@
 (ns com.blockether.vis.ext.foundation.nudges
-  "Built-in `<current_engine_start_nudge>` policy for vis-foundation, expressed as
-   `:ext/hooks` declarations. Active hooks ship here today:
-
-     1. `:vis.foundation/conversation-title` (importance :low)
-        Reminds the model to keep `CONVERSATION_TITLE` current. Fires
-        when the title is blank, at every `TITLE_REFRESH_NUDGE_PERIOD`
-        iterations inside a long turn, or on turn boundaries (the
-        host passes `:title-refresh?`).
-
-     2. `:vis.foundation/context-pressure` (importance :high)
-        Fires when the estimated input tokens for the assembled
-        prompt-so-far cross `CONTEXT_PRESSURE_THRESHOLD * context-limit`.
-        Default 0.50 - with the uniform 200k Vis ceiling, that means
-        the hook engages at ~100k input tokens, which matches z.ai's
-        empirically reported GLM sweet spot of 95k-100k input tokens.
-
-     3. `:vis.foundation/blind-answer` (importance :high)
-        Fires on iteration 1 when the user request contains
-        investigation verbs (why / fix / check / find / debug / ...)
-        and no prior tool calls have run. Ignores explicit planning-only
-        requests and symbol-name occurrences like `z/patch-check`.
-        Warns the model that answering from memory on an investigation
-        request is a hallucination.
-
-     4. `:vis.foundation/action-request-needs-evidence`
-        (hard `:turn.answer/validate` guard)
-        Rejects completion claims for action requests that have no
-        prior observed work in the current turn.
-
-   Keeping policy in an extension (not core hardcoded built-ins)
-   means these go through the same `:ext/hooks` protocol any
-   third-party extension uses, can be swapped per channel/config,
-   and the iteration assembly in core stays policy-free."
   (:require
    [clojure.string :as str]))
 
-(def ^:const TITLE_REFRESH_NUDGE_PERIOD
-  "Iteration cadence at which `title-nudge` re-asks the model to
-   refresh `CONVERSATION_TITLE`. Independent of the always-on nudge
-   fired when the title is blank. 12 sits in the middle of the
-   user-requested 10-20 range - frequent enough that titles stay
-   current as the conversation drifts, infrequent enough that a
-   settled conversation isn't pestered every turn."
-  12)
+(def ^:const TITLE_REFRESH_TURN_PERIOD
+  "Turn cadence at which `title-nudge` re-asks the model to refresh
+   `CONVERSATION_TITLE` when it is already set. The nudge fires on
+   iteration 0 of turn 1 (first turn of the conversation), then on
+   iteration 0 of every Nth turn after that (10, 20, 30, ...).
+
+   Why turn-cadence instead of iteration-cadence:
+   the previous iteration-mod-12 rule never fired across a string of
+   short single-iteration turns (conversation 9a55ca1a reproduced
+   this). A turn-cadence rule fires once per visible focus shift
+   and stays quiet inside any single turn no matter how long it
+   runs."
+  10)
 
 (def ^:const CONTEXT_PRESSURE_THRESHOLD
   "Fraction of the model's effective input-token budget at which
@@ -53,6 +25,16 @@
    thinking + tool calls + answer payload."
   0.50)
 
+(defn- turn-cadence-tick?
+  "True iff `turn-position` is the first turn or a multiple of
+   `TITLE_REFRESH_TURN_PERIOD`. Defensive on non-positive / non-integer
+   input so the surrounding hook never crashes the iteration."
+  [turn-position]
+  (let [tp (long (or turn-position 0))]
+    (and (pos? tp)
+      (or (= 1 tp)
+        (zero? (mod tp TITLE_REFRESH_TURN_PERIOD))))))
+
 (defn title-nudge
   "Return a `:low`-importance nudge map when `CONVERSATION_TITLE`
    needs attention, otherwise nil. Inputs are pulled from the
@@ -60,8 +42,18 @@
 
      `:conversation-title` - current trimmed title (nil/blank if unset)
      `:title-refresh?`     - host signalled a turn-boundary refresh check
-     `:iteration`          - 1-based iteration position inside the turn"
-  [{:keys [conversation-title title-refresh? iteration]}]
+                             (true on iteration 0 of every turn)
+     `:turn-position`      - 1-based turn position inside the conversation
+     `:iteration`          - 1-based iteration position inside the turn
+                             (retained for callers that probe the fn,
+                              no longer used for cadence)
+
+   Two branches now, no iteration-mod cadence:
+     blank-title  : always nudge (a missing title is its own case)
+     refresh-tick : fires when the host flagged `:title-refresh?` AND
+                    `turn-position` is the first turn or a multiple of
+                    `TITLE_REFRESH_TURN_PERIOD`."
+  [{:keys [conversation-title title-refresh? turn-position]}]
   (let [blank? (or (nil? conversation-title) (str/blank? conversation-title))]
     (cond
       blank?
@@ -71,19 +63,12 @@
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
                "the conversation is discoverable in the sidebar.")}
 
-      title-refresh?
+      (and title-refresh? (turn-cadence-tick? turn-position))
       {:importance :low
        :text (str "Current CONVERSATION_TITLE is \"" conversation-title "\". "
-               "If this turn changes the conversation focus, refresh the title via "
-               "`(set-conversation-title! \"...\")`.")}
-
-      (and (integer? iteration)
-        (pos? iteration)
-        (zero? (mod iteration TITLE_REFRESH_NUDGE_PERIOD)))
-      {:importance :low
-       :text (str "You're " iteration " iterations into this turn. "
-               "If the conversation's focus has shifted from \"" conversation-title "\", "
-               "refresh the title via `(set-conversation-title! \"...\")`.")})))
+               "You are " turn-position " turn(s) into this conversation. "
+               "If the focus has shifted, refresh the title via "
+               "`(set-conversation-title! \"...\")`.")})))
 
 (defn context-pressure-nudge
   "Return a `:high`-importance nudge when the estimated input tokens
@@ -113,9 +98,9 @@
                  "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 
 ;; ----------------------------------------------------------------------------
-;; Hooks (`:ext/hooks`) — structured lifecycle-phase callbacks. Pre-phase
-;; hooks (e.g. :turn.iteration/start) emit MODEL-FACING <current_engine_start_nudge> entries;
-;; post-phase hooks (e.g. :turn.iteration/stop, :turn/stop) are side-effect only.
+;; Hooks (`:ext/hooks`) — structured lifecycle callbacks. :turn.iteration/start
+;; emits MODEL-FACING <current_engine_start_nudge> entries; :turn.answer/validate
+;; can reject an invalid final answer.
 ;; ----------------------------------------------------------------------------
 
 ;; `title-nudge` and `context-pressure-nudge` are exposed as plain fns so

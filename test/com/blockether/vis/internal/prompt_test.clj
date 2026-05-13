@@ -48,7 +48,29 @@
       (expect (str/includes? content "SCI-based recursive model runtime"))
       (expect (str/includes? content "reply := ```clojure``` fences only"))
       (expect (str/includes? content "Host evals forms, records evidence"))
-      (expect (str/includes? content "TURN := USER_GOAL × WORK(ITERATIONS)* × FINAL"))
+      ;; Single railway / Kleisli fixpoint replaces the old TURN := / WORK :=
+      ;; / λDISCIPLINE / λOUTPUT paraphrases. λVis is one composition, not
+      ;; four English restatements.
+      (expect (str/includes? content "λVis : USER_GOAL → FINAL"))
+      (expect (str/includes? content "λVis ≡ fix (λ loop. λ ctx."))
+      (expect (str/includes? content "step = MODEL_REPLY >=> SCI_EVAL >=> OBSERVE"))
+      (expect (str/includes? content "if READY? ctx then EMIT_FINAL ctx else loop (step ctx)"))
+      (expect (str/includes? content "Kleisli"))
+      (expect (str/includes? content "StateT Ctx (Either Err)"))
+      (expect (str/includes? content "MODEL_REPLY : Ctx → M Forms"))
+      (expect (str/includes? content "SCI_EVAL    : Forms → M Evidence"))
+      (expect (str/includes? content "OBSERVE     : Evidence → M Ctx"))
+      (expect (str/includes? content "EMIT_FINAL"))
+      (expect (str/includes? content "mutation_occurred ⇒ post-mutation read-only verification present in <journal>"))
+      ;; Old TURN := production grammar is gone; fixpoint subsumes it.
+      (expect (not (str/includes? content "TURN := USER_GOAL × WORK(ITERATIONS)* × FINAL")))
+      ;; λDISCIPLINE and λOUTPUT are folded into λENGINE arrow definitions and
+      ;; READY? conjuncts; their dedicated section headers must not return.
+      (expect (not (str/includes? content "λDISCIPLINE.")))
+      (expect (not (str/includes? content "λOUTPUT.")))
+      ;; And the verbose "if ¬READY? → WORK MORE = ITERATE -> ..." paraphrase
+      ;; the user flagged is gone too.
+      (expect (not (str/includes? content "WORK MORE = ITERATE")))
       (expect (not (str/includes? content "Host loop: assistant emits executable SCI forms")))
       (expect (not (str/includes? content "<environment>")))
       (expect (not (str/includes? content "<extensions>")))
@@ -58,10 +80,15 @@
       (expect (str/includes? content "direct turn/conversation values"))
       (expect (str/includes? content "FINAL forbids stateful mutation"))
       (expect (str/includes? content "(turn-answer! ir)"))
-      (expect (str/includes? content "(set-conversation-title! s)"))
+      ;; `(set-conversation-title! ...)` is intentionally absent from the
+      ;; cached system prompt. The model is reminded to call it by the
+      ;; per-iteration `:vis.foundation/conversation-title` nudge (turn-
+      ;; cadence: turn 1, then every TITLE_REFRESH_TURN_PERIOD-th turn),
+      ;; so duplicating it in always-on prompt text is pure waste.
+      (expect (not (str/includes? content "(set-conversation-title! s)")))
+      (expect (not (str/includes? content "set-conversation-title!")))
       (expect (str/includes? content "v/engine-symbol-documentation"))
       (expect (str/includes? content "v/engine-symbol-source-code"))
-      (expect (str/includes? content "v/engine-symbol-metadata"))
       (expect (str/includes? content "v/engine-symbol-apropos"))
       (expect (not (str/includes? content "var-history")))
       (expect (not (str/includes? content "var-history-timeline")))

@@ -642,11 +642,9 @@
 
    Plus zero or more tagged `<current_engine_start_nudge importance=\"...\">`
    entries wrapped in `<current_engine_start_nudges>`. All entries come from
-   `:ext/hooks` on active extensions; core owns no built-in hook policy.
-   Each hook declares its lifecycle `:phase` (`:session/start`,
-   `:turn/start`, `:turn.iteration/start`) and a `:fn` that receives the
-   `nudge-ctx` (the per-iteration ctx below) and returns either nil
-   (silent) or `{:hint :importance?}`.
+   `:turn.iteration/start` hooks on active extensions; core owns no built-in
+   hook policy. Each hook receives the `nudge-ctx` (the per-iteration ctx
+   below) and returns either nil (silent) or `{:hint :importance?}`.
 
    `nudge-ctx` fields (passed to every hook `:fn`):
      :environment        full environment map
@@ -662,8 +660,7 @@
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Computed once
         per turn; threaded through every iteration. Each extension's
-        :ext/hooks vector is consulted (phase-filtered to the current
-        iteration / turn / session position).
+        :turn.iteration/start hooks are consulted.
 
    Optional:
      `:blocks-by-iteration` - carried iterations as
@@ -710,8 +707,13 @@
                         [stable-prompt-content current-user-content current-context-block recent-block bindings-block]))
         input-tokens (or (count-prompt-tokens model prompt-text) 0)
         conversation-title (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
+        ;; Turn position reaches hooks via :turn-position. The title
+        ;; nudge uses it to fire on a turn cadence (turn 1, then every
+        ;; Nth turn) instead of an iteration cadence inside a single turn.
+        turn-position (long (or (some-> environment :current-turn-position-atom deref) 1))
         nudge-ctx {:environment environment
                    :iteration (if (some? iteration) (inc (long iteration)) 1)
+                   :turn-position turn-position
                    :previous-blocks last-iteration-blocks
                    :model model
                    :context-limit ctx-limit
@@ -721,29 +723,14 @@
                    ;; Raw current-turn user request — hooks inspect it
                    ;; for investigation verbs / blind-answer prevention.
                    :user-request current-user-content}
-        ;; <current_engine_start_nudges> are populated by PRE-phase `:ext/hooks` —
-        ;; the single mechanism for model-facing advisory hints. Each hook
-        ;; declares :phase; the host invokes :fn only when the phase
-        ;; matches the current lifecycle position. Pre-phase fns return
-        ;; nil (silent) or `{:hint :importance?}`.
-        ;;
-        ;; Post-phase hooks (:turn.iteration/stop, :turn/stop) are NOT invoked
-        ;; here; they fire from internal/loop.clj after eval completes.
-        iter-pos     (long (or iteration 0))
-        first-iter?  (zero? iter-pos)
-        turn-pos     (long (or (some-> environment :current-turn-position-atom deref) 1))
-        first-turn?  (= 1 turn-pos)
-        phase-active? (fn [phase]
-                        (case phase
-                          :turn.iteration/start true
-                          :turn/start           first-iter?
-                          :session/start        (and first-iter? first-turn?)
-                          false))
+        ;; <current_engine_start_nudges> are populated by :turn.iteration/start
+        ;; `:ext/hooks` — the single mechanism for model-facing advisory hints.
+        ;; Hook fns return nil (silent) or `{:hint :importance?}`.
         all-nudges (into []
                      (mapcat
                        (fn [ext]
                          (for [{:keys [id phase fn]} (or (:ext/hooks ext) [])
-                               :when (phase-active? phase)
+                               :when (= :turn.iteration/start phase)
                                :let [hit (try (call-extension-callback ext fn
                                                 (assoc nudge-ctx :phase phase))
                                            (catch Throwable t
@@ -822,38 +809,58 @@ Aliases:
   clojure.pprint -> pp
   clojure.edn -> edn
   clojure.spec.alpha -> s
- 
+
 BANNED:
   - `slurp`, `spit`, `clojure.java.io` and other direct filesystem access.
 
 λENGINE.
   Host evals forms, records evidence to <journal>/<bindings>, then asks again
-  or persists accepted final answer.
+  or persists accepted final answer. The loop is one Kleisli fixpoint, not a
+  story; READY? alone decides exit. Railway: success threads Ctx down the
+  green track; any step's error short-circuits into <journal> and the loop
+  keeps running until READY?.
 
-  TURN := USER_GOAL × WORK(ITERATIONS)* × FINAL
+  λVis : USER_GOAL → FINAL
+  λVis ≡ fix (λ loop. λ ctx.
+           let step = MODEL_REPLY >=> SCI_EVAL >=> OBSERVE
+           in if READY? ctx then EMIT_FINAL ctx else loop (step ctx))
 
-  WORK (ITERATIONS) :=
-    MODEL_REPLY_IN_CODE_FENCES{form*}
-    → ENGINE_SCI_EVAL(form*)
-    → NEW_VARS(def|defn) → <bindings>
-    → {result|error, stdout, stderr, journal sink entries} → <journal>
-    → DECIDE_NEXT: READY? or WORK MORE
+  arrows (Kleisli over M ≈ StateT Ctx (Either Err); >=> = monadic bind / fish):
+    MODEL_REPLY : Ctx → M Forms
+      reply := ```clojure``` fences only; body := SCI forms.
+      narration := `;;` comments inside fences.
+      turn_finalization := `(turn-answer! <ANSWER_IR>)`.
+    SCI_EVAL    : Forms → M Evidence
+      host evaluates; NEW_VARS(def|defn) extend <bindings>;
+      {result|error, stdout, stderr, journal sink entries} captured.
+    OBSERVE     : Evidence → M Ctx
+      append <journal>; refresh <bindings>;
+      error track surfaces in next iteration's <journal>, never silently swallowed.
 
-  READY? :=
+  READY? ctx (decide from <journal> + <bindings>, not memory):
     required_evidence_observed?
     ∧ unresolved_blockers = Ø
     ∧ user_goal_satisfiable_from(<journal>, <bindings>)
     ∧ no errors in the last iteration journal entry
+    ∧ mutation_occurred ⇒ post-mutation read-only verification present in <journal>
+      (i.e. no answer in the same iteration as a mutation; verify first.)
 
-  if ¬READY? → WORK MORE = ITERATE -> MODEL_REPLY_IN_CODE_FENCES + ENGINE_SCI_EVAL + OBSERVE THE RESULTS IN THE NEXT ITERATION'S <journal> + <bindings> => DECIDE_NEXT
-  if READY?  → EMIT FINAL
-
-  FINAL :=
-    allowed forms: optional title, optional read-only evidence, exactly one
-    direct or guarded answer: `(turn-answer! [:ir ...])` or
-    `(when condition (turn-answer! [:ir ...]))`.
-  false guard ⇒ no FINAL; ENGINE loops.
-  FINAL forbids stateful mutation/reloads.
+  EMIT_FINAL :=
+    When all of the READY? conditions are met, all of the evidence gathered, no errors present
+      `(turn-answer! <ANSWER_IR>)`
+      `(when condition (turn-answer! <ANSWER_IR>))`
+    false guard ⇒ no FINAL; loop continues.
+    FINAL forbids stateful mutation/reloads.
+  
+    ANSWER_IR 
+      Build IR directly; do not render Markdown into IR.
+      root        := [:ir block*]
+      block       := :p | :h{:level 1-6} | :code{:lang} | :ul | :ol{:start} | :li
+                        | :quote | :table | :tr | :th | :td
+      inline      := :span{:preserve-ws? :nowrap?} | :br | :strong | :em | :c
+                     | :a{:href} | :img{:src :alt} | :kbd | :mark | :sup | :sub
+      text        := string shorthand
+      preserve_ws := :code | :c | :kbd
 
 λDYNAMIC_CONTEXT.
   user-role turn/iteration context; initial user message plus per-iteration trailer.
@@ -864,38 +871,11 @@ BANNED:
   <bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings.
   <current_engine_start_nudges> := extension hook runtime hints for this iteration.
 
-λHOST.
-  (turn-answer! ir)           ; finalize turn, ir must be [:ir ...]
-  (set-conversation-title! s)  ; set conversation title
-
 λENGINE_RECOVERY.
   - *1 *2 *3 *e := last values/errors for sandbox recovery; ordinary prompt context uses rendered values, not named runtime-var indirection.
   - `(v/engine-symbol-documentation 'map)` -> puts the documentation + signature for `map` into the <journal> for model inspection.
   - `(v/engine-symbol-source-code 'map)` -> puts the source code for `map` into the <journal> for model inspection.
-  - `(v/engine-symbol-metadata 'map)` -> puts the metadata map for `map` into the <journal> for model inspection.
   - `(v/engine-symbol-apropos 'map)` -> puts the list of matching symbols for `map` into the <journal> for model inspection.
-
-λDISCIPLINE.
-  - decide from <journal> + <bindings>, not memory.
-  - missing_facts? -> observe with defs.
-  - need_change? -> mutate alone; no answer same iteration.
-  - after_mutation -> verify with read-only evidence.
-  - answer only when enough?; guard if condition is machine-checkable, turn_finalization only IF full evidence observed
-
-λOUTPUT.
-  reply := ```clojure``` fences only; body := SCI forms.
-  narration := `;;` comments inside fences.
-  turn_finalization := `(turn-answer! <ANSWER_IR>)`
-
-λANSWER_IR.
-  Build IR directly; do not render Markdown into IR.
-  root   := [:ir block*]
-  block  := :p | :h{:level 1-6} | :code{:lang} | :ul | :ol{:start} | :li
-          | :quote | :table | :tr | :th | :td
-  inline := :span{:preserve-ws? :nowrap?} | :br | :strong | :em | :c
-          | :a{:href} | :img{:src :alt} | :kbd | :mark | :sup | :sub
-  text   := string shorthand
-  preserve_ws := :code | :c | :kbd
 
 λEXAMPLE TURN.
 
@@ -903,7 +883,6 @@ BANNED:
 
   Vis iteration 1 - observe:
     ```clojure
-    (set-conversation-title! \"Update foo return\")
     (def foo-source (v/cat \"src/foo.clj\"))
     ```
 

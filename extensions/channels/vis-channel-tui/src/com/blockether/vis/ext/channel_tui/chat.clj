@@ -253,7 +253,7 @@
                                                                      "<runtime value; re-evaluate expression to restore>"
                                                                      (extension/tool-result? result)
                                                                      (extension/channel-render-tool-result result)
-                                                                     :else (pr-str result))))
+                                                                     :else (vis/safe-pr-str result))))
                                                            exprs)
                                              result-details (mapv (fn [expr]
                                                                     (tool-result-detail (:result expr)))
