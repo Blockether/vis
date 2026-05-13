@@ -7,6 +7,22 @@
             [lazytest.core :refer [defdescribe expect it]]
             [sci.core :as sci]))
 
+(defdescribe reload-extension-diff-test
+  (it "diffs by manifest loader ns while removing logical extension ids"
+    (let [diff (#'loop/diff-extensions
+                [{:ext/namespace 'com.example.sqlite.core
+                  :ext/nses      ['com.example.sqlite.registrar]}
+                 {:ext/namespace 'com.example.provider.plan-a
+                  :ext/nses      ['com.example.provider]}
+                 {:ext/namespace 'com.example.removed.core}]
+                {'sqlite  {:nses ['com.example.sqlite.registrar]}
+                 'provider {:nses ['com.example.provider]}
+                 'new      {:nses ['com.example.new]}})]
+      (expect (= ['com.example.new] (:added diff)))
+      (expect (= ['com.example.removed.core] (:removed diff)))
+      (expect (= ['com.example.provider 'com.example.sqlite.registrar]
+                (:reloaded diff))))))
+
 (defdescribe host-final-surface-test
   (it "recognizes final-answer and title host forms, including guarded answers"
     (let [answer-call?      #'loop/turn-answer-call-form?

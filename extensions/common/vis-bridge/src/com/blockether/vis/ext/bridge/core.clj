@@ -346,10 +346,9 @@
       (when-let [backend (:backend stats)] (str ", backend=" backend)))))
 
 (defn- render-channel [result]
-  (str (render-summary result)
-    "\n\n```clojure\n"
-    (pr-str (update result :nodes #(take 20 %)))
-    "\n```"))
+  [:ir {}
+   [:p {} [:span {} (render-summary result)]]
+   [:code {:lang "clojure"} (pr-str (update result :nodes #(take 20 %)))]])
 
 (defn- render-rows-summary [rows]
   (str "Bridge aggregate rows: " (count rows)
@@ -384,31 +383,36 @@
    (vis/symbol #'clojure-lsp-status
      {:journal-render-fn #(str "clojure-lsp available=" (:available? %)
                             (when-let [path (:path %)] (str ", path=" path)))
-      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
+      :channel-render-fn (fn [result]
+                           [:ir {} [:code {:lang "clojure"} (pr-str result)]])})
    (vis/symbol #'extract-clojure
      {:journal-render-fn render-summary
       :channel-render-fn render-channel})
    (vis/symbol #'aggregate-rows
      {:journal-render-fn render-rows-summary
-      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
+      :channel-render-fn (fn [result]
+                           [:ir {} [:code {:lang "clojure"} (pr-str result)]])})
    (vis/symbol 'fill! fill-result*
      {:doc "Persist a normalized Bridge extraction result through extension aggregates. Defaults to replacing path rows for file results and language rows for project results."
       :arglists '([result] [result opts])
       :before-fn inject-env-before-fn
       :journal-render-fn render-fill-summary
-      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
+      :channel-render-fn (fn [result]
+                           [:ir {} [:code {:lang "clojure"} (pr-str result)]])})
    (vis/symbol 'extract-and-fill! extract-and-fill*
      {:doc "Extract Bridge facts and persist them. `(bridge/extract-and-fill! {:path ...})` reindexes one file; `(bridge/extract-and-fill! {:language \"clojure\"})` refreshes that language."
       :arglists '([] [opts])
       :before-fn inject-env-before-fn
       :journal-render-fn render-extract-and-fill-summary
-      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})
+      :channel-render-fn (fn [result]
+                           [:ir {} [:code {:lang "clojure"} (pr-str result)]])})
    (vis/symbol 'backfill! backfill-with-env!
      {:doc "Incrementally reindex only changed files from `:path` or `:paths`. Uses SHA-256 hashes stored in Bridge index rows."
       :arglists '([opts])
       :before-fn inject-env-before-fn
       :journal-render-fn render-backfill-summary
-      :channel-render-fn #(str "```clojure\n" (pr-str %) "\n```")})])
+      :channel-render-fn (fn [result]
+                           [:ir {} [:code {:lang "clojure"} (pr-str result)]])})])
 
 (defn- prompt [_env]
   (str (vis/render-prompt

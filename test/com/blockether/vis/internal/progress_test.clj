@@ -33,6 +33,18 @@
       (let [entry (first (get-timeline))]
         (expect (= ["{:a [1 2 3], :b 2}"] (:results entry))))))
 
+  (it "preserves IR from channel sink entries"
+    (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)
+          ir [:ir {} [:p {} [:span {} "rendered"]]]]
+      (on-chunk {:phase :form-result
+                 :iteration 1
+                 :form-idx 0
+                 :code "(tool)"
+                 :channel [{:position 0 :success? true :result ir :error nil}]
+                 :execution-time-ms 1})
+      (let [entry (first (get-timeline))]
+        (expect (= [ir] (:results entry))))))
+
   (it "still elides the final answer form"
     (let [{:keys [on-chunk get-timeline]} (progress/make-progress-tracker)]
       (on-chunk {:phase :form-result

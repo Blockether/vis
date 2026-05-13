@@ -32,6 +32,7 @@
    [com.blockether.vis.ext.foundation.environment.monorepo :as monorepo]
    [com.blockether.vis.ext.foundation.environment.render :as render]
    [com.blockether.vis.ext.foundation.environment.repositories :as repositories]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel]))
 
@@ -148,50 +149,83 @@
   "Render the current snapshot as the same `<environment>` block embedded in the system prompt. Useful for debugging or surfacing the block on demand."
   [] (render/render (snapshot)))
 
+(defn- success-envelope
+  [result]
+  (extension/success {:result result}))
+
+(defn- snapshot-tool
+  "Full environment snapshot as a map: {:host :git :languages :monorepo :repositories}. Cached per cwd; recomputed automatically when cwd changes or after `(refresh!)`."
+  []
+  (success-envelope (snapshot)))
+
+(defn- repositories-tool
+  "Multirepo Git snapshot: {:count :repositories [{:path :branch :dirty? :changes? :stale? :stash-count ...}]} - returned in a canonical tool envelope."
+  []
+  (success-envelope (repositories)))
+
+(defn- git-tool
+  "Git submap of the snapshot, or nil when not in a repo. Includes :root :branch :detached? :submodules? :worktree? plus dirty-status counts; returned in a canonical tool envelope."
+  []
+  (success-envelope (git)))
+
+(defn- languages-tool
+  "Language scan: {:total-files :total-bytes :primary :languages [...]} sorted by total bytes desc; returned in a canonical tool envelope."
+  []
+  (success-envelope (languages)))
+
+(defn- monorepo-tool
+  "Monorepo shape detection: {:shape :totals :files} or :shape nil for single-package repos; returned in a canonical tool envelope."
+  []
+  (success-envelope (monorepo)))
+
+(defn- refresh!-tool
+  "Drop the cached snapshot and recompute. Returns the refreshed snapshot in a canonical tool envelope."
+  []
+  (success-envelope (refresh!)))
+
+(defn- render-tool
+  "Render the current snapshot as the same `<environment>` block embedded in the system prompt; returned in a canonical tool envelope."
+  []
+  (success-envelope (render)))
+
 (defn- env-data-symbol
-  "Environment helpers all return Clojure data structures; share the same
-   pr-str renderers so each entry below stays a one-liner."
-  [v opts]
+  "Register an explicit envelope-returning tool var under a stable `v/` name.
+   The public helper vars above stay plain Clojure functions for host callers;
+   only the SCI symbol implementation returns a tool envelope."
+  [v sym]
   (vis/symbol v
-    (merge {:journal-render-fn vis/render-pr-str-journal
-            :channel-render-fn vis/render-pr-str-channel}
-      opts)))
+    {:symbol sym
+     :journal-render-fn vis/render-pr-str-journal
+     :channel-render-fn vis/render-pr-str-channel}))
 
 (defn- env-string-symbol
-  "Environment helpers that already return strings (markdown render)."
-  [v opts]
+  "Register an explicit envelope-returning string tool var under a stable `v/` name."
+  [v sym]
   (vis/symbol v
-    (merge {:journal-render-fn vis/render-string-journal
-            :channel-render-fn vis/render-string-channel}
-      opts)))
+    {:symbol sym
+     :journal-render-fn vis/render-string-journal
+     :channel-render-fn vis/render-string-channel}))
 
 (def snapshot-symbol
-  (env-data-symbol #'snapshot
-    {}))
+  (env-data-symbol #'snapshot-tool 'snapshot))
 
 (def repositories-symbol
-  (env-data-symbol #'repositories
-    {}))
+  (env-data-symbol #'repositories-tool 'repositories))
 
 (def git-symbol
-  (env-data-symbol #'git
-    {}))
+  (env-data-symbol #'git-tool 'git))
 
 (def languages-symbol
-  (env-data-symbol #'languages
-    {}))
+  (env-data-symbol #'languages-tool 'languages))
 
 (def monorepo-symbol
-  (env-data-symbol #'monorepo
-    {}))
+  (env-data-symbol #'monorepo-tool 'monorepo))
 
 (def refresh!-symbol
-  (env-data-symbol #'refresh!
-    {}))
+  (env-data-symbol #'refresh!-tool 'refresh!))
 
 (def render-symbol
-  (env-string-symbol #'render
-    {}))
+  (env-string-symbol #'render-tool 'render))
 
 ;; ---------------------------------------------------------------------------
 ;; Project guidance + scan-warnings surface.
@@ -201,10 +235,6 @@
   "Project guidance from AGENTS.md or CLAUDE.md fallback. Returns {:found? ...}."
   []
   (agents/instructions))
-
-(def main-agent-instructions-symbol
-  (env-data-symbol #'main-agent-instructions
-    {}))
 
 (defn- combined-scan-warnings []
   ;; Two sources, all `{:source :reason :path}` shaped so the
@@ -230,39 +260,47 @@
   []
   (combined-scan-warnings))
 
-(defn reload-instructions!
-  "Reload AGENTS.md / CLAUDE.md cache."
-  []
-  (agents/reload!))
-
 (defn reload-extensions!
   "Reload extension registry. Returns diff: {:added :removed :reloaded :errors ...}."
   ([] (vis/reload-extensions!))
   ([opts] (vis/reload-extensions! opts)))
 
-(def scan-warnings-symbol
-  (env-data-symbol #'scan-warnings
-    {}))
+(defn- main-agent-instructions-tool
+  "Project guidance from AGENTS.md or CLAUDE.md fallback, returned in a canonical tool envelope."
+  []
+  (success-envelope (main-agent-instructions)))
 
-(def reload-instructions!-symbol
-  (env-data-symbol #'reload-instructions!
-    {}))
+(defn- scan-warnings-tool
+  "Scan warnings vec: {:source :reason :path}. Empty when clean. Returned in a canonical tool envelope."
+  []
+  (success-envelope (scan-warnings)))
+
+(defn- reload-extensions!-tool
+  "Reload extension registry. Returns diff in a canonical tool envelope: {:added :removed :reloaded :errors ...}."
+  ([]
+   (success-envelope (reload-extensions!)))
+  ([opts]
+   (success-envelope (reload-extensions! opts))))
+
+(def main-agent-instructions-symbol
+  (env-data-symbol #'main-agent-instructions-tool 'main-agent-instructions))
+
+(def scan-warnings-symbol
+  (env-data-symbol #'scan-warnings-tool 'scan-warnings))
 
 (def reload-extensions!-symbol
-  (env-data-symbol #'reload-extensions!
-    {}))
+  (env-data-symbol #'reload-extensions!-tool 'reload-extensions!))
 
 (def environment-symbols
   [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
    refresh!-symbol render-symbol
    main-agent-instructions-symbol
    scan-warnings-symbol
-   reload-instructions!-symbol
    reload-extensions!-symbol])
 
 (def ^:private FN_INDEX
   "One-line strategy for environment fns under the `v/` alias."
-  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; v/render only when you need the prompt block; reload helpers after instruction/extension changes.")
+  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; v/render only when you need the prompt block; project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change; use v/reload-extensions! only after extension changes.")
 
 (defn environment-info
   "Render the foundation-owned environment contribution. The

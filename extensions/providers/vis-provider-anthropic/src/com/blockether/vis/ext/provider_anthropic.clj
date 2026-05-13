@@ -286,7 +286,78 @@
                  :message message
                  :data data}})
 
-(defn- limits []
+(def ^:private limits-success-cache-ms
+  (* 5 60 1000))
+
+(def ^:private limits-transient-error-cache-ms
+  (* 10 60 1000))
+
+(def ^:private limits-error-cache-ms
+  (* 2 60 1000))
+
+(defonce ^:private limits-cache
+  (atom nil))
+
+(defonce ^:private limits-lock
+  (Object.))
+
+(defn clear-limits-cache!
+  "Clear the in-process Anthropic usage cache. Intended for tests and
+   forced provider refreshes; normal callers should use `limits`."
+  []
+  (reset! limits-cache nil))
+
+(defn- transient-usage-status?
+  [status]
+  (contains? #{409 429} status))
+
+(defn- transient-limits-report?
+  [report]
+  (and (= :error (:status report))
+    (transient-usage-status? (get-in report [:error :data :status]))))
+
+(defn- cached-limits-report
+  [now-ms]
+  (let [{:keys [report expires-at-ms]} @limits-cache]
+    (when (and report expires-at-ms (< (long now-ms) (long expires-at-ms)))
+      report)))
+
+(defn- annotate-stale-limits-report
+  [report status]
+  (update report :dynamic assoc :note
+    (str "Using cached Claude subscription usage; Anthropic usage endpoint returned HTTP "
+      status
+      ", so Vis is backing off.")))
+
+(defn- limits-cache-ttl-ms
+  [report transient?]
+  (cond
+    transient?              limits-transient-error-cache-ms
+    (= :ok (:status report)) limits-success-cache-ms
+    :else                   limits-error-cache-ms))
+
+(defn- remember-limits-report!
+  [report now-ms]
+  (let [prev       @limits-cache
+        transient? (transient-limits-report? report)
+        stale-ok   (:stale-ok-report prev)
+        report*    (if (and transient? stale-ok)
+                     (annotate-stale-limits-report stale-ok (get-in report [:error :data :status]))
+                     report)
+        ttl-ms     (limits-cache-ttl-ms report* transient?)
+        stale-ok*  (if (= :ok (:status report*)) report* stale-ok)]
+    (reset! limits-cache {:report report*
+                          :expires-at-ms (+ (long now-ms) (long ttl-ms))
+                          :stale-ok-report stale-ok*})
+    report*))
+
+(defn- usage-throttle-report
+  [status]
+  (limits-error-report :vis/anthropic-usage-rate-limited
+    (str "Anthropic usage endpoint temporarily rejected the limits check (HTTP " status ").")
+    {:status status}))
+
+(defn- fetch-limits-report []
   (try
     (let [{:keys [token]} (get-anthropic-token!)
           {:keys [status body json]} (fetch-usage! token)]
@@ -309,10 +380,8 @@
          :dynamic     {:limits []
                        :note "Anthropic OAuth token was rejected. Run `vis providers auth anthropic-coding-plan --force` to re-authenticate."}}
 
-        (= 429 status)
-        (limits-error-report :vis/anthropic-usage-rate-limited
-          "Anthropic usage endpoint rate limited the limits check."
-          {:status status})
+        (transient-usage-status? status)
+        (usage-throttle-report status)
 
         :else
         (limits-error-report :vis/anthropic-usage-failed
@@ -332,6 +401,14 @@
       (limits-error-report :vis/anthropic-limits-error
         (or (ex-message t) (.getName (class t)))
         {:class (.getName (class t))}))))
+
+(defn- limits []
+  (let [now-ms (System/currentTimeMillis)]
+    (or (cached-limits-report now-ms)
+      (locking limits-lock
+        (let [now-ms (System/currentTimeMillis)]
+          (or (cached-limits-report now-ms)
+            (remember-limits-report! (fetch-limits-report) now-ms)))))))
 
 (defn authenticated? []
   (some? (detect-credentials)))

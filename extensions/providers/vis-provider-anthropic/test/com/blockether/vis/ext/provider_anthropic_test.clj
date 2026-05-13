@@ -92,6 +92,7 @@
                                               :seven_day {:utilization 25}
                                               :seven_day_opus {:utilization 10}})})}
         (fn []
+          (anthropic/clear-limits-cache!)
           (let [report ((:provider/limits-fn provider))
                 rows   (get-in report [:dynamic :limits])]
             (expect (= "https://api.anthropic.com/api/oauth/usage" (:url @called)))
@@ -103,6 +104,50 @@
             (expect (= 100.0 (:limit (first rows))))
             (expect (int? (get-in (first rows) [:window :resets-at-ms]))))))))
 
+  (it "coalesces concurrent Claude subscription usage limit checks"
+    (let [provider (vis/provider-by-id :anthropic-coding-plan)
+          calls    (atom 0)]
+      (anthropic/clear-limits-cache!)
+      (with-redefs-fn {#'anthropic/get-anthropic-token! (fn [] {:token "sk-ant-oat01-test"})
+                       #'http/get (fn [_url _opts]
+                                    (swap! calls inc)
+                                    (Thread/sleep 50)
+                                    {:status 200
+                                     :body (json/write-json-str
+                                             {:five_hour {:utilization 8}
+                                              :seven_day {:utilization 7}})})}
+        (fn []
+          (let [reports (->> (repeatedly 2 #(future ((:provider/limits-fn provider))))
+                          doall
+                          (mapv deref))]
+            (expect (= 1 @calls))
+            (expect (= [:ok :ok] (mapv :status reports))))))))
+
+  (it "backs off after Anthropic usage endpoint returns HTTP 409 and serves stale limits"
+    (let [provider (vis/provider-by-id :anthropic-coding-plan)
+          calls    (atom 0)]
+      (anthropic/clear-limits-cache!)
+      (with-redefs-fn {#'anthropic/get-anthropic-token! (fn [] {:token "sk-ant-oat01-test"})
+                       #'http/get (fn [_url _opts]
+                                    (let [n (swap! calls inc)]
+                                      (if (= 1 n)
+                                        {:status 200
+                                         :body (json/write-json-str
+                                                 {:five_hour {:utilization 8}
+                                                  :seven_day {:utilization 7}})}
+                                        {:status 409
+                                         :body "conflict"})))}
+        (fn []
+          (let [fresh ((:provider/limits-fn provider))]
+            (expect (= :ok (:status fresh)))
+            (swap! @#'anthropic/limits-cache assoc :expires-at-ms 0)
+            (let [stale       ((:provider/limits-fn provider))
+                  still-stale ((:provider/limits-fn provider))]
+              (expect (= 2 @calls))
+              (expect (= :ok (:status stale)))
+              (expect (= :ok (:status still-stale)))
+              (expect (str/includes? (get-in stale [:dynamic :note]) "HTTP 409"))))))))
+
   (it "returns unauthenticated limits report when Claude subscription OAuth is missing"
     (let [provider (vis/provider-by-id :anthropic-coding-plan)]
       (with-redefs-fn {#'anthropic/get-anthropic-token!
@@ -110,6 +155,7 @@
                          (throw (ex-info "missing" {:type :vis/anthropic-not-authenticated})))
                        #'http/get (fn [& _] (throw (ex-info "should not call" {})))}
         (fn []
+          (anthropic/clear-limits-cache!)
           (let [report ((:provider/limits-fn provider))]
             (expect (= :unauthenticated (:status report)))
             (expect (= [] (get-in report [:dynamic :limits])))

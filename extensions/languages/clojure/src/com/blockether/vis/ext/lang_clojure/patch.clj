@@ -433,21 +433,20 @@
 
 (defn- channel-render-patch-check
   [result]
-  (let [{:keys [valid? checks failures warnings]} (or result {})]
-    (str (if valid? "All zipper edits valid." (str (count failures) " zipper edit(s) failed."))
-      (when (seq warnings)
-        (str " " (count warnings) " warning(s)."))
-      "\n\n"
-      (when (seq checks)
-        (str "```text\n"
-          (str/join "\n"
-            (map (fn [{:keys [edit-index path matches changed? locator-error replacement-error warnings]}]
-                   (str "#" edit-index " " path " matches=" matches " changed=" changed?
-                     (when locator-error (str " locator-error=" locator-error))
-                     (when replacement-error (str " replacement-error=" replacement-error))
-                     (when (seq warnings) " WARNING no-op")))
-              checks))
-          "\n```")))))
+  (let [{:keys [valid? checks failures warnings]} (or result {})
+        lines (when (seq checks)
+                (str/join "\n"
+                  (map (fn [{:keys [edit-index path matches changed? locator-error replacement-error warnings]}]
+                         (str "#" edit-index " " path " matches=" matches " changed=" changed?
+                           (when locator-error (str " locator-error=" locator-error))
+                           (when replacement-error (str " replacement-error=" replacement-error))
+                           (when (seq warnings) " WARNING no-op")))
+                    checks)))]
+    (cond-> [:ir {}
+             [:p {} [:span {} (str (if valid? "All zipper edits valid." (str (count failures) " zipper edit(s) failed."))
+                                (when (seq warnings)
+                                  (str " " (count warnings) " warning(s).")))]]]
+      lines (conj [:code {:lang "text"} lines]))))
 
 (defn- write-plans!
   [plans]
@@ -569,17 +568,16 @@
                 (map #(str " " %) context-after))))
           (render-file [{:keys [path changed? hunks]}]
             (if-not changed?
-              (str "### `" path "` — unchanged")
+              [[:h {:level 3} [:c {} path] [:span {} " — unchanged"]]]
               (let [{:keys [start-line] :as hunk} (first hunks)]
-                (str "### `" path "` — changed\n\n"
-                  "```diff\n"
-                  "@@ line " start-line " @@\n"
-                  (preview-text (render-lines hunk))
-                  "\n```"))))]
+                [[:h {:level 3} [:c {} path] [:span {} " — changed"]]
+                 [:code {:lang "diff"}
+                  (str "@@ line " start-line " @@\n" (preview-text (render-lines hunk)))]])))]
     (let [files (patch-result-files result)]
-      (str "Patched " (count files)
-        " Clojure file(s). z/patch preflight validated exact matches before writing.\n\n"
-        (str/join "\n\n" (map render-file (take 6 files)))))))
+      (into [:ir {}
+             [:p {} [:span {} (str "Patched " (count files)
+                                " Clojure file(s). z/patch preflight validated exact matches before writing.")]]]
+        (mapcat render-file (take 6 files))))))
 
 ;; =============================================================================
 ;; Locator discovery
@@ -851,14 +849,16 @@
 
 (defn- channel-render-locators
   [result]
-  (let [rows (vec (if (sequential? result) result (when result [result])))]
-    (str "Found " (count rows) " zipper locator(s).\n\n"
-      (when (seq rows)
-        (str "```text\n"
-          (str/join "\n"
-            (map-indexed render-locator-line (take 20 rows)))
-          "\n```\n\n"
-          "Patch by adding :replace to the chosen row: `(z/patch (assoc row :replace \"<new source>\"))`.")))))
+  (let [rows (vec (if (sequential? result) result (when result [result])))
+        body (when (seq rows)
+               (str/join "\n" (map-indexed render-locator-line (take 20 rows))))]
+    (cond-> [:ir {}
+             [:p {} [:span {} (str "Found " (count rows) " zipper locator(s).")]]]
+      body (conj [:code {:lang "text"} body]
+             [:p {} [:span {} "Patch by adding "] [:c {} ":replace"]
+              [:span {} " to the chosen row: "]
+              [:c {} "(z/patch (assoc row :replace \"<new source>\"))"]
+              [:span {} "."]]))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} inspect-locator
   "Return a compact, serializable summary for a rewrite-clj zipper loc or a z/ locator row. Use this instead of relying on raw zloc #object printing in journals."
@@ -874,9 +874,13 @@
     {:tag (some-> x class .getName)
      :value-preview (compact-source (pr-str x))}))
 
-(defn- ^{:clj-kondo/ignore [:unused-private-var]} render-inspect
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} journal-render-inspect
   [result]
   (str "z/inspect — " (pr-str result)))
+
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} channel-render-inspect
+  [result]
+  [:ir {} [:p {} [:span {} "z/inspect — "] [:c {} (pr-str result)]]])
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} render-node
   [result]
@@ -887,6 +891,17 @@
                            (catch Throwable _ :not-sexpr-able))))
     (str "rewrite-clj node — " (pr-str result))))
 
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} channel-render-node
+  [result]
+  (if (node/node? result)
+    [:ir {}
+     [:p {} [:span {} "rewrite-clj node"]]
+     [:code {:lang "clojure"}
+      (str ":source " (pr-str (node/string result)) "\n"
+        ":sexpr  " (pr-str (try (node/sexpr result)
+                             (catch Throwable _ :not-sexpr-able))))]]
+    [:ir {} [:p {} [:span {} "rewrite-clj node — "] [:c {} (pr-str result)]]]))
+
 ;; =============================================================================
 ;; Symbol declarations
 ;; =============================================================================
@@ -895,13 +910,13 @@
   (vis/symbol #'source
     {:raw? true
      :journal-render-fn render-node
-     :channel-render-fn render-node}))
+     :channel-render-fn channel-render-node}))
 
 (def lit-symbol
   (vis/symbol #'lit
     {:raw? true
      :journal-render-fn render-node
-     :channel-render-fn render-node}))
+     :channel-render-fn channel-render-node}))
 
 (def patch-check-symbol
   (vis/symbol #'patch-check-tool
@@ -955,8 +970,8 @@
   (vis/symbol #'inspect-locator
     {:symbol 'inspect
 
-     :journal-render-fn render-inspect
-     :channel-render-fn render-inspect}))
+     :journal-render-fn journal-render-inspect
+     :channel-render-fn channel-render-inspect}))
 
 (def z-prompt
   "`z/` strategy for Clojure/EDN edits.\nCombine discovery rows with one patch: z/forms for top-level defs/ns, z/locators {:depth :all} for nested forms, z/symbols for symbol sites; choose the row by :span/:digest and add :replace. Prefer data replacements for structural changes; use z/source only when comments/formatting/reader syntax must be exact. Use z/patch-check for risky batches, z/repair-* after parse damage, and v/patch for non-Clojure text.")

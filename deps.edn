@@ -29,7 +29,6 @@
   com.blockether/vis-exa                      {:local/root "extensions/common/vis-exa"}
   com.blockether/vis-bridge                   {:local/root "extensions/common/vis-bridge"}
   com.blockether/vis-goal                     {:local/root "extensions/common/vis-goal"}
-  com.blockether/vis-mermaid                  {:local/root "extensions/common/vis-mermaid"}
   com.blockether/vis-voice                   {:local/root "extensions/common/vis-voice"}
   com.blockether/vis-language-clojure         {:local/root "extensions/languages/clojure"}
 
@@ -130,7 +129,6 @@
                         "extensions/common/vis-exa/test"
                         "extensions/common/vis-bridge/test"
                         "extensions/common/vis-goal/test"
-                        "extensions/common/vis-mermaid/test"
                         "extensions/common/vis-voice/test"
                         "extensions/languages/clojure/test"]
           :extra-deps  {io.github.noahtheduke/lazytest             {:mvn/version "2.0.0"}
@@ -144,7 +142,6 @@
                         com.blockether/vis-exa                     {:local/root "extensions/common/vis-exa"}
                         com.blockether/vis-bridge                  {:local/root "extensions/common/vis-bridge"}
                         com.blockether/vis-goal                    {:local/root "extensions/common/vis-goal"}
-                        com.blockether/vis-mermaid                 {:local/root "extensions/common/vis-mermaid"}
                         com.blockether/vis-voice                  {:local/root "extensions/common/vis-voice"}
                         ;; Microbenchmarks. Pulled into `:test` so a
                         ;; `*_bench_test.clj` file can `(require
@@ -168,7 +165,6 @@
                         "--dir" "extensions/common/vis-foundation/test"
                         "--dir" "extensions/common/vis-exa/test"
                         "--dir" "extensions/common/vis-bridge/test"
-                        "--dir" "extensions/common/vis-mermaid/test"
                         "--dir" "extensions/common/vis-voice/test"
                         "--dir" "extensions/languages/clojure/test"]}
 

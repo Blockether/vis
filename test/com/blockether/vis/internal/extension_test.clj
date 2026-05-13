@@ -14,6 +14,11 @@
   [_env x]
   (extension/success {:op :demo/env-echo :result x}))
 
+(defn ir-render-tool
+  "Observed helper whose channel renderer returns IR."
+  [x]
+  (extension/success {:op :demo/ir-render :result x}))
+
 (defdescribe symbol-builder-test
   (it "builds raw callable symbols without renderers"
     (let [entry (extension/symbol #'raw-add {:raw? true})]
@@ -89,7 +94,22 @@
         (expect (= :payload (extension/invoke-symbol-wrapper ext entry [:payload] env))))
       (expect (= "(d/env-echo :payload)" (:form (first @journal))))
       (expect (= "(d/env-echo :payload)" (:form (first @channel))))
-      (expect (not (clojure.string/includes? (:form (first @journal)) "host env"))))))
+      (expect (not (clojure.string/includes? (:form (first @journal)) "host env")))))
+
+  (it "allows channel renderers to record IR"
+    (let [entry (extension/symbol #'ir-render-tool
+                  {:symbol 'ir-render
+                   :journal-render-fn pr-str
+                   :channel-render-fn (fn [result]
+                                        [:ir [:p "rendered " [:c (str result)]]])})
+          ext   {:ext/namespace 'demo.ext
+                 :ext/alias {:alias 'd}}
+          channel (atom [])]
+      (binding [extension/*channel-render-sink* channel
+                extension/*sink-position* (atom -1)]
+        (expect (= :payload (extension/invoke-symbol-wrapper ext entry [:payload] nil))))
+      (expect (= [:ir {} [:p {} [:span {} "rendered "] [:c {} ":payload"]]]
+                (:result (first @channel)))))))
 
 (defdescribe extension-docs-test
   (it "returns authored doc links without computed backlinks"

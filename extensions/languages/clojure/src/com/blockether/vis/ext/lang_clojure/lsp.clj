@@ -185,8 +185,9 @@
 
 (defn- channel-render-lsp
   [result]
-  (str (if (sequential? result) (count result) 1) " result(s).\n\n"
-    "```clojure\n" (pr-str result) "\n```"))
+  [:ir {}
+   [:p {} [:span {} (str (if (sequential? result) (count result) 1) " result(s).")]]
+   [:code {:lang "clojure"} (pr-str result)]])
 
 (defn- lsp-symbol
   [v]

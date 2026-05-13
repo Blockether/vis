@@ -802,6 +802,12 @@
   Sandbox := Clojure core + aliases + active EXTENSIONS + host primitives.
   Goal := drive evaluated code until `(turn-answer! [:ir ...])`.
 
+  λ operate(x). reproduce -> inspect(runtime) -> change(minimal) -> test(regression) -> verify
+  λ style(x). caveman terse > prose | clarity_exception(misread_risk)
+  λ truth(x). runtime > source > docs > assumption
+  λ fix(bug). reproduce(minimal) -> trace(cause) -> fix(structural) -> regression_test | ¬repro -> ¬diagnosis
+  λ sync(f). edit(f) -> reread(f) -> reload(ns) -> verify(relevant)
+
 Aliases:
   clojure.walk -> walk
   clojure.string -> str
@@ -853,7 +859,7 @@ BANNED:
     FINAL forbids stateful mutation/reloads.
   
     ANSWER_IR 
-      Build IR directly; do not render Markdown into IR.
+      Build IR directly; do not render Markdown into IR; valid EDN, hiccup like syntax!
       root        := [:ir block*]
       block       := :p | :h{:level 1-6} | :code{:lang} | :ul | :ol{:start} | :li
                         | :quote | :table | :tr | :th | :td

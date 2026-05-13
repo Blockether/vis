@@ -154,7 +154,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defonce ^:private state
-  (atom {:cwd nil :result nil :warnings nil}))
+  (atom {:cwd nil :marker nil :result nil :warnings nil}))
 
 (defn- canonical-cwd ^String []
   (try (.getCanonicalPath ^java.io.File (repo-cwd))
@@ -162,28 +162,49 @@
       (or workspace/*workspace-root*
         (System/getProperty "user.dir")))))
 
-(defn current
-  "Return the cached scan result, computing it on first access or
-   when cwd changes. Recomputed automatically when cwd differs."
-  []
-  (let [cwd     (canonical-cwd)
-        cached  @state]
-    (if (= cwd (:cwd cached))
-      cached
-      (let [{:keys [result warnings]} (scan)
-            v {:cwd cwd :result result :warnings warnings}]
-        (reset! state v)
-        v))))
+(defn- file-marker
+  [^java.io.File f]
+  {:path          (.getAbsolutePath f)
+   :file?         (.isFile f)
+   :last-modified (when (.isFile f) (.lastModified f))
+   :length        (when (.isFile f) (.length f))})
 
-(defn reload!
-  "Invalidate and recompute the cached scan. Returns the new scan
-   result map (same shape as `(current)`). Surfaces as
-   `(vis/reload-instructions!)`."
+(defn- guidance-marker
+  "Cheap invalidation marker for guidance candidates. Tracks both
+   AGENTS.md and CLAUDE.md so creating AGENTS.md invalidates a cached
+   CLAUDE.md fallback without reading either file's content."
   []
+  (let [root (repo-cwd)]
+    {:agents (file-marker (java.io.File. root "AGENTS.md"))
+     :claude (file-marker (java.io.File. root "CLAUDE.md"))}))
+
+(defn- rescan!
+  [cwd marker]
   (let [{:keys [result warnings]} (scan)
-        v {:cwd (canonical-cwd) :result result :warnings warnings}]
+        v {:cwd cwd :marker marker :result result :warnings warnings}]
     (reset! state v)
     v))
+
+(defn current
+  "Return the cached scan result, computing it on first access or
+   when cwd / AGENTS.md / CLAUDE.md marker changes. The common path is
+   stat-only: content is read only when the marker changed."
+  []
+  (let [cwd     (canonical-cwd)
+        marker  (guidance-marker)
+        cached  @state]
+    (if (and (= cwd (:cwd cached)) (= marker (:marker cached)))
+      cached
+      (rescan! cwd marker))))
+
+(defn reload!
+  "Revalidate project guidance and return the current scan result.
+   This is intentionally conditional: if cwd and guidance file markers
+   are unchanged, no file content is re-read. Surfaces as
+   The former manual `v/reload-instructions!` surface is gone; callers
+   should just read `instructions` / assemble the next prompt."
+  []
+  (current))
 
 ;; ---------------------------------------------------------------------------
 ;; Public-ish helpers used by the foundation aggregator and the

@@ -6,7 +6,6 @@
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.render :as render]
    [com.blockether.vis.ext.channel-tui.theme :as t]
-   [com.blockether.vis.ext.mermaid.core]
    [clojure.string :as str]
    [lazytest.core :refer [defdescribe describe expect it]]))
 
@@ -33,6 +32,14 @@
   (when (string? s)
     (if (zero? (count s)) "" (subs s 1))))
 
+(defn- strip-sentinels
+  "Drop inline-style sentinels (PUA U+E110..U+E2FF) so equality
+   assertions compare the visible text only."
+  [s]
+  (->> s
+    (remove #(<= 0xE110 (int %) 0xE2FF))
+    (apply str)))
+
 (defdescribe input-overflow-hint-test
   (it "shows hidden visual-row count as an N more label for the input top border"
     (expect (= nil (input-more-hint 1 4)))
@@ -57,6 +64,20 @@
       (expect (not-any? #(str/includes? % "CODE 1") lines))
       (expect (= p/MARKER_CODE (marker-of code-line)))
       (expect (= p/MARKER_CODE_STATUS (marker-of status-line)))))
+
+  (it "renders IR tool results without EDN dumping"
+    (let [ir [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
+          lines (format-iteration-entry {:iteration 0
+                                         :code ["(tool)"]
+                                         :results [ir]
+                                         :result-kinds [:tool]
+                                         :successes [true]
+                                         :durations [1]}
+                  60 1 {})
+          body (str/join "\n" (map (comp strip-ansi body-of) lines))]
+      (expect (str/includes? body "bold"))
+      (expect (str/includes? body "result"))
+      (expect (not (str/includes? body ":ir")))))
 
   (it "puts success status on its own bottom line and keeps bottom padding"
     ;; Layout (post header-band removal):
@@ -873,14 +894,6 @@
 ;; the specific shapes the user reported.
 ;; ─────────────────────────────────────────────────────────────────────────
 
-(defn- strip-sentinels
-  "Drop inline-style sentinels (PUA U+E110..U+E2FF) so equality
-   assertions compare the visible text only."
-  [s]
-  (->> s
-    (remove #(<= 0xE110 (int %) 0xE2FF))
-    (apply str)))
-
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; e4167d48: bullet continuation must NOT strip whitespace inside
 ;; inline-code spans
@@ -1242,14 +1255,13 @@
         (expect (contains? (:sgr summary-put) com.googlecode.lanterna.SGR/BOLD))))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
-;; Tool detail Markdown rendering - preserves the presentation contract:
-;; tool render-fns return Markdown, so an expanded tool-result details
-;; block must paint headings/bullets/inline emphasis as Markdown rows,
-;; not as raw `**bold**` text.
+;; Tool detail result rendering. Tool render-fns may return Markdown-ish
+;; strings, but result panes are output logs, not answer prose: no automatic
+;; Markdown-to-TUI coloring, no special fence renderer, no visible fence rows.
 ;; ─────────────────────────────────────────────────────────────────────────
 
-(defdescribe tool-detail-markdown-rendering-test
-  (describe "expanded tool result body renders Markdown structurally"
+(defdescribe tool-detail-plain-result-rendering-test
+  (describe "expanded tool result body renders as literal result text"
     (it "bullet lines inside an expanded tool result are reachable as text"
       ;; The earlier contract re-rendered tool-result bodies through the
       ;; Markdown pipeline, producing MARKER_MD_BULLET rows. The current
@@ -1279,7 +1291,7 @@
         (expect (some #(str/includes? % "beta line") lines))
         (expect (some #(str/includes? % "gamma line") lines))))
 
-    (it "inline bold/italic inside tool results paints with inline sentinels"
+    (it "inline bold/italic inside tool results stays literal, with no inline sentinels"
       (render/invalidate-cache!)
       (let [body "Result: **important** and *subtle*."
             ;; Trip auto-collapse with filler.
@@ -1297,24 +1309,50 @@
                       nil trace 96 {:show-iterations true} nil false opts)
             lines   (:lines payload)
             text    (:text payload)]
-        ;; Painter lines carry inline-bold sentinels so the painter
-        ;; styles "important" as bold; user-facing :text strips those
-        ;; private PUA controls.
-        (expect (some #(str/includes? % p/INLINE_BOLD_ON) lines))
-        (expect (some #(str/includes? % p/INLINE_BOLD_OFF) lines))
-        (expect (some #(str/includes? % p/INLINE_ITALIC_ON) lines))
-        (expect (some #(str/includes? % p/INLINE_ITALIC_OFF) lines))
-        (expect (str/includes? text "important"))
-        (expect (str/includes? text "subtle"))
-        (expect (not (str/includes? text p/INLINE_BOLD_ON)))
-        (expect (not (str/includes? text "**important**")))
-        (expect (not (str/includes? text "*subtle*")))))
+        (expect (not-any? #(str/includes? % p/INLINE_BOLD_ON) lines))
+        (expect (not-any? #(str/includes? % p/INLINE_BOLD_OFF) lines))
+        (expect (not-any? #(str/includes? % p/INLINE_ITALIC_ON) lines))
+        (expect (not-any? #(str/includes? % p/INLINE_ITALIC_OFF) lines))
+        (expect (str/includes? text "**important**"))
+        (expect (str/includes? text "*subtle*"))))
+
+    (it "strips fenced marker rows and does not run Markdown structural rendering in tool results"
+      (render/invalidate-cache!)
+      (let [body (str "# Tool output\n\n"
+                   "```diagram\n"
+                   "flowchart LR\n"
+                   "A[Start] --> B[Done]\n"
+                   "```\n\n"
+                   "```diff\n"
+                   "+changed\n"
+                   "```\n")
+            big-body (str body "\n" (apply str (repeat 4096 "z")))
+            trace [{:code ["(v/cat \"x\")"]
+                    :results [big-body]
+                    :result-kinds [:tool]
+                    :result-details [{:op :v/cat :tag :op.tag/observation
+                                      :color-role :tool-color/read}]
+                    :stdouts [""] :durations [1] :successes [true]}]
+            opts {:conversation-id "conversation"
+                  :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                  :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
+            payload (render/format-answer-with-thinking-data
+                      nil trace 96 {:show-iterations true} nil false opts)
+            lines   (:lines payload)
+            text    (:text payload)]
+        (expect (not (str/includes? text "```")))
+        (expect (not (str/includes? text "diagram")))
+        (expect (str/includes? text "# Tool output"))
+        (expect (str/includes? text "flowchart LR"))
+        (expect (str/includes? text "A[Start] --> B[Done]"))
+        (expect (str/includes? text "+changed"))
+        (expect (not-any? #(= p/MARKER_MD_H1 (marker-of %)) lines))
+        (expect (not-any? #(= p/MARKER_MD_CODE (marker-of %)) lines))))
 
     (it "errors keep raw rendering - error formatting handles its own marker"
-      ;; Errors come through err-result-marker; we explicitly opt OUT
-      ;; of `:render-as :ir` for them in `form-lines`. This test pins
-      ;; that contract: the error body still appears verbatim and does
-      ;; NOT pick up bullet markers from accidental IR conversion.
+      ;; Errors come through err-result-marker. This test pins that
+      ;; contract: the error body still appears verbatim and does NOT
+      ;; pick up bullet markers from accidental IR conversion.
       (render/invalidate-cache!)
       (let [trace [{:code ["(boom)"]
                     :results ["- pretend-bullet"]
@@ -1329,24 +1367,6 @@
         ;; The literal `- pretend-bullet` text stays in the row; we
         ;; never re-render error bodies as Markdown.
         (expect (some #(str/includes? % "- pretend-bullet") lines))))))
-
-;; ─────────────────────────────────────────────────────────────────────────
-;; Mermaid fenced rendering - `vis-mermaid` registers a fenced renderer.
-;; The TUI must route ` ```mermaid ` fences through the extension and
-;; paint the rendered ASCII rows on the code-block band.
-;; ─────────────────────────────────────────────────────────────────────────
-
-(defdescribe mermaid-fenced-rendering-test
-  (it "renders mermaid code blocks through the fenced renderer, not as raw source"
-    (let [source  "flowchart LR\nA[Start] --> B[Done]\n"
-          payload (render/format-answer-markdown-data
-                    [:ir {} [:code {:lang "mermaid"} source]]
-                    80)
-          visible (mapv (comp strip-sentinels body-of) (:lines payload))]
-      (expect (not-any? #(str/includes? % "Mermaid (flowchart)") visible))
-      (expect (some #(str/includes? % "Start") visible))
-      (expect (not-any? #(str/includes? % "flowchart LR") visible))
-      (expect (not-any? #(str/includes? % "A[Start] --> B[Done]") visible)))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
 ;; Retired answer disclosure tags must not create collapsible output.
@@ -1368,10 +1388,7 @@
       (expect (str/includes? visible "Planalphabeta")))))
 
 ;; ─────────────────────────────────────────────────────────────────────────
-;; Provider-error / system-call / tool-call presentation contract - these
-;; lean on the shared `internal.presentation` ns. We exercise the cross
-;; surface contract from the TUI side too: presentation maps must round-
-;; trip into Markdown that the TUI can then tokenise as usual.
+;; Provider-error answer rendering.
 ;; ─────────────────────────────────────────────────────────────────────────
 
 (defdescribe provider-error-answer-test

@@ -46,6 +46,8 @@
                               (:ext/namespace %)) %)
                  exts)]
       (expect (some? ext))
+      (expect (= ['com.blockether.vis.ext.persistance-sqlite.registrar]
+                (:ext/nses ext)))
       (expect (= [{:persistance/id :sqlite
                    :persistance/ns 'com.blockether.vis.ext.persistance-sqlite.core}]
                 (:ext/persistance ext))))))

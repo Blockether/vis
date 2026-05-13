@@ -72,6 +72,7 @@
 (def vis-extension
   (vis/extension
     {:ext/namespace 'com.blockether.vis.ext.channel-tui.builtin-hooks
+     :ext/nses      ['com.blockether.vis.ext.channel-tui.core]
      :ext/doc       (str "Built-in TUI hook contributions: model/provider "
                       "display in the footer. Registered as regular extension "
                       "channel-hooks so the user can toggle them via Settings "

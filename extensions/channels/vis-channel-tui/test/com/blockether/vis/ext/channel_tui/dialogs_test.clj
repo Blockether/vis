@@ -81,8 +81,8 @@
       (is (= "Voice"
             (label {:ext/namespace 'com.blockether.vis.ext.voice.core}))
         "plain ns -> tail segment titleized; vendor prefix dropped")
-      (is (= "Mermaid"
-            (label {:ext/namespace 'com.blockether.vis.ext.mermaid.core}))
+      (is (= "Goal"
+            (label {:ext/namespace 'com.blockether.vis.ext.goal.core}))
         "trailing 'core' segment is dropped")
       (is (= "Channel Tui"
             (label {:ext/namespace 'com.blockether.vis.ext.channel-tui.core}))
