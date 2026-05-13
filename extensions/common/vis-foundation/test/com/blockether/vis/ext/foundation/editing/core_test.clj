@@ -4,7 +4,7 @@
    Smoke-checks the loaded extension surface (symbol vector, doc
    strings, prompt fragment) plus behavioral coverage of the
    structured preview/search helpers (`v/cat`, `v/rg`) and the new
-   thin babashka.fs wrappers (`v/patch`, `v/glob`, ...).
+   thin babashka.fs wrappers (`v/patch`, `v/copy`, ...).
 
    Tests reach private fns directly through the registry to avoid
    bringing up a full SCI sandbox. Temp files land under
@@ -14,11 +14,8 @@
    [babashka.fs :as fs]
    [clojure.set]
    [clojure.string :as string]
-   [com.blockether.vis.ext.foundation.core :as foundation]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
-   [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
 (defn- private-fn [name]
@@ -52,8 +49,8 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 13 (count editing/editing-symbols)))
-    (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize}
+    (expect (= 11 (count editing/editing-symbols)))
+    (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize 'bash}
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
               (map :ext.symbol/symbol editing/editing-symbols)))
@@ -63,21 +60,18 @@
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'write-lines 'update-file}
               (map :ext.symbol/symbol editing/editing-symbols)))
-    (do
-      (expect (some #{'bash}
-                (map :ext.symbol/symbol editing/editing-symbols)))
-      (expect (= 1 (count (filter #{'bash}
-                            (map :ext.symbol/symbol editing/editing-symbols))))))
     (expect (not-any? #{'preview 'silent!}
               (map :ext.symbol/symbol editing/editing-symbols))))
 
-  (it "omits bash symbols and prompt examples when bash is disabled by config"
-    (with-redefs [config/bash-disabled? (fn [] true)]
-      (let [symbols (map :ext.symbol/symbol (editing/available-editing-symbols))
-            prompt (editing/available-editing-prompt)]
-        (expect (not-any? #{'bash} symbols))
-        (expect (string/includes? prompt "v/bash is disabled"))
-        (expect (not (string/includes? prompt "(get-in (v/bash \"pwd\")"))))))
+  (it "bash tool fully removed: no symbol, no helpers, no prompt mention"
+    (let [symbols (map :ext.symbol/symbol (editing/available-editing-symbols))
+          prompt (editing/available-editing-prompt)]
+      (expect (not-any? #{'bash} symbols))
+      (expect (not (string/includes? prompt "v/bash")))
+      (expect (not (string/includes? prompt "bash")))
+      (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "bash-tool"))))
+      (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "bash-symbol"))))
+      (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "run-bash-safe"))))))
 
   (it "every editing symbol carries a non-blank :doc and an :arglists vector"
     (doseq [s editing/editing-symbols
@@ -97,35 +91,17 @@
                     editing/editing-symbols))))
 
   (it "pushes search/read/path discovery to the structured v tool surface"
-    (expect (string/includes? editing/editing-prompt
-              "Use structured tools for discovery and reads"))
-    (expect (string/includes? editing/editing-prompt
-              "`v/glob` returns cwd-relative path strings under `:result`"))
-    (expect (string/includes? editing/editing-prompt
-              "recursive patterns like `**/*.clj` walk descendants"))
-    (expect (string/includes? editing/editing-prompt
-              "immediate children"))
+    (expect (string/includes? editing/editing-prompt "v/rg"))
+    (expect (string/includes? editing/editing-prompt "v/ls"))
+    (expect (string/includes? editing/editing-prompt "v/cat"))
     nil)
 
   (it "registers journal + channel renderers on every fn-symbol"
-    (doseq [sym-name '[cat ls rg patch patch-check create-dirs glob copy move delete delete-if-exists exists? bash]]
+    (doseq [sym-name '[cat ls rg patch patch-check create-dirs copy move delete delete-if-exists exists?]]
       (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
                     editing/editing-symbols)]
         (expect (ifn? (:ext.symbol/journal-render-fn entry)))
-        (expect (ifn? (:ext.symbol/channel-render-fn entry))))))
-
-  (it "teaches the model that file and shell payloads live under the tool envelope :result"
-    (let [bash-symbol (some #(when (= 'bash (:ext.symbol/symbol %)) %)
-                        editing/editing-symbols)]
-      (expect (string/includes? editing/editing-prompt "[:result :lines]"))
-      (expect (string/includes? editing/editing-prompt "Never use [:result :lines]"))
-      (expect (string/includes? editing/editing-prompt "`(get-in vector)` is an arity error"))
-      (expect (string/includes? editing/editing-prompt "(-> (v/rg {:all [\"needle\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) :result :hits)"))
-      (expect (string/includes? editing/editing-prompt "[:result :stdout]"))
-      (expect (string/includes? (:ext.symbol/doc bash-symbol) ":result :stdout"))
-      (expect (string/includes? (:ext.symbol/doc bash-symbol) "Refuses shell-driven Clojure/EDN source edits"))
-      (expect (string/includes? editing/editing-prompt "Use `v/bash`"))
-      (expect (string/includes? editing/editing-prompt "set -euo pipefail")))))
+        (expect (ifn? (:ext.symbol/channel-render-fn entry)))))))
 
 (it "defers op classification to the engine contract (no editing-local copy)"
   ;; The classification table + presentation map live in
@@ -133,8 +109,7 @@
   ;; `op-presentation`). Editing used to keep a thin shim; that
   ;; shim is gone and callers go straight to the engine. Tags
   ;; collapsed to 2 values per PLAN.md §2.11; ops not in the
-  ;; registration table (e.g. :v/bash, :v/extensions) get the
-  ;; safe default :op.tag/observation.
+  ;; registration table get the safe default :op.tag/observation.
   (doseq [[op tag] [[:v/cat         :op.tag/observation]
                     [:z/locators    :op.tag/observation]
                     [:v/rg          :op.tag/observation]
@@ -142,7 +117,6 @@
                     [:v/create-dirs :op.tag/action]
                     [:v/delete      :op.tag/action]
                     [:v/move        :op.tag/action]
-                    [:v/bash        :op.tag/observation]   ; default; bash wrapper overrides at call site
                     [:v/extensions  :op.tag/observation]]] ; unregistered -> default
     (expect (= tag (extension/op-tag op)))
     (expect (= {:tag tag} (extension/op-presentation op)))))
@@ -300,16 +274,7 @@
           rg (private-fn "rg-tool")]
       (expect (= (grep spec) (:result (rg spec))))))
 
-  (it "public rg accepts the legacy query-plus-glob shorthand"
-    (let [_  (write-temp! "rglegacy/src/a.clj" "alpha here\n")
-          _  (write-temp! "rglegacy/src/b.clj" "beta here\n")
-          _  (write-temp! "rglegacy/src/c.txt" "alpha ignored\n")
-          rg (private-fn "rg-tool")
-          out (:result (rg "alpha|beta" {:paths [(temp-dir-path "rglegacy")]
-                                          :glob "src/**/*.clj"}))]
-      (expect (= ["alpha here" "beta here"] (mapv :text (:hits out))))))
-
-  (it "private grep keeps strict spec validation and public rg rejects unknown shorthand opts"
+  (it "rejects shorthand and unknown keys instead of silently changing grammar"
     (let [grep (private-fn "grep-files")
           rg (private-fn "rg-tool")
           bad-spec (fn [k v] (assoc {:all ["needle"] :paths ["."]} k v))]
@@ -317,8 +282,13 @@
                 #(grep "needle")))
       (expect (throws? clojure.lang.ExceptionInfo
                 #(grep {:all ["needle"] :paths "."})))
-      (expect (throws? clojure.lang.ExceptionInfo
-                #(rg "needle" {:limit 2})))
+      (let [err (try
+                  (rg "needle" {:include "**/*.clj"})
+                  nil
+                  (catch clojure.lang.ExceptionInfo e e))]
+        (expect (some? err))
+        (expect (= :ext.foundation.editing/invalid-rg-arity (:type (ex-data err))))
+        (expect (clojure.string/includes? (ex-message err) "exactly one spec map")))
       (doseq [[k v] [[(keyword "limit") 2]
                      [(keyword "type") :clj]
                      [(keyword "mode") :any]]]
@@ -393,28 +363,6 @@
       (expect (false? (:valid? out)))
       (expect (= "alpha\nbeta\nbeta\n" (slurp path)))))
 
-  (it "glob returns cwd-relative path strings for immediate-child patterns"
-    (let [_    (write-temp! "bbfs/tree/a.clj" "(ns a)")
-          _    (write-temp! "bbfs/tree/b.txt" "b")
-          glob (private-fn "glob-safe")
-          root (str (temp-root) "/bbfs/tree")]
-      (expect (= #{"target/editing-test/bbfs/tree/a.clj"
-                   "target/editing-test/bbfs/tree/b.txt"}
-                (set (:paths (glob root "*")))))
-      (expect (= ["target/editing-test/bbfs/tree/a.clj"]
-                (:paths (glob root "*.clj"))))))
-
-  (it "glob walks descendants for recursive patterns and supports explicit :scope"
-    (let [_    (write-temp! "bbfs/deep/a.clj" "(ns a)")
-          _    (write-temp! "bbfs/deep/nested/b.clj" "(ns b)")
-          glob (private-fn "glob-safe")
-          root (str (temp-root) "/bbfs/deep")]
-      (expect (= #{"target/editing-test/bbfs/deep/a.clj"
-                   "target/editing-test/bbfs/deep/nested/b.clj"}
-                (set (:paths (glob root "**/*.clj")))))
-      (expect (= ["target/editing-test/bbfs/deep/a.clj"]
-                (:paths (glob root "*.clj" {:scope :children}))))))
-
   (it "exists? and delete-if-exists work on cwd-relative paths"
     (let [path             (write-temp! "bbfs/meta/x.txt" "x")
           exists?          (private-fn "exists-safe?")
@@ -423,98 +371,14 @@
       (expect (true? (delete-if-exists path)))
       (expect (false? (exists? path)))))
 
-  (it "bash runs bounded commands inside the working tree"
-    (let [run-bash (private-fn "run-bash-safe")
-          out      (run-bash "printf '%s' hello && printf '%s' err >&2" {:timeout-ms 5000})]
-      (expect (= 0 (:exit out)))
-      (expect (= "hello" (:stdout out)))
-      (expect (= "err" (:stderr out)))
-      (expect (= "." (:cwd out)))
-      (expect (false? (:timed-out? out)))))
-
-  (it "bash default cwd follows the active workspace root binding"
-    (let [run-bash (private-fn "run-bash-safe")
-          root     (.getCanonicalPath (fs/file (temp-dir-path "workspace-root")))]
-      (binding [workspace/*workspace-root* root]
-        (let [out (run-bash "pwd" {:timeout-ms 5000})]
-          (expect (= root (string/trim (:stdout out))))
-          (expect (= "." (:cwd out)))))))
-
-  (it "bash warns when Traceback appears on stderr despite exit 0"
-    (let [bash-tool   (private-fn "bash-tool")
-          render-bash (private-fn "channel-render-bash")
-          out         (bash-tool "printf '%s\n' 'Traceback (most recent call last):' >&2" {:timeout-ms 5000})
-          rendered    (render-bash (:result out))]
-      (expect (true? (:success? out)))
-      (expect (= 0 (get-in out [:result :exit])))
-      (expect (= :stderr-traceback-with-zero-exit
-                (get-in out [:result :warnings 0 :type])))
-      (expect (string/includes? rendered "warning(s)"))
-      (expect (string/includes? rendered "swallowed"))))
-
-  (it "bash prepends strict mode and keeps original command in result"
-    (let [strict-command (private-fn "strict-bash-command")
-          bash-tool      (private-fn "bash-tool")
-          out            (bash-tool "false\necho SHOULD_NOT_RUN" {:timeout-ms 5000})
-          result         (:result out)]
-      (expect (= "set -euo pipefail\nfalse\necho SHOULD_NOT_RUN"
-                (strict-command "false\necho SHOULD_NOT_RUN")))
-      (expect (true? (:success? out)))
-      (expect (= 1 (:exit result)))
-      (expect (= "" (:stdout result)))
-      (expect (true? (:strict? result)))
-      (expect (= "false\necho SHOULD_NOT_RUN" (:original-command result)))
-      (expect (string/starts-with? (:command result) "set -euo pipefail\n"))))
-
-  (it "bash interruption returns concise cancelled failure instead of timeout or stack dump"
-    (let [entry       (some #(when (= 'bash (:ext.symbol/symbol %)) %)
-                        (:ext/symbols foundation/vis-extension))
-          render-bash (private-fn "channel-render-bash")
-          out         (promise)
-          worker      (Thread.
-                        (fn []
-                          (try
-                            (deliver out
-                              (extension/invoke-symbol-wrapper
-                                foundation/vis-extension entry
-                                ["sleep 5" {:timeout-ms 30000}]
-                                {}))
-                            (catch Throwable e
-                              (deliver out e)))))]
-      (.start worker)
-      (Thread/sleep 100)
-      (.interrupt worker)
-      (let [v        (deref out 2000 ::timeout)
-            rendered (when (map? v)
-                       (if (:success? v)
-                         (render-bash (:result v))
-                         (extension/default-channel-error-text v)))]
-        (expect (not= ::timeout v))
-        (expect (map? v))
-        (expect (false? (:success? v)))
-        (expect (nil? (get-in v [:error :type])))
-        (expect (nil? (get-in v [:error :trace])))
-        (expect (string/includes? (get-in v [:error :message]) "cancelled"))
-        (expect (not (string/includes? (get-in v [:error :message]) "timed out")))
-        (expect (= :interrupted (get-in v [:metadata :status])))
-        (expect (= "sleep 5" (get-in v [:metadata :command])))
-        (expect (= :v/bash (:symbol v)))
-        (expect (= "." (get-in v [:metadata :target :requested])))
-        (expect (string/includes? rendered "cancelled"))
-        (expect (not (string/includes? rendered "timed out")))
-        (expect (not (string/includes? (pr-str (:error v)) "core.clj"))))))
-
-  (it "bash validates cwd through the same safe path guard and blocks shell source edits"
-    (let [run-bash (private-fn "run-bash-safe")]
-      (expect (throws? clojure.lang.ExceptionInfo #(run-bash "pwd" {:cwd ".."})))
-      (let [command "python3 - <<'PY'\nfrom pathlib import Path\nPath('src/demo.clj').write_text('(ns demo)')\nPY"]
-        (expect (throws? clojure.lang.ExceptionInfo #(run-bash command)))
-        (try
-          (run-bash command)
-          (expect false)
-          (catch clojure.lang.ExceptionInfo e
-            (expect (= :ext.foundation.editing/bash-clojure-source-edit-blocked (:type (ex-data e))))
-            (expect (= :use-z-patch (:reason (ex-data e))))))))))
+  (it "bash helpers fully removed from the editing core"
+    (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "run-bash-safe"))))
+    (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "bash-tool"))))
+    (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "strict-bash-command"))))
+    (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "coerce-bash-opts"))))
+    (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "bash-warnings"))))
+    (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "channel-render-bash"))))
+    (expect (nil? (resolve (symbol "com.blockether.vis.ext.foundation.editing.core" "journal-render-bash"))))))
 
 (defdescribe editing-renderer-guidance-test
   (it "patch renderer reports patched paths"

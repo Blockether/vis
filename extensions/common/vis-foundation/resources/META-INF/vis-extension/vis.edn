@@ -28,10 +28,10 @@ Normal source installs keep the Vis checkout at `~/.vis/sourcecode`. When an age
 (v/ls path)
 (v/rg {:all [\"defn\" \"name\"] :paths [\"src\" \"test\"] :include [\"*.clj\" \"*.cljc\"]}) ; all terms same line
 (v/rg {:any [\"foo\" \"bar\"] :paths [\".\"]}) ; any term same line
-(v/bash command)
 (v/patch [{:path path :search \"old\" :replace \"new\"}])
-(v/glob root pattern)
 ```
+
+Path discovery is part of `v/rg` (`:paths`, `:include`, `:exclude`) and `v/ls`.
 
 ## Markdown answer builders
 

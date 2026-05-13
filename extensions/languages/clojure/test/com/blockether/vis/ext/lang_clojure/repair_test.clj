@@ -42,7 +42,12 @@
       (expect (= "(ns demo)\n(defn bad [x]\n  (inc x))\n\n(def ok 1)\n"
                 (slurp path)))
       (expect (= "(defn bad [x]\n  (inc x)\n" (get-in out [:metadata :files 0 :before])))
-      (expect (= "(defn bad [x]\n  (inc x))\n" (get-in out [:metadata :files 0 :after])))))
+      (expect (= "(defn bad [x]\n  (inc x))\n" (get-in out [:metadata :files 0 :after])))
+      (expect (string? (get-in out [:result :parse-error-before])))
+      (expect (nil? (get-in out [:result :parse-error-after])))
+      (expect (false? (get-in out [:result :whole-file-parseable-before?])))
+      (expect (true? (get-in out [:result :whole-file-parseable-after?])))
+      (expect (= :parinfer (get-in out [:metadata :files 0 :engine])))))
 
   (it "accepts locator-row :span and supports dry-run"
     (let [path      (write-temp! "range/quote.clj" "(ns demo)\n(def broken (str \"foo\" \"bar\" \"))\n(def ok 1)\n")

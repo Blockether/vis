@@ -60,6 +60,13 @@
       (expect (= 1 (count (:failures out))))
       (expect (= 0 (:matches (first (:failures out)))))))
 
+  (it "warns when a valid patch would be a no-op"
+    (let [path (write-temp! "patch-check/no-op.clj" "(ns demo)\n(def x 1)\n")
+          out  (patch/patch-check [{:path path :search "(def x 1)" :replace "(def x 1)"}])]
+      (expect (true? (:valid? out)))
+      (expect (= false (:changed? (first (:checks out)))))
+      (expect (= :ext.lang-clojure/patch-no-op (get-in out [:warnings 0 :type])))))
+
   (it "is exposed as a registered z/patch-check symbol"
     (expect (= 'patch-check (:ext.symbol/symbol patch/patch-check-symbol)))))
 
@@ -175,11 +182,29 @@
           symbol-filter (symbols-fn path {:name 'target-sym})]
       (expect (= 22 (count (:result by-default))))
       (expect (false? (get-in by-default [:metadata :truncated?])))
+      (expect (= :of-string (get-in by-default [:metadata :parse :create])))
+      (expect (= true (get-in by-default [:metadata :parse :track-position?])))
       (expect (= [:defn] (mapv :kind (:result by-kind))))
       (expect (= ['needle] (mapv :name (:result by-name))))
       (expect (= ['target-sym] (mapv :value (:result by-symbol))))
       (expect (some #(str/includes? (:source %) "needle") (:result by-source)))
       (expect (= ['target-sym] (mapv :value (:result symbol-filter))))))
+
+  (it "can expose hidden nodes and sexpr failures without dropping source locators"
+    (let [path        (write-temp! "patch/locators-sexpr-edge.clj" ";; keep\n(def x ^(bad metadata) y)\n")
+          locators-fn (:ext.symbol/fn patch/locators-symbol)
+          out         (locators-fn path {:include-hidden? true :limit 100})
+          rows        (:result out)
+          comment-row (first (filter #(= :comment (:tag %)) rows))
+          meta-row    (first (filter #(= :meta (:tag %)) rows))]
+      (expect (= :of-string* (get-in out [:metadata :parse :create])))
+      (expect (= :next* (get-in out [:metadata :parse :move])))
+      (expect (= ";; keep\n" (:source comment-row)))
+      (expect (false? (:sexpr-able? comment-row)))
+      (expect (not (contains? comment-row :value)))
+      (expect (= "^(bad metadata) y" (:source meta-row)))
+      (expect (true? (:sexpr-able? meta-row)))
+      (expect (str/includes? (:value-error meta-row) "Metadata must be"))))
 
   (it "z/locator-for-symbol returns one symbol row without dumping the namespace"
     (let [path       (write-temp! "patch/locator-for-symbol.clj" "(ns demo)\n(defn f [] target-sym)\n")
@@ -212,6 +237,20 @@
       (expect (= 2 (count old-symbols)))
       (patch-fn {:path path :search second-old :replace 'new-sym})
       (expect (= "(ns demo)\n(def a old-sym)\n(def b new-sym)\n" (slurp path)))))
+
+  (it "preserves rewrite-clj namespaced-map and auto-resolve behavior when patching locator rows"
+    (let [path        (write-temp! "patch/namespaced-map.clj" "(ns demo)\n(def m #:prefix {:a 1})\n(def k ::old)\n")
+          patch-fn    (private-fn "patch-safe")
+          locators-fn (:ext.symbol/fn patch/locators-symbol)
+          rows        (:result (locators-fn path {:depth :all :limit 100}))
+          ns-key-row  (first (filter #(= :prefix/a (:value %)) rows))
+          auto-row    (first (filter #(= :?_current-ns_?/old (:value %)) rows))]
+      (patch-fn [(assoc ns-key-row :replace :b)
+                 (assoc auto-row :replace "::new")])
+      (expect (= "(ns demo)\n(def m #:prefix {:b 1})\n(def k ::new)\n" (slurp path)))
+      (let [after-rows (:result (locators-fn path {:depth :all :limit 100}))]
+        (expect (some #(= :prefix/b (:value %)) after-rows))
+        (expect (some #(= :?_current-ns_?/new (:value %)) after-rows)))))
 
   (it "applies span-specific locator row edits, including reader-anonymous fn forms"
     (let [path        (write-temp! "patch/locator-row-multi.clj" "(ns demo)\n(def a old-sym)\n(def b old-sym)\n")

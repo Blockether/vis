@@ -704,8 +704,7 @@
 (defn- conversation-envelope
   [op result]
   (extension/success {:op op
-                      :result result
-                      :metadata {:kind :conversation-state}}))
+                      :result result}))
 
 (defn- foundation-inspect
   "Canonical conversation-state data surface. Returns a Vis tool envelope;

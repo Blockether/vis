@@ -13,6 +13,7 @@
 (def ^:private format-iteration-entry @#'render/format-iteration-entry)
 (def ^:private input-more-hint @#'render/input-more-hint)
 (def ^:private clip-lines-preserving-markers @#'render/clip-lines-preserving-markers)
+(def ^:private assistant-meta-line @#'render/assistant-meta-line)
 
 (defn- marker-of
   "First codepoint of `s` as a single-char string, or nil for empty."
@@ -147,6 +148,35 @@
         (expect (some? fallback))
         (expect (= t/warning-bg (:bg fallback)))
         (expect (= t/warning-fg (:fg fallback)))))))
+
+(defdescribe assistant-bubble-footer-fallback-test
+  (it "shows selected and actual LLM routing in the assistant bubble footer"
+    (let [message {:role :assistant
+                   :llm-selected {:provider "anthropic-coding-plan"
+                                  :model "claude-opus-4-7"}
+                   :llm-actual {:provider "openai-codex"
+                                :model "gpt-5.3-codex"}
+                   :llm-fallback? true
+                   :llm-fallback-trace [{:provider-id "anthropic-coding-plan"
+                                         :model "claude-opus-4-7"
+                                         :error "Exceptional status code: 429"}]}]
+      (expect (= "fallback anthropic-coding-plan/claude-opus-4-7 → openai-codex/gpt-5.3-codex — Exceptional status code: 429"
+                (assistant-meta-line message)))))
+
+  (it "counts fallback-only footer height so the footer is not overwritten"
+    (let [base {:role :assistant
+                :text "Done."
+                :timestamp nil
+                :prewrapped-lines ["Done."]}
+          routed (assoc base
+                   :llm-selected {:provider "anthropic-coding-plan"
+                                  :model "claude-opus-4-7"}
+                   :llm-actual {:provider "openai-codex"
+                                :model "gpt-5.3-codex"}
+                   :llm-fallback? true)]
+      (render/invalidate-cache!)
+      (expect (= (inc (render/bubble-height base 120))
+                (render/bubble-height routed 120))))))
 
 (defn- visually-blank?
   "True when a rendered line carries no visible glyphs — either truly
@@ -1078,6 +1108,28 @@
               (expect (not (str/includes? (:text payload) "5: selected line")))
               (expect (< @wrap-calls 80))))))))
 
+  (it "renders raw preview results without pretty-printing or ANSI syntax colors"
+    (render/invalidate-cache!)
+    (let [raw "{:b 2 :a [1 2 3]}"
+          trace [{:code ["(v/preview data)"]
+                  :results ["preview"]
+                  :result-kinds [:preview]
+                  :result-details [{:raw raw}]
+                  :stdouts [""]
+                  :durations [1]
+                  :successes [true]}]
+          payload (render/format-answer-with-thinking-data
+                    nil trace 96 {:show-iterations true} nil false
+                    {:conversation-id "conversation"
+                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
+                     :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:preview-switch"] :raw}})
+          text (:text payload)
+          result-lines (filter #(str/includes? % raw) (:lines payload))]
+      (expect (str/includes? text raw))
+      (expect (not (str/includes? text "{:a [1 2 3], :b 2}")))
+      (expect (seq result-lines))
+      (expect (not-any? #(re-find #"\u001b\[[0-9;]*m" %) result-lines))))
+
   (it "renders operation badges and color roles for tool result summaries"
     (render/invalidate-cache!)
     (let [trace [{:code ["(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"]
@@ -1116,159 +1168,6 @@
       (expect (= 1 (count (re-seq #"ACTION patch" body))))
       (expect (some #(str/starts-with? (body-of %) "▸ ACTION patch") (:lines payload)))
       (expect (not-any? #(str/starts-with? (body-of %) "  ▸ ACTION patch") (:lines payload)))))
-
-  (it "does not duplicate self-describing shell result summaries"
-    (render/invalidate-cache!)
-    (let [huge-result (str "Ran bash in `.` - exit `0`, 1 ms.\n"
-                        "Command: `find . -maxdepth 2 -type f`\n"
-                        (str/join " " (repeat 500 "file.txt")))
-          trace       [{:code ["(v/bash \"find . -maxdepth 2 -type f\")"]
-                        :results [huge-result]
-                        :result-kinds [:tool]
-                        :result-details [{:op :v/bash
-                                          :tag :op.tag/action
-                                          :color-role :tool-color/shell}]
-                        :stdouts [""]
-                        :durations [1]
-                        :successes [true]}]
-          payload     (render/format-answer-with-thinking-data
-                        nil trace 96 {:show-iterations true} nil false
-                        {:conversation-id "conversation"
-                         :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
-          body        (strip-ansi (:text payload))]
-      (expect (= 1 (count (re-seq #"ACTION bash" body))))))
-
-  (it "keeps shell stderr inside the shell result zone"
-    (let [lines (format-iteration-entry {:iteration      0
-                                         :code           ["(v/bash \"boom\")"]
-                                         :results        ["Ran bash in `.` - exit `1`, 1 ms.\n\nstderr:\n\n```text\nExecution error\n```"]
-                                         :result-kinds   [:tool]
-                                         :result-details [{:op :v/bash
-                                                           :tag :op.tag/action
-                                                           :color-role :tool-color/shell
-                                                           :stderr "Execution error"}]
-                                         :stdouts        [""]
-                                         :stderrs        [""]
-                                         :successes      [false]
-                                         :durations      [1]}
-                  48 1 {})
-          stderr-label (first (filter #(str/includes? % "STDERR") lines))
-          stderr-body  (first (filter #(str/includes? % "Execution error") lines))]
-      (expect (nil? stderr-label))
-      (expect (= p/MARKER_ERR_RESULT (marker-of stderr-body)))))
-
-  (it "keeps shell stdout inside the shell result zone"
-    (let [lines (format-iteration-entry {:iteration      0
-                                         :code           ["(v/bash \"echo hello\")"]
-                                         :results        ["Ran bash in `.` - exit `0`, 1 ms.\n\nstdout:\n\n```text\nhello\nworld\n```"]
-                                         :result-kinds   [:tool]
-                                         :result-details [{:op :v/bash
-                                                           :tag :op.tag/action
-                                                           :color-role :tool-color/shell
-                                                           :stdout "hello\nworld"
-                                                           :stderr ""}]
-                                         :stdouts        [""]
-                                         :stderrs        [""]
-                                         :successes      [true]
-                                         :durations      [1]}
-                  56 1 {})
-          result-line  (first (filter #(str/includes? % "Ran bash") lines))
-          stdout-label (first (filter #(str/includes? % "STDOUT") lines))
-          stderr-label (first (filter #(str/includes? % "STDERR") lines))
-          stdout-body  (first (filter #(str/includes? % "hello") lines))]
-      (expect (some? result-line))
-      (let [result-idx (.indexOf lines result-line)
-            preceding  (subvec (vec lines) 0 result-idx)]
-        ;; A new `ACTION <op>` label line was inserted between the
-        ;; iteration-pad and the result body, so the iteration-pad is
-        ;; no longer guaranteed to be the IMMEDIATELY preceding row
-        ;; — just somewhere above the result inside the iteration body.
-        (expect (some #(= p/MARKER_ITERATION_PAD (marker-of %)) preceding)))
-      (expect (not (str/starts-with? (body-of result-line) "  ")))
-      (expect (nil? stdout-label))
-      (expect (nil? stderr-label))
-      (expect (some? stdout-body))))
-
-  (it "paints merged shell output on the shell result background"
-    (let [trace   [{:code ["(v/bash \"echo ok\")"]
-                    :results ["Ran bash in `.` - exit `0`, 1 ms.\n\nstdout:\n\n```text\nstdout-line\n```"]
-                    :result-kinds [:tool]
-                    :result-details [{:op :v/bash
-                                      :tag :op.tag/action
-                                      :color-role :tool-color/shell
-                                      :stdout "stdout-line"}]
-                    :stdouts [""]
-                    :durations [1]
-                    :successes [true]}]
-          payload (render/format-answer-with-thinking-data
-                    nil trace 80 {:show-iterations true} nil false
-                    {:conversation-id "conversation"
-                     :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"})
-          fills   (atom [])
-          puts    (atom [])
-          active  (atom #{})
-          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
-                     (clearModifiers []
-                       (reset! active #{})
-                       this)
-                     (enableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                       (swap! active into (seq arr))
-                       this)
-                     (disableModifiers [^"[Lcom.googlecode.lanterna.SGR;" arr]
-                       (apply swap! active disj (seq arr))
-                       this)
-                     (getActiveModifiers []
-                       (if (empty? @active)
-                         (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR)
-                         (java.util.EnumSet/copyOf ^java.util.Collection @active)))
-                     (setForegroundColor [_] this)
-                     (setBackgroundColor [_] this)
-                     (putString [col row text]
-                       (swap! puts conj {:col col :row row :text text})
-                       this)
-                     (fillRectangle [pos size _ch]
-                       (swap! fills conj {:row (.getRow ^com.googlecode.lanterna.TerminalPosition pos)
-                                          :col (.getColumn ^com.googlecode.lanterna.TerminalPosition pos)
-                                          :w   (.getColumns ^com.googlecode.lanterna.TerminalSize size)})
-                       this)
-                     (setCharacter [_ _ _] this))]
-      (render/draw-chat-bubble! graphics
-        {:role :assistant
-         :text (:text payload)
-         :prewrapped-lines (:lines payload)
-         :line-meta (:line-meta payload)}
-        0 2 80 {:viewport-h 50})
-      (let [code-put   (some #(when (str/includes? (:text %) "v/bash") %) @puts)
-            stdout-put (some #(when (= "stdout-line" (:text %)) %) @puts)
-            result-put (some #(when (str/includes? (:text %) "Ran bash") %) @puts)
-            code-fill-col (apply max (map :col (filter #(= (:row code-put) (:row %)) @fills)))
-            stdout-fill-col (apply max (map :col (filter #(= (:row stdout-put) (:row %)) @fills)))
-            result-fill-col (apply max (map :col (filter #(= (:row result-put) (:row %)) @fills)))]
-        (expect (some? code-put))
-        (expect (some? result-put))
-        (expect (some? stdout-put))
-        (expect (= code-fill-col result-fill-col))
-        (expect (= code-fill-col stdout-fill-col)))))
-
-  (it "omits blank shell result/stdout/stderr blocks"
-    (let [lines (format-iteration-entry {:iteration      0
-                                         :code           ["(v/bash \"true\")"]
-                                         :results        [""]
-                                         :result-kinds   [:tool]
-                                         :result-details [{:op :v/bash
-                                                           :tag :op.tag/action
-                                                           :color-role :tool-color/shell
-                                                           :stdout ""
-                                                           :stderr ""}]
-                                         :stdouts        [""]
-                                         :stderrs        [""]
-                                         :successes      [true]
-                                         :durations      [1]}
-                  56 1 {})]
-      (expect (not-any? #(str/includes? % "BASH") lines))
-      (expect (not-any? #(str/includes? % "RESULT") lines))
-      (expect (not-any? #(str/includes? % "STDOUT") lines))
-      (expect (not-any? #(str/includes? % "STDERR") lines))))
 
   (it "does not emit vague duplicate search-any rows"
     (render/invalidate-cache!)
@@ -1478,11 +1377,11 @@
                    "- beta line\n"
                    "- gamma line")
             big-body (str body "\n\n" (apply str (repeat 4096 "x")))
-            trace [{:code ["(v/bash \"echo hi\")"]
+            trace [{:code ["(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"]
                     :results [big-body]
                     :result-kinds [:tool]
-                    :result-details [{:op :v/bash :tag :op.tag/action
-                                      :color-role :tool-color/shell}]
+                    :result-details [{:op :v/patch :tag :op.tag/action
+                                      :color-role :tool-color/edit}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
@@ -1499,11 +1398,11 @@
       (let [body "Result: **important** and *subtle*."
             ;; Trip auto-collapse with filler.
             big-body (str body "\n" (apply str (repeat 4096 "y")))
-            trace [{:code ["(v/bash \"echo hi\")"]
+            trace [{:code ["(v/patch [{:path \"x\" :search \"a\" :replace \"b\"}])"]
                     :results [big-body]
                     :result-kinds [:tool]
-                    :result-details [{:op :v/bash :tag :op.tag/action
-                                      :color-role :tool-color/shell}]
+                    :result-details [{:op :v/patch :tag :op.tag/action
+                                      :color-role :tool-color/edit}]
                     :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"

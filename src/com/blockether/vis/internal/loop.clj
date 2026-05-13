@@ -46,7 +46,6 @@
    [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
-   [com.blockether.vis.internal.registry :as registry]
    [edamame.core :as edamame]
    [sci.core :as sci]
    [taoensso.telemere :as tel])
@@ -493,9 +492,8 @@
    Repair pipeline when source fails edamame: bounded loop over small,
    deterministic repairs, re-parsing after every successful rewrite. This lets
    independent fixes compose (e.g. answer-string `\\e` rescue, then parinfer).
-   On final failure return `[nil parse-error]` and let the caller
-   (`execute-code`) dispatch to the extension rescue chain
-   (`try-extension-parse-rescue`).
+   On final failure return `[nil parse-error]`; `execute-code` surfaces the
+   structured parse error directly.
 
    Empty / whitespace-only / comment-only input returns `[[] nil]`."
   [code]
@@ -746,44 +744,6 @@
       (:timeout? execution-result) (assoc :timeout? true)
       (not (:timeout? execution-result)) (assoc :timeout? false))))
 
-(def ^:private parse-rescue-max-iterations
-  "Hard cap on rescue retries. Bounds pathological hooks that keep
-   rewriting the source without converging. The vast majority of
-   real-world cases (single `\\|`, two `\\|` on different lines)
-   need 1-3 iterations; 8 is generous."
-  8)
-
-(defn- try-extension-parse-rescue
-  "Walk the environment's active extensions and ask each one's
-   `:ext/on-parse-error-fn` to rewrite `code`. Loops the rescue chain
-   so that hooks repairing only the FIRST offending site (the
-   documented contract of `rescue-parse-error`) still converge when
-   the source contains 2+ broken sites. Returns the rewritten string
-   once it parses cleanly, nil otherwise.
-
-   Termination conditions (in order):
-     1. Rewrite parses cleanly             -> return rewrite.
-     2. Hook returns nil                    -> return nil.
-     3. Hook returns the input unchanged    -> return nil (no progress).
-     4. Iteration cap reached               -> return nil (bounded).
-
-   Read-only on the environment."
-  [environment code parse-error]
-  (when-let [exts (some-> (:extensions environment) deref seq)]
-    (loop [current-code  code
-           current-error parse-error
-           iterations    0]
-      (when (< iterations parse-rescue-max-iterations)
-        (let [fixed (extension/try-rescue-parse-error exts current-code current-error environment)]
-          (cond
-            (nil? fixed)              nil
-            (= fixed current-code)    nil  ; no progress - bail
-            :else
-            (let [next-error (parse-clojure-syntax fixed)]
-              (if (nil? next-error)
-                fixed                       ; parses cleanly - done
-                (recur fixed next-error (inc iterations))))))))))
-
 (def ^:private DEF_HEADS '#{def defn defn- defmacro})
 
 (defn extract-defining-name
@@ -820,16 +780,6 @@
                      :data {:name (str defining-name)
                             :error (ex-message t)}}))))))
 
-(defn- try-extension-source-rewrite
-  "Walk active extensions for parsed-source normalization before SCI eval.
-   Extension-owned: the loop only supplies the hook seam and validates that
-   rewritten source still parses."
-  [environment code]
-  (when-let [exts (some-> (:extensions environment) deref seq)]
-    (when-let [rewritten (extension/try-rewrite-source exts code environment)]
-      (when-not (parse-clojure-syntax rewritten)
-        rewritten))))
-
 (defn- execute-code
   "Run a single :code block through the SCI sandbox.
 
@@ -858,27 +808,11 @@
          :execution-time-ms 0 :timeout? false}
         (let [parse-error (parse-clojure-syntax code)]
           (if parse-error
-            (if-let [rescued (try-extension-parse-rescue environment code parse-error)]
-              (let [exec (run-with-timing sci-ctx rescued sandbox-ns timeout-ms start-time tool-event-fn environment)
-                    eval-ok? (nil? (:error exec))]
-                (when eval-ok?
-                  (attach-doc-meta! environment rescued doc))
-                ;; `:repaired? true` ONLY when the rescued source
-                ;; actually evaluated cleanly. Setting it on a
-                ;; still-failing eval misleads the journal/transcript
-                ;; ("repaired" tag) and the model. Keep
-                ;; `:original-error`/`:original-code` regardless so
-                ;; the next iteration sees what we tried.
-                (cond-> exec
-                  true     (assoc :original-code code
-                             :original-error parse-error)
-                  eval-ok? (assoc :repaired? true)))
-              {:result nil :stdout "" :stderr ""
-               :error {:message parse-error
-                       :block   {:source code :phase :edamame/parse}}
-               :execution-time-ms 0 :timeout? false})
-            (let [rewritten-code (try-extension-source-rewrite environment code)
-                  eval-code      (or rewritten-code code)
+            {:result nil :stdout "" :stderr ""
+             :error {:message parse-error
+                     :block   {:source code :phase :edamame/parse}}
+             :execution-time-ms 0 :timeout? false}
+            (let [eval-code      code
                   initial-exec   (run-with-timing sci-ctx eval-code sandbox-ns timeout-ms start-time tool-event-fn environment)
                   initial-ok?    (nil? (:error initial-exec))
                   ;; Eval-time auto-repair scoped to `(turn-answer! ...)`
@@ -927,15 +861,6 @@
                   (or (:candidate restitched) eval-code) doc))
               (cond-> exec
                 enriched-error              (assoc :error enriched-error)
-                ;; `:repaired?` ONLY when the source was actually
-                ;; mutated AND eval was clean. A rewrite that still
-                ;; throws is not a repair - it's an attempt that
-                ;; fell through.
-                (and rewritten-code eval-ok? (not restitched))
-                (assoc :repaired? true
-                  :original-code code
-                  :repair :extension-source-rewrite)
-
                 restitched
                 (assoc :repaired? true
                   :original-code code
@@ -2710,24 +2635,6 @@
   [router]
   (boolean (:reasoning? (resolve-effective-model router))))
 
-(defn- provider-prompt-context
-  "Build the append-only provider prompt hook context for the active
-   router root. Secrets stay out: the provider config passed to the
-   hook is limited to routing/model metadata, never `:api-key` or
-   provider-specific credential fields."
-  [environment resolved-model]
-  (let [provider-id (:provider resolved-model)
-        router-provider (some #(when (= provider-id (:id %)) %)
-                          (:providers (:router environment)))
-        descriptor (registry/provider-by-id provider-id)]
-    (when (and provider-id descriptor (:provider/prompt-fn descriptor))
-      {:provider    (assoc (select-keys (or router-provider {})
-                             [:id :base-url :api-style :models :reasoning?])
-                      :id provider-id)
-       :descriptor  descriptor
-       :model       resolved-model
-       :environment environment})))
-
 ;; -----------------------------------------------------------------------------
 ;; Concurrency primitives (reentrant semaphore, deadline helpers)
 ;; -----------------------------------------------------------------------------
@@ -2861,7 +2768,7 @@
 (defn inject-system-var-snapshots
   "Append a SYSTEM-var snapshot to `vars-snapshot` for EVERY name in
    `SYSTEM_VAR_NAMES` on EVERY iteration. The inspect transcript and
-   persisted var history then have ONE row per iteration for each X,
+   persisted var rows then have ONE row per iteration for each X,
    even when the value is unchanged or blank.
 
    Yes, turn-frozen vars (TURN_ID, TURN_POSITION,
@@ -2870,7 +2777,7 @@
    iterations of the same turn - that is the intentional contract:
    \"every iteration carries a snapshot of every SYSTEM var\". The
    dedup-on-unchanged optimization the previous version did was a
-   row-saving micro-opt that kept the var-history vec stuck on iter 0
+   row-saving micro-opt that kept persisted rows stuck on iter 0
    for those names.
 
    Each var is normalized to a non-nil string so `expression_state`
@@ -2924,8 +2831,7 @@
 
 (defn- archive-vars!
   "Unmap `names` from the SCI sandbox namespace. Archive removes live
-   bindings only; persisted history remains available through
-   `var-history`.
+   bindings only; persisted rows remain for automatic sandbox restore.
 
    HARD GUARD: SYSTEM symbols can NEVER be archived - they are contract
    surfaces the iteration loop re-binds every turn. Filtered out +
@@ -2990,7 +2896,7 @@
 (defn auto-archive-hot-symbols!
   "Archive eligible live user symbols after a final successful answer.
    Archive means removing bindings from the live SCI sandbox only; DB
-   history remains the source of truth for `var-history`."
+   rows remain the source of truth for automatic sandbox restore."
   [{:keys [db-info conversation-id sci-ctx initial-ns-keys bindings-atom]}]
   (when (and db-info conversation-id sci-ctx)
     (try
@@ -3116,8 +3022,8 @@
         has-reasoning? (reasoning-effort-configurable? resolved-model)
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per turn. Threaded through both the
-        ;; stable prompt message assembler (cacheable prefix) and the
-        ;; per-iteration ext nudge collector - activation-fn never re-fires inside the loop.
+        ;; prompt message assembler (core, environment, extension messages) and
+        ;; the per-iteration ext nudge collector - activation-fn never re-fires inside the loop.
         active-exts   (prompt/active-extensions environment)
         _             (sync-active-extension-symbols! environment active-exts)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
@@ -3389,8 +3295,6 @@
                                            :context-limit       max-context-tokens
                                            :current-user-content user-request
                                            :stable-prompt-content stable-prompt-content
-                                           :provider-prompt-context
-                                           (provider-prompt-context environment pre-resolved-model)
                                            ;; One low-importance turn-boundary check keeps
                                            ;; titles live across topic shifts. The old
                                            ;; iteration-only cadence never fired for a
@@ -4268,79 +4172,6 @@
 ;; down (which returns the process-wide shared connection). The defn was
 ;; deleted to keep ONE canonical `db-info` symbol on this namespace.
 
-(defn- normalize-history-symbol
-  [sym]
-  (cond
-    (symbol? sym) sym
-    (string? sym) (clojure.core/symbol sym)
-    :else         (clojure.core/symbol (str sym))))
-
-(defn- live-user-symbols
-  [{:keys [sci-ctx initial-ns-keys]}]
-  (let [sandbox-map (get-in @(:env sci-ctx) [:namespaces 'sandbox])]
-    (into #{}
-      (filter (fn [sym]
-                (and (symbol? sym)
-                  (not (contains? initial-ns-keys sym))
-                  (not (env/system-var-sym? sym)))))
-      (keys sandbox-map))))
-
-(defn- with-live-status
-  [live-syms entry]
-  (assoc entry :status
-    (cond
-      (contains? live-syms (:name entry)) :live
-      (= :unavailable (:status entry))   :unavailable
-      :else                              :archived)))
-
-(defn- history-preview
-  [v]
-  (prompt/safe-pr-str v {:max-chars 1000 :print-length 16 :print-level 4}))
-
-(defn- history-entry-view
-  [entry opts]
-  (let [base (cond-> (dissoc entry :value :code)
-               (:code? opts) (assoc :code (:code entry)))
-        include (:include opts)]
-    (case include
-      :preview (assoc base :preview (history-preview (:value entry)))
-      :value   (assoc base :value (:value entry))
-      base)))
-
-(defn- var-history-index
-  [environment opts]
-  (let [db-info (:db-info environment)
-        conversation-id (:conversation-id environment)
-        live-syms (live-user-symbols environment)]
-    (->> (persistance/db-var-history-index db-info conversation-id (or opts {}))
-      (mapv #(with-live-status live-syms %)))))
-
-(defn- var-history-for-symbol
-  [environment sym opts]
-  (let [db-info (:db-info environment)
-        conversation-id (:conversation-id environment)
-        sym (normalize-history-symbol sym)
-        live? (contains? (live-user-symbols environment) sym)]
-    (->> (persistance/db-var-history db-info conversation-id sym)
-      (mapv (fn [entry]
-              (-> entry
-                (assoc :name sym
-                  :status (if live? :live :archived))
-                (history-entry-view (or opts {}))))))))
-
-(defn- var-history-timeline-view
-  [environment opts]
-  (let [db-info (:db-info environment)
-        conversation-id (:conversation-id environment)
-        opts (or opts {})
-        symbol (:symbol opts)
-        events (:events opts)
-        timeline (persistance/db-var-history-timeline db-info conversation-id
-                   (cond-> opts symbol (assoc :symbol (normalize-history-symbol symbol))))]
-    (cond->> timeline
-      (seq events) (filter #(contains? (set events) (:event %)))
-      true vec)))
-
 (defn- extension-aliases
   [exts]
   (->> (or exts [])
@@ -4574,25 +4405,6 @@
                                               :title         title
                                               :system-prompt system-prompt}
                                        root-provider (assoc :provider root-provider))))
-        ;; Bind sandbox helpers that need env identity (db-info +
-        ;; conversation-id). They go through `custom-bindings` so they
-        ;; land in `initial-ns-keys` and therefore stay out of
-        ;; `<bindings>` (matches the treatment of every other system
-        ;; binding shipped via EXTRA_BINDINGS).
-        var-history-fn           (fn var-history
-                                   ([]
-                                    (var-history-index @environment-atom {}))
-                                   ([sym-or-opts]
-                                    (if (map? sym-or-opts)
-                                      (var-history-index @environment-atom sym-or-opts)
-                                      (var-history-for-symbol @environment-atom sym-or-opts {})))
-                                   ([sym opts]
-                                    (var-history-for-symbol @environment-atom sym opts)))
-        var-history-timeline-fn  (fn var-history-timeline
-                                   ([]
-                                    (var-history-timeline-view @environment-atom {}))
-                                   ([opts]
-                                    (var-history-timeline-view @environment-atom opts)))
         ;; SCI binding for `(turn-answer! "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; `current-form-idx-atom` so the iteration loop can scope
@@ -4664,9 +4476,7 @@
         ;; `(v/conversation-state)` -> :current-turn :user-request (and through
         ;; :transcript :turns for cross-turn history), so a separate
         ;; sandbox primitive would just duplicate the surface.
-        env-bindings             {'var-history          var-history-fn
-                                  'var-history-timeline var-history-timeline-fn
-                                  'turn-answer!         answer-fn
+        env-bindings             {'turn-answer!         answer-fn
                                   'set-conversation-title! conversation-title-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings

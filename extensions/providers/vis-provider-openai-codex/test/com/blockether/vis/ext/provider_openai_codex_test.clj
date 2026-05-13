@@ -181,8 +181,7 @@
       (expect (= :openai-codex (:provider/id provider)))
       (expect (= "OpenAI Codex (ChatGPT OAuth)" (:provider/label provider)))
       (expect (ifn? (:provider/get-token-fn provider)))
-      (expect (ifn? (:provider/limits-fn provider)))
-      (expect (nil? (:provider/prompt-fn provider))))))
+      (expect (ifn? (:provider/limits-fn provider))))))
 
 (defdescribe codex-extension-settings-test
   (it "owns its TUI settings metadata"

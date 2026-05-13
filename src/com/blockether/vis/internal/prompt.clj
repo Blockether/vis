@@ -1,16 +1,15 @@
 (ns com.blockether.vis.internal.prompt
   "Prompt assembly.
 
-   Stable provider prefix is separate system-role messages: core RLM rules,
-   then environment, extension, and provider fragments. Initial user-role
-   content carries the current user goal plus optional previous-turn context.
+   Provider messages are explicit blocks in send order: core system rules,
+   turn-start environment, extension fragments, then the user goal. Environment
+   and extension prompts stay OUT of CORE_SYSTEM_PROMPT; they are recomputed
+   from active extensions and sent as their own messages.
+
    Per-iteration user-role context carries dynamic engine telemetry
    (<current_turn_context>), fresh evidence (<journal>), live bindings,
-   and current engine nudges.
-
-   Dynamic turn / iteration ids never enter the cached stable prefix. Static
-   lifecycle and policy stay in the system prompt; `<current_turn_context>`
-   reports only live ids, positions, and state labels."
+   and current engine nudges. `<current_turn_context>` reports only live ids,
+   positions, and state labels."
   (:require
    [clojure.string :as str]
    [com.blockether.svar.internal.router :as svar-router]
@@ -623,26 +622,6 @@
             extension/*current-symbol* nil]
     (apply f args)))
 
-(defn- provider-prompt-block
-  "Render `<llm_model_prompt>` by calling the active provider's
-   `:provider/prompt-fn` with the prompt context built by the loop
-   layer. Returns nil when no provider hook is configured or when
-   it returns blank."
-  [provider-prompt-context]
-  (when-let [{:keys [descriptor] :as ctx} provider-prompt-context]
-    (when-let [f (:provider/prompt-fn descriptor)]
-      (try
-        (let [result (f ctx)]
-          (when (and (string? result) (not (str/blank? result)))
-            (prompt-block "llm_model_prompt" result)))
-        (catch Throwable t
-          (tel/log! {:level :warn
-                     :id ::provider-prompt-error
-                     :data {:provider (:id (:provider ctx))
-                            :error (ex-message t)}}
-            "Provider prompt-fn threw")
-          nil)))))
-
 (defn build-iteration-context
   "Assemble the per-iteration user-role trailer appended to each model call.
 
@@ -660,8 +639,6 @@
                      the wire messages array.
      <bindings>   - `(def ...)` user vars in the SCI env; SYSTEM vars and
                     initial tool/helper bindings are excluded.
-     <llm_model_prompt> - provider/model-specific prompt hook. Dynamic because
-                    model/provider routing can change per iteration.
 
    Plus zero or more tagged `<current_engine_start_nudge importance=\"...\">`
    entries wrapped in `<current_engine_start_nudges>`. All entries come from
@@ -697,7 +674,7 @@
         callers that keep an internal counter convert before exposing it)."
   [environment {:keys [blocks-by-iteration active-extensions iteration
                        model stable-prompt-content current-user-content context-limit
-                       provider-prompt-context title-refresh?]
+                       title-refresh?]
                 :as opts}]
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "build-iteration-context requires :active-extensions"
@@ -709,8 +686,7 @@
                                  :engine-phase :model_think
                                  :active-extensions active-extensions
                                  :system-prompt stable-prompt-content})
-        provider-block (provider-prompt-block provider-prompt-context)
-        pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block provider-block]))
+        pinned-text (str/join "\n\n" (keep identity [stable-prompt-content current-user-content current-context-block]))
         pinned-tokens (or (count-prompt-tokens model pinned-text) 0)
         budget-after-pinned (max 1 (- ctx-limit (long pinned-tokens)))
         bindings-str (read-bindings-str environment)
@@ -731,7 +707,7 @@
         ;; passes the value; policy lives in extensions.
         prompt-text (str/join "\n\n"
                       (keep identity
-                        [stable-prompt-content current-user-content current-context-block provider-block recent-block bindings-block]))
+                        [stable-prompt-content current-user-content current-context-block recent-block bindings-block]))
         input-tokens (or (count-prompt-tokens model prompt-text) 0)
         conversation-title (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
         nudge-ctx {:environment environment
@@ -785,7 +761,7 @@
                      (or active-extensions []))
         nudges-block (current-engine-nudges-block all-nudges)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [current-context-block provider-block recent-block bindings-block nudges-block])]
+                [current-context-block recent-block bindings-block nudges-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -835,10 +811,9 @@
 ;; =============================================================================
 
 (def ^:private CORE_SYSTEM_PROMPT
-  "λVis.
-SCI-based recursive model runtime.
-Sandbox := Clojure core + aliases + active EXTENSIONS + host primitives.
-Goal := drive evaluated code until `(turn-answer! [:ir ...])`.
+  "λVis. SCI-based recursive model runtime.
+  Sandbox := Clojure core + aliases + active EXTENSIONS + host primitives.
+  Goal := drive evaluated code until `(turn-answer! [:ir ...])`.
 
 Aliases:
   clojure.walk -> walk
@@ -847,11 +822,9 @@ Aliases:
   clojure.pprint -> pp
   clojure.edn -> edn
   clojure.spec.alpha -> s
-
-λOUTPUT.
-  reply := ```clojure``` fences only; body := SCI forms.
-  narration := `;;` comments inside fences.
-  final := `(turn-answer! [:ir ...])`; never raw Markdown/prose.
+ 
+BANNED:
+  - `slurp`, `spit`, `clojure.java.io` and other direct filesystem access.
 
 λENGINE.
   Host evals forms, records evidence to <journal>/<bindings>, then asks again
@@ -882,12 +855,6 @@ Aliases:
   false guard ⇒ no FINAL; ENGINE loops.
   FINAL forbids stateful mutation/reloads.
 
-λSTATIC_CONTEXT.
-  system-role stable prefix, built once at turn start; provider may cache it.
-  <system_prompt>      := core RLM rules + caller addendum.
-  <environment>   := turn-start host/project facts from active extension callbacks.
-  <extensions>         := turn-start active extension prompt fragments.
-
 λDYNAMIC_CONTEXT.
   user-role turn/iteration context; initial user message plus per-iteration trailer.
   <user_turn_request_main_goal> := current user goal; initial user message.
@@ -896,13 +863,10 @@ Aliases:
   <journal>                     := token-budgeted iteration evidence; newest at bottom; may carry prior conversation iterations.
   <bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings.
   <current_engine_start_nudges> := extension hook runtime hints for this iteration.
-  <llm_model_prompt>            := provider/model-specific prompt fragment for this iteration.
 
 λHOST.
   (turn-answer! ir)           ; finalize turn, ir must be [:ir ...]
   (set-conversation-title! s)  ; set conversation title
-  (var-history ...)           ; inspect persisted vars
-  (var-history-timeline ...)  ; inspect var timeline
 
 λENGINE_RECOVERY.
   - *1 *2 *3 *e := last values/errors for sandbox recovery; ordinary prompt context uses rendered values, not named runtime-var indirection.
@@ -912,13 +876,17 @@ Aliases:
   - `(v/engine-symbol-apropos 'map)` -> puts the list of matching symbols for `map` into the <journal> for model inspection.
 
 λDISCIPLINE.
-  decide from <journal> + <bindings>, not memory.
-  missing_facts? -> observe with defs.
-  need_change? -> mutate alone; no answer same iteration.
-  after_mutation -> verify with read-only evidence.
-  answer only when enough?; guard if condition is machine-checkable.
-  no guessing.
-  
+  - decide from <journal> + <bindings>, not memory.
+  - missing_facts? -> observe with defs.
+  - need_change? -> mutate alone; no answer same iteration.
+  - after_mutation -> verify with read-only evidence.
+  - answer only when enough?; guard if condition is machine-checkable, turn_finalization only IF full evidence observed
+
+λOUTPUT.
+  reply := ```clojure``` fences only; body := SCI forms.
+  narration := `;;` comments inside fences.
+  turn_finalization := `(turn-answer! <ANSWER_IR>)`
+
 λANSWER_IR.
   Build IR directly; do not render Markdown into IR.
   root   := [:ir block*]
@@ -926,7 +894,6 @@ Aliases:
           | :quote | :table | :tr | :th | :td
   inline := :span{:preserve-ws? :nowrap?} | :br | :strong | :em | :c
           | :a{:href} | :img{:src :alt} | :kbd | :mark | :sup | :sub
-  forbidden := :details | :summary | HTML <details>/<summary> | collapsible answer widgets
   text   := string shorthand
   preserve_ws := :code | :c | :kbd
 
@@ -1098,13 +1065,15 @@ Aliases:
   (str/join "\n\n" (keep :content messages)))
 
 (defn assemble-stable-prompt-messages
-  "Assemble stable provider-prefix messages.
+  "Assemble provider-prefix messages.
 
-   Each tagged block becomes its own system-role message so provider prompt
-   caching can catch stable boundaries independently:
-     `<system_prompt>`      - CORE_SYSTEM_PROMPT + caller addendum
+   Send order is explicit and tested:
+     `<system_prompt>` - CORE_SYSTEM_PROMPT + caller addendum
      `<environment>`   - host/git/project facts from extensions
-     `<extensions>`         - extension `:ext/prompt` fragments
+     `<extensions>`    - extension `:ext/prompt` fragments
+
+   Environment and extensions are separate messages, not content inside the
+   core system prompt.
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Drives

@@ -7,7 +7,7 @@
 
 ### The problem
 
-Vis agents operate on codebases through `v/cat`, `v/rg`, `v/patch`, `v/glob`. These are **flat file primitives** — grep a string, read a file, patch a line. The agent has no structural model of:
+Vis agents operate on codebases through `v/cat`, `v/rg`, `v/patch`, `v/ls`. These are **flat file primitives** — grep a string, read a file, patch a line. The agent has no structural model of:
 
 - What *calls* what (call graph)
 - What *contains* what (hierarchy: project → namespace → defn → local)

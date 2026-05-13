@@ -25,8 +25,8 @@
             :stdout-chars (count stdout)
             :stdout-truncated? false
             :stdout stdout}
-   :info {:op :v/bash
-          :tool {:symbol 'bash :call "v/bash" :alias 'v}
+   :info {:op :v/tool
+          :tool {:symbol 'tool :call "v/tool" :alias 'v}
           :command command
           :duration-ms 5
           :started-at-ms 10
@@ -290,7 +290,7 @@
               turn (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                        :user-request "run a tool"
                                                        :status :running})
-              code "(def out (v/bash \"echo hi\"))"
+              code "(def out (v/tool \"echo hi\"))"
               value (tool-result "echo hi" "hi\n")]
           (vis/db-store-iteration! s {:conversation-turn-id turn
                                       :blocks [{:code code
@@ -309,7 +309,7 @@
                         {:role :assistant :turn-id turn :content "done"}]
                       (:dialog data)))
             (expect (= 1 (count (:calls data))))
-            (expect (= :v/bash (:op call)))
+            (expect (= :v/tool (:op call)))
             (expect (= "out" (:var call)))
             (expect (= code (:code call)))
             (expect (= "echo hi" (:command call)))
@@ -326,7 +326,7 @@
               turn  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                         :user-request "run a tool"
                                                         :status :running})
-              code  "(def out (v/bash \"echo hi\"))"
+              code  "(def out (v/tool \"echo hi\"))"
               value (tool-result "echo hi" "hi\n")]
           (vis/db-store-iteration! s {:conversation-turn-id turn
                                       :blocks [{:code code

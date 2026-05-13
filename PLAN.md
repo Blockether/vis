@@ -39,28 +39,26 @@ Engine Σ U =
 
 ## Prompt integration points
 
-### 1. Stable SYSTEM
+### 1. Core SYSTEM + dynamic context messages
 
 Built by:
 
 ```text
 prompt/assemble-stable-prompt-messages
-  -> prompt/build-system-prompt
-  -> separate system-role messages for environment / extension prompt / provider prompt
+  -> [0] <system_prompt> core RLM rules + caller addendum
+  -> [1] <environment> active extension environment data
+  -> [2] <extensions> active extension instructions
 ```
 
-Role:
+Rules:
 
 ```text
-SYSTEM:
-  stable identity
-  stable RLM rules
-  stable engine semantics
-  stable explanation of <current_turn_context>
-  stable explanation of <current_engine_start_nudges>
+<environment> and <extensions> are separate messages.
+They are not described inside CORE_SYSTEM_PROMPT.
+Order is always environment first, extensions second.
 ```
 
-Must not contain:
+Must not contain dynamic ids:
 
 ```text
 conversation_id
@@ -70,8 +68,6 @@ current_engine_iteration_id
 engine_iteration_position
 previous_persisted_iteration_id
 ```
-
-Reason: provider prompt cache stays hot.
 
 ### 2. Initial USER message
 
@@ -147,11 +143,6 @@ v/... tools available
 z/... clojure structural editing available
 ...
 </extensions>
-
-[3] role=system
-<llm_model_prompt>
-Provider/model-specific stable advice, if any.
-</llm_model_prompt>
 
 
 [5] role=user

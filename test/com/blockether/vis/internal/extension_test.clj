@@ -37,6 +37,39 @@
       (expect (= '([x y]) (:ext.symbol/arglists entry)))
       (expect (true? (:ext.symbol/raw? entry))))))
 
+(defdescribe extension-kind-test
+  (it "buckets channel-hook-only extensions with channels"
+    (let [ext (extension/extension
+                {:ext/namespace 'demo.channel-hook
+                 :ext/doc       "Demo channel hook."
+                 :ext/channel-hooks [{:channel-id :tui
+                                      :hook-id    :demo/status}]})]
+      (expect (= "channels" (:ext/kind ext)))
+      (expect (= [] (:ext/channels ext)))))
+
+  (it "preserves explicit kind for channel-hook extensions"
+    (let [ext (extension/extension
+                {:ext/namespace 'demo.channel-hook
+                 :ext/doc       "Demo channel hook."
+                 :ext/kind      "conversation-state"
+                 :ext/channel-hooks [{:channel-id :tui
+                                      :hook-id    :demo/status}]})]
+      (expect (= "conversation-state" (:ext/kind ext))))))
+
+(defdescribe provider-extension-test
+  (it "rejects removed provider-specific prompt slots"
+    (let [thrown (try
+                   (extension/extension
+                     {:ext/namespace 'demo.provider
+                      :ext/doc       "Demo provider."
+                      :ext/providers [{:provider/id :demo
+                                       :provider/label "Demo"
+                                       :provider/prompt-fn (constantly "nope")}]})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e e))]
+      (expect (some? thrown))
+      (expect (= :extension/invalid-spec (:type (ex-data thrown)))))))
+
 (defdescribe invoke-symbol-wrapper-test
   (it "renders sink forms from user args, not before-fn injected env"
     (let [entry (extension/symbol #'env-echo-tool

@@ -23,7 +23,7 @@
       ;; Existing areas still present.
       (expect (contains? syms 'extensions))
       (expect (contains? syms 'cat))
-      (expect (contains? syms 'bash))
+      (expect (not (contains? syms 'bash)))
       (expect (contains? syms 'snapshot))
       ;; Markdown builders now live under the same alias.
       (expect (contains? syms 'h1))
@@ -35,7 +35,7 @@
   (it "keeps the unified prompt strategy-only"
     (let [prompt ((:ext/prompt foundation/vis-extension) {})]
       (expect (str/includes? prompt "`v/` strategy"))
-      (expect (str/includes? prompt "combine v/rg/v/glob/v/ls"))
+      (expect (str/includes? prompt "combine v/rg and v/ls"))
       (expect (not (str/includes? prompt "clojure.repl/doc")))
       (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
       (expect (not (str/includes? prompt "Do not render Markdown as IR")))
