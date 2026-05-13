@@ -38,18 +38,41 @@
       (expect (true? (title-form? "(set-conversation-title! \"Prompt cleanup\")")))
       (expect (false? (title-form? "(conversation-title \"Prompt cleanup\")")))))
 
-  (it "does not collapse non-mutating sibling forms beside a final answer"
+  (it "one Markdown code block = one code-entry (per-block-eval contract)"
+    ;; Phase B contract: svar hands vis a vector of blocks; vis evaluates
+    ;; each block's :source as one SCI eval. Internal top-level forms
+    ;; inside one block are SCI's problem, not vis's — the model is free
+    ;; to put any number of forms inside a single ```clojure block.
     (let [preflight #'loop/code-entries-preflight
-          entries (:code-entries
-                   (preflight 1
-                     (str "(def a 1)\n\n"
-                       "(set-conversation-title! \"Def a 1\")\n\n"
-                       "(turn-answer! [:ir [:p \"Done\"]])")))]
+          blocks    [{:lang "clojure"
+                      :source (str "(def a 1)\n"
+                                "(set-conversation-title! \"Def a 1\")\n"
+                                "(turn-answer! [:ir [:p \"Done\"]])")}]
+          entries (:code-entries (preflight 1 blocks))]
+      (expect (= 1 (count entries)))
+      (expect (= (:source (first blocks)) (:expr (first entries))))))
+
+  (it "three separate blocks = three code-entries"
+    (let [preflight #'loop/code-entries-preflight
+          blocks    [{:lang "clojure" :source "(def a 1)"}
+                     {:lang "clojure" :source "(set-conversation-title! \"Def a 1\")"}
+                     {:lang "clojure" :source "(turn-answer! [:ir [:p \"Done\"]])"}]
+          entries (:code-entries (preflight 1 blocks))]
       (expect (= 3 (count entries)))
       (expect (= ["(def a 1)"
                   "(set-conversation-title! \"Def a 1\")"
                   "(turn-answer! [:ir [:p \"Done\"]])"]
                 (mapv :expr entries)))))
+
+  (it "dedupes exact-duplicate blocks (provider stutter)"
+    (let [preflight #'loop/code-entries-preflight
+          blocks    [{:lang "clojure" :source "(def a 1)"}
+                     {:lang "clojure" :source "(def a 1)"}
+                     {:lang "clojure" :source "(def b 2)"}]
+          {:keys [code-entries duplicate-blocks-normalized?]}
+          (preflight 1 blocks)]
+      (expect (= 2 (count code-entries)))
+      (expect (true? duplicate-blocks-normalized?))))
 
   (it "canonicalizes final answer IR and caps lazy children at the persistence boundary"
     (let [answer (loop/append-runtime-appendices

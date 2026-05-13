@@ -642,8 +642,6 @@
       (assoc :length (:llm-raw-response-length iteration))
       (some? (:llm-raw-response-sha256 iteration))
       (assoc :sha256 (:llm-raw-response-sha256 iteration))
-      (some? (:llm-executable-code iteration))
-      (assoc :executable-code (:llm-executable-code iteration))
       blocks
       (assoc :executable-blocks blocks
         :block-count (count blocks)

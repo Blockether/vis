@@ -217,8 +217,7 @@ CREATE TABLE conversation_turn_iteration (
                                     llm_raw_response_length IS NULL OR llm_raw_response_length >= 0
                                   ),
   llm_raw_response_sha256         TEXT,
-  llm_executable_code             TEXT,
-  llm_executable_code_blocks      TEXT,    -- JSON vec of executable fenced blocks selected by svar: [{:lang :source} ...]
+  llm_executable_code_blocks      TEXT,    -- JSON vec of executable Markdown code blocks selected by svar: [{:lang :source} ...]
 
   -- svar canonical assistant message persisted so preserved-thinking
   -- replay survives a vis restart. JSON-encoded
