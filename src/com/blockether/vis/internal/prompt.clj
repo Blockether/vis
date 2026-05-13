@@ -324,10 +324,16 @@
                       (reduce-kv
                         (fn [acc k blk]
                           (let [comment-text (some-> (:comment blk) str str/trim not-empty)
-                                ;; `:comment` is captured by `split-top-level-forms`
-                                ;; as the verbatim source slice between forms
-                                ;; (already includes `;;` prefixes / `#_(...)`
-                                ;; discards). Render as-is; DO NOT prepend
+                                ;; `:comment` is a legacy per-form field from
+                                ;; the pre-Phase-B splitter, which captured
+                                ;; the verbatim prose slice between top-level
+                                ;; forms (`;;` lines / `#_(...)` discards).
+                                ;; Per-block eval no longer populates it —
+                                ;; one block is one entry and its prose is
+                                ;; part of `:code`. The branch survives so
+                                ;; old conversations resumed from the DB
+                                ;; still render their captured comments
+                                ;; correctly. Render as-is; DO NOT prepend
                                 ;; another `;; ` or we get `;; ;;` doubling
                                 ;; (conversation d2763464 regression).
                                 acc (if comment-text

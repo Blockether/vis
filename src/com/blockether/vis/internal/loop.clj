@@ -647,9 +647,16 @@
 
 (defn- parsed-entry-form
   "Return the parsed Clojure form for a code entry/form/source string.
-   `split-top-level-forms` already parses once and stores `:form`; helpers
-   use that instead of reparsing the same `:expr` over and over. String
-   parsing remains only as a fallback for older/synthetic call sites."
+
+   With per-block eval, `code-entries-preflight` builds entries directly
+   from svar's `:blocks` and the `:expr` field is the block's `:source`
+   string verbatim — no `:form` pre-parse is cached on the entry. The
+   preflight gates that need a parsed form (turn-answer / mutation /
+   needs-input / direct-answer detection) pay one edamame parse per
+   gate per block here. That's cheap; blocks are short.
+
+   Returns the cached `:form` when an entry carries one (older / synthetic
+   call sites), otherwise re-parses `:expr` / the bare string."
   [entry-or-form-or-source]
   (try
     (cond
@@ -2245,9 +2252,13 @@
 
 (defn ask-code!
   "One-shot routed `svar/ask-code!` against the global router.
-   Plain-text completion + fenced code-block extraction - returns the
-   svar map `{:result :blocks :raw :tokens :cost :duration-ms}`.
-   `ask!` (JSON-spec) is gone; every Vis caller uses `ask-code!`."
+   Plain-text completion + Markdown-code-block extraction — returns the
+   svar map `{:blocks :raw :reasoning :tokens :cost :duration-ms
+   :assistant-message :provider-state}`. `:blocks` is a vec of
+   `{:lang :source}` (one entry per Markdown code block); concatenate
+   yourself with `svar.internal.codes/concat-sources` if you need a
+   single string. `ask!` (JSON-spec) is gone; every Vis caller uses
+   `ask-code!`."
   [opts]
   (svar/ask-code! (get-router) opts))
 
