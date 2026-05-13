@@ -1,9 +1,13 @@
 (ns com.blockether.vis.ext.lang-clojure.repair
   "Range-scoped Clojure source repair for the `z/` alias.
 
-   Reuses Vis' existing runtime repair strategy:
-     1. parinfer indent-mode for delimiter balance;
-     2. parse-diagnose quote rebalance for odd unescaped double-quotes.
+   Strategy: parinfer indent-mode for delimiter balance. That's it.
+
+   (Prior versions also delegated to `parse-diagnose/try-quote-rebalance`
+   for unbalanced double-quotes. The parse-diagnose ns was removed as
+   part of the per-block-eval pivot; the quote-rebalance path went with
+   it. If parinfer can't repair the source, the tools return the original
+   unchanged + a parse error — the model self-corrects from there.)
 
    Public tools work on files and on rewrite-clj ranges (`:span` rows from
    z/locators/z/symbols/xref locator bridges)."
@@ -12,8 +16,6 @@
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.lang-clojure.path :as lang-path]
    [com.blockether.vis.internal.extension :as extension]
-
-   [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [edamame.core :as edamame])
   (:import
    (com.oakmac.parinfer Parinfer ParinferResult)))
@@ -49,22 +51,16 @@
             rebalanced))))
     (catch Throwable _ nil)))
 
-(defn quote-rebalance
-  "Return quote-repaired `source` iff Vis' parse-diagnose repair finds one. Pure."
-  ^String [^String source]
-  (parse-diagnose/try-quote-rebalance source parse-ok?))
-
 (defn repair-source
-  "Repair a Clojure source string using Vis' existing parse repair order.
+  "Repair a Clojure source string using parinfer indent-mode.
 
    Returns:
      {:changed? bool
       :parseable-before? bool
       :parseable-after? bool
-      :engine nil|:parinfer|:quote
+      :engine nil|:parinfer
       :source fixed-or-original
-      :error parse-error-message-or-nil
-      :diagnostic optional-quote-diagnostic}"
+      :error parse-error-message-or-nil}"
   [^String source]
   (let [source (or source "")]
     (if (parse-ok? source)
@@ -80,21 +76,12 @@
          :engine :parinfer
          :source fixed
          :error nil}
-        (if-let [fixed (quote-rebalance source)]
-          {:changed? true
-           :parseable-before? false
-           :parseable-after? true
-           :engine :quote
-           :source fixed
-           :error nil
-           :diagnostic (parse-diagnose/diagnose-quote-balance source)}
-          {:changed? false
-           :parseable-before? false
-           :parseable-after? false
-           :engine nil
-           :source source
-           :error (parse-error-message source)
-           :diagnostic (parse-diagnose/diagnose-quote-balance source)})))))
+        {:changed? false
+         :parseable-before? false
+         :parseable-after? false
+         :engine nil
+         :source source
+         :error (parse-error-message source)}))))
 
 ;; =============================================================================
 ;; Path/range handling
@@ -266,8 +253,7 @@
                 :whole-file-parse-error-after after-all-error
                 :selection {:before (:source selection)
                             :after (:source repaired)}
-                :error (:error repaired)
-                :diagnostic (:diagnostic repaired)}
+                :error (:error repaired)}
        :info {:files [file-info]}})))
 
 (defn- repair-range

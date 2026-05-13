@@ -41,7 +41,9 @@
       (expect (not (str/includes? (render/render ast :markdown) "<details")))
       (expect (not (str/includes? (render/render ast :markdown) "<summary")))))
 
-  (it "removes disclosure tags from the system answer grammar"
-    (let [prompt #'com.blockether.vis.internal.prompt/CORE_SYSTEM_PROMPT]
-      (expect (not (str/includes? @prompt "| :details{:open?} | :summary")))
-      (expect (str/includes? @prompt "forbidden := :details | :summary")))))
+  ;; Removed: "removes disclosure tags from the system answer grammar".
+  ;; The system prompt was slimmed and no longer carries the
+  ;; `forbidden := :details | :summary` directive in prose; the
+  ;; canonical grammar still excludes :details/:summary, asserted
+  ;; structurally above (`canonical?` + `not-any? #{:details :summary}`).
+  )

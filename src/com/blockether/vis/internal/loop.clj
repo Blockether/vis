@@ -43,7 +43,6 @@
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.render :as render]
-   [com.blockether.vis.internal.parse-diagnose :as parse-diagnose]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
    [edamame.core :as edamame]
@@ -364,36 +363,18 @@
           ;; Reader failure — defer to parse-clojure-syntax / extension rescue.
           nil)))))
 
-(defn- edamame-parses?
-  "Predicate the repair search hands to `parse-diagnose/try-quote-rebalance`.
-   Returns true when `src` survives `edamame/parse-string-all` with
-   the same opts the rest of this ns uses; false on any throw."
-  [^String src]
-  (try
-    (edamame/parse-string-all src edamame-opts)
-    true
-    (catch Throwable _ false)))
+;; Removed: `edamame-parses?` — only consumer was
+;; `parse-diagnose/try-quote-rebalance`, which is gone with the rest of
+;; the parse-diagnose ns.
 
 (defn quote-rebalance
-  "Companion to `parinfer-rebalance` for the OTHER common shape of
-   malformed Clojure source: an unbalanced double-quote string.
-
-   Parinfer doesn't fix string delimiters. We do:
-
-     1. Quick-out when the unescaped-quote count is even.
-     2. Find the line where the running count first goes odd.
-     3. Try removing each unescaped `\"` on that line, ONE AT A
-        TIME (most common LLM mistake - conversation cf9e29b5).
-     4. As a fallback, try appending `\"` at end of that line
-        (the \"missing close-quote\" case).
-     5. Each candidate goes to edamame; first one that parses wins.
-
-   Returns the rebalanced source string, or `nil` when nothing in
-   the search produces a parsable variant. Same contract as
-   `parinfer-rebalance` so the two slot into the parse pipeline
-   the same way."
-  ^String [^String source]
-  (parse-diagnose/try-quote-rebalance source edamame-parses?))
+  "Stub. The previous implementation delegated to `parse-diagnose/
+   try-quote-rebalance`; that ns was deleted as part of the per-block-eval
+   pivot. Kept as a no-op so the repair chain in `split-top-level-forms`
+   still composes during the transitional state, then this defn + its
+   call site go away with the rest of the splitter."
+  ^String [^String _source]
+  nil)
 
 (defn parinfer-rebalance
   "First-line repair for malformed Clojure source. Calls parinfer's
@@ -566,13 +547,12 @@
                                     :end-row   (:end-row   bnd)
                                     :end-col   (:end-col   bnd)))))
              (range) forms)))
-       (answer-escape-repair [src parse-error]
-         ;; Models often write terminal notation like `\\e[200~` in
-         ;; final-answer prose. Clojure rejects that before IR exists,
-         ;; so rewrite to a literal visible `\\\\e[200~` only inside
-         ;; `(turn-answer! ...)`. Accept this partial repair even when
-         ;; another parser error remains; the outer loop will re-parse.
-         (parse-diagnose/try-answer-escape-rescue src parse-error (constantly true)))
+       (answer-escape-repair [_src _parse-error]
+         ;; No-op: `parse-diagnose/try-answer-escape-rescue` was deleted
+         ;; with the parse-diagnose ns. Slot is kept so the repair-fns
+         ;; chain still composes; the per-block-eval pivot will retire
+         ;; the whole splitter shortly.
+         nil)
        (first-repair-candidate [src parse-error seen repair-fns]
          (some (fn [{:keys [name f]}]
                  (when-let [fixed (try-repair-with-timeout name f src parse-error)]
@@ -825,37 +805,17 @@
                   ;; Each candidate is re-evaluated; first that
                   ;; succeeds wins. A failed restitch falls through
                   ;; to the hint-enrichment path below.
-                  ;; :error is now structured; pull :message for the
-                  ;; prose-as-symbol detector.
-                  initial-error-msg (some-> initial-exec :error :message)
-                  restitched     (when (and (not initial-ok?) (string? initial-error-msg))
-                                   (when-let [sym (some-> ^String initial-error-msg
-                                                    (->> (re-find #"Unable to resolve symbol: (\S+)"))
-                                                    second)]
-                                     (when-let [candidates (parse-diagnose/try-answer-string-restitch
-                                                             eval-code sym)]
-                                       (some (fn [candidate]
-                                               (let [retry (run-with-timing sci-ctx candidate sandbox-ns
-                                                             timeout-ms start-time tool-event-fn environment)]
-                                                 (when (nil? (:error retry))
-                                                   {:retry retry :candidate candidate})))
-                                         candidates))))
-                  original-error (when restitched (:error initial-exec))
-                  exec           (or (:retry restitched) initial-exec)
-                  eval-ok?       (or (some? restitched) initial-ok?)
-                  ;; Eval-time prose-as-symbol HINT for the surfaced
-                  ;; error - only relevant when restitch did NOT
-                  ;; recover. Pure advisory; never rewrites source.
-                  exec-error-msg (some-> exec :error :message)
-                  enriched-error (when (and (not eval-ok?) (string? exec-error-msg))
-                                   (when-let [hint (parse-diagnose/unresolved-symbol-hint
-                                                     exec-error-msg eval-code)]
-                                     ;; Build a fresh structured error
-                                     ;; that adds the hint per PLAN §2.1
-                                     ;; ({:message :hint? :trace? :block?}).
-                                     (-> (or (:error exec) {})
-                                       (assoc :message exec-error-msg
-                                         :hint hint))))]
+                  ;; Eval-time restitch (was: `parse-diagnose/
+                  ;; try-answer-string-restitch`) and prose-as-symbol
+                  ;; hint enrichment (was: `parse-diagnose/
+                  ;; unresolved-symbol-hint`) were both deleted with the
+                  ;; parse-diagnose ns. SCI's error surfaces verbatim;
+                  ;; the model self-corrects next iteration.
+                  restitched     nil
+                  original-error nil
+                  exec           initial-exec
+                  eval-ok?       initial-ok?
+                  enriched-error nil]
               (when eval-ok?
                 (attach-doc-meta! environment
                   (or (:candidate restitched) eval-code) doc))
@@ -1569,23 +1529,23 @@
                          :blocks blocks
                          :answer answer-value}
                    extra-ctx)]
-     (some (fn [ext]
-             (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
-                     (when (= :turn.answer/validate phase)
-                       (binding [extension/*current-extension* ext
-                                 extension/*current-symbol* nil]
-                         (try
-                           (let [hit (hook-fn ctx)]
-                             (cond
-                               (s/valid? ::extension/answer-validation-reject hit)
-                               (answer-validation-rejection-message hook hit)
+         (some (fn [ext]
+                 (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
+                         (when (= :turn.answer/validate phase)
+                           (binding [extension/*current-extension* ext
+                                     extension/*current-symbol* nil]
+                             (try
+                               (let [hit (hook-fn ctx)]
+                                 (cond
+                                   (s/valid? ::extension/answer-validation-reject hit)
+                                   (answer-validation-rejection-message hook hit)
 
-                               (and (map? hit) (:reject hit))
-                               (answer-validation-invalid-return-message ext id hit)))
-                           (catch Throwable t
-                             (answer-validation-hook-error-message ext id t))))))
-               (or (:ext/hooks ext) [])))
-       (answer-validation-extensions environment active-extensions)))))))
+                                   (and (map? hit) (:reject hit))
+                                   (answer-validation-invalid-return-message ext id hit)))
+                               (catch Throwable t
+                                 (answer-validation-hook-error-message ext id t))))))
+                   (or (:ext/hooks ext) [])))
+           (answer-validation-extensions environment active-extensions)))))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -2804,11 +2764,15 @@
                                      for this turn). For all earlier
                                      iterations of the same turn it
                                      keeps the previous turn's value.
-     CONVERSATION_TITLE           - mirrors `:conversation-title-atom`
-                                     so a `(set-conversation-title! \"...\")`
-                                     inside iteration N is observable
-                                     to the model in iteration N+1
-                                     without a DB round-trip.
+
+   `CONVERSATION_TITLE` was retired as a SYSTEM var. The conversation
+   title is a sidebar / channel-chrome label; the model never needed
+   to read it from `<bindings>`. Setting flows through
+   `(set-conversation-title! \"...\")` -> `:conversation-title-atom` +
+   DB; the foundation `title-nudge` carries the current value in its
+   text body when a refresh-cadence hint fires. Removing the binding
+   drops one identical-per-iteration row from `expression_state`
+   per conversation.
 
    Prior thinking text used to be bound to ITERATION_PREVIOUS_REASONING
    here. That var was retired once preserved-thinking replay started
@@ -2818,9 +2782,7 @@
    `:thinking` column straight from the DB."
   [environment {:keys [final-result final-answer]}]
   (when final-result
-    (env/bind-and-bump! environment 'CONVERSATION_PREVIOUS_ANSWER final-answer))
-  (when-let [conversation-title-atom (:conversation-title-atom environment)]
-    (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
+    (env/bind-and-bump! environment 'CONVERSATION_PREVIOUS_ANSWER final-answer)))
 
 (defn update-iteration-id!
   "Rebind `TURN_ITERATION_ID` and `TURN_ITERATION_POSITION` in the
@@ -2854,14 +2816,21 @@
 
    Each var is normalized to a non-nil string so `expression_state`
    never stores nil for a SYSTEM var - makes the version vec a clean
-   log of values across iterations."
+   log of values across iterations.
+
+   `CONVERSATION_TITLE` is intentionally absent: the conversation
+   title is sidebar / channel chrome, not data the model uses for its
+   work. Stamping it every iteration produced N identical rows for a
+   value that changes ~once per conversation. Latest title lives on
+   `conversation_state.title` (DB) + `:conversation-title-atom`
+   (runtime); the foundation `title-nudge` carries the current value
+   when refresh-cadence fires."
   [vars-snapshot {:keys [final-answer
                          turn-id turn-position
                          iteration-id iteration-position
                          conversation-state-id
                          system-prompt
-                         extensions-snapshot
-                         conversation-title]}]
+                         extensions-snapshot]}]
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
@@ -2873,18 +2842,7 @@
       (stamp "TURN_ITERATION_ID"            (or iteration-id ""))
       (stamp "TURN_ITERATION_POSITION"      (or iteration-position 0))
       (stamp "CONVERSATION_STATE_ID"        (or conversation-state-id ""))
-      (stamp "CONVERSATION_TITLE"           (or conversation-title ""))
       (stamp "CONVERSATION_PREVIOUS_ANSWER" (or final-answer "")))))
-
-(defn update-title-system-var!
-  "Rebind CONVERSATION_TITLE in the SCI sandbox to whatever the env's
-   conversation-title-atom currently holds. Called once at iteration 0
-   so the first iteration sees the live title; per-iteration rebinds
-   happen in `update-system-vars!` (alongside
-   `CONVERSATION_PREVIOUS_ANSWER`)."
-  [environment]
-  (when-let [conversation-title-atom (:conversation-title-atom environment)]
-    (env/bind-and-bump! environment 'CONVERSATION_TITLE (or @conversation-title-atom ""))))
 
 ;; =============================================================================
 ;; System Prompt
@@ -3208,8 +3166,10 @@
     ;; mutated again until the next turn opens - the model gets a
     ;; stable view for the entire iteration loop. `ITERATION_*` resets
     ;; here and rebinds per iteration. `CONVERSATION_*` is touched at
-    ;; iteration boundaries via `update-system-vars!` /
-    ;; `update-title-system-var!`.
+    ;; iteration boundaries via `update-system-vars!`. The retired
+    ;; `CONVERSATION_TITLE` binding is gone — the title now lives
+    ;; only on `:conversation-title-atom` + the DB, surfaced to the
+    ;; model through the foundation `title-nudge` when blank or stale.
     ;; -----------------------------------------------------------------
     ;; TURN_USER_REQUEST retired. The current human turn text and richer
     ;; per-iteration / cross-turn history both flow through
@@ -3245,7 +3205,6 @@
     ;; `update-iteration-id!` after each iteration row commits.
     (env/bind-and-bump! environment 'TURN_ITERATION_ID nil)
     (env/bind-and-bump! environment 'TURN_ITERATION_POSITION 0)
-    (update-title-system-var! environment)
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
@@ -3530,10 +3489,6 @@
                                          ;; transcript data returns one row per
                                          ;; iter, not just iter 0.
                                            :extensions-snapshot        (prompt/extensions-snapshot active-exts)
-                                         ;; Live conversation title; same value
-                                         ;; the SCI sandbox sees as CONVERSATION_TITLE.
-                                           :conversation-title    (some-> (:conversation-title-atom environment)
-                                                                    deref str)
                                          ;; Frozen-at-this-iter map of conversation
                                          ;; facts (channel, external-id, turn-count,
                                          ;; created-at). Saves the model an iter
@@ -3906,7 +3861,7 @@
 
    1. Writes the title to the persisted `conversation_state` row.
    2. Updates the env's in-memory `:conversation-title-atom` so the next iteration's
-      `CONVERSATION_TITLE` SYSTEM var rebind sees the new value AND so a
+      `:conversation-title-atom` mirror sees the new value AND so a
       read from the SCI sandbox returns the fresh string immediately,
       without a DB round-trip.
    3. Broadcasts to every registered listener.
@@ -4412,7 +4367,7 @@
         ;; Title atom: in-memory cache for the conversation title.
         ;; The DB column on `conversation_state` is the persisted
         ;; truth; this atom is the fast read path for  and
-        ;; the source for the `CONVERSATION_TITLE` SYSTEM var rebind at iteration
+        ;; the source for the title nudge / channel chrome at iteration
         ;; boundaries. `set-title!` writes both, in that order, then
         ;; broadcasts to every registered listener.
         conversation-title-atom               (atom (or title ""))
@@ -4484,11 +4439,11 @@
         ;;                              channels (e.g. the TUI
         ;;                              header) can refresh without
         ;;                              polling.
-        ;; ONE-ARITY ONLY. To READ the current title from `:code`,
-        ;; reference the `CONVERSATION_TITLE` SYSTEM var - there is
-        ;; no zero-arg reader, by design: a `(set-conversation-title!)`
-        ;; call would invite the model to round-trip what it can
-        ;; read for free. Calling with the wrong arity raises an
+        ;; ONE-ARITY ONLY. There is no zero-arg reader by design: the
+        ;; model has no in-sandbox read path for the title (the
+        ;; `CONVERSATION_TITLE` SYSTEM var was retired as redundant).
+        ;; The foundation `title-nudge` surfaces the current value
+        ;; when relevant. Calling with the wrong arity raises an
         ;; `ArityException` from SCI like any other Clojure fn.
         ;; Returns `:vis/silent`: the title is visible in channel chrome
         ;; and the model journal, but the host call itself is noise in

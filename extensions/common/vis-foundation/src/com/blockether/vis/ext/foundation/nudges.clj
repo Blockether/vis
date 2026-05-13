@@ -2,7 +2,8 @@
   "Foundation-shipped :turn.iteration/start hints.
 
    Two soft nudges remain:
-     - `title-nudge`           — set/refresh CONVERSATION_TITLE
+     - `title-nudge`           — set/refresh the conversation title via
+                                  `(set-conversation-title! \"...\")`
      - `context-pressure-nudge` — warn when prompt size crosses ~50% of window
 
    Previously this namespace also shipped two evidence-related hints
@@ -20,7 +21,7 @@
 
 (def ^:const TITLE_REFRESH_TURN_PERIOD
   "Turn cadence at which `title-nudge` re-asks the model to refresh
-   `CONVERSATION_TITLE` when it is already set. The nudge fires on
+   the conversation title when it is already set. The nudge fires on
    iteration 0 of turn 1 (first turn of the conversation), then on
    iteration 0 of every Nth turn after that (10, 20, 30, ...).
 
@@ -52,9 +53,14 @@
         (zero? (mod tp TITLE_REFRESH_TURN_PERIOD))))))
 
 (defn title-nudge
-  "Return a `:low`-importance nudge map when `CONVERSATION_TITLE`
-   needs attention, otherwise nil. Inputs are pulled from the
-   host-supplied nudge ctx:
+  "Return a nudge map when the conversation title needs attention,
+   otherwise nil. The model's only write path is the host primitive
+   `(set-conversation-title! \"...\")`; there is no in-sandbox read
+   binding for the current title (retired as redundant) — this nudge
+   carries the current value in its text body when refresh-cadence
+   fires.
+
+   Inputs are pulled from the host-supplied nudge ctx:
 
      `:conversation-title` - current trimmed title (nil/blank if unset)
      `:title-refresh?`     - host signalled a turn-boundary refresh check
@@ -72,14 +78,14 @@
   [{:keys [conversation-title title-refresh? turn-position]}]
   (let [blank? (or (nil? conversation-title) (str/blank? conversation-title))]
     (cond
-      ;; Blank title is a real gap, not a soft suggestion. CONVERSATION_TITLE
-      ;; is the only label the sidebar / persisted conversation row carries;
-      ;; without it the conversation is anonymous. :high makes the model
-      ;; actually call `(set-conversation-title! ...)` instead of skipping
-      ;; the hint as low-priority advisory noise.
+      ;; Blank title is a real gap, not a soft suggestion. The title
+      ;; is the only label the sidebar / persisted conversation row
+      ;; carries; without it the conversation is anonymous. :high
+      ;; makes the model actually call `(set-conversation-title! ...)`
+      ;; instead of skipping the hint as low-priority advisory noise.
       blank?
       {:importance :high
-       :text (str "CONVERSATION_TITLE is currently empty. "
+       :text (str "The conversation title is currently empty. "
                "Set it via `(set-conversation-title! \"...\")` (3-7-word noun phrase, "
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
                "the conversation is discoverable in the sidebar.")}
@@ -89,9 +95,9 @@
       ;; shifted, and is fine to skip.
       (and title-refresh? (turn-cadence-tick? turn-position))
       {:importance :low
-       :text (str "Current CONVERSATION_TITLE is \"" conversation-title "\". "
+       :text (str "Current conversation title is \"" conversation-title "\". "
                "You are " turn-position " turn(s) into this conversation. "
-               "If the focus has shifted, refresh the title via "
+               "If the focus has shifted, refresh it via "
                "`(set-conversation-title! \"...\")`.")})))
 
 (defn context-pressure-nudge

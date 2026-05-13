@@ -65,23 +65,12 @@
       (expect (str/includes? rendered "… many more"))
       (expect (not (str/includes? (pr-str answer) "LazySeq")))))
 
-  (it "rescues terminal \\e notation in final answer source before IR parsing"
-    (let [[entries parse-error] (#'loop/split-top-level-forms
-                                 (str "(set-conversation-title! \"Paste markers\")\n\n"
-                                   "(turn-answer! [:ir [:c \"\\e[200~\"] [:c \"\\e[201~\"]])"))]
-      (expect (nil? parse-error))
-      (expect (= 2 (count entries)))
-      (expect (every? :repaired? entries))
-      (expect (str/includes? (:expr (second entries)) "\"\\\\e[200~\""))
-      (expect (str/includes? (:expr (second entries)) "\"\\\\e[201~\""))))
-
-  (it "composes answer escape rescue with the next parser repair"
-    (let [[entries parse-error] (#'loop/split-top-level-forms
-                                 "(turn-answer! [:ir [:c \"\\e[200~\"]]")]
-      (expect (nil? parse-error))
-      (expect (= 1 (count entries)))
-      (expect (:repaired? (first entries)))
-      (expect (str/includes? (:expr (first entries)) "\"\\\\e[200~\""))))
+  ;; Removed: "rescues terminal \\e notation in final answer source" and
+  ;; "composes answer escape rescue with the next parser repair". Both
+  ;; exercised `parse-diagnose/try-answer-escape-rescue`, which was
+  ;; deleted with the parse-diagnose ns. Models that emit `\\e[…]` inside
+  ;; `(turn-answer! …)` now get the SCI parse error verbatim and
+  ;; self-correct by escaping the backslash (`\\\\e[…]`).
 
   (it "caps one parser repair attempt at about one second"
     (let [repair #'loop/try-repair-with-timeout
