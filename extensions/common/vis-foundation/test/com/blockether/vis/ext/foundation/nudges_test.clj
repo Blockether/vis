@@ -5,7 +5,7 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe title-nudge-test
-  (it "nudges :high when CONVERSATION_TITLE is blank (regardless of turn position)"
+  (it "nudges :high when the conversation title is blank (regardless of turn position)"
     ;; :high — a blank title is a real gap, not soft advice. Models
     ;; routinely skip :low hints; :high makes the title call happen.
     (doseq [tp [1 2 5 10 17 100]]
@@ -14,7 +14,7 @@
                                    :turn-position tp
                                    :iteration 1})]
         (expect (= :high (:importance n)))
-        (expect (str/includes? (:text n) "CONVERSATION_TITLE is currently empty")))))
+        (expect (str/includes? (:text n) "conversation title is currently empty")))))
 
   (it "fires on turn 1 (first turn) when host flags :title-refresh?"
     (let [n (nudges/title-nudge {:conversation-title "Refactor auth flow"
@@ -23,7 +23,9 @@
                                  :iteration 1})]
       (expect (= :low (:importance n)))
       (expect (str/includes? (:text n) "Refactor auth flow"))
-      (expect (str/includes? (:text n) "refresh the title"))
+      ;; Text reworded from "refresh the title via ..." to "refresh it
+      ;; via ..."; assert the call-to-action via the primitive instead.
+      (expect (str/includes? (:text n) "set-conversation-title!"))
       (expect (str/includes? (:text n) "1 turn(s)"))))
 
   (it "fires on every TITLE_REFRESH_TURN_PERIOD-th turn when host flags :title-refresh?"
