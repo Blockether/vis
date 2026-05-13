@@ -95,17 +95,11 @@
   ;; `(turn-answer! …)` now get the SCI parse error verbatim and
   ;; self-correct by escaping the backslash (`\\\\e[…]`).
 
-  (it "caps one parser repair attempt at about one second"
-    (let [repair #'loop/try-repair-with-timeout
-          start  (System/nanoTime)
-          fixed  (repair :slow-test
-                   (fn [_src _err]
-                     (Thread/sleep 5000)
-                     "fixed")
-                   "(broken" "parse failed")
-          elapsed-ms (/ (double (- (System/nanoTime) start)) 1000000.0)]
-      (expect (nil? fixed))
-      (expect (< elapsed-ms 1500.0)))))
+  ;; Removed: "caps one parser repair attempt at about one second". The
+  ;; entire `try-repair-with-timeout` / parinfer / quote-rebalance chain was
+  ;; deleted with the splitter (Phase B). SCI parses each block as one chunk
+  ;; and its errors surface verbatim — no repair attempts to time-bound.
+  )
 
 (defdescribe copilot-headers-test
   (it "builds Copilot X-Initiator headers only for Copilot providers"
