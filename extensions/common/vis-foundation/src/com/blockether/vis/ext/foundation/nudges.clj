@@ -1,4 +1,20 @@
 (ns com.blockether.vis.ext.foundation.nudges
+  "Foundation-shipped :turn.iteration/start hints.
+
+   Two soft nudges remain:
+     - `title-nudge`           — set/refresh CONVERSATION_TITLE
+     - `context-pressure-nudge` — warn when prompt size crosses ~50% of window
+
+   Previously this namespace also shipped two evidence-related hints
+   (`blind-answer-guard-check` and `action-request-needs-evidence-check`)
+   that used verb-regex heuristics to fire on investigation/action
+   requests with no observed tool work. Both are now subsumed by the
+   harness-level structural gate inside `(turn-answer! ...)`
+   (see `final-answer-structural-criteria-errors` in
+   `com.blockether.vis.internal.loop`): if the latest iteration's
+   <journal> carries no evidence, the answer is refused regardless of
+   user-request shape. Removing the nudges keeps a single source of
+   truth and drops the regex heuristic surface."
   (:require
    [clojure.string :as str]))
 
@@ -56,13 +72,21 @@
   [{:keys [conversation-title title-refresh? turn-position]}]
   (let [blank? (or (nil? conversation-title) (str/blank? conversation-title))]
     (cond
+      ;; Blank title is a real gap, not a soft suggestion. CONVERSATION_TITLE
+      ;; is the only label the sidebar / persisted conversation row carries;
+      ;; without it the conversation is anonymous. :high makes the model
+      ;; actually call `(set-conversation-title! ...)` instead of skipping
+      ;; the hint as low-priority advisory noise.
       blank?
-      {:importance :low
+      {:importance :high
        :text (str "CONVERSATION_TITLE is currently empty. "
                "Set it via `(set-conversation-title! \"...\")` (3-7-word noun phrase, "
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
                "the conversation is discoverable in the sidebar.")}
 
+      ;; Periodic refresh stays :low — the existing title already labels
+      ;; the conversation; this branch only nudges when focus may have
+      ;; shifted, and is fine to skip.
       (and title-refresh? (turn-cadence-tick? turn-position))
       {:importance :low
        :text (str "Current CONVERSATION_TITLE is \"" conversation-title "\". "
@@ -98,119 +122,15 @@
                  "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 
 ;; ----------------------------------------------------------------------------
-;; Hooks (`:ext/hooks`) — structured lifecycle callbacks. :turn.iteration/start
-;; emits MODEL-FACING <current_engine_start_nudge> entries; :turn.answer/validate
-;; can reject an invalid final answer.
+;; Hooks (`:ext/hooks`) — :turn.iteration/start emits MODEL-FACING
+;; <iteration_hint> entries. Answer-time enforcement now lives in the
+;; harness gate (`final-answer-structural-criteria-errors`); no
+;; foundation :turn.answer/validate hooks remain.
 ;; ----------------------------------------------------------------------------
-
-;; `title-nudge` and `context-pressure-nudge` are exposed as plain fns so
-;; tests can probe them independently of the hook envelope. Their hook
-;; wrappers below adapt the `{:importance :text}` map they return into the
-;; `{:hint :importance}` shape pre-phase hooks return.
 
 (defn- nudge->hook-hit
   [n]
   (when n {:hint (:text n) :importance (:importance n)}))
-
-(def ^:private investigation-verb-regex
-  ;; Stems of verbs that strongly imply "answer requires runtime/file
-  ;; observation". Match whole-word, case-insensitive. Avoid treating
-  ;; tool/symbol names (`z/patch-check`, `foo/check`) as user verbs.
-  #"(?i)(?<![-/])\b(investigate|investigating|debug|debugging|why|fix|fixing|check|checking|find|finding|look(?:up|s)?|inspect|inspecting|reproduce|reproducing|diagnose|diagnosing|verify|verifying|trace|tracing|where|which|what does|how does|show me|search for|grep|locate|count)\b")
-
-(def ^:private planning-only-regex
-  #"(?i)\b(planning-only|plan-only|opinion-only|design-only|no tools?|do not inspect|do not investigate|do not modify files)\b")
-
-(defn- looks-like-investigation?
-  [user-request]
-  (let [s (some-> user-request str str/trim)]
-    (and s
-      (>= (count s) 8)        ;; "hey" / "thx" / "siema" stay below
-      (not (re-find planning-only-regex s))
-      (boolean (re-find investigation-verb-regex s)))))
-
-(defn blind-answer-guard-check
-  "Fires on iteration 1 when the user request looks like an
-   investigation but the model is about to answer without any tool
-   observation. Returns nil (silent) or `{:hint :importance}`.
-
-   Soft: the nudge only TELLS the model to investigate; preflight
-   does NOT reject the answer. If the model still answers blindly,
-   that's its call — the failure mode is at least surfaced."
-  [{:keys [iteration user-request previous-blocks]}]
-  (when (and (= 1 (long (or iteration 1)))
-          (looks-like-investigation? user-request)
-          (empty? previous-blocks))
-    {:importance :high
-     :hint (str "The user request looks like an investigation (verbs like "
-             "'why', 'fix', 'check', 'find', 'debug', 'show me' …). "
-             "You MUST call at least one tool (v/cat, v/rg, z/locators, "
-             "v/ls …) to observe the actual state before composing "
-             "`(turn-answer! …)`. Answering from memory on an investigation "
-             "request is a hallucination. If the request is truly "
-             "trivial chat (greeting, ack), ignore this nudge.")}))
-
-(defn- previous-iteration-entries
-  [{:keys [previous-iterations previous-blocks]}]
-  (if (seq previous-iterations)
-    (map (fn [entry]
-           (if (vector? entry)
-             {:iteration (first entry)
-              :blocks (:blocks (second entry))}
-             {:iteration (or (:iteration entry) (:position entry))
-              :blocks (:blocks entry)}))
-      previous-iterations)
-    [{:iteration nil :blocks previous-blocks}]))
-
-(def ^:private action-request-regex
-  #"(?i)\b(fix|implement|patch|change|add|remove|delete|create|edit|update|verify|run|commit|push)\b")
-
-(def ^:private blocked-answer-regex
-  #"(?i)\b(blocked|cannot|can't|unable|need input|needs input|partial|not done|failed)\b")
-
-(defn- action-request?
-  [{:keys [user-request]}]
-  (let [s (some-> user-request str str/trim)]
-    (boolean
-      (and (seq s)
-        (not (re-find planning-only-regex s))
-        (re-find action-request-regex s)))))
-
-(defn- answer-blocked-or-partial?
-  [answer]
-  (boolean (when-some [s (some-> answer pr-str)]
-             (re-find blocked-answer-regex s))))
-
-(defn- answer-form?
-  [form]
-  (boolean (some-> form str str/trim (str/starts-with? "(turn-answer!"))))
-
-(defn- successful-work-event?
-  [block]
-  (let [form (or (:code block) (:form block))]
-    (and (seq (str form))
-      (not (answer-form? form))
-      (or (and (contains? block :error) (nil? (:error block)))
-        (some true? (map :success? (:journal block)))))))
-
-(defn- turn-has-work-evidence?
-  [ctx]
-  (boolean
-    (some successful-work-event?
-      (mapcat :blocks (previous-iteration-entries ctx)))))
-
-(defn action-request-needs-evidence-check
-  "Hard answer validator. Mutating/action requests must have at least one
-   previous tool/code evidence event in this turn before a final answer claims
-   completion. Blocked/partial failure reports are allowed so the model can
-   truthfully stop when no useful recovery exists."
-  [{:keys [answer] :as ctx}]
-  (when (and (action-request? ctx)
-          (not (turn-has-work-evidence? ctx))
-          (not (answer-blocked-or-partial? answer)))
-    {:reject true
-     :message "User asked for action, but this turn contains no observed tool/code work before the final answer."
-     :hint "Do the requested work or inspection first. If you are blocked, answer explicitly as blocked/partial instead of claiming completion."}))
 
 (def hooks
   "`:ext/hooks` vector for vis-foundation. Each entry conforms to the
@@ -222,12 +142,4 @@
    {:id    :vis.foundation/context-pressure
     :doc   "Warn when assembled input tokens cross ~50% of the model's context window."
     :phase :turn.iteration/start
-    :fn    (fn [ctx] (nudge->hook-hit (context-pressure-nudge ctx)))}
-   {:id    :vis.foundation/blind-answer
-    :doc   "Warn when iteration 1 is about to answer an investigation-style request without any tool calls."
-    :phase :turn.iteration/start
-    :fn    blind-answer-guard-check}
-   {:id    :vis.foundation/action-request-needs-evidence
-    :doc   "Reject action-request completion claims with no prior observed tool/code evidence in the turn."
-    :phase :turn.answer/validate
-    :fn    action-request-needs-evidence-check}])
+    :fn    (fn [ctx] (nudge->hook-hit (context-pressure-nudge ctx)))}])

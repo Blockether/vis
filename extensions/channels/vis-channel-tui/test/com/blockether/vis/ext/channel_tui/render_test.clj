@@ -308,6 +308,34 @@
           body    (strip-ansi (str/join "\n" (:lines payload)))]
       (expect (str/includes? body "Vis is parsing model response (iter 1)"))))
 
+  (it "uses the same trace renderer for live progress and cancelled bubbles"
+    (let [ir       [:ir {} [:p {} [:strong {} [:span {} "bold result"]]]]
+          iter     {:code ["(tool)"]
+                    :results [ir]
+                    :result-kinds [:value]
+                    :durations [1]
+                    :successes [true]}
+          settings {:show-thinking true :show-iterations true}
+          live     (:lines (render/progress->lines-data
+                             {:iterations [iter]} 80 settings
+                             {:now-ms 1000 :turn-start-ms 0}))
+          cancel   (:lines (render/format-answer-with-thinking-data
+                             [:ir {} [:p {} [:span {} "Cancelled by user."]]]
+                             [iter] 80 settings nil true nil))
+          clean    (fn [line] (strip-sentinels (strip-ansi line)))
+          trim-tail (fn [xs]
+                      (vec (reverse (drop-while visually-blank? (reverse xs)))))
+          trace-before (fn [needle lines]
+                         (->> lines
+                           (take-while #(not (str/includes? (clean %) needle)))
+                           trim-tail))
+          live-trace (trace-before "Vis is" live)
+          cancel-trace (trace-before "Cancelled by user." cancel)
+          body      (str/join "\n" (map clean cancel-trace))]
+      (expect (= live-trace cancel-trace))
+      (expect (str/includes? body "bold result"))
+      (expect (not (str/includes? body ":ir")))))
+
   (it "live progress renders every iteration instead of hiding history"
     (let [mk-entry (fn [n]
                      {:code      [(str "(+ " n " 1)")]

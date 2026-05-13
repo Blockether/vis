@@ -556,9 +556,9 @@ Bridge puts **searchable fields** in `metadata` (JSON, queryable) and
 Rule: if Bridge needs to filter on it, it goes in `metadata`.
 If it's payload data, it goes in `content`. Some fields appear in both.
 
-### 7.3 Environment info
+### 7.3 Extension prompt info
 
-`bridge/environment-info-fn` contributes:
+Bridge contributes its model-facing index summary through its own extension prompt fragment, for example:
 
 ```
 bridge.indexed: true

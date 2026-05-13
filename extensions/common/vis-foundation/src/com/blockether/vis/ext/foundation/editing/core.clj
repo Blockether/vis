@@ -10,7 +10,8 @@
         (v/cat path offset n)   ; n lines starting at line `offset` (1-based)
         (v/ls path)             ; -> nested {:name :path :type :size :children} tree
         (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
-        (v/rg spec)            ; -> {:hits :truncated-by}; spec = {:all|:any [...] :paths [...]}
+        (v/rg spec)            ; -> {:hits :truncated-by}; spec = {:any [literal] :paths [src]}
+                               ; OR {:all [lit1 lit2]}; no regex/query+opts shorthand
 
    2. Cwd-safe wrappers over the babashka.fs file API. `v/patch` is
       the canonical text edit surface:
@@ -654,7 +655,7 @@
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
-  "Search file contents with one spec-map grammar: (v/rg {:all [...] :paths [...]}) or (v/rg {:any [...] :paths [...]}). Exactly one of :all/:any. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; bind the result and slice for display. Returns {:hits [...] :truncated-by ...}. For pure path discovery without content matching, use a vacuous spec like (v/rg {:any [\"\"] :include [\"**/*.clj\"]}) or `v/ls`."
+  "Literal file-content search with one spec-map grammar. Use (v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]}) for OR, or (v/rg {:all [\"defn\" \"handler\"] :paths [\"src\"]}) when all literals must occur on the same line. Exactly one of :all/:any is required. Strings are literal substrings: | is a pipe character, not regex alternation. No positional/query+opts shorthand. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; bind the result and slice for display. Returns {:hits [...] :truncated-by ...}. For pure path discovery without content matching, use a vacuous spec like (v/rg {:any [\"\"] :include [\"**/*.clj\"]}) or `v/ls`."
   ([spec]
    (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
          out (grep-files spec)]
@@ -1144,7 +1145,7 @@
 (defn available-editing-prompt
   []
   (str
-    "`v/` strategy: combine v/rg and v/ls to locate (v/rg :include/:exclude take glob vectors), v/cat to read a window, then bind raw payloads and slice with normal Clojure. "
+    "`v/` strategy: combine v/rg and v/ls to locate. v/rg takes exactly one literal spec map: `(v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]})` for OR, or `{:all [\"defn\" \"foo\"]}` for same-line AND; no regex/query+opts shorthand. v/cat reads a window; bind raw payloads and slice with normal Clojure. "
     "`v/cat` reads the whole file in one call only when it fits one window; for larger files, page with `(v/cat path offset n)` and advance via `(:next-offset prev)` until `(:eof? prev)`. Bind windows, not whole files: each call persists one bounded Nippy blob keyed by `[:result :lines]`. "
     "Edit text with canonical (v/patch [{:path :search :replace}]); every :search must match exactly once or the whole batch fails. Use v/patch-check when uniqueness is uncertain; use z/patch for Clojure/EDN when `z/` is active. "
     "Read back after writes only when exact persisted bytes matter; otherwise rely on the patch result. "

@@ -14,9 +14,9 @@
   (str/includes? (:content message) (str "<" tag)))
 
 (defdescribe prompt-test
-  (it "sends core, environment, and extensions as separate messages before the user message"
+  (it "sends core and extensions as separate messages before the user message"
     (let [active-extensions [{:ext/namespace 'test.env
-                              :ext/environment-prompt-fn (fn [_] "host facts")}
+                              :ext/prompt (fn [_] "<environment>\nhost facts\n</environment>")}
                              {:ext/namespace 'test.ext
                               :ext/prompt (fn [_] "extension rules")}]
           stable-messages (prompt/assemble-stable-prompt-messages
@@ -26,94 +26,81 @@
           messages (prompt/assemble-initial-messages
                      {:stable-prompt-messages stable-messages
                       :initial-user-content "Do the thing."})]
-      (expect (= ["system" "system" "system" "user"]
+      (expect (= ["system" "system" "user"]
                 (role-seq messages)))
       (expect (= stable-messages (subvec messages 0 (count stable-messages))))
       (expect (every? #(= "system" (:role %)) stable-messages))
       (expect (contains-tag? (nth messages 0) "system_prompt"))
+      (expect (contains-tag? (nth messages 1) "extensions"))
+      (expect (str/includes? (get-in messages [1 :content]) "<extension id=\"test.env\">"))
+      (expect (str/includes? (get-in messages [1 :content]) "<extension id=\"test.ext\">"))
       (expect (contains-tag? (nth messages 1) "environment"))
-      (expect (contains-tag? (nth messages 2) "extensions"))
       (expect (str/includes? (get-in messages [1 :content]) "host facts"))
-      (expect (str/includes? (get-in messages [2 :content]) "extension rules"))
+      (expect (str/includes? (get-in messages [1 :content]) "extension rules"))
       (expect (not (str/includes? (get-in messages [0 :content]) "host facts")))
       (expect (not (str/includes? (get-in messages [0 :content]) "extension rules")))
       (expect (not (some #(contains-tag? % "skills") stable-messages)))
-      (expect (str/includes? (get-in messages [3 :content])
-                "<user_turn_request_main_goal>\nDo the thing.\n</user_turn_request_main_goal>"))))
+      (expect (str/includes? (get-in messages [2 :content])
+                "<current_user_message>\nDo the thing.\n</current_user_message>"))))
 
-  (it "core system prompt omits environment and extension prompt plumbing"
+  (it "core system prompt is minimal: env/extension plumbing stays out, key directives stay in"
+    ;; The core prompt is intentionally terse — just enough scaffolding
+    ;; for the SCI loop. Environment, extensions, journal/bindings
+    ;; framing, skills, system vars, and tool catalogs all live
+    ;; OUTSIDE this string (as separate provider messages or
+    ;; per-iteration trailer content). Only “load-bearing” directives
+    ;; live here.
     (let [content (:content (first (prompt/assemble-stable-prompt-messages
                                      {}
                                      {:active-extensions []})))]
-      (expect (str/includes? content "SCI-based recursive model runtime"))
-      (expect (str/includes? content "reply := ```clojure``` fences only"))
-      (expect (str/includes? content "Host evals forms, records evidence"))
-      ;; Single railway / Kleisli fixpoint replaces the old TURN := / WORK :=
-      ;; / λDISCIPLINE / λOUTPUT paraphrases. λVis is one composition, not
-      ;; four English restatements.
-      (expect (str/includes? content "λVis : USER_GOAL → FINAL"))
-      (expect (str/includes? content "λVis ≡ fix (λ loop. λ ctx."))
-      (expect (str/includes? content "step = MODEL_REPLY >=> SCI_EVAL >=> OBSERVE"))
-      (expect (str/includes? content "if READY? ctx then EMIT_FINAL ctx else loop (step ctx)"))
-      (expect (str/includes? content "Kleisli"))
-      (expect (str/includes? content "StateT Ctx (Either Err)"))
-      (expect (str/includes? content "MODEL_REPLY : Ctx → M Forms"))
-      (expect (str/includes? content "SCI_EVAL    : Forms → M Evidence"))
-      (expect (str/includes? content "OBSERVE     : Evidence → M Ctx"))
+      ;; Identity + headline sections
+      (expect (str/includes? content "λVis"))
+      (expect (str/includes? content "ENV"))
+      (expect (str/includes? content "TURN PROTOCOL"))
+      (expect (str/includes? content "LOOP DISCIPLINE"))
       (expect (str/includes? content "EMIT_FINAL"))
-      (expect (str/includes? content "mutation_occurred ⇒ post-mutation read-only verification present in <journal>"))
-      ;; Old TURN := production grammar is gone; fixpoint subsumes it.
-      (expect (not (str/includes? content "TURN := USER_GOAL × WORK(ITERATIONS)* × FINAL")))
-      ;; λDISCIPLINE and λOUTPUT are folded into λENGINE arrow definitions and
-      ;; READY? conjuncts; their dedicated section headers must not return.
-      (expect (not (str/includes? content "λDISCIPLINE.")))
-      (expect (not (str/includes? content "λOUTPUT.")))
-      ;; And the verbose "if ¬READY? → WORK MORE = ITERATE -> ..." paraphrase
-      ;; the user flagged is gone too.
-      (expect (not (str/includes? content "WORK MORE = ITERATE")))
-      (expect (not (str/includes? content "Host loop: assistant emits executable SCI forms")))
+      (expect (str/includes? content "ANSWER_IR"))
+
+      ;; Canonical final form (the gate is hidden inside turn-answer!)
+      (expect (str/includes? content "(turn-answer! <IR>)"))
+      (expect (not (str/includes? content "(when (turn-converges?)")))
+      (expect (not (str/includes? content "turn-converges?")))
+
+      ;; The four structural gate criteria are surfaced to the model.
+      (expect (str/includes? content "no error in the latest iteration"))
+      (expect (str/includes? content "no action-tagged tool call"))
+      (expect (str/includes? content "<journal> carries evidence for this turn"))
+      (expect (str/includes? content "turn-answer! itself evaluated without throwing"))
+
+      ;; Banned ops surface in the core prompt.
+      (expect (str/includes? content "slurp"))
+      (expect (str/includes? content "clojure.java.io"))
+      (expect (str/includes? content "any filesystem access"))
+
+      ;; ANSWER_IR shape stays callable / parseable from the prompt.
+      (expect (str/includes? content "[:ir block*]"))
+      (expect (str/includes? content ":h {:level 1-6}"))
+      (expect (str/includes? content ":code {:lang string}"))
+
+      ;; Plumbing kept OUT of the core string.
       (expect (not (str/includes? content "<environment>")))
       (expect (not (str/includes? content "<extensions>")))
-      (expect (str/includes? content "λDYNAMIC_CONTEXT."))
-      (expect (str/includes? content "<journal>                     := token-budgeted iteration evidence; newest at bottom; may carry prior conversation iterations."))
-      (expect (str/includes? content "<bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings."))
-      (expect (str/includes? content "direct turn/conversation values"))
-      (expect (str/includes? content "FINAL forbids stateful mutation"))
-      (expect (str/includes? content "(turn-answer! ir)"))
-      ;; `(set-conversation-title! ...)` is intentionally absent from the
-      ;; cached system prompt. The model is reminded to call it by the
-      ;; per-iteration `:vis.foundation/conversation-title` nudge (turn-
-      ;; cadence: turn 1, then every TITLE_REFRESH_TURN_PERIOD-th turn),
-      ;; so duplicating it in always-on prompt text is pure waste.
-      (expect (not (str/includes? content "(set-conversation-title! s)")))
-      (expect (not (str/includes? content "set-conversation-title!")))
-      (expect (str/includes? content "v/engine-symbol-documentation"))
-      (expect (str/includes? content "v/engine-symbol-source-code"))
-      (expect (str/includes? content "v/engine-symbol-apropos"))
-      (expect (not (str/includes? content "var-history")))
-      (expect (not (str/includes? content "var-history-timeline")))
-      (expect (not (str/includes? content "clojure.repl")))
-      (expect (not (str/includes? content "repl/doc")))
-      (expect (str/includes? content "required_evidence_observed?"))
-      (expect (str/includes? content "decide from <journal> + <bindings>, not memory"))
-      (expect (str/includes? content "false guard"))
-      (expect (str/includes? content "(when condition (turn-answer! [:ir ...]))"))
-      (expect (not (str/includes? content "v/bash")))
-      (expect (not (str/includes? content "(v/cat \"src/foo.clj\" :from 0 :to 1000)")))
-      (expect (not (str/includes? content "tool-events")))
-      (expect (not (str/includes? content "λSYSTEM_VARS.")))
-      (expect (not (str/includes? content "read_only :=")))
-      (expect (not (str/includes? content "TURN_ID")))
-      (expect (not (str/includes? content "CONVERSATION_PREVIOUS_ANSWER")))
-      (expect (not (str/includes? content "load-skill")))
-      (expect (not (str/includes? content "reload-skills")))
       (expect (not (str/includes? content "<skills>")))
       (expect (not (str/includes? content "<active_skills>")))
-      (expect (not (str/includes? content "(answer")))
-      (expect (not (str/includes? content "(conversation-title")))
-      (expect (not (str/includes? content "cached host facts")))
-      (expect (not (str/includes? content "NO ERRORS IN PREVIOUS ITERATION")))
-      (expect (not (str/includes? content "reload-extensions")))))
+      (expect (not (str/includes? content "load-skill")))
+      (expect (not (str/includes? content "reload-skills")))
+      (expect (not (str/includes? content "reload-extensions")))
+      ;; Conversation-title prompting lives in the foundation nudge, not
+      ;; in the always-on system prompt.
+      (expect (not (str/includes? content "set-conversation-title!")))
+      ;; System-vars catalogue and per-tool examples likewise stay out.
+      (expect (not (str/includes? content "λSYSTEM_VARS.")))
+      (expect (not (str/includes? content "TURN_ID")))
+      (expect (not (str/includes? content "CONVERSATION_PREVIOUS_ANSWER")))
+      (expect (not (str/includes? content "v/bash")))
+      (expect (not (str/includes? content "tool-events")))
+      (expect (not (str/includes? content "var-history")))
+      (expect (not (str/includes? content "clojure.repl")))))
 
   (it "current turn context renders dynamic telemetry and direct runtime values without static lifecycle policy"
     (let [turn-id #uuid "11111111-1111-1111-1111-111111111111"

@@ -641,7 +641,7 @@
     (cond
       (= "system" role) "stable system prompt"
       (and (= "user" role) (str/includes? content "<current_turn_context>")) "per-iteration trailer"
-      (and (= "user" role) (str/includes? content "<user_turn_request_main_goal>")) "user goal"
+      (and (= "user" role) (str/includes? content "<current_user_message>")) "current user message"
       (= "assistant" role) "assistant optional replay"
       :else nil)))
 
