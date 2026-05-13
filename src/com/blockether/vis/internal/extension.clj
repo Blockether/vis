@@ -31,6 +31,7 @@
    [com.blockether.vis.internal.manifest :as manifest]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.registry :as registry]
+   [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.theme :as theme]
    [com.blockether.vis.internal.workspace :as workspace]
    [taoensso.telemere :as tel])
@@ -41,6 +42,38 @@
    (java.util.jar JarEntry JarFile)))
 
 (defn- non-blank-string? [x] (and (string? x) (not (str/blank? x))))
+
+(defn channel-render-ir?
+  "True when `x` is an IR value acceptable from `:channel-render-fn`.
+   Non-canonical `[:ir ...]` is accepted and normalized at render time."
+  [x]
+  (render/ir? x))
+
+(defn channel-render-value?
+  "Channel renderers must return answer IR (`[:ir ...]`)."
+  [x]
+  (channel-render-ir? x))
+
+(defn literal-channel-ir
+  "Build literal-text channel IR. This is for compatibility wrappers and
+   error placeholders, not for `:channel-render-fn` return strings."
+  [x]
+  (render/->ast (str x)))
+
+(defn normalize-channel-render-value
+  "Normalize an accepted channel-render IR value to canonical IR."
+  [x]
+  (render/->ast x))
+
+(defn combine-channel-render-values
+  "Combine per-form channel IR values into one canonical IR root."
+  [values]
+  (let [values (vec (remove nil? values))]
+    (if (empty? values)
+      [:ir {}]
+      (let [blocks     (map #(drop 2 (normalize-channel-render-value %)) values)
+            separators (repeat [[:p {} [:span {} ""]]])]
+        (into [:ir {}] (mapcat identity (butlast (interleave blocks separators))))))))
 
 ;; =============================================================================
 ;; Tool-result contract
@@ -147,7 +180,7 @@
 (s/def :ext.sink/position  (s/and integer? (complement neg?)))
 (s/def :ext.sink/form      non-blank-string?)
 (s/def :ext.sink/success?  boolean?)
-(s/def :ext.sink/result    (s/nilable string?))
+(s/def :ext.sink/result    (s/nilable #(or (string? %) (channel-render-value? %))))
 (s/def :ext.sink/error     ::error)           ; ::error is itself nilable per its spec
 
 (s/def ::sink-entry
@@ -156,7 +189,7 @@
                      :ext.sink/success? :ext.sink/result :ext.sink/error])
     (fn [{:keys [success? result error]}]
       (if success?
-        (and (string? result) (nil? error))    ; success -> rendered text, no error
+        (and (or (string? result) (channel-render-value? result)) (nil? error)) ; journal string or channel IR
         (and (nil? result) (some? error))))))  ; failure -> raw error map, no text
 
 (defn assert-sink-entry!
@@ -477,57 +510,50 @@
       block                        (assoc :block block)
       cause-data                   (assoc :cause-data cause-data))))
 
+(defn- render-error-context-text
+  "Babashka-style source context text for `render-error-context` IR."
+  [{:keys [source row col opened-loc]} {:keys [form-start-row form-end-row]}]
+  (when (string? source)
+    (let [;; Edamame: opened-loc beats row/col for arrow placement.
+          arrow-row  (or (:row opened-loc) row)
+          arrow-col  (or (:col opened-loc) col)
+          lines      (vec (str/split source #"\n" -1))
+          total      (count lines)
+          gutter-w   (count (str total))
+          in-form?   (fn [ln-1based]
+                       (and form-start-row form-end-row
+                         (<= form-start-row ln-1based form-end-row)))
+          fmt-line   (fn [idx0]
+                       (let [ln     (inc idx0)
+                             marker (if (in-form? ln) ">" " ")]
+                         (format (str "%s %" gutter-w "d: %s")
+                           marker ln (nth lines idx0))))
+          arrow-line (when (and arrow-row arrow-col
+                             (<= 1 arrow-row total))
+                       (str (apply str (repeat (+ gutter-w 4) \space))
+                         (apply str (repeat (max 0 (dec arrow-col)) \space))
+                         "^---"))
+          arrow-idx0 (when arrow-line (dec arrow-row))]
+      (->> (range total)
+        (mapcat (fn [idx0]
+                  (cond-> [(fmt-line idx0)]
+                    (= idx0 arrow-idx0) (conj arrow-line))))
+        (str/join "\n")))))
+
 (defn render-error-context
-  "Render the source from an `:error :block` map per PLAN §2.8
-   layout: babashka-style. Every line is gutter-numbered. The line
-   containing the failure gets a `^---` arrow at the exact column
-   on the line below it. Lines belonging to the failing form
-   (`form-start-row`..`form-end-row` from PLAN §7.3.7 form-bounds
-   extension) get a `>` gutter prefix; sibling forms get a space.
-   No truncation — always shows the whole `:source` block.
+  "Render the source from an `:error :block` map as canonical IR.
 
-   When `:opened-loc` is present (edamame delimiter mismatch), it
-   wins over `:row`/`:col` for arrow placement — it points at the
-   actually-actionable unmatched opener.
+   Layout: babashka-style. Every line is gutter-numbered. The failing
+   line gets a `^---` arrow under the exact column. Lines belonging to
+   the failing form get a `>` gutter prefix. No truncation.
 
-   Returns a string. Pure. No SCI/TUI dependencies.
-
-   Args:
-     block - `{:source :phase :row? :col? :opened-loc?}` map
-             from `:error :block`.
-     opts  - optional map; recognised keys:
-               :form-start-row  1-based int, range start for `>`
-                                marker. nil => no marker.
-               :form-end-row    1-based int, inclusive end of
-                                marker range. nil => no marker."
+   Returns `[:ir ...]`. Channel error paths use this directly; no Markdown
+   or string renderer hop."
   ([block] (render-error-context block nil))
-  ([{:keys [source row col opened-loc]} {:keys [form-start-row form-end-row]}]
-   (when (string? source)
-     (let [;; Edamame: opened-loc beats row/col for arrow placement.
-           arrow-row    (or (:row opened-loc) row)
-           arrow-col    (or (:col opened-loc) col)
-           lines        (vec (str/split source #"\n" -1))
-           total        (count lines)
-           gutter-w     (count (str total))
-           in-form?     (fn [ln-1based]
-                          (and form-start-row form-end-row
-                            (<= form-start-row ln-1based form-end-row)))
-           fmt-line     (fn [idx0]
-                          (let [ln (inc idx0)
-                                marker (if (in-form? ln) ">" " ")]
-                            (format (str "%s %" gutter-w "d: %s")
-                              marker ln (nth lines idx0))))
-           arrow-line   (when (and arrow-row arrow-col
-                                (<= 1 arrow-row total))
-                          (str (apply str (repeat (+ gutter-w 4) \space))
-                            (apply str (repeat (max 0 (dec arrow-col)) \space))
-                            "^---"))
-           arrow-idx0   (when arrow-line (dec arrow-row))]
-       (->> (range total)
-         (mapcat (fn [idx0]
-                   (cond-> [(fmt-line idx0)]
-                     (= idx0 arrow-idx0) (conj arrow-line))))
-         (str/join "\n"))))))
+  ([block opts]
+   (if-let [text (render-error-context-text block opts)]
+     [:ir {} [:code {:lang "text"} text]]
+     [:ir {}])))
 
 ;; =============================================================================
 ;; Symbol entry spec
@@ -583,21 +609,8 @@
 
 ;; Optional override for channel failure rendering. Receives the
 ;; tool-result envelope only. When absent, the engine uses
-;; `default-channel-error-text`.
+;; `default-channel-error-ir`.
 (s/def :ext.symbol/channel-render-error-fn fn?)
-
-;; Extension-owned renderers for Markdown fenced code blocks. Channels call
-;; `render-fenced-block` from their Markdown projection path; the first
-;; renderer whose `:renderer/langs` contains the normalized fence language
-;; and returns a non-nil result wins.
-(s/def :renderer/id keyword?)
-(s/def :renderer/langs
-  (s/and set? seq #(every? non-blank-string? %)))
-(s/def :renderer/render-fn ifn?)
-(s/def ::fenced-renderer
-  (s/keys :req [:renderer/id :renderer/langs :renderer/render-fn]))
-(s/def :ext/fenced-renderers
-  (s/coll-of ::fenced-renderer :kind vector?))
 
 ;; Plain value bound in the sandbox (constant, data, config).
 ;; Mutually exclusive with :ext.symbol/fn.
@@ -896,7 +909,6 @@
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
             :ext/alias :ext/prompt :ext/environment-prompt-fn
-            :ext/fenced-renderers
             :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
@@ -920,10 +932,11 @@
     (if (<= n 1500) s (str (subs s 0 1500) "…<+" (- n 1500) " chars>"))))
 
 (defn render-pr-str-channel
-  "Default-shaped channel renderer that pr-strs the result. Authors opt
-   in explicitly via `:channel-render-fn extension/render-pr-str-channel`."
+  "Default-shaped channel renderer that pr-strs the result as literal IR.
+   Authors opt in explicitly via
+   `:channel-render-fn extension/render-pr-str-channel`."
   [result]
-  (pr-str result))
+  (literal-channel-ir (pr-str result)))
 
 (defn render-string-journal
   "Pass-through renderer for symbols whose `:result` is already a string
@@ -934,9 +947,9 @@
     (if (<= n 1500) s (str (subs s 0 1500) "…<+" (- n 1500) " chars>"))))
 
 (defn render-string-channel
-  "Pass-through channel renderer for string-shaped `:result`."
+  "Channel renderer for string-shaped `:result`; returns literal IR."
   [result]
-  (str result))
+  (literal-channel-ir (str result)))
 
 (defn- validate-symbol-entry!
   "Assert a symbol entry conforms to ::symbol-entry. Throws on violation."
@@ -1059,8 +1072,8 @@
      :journal-render-fn   - (fn [result] string). Renders the unwrapped
                             internal envelope `:result` into model-facing
                             <journal>. Plaintext, terse, ≤~1500 chars.
-     :channel-render-fn   - (fn [result] string). Renders the unwrapped
-                            result as markdown. UNIFORM across every channel.
+     :channel-render-fn   - (fn [result] IR). Renders the unwrapped result as
+                            canonical IR. UNIFORM across every channel.
 
    Raw helpers pass `:raw? true` and return plain values directly, with no
    envelope enforcement, journal/channel sink, or tool metadata.
@@ -1071,7 +1084,7 @@
      :raw?                      - true for plain composable helpers.
      :journal-render-error-fn   - (fn [error] string). Override journal
                                   failure render.
-     :channel-render-error-fn   - (fn [error] string). Override channel
+     :channel-render-error-fn   - (fn [tool-result] IR). Override channel
                                   failure render. Uniform across channels.
      :before-fn :after-fn :on-error-fn
 
@@ -1121,7 +1134,7 @@
        (if (:raw? opts)
          opts
          (merge {:journal-render-fn (constantly "")
-                 :channel-render-fn (constantly "")}
+                 :channel-render-fn (constantly [:ir {}])}
            opts))))))
 
 (defn helper
@@ -1414,11 +1427,11 @@
                     sym-name)]
     (pr-str (cons head (vec args)))))
 
-(defn- safely-render
-  "Call a render-fn against an unwrapped tool-result value, defending
-   against non-string returns and renderer exceptions. Errors collapse to
-   a `<...>` placeholder string so the sink invariant (`:result` is a
-   non-blank string on success) survives misbehaving renderers."
+(defn- safely-render-journal
+  "Call a journal render fn for sink recording. Journal renderers receive
+   the unwrapped `:result` payload and must return non-blank strings. Any
+   renderer failure becomes a `<...>` placeholder string so sink writes survive
+   misbehaving renderers."
   [render-fn sym-name label value]
   (try
     (let [s (render-fn value)]
@@ -1429,6 +1442,20 @@
                                                  (pr-str (type s)) ">")))
     (catch Throwable t
       (str "<" label " for " sym-name " threw: " (ex-message t) ">"))))
+
+(defn- safely-render-channel
+  "Call a channel render fn for sink recording. Channel renderers must return
+   answer IR; renderer failures become literal IR placeholders."
+  [render-fn sym-name label value]
+  (try
+    (let [v (render-fn value)]
+      (if (channel-render-ir? v)
+        (normalize-channel-render-value v)
+        (literal-channel-ir
+          (str "<" label " returned non-IR: " (pr-str (type v)) ">"))))
+    (catch Throwable t
+      (literal-channel-ir
+        (str "<" label " for " sym-name " threw: " (ex-message t) ">")))))
 
 (defn- write-sink-entries!
   "After a tool symbol's `invoke-symbol-wrapper` produces a final
@@ -1450,9 +1477,9 @@
           base     {:position position :form form-str}]
       (if (:success? result)
         (let [unwrapped (:result result)
-              j-text   (safely-render (:ext.symbol/journal-render-fn sym-entry)
+              j-text   (safely-render-journal (:ext.symbol/journal-render-fn sym-entry)
                          sym-name ":journal-render-fn" unwrapped)
-              c-text   (safely-render (:ext.symbol/channel-render-fn sym-entry)
+              c-text   (safely-render-channel (:ext.symbol/channel-render-fn sym-entry)
                          sym-name ":channel-render-fn" unwrapped)]
           (record-journal-entry! (assoc base :success? true :result j-text :error nil))
           (record-channel-entry! (assoc base :success? true :result c-text :error nil)))
@@ -1650,7 +1677,6 @@
       (not (:ext/providers spec))                      (assoc :ext/providers [])
       (not (:ext/persistance spec))                    (assoc :ext/persistance [])
       (not (:ext/channel-hooks spec))                  (assoc :ext/channel-hooks [])
-      (not (:ext/fenced-renderers spec))               (assoc :ext/fenced-renderers [])
       (not (:ext/doctor-check-fn spec))                (assoc :ext/doctor-check-fn (constantly [])))
     (validate!)))
 
@@ -1911,8 +1937,7 @@
                       :channels    (count (:ext/channels ext))
                       :providers   (count (:ext/providers ext))
                       :persistance (count (:ext/persistance ext))
-                      :themes      (count (:ext/theme ext))
-                      :fenced-renderers (count (:ext/fenced-renderers ext))}
+                      :themes      (count (:ext/theme ext))}
                :msg (str "Extension '" ns-sym "' registered globally")})
     (doseq [c (:ext/cli ext)]      (registry/register-cmd! (mount-under-extensions c)))
     (doseq [c (:ext/channels ext)] (registry/register-channel! c))
@@ -2067,67 +2092,6 @@
     (filter #(= channel-id (:channel-id %)))
     vec))
 
-(defn- normalize-fence-lang
-  [lang]
-  (let [lang (some-> lang str str/trim str/lower-case)]
-    (when (non-blank-string? lang) lang)))
-
-(defn fenced-renderers
-  "Return extension-owned Markdown fenced-code renderers in registration order."
-  []
-  (->> (registered-extensions)
-    (mapcat :ext/fenced-renderers)
-    vec))
-
-(defn- fenced-renderer-supports?
-  [renderer normalized-lang]
-  (contains? (set (keep normalize-fence-lang (:renderer/langs renderer)))
-    normalized-lang))
-
-(defn- normalize-fenced-render-result
-  [renderer-id result]
-  (let [lines (cond
-                (nil? result) nil
-                (string? result) (str/split-lines result)
-                (sequential? result) (mapv str result)
-                (map? result) (let [v (or (:lines result) (:text result))]
-                                (cond
-                                  (string? v) (str/split-lines v)
-                                  (sequential? v) (mapv str v)
-                                  :else nil))
-                :else [(str result)])]
-    (when (seq lines)
-      (cond-> (if (map? result) result {})
-        :always (assoc :renderer/id renderer-id
-                  :lines (mapv str lines))))))
-
-(defn render-fenced-block
-  "Render a Markdown fenced code block through extension-owned renderers.
-
-     `ctx` keys are channel-defined but should include at least
-     `:surface`, `:lang`, `:source`, and `:width`. Returns normalized
-     `{:renderer/id kw :lines [string ...] ...}` or nil for fallback.
-     Renderer exceptions are logged and treated as nil so display falls back
-     to Vis normal fenced code block renderer."
-  [ctx]
-  (let [lang (normalize-fence-lang (:lang ctx))]
-    (when lang
-      (some
-        (fn [{:renderer/keys [id render-fn] :as renderer}]
-          (when (fenced-renderer-supports? renderer lang)
-            (try
-              (normalize-fenced-render-result id
-                (render-fn (assoc ctx :lang lang :renderer/id id)))
-              (catch Throwable t
-                (tel/log! {:level :warn :id ::fenced-renderer-failed
-                           :data {:renderer/id id
-                                  :lang lang
-                                  :error (ex-message t)
-                                  :ex-class (.getName (class t))}
-                           :msg (str "fenced renderer " id " failed for ```" lang "`; falling back")})
-                nil))))
-        (fenced-renderers)))))
-
 (defn- tool-result-symbol-entry
   [tool-result]
   ;; Per PLAN §2.1, `:tool` and `:extension` blobs live under
@@ -2182,17 +2146,23 @@
        ":type " type
        " :message " (pr-str message)))))
 
-(defn default-channel-error-text
-  "Engine fallback used by `channel-render-tool-result` when a symbol
-   does NOT declare `:ext.symbol/channel-render-error-fn`. Markdown
-   one-liner; uniform across every channel."
+(defn default-channel-error-ir
+  "Engine fallback used by `channel-render-tool-result` when a symbol does
+   not declare `:ext.symbol/channel-render-error-fn`. Returns canonical IR
+   and includes rendered source context when `:error :block` is present."
   [tool-result]
-  (let [op   (:symbol tool-result)
-        {:keys [type message]} (format-error-fields (:error tool-result))]
-    (str "**ERROR**"
-      (when op (str " `" op "`"))
-      " — " type
-      (when (seq message) (str ": " message)))))
+  (let [op                  (:symbol tool-result)
+        error               (:error tool-result)
+        {:keys [type message]} (format-error-fields error)
+        context-ir          (when (:block error) (render-error-context (:block error)))]
+    (render/->ast
+      (into [:ir {}
+             [:p {}
+              [:strong {} [:span {} "ERROR"]]
+              (when op [:span {} (str " " op)])
+              [:span {} (str " — " type)]
+              (when (seq message) [:span {} (str ": " message)])]]
+        (when context-ir (drop 2 context-ir))))))
 
 (defn- assert-string!
   [v label sym-entry]
@@ -2233,30 +2203,46 @@
 
 (defn channel-render-tool-result
   "Render a tool-result for runtime channels (TUI, telegram, ...). All
-   channels render the SAME markdown - channel-specific quirks are the
+   channels render the SAME canonical IR value. Channel-specific quirks are the
    channel adapter's responsibility, not the symbol renderer's.
 
    Dispatch:
      - On (:success? false): call the symbol's `:channel-render-error-fn`
-       if present, otherwise `default-channel-error-text`.
+       if present, otherwise `default-channel-error-ir`.
      - On success: unwrap `(:result tool-result)` and call the symbol's
        MANDATORY `:channel-render-fn` with the unwrapped result.
 
-   Renderers must return strings; non-string returns throw."
+   Renderers must return IR; other returns throw."
   [tool-result]
   (let [sym-entry (tool-result-symbol-entry tool-result)]
     (if-not (:success? tool-result)
       (let [error-fn (or (:ext.symbol/channel-render-error-fn sym-entry)
-                       default-channel-error-text)
+                       default-channel-error-ir)
             rendered (error-fn tool-result)]
-        (if (string? rendered) rendered (pr-str rendered)))
+        (when-not (channel-render-value? rendered)
+          (throw (ex-info (str ":channel-render-error-fn for symbol '"
+                            (:ext.symbol/symbol sym-entry)
+                            "' must return IR, got " (pr-str (type rendered)))
+                   {:type :extension/render-non-ir
+                    :symbol (:ext.symbol/symbol sym-entry)
+                    :label ":channel-render-error-fn"
+                    :value rendered})))
+        (normalize-channel-render-value rendered))
       (let [render-fn (some-> sym-entry :ext.symbol/channel-render-fn)]
         (when-not render-fn
           (throw (AssertionError.
                    (str "No :channel-render-fn for tool result with op "
                      (pr-str (:symbol tool-result))))))
-        (assert-string! (render-fn (:result tool-result))
-          ":channel-render-fn" sym-entry)))))
+        (let [rendered (render-fn (:result tool-result))]
+          (when-not (channel-render-value? rendered)
+            (throw (ex-info (str ":channel-render-fn for symbol '"
+                              (:ext.symbol/symbol sym-entry)
+                              "' must return IR, got " (pr-str (type rendered)))
+                     {:type :extension/render-non-ir
+                      :symbol (:ext.symbol/symbol sym-entry)
+                      :label ":channel-render-fn"
+                      :value rendered})))
+          (normalize-channel-render-value rendered))))))
 
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.

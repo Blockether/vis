@@ -51,7 +51,7 @@
      {:iteration N
       :thinking  str-or-nil
       :code      [str ...]            ;; per-form, idx-aligned
-      :results   [str-or-formatted-error ...]
+      :results   [str-or-IR-or-formatted-error ...]
       :result-kinds [keyword ...] ;; :tool, :value, or :error
       :result-details [map-or-str ...] ;; extra result metadata
       :stdouts   [str ...]
@@ -71,7 +71,6 @@
    from this single flat layout. One layout path is enough."
   (:require
    [clojure.string :as str]
-   [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.prompt :as prompt]))
 
@@ -144,20 +143,20 @@
    value is an `:envelope`, otherwise bounded `safe-pr-str`."
   [chunk]
   (if (:error chunk)
-    (error/format-error (:error chunk))
+    (extension/default-channel-error-ir {:success? false :error (:error chunk)})
     (let [channel-entries (seq (:channel chunk))]
       (cond
         channel-entries
         ;; Sort by :position so racy futures (which can land in
         ;; completion order rather than source order) render in canonical
         ;; source order.
-        (str/join "\n\n"
+        (extension/combine-channel-render-values
           (map (fn [{:keys [success? result error]}]
                  (if success?
                    result
                    ;; Per PLAN §2.1: build the envelope shape the
                    ;; default error formatter expects.
-                   (extension/default-channel-error-text
+                   (extension/default-channel-error-ir
                      {:success? false :error error})))
             (sort-by :position channel-entries)))
 

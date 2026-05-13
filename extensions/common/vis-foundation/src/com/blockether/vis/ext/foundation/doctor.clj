@@ -167,8 +167,8 @@
                :message     (str path ": " reason)
                :remediation (case source
                               :agents-md
-                              (str "Verify the file is readable; then run `(vis/reload-instructions!)` "
-                                "or `bin/vis extensions doctor` to revalidate.")
+                              (str "Verify the file is readable; project guidance auto-refreshes "
+                                "when AGENTS.md/CLAUDE.md markers change. Run `bin/vis extensions doctor` to revalidate now.")
                               :claude-md-fallback
                               (str "Verify the file is readable; or add a proper `AGENTS.md` instead of "
                                 "relying on the CLAUDE.md fallback.")

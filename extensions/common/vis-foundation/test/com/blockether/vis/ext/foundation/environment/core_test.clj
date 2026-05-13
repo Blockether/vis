@@ -2,7 +2,9 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
+   [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.environment.core :as env-core]
+   [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
@@ -55,7 +57,7 @@
       (expect (not (contains? syms 'load-skill)))
       (expect (not (contains? syms 'reload-skills!)))
       (expect (contains? syms 'scan-warnings))
-      (expect (contains? syms 'reload-instructions!))
+      (expect (not (contains? syms 'reload-instructions!)))
       (expect (contains? syms 'reload-extensions!))))
 
   (it "renders a prompt fragment for the unified v/ alias"
@@ -66,6 +68,18 @@
       (expect (not (str/includes? prompt "reload-skills")))
       (expect (str/includes? prompt "(v/reload-extensions!)"))
       (expect (not (str/includes? prompt "`md/`")))))
+
+  (it "binds reload helper to an explicit envelope-returning tool fn"
+    (let [payload {:added [] :removed [] :reloaded []}
+          tool-fn (:ext.symbol/fn env-core/reload-extensions!-symbol)]
+      (expect (nil? (:ext.symbol/after-fn env-core/reload-extensions!-symbol)))
+      (with-redefs [vis/reload-extensions! (fn
+                                             ([] payload)
+                                             ([opts] (assoc payload :opts opts)))]
+        (let [wrapped (tool-fn)]
+          (expect (extension/tool-result? wrapped))
+          (expect (:success? wrapped))
+          (expect (= payload (:result wrapped)))))))
 
   (it "renders foundation environment info separately from prompt extras"
     (let [info (env-core/environment-info {})]

@@ -596,7 +596,6 @@ bridge/ — codebase knowledge graph. Run (bridge/index) first.
 - **Cross-project indexing**: Multiple Vis projects sharing a graph store.
 - **ADR integration**: Architecture Decision Records as first-class nodes with `documents` edges.
 - **MCP server**: Expose Bridge as an MCP server for non-Vis agents.
-- **Visualization**: `vis-mermaid` integration to render subgraphs as Mermaid diagrams in the TUI.
 
 ---
 

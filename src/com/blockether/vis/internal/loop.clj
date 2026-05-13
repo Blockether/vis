@@ -4579,27 +4579,42 @@
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
 
+(defn- extension-loader-nses
+  "Namespaces that load/register `ext`. Most extensions use their
+   `:ext/namespace` directly. Lightweight registrars and provider bundles
+   register one or more logical extension ids from a separate manifest ns;
+   those must declare `:ext/nses` so reload diffs against the loader ns,
+   not the logical extension id."
+  [ext]
+  (set (or (some-> (:ext/nses ext) seq vec)
+         [(:ext/namespace ext)])))
+
 (defn- diff-extensions
   "Compute the F1-lite diff between the current in-memory
    `extension-registry` and a freshly-scanned `manifests` map
    (manifest-id -> entry, where entry has `:nses`).
 
-   Returns `{:added [#{ns-syms...}] :removed [#{ns-syms...}]
-             :reloaded [#{ns-syms...}]}` - each value is a vec of
-   `:ext/namespace` symbols.
+   Returns `{:added [...] :removed [...] :reloaded [...]}`.
 
-   `:added`: nses in some manifest's `:nses` but no extension
-            currently registered for that ns.
-   `:removed`: registered ext namespaces no longer covered by any
-            manifest.
-   `:reloaded`: ext namespaces present in BOTH - every still-here
-            ext re-loaded under F1-lite (no change detection v1)."
+   `:added` / `:reloaded` are manifest loader namespaces to require.
+   `:removed` is logical `:ext/namespace` ids to deregister.
+
+   This distinction is load-bearing: SQLite registers logical extension
+   `com.blockether.vis.ext.persistance-sqlite.core` from lightweight loader
+   `com.blockether.vis.ext.persistance-sqlite.registrar`; provider bundles
+   similarly register plan-specific logical ids from one loader ns. Treating
+   the logical id as the loader deregisters live side effects and skips the
+   registrar re-exec, leaving e.g. `:sqlite` unregistered."
   [registered manifests]
-  (let [registered-ns (set (map :ext/namespace registered))
-        manifest-ns   (set (mapcat :nses (vals manifests)))
-        added         (vec (sort (set/difference manifest-ns registered-ns)))
-        removed       (vec (sort (set/difference registered-ns manifest-ns)))
-        reloaded      (vec (sort (set/intersection registered-ns manifest-ns)))]
+  (let [registered-loader-ns (set (mapcat extension-loader-nses registered))
+        manifest-ns          (set (mapcat :nses (vals manifests)))
+        added                (vec (sort (set/difference manifest-ns registered-loader-ns)))
+        removed              (->> registered
+                               (filter #(empty? (set/intersection (extension-loader-nses %) manifest-ns)))
+                               (map :ext/namespace)
+                               sort
+                               vec)
+        reloaded             (vec (sort (set/intersection registered-loader-ns manifest-ns)))]
     {:added added :removed removed :reloaded reloaded}))
 
 (defn- record-error
@@ -4669,9 +4684,9 @@
    Plan caveat: reload deadlock prevention.
 
    Returns:
-     {:added [...]              ;; ns-syms newly registered
-      :removed [...]             ;; ns-syms deregistered
-      :reloaded [...]            ;; ns-syms re-required + re-registered
+     {:added [...]              ;; loader ns-syms newly required
+      :removed [...]             ;; logical extension ns-syms deregistered
+      :reloaded [...]            ;; loader ns-syms re-required + re-registered
       :errors [{:ns :phase :reason :stack-trace} ...]
       :envs-reseated 3
       :env-reseat-deferred [#uuid \"...\"]

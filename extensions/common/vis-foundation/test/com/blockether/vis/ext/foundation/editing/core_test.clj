@@ -144,76 +144,178 @@
       (expect (not (string/includes? editing/editing-prompt "update-file"))))))
 
 (defdescribe vis-cat-structured-shape-test
-  (it "reads the whole file as raw lines plus shape metadata"
+  (it "returns the paginated shape (small file, single window, eof)"
     (let [path (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      (expect (= #{:path :offset :total-lines :truncated-by :lines}
+      (expect (= #{:path :offset :returned :limit :next-offset :eof? :truncated-by :lines}
                 (set (keys out))))
       (expect (string? (:path out)))
       (expect (= 1 (:offset out)))
-      ;; str/split-lines drops the trailing empty after final \n.
-      (expect (= 3 (:total-lines out)))
-      (expect (= ["alpha" "beta" "gamma"] (:lines out)))
-      (expect (= :end-of-file (:truncated-by out)))))
+      (expect (= 3 (:returned out)))
+      (expect (= 200 (:limit out)))
+      (expect (nil? (:next-offset out)))
+      (expect (true? (:eof? out)))
+      (expect (= :eof (:truncated-by out)))
+      (expect (= ["alpha" "beta" "gamma"] (:lines out)))))
 
   (it ":lines carries raw strings - no leading line-number prefix"
     (let [path (write-temp! "raw.txt" "   indented\nplain\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      ;; The contract preserves the file's exact bytes per line so
-      ;; the model can compute on raw content without parsing display text.
       (expect (= ["   indented" "plain"] (:lines out)))))
 
-  (it "cat reads everything; no display-range subsetting"
-    (let [long-line (apply str (repeat 7000 "x"))
-          path (write-temp! "whole-cat.txt" (str long-line "\nlast\n"))
+  (it "(v/cat path n) reads first n lines and reports :limit truncation"
+    (let [body (string/join "\n" (map #(str "line-" %) (range 1 11)))
+          path (write-temp! "ten.txt" (str body "\n"))
           read-file (private-fn "read-file")
-          out (read-file path)]
-      (expect (= :end-of-file (:truncated-by out)))
-      (expect (= [long-line "last"] (:lines out)))))
+          out  (read-file path 4)]
+      (expect (= 1 (:offset out)))
+      (expect (= 4 (:returned out)))
+      (expect (= 4 (:limit out)))
+      (expect (= 5 (:next-offset out)))
+      (expect (false? (:eof? out)))
+      (expect (= :limit (:truncated-by out)))
+      (expect (= ["line-1" "line-2" "line-3" "line-4"] (:lines out)))))
 
-  (it "rejects all v/cat opts because cat is full acquisition only"
+  (it "(v/cat path offset n) reads a mid-file window and advances :next-offset"
+    (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
+          path (write-temp! "twenty.txt" (str body "\n"))
+          read-file (private-fn "read-file")
+          out  (read-file path 7 3)]
+      (expect (= 7 (:offset out)))
+      (expect (= 3 (:returned out)))
+      (expect (= 10 (:next-offset out)))
+      (expect (= ["L7" "L8" "L9"] (:lines out)))
+      (expect (= :limit (:truncated-by out)))))
+
+  (it "paging via :next-offset reaches eof cleanly"
+    (let [body (string/join "\n" (map #(str "line-" %) (range 1 11)))
+          path (write-temp! "page.txt" (str body "\n"))
+          read-file (private-fn "read-file")
+          page-1 (read-file path 1 4)
+          page-2 (read-file path (:next-offset page-1) 4)
+          page-3 (read-file path (:next-offset page-2) 4)]
+      (expect (= ["line-1" "line-2" "line-3" "line-4"] (:lines page-1)))
+      (expect (= ["line-5" "line-6" "line-7" "line-8"] (:lines page-2)))
+      (expect (= ["line-9" "line-10"] (:lines page-3)))
+      (expect (true? (:eof? page-3)))
+      (expect (nil? (:next-offset page-3)))
+      (expect (= :eof (:truncated-by page-3)))))
+
+  (it "offset past EOF returns an empty window, eof?, no next-offset"
+    (let [path (write-temp! "two.txt" "a\nb\n")
+          read-file (private-fn "read-file")
+          out  (read-file path 99 10)]
+      (expect (= 0 (:returned out)))
+      (expect (= [] (:lines out)))
+      (expect (true? (:eof? out)))
+      (expect (nil? (:next-offset out)))
+      (expect (= :eof (:truncated-by out)))))
+
+  (it ":truncated-by :bytes when a window would exceed max-cat-window-bytes"
+    ;; Each line is ~70KB; the byte cap is 64KB. First line is always
+    ;; included (guarantees one-line forward progress), second line
+    ;; would push past the cap -> stop with :bytes.
+    (let [huge (apply str (repeat 70000 "x"))
+          path (write-temp! "huge.txt" (str huge "\n" huge "\n" huge "\n"))
+          read-file (private-fn "read-file")
+          out  (read-file path 1 10)]
+      (expect (= :bytes (:truncated-by out)))
+      (expect (= 1 (:returned out)))
+      (expect (false? (:eof? out)))
+      (expect (= 2 (:next-offset out)))))
+
+  (it "persistence-blob contract: :lines bytes are bounded by max-cat-window-bytes"
+    ;; This is the storage claim: a single v/cat call cannot persist
+    ;; more than max-cat-window-bytes of line bytes regardless of file size.
+    (let [line (apply str (repeat 200 "x"))    ; 200 bytes
+          body (string/join "\n" (repeat 5000 line))  ; ~1MB total
+          path (write-temp! "persist.txt" (str body "\n"))
+          read-file (private-fn "read-file")
+          out  (read-file path 1 100000)
+          line-bytes (reduce + 0 (map #(inc (count (.getBytes ^String % "UTF-8")))
+                                   (:lines out)))]
+      (expect (<= line-bytes 65536))))
+
+  (it "rejects bad positional args (non-positive ints, non-int types)"
     (let [path (write-temp! "validate.txt" "x\n")
           read-file (private-fn "read-file")]
-      (doseq [bad-opts [(hash-map (keyword "offset") 1)
-                        (hash-map (keyword "limit") 10)
-                        (hash-map (keyword "char-limit") 20)
-                        (hash-map (keyword "max-lines") 2)
-                        2]]
-        (expect (throws? clojure.lang.ExceptionInfo #(read-file path bad-opts)))))))
+      (doseq [bad [[0 10]    ; offset 0 (must be >= 1)
+                   [-1 10]   ; negative offset
+                   [1 0]     ; zero limit
+                   [1 -5]    ; negative limit
+                   ["a" 10]  ; non-int offset
+                   [1 :hi]]] ; non-int limit
+        (expect (throws? clojure.lang.ExceptionInfo
+                  #(apply read-file path bad)))))))
 
 (defdescribe new-renderer-contract-test
-  (it "v/cat journal renderer shows head/tail with read-more hint"
+  (it "v/cat journal renderer shows window range, eof hint, and read-more hint"
     (let [journal-render-cat (private-fn "journal-render-cat")
-          result {:path "src/demo.clj" :offset 0 :total-lines 6 :truncated-by :end-of-file
+          result {:path "src/demo.clj" :offset 1 :returned 6 :limit 200
+                  :next-offset nil :eof? true :truncated-by :eof
                   :lines ["alpha" "beta" "gamma" "delta" "epsilon" "zeta"]}
           out (journal-render-cat result)]
       (expect (string/includes? out "v/cat src/demo.clj"))
-      (expect (string/includes? out "6 line(s)"))
-      (expect (string/includes? out "alpha"))
+      (expect (string/includes? out "lines 1\u20136"))   ; en-dash
+      (expect (string/includes? out "6/200"))
+      (expect (string/includes? out "1: alpha"))
+      (expect (string/includes? out "(eof)"))
       (expect (string/includes? out "<your binding>"))))
 
-  (it "v/cat channel renderer wraps lines in a code block"
+  (it "v/cat journal renderer emits a (v/cat ...) hint when more remains"
+    (let [journal-render-cat (private-fn "journal-render-cat")
+          result {:path "big.log" :offset 1 :returned 4 :limit 4
+                  :next-offset 5 :eof? false :truncated-by :limit
+                  :lines ["a" "b" "c" "d"]}
+          out (journal-render-cat result)]
+      (expect (string/includes? out "truncated-by limit"))
+      (expect (string/includes? out "(v/cat \"big.log\" 5 4)"))))
+
+  (it "v/cat channel renderer returns canonical [:ir ...] with a :code block, line-numbered from :offset"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          result {:path "src/demo.clj" :offset 0 :total-lines 1 :truncated-by :end-of-file
+          result {:path "src/demo.clj" :offset 1 :returned 1 :limit 200
+                  :next-offset nil :eof? true :truncated-by :eof
                   :lines ["only-line"]}
           out (channel-render-cat result)]
-      (expect (string/includes? out "```text"))
-      (expect (string/includes? out "1: only-line"))))
+      ;; Engine contract: channel renderer must return canonical IR.
+      (expect (vector? out))
+      (expect (= :ir (first out)))
+      ;; The code block carries the numbered window body verbatim.
+      (let [code-blocks (filter #(and (vector? %) (= :code (first %))) (tree-seq sequential? seq out))
+            body (last (first code-blocks))]
+        (expect (= 1 (count code-blocks)))
+        (expect (string/includes? body "1: only-line")))))
 
-  (it "engine-default channel error formatter renders failures without symbol error-fn"
+  (it "v/cat channel renderer respects :offset for mid-file windows"
+    (let [channel-render-cat (private-fn "channel-render-cat")
+          result {:path "f.txt" :offset 100 :returned 2 :limit 200
+                  :next-offset 102 :eof? false :truncated-by :limit
+                  :lines ["hundred" "hundred-one"]}
+          out (channel-render-cat result)
+          body (last (first (filter #(and (vector? %) (= :code (first %)))
+                              (tree-seq sequential? seq out))))]
+      (expect (= :ir (first out)))
+      (expect (string/includes? body "100: hundred"))
+      (expect (string/includes? body "101: hundred-one"))))
+
+  (it "engine-default channel error formatter renders failures as canonical [:ir ...]"
     ;; Per PLAN §2.1 (Phase 4): envelope is flat under :* and the
     ;; error map is structured {:message :trace? :hint? :block?}.
-    ;; Old shape was {:success? :result :info :error}; lifted to flat.
-    (let [out (extension/default-channel-error-text
+    ;; Channel errors return canonical IR (not Markdown strings).
+    (let [out (extension/default-channel-error-ir
                 {:success? false
                  :symbol :v/cat
                  :error {:message "src/missing.clj (No such file)"
-                         :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})]
-      (expect (string/includes? out "**ERROR**"))
-      (expect (string/includes? out "v/cat"))
-      (expect (string/includes? out "FileNotFoundException")))))
+                         :trace "java.io.FileNotFoundException: src/missing.clj (No such file)"}})
+          text-leaves (filter string? (tree-seq sequential? seq out))
+          joined (string/join " " text-leaves)]
+      (expect (vector? out))
+      (expect (= :ir (first out)))
+      (expect (string/includes? joined "ERROR"))
+      (expect (string/includes? joined "v/cat"))
+      (expect (string/includes? joined "FileNotFoundException")))))
 
 (defdescribe vis-rg-structured-shape-test
   (it "returns a 2-key map: :hits + :truncated-by"
@@ -393,14 +495,18 @@
                               :text "  (inc (reduce max 0 ...))"}
                              {:line 472
                               :text "(defn- workspace-tabs-or-base"}]
-                      :truncated-by :end-of-results})]
-      (expect (string? rendered))
-      (expect (not (string/includes? rendered "{:line 462")))
-      (expect (not (string/includes? rendered ":text \"")))
-      (expect (string/includes? rendered ":462"))
-      (expect (string/includes? rendered "(inc (reduce max 0"))
-      (expect (string/includes? rendered ":472"))
-      (expect (string/includes? rendered "workspace-tabs-or-base"))))
+                      :truncated-by :end-of-results})
+          text-leaves (filter string? (tree-seq sequential? seq rendered))
+          joined (string/join "\n" text-leaves)]
+      ;; Channel renderer must return canonical IR, not raw text/EDN.
+      (expect (vector? rendered))
+      (expect (= :ir (first rendered)))
+      (expect (not (string/includes? joined "{:line 462")))
+      (expect (not (string/includes? joined ":text \"")))
+      (expect (string/includes? joined ":462"))
+      (expect (string/includes? joined "(inc (reduce max 0"))
+      (expect (string/includes? joined ":472"))
+      (expect (string/includes? joined "workspace-tabs-or-base"))))
   (it "search-hits renderer keeps full path:line prefix when path present"
     (let [render-hits (private-fn "channel-render-rg")
           rendered (render-hits
