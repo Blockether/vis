@@ -239,11 +239,11 @@
         unit   (field limit :unit)
         number (field limit :number)]
     (cond
-      (and (= :tokens kind) (= 3 unit) (= 5 number)) "Z.ai Coding 5h token quota"
-      (and (= :tokens kind) (= 6 unit) (= 7 number)) "Z.ai Coding 7d token quota"
-      (= :tokens kind)                         "Z.ai Coding token quota"
-      (= :requests kind)                       "Z.ai Coding request quota"
-      :else                                    "Z.ai Coding quota")))
+      (and (= :tokens kind) (= 3 unit) (= 5 number)) "Z.ai coding plan 5h token quota"
+      (and (= :tokens kind) (= 6 unit) (= 7 number)) "Z.ai coding plan 7d token quota"
+      (= :tokens kind)                         "Z.ai coding plan token quota"
+      (= :requests kind)                       "Z.ai coding plan request quota"
+      :else                                    "Z.ai coding plan quota")))
 
 (defn- limit-id
   [limit idx]
@@ -307,9 +307,9 @@
         level  (field data :level)]
     (cond-> {:limits rows}
       (empty? rows)
-      (assoc :note "Z.ai Coding quota endpoint did not return quota windows.")
+      (assoc :note "Z.ai coding plan quota endpoint did not return quota windows.")
       (and (seq rows) (some? level))
-      (assoc :note (str "Z.ai Coding plan level: " level ".")))))
+      (assoc :note (str "Z.ai coding plan level: " level ".")))))
 
 (defn- fetch-quota!
   [api-key]
@@ -322,7 +322,7 @@
         body     (:body response)]
     (if (<= 200 status 299)
       (json/read-json body :key-fn keyword)
-      (throw (ex-info (str "Z.ai Coding quota request failed: HTTP " status)
+      (throw (ex-info (str "Z.ai coding plan quota request failed: HTTP " status)
                {:type   :provider/zai-coding-quota-error
                 :status status
                 :body   body
