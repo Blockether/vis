@@ -1040,13 +1040,14 @@
             (:repaired? exec)                  (assoc :repaired? true))))
       vec)))
 
+#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
   "Store one iteration row + per-`(def ...)` expression_soul/expression_state
    rows. The iteration's full code-block log is written inline as a
    Nippy blob in `iteration.code_blocks` (no per-call rows; see V1 schema
    migration banner). Returns the iteration UUID."
   [db-info {:keys [conversation-turn-id blocks thinking answer answer-form-idx duration-ms vars error metadata
-                   llm-messages llm-provider llm-model llm-raw-response llm-executable-code
+                   llm-messages llm-provider llm-model llm-raw-response
                    llm-executable-blocks llm-assistant-message tokens cost-usd]}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
@@ -1106,7 +1107,6 @@
                                  :llm_returned_empty_code_blocks (if (empty? blocks) 1 0)
                                  :metadata             (when metadata (->json metadata))
                                  :code_blocks          (->blob blocks-vec)
-                                 :llm_executable_code (some-> llm-executable-code str)
                                  :llm_executable_code_blocks (when (some? llm-executable-blocks)
                                                                (->json (vec llm-executable-blocks)))
                                  :llm_assistant_message (when (some? llm-assistant-message)
@@ -1288,8 +1288,6 @@
     (assoc :llm-raw-response-length (:llm_raw_response_length row))
     (some? (:llm_raw_response_sha256 row))
     (assoc :llm-raw-response-sha256 (:llm_raw_response_sha256 row))
-    (some? (:llm_executable_code row))
-    (assoc :llm-executable-code (:llm_executable_code row))
     (some? (:llm_executable_code_blocks row))
     (assoc :llm-executable-blocks (<-json (:llm_executable_code_blocks row)))
     ;; Canonical assistant message svar emitted on this iteration; rehydrated
@@ -1363,6 +1361,7 @@
       (vec (or decoded [])))
     []))
 
+#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-latest-var-registry
   ([db-info conversation-id] (db-latest-var-registry db-info conversation-id {}))
   ([db-info conversation-id _opts]
@@ -1499,6 +1498,7 @@
         []))
     []))
 
+#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-var-history-timeline
   "Newest-first, value-free symbol-memory timeline. Definition/redefinition
    events are persisted. Runtime archive/restore events are intentionally not
@@ -1808,6 +1808,7 @@
 ;; Expression dependencies
 ;; =============================================================================
 
+#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-dependency!
   "Store an edge: downstream depends on upstream.
    Both must be expression_souls in the same conversation_state."
