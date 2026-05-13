@@ -3340,6 +3340,112 @@
       executing?  (str "Vis is running code (iter " n ")")
       :else       (str "Vis is working (iter " n ")"))))
 
+(defn- ^{:clj-kondo/ignore [:unused-private-var]} trace-render-entries
+  "Unified renderer for iteration traces in live, cancelled, and completed
+   assistant bubbles. Live progress and final/cancel rendering must call this
+   instead of formatting iterations themselves. The only caller-specific UI is
+   the trailer after these entries (spinner, final answer, or cancelled note)."
+  [{:keys [iterations content-w settings now-ms viewport-rows conversation-id
+           conversation-turn-id detail-expansions live? suppress-trace?]
+    :or   {live? false suppress-trace? false}}]
+  (let [raw-iterations (or iterations [])
+        iterations     (if (vector? raw-iterations) raw-iterations (vec raw-iterations))
+        show-thinking? (get settings :show-thinking true)
+        show-iterations? (get settings :show-iterations true)
+        show-silent?   (get settings :show-silent false)
+        ;; One trace renderer means one visual contract: no iteration/block
+        ;; label bands in live, completed, or cancelled bubbles.
+        show-iteration-headers? false
+        static-limit   (max 1 (long (get settings :progress/live-iteration-limit 24)))
+        dynamic-limit  (when (and live? viewport-rows (pos? (long viewport-rows)))
+                         (let [budget (long (* 2 (long viewport-rows)))]
+                           (loop [i (dec (count iterations)) acc 0 kept 0]
+                             (cond
+                               (neg? i) kept
+                               (and (pos? kept) (>= acc budget)) kept
+                               :else
+                               (let [it (nth iterations i)
+                                     n-code (long (count (or (:code it) [])))
+                                     thinking-rows (quot (count (or (:thinking it) "")) 80)
+                                     stdout-rows (long (reduce + 0
+                                                         (map (fn [s] (quot (count (or s "")) 80))
+                                                           (or (:stdouts it) []))))
+                                     rows (+ 6 (* 12 n-code) thinking-rows stdout-rows)]
+                                 (recur (dec i) (+ acc rows) (inc kept)))))))
+        live-limit     (long (cond
+                               (nil? dynamic-limit) static-limit
+                               :else                (min static-limit (long dynamic-limit))))
+        line-entry     (fn [line] {:line line :meta nil})
+        history-ctx    {:conversation-id conversation-id
+                        :conversation-turn-id conversation-turn-id
+                        :details-path nil
+                        :section :progress
+                        :kind :history}
+        history-node-id (detail-node-id history-ctx)
+        grouped-iterations (collapse-repeated-error-runs iterations)
+        history-needed? (and live? (> (count grouped-iterations) live-limit))
+        history-expanded? (and history-needed?
+                            conversation-id
+                            (detail-expanded? detail-expansions conversation-id history-node-id false))
+        hidden-count   (if (and history-needed? (not history-expanded?))
+                         (- (count grouped-iterations) live-limit)
+                         0)
+        visible-iterations (if (pos? hidden-count)
+                             (subvec grouped-iterations hidden-count)
+                             grouped-iterations)
+        history-summary (when history-needed?
+                          (let [collapsed? (pos? hidden-count)
+                                summary-text (if collapsed?
+                                               (str "PROGRESS HISTORY / " hidden-count " iterations hidden")
+                                               (str "PROGRESS HISTORY / showing all " (count grouped-iterations) " iterations"))
+                                suffix     (detail-id-suffix history-ctx)
+                                left       (str (if collapsed? "▸ " "▾ ") summary-text)
+                                line       (format-detail-summary-line left suffix content-w)
+                                meta       (when conversation-id
+                                             {:kind :toggle-details
+                                              :conversation-id (str conversation-id)
+                                              :node-id (str history-node-id)
+                                              :collapsed? collapsed?})]
+                            [(cond-> (line-entry (str md-summary-marker line))
+                               meta (assoc :meta meta))]))
+        iter-entry-fn  (fn [[idx entry]]
+                         (let [visible  (visible-iteration-entry entry show-silent?)
+                               stripped (if show-thinking? visible (dissoc visible :thinking))
+                               running? (and live? (iteration-running? stripped))
+                               sec-bucket (when running? (quot (long (or now-ms 0)) 1000))
+                               iter-num (inc (long idx))
+                               detail-scope-opts {:section :iteration
+                                                  :iteration-number iter-num
+                                                  :conversation-id conversation-id
+                                                  :conversation-turn-id conversation-turn-id
+                                                  :detail-expansions detail-expansions}
+                               k [::iter-entries
+                                  (if live? :live :final)
+                                  iter-num
+                                  (iteration-fingerprint stripped)
+                                  (long content-w)
+                                  show-iteration-headers?
+                                  (boolean show-thinking?)
+                                  (boolean show-silent?)
+                                  conversation-id
+                                  conversation-turn-id
+                                  (relevant-detail-expansions-key detail-scope-opts)
+                                  sec-bucket]
+                               inner-opts {:show-header?         show-iteration-headers?
+                                           :now-ms               (when running? now-ms)
+                                           :conversation-id      conversation-id
+                                           :conversation-turn-id conversation-turn-id
+                                           :detail-expansions   detail-expansions
+                                           :live-preview?        live?}
+                               render!    #(format-iteration-entry-entries
+                                             stripped content-w iter-num inner-opts)]
+                           (if live?
+                             (cached* k render!)
+                             (render!))))]
+    (when (and show-iterations? (not suppress-trace?) (seq iterations))
+      (vec (concat (or history-summary [])
+             (mapcat iter-entry-fn visible-iterations))))))
+
 (defn progress->lines-data
   "Build prewrapped lines for the live progress placeholder bubble.
 
@@ -3376,49 +3482,9 @@
    (let [raw-iterations   (or (:iterations progress) [])
          iterations       (if (vector? raw-iterations) raw-iterations (vec raw-iterations))
          content-w        (max 10 (- bubble-w 4))
-         show-thinking?   (get settings :show-thinking true)
-         show-iterations? (get settings :show-iterations true)
-         show-silent?     (get settings :show-silent false)
-         ;; Iteration / block headers (ITERATION N, BLOCK N) are
-         ;; removed entirely per user directive. The visual separator
-         ;; between iterations is the trailing newline + per-block
-         ;; status row; no right-aligned label band is painted.
-         show-iteration-headers?  false
-         static-limit     (max 1 (long (get settings :progress/live-iteration-limit 24)))
          {:keys [now-ms turn-start-ms cancelling? conversation-id
                  conversation-turn-id detail-expansions viewport-rows]} extra
          now-ms           (long (or now-ms (System/currentTimeMillis)))
-         ;; Patch 2: viewport-aware live truncation. The OUTER virtualizer
-         ;; only knows "the live bubble is visible", not "only the bottom
-         ;; 50 rows of a 450-row bubble are on screen". So when the caller
-         ;; tells us the viewport row budget, we walk iterations from the
-         ;; END accumulating cheap row estimates and stop at the iteration
-         ;; whose top would land roughly two viewports above the visible
-         ;; band. Iterations above that go behind the existing
-         ;; `PROGRESS HISTORY` collapse - clicking it expands them, paying
-         ;; the format cost only when the user opts in.
-         dynamic-limit    (when (and viewport-rows (pos? (long viewport-rows)))
-                            (let [budget (long (* 2 (long viewport-rows)))]
-                              (loop [i (dec (count iterations)) acc 0 kept 0]
-                                (cond
-                                  (neg? i) kept
-                                  (and (pos? kept) (>= acc budget)) kept
-                                  :else
-                                  (let [it (nth iterations i)
-                                        ;; Cheap row estimate per iteration: chrome
-                                        ;; rows + ~1 row per 80 thinking chars +
-                                        ;; ~1 row per code block * 12 + stdout chars
-                                        ;; / ~80. Order of magnitude only.
-                                        n-code (long (count (or (:code it) [])))
-                                        thinking-rows (quot (count (or (:thinking it) "")) 80)
-                                        stdout-rows (long (reduce + 0
-                                                            (map (fn [s] (quot (count (or s "")) 80))
-                                                              (or (:stdouts it) []))))
-                                        rows (+ 6 (* 12 n-code) thinking-rows stdout-rows)]
-                                    (recur (dec i) (+ acc rows) (inc kept)))))))
-         live-limit       (long (cond
-                                  (nil? dynamic-limit) static-limit
-                                  :else                (min static-limit (long dynamic-limit))))
          elapsed-ms       (when turn-start-ms
                             (max 0 (- now-ms (long turn-start-ms))))
          elapsed-str      (or (vis/format-duration elapsed-ms) "0ms")
@@ -3426,89 +3492,16 @@
                             (progress-phase iterations cancelling?) "...  "
                             elapsed-str "  /  Esc to cancel")
          line-entry       (fn [line] {:line line :meta nil})
-         history-ctx      {:conversation-id conversation-id
-                           :conversation-turn-id conversation-turn-id
-                           :details-path nil
-                           :section :progress
-                           :kind :history}
-         history-node-id  (detail-node-id history-ctx)
-         grouped-iterations (collapse-repeated-error-runs iterations)
-         history-needed?  (> (count grouped-iterations) live-limit)
-         history-expanded? (and history-needed?
-                             conversation-id
-                             (detail-expanded? detail-expansions conversation-id history-node-id false))
-         hidden-count     (if (and history-needed? (not history-expanded?))
-                            (- (count grouped-iterations) live-limit)
-                            0)
-         visible-iterations (if (pos? hidden-count)
-                              (subvec grouped-iterations hidden-count)
-                              grouped-iterations)
-         history-summary  (when history-needed?
-                            (let [collapsed?   (pos? hidden-count)
-                                  summary-text (if collapsed?
-                                                 (str "PROGRESS HISTORY / " hidden-count " iterations hidden")
-                                                 (str "PROGRESS HISTORY / showing all " (count grouped-iterations) " iterations"))
-                                  suffix       (detail-id-suffix history-ctx)
-                                  left         (str (if collapsed? "▸ " "▾ ") summary-text)
-                                  line         (format-detail-summary-line left suffix content-w)
-                                  meta         (when conversation-id
-                                                 {:kind :toggle-details
-                                                  :conversation-id (str conversation-id)
-                                                  :node-id (str history-node-id)
-                                                  :collapsed? collapsed?})]
-                              [{:line (str md-summary-marker line) :meta meta}]))
-         ;; Patch 1: per-iteration content-keyed cache. The old
-         ;; whole-trace cache keyed on `(System/identityHashCode iterations)`
-         ;; missed on every chunk because `make-progress-tracker` returns
-         ;; a freshly-built `(vec (vals @timeline))` each tick, and missed
-         ;; once a second on `(quot now-ms 1000)`. With a 15-iteration
-         ;; trace that meant ~135 ms re-formatting per 80 ms tick. Now we
-         ;; cache each iteration on a structural fingerprint plus a
-         ;; running-block second-bucket; completed iterations hit forever,
-         ;; only the streaming iteration recomputes. Steady-state ~1-5 ms.
-         iter-entry-fn    (fn [[idx entry]]
-                            (let [visible  (visible-iteration-entry entry show-silent?)
-                                  stripped (if show-thinking?
-                                             visible
-                                             (dissoc visible :thinking))
-                                  ;; Only include the second-bucket in the
-                                  ;; cache key for iterations that actually
-                                  ;; have a running block. Done iterations
-                                  ;; have a fully time-independent key and
-                                  ;; cache forever.
-                                  running? (iteration-running? stripped)
-                                  sec-bucket (when running? (quot now-ms 1000))
-                                  iter-num (inc (long idx))
-                                  detail-scope-opts {:section :iteration
-                                                     :iteration-number iter-num
-                                                     :conversation-id conversation-id
-                                                     :conversation-turn-id conversation-turn-id
-                                                     :detail-expansions detail-expansions}
-                                  k [::iter-entries
-                                     iter-num
-                                     (iteration-fingerprint stripped)
-                                     (long content-w)
-                                     show-iteration-headers?
-                                     (boolean show-thinking?)
-                                     (boolean show-silent?)
-                                     conversation-id
-                                     conversation-turn-id
-                                     (relevant-detail-expansions-key detail-scope-opts)
-                                     sec-bucket]
-                                  inner-opts {:show-header?         show-iteration-headers?
-                                              :now-ms               (when running? now-ms)
-                                              :conversation-id      conversation-id
-                                              :conversation-turn-id conversation-turn-id
-                                              :detail-expansions   detail-expansions
-                                              :live-preview?        true}]
-                              (cached* k
-                                #(format-iteration-entry-entries
-                                   stripped content-w iter-num inner-opts))))
-         trace-entries    (when (and show-iterations? (seq iterations))
-                            (vec
-                              (concat
-                                (or history-summary [])
-                                (mapcat iter-entry-fn visible-iterations))))
+         trace-entries    (trace-render-entries
+                            {:iterations iterations
+                             :content-w content-w
+                             :settings settings
+                             :now-ms now-ms
+                             :viewport-rows viewport-rows
+                             :conversation-id conversation-id
+                             :conversation-turn-id conversation-turn-id
+                             :detail-expansions detail-expansions
+                             :live? true})
          ;; Top margin invariant: the spinner row always has ONE blank
          ;; line above it inside the bubble, regardless of whether any
          ;; iterations have been recorded yet. Without this the iter-0
@@ -3560,38 +3553,20 @@
    the already-wrapped lines.
 
    STRICT: `answer` is canonical answer-IR (`[:ir & nodes]`) or nil."
-  [answer trace bubble-w settings confidence cancelled? opts]
+  [answer trace bubble-w settings _confidence cancelled? opts]
   (let [content-w               (max 10 (- bubble-w 4))
         fill-w                  (max 1 (dec content-w))
-        show-thinking?          (get settings :show-thinking true)
-        show-iterations?        (get settings :show-iterations true)
-        show-silent?            (get settings :show-silent false)
-        ;; Same hardcode as in `progress->lines-data` above: the
-        ;; iteration header band is the visual separator and always
-        ;; renders. `:show-final-answer-header` similarly retired.
-        show-iteration-headers? true
-        show-final-hdr?         false
         line-entry              (fn [line] {:line line :meta nil})
         _                       (assert-canonical-ir! answer)
         suppress-trace?         (provider-error-answer? answer)
-        trace-entries           (when (and show-iterations? (not suppress-trace?) (seq trace))
-                                  (into []
-                                    (mapcat (fn [[idx entry]]
-                                              (let [visible (visible-iteration-entry entry show-silent?)]
-                                                (format-iteration-entry-entries
-                                                  (if show-thinking? visible (dissoc visible :thinking))
-                                                  content-w (inc idx)
-                                                  {:show-header?         show-iteration-headers?
-                                                   :conversation-id      (:conversation-id opts)
-                                                   :detail-expansions   (:detail-expansions opts)
-                                                   :conversation-turn-id (:conversation-turn-id opts)}))))
-                                    (collapse-repeated-error-runs trace)))
-        fa-label                (label-text "final answer")
-        conf-str                (when confidence (str " / " (name confidence)))
-        full-label              (str fa-label (or conf-str ""))
-        fa-pad                  (max 0 (- fill-w (count full-label) 1))
-        fa-hdr                  (when (and show-final-hdr? (not cancelled?))
-                                  (line-entry (str answer-hdr-marker (repeat-str \space fa-pad) full-label " ")))
+        trace-entries           (trace-render-entries
+                                  {:iterations trace
+                                   :content-w content-w
+                                   :settings settings
+                                   :conversation-id (:conversation-id opts)
+                                   :conversation-turn-id (:conversation-turn-id opts)
+                                   :detail-expansions (:detail-expansions opts)
+                                   :suppress-trace? suppress-trace?})
         ;; IR walker emits painter-ready entries directly. No
         ;; markdown round-trip, no `markdown->entries` rebuild.
         ans-entries             (if (ir-non-empty? answer)
@@ -3630,13 +3605,11 @@
         answer-block            (if has-trace?
                                   (cond-> []
                                     answer-top-margin (conj answer-top-margin)
-                                    fa-hdr            (conj fa-hdr)
                                     :always           (conj ans-pad)
                                     :always           (into ans-entries)
                                     :always           (conj ans-pad))
                                   (-> [(line-entry "")]
                                     (cond->
-                                      fa-hdr  (conj fa-hdr)
                                       :always (into ans-entries))))
         trailer                 (if cancelled? cancel-block answer-block)
         entries                 (if has-trace?

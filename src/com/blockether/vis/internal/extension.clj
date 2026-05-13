@@ -82,45 +82,7 @@
 
 (defn- now-ms [] (System/currentTimeMillis))
 
-;; Forward declare — `op-tag` is defined ~2000 lines below in the
-;; op-classification section, but `envelope-of` (in this section)
-;; needs to call it. Sorting defs in dependency order would push
-;; the entire envelope/constructor section below the registration
-;; table, burying the canonical envelope contract under registration
-;; minutiae. The declare is the cleaner exception per AGENTS.md S4.
 (declare op-tag)
-
-;; ============================================================
-;; Tool-result envelope spec (PLAN.md §2.1, atomic Phase 4)
-;;
-;; The old `::info` map (which lived inside an outer wrapper of
-;; {:success? :result :info :error}) is REPLACED by a flat
-;; envelope. Payload and metadata fields live under the `op/*`
-;; namespace. The canonical payload key is `:result`; there is no
-;; outer plain `:result` key in an envelope.
-;;
-;; Old shape (deleted):
-;;   {:success? bool :result <v>
-;;    :info {:op kw :started-at-ms ... :duration-ms ...}
-;;    :error {:type :message :trace [<frames>]}}
-;;
-;; New shape:
-;;   {:result   <v>
-;;    :symbol   :v/cat
-;;    :tag      :op.tag/observation
-;;    :success? true
-;;    :error    nil
-;;    :stdout   ""
-;;    :stderr   ""
-;;    :metadata {:paths [...] :duration-ms 5 ...}}
-;; ============================================================
-
-;; Live extension-info / source-markers shape lives near `::extension-info`
-;; further down. The old `::tool-result-extension` / `::tool` / `::source`
-;; cluster was removed when the `::info` envelope flattened into `::envelope`
-;; (commit 30e57b3e); leaf primitives `::alias`, `::namespace`, `::doc`,
-;; `::kind`, `::version`, `::author`, `::owner`, `::license`, `::registry-id`
-;; are defined alongside `::extension-info`.
 
 ;; ---- envelope leaf specs (op/*) ----
 (s/def ::symbol     (s/or :op keyword? :sci-symbol symbol?)) ; op e.g. :v/cat, tool symbol e.g. 'cat
@@ -661,12 +623,6 @@
 ;; Optional extra LLM-facing documentation appended when the extension is active.
 (s/def :ext/prompt fn?)
 
-;; Optional system-prompt environment contributor. Called once at
-;; system-prompt assembly with the live environment. Any active extension
-;; can add repo/runtime/project facts here without taking over the whole
-;; `:ext/prompt` fragment.
-(s/def :ext/environment-prompt-fn fn?)
-
 ;; ----------------------------------------------------------------------------
 ;; Hooks: the single mechanism extensions use to plug into the turn lifecycle.
 ;; A hook is a named callback that fires at a declared `:phase`; its `:fn`
@@ -675,7 +631,7 @@
 ;; Canonical phase keywords:
 ;;   :turn.iteration/start — every iteration, BEFORE the model call. Returns
 ;;                           nil | {:hint :importance?}; hint flows into
-;;                           <current_engine_start_nudges>.
+;;                           <iteration_hints>.
 ;;   :turn.answer/validate — when a `(turn-answer! ...)` form produced a candidate
 ;;                           final answer. Return nil to accept or
 ;;                           {:reject true :message ... :hint ...} to reject.
@@ -690,7 +646,7 @@
 ;; loop or starves siblings.
 ;;
 ;; Start hooks do NOT block evaluation. They emit advisory
-;; <current_engine_start_nudge> entries. For HARD final-answer rejection, use
+;; <iteration_hint> entries. For HARD final-answer rejection, use
 ;; :turn.answer/validate.
 ;; ----------------------------------------------------------------------------
 (def canonical-hook-phases
@@ -837,8 +793,7 @@
 ;; Authors who don't ship checks just omit the field.
 ;;
 ;; Naming follows the `:ext/<surface>-fn` convention already used for
-;; `:ext/activation-fn` and `:ext/environment-prompt-fn` - ONE fn,
-;; called by the host, returns data.
+;; `:ext/activation-fn` - ONE fn, called by the host, returns data.
 ;;
 ;; Per-message expectations (host coerces missing/invalid):
 ;;   {:level :info|:warn|:error
@@ -907,7 +862,7 @@
     (s/keys :req [:ext/namespace :ext/doc]
       :opt [:ext/kind :ext/activation-fn
             :ext/symbols :ext/classes :ext/imports
-            :ext/alias :ext/prompt :ext/environment-prompt-fn
+            :ext/alias :ext/prompt
             :ext/hooks
             :ext/env :ext/settings :ext/theme :ext/requires
             :ext/version :ext/author :ext/owner :ext/license
@@ -1270,6 +1225,10 @@
    Normalizes `:ext/prompt` (string -> fn) before checking the spec
    when the key is present. Throws with spec explain-data on violation."
   [ext]
+  (when (contains? ext :ext/environment-prompt-fn)
+    (throw (ex-info ":ext/environment-prompt-fn was removed; put model-facing environment text inside :ext/prompt"
+             {:type :extension/retired-environment-prompt-fn
+              :namespace (:ext/namespace ext)})))
   (let [ext (cond-> ext
               (contains? ext :ext/prompt) (update :ext/prompt normalize-prompt))]
     (when-not (s/valid? ::extension ext)

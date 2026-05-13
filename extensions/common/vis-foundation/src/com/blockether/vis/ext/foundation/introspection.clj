@@ -268,7 +268,7 @@
     "Provider returned prose/string instead of the iteration map. Skip the SQLite trip - the raw preview is already here. Continue after the built-in schema retry, or switch model when this repeats."
 
     :regex-unsupported-escape
-    "Clojure strings reject \\| as an escape. Use bare | for regex alternation inside a string, or switch to a #\"...\" regex literal for complex patterns."
+    "Clojure strings reject \\| as an escape. v/rg is literal and takes one spec map: use {:any [\"foo\" \"bar\"]} for OR, or {:all [\"foo|bar\"]} only when you need the literal pipe text."
 
     :regex-unescaped-quote
     "The regex string likely contains an unescaped inner quote. Escape it as \\\" or use a regex literal / simpler pattern."

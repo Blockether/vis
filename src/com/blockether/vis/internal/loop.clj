@@ -1265,7 +1265,7 @@
 ;; burning an entire iteration on a parser-recoverable error.
 ;;
 ;; Repair pass: at the line level, drop every <journal>/<bindings>
-;; /<current_turn_context>/<current_engine_start_nudge[s]> opener through its closer. Closer matches `</tag>` (proper),
+;; /<current_turn_context>/<iteration_hint[s]> opener through its closer. Closer matches `</tag>` (proper),
 ;; a bare ``` line (LLM fumble), or another opener (implicit close), or EOF.
 ;; A ```lang line implicitly closes the envelope without itself being dropped
 ;; so a real fence directly after a fabricated envelope still parses cleanly.
@@ -1275,8 +1275,9 @@
   ;; Vis -> LLM ONLY. The model must never emit these. See
   ;; `com.blockether.vis.internal.prompt` for the renderers that own them.
   #{"journal" "bindings" "current_turn_context"
-    "current_engine_start_nudges" "current_engine_start_nudge"
+    "iteration_hints" "iteration_hint"
     ;; Backward-compatible echo cleanup for older transcripts / model habits.
+    "current_engine_start_nudges" "current_engine_start_nudge"
     "system_vars" "system_var" "system_nudges" "system_nudge"})
 
 (defn- vis-engine-xml-open-tag
@@ -1481,12 +1482,72 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
+(defn- final-answer-structural-criteria-errors
+  "Built-in structural gate for `(turn-answer! ...)`. Returns a vector
+   of human-readable reason strings; empty when all criteria pass.
+
+   Distinct from `final-answer-gate-error`'s extension hook dispatch:
+   this is the harness's own floor that always runs first, regardless
+   of which extensions are active. Three criteria are enforced here
+   (a fourth — the answer-form's own evaluation — is gated upstream by
+   `answer-form-error`):
+
+     #1 No error in any non-answer block of the latest iteration.
+        Sibling errors in the same iteration as `turn-answer!` mean
+        the model has not yet observed a clean state to derive from.
+
+     #2 No action-tagged tool call in the latest iteration.
+        Belt-and-suspenders for `answer-with-mutation-preflight-mismatch`
+        (which rejects this shape at parse time before SCI eval). If a
+        refactor ever shifts ordering, this gate still catches it.
+
+     #3 <journal> for this turn carries at least one evidence entry —
+        either a non-answer block ran in this iteration, or any prior
+        iteration exists in `previous-iterations`. Blocks the trivial
+        zero-probe answer on turn open."
+  [{:keys [blocks form-idx code-entries previous-iterations]}]
+  (let [errored-idxs   (->> blocks
+                         (keep-indexed (fn [i b]
+                                         (when (and (not= i form-idx)
+                                                 (some? (:error b)))
+                                           i)))
+                         vec)
+        mutating-idxs  (->> (or code-entries [])
+                         (keep-indexed (fn [i e]
+                                         (when (form-contains-mutating-call? e) i)))
+                         vec)
+        evidence-this? (boolean
+                         (some (fn [i]
+                                 (and (not= i form-idx)
+                                   (nil? (:error (nth blocks i)))))
+                           (range (count blocks))))
+        evidence-prior? (boolean (seq previous-iterations))]
+    (cond-> []
+      (seq errored-idxs)
+      (conj (str "latest iteration had errors in form(s) "
+              (str/join ", " (map (comp str inc) errored-idxs))
+              " — resolve before turn-answer!"))
+
+      (seq mutating-idxs)
+      (conj (str "latest iteration contains action-tagged tool call(s) in form(s) "
+              (str/join ", " (map (comp str inc) mutating-idxs))
+              " — observe the mutation in a later read-only iteration before turn-answer!"))
+
+      (and (not evidence-this?) (not evidence-prior?))
+      (conj "<journal> contains no evidence for this turn yet — probe before turn-answer!"))))
+
 (defn final-answer-gate-error
-  "Run hard final-answer validation hooks. Returns nil when the candidate
-   answer is accepted, otherwise a string error surfaced as the rejected
-   answer form's validation error. `active-extensions` is passed by the
-   turn loop so activation is computed once per turn; direct callers may
-   omit it and provide `:extensions` on the environment."
+  "Run final-answer validation, structural floor first then extension hooks.
+   Returns nil when the candidate answer is accepted, otherwise a string
+   error surfaced as the rejected answer form's validation error.
+
+   Structural criteria (`final-answer-structural-criteria-errors`) run
+   unconditionally and short-circuit the extension dispatch; their
+   failures compose into a single multi-line refusal so the model sees
+   every failing criterion in one journal entry instead of one per
+   iteration. `active-extensions` is passed by the turn loop so
+   activation is computed once per turn; direct callers may omit it
+   and provide `:extensions` on the environment."
   ([environment iteration blocks]
    (final-answer-gate-error environment iteration blocks nil nil))
   ([environment iteration blocks answer-value]
@@ -1494,12 +1555,20 @@
   ([environment iteration blocks answer-value active-extensions]
    (final-answer-gate-error environment iteration blocks answer-value active-extensions nil))
   ([environment iteration blocks answer-value active-extensions extra-ctx]
-   (let [ctx (merge {:environment environment
-                     :phase :turn.answer/validate
-                     :iteration iteration
-                     :blocks blocks
-                     :answer answer-value}
-               extra-ctx)]
+   (let [structural (final-answer-structural-criteria-errors
+                      {:blocks blocks
+                       :form-idx (:form-idx extra-ctx)
+                       :code-entries (:code-entries extra-ctx)
+                       :previous-iterations (:previous-iterations extra-ctx)})]
+     (if (seq structural)
+       (str "turn-answer! refused. Failing criteria:\n  - "
+         (str/join "\n  - " structural))
+       (let [ctx (merge {:environment environment
+                         :phase :turn.answer/validate
+                         :iteration iteration
+                         :blocks blocks
+                         :answer answer-value}
+                   extra-ctx)]
      (some (fn [ext]
              (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
                      (when (= :turn.answer/validate phase)
@@ -1516,7 +1585,7 @@
                            (catch Throwable t
                              (answer-validation-hook-error-message ext id t))))))
                (or (:ext/hooks ext) [])))
-       (answer-validation-extensions environment active-extensions)))))
+       (answer-validation-extensions environment active-extensions)))))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -2228,7 +2297,10 @@
               total-forms     (count code-entries)
               own-form-error  (answer-form-error block-results form-idx)
               gate-error      (when (nil? own-form-error)
-                                (final-answer-gate-error environment iteration-position blocks value active-extensions answer-validation-context))
+                                (final-answer-gate-error environment iteration-position blocks value active-extensions
+                                  (assoc answer-validation-context
+                                    :form-idx form-idx
+                                    :code-entries code-entries)))
               validation-error (cond
                                  own-form-error
                                  (error/final-answer-code-error-message own-form-error)

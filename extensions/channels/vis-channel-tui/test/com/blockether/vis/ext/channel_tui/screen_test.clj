@@ -9,6 +9,7 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.channel-tui.chat :as chat]
+   [com.blockether.vis.ext.channel-tui.dialogs :as dlg]
    [com.blockether.vis.ext.channel-tui.input :as input]
    [com.blockether.vis.ext.channel-tui.primitives :as p]
    [com.blockether.vis.ext.channel-tui.screen :as screen]
@@ -52,6 +53,9 @@
 
 (def ^:private palette-extra-commands
   (deref #'screen/palette-extra-commands))
+
+(def ^:private menu-commands
+  (deref #'screen/menu-commands))
 
 (def ^:private copy-conversation-id!
   (deref #'screen/copy-conversation-id!))
@@ -255,7 +259,14 @@
                   :run-fn identity}
                  {:id :shown
                   :label "Shown"
-                  :run-fn identity}])))))
+                  :run-fn identity}]))))
+
+  (it "adds a slash-only /model alias without changing the Ctrl+K palette"
+    (with-redefs-fn {#'screen/extension-commands (constantly [])}
+      #(let [ids (mapv :id (menu-commands nil))]
+         (expect (some #{:model} ids))
+         (expect (some #{:providers} ids))
+         (expect (not-any? #{:model} (mapv :id dlg/palette-commands)))))))
 
 (defdescribe workspace-tab-click-test
   (it "switches to the clicked workspace tab and refreshes active conversation state"

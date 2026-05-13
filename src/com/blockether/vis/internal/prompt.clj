@@ -2,13 +2,13 @@
   "Prompt assembly.
 
    Provider messages are explicit blocks in send order: core system rules,
-   turn-start environment, extension fragments, then the user goal. Environment
-   and extension prompts stay OUT of CORE_SYSTEM_PROMPT; they are recomputed
-   from active extensions and sent as their own messages.
+   extension fragments, then the current user message. Extension prompts stay
+   OUT of CORE_SYSTEM_PROMPT; active extensions own their model-facing blocks
+   (including foundation's `<environment>`) inside the extension message.
 
    Per-iteration user-role context carries dynamic engine telemetry
    (<current_turn_context>), fresh evidence (<journal>), live bindings,
-   and current engine nudges. `<current_turn_context>` reports only live ids,
+   and iteration hints. `<current_turn_context>` reports only live ids,
    positions, and state labels."
   (:require
    [clojure.string :as str]
@@ -475,7 +475,7 @@
           (str/join "\n" kept))))))
 
 ;; =============================================================================
-;; Iteration context - provider context block inserted before current user goal
+;; Iteration context - provider context block inserted before current user message
 ;; =============================================================================
 
 (defn- prompt-block
@@ -603,18 +603,18 @@
       {:importance (attr-name (or (:importance entry) default-importance))
        :text       text})))
 
-(defn- format-current-engine-nudge
+(defn- format-iteration-hint
   [{:keys [importance text]}]
-  (str "<current_engine_start_nudge importance=\"" importance "\">\n"
+  (str "<iteration_hint importance=\"" importance "\">\n"
     (attr-str text)
-    "\n</current_engine_start_nudge>"))
+    "\n</iteration_hint>"))
 
-(defn- current-engine-nudges-block
-  [nudges]
-  (when-let [nudges (seq (keep identity nudges))]
-    (str "<current_engine_start_nudges>\n"
-      (str/join "\n" (map format-current-engine-nudge nudges))
-      "\n</current_engine_start_nudges>")))
+(defn- iteration-hints-block
+  [hints]
+  (when-let [hints (seq (keep identity hints))]
+    (str "<iteration_hints>\n"
+      (str/join "\n" (map format-iteration-hint hints))
+      "\n</iteration_hints>")))
 
 (defn- call-extension-callback
   [ext f & args]
@@ -640,11 +640,11 @@
      <bindings>   - `(def ...)` user vars in the SCI env; SYSTEM vars and
                     initial tool/helper bindings are excluded.
 
-   Plus zero or more tagged `<current_engine_start_nudge importance=\"...\">`
-   entries wrapped in `<current_engine_start_nudges>`. All entries come from
+   Plus zero or more tagged `<iteration_hint importance=\"...\">`
+   entries wrapped in `<iteration_hints>`. All entries come from
    `:turn.iteration/start` hooks on active extensions; core owns no built-in
-   hook policy. Each hook receives the `nudge-ctx` (the per-iteration ctx
-   below) and returns either nil (silent) or `{:hint :importance?}`.
+   hook policy. Each hook receives the per-iteration hook ctx below and
+   returns either nil (silent) or `{:hint :importance?}`.
 
    `nudge-ctx` fields (passed to every hook `:fn`):
      :environment        full environment map
@@ -720,35 +720,35 @@
                    :input-tokens input-tokens
                    :title-refresh? (boolean title-refresh?)
                    :conversation-title conversation-title
-                   ;; Raw current-turn user request — hooks inspect it
-                   ;; for investigation verbs / blind-answer prevention.
+                   ;; Raw current-turn user request — available to hooks
+                   ;; that want user-intent context (none in core today).
                    :user-request current-user-content}
-        ;; <current_engine_start_nudges> are populated by :turn.iteration/start
+        ;; <iteration_hints> are populated by :turn.iteration/start
         ;; `:ext/hooks` — the single mechanism for model-facing advisory hints.
         ;; Hook fns return nil (silent) or `{:hint :importance?}`.
-        all-nudges (into []
-                     (mapcat
-                       (fn [ext]
-                         (for [{:keys [id phase fn]} (or (:ext/hooks ext) [])
-                               :when (= :turn.iteration/start phase)
-                               :let [hit (try (call-extension-callback ext fn
-                                                (assoc nudge-ctx :phase phase))
-                                           (catch Throwable t
-                                             (tel/log! {:level :warn
-                                                        :id ::hook-threw
-                                                        :data {:ext (:ext/namespace ext)
-                                                               :hook id
-                                                               :phase phase
-                                                               :error (ex-message t)}})
-                                             nil))]
-                               :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]
-                           (normalize-system-nudge
-                             (or (:importance hit) :normal)
-                             (:hint hit)))))
-                     (or active-extensions []))
-        nudges-block (current-engine-nudges-block all-nudges)
+        all-hints (into []
+                    (mapcat
+                      (fn [ext]
+                        (for [{:keys [id phase fn]} (or (:ext/hooks ext) [])
+                              :when (= :turn.iteration/start phase)
+                              :let [hit (try (call-extension-callback ext fn
+                                               (assoc nudge-ctx :phase phase))
+                                          (catch Throwable t
+                                            (tel/log! {:level :warn
+                                                       :id ::hook-threw
+                                                       :data {:ext (:ext/namespace ext)
+                                                              :hook id
+                                                              :phase phase
+                                                              :error (ex-message t)}})
+                                            nil))]
+                              :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]
+                          (normalize-system-nudge
+                            (or (:importance hit) :normal)
+                            (:hint hit)))))
+                    (or active-extensions []))
+        hints-block (iteration-hints-block all-hints)
         parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [current-context-block recent-block bindings-block nudges-block])]
+                [current-context-block recent-block bindings-block hints-block])]
     (when (seq parts)
       (str/join "\n" parts))))
 
@@ -778,15 +778,15 @@
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
    dialog transcript: Vis state flows through <current_turn_context>,
-   <journal>, <bindings>, and DB-backed tools. The current user request is tagged as
-   <user_turn_request_main_goal>.
+   <journal>, <bindings>, and DB-backed tools. The current user message is tagged as
+   <current_user_message>.
 
    One full previous-turn context block may be prepended so short follow-ups
    can inspect the prior exchange without replaying the whole conversation."
   [{:keys [stable-prompt-messages initial-user-content previous-turn-context]}]
   (let [previous-block (previous-turn-context-block previous-turn-context)
         user-block     (when initial-user-content
-                         (prompt-block "user_turn_request_main_goal" initial-user-content))]
+                         (prompt-block "current_user_message" initial-user-content))]
     (vec
       (concat
         (or stable-prompt-messages [])
@@ -798,115 +798,69 @@
 ;; =============================================================================
 
 (def ^:private CORE_SYSTEM_PROMPT
-  "λVis. SCI-based recursive model runtime.
-  Sandbox := Clojure core + aliases + active EXTENSIONS + host primitives.
-  Goal := drive evaluated code until `(turn-answer! [:ir ...])`.
+  "λVis — Clojure SCI harness with a recursive eval loop.
 
-  λ operate(x). reproduce -> inspect(runtime) -> change(minimal) -> test(regression) -> verify
-  λ style(x). caveman terse > prose | clarity_exception(misread_risk)
-  λ truth(x). runtime > source > docs > assumption
-  λ fix(bug). reproduce(minimal) -> trace(cause) -> fix(structural) -> regression_test | ¬repro -> ¬diagnosis
-  λ sync(f). edit(f) -> reread(f) -> reload(ns) -> verify(relevant)
+ARCHITECTURE
+  Conversation : persisted sequence of turns.
+  Turn         : one user<->vis exchange. You iterate internally.
+  Iteration    : one model reply of many ```clojure``` prompts → λVis evaluates → evidence returns.
+                 Many iterations per turn.
+  Block        : one ```clojure fenced form. Unit of evaluation
+                 and attribution.
 
-Aliases:
-  clojure.walk -> walk
-  clojure.string -> str
-  clojure.set -> set
-  clojure.pprint -> pp
-  clojure.edn -> edn
-  clojure.spec.alpha -> s
+  <journal>  : append-only log of block evaluations.
+               Persists across iterations and turns.
+  <bindings> : namespace state (defs).
+               Persists across iterations and turns.
 
-BANNED:
-  - `slurp`, `spit`, `clojure.java.io` and other direct filesystem access.
+  A turn ends when you emit
+    (when (turn-converges?) (turn-answer! <IR>))
+  and turn-converges? returns true.
 
-λENGINE.
-  Host evals forms, records evidence to <journal>/<bindings>, then asks again
-  or persists accepted final answer. The loop is one Kleisli fixpoint, not a
-  story; READY? alone decides exit. Railway: success threads Ctx down the
-  green track; any step's error short-circuits into <journal> and the loop
-  keeps running until READY?.
+ENV
+  Aliases: walk, str, set, pp, edn, s
+  Banned:  slurp, spit, clojure.java.io, any filesystem access
+  Truth:   runtime > source > docs > memory
 
-  λVis : USER_GOAL → FINAL
-  λVis ≡ fix (λ loop. λ ctx.
-           let step = MODEL_REPLY >=> SCI_EVAL >=> OBSERVE
-           in if READY? ctx then EMIT_FINAL ctx else loop (step ctx))
+TURN PROTOCOL
+  Emit one or more ```clojure blocks per turn, as needed.
+  Narration is ;; comments only.
+  Each block evaluates; its result, error, stdout, stderr attach
+  to that block in <journal>. New defs accumulate in <bindings>.
+  Both persist across turns.
+  Prefer several focused blocks over one monolith when distinct
+  probes benefit from separate attribution.
+  Errors are evidence — adjust and continue.
 
-  arrows (Kleisli over M ≈ StateT Ctx (Either Err); >=> = monadic bind / fish):
-    MODEL_REPLY : Ctx → M Forms
-      reply := ```clojure``` fences only; body := SCI forms.
-      narration := `;;` comments inside fences.
-      turn_finalization := `(turn-answer! <ANSWER_IR>)`.
-    SCI_EVAL    : Forms → M Evidence
-      host evaluates; NEW_VARS(def|defn) extend <bindings>;
-      {result|error, stdout, stderr, journal sink entries} captured.
-    OBSERVE     : Evidence → M Ctx
-      append <journal>; refresh <bindings>;
-      error track surfaces in next iteration's <journal>, never silently swallowed.
+LOOP DISCIPLINE
+  Before each probe, name in ;; comments the weakest assumption
+  in your current model. Before emitting, disprove at least one
+  plausible alternative from <journal>. Every claim in the final
+  answer must trace to a <journal> or <bindings> entry — never
+  memory.
 
-  READY? ctx (decide from <journal> + <bindings>, not memory):
-    required_evidence_observed?
-    ∧ unresolved_blockers = Ø
-    ∧ user_goal_satisfiable_from(<journal>, <bindings>)
-    ∧ no errors in the last iteration journal entry
-    ∧ mutation_occurred ⇒ post-mutation read-only verification present in <journal>
-      (i.e. no answer in the same iteration as a mutation; verify first.)
+EMIT_FINAL
+  (turn-answer! <IR>)
 
-  EMIT_FINAL :=
-    When all of the READY? conditions are met, all of the evidence gathered, no errors present
-      `(turn-answer! <ANSWER_IR>)`
-      `(when condition (turn-answer! <ANSWER_IR>))`
-    false guard ⇒ no FINAL; loop continues.
-    FINAL forbids stateful mutation/reloads.
-  
-    ANSWER_IR 
-      Build IR directly; do not render Markdown into IR; valid EDN, hiccup like syntax!
-      root        := [:ir block*]
-      block       := :p | :h{:level 1-6} | :code{:lang} | :ul | :ol{:start} | :li
-                        | :quote | :table | :tr | :th | :td
-      inline      := :span{:preserve-ws? :nowrap?} | :br | :strong | :em | :c
-                     | :a{:href} | :img{:src :alt} | :kbd | :mark | :sup | :sub
-      text        := string shorthand
-      preserve_ws := :code | :c | :kbd
+  Gated. The call is refused (failing criteria recorded in
+  <journal>) unless ALL hold:
+    - no error in the latest iteration
+    - latest iteration ran no action-tagged tool call and no
+      reload (intermediate defs are fine)
+    - <journal> carries evidence for this turn
+    - turn-answer! itself evaluated without throwing
 
-λDYNAMIC_CONTEXT.
-  user-role turn/iteration context; initial user message plus per-iteration trailer.
-  <user_turn_request_main_goal> := current user goal; initial user message.
-  <previous_turn_context>       := optional immediately previous exchange only; initial user message.
-  <current_turn_context>        := per-iteration engine ids/positions/state + direct turn/conversation values; no user intent; no policy; no named runtime-var indirection.
-  <journal>                     := token-budgeted iteration evidence; newest at bottom; may carry prior conversation iterations.
-  <bindings>                    := live SCI user-var index; excludes SYSTEM vars and tool/helper bindings.
-  <current_engine_start_nudges> := extension hook runtime hints for this iteration.
+  Structural only. Grounding every claim in <journal>/<bindings>
+  with no memory-sourced assumptions is on you, not the gate.
 
-λENGINE_RECOVERY.
-  - *1 *2 *3 *e := last values/errors for sandbox recovery; ordinary prompt context uses rendered values, not named runtime-var indirection.
-  - `(v/engine-symbol-documentation 'map)` -> puts the documentation + signature for `map` into the <journal> for model inspection.
-  - `(v/engine-symbol-source-code 'map)` -> puts the source code for `map` into the <journal> for model inspection.
-  - `(v/engine-symbol-apropos 'map)` -> puts the list of matching symbols for `map` into the <journal> for model inspection.
-
-λEXAMPLE TURN.
-
-  Human: Change `src/foo.clj` so `foo` returns `\"new\"`.
-
-  Vis iteration 1 - observe:
-    ```clojure
-    (def foo-source (v/cat \"src/foo.clj\"))
-    ```
-
-  Iteration 2 - mutate only:
-    ```clojure
-    (def foo-patch
-      (z/patch [{:path \"src/foo.clj\"
-                 :search \"(defn foo [] \\\"old\\\")\"
-                 :replace \"(defn foo [] \\\"new\\\")\"}]))
-    ```
-
-  Iteration 3 - verify + guarded answer:
-    ```clojure
-    (def foo-after (v/cat \"src/foo.clj\"))
-    (when (and (:success? foo-patch)
-               (some #(str/includes? % \"(defn foo [] \\\"new\\\")\") (:lines foo-after)))
-      (turn-answer! [:ir [:p \"Patch applied and verified by rereading src/foo.clj.\"]]))
-    ```")
+ANSWER_IR
+  EDN hiccup: [:ir block*]
+  Blocks: :p | :h {:level 1-6} | :code {:lang string} | :ul
+        | :ol {:start int} | :li | :quote | :table | :tr | :th | :td
+  Inline: :span {:preserve-ws? bool :nowrap? bool} | :br
+        | :strong | :em | :c | :a {:href string}
+        | :img {:src string :alt string} | :kbd | :mark | :sup | :sub
+")
 
 (defn build-system-prompt
   "Core system prompt: CORE_SYSTEM_PROMPT plus optional caller addendum."
@@ -976,41 +930,32 @@ BANNED:
                 (nil? (:kind info)) (dissoc :kind)
                 (nil? registry-id) (dissoc :registry-id)))))))
 
-(defn- environment-info-block
-  "Collect `<environment>` from every active extension that declares
-   `:ext/environment-prompt-fn`. Each fn receives the live environment and
-   returns a string or nil. Non-blank results are joined and wrapped in
-   `<environment>...</environment>`."
-  [environment active-extensions]
-  (let [fragments (keep (fn [ext]
-                          (when-let [f (:ext/environment-prompt-fn ext)]
-                            (try
-                              (let [result (call-extension-callback ext f environment)]
-                                (when (and (string? result) (not (str/blank? result)))
-                                  result))
-                              (catch Throwable t
-                                (tel/log! {:level :warn
-                                           :id ::environment-info-error
-                                           :data {:ext (:ext/namespace ext)
-                                                  :error (ex-message t)}}
-                                  "Extension environment-info-fn threw")
-                                nil))))
-                    active-extensions)]
-    (when (seq fragments)
-      (prompt-block "environment" (str/join "\n\n" fragments)))))
+(defn- extension-prompt-id
+  [ext]
+  (str (or (get-in ext [:ext/alias :alias])
+         (:ext/namespace ext)
+         "unknown")))
+
+(defn- extension-prompt-fragment
+  [ext body]
+  (str "<extension id=\"" (attr-str (extension-prompt-id ext)) "\">\n"
+    body
+    (when-not (str/ends-with? body "\n") "\n")
+    "</extension>"))
 
 (defn- extensions-prompt-block
   "Collect `<extensions>` from every active extension that declares
    `:ext/prompt`. Each prompt is `(fn [env] -> string)` (normalized at
-   registration). Non-blank results are joined and wrapped in
-   `<extensions>...</extensions>`."
+   registration). Non-blank results are wrapped as an extension element
+   with an id attribute, then joined inside one `<extensions>...</extensions>`
+   block."
   [environment active-extensions]
   (let [fragments (keep (fn [ext]
                           (when-let [f (:ext/prompt ext)]
                             (try
                               (let [result (call-extension-callback ext f environment)]
                                 (when (and (string? result) (not (str/blank? result)))
-                                  result))
+                                  (extension-prompt-fragment ext result)))
                               (catch Throwable t
                                 (tel/log! {:level :warn
                                            :id ::extension-prompt-error
@@ -1038,11 +983,11 @@ BANNED:
 
    Send order is explicit and tested:
      `<system_prompt>` - CORE_SYSTEM_PROMPT + caller addendum
-     `<environment>`   - host/git/project facts from extensions
-     `<extensions>`    - extension `:ext/prompt` fragments
+     `<extensions>`    - extension-owned prompt fragments. Foundation emits
+                         `<environment>` inside its own fragment.
 
-   Environment and extensions are separate messages, not content inside the
-   core system prompt.
+   Extension fragments are separate messages, not content inside the core system
+   prompt.
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Drives
@@ -1054,13 +999,12 @@ BANNED:
   (when-not (contains? opts :active-extensions)
     (throw (ex-info "assemble-stable-prompt-messages requires :active-extensions"
              {:type :vis/missing-active-extensions})))
-  (let [core-block   (prompt-block "system_prompt"
-                       (build-system-prompt {:system-prompt system-prompt}))
-        env-block    (environment-info-block environment active-extensions)
-        ext-block    (extensions-prompt-block environment active-extensions)]
+  (let [core-block (prompt-block "system_prompt"
+                     (build-system-prompt {:system-prompt system-prompt}))
+        ext-block  (extensions-prompt-block environment active-extensions)]
     (vec
       (keep stable-prompt-message
-        [core-block env-block ext-block]))))
+        [core-block ext-block]))))
 
 (defn assemble-system-prompt
   "Backward-compatible joined-text view of `assemble-stable-prompt-messages`.

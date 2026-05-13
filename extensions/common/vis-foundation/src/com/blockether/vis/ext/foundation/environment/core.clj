@@ -145,10 +145,6 @@
   "Monorepo shape detection: {:shape :totals :files} or :shape nil for single-package repos."
   [] (:monorepo (snapshot)))
 
-(defn render
-  "Render the current snapshot as the same `<environment>` block embedded in the system prompt. Useful for debugging or surfacing the block on demand."
-  [] (render/render (snapshot)))
-
 (defn- success-envelope
   [result]
   (extension/success {:result result}))
@@ -183,11 +179,6 @@
   []
   (success-envelope (refresh!)))
 
-(defn- render-tool
-  "Render the current snapshot as the same `<environment>` block embedded in the system prompt; returned in a canonical tool envelope."
-  []
-  (success-envelope (render)))
-
 (defn- env-data-symbol
   "Register an explicit envelope-returning tool var under a stable `v/` name.
    The public helper vars above stay plain Clojure functions for host callers;
@@ -197,14 +188,6 @@
     {:symbol sym
      :journal-render-fn vis/render-pr-str-journal
      :channel-render-fn vis/render-pr-str-channel}))
-
-(defn- env-string-symbol
-  "Register an explicit envelope-returning string tool var under a stable `v/` name."
-  [v sym]
-  (vis/symbol v
-    {:symbol sym
-     :journal-render-fn vis/render-string-journal
-     :channel-render-fn vis/render-string-channel}))
 
 (def snapshot-symbol
   (env-data-symbol #'snapshot-tool 'snapshot))
@@ -223,9 +206,6 @@
 
 (def refresh!-symbol
   (env-data-symbol #'refresh!-tool 'refresh!))
-
-(def render-symbol
-  (env-string-symbol #'render-tool 'render))
 
 ;; ---------------------------------------------------------------------------
 ;; Project guidance + scan-warnings surface.
@@ -293,19 +273,19 @@
 
 (def environment-symbols
   [snapshot-symbol repositories-symbol git-symbol languages-symbol monorepo-symbol
-   refresh!-symbol render-symbol
+   refresh!-symbol
    main-agent-instructions-symbol
    scan-warnings-symbol
    reload-extensions!-symbol])
 
 (def ^:private FN_INDEX
   "One-line strategy for environment fns under the `v/` alias."
-  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; v/render only when you need the prompt block; project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change; use v/reload-extensions! only after extension changes.")
+  "`v/` env strategy: use v/snapshot or focused env helpers when combining runtime facts; project guidance auto-refreshes when AGENTS.md/CLAUDE.md markers change; use v/reload-extensions! only after extension changes.")
 
 (defn environment-info
-  "Render the foundation-owned environment contribution. The
-   internal prompt assembler owns placement; this function owns the
-   host/git/language/monorepo/multirepo snapshot text."
+  "Render the foundation-owned model-facing `<environment>` contribution.
+   The extension owns this envelope; the core prompt assembler only places
+   returned fragments in send order and does not wrap them."
   [_environment]
   (try
     (render/render (snapshot))

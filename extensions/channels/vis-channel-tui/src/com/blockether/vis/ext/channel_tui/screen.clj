@@ -311,10 +311,18 @@
   [commands]
   (filterv #(not= false (:palette? %)) commands))
 
+(def ^:private slash-only-commands
+  "Built-in slash commands that should not add another Ctrl+K palette row."
+  [{:id :model
+    :label "Model / Providers"
+    :doc "Open the provider/model router dialog."}])
+
 (defn- menu-commands
-  "All slash commands shown in the TUI overlay: built-in palette plus extension-contributed palette commands."
+  "All slash commands shown in the TUI overlay: built-in palette commands,
+   slash-only aliases, plus extension-contributed palette commands."
   [screen]
   (vec (concat dlg/palette-commands
+         slash-only-commands
          (palette-extra-commands (extension-commands screen)))))
 
 (defn- slash-command-for-input
@@ -2281,6 +2289,11 @@
                                    ;; entry point for the same action.
 
                                    :providers
+                                   (when-let [c (with-dialog-lock
+                                                  #(provider/show-provider-dialog! screen (:config @state/app-db)))]
+                                     (state/dispatch [:set-config c]))
+
+                                   :model
                                    (when-let [c (with-dialog-lock
                                                   #(provider/show-provider-dialog! screen (:config @state/app-db)))]
                                      (state/dispatch [:set-config c]))

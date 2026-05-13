@@ -5,13 +5,15 @@
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defdescribe title-nudge-test
-  (it "nudges when CONVERSATION_TITLE is blank (regardless of turn position)"
+  (it "nudges :high when CONVERSATION_TITLE is blank (regardless of turn position)"
+    ;; :high — a blank title is a real gap, not soft advice. Models
+    ;; routinely skip :low hints; :high makes the title call happen.
     (doseq [tp [1 2 5 10 17 100]]
       (let [n (nudges/title-nudge {:conversation-title nil
                                    :title-refresh? false
                                    :turn-position tp
                                    :iteration 1})]
-        (expect (= :low (:importance n)))
+        (expect (= :high (:importance n)))
         (expect (str/includes? (:text n) "CONVERSATION_TITLE is currently empty")))))
 
   (it "fires on turn 1 (first turn) when host flags :title-refresh?"
@@ -92,20 +94,19 @@
     (expect (nil? (nudges/context-pressure-nudge {:input-tokens 50000 :context-limit 0})))))
 
 (defdescribe hooks-registration-test
-  (it "foundation ships soft nudges and hard answer guards"
+  (it "foundation ships only the two iteration-start soft nudges"
+    ;; Evidence/blind-answer guards were removed; their job is now the
+    ;; harness's structural gate inside `(turn-answer! ...)`.
     (let [ids (set (map :id nudges/hooks))]
       (expect (= #{:vis.foundation/conversation-title
-                   :vis.foundation/context-pressure
-                   :vis.foundation/blind-answer
-                   :vis.foundation/action-request-needs-evidence}
+                   :vis.foundation/context-pressure}
                 ids))))
 
   (it "every hook declares the four required keys (:id :doc :phase :fn)"
     (doseq [h nudges/hooks]
       (expect (keyword? (:id h)))
       (expect (string? (:doc h)))
-      (expect (contains? #{:turn.iteration/start :turn.answer/validate}
-                (:phase h)))
+      (expect (= :turn.iteration/start (:phase h)))
       (expect (fn? (:fn h)))))
 
   (it "title hook adapts title-nudge into the {:hint :importance} shape"
@@ -113,90 +114,17 @@
           hit ((:fn h) {:conversation-title nil :title-refresh? false
                         :turn-position 1 :iteration 1})]
       (expect (string? (:hint hit)))
-      (expect (= :low (:importance hit)))))
+      ;; Blank-title branch is :high (see title-nudge-test).
+      (expect (= :high (:importance hit)))))
 
   (it "hooks return nil when their underlying condition is absent"
     (let [title-h    (some #(when (= :vis.foundation/conversation-title (:id %)) %) nudges/hooks)
           pressure-h (some #(when (= :vis.foundation/context-pressure (:id %)) %) nudges/hooks)]
       (expect (nil? ((:fn title-h)    {:conversation-title "Set" :title-refresh? false
                                        :turn-position 5 :iteration 1})))
-      (expect (nil? ((:fn pressure-h) {:input-tokens 100 :context-limit 200000})))))
+      (expect (nil? ((:fn pressure-h) {:input-tokens 100 :context-limit 200000}))))))
 
-  (it "hard guard hooks are registered on the answer-validation phase"
-    (let [by-id    (into {} (map (juxt :id identity) nudges/hooks))
-          evidence (:vis.foundation/action-request-needs-evidence by-id)]
-      (expect (= :turn.answer/validate (:phase evidence)))
-      (expect (= true (:reject ((:fn evidence)
-                                {:user-request "Fix it now."
-                                 :answer [:ir [:p "Done."]]})))))))
-
-(defdescribe blind-answer-guard-test
-  (it "fires on iter 1 + investigation verb + no prior blocks"
-    (doseq [req ["Why is the footer not showing?"
-                 "Investigate the SCI sandbox setup"
-                 "Fix the broken test"
-                 "Check the conversation persistence"
-                 "Find where v/cat is defined"
-                 "Show me the loop preflight code"
-                 "Debug iteration cancel"]]
-      (let [hit (nudges/blind-answer-guard-check
-                  {:iteration 1 :user-request req :previous-blocks nil})]
-        (expect (some? hit))
-        (expect (= :high (:importance hit)))
-        (expect (string? (:hint hit))))))
-
-  (it "stays silent on trivial chat"
-    (doseq [req ["hey" "thx" "siema" "Hi!" "ok" "yes"]]
-      (expect (nil? (nudges/blind-answer-guard-check
-                      {:iteration 1 :user-request req :previous-blocks nil})))))
-
-  (it "stays silent for explicit planning-only requests and symbol-name triggers"
-    (doseq [req ["Planning-only review. Answer one paragraph: should z/patch-check be de-emphasized?"
-                 "Opinion-only: compare v/patch-check with z/patch-check."
-                 "Design-only, do not inspect files: should foo/check exist?"]]
-      (expect (nil? (nudges/blind-answer-guard-check
-                      {:iteration 1 :user-request req :previous-blocks nil})))))
-
-  (it "stays silent on iteration 2+ even with investigation verbs"
-    (expect (nil? (nudges/blind-answer-guard-check
-                    {:iteration 2
-                     :user-request "Why is X broken?"
-                     :previous-blocks nil}))))
-
-  (it "stays silent when previous-blocks is non-empty (model already observed)"
-    (expect (nil? (nudges/blind-answer-guard-check
-                    {:iteration 1
-                     :user-request "Why is X broken?"
-                     :previous-blocks [{:code "(v/cat \"x\")" :result {}}]})))))
-
-(defdescribe action-request-needs-evidence-test
-  (it "allows conceptual answer-only requests"
-    (expect (nil? (nudges/action-request-needs-evidence-check
-                    {:user-request "Explain the tradeoff briefly."
-                     :answer [:ir [:p "It depends."]]}))))
-
-  (it "rejects action requests with no turn evidence"
-    (let [hit (nudges/action-request-needs-evidence-check
-                {:user-request "Fix it now."
-                 :answer [:ir [:p "Fixed."]]})]
-      (expect (= true (:reject hit)))
-      (expect (str/includes? (:message hit) "no observed tool/code work"))))
-
-  (it "does not treat bare do-it as an action request when no objective is bound"
-    (expect (nil? (nudges/action-request-needs-evidence-check
-                    {:user-request "do it"
-                     :answer [:ir [:p "Done."]]}))))
-
-  (it "allows action requests after successful prior work evidence"
-    (expect (nil? (nudges/action-request-needs-evidence-check
-                    {:user-request "Fix it now."
-                     :answer [:ir [:p "Done."]]
-                     :previous-iterations [[1 {:blocks [{:code "(v/cat \"src/x.clj\")"
-                                                         :error nil
-                                                         :journal [{:success? true
-                                                                    :form "(v/cat \"src/x.clj\")"}]}]}]]}))))
-
-  (it "allows blocked or partial answers with no evidence"
-    (expect (nil? (nudges/action-request-needs-evidence-check
-                    {:user-request "Fix it now."
-                     :answer [:ir [:p "Blocked: I need the file path."]]})))))
+;; Removed: blind-answer-guard-test and action-request-needs-evidence-test.
+;; Their behaviours are now enforced by the harness structural gate inside
+;; `(turn-answer! ...)` (see `final-answer-structural-criteria-errors` in
+;; `com.blockether.vis.internal.loop`); coverage lives in the loop tests.

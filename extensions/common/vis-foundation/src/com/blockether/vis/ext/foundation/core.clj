@@ -7,12 +7,13 @@
    [com.blockether.vis.ext.foundation.nudges :as nudges]))
 
 (defn- combined-prompt
-  "Stitch the per-area prompt fragments together. The environment
-   fragment is a fn (it renders the live snapshot every time the
-   system prompt is assembled); introspection + editing + answer-IR
-   fragments are static strings that we concatenate directly."
+  "Stitch the foundation-owned model prompt fragment together.
+   Foundation owns its `<environment>` block directly here; core only
+   wraps all active extension fragments in `<extensions>`."
   [env]
-  (str (environment/environment-prompt env)
+  (str (environment/environment-info env)
+    "\n\n"
+    (environment/environment-prompt env)
     "\n\n"
     introspection/introspection-prompt
     "\n\n"
@@ -64,7 +65,6 @@
      :ext/license        "Apache-2.0"
      :ext/alias       {:ns 'vis.ext.v :alias 'v}
      :ext/kind           "foundation"
-     :ext/environment-prompt-fn environment/environment-info
      :ext/hooks          nudges/hooks
      :ext/prompt         combined-prompt
      :ext/symbols        (vec (concat introspection/all-symbols

@@ -853,12 +853,17 @@
                                      :where  [:= :conversation_state_id state-id-s]}))
                                1)
               user-request-s (or user-request "")]
+          ;; `conversation_turn_soul` has no `title` column by design.
+          ;; The canonical title lives on `conversation_state.title`
+          ;; only (set via `(set-conversation-title! ...)`). A per-turn
+          ;; title column previously existed but was auto-populated
+          ;; with `(subs user_request 0 100)` — useless for trivial
+          ;; greetings and never written by any model-facing primitive.
           (execute! tx-info
             {:insert-into :conversation_turn_soul
              :values [{:id                    (str soul-id)
                        :conversation_state_id state-id-s
                        :position              turn-position
-                       :title                 (subs user-request-s 0 (min (count user-request-s) 100))
                        :user_request          user-request-s
                        :created_at            now}]})
           (execute! tx-info
@@ -1199,7 +1204,11 @@
              :user-request          (:user_request row)
              :status                (->kw-back (:status row))
              :created-at            (->date (:soul_created_at row))}
-      (:title row)              (assoc :name (:title row))
+      ;; Turn rows carry no `title` column; `:name` is not populated
+      ;; here. UI/display layers should use `:user-request` for a
+      ;; turn label or read the conversation-level title via `:title`
+      ;; on the conversation map.
+      ;; (intentionally no `(:title row)` branch)
       (:answer row)             (assoc :answer (<-blob (:answer row)))
       (:iteration-count state-meta)  (assoc :iteration-count (:iteration-count state-meta))
       (:duration-ms state-meta)      (assoc :duration-ms (:duration-ms state-meta))
@@ -1214,7 +1223,10 @@
 (defn- conversation-turn-soul+state-query
   "HoneySQL fragment joining conversation_turn_soul + latest conversation_turn_state."
   [where-clause]
-  {:select [:qs.id :qs.conversation_state_id :qs.position :qs.title :qs.user_request
+  ;; `:qs.title` intentionally absent: `conversation_turn_soul` has
+  ;; no `title` column. Display layers fall back to `:user_request`
+  ;; or the conversation-level title.
+  {:select [:qs.id :qs.conversation_state_id :qs.position :qs.user_request
             [:qs.created_at :soul_created_at] [:qs.id :soul_id]
             :qst.status :qst.metadata [:qst.metadata :state_metadata]
             :qst.answer
