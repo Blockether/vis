@@ -266,9 +266,17 @@
                 (Thread/sleep 25)
                 (recur))))))
 
+;; Multiprocess child JVMs cold-boot Clojure + Flyway + sqlite-jdbc on every
+;; spawn. On a warm machine that's ~6–7 s; under the full test suite (JIT
+;; contention with the rest of the run), 10–20 s. The previous 10 s ceiling
+;; flaked deterministically as soon as anything else heated the JVM up at
+;; the same time. 30 s is correctness-only — these tests guard cross-JVM DB
+;; semantics, not startup speed.
+(def ^:private MULTIPROCESS_CHILD_TIMEOUT_S 30)
+
 (defn- expect-child-success!
   [^Process child]
-  (expect (true? (.waitFor child 10 TimeUnit/SECONDS)))
+  (expect (true? (.waitFor child MULTIPROCESS_CHILD_TIMEOUT_S TimeUnit/SECONDS)))
   (let [output-future (get @child-output-futures child)
         output        (when output-future (deref output-future 1000 ""))]
     (swap! child-output-futures dissoc child)
@@ -283,7 +291,7 @@
         (let [parent (vis/db-create-connection! (str dir))
               child  (start-multiprocess-writer! (str dir) (str marker))]
           (try
-            (expect (true? (wait-for-file marker 10000)))
+            (expect (true? (wait-for-file marker (* 1000 MULTIPROCESS_CHILD_TIMEOUT_S))))
             (vis/db-store-conversation! parent {:channel :parent :title "parent"})
             (expect-child-success! child)
             (expect (= #{"child" "parent"}
@@ -876,7 +884,6 @@
                                   :blocks [{:code "(+ 1 1)" :result 2}]
                                   :duration-ms 5
                                   :llm-raw-response raw
-                                  :llm-executable-code "(+ 1 1)"
                                   :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]})
       (let [iter (first (vis/db-list-conversation-turn-iterations s qid))]
         (expect (= raw (:llm-raw-response iter)))
@@ -884,7 +891,9 @@
         (expect (= (count raw) (:llm-raw-response-length iter)))
         (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
                   (:llm-raw-response-sha256 iter)))
-        (expect (= "(+ 1 1)" (:llm-executable-code iter)))
+        ;; :llm-executable-code was removed during the per-block-eval pivot;
+        ;; :llm-executable-blocks is the single source of truth.
+        (expect (nil? (:llm-executable-code iter)))
         (expect (= [{:lang "clojure" :source "(+ 1 1)"}]
                   (:llm-executable-blocks iter))))))
 

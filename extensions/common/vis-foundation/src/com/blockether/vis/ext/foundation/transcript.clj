@@ -51,7 +51,7 @@
             :llm-system-prompt :llm-user-prompt
             :llm-raw-response :llm-raw-response-preview :llm-raw-response-length
             :llm-raw-response-sha256
-            :llm-executable-code :llm-executable-blocks
+            :llm-executable-blocks
             :metadata
             :vars
             [{:name :code :value :version}]
@@ -423,8 +423,6 @@
       (assoc :length (:llm-raw-response-length iteration))
       (some? (:llm-raw-response-sha256 iteration))
       (assoc :sha256 (:llm-raw-response-sha256 iteration))
-      (some? (:llm-executable-code iteration))
-      (assoc :executable-code (:llm-executable-code iteration))
       (seq blocks)
       (assoc :executable-blocks blocks
         :block-count (count blocks)
@@ -689,7 +687,6 @@
                       (when (or (some? (:llm-raw-response-preview iter))
                               (some? (:llm-raw-response-length iter))
                               (some? (:llm-raw-response-sha256 iter))
-                              (some? (:llm-executable-code iter))
                               (seq (:llm-executable-blocks iter)))
                         (let [executable-blocks (vec (:llm-executable-blocks iter))]
                           {:turn-id           (:id turn)
@@ -699,7 +696,6 @@
                            :raw-preview       (:llm-raw-response-preview iter)
                            :raw-length        (:llm-raw-response-length iter)
                            :raw-sha256        (:llm-raw-response-sha256 iter)
-                           :executable-code   (:llm-executable-code iter)
                            :executable-blocks executable-blocks
                            :block-count       (count executable-blocks)
                            :block-langs       (mapv :lang executable-blocks)})))
@@ -721,18 +717,15 @@
     " |\n"))
 
 (defn- render-raw-diagnostic-details
-  [{:keys [turn-position iteration raw-preview raw-length executable-code executable-blocks]}]
+  [{:keys [turn-position iteration raw-preview raw-length executable-blocks]}]
   (render-collapsible
     (str "Raw LLM response preview for turn " (or turn-position "?")
       " / iteration " iteration
       (when raw-length (str " (" raw-length " chars total)")))
     (str
       (render-fenced "text" raw-preview)
-      (when (not (str/blank? (str executable-code)))
-        (str "\n\nExecutable code selected by svar:\n\n"
-          (render-fenced "clojure" executable-code)))
       (when (seq executable-blocks)
-        (str "\n\nExecutable fenced blocks selected by svar:\n\n"
+        (str "\n\nExecutable Markdown code blocks selected by svar:\n\n"
           (render-fenced "clojure" (pr-str executable-blocks)))))))
 
 (defn- render-raw-diagnostics

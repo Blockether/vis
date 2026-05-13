@@ -1138,12 +1138,9 @@
   [s]
   (bytes->hex (.digest (MessageDigest/getInstance "SHA-256") (.getBytes (str s) "UTF-8"))))
 
-(defn- normalized-code-source
-  [code-entries]
-  (->> code-entries
-    (map (comp str/trim str :expr))
-    (remove str/blank?)
-    (str/join "\n")))
+;; `normalized-code-source` removed: `code-entries-preflight` now computes
+;; the same join inline on the surviving block sources (was only ever called
+;; from the splitter's old preflight path).
 
 (defn- needs-input-call-form?
   [form]
@@ -1160,58 +1157,19 @@
   [entry-or-form-or-source]
   (turn-answer-call-form? (parsed-entry-form entry-or-form-or-source)))
 
-(defn- bare-symbol-entry?
-  [entry-or-form-or-source]
-  (symbol? (parsed-entry-form entry-or-form-or-source)))
+;; `bare-symbol-entry?` removed with `plain-prose-code-error` — the
+;; per-block-eval pivot routes prose into SCI as a parse / unresolved-symbol
+;; error instead of detecting "every entry is a bare symbol" upfront.
 
-(defn- plain-prose-code-error
-  [raw-code code-entries]
-  (when (and (not (str/blank? (or raw-code "")))
-          (re-find #"\s" (str raw-code))
-          (<= 3 (count code-entries))
-          (every? bare-symbol-entry? code-entries))
-    (str "Provider returned plain prose where executable Clojure was required. "
-      "Wrap final prose in `(turn-answer! ...)` or emit a fenced `clojure` code block; "
-      "aborting this iteration instead of evaluating each word as a symbol.")))
-
-(defn- prose->comment
-  [raw-code]
-  (->> (str/split-lines (str raw-code))
-    (map #(str ";; " %))
-    (str/join "\n")))
-
-(defn- executable-block-source
-  [block]
-  (when (map? block)
-    (some-> (or (:source block)
-              (:code block)
-              (:text block)
-              (:content block))
-      str
-      str/trim)))
-
-(defn- executable-block-sources
-  [blocks]
-  (->> (or blocks [])
-    (keep executable-block-source)
-    (remove str/blank?)
-    vec))
-
-(defn- duplicate-fenced-blocks?
-  [blocks]
-  (let [sources (executable-block-sources blocks)]
-    (< (count (distinct sources)) (count sources))))
-
-(defn- dedupe-fenced-block-code
-  "Providers sometimes stutter and return the same fenced code block multiple
-   times (` ```clojure ... ``````clojure ... ````). Treat exact duplicate
-   executable blocks as transport noise: execute the first copy once instead
-   of burning a retry iteration."
-  [raw-code blocks]
-  (let [sources (executable-block-sources blocks)]
-    (if (< (count (distinct sources)) (count sources))
-      (str/join "\n\n" (distinct sources))
-      raw-code)))
+;; Removed during the per-block-eval pivot:
+;;   - `plain-prose-code-error` + `prose->comment` — the splitter no longer
+;;     produces multi-symbol entry vectors that a prose response could
+;;     accidentally satisfy. With one block = one SCI eval, prose lands in
+;;     SCI as a parse error or unresolved-symbol error and the model
+;;     self-corrects from the structured error.
+;;   - `duplicate-fenced-blocks?` + `dedupe-fenced-block-code` +
+;;     `executable-block-source`/-`sources` — dedup now happens inline
+;;     inside `code-entries-preflight` on the block vector directly.
 
 ;; ---------------------------------------------------------------------------
 ;; Vis-engine XML echo stripper (hallucinated <journal>/<bindings>/...).
@@ -1329,9 +1287,9 @@
 
 (defn- normalize-ask-result-vis-engine-xml-echo
   "When the LLM raw response contains hallucinated Vis-engine XML envelopes
-   (`<journal>`, `<bindings>`, ...), strip them and re-extract fenced clojure
-   blocks. Replaces `:result` and `:blocks` on the ask-result; leaves `:raw`
-   ORIGINAL so forensic logs / DB rows show what the model actually emitted.
+   (`<journal>`, `<bindings>`, ...), strip them and re-extract Markdown code
+   blocks. Replaces `:blocks` on the ask-result; leaves `:raw` ORIGINAL so
+   forensic logs / DB rows show what the model actually emitted.
 
    Pass-through when no envelope appears or stripping yields nothing usable."
   [ask-result]
@@ -1342,71 +1300,90 @@
         (if (or (str/blank? cleaned) (= cleaned raw))
           ask-result
           (let [blocks   (svar-codes/extract-code-blocks cleaned)
-                selected (svar-codes/select-blocks blocks "clojure")
-                result   (svar-codes/concat-sources selected)]
-            (if (str/blank? result)
+                selected (svar-codes/select-blocks blocks "clojure")]
+            (if (empty? selected)
               ask-result
               (assoc ask-result
-                :result result
                 :blocks selected
                 :vis/normalized-from-raw? true))))))))
 
 (defn- code-entries-preflight
-  ([iteration-position raw-code]
-   (code-entries-preflight iteration-position raw-code nil))
-  ([_iteration-position raw-code opts]
-   (let [raw-code (or raw-code "")
-         duplicate-blocks-normalized? (duplicate-fenced-blocks? (:blocks opts))
-         raw-code (dedupe-fenced-block-code raw-code (:blocks opts))
-         raw-fence-error (raw-markdown-fence-leak-error raw-code)
-         [forms parse-error] (if raw-fence-error
-                               [nil (ex-info raw-fence-error
-                                      {:vis/error :raw-markdown-fence-leak})]
-                               (split-top-level-forms raw-code))
-         parsed-code-entries (cond
-                               raw-fence-error
-                               [{:expr "(vis/preflight-error :raw-markdown-fence-leak)"
-                                 :vis/preflight-error raw-fence-error}]
+  "Per-block-eval preflight. One svar Markdown code block becomes one
+   code-entry; the block's `:source` is the entry's `:expr` verbatim.
+   SCI parses + evals each entry as a single chunk during execution
+   — there is no top-level form splitting at this layer.
 
-                               parse-error
-                               [{:expr (str raw-code) :parse-error parse-error}]
+   Gates retained:
+     - `raw-markdown-fence-leak-error` per block. A nested ``` inside the
+       extracted source means svar's normalizer fell into a recursive shape;
+       structured rejection beats a JVM crash.
+     - `answer-with-mutation-preflight-mismatch` across blocks. An iteration
+       containing both `(turn-answer! …)` and a mutating tool call is
+       structurally unobservable (write-then-read race).
+     - Duplicate-block dedup. Some providers stutter and emit the same
+       block twice; we keep the first copy and drop the rest."
+  [_iteration-position blocks]
+  (let [blocks                       (vec (or blocks []))
+        ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
+        ;; but operates on the block vector directly.
+        unique-blocks                (->> blocks
+                                       (remove #(str/blank? (:source %)))
+                                       (reduce (fn [{:keys [seen acc]} b]
+                                                 (if (contains? seen (:source b))
+                                                   {:seen seen :acc acc}
+                                                   {:seen (conj seen (:source b))
+                                                    :acc  (conj acc b)}))
+                                         {:seen #{} :acc []})
+                                       :acc)
+        duplicate-blocks-normalized? (< (count unique-blocks) (count blocks))
+        ;; Build entries: one block → one entry. Per-block raw-fence-leak
+        ;; guard — if a single block's source still carries a literal
+        ;; ```, reject just that block; sibling blocks keep their chance
+        ;; to run.
+        raw-entries                  (mapv (fn [b]
+                                             (let [src (:source b)]
+                                               (if-let [err (raw-markdown-fence-leak-error src)]
+                                                 {:expr "(vis/preflight-error :raw-markdown-fence-leak)"
+                                                  :vis/preflight-error err
+                                                  :block-lang (:lang b)}
+                                                 {:expr src
+                                                  :block-lang (:lang b)})))
+                                       unique-blocks)
+        raw-fence-error              (some :vis/preflight-error raw-entries)
+        parsed-total-blocks          (count raw-entries)
+        ;; Normalized concat of all surviving block sources — the
+        ;; identity used for iteration-hash dedup in the journal.
+        normalized-code              (->> raw-entries
+                                       (remove :vis/preflight-error)
+                                       (map (comp str/trim :expr))
+                                       (remove str/blank?)
+                                       (str/join "\n"))
+        code-hash                    (when-not (str/blank? normalized-code)
+                                       (sha256-hex normalized-code))
+        ;; Answer-with-mutation gate — fires when BOTH an answer and a
+        ;; mutating tool call exist in the same iteration's block set.
+        ;; Operates on `:expr` strings; the helper parses each lazily via
+        ;; `parsed-entry-form`. Skip when any block already flagged a
+        ;; fence-leak so the first error stays the primary one.
+        answer-with-mutation-mismatch (when (and (not raw-fence-error)
+                                              (pos? parsed-total-blocks))
+                                        (answer-with-mutation-preflight-mismatch raw-entries))
+        answer-with-mutation-error    (when answer-with-mutation-mismatch
+                                        (answer-with-mutation-preflight-error-message
+                                          answer-with-mutation-mismatch))]
+    {:code-entries                  (cond
+                                      answer-with-mutation-error
+                                      [{:expr "(vis/preflight-error :answer-with-mutation)"
+                                        :vis/preflight-error answer-with-mutation-error}]
 
-                               :else
-                               (vec (filter #(not (str/blank? (:expr %)))
-                                      (or forms []))))
-         plain-prose-error (when-not (or raw-fence-error parse-error)
-                             (plain-prose-code-error raw-code parsed-code-entries))
-         parsed-total-blocks (count parsed-code-entries)
-         normalized-code (normalized-code-source parsed-code-entries)
-         code-hash (when-not (str/blank? normalized-code)
-                     (sha256-hex normalized-code))
-         answer-with-mutation-mismatch (when (and (not raw-fence-error)
-                                               (not plain-prose-error)
-                                               (pos? parsed-total-blocks))
-                                         (answer-with-mutation-preflight-mismatch
-                                           parsed-code-entries))
-         answer-with-mutation-error (when answer-with-mutation-mismatch
-                                      (answer-with-mutation-preflight-error-message
-                                        answer-with-mutation-mismatch))]
-     {:code-entries (cond
-                      plain-prose-error
-                      [{:expr "(vis/preflight-error :plain-prose-code)"
-                        :comment (prose->comment raw-code)
-                        :vis/preflight-error plain-prose-error}]
-
-                      answer-with-mutation-error
-                      [{:expr "(vis/preflight-error :answer-with-mutation)"
-                        :vis/preflight-error answer-with-mutation-error}]
-
-                      :else
-                      parsed-code-entries)
-      :answer-with-mutation-preflight-error answer-with-mutation-error
-      :plain-prose-preflight-error plain-prose-error
-      :raw-fence-preflight-error raw-fence-error
-      :duplicate-blocks-normalized? duplicate-blocks-normalized?
-      :normalized-code normalized-code
-      :code-hash code-hash
-      :original-total-blocks parsed-total-blocks})))
+                                      :else
+                                      raw-entries)
+     :answer-with-mutation-preflight-error answer-with-mutation-error
+     :raw-fence-preflight-error     raw-fence-error
+     :duplicate-blocks-normalized?  duplicate-blocks-normalized?
+     :normalized-code               normalized-code
+     :code-hash                     code-hash
+     :original-total-blocks         parsed-total-blocks}))
 
 (defn- answer-validation-rejection-message
   [{:keys [id]} hit]
@@ -2002,28 +1979,27 @@
                :thinking      thinking
                :vis-engine-xml-echo-stripped? (boolean (:vis/normalized-from-raw? ask-result))})
           api-usage (ask-result->api-usage ask-result)
-          ;; svar/ask-code! returns the concatenated source string in :result.
-          ;; Parse it into top-level forms; each form becomes one
-          ;; expression_state row.
-          raw-code (or (:result ask-result) "")
+          ;; svar/ask-code! returns the per-block vector in `:blocks`
+          ;; (single source of truth; the legacy `:result` concatenated
+          ;; string was removed in svar v0.5.3). One block → one
+          ;; code-entry; SCI evaluates each entry as a single chunk.
+          blocks (vec (:blocks ask-result))
           preflight-start-ns (System/nanoTime)
-          preflight-result (code-entries-preflight iteration-position raw-code
-                             {:blocks (:blocks ask-result)})
+          preflight-result (code-entries-preflight iteration-position blocks)
           preflight-duration-ms (elapsed-ms preflight-start-ns)
-          {:keys [code-entries]} preflight-result
+          {:keys [code-entries normalized-code]} preflight-result
           _ (log-stage! :response-preflight/stop iteration
               {:duration-ms preflight-duration-ms
-               :code-length (count raw-code)
+               :block-count (count blocks)
+               :code-length (count normalized-code)
                :forms (count code-entries)
-               :parse-error? (boolean (:parse-error (first code-entries)))
-               :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))
-               :plain-prose-preflight? (boolean (:plain-prose-preflight-error preflight-result))})
+               :raw-fence-preflight? (boolean (:raw-fence-preflight-error preflight-result))})
           _ (when on-chunk
               (on-chunk {:phase :response-parse
                          :status :done
                          :iteration iteration-position
                          :duration-ms preflight-duration-ms
-                         :code-length (count raw-code)
+                         :code-length (count normalized-code)
                          :forms (count code-entries)}))
           engine-timing {:provider-call-ms provider-duration-ms
                          :response-normalize-ms normalize-duration-ms
@@ -2328,7 +2304,6 @@
              :llm-actual-model model-name
              :llm-fallback-trace (:routed/fallback-trace ask-result)
              :llm-raw-response (:raw ask-result)
-             :llm-executable-code (:result ask-result)
              :llm-executable-blocks (:blocks ask-result)
              :assistant-message (:assistant-message ask-result)}
             (let [final-answer* (append-runtime-appendices environment final-answer value)]
@@ -2355,7 +2330,6 @@
                :llm-actual-model model-name
                :llm-fallback-trace (:routed/fallback-trace ask-result)
                :llm-raw-response (:raw ask-result)
-               :llm-executable-code (:result ask-result)
                :llm-executable-blocks (:blocks ask-result)
                :assistant-message (:assistant-message ask-result)})))
           ;; Normal path
@@ -2374,7 +2348,6 @@
          :llm-actual-model (actual-llm-model resolved-model ask-result)
          :llm-fallback-trace (:routed/fallback-trace ask-result)
          :llm-raw-response (:raw ask-result)
-         :llm-executable-code (:result ask-result)
          :llm-executable-blocks (:blocks ask-result)
          :assistant-message (:assistant-message ask-result)}))))
 
@@ -3506,7 +3479,6 @@
                                                     :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                                     :llm-model (:llm-model iteration-result)
                                                     :llm-raw-response (:llm-raw-response iteration-result)
-                                                    :llm-executable-code (:llm-executable-code iteration-result)
                                                     :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                     :llm-assistant-message (:assistant-message iteration-result)
                                                     :metadata (cond-> (iteration-metadata iteration
@@ -3590,7 +3562,7 @@
                                                 [(inc (long iteration))
                                                  {:thinking thinking
                                                   :blocks   blocks
-                                                  :llm-executable-code (:llm-executable-code iteration-result)
+                                                  :llm-executable-blocks (:llm-executable-blocks iteration-result)
                                                   :llm-provider (:llm-provider iteration-result)
                                                   :llm-model    (:llm-model iteration-result)
                                                   ;; svar's canonical replay handle for this

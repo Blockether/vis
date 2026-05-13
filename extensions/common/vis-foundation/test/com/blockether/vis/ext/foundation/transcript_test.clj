@@ -88,7 +88,6 @@
                                                            "<iteration_hint importance=\"high\">observe before answer</iteration_hint>\n"
                                                            "</iteration_hints>")}]
                                 :llm-raw-response "```clojure\n(+ 1 1)\n```"
-                                :llm-executable-code "(+ 1 1)"
                                 :llm-executable-blocks [{:lang "clojure" :source "(+ 1 1)"}]
                                 :tokens   {:input 100 :output 20 :reasoning 0 :cached 30}
                                 :cost-usd 0.0042})
@@ -259,7 +258,9 @@
           (expect (= 22 (:llm-raw-response-length iter)))
           (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
                     (:llm-raw-response-sha256 iter)))
-          (expect (= "(+ 1 1)" (:llm-executable-code iter)))
+          ;; :llm-executable-code removed during the per-block-eval pivot;
+          ;; :llm-executable-blocks is the single source of truth.
+          (expect (nil? (:llm-executable-code iter)))
           (expect (= [{:lang "clojure" :source "(+ 1 1)"}]
                     (:llm-executable-blocks iter))))
         (finally (vis/db-dispose-connection! s)))))
