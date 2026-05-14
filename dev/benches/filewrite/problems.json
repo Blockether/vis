@@ -292,5 +292,68 @@
       }
     ],
     "verify": "(require 'mag) (assert (resolve 'mag/discount-rate) \"must define `mag/discount-rate`\") (assert (= 0.85 (deref (resolve 'mag/discount-rate)))) (assert (= 85.0 (mag/discount 100))) (let [src (slurp \"mag.clj\")] (assert (= 1 (count (re-seq #\"0\\.85\" src))) \"literal 0.85 should appear exactly once (in the def)\") (assert (re-find #\"\\(def\\s+discount-rate\\b\" src) \"use `def discount-rate`\")) (println :pass)"
+  },
+  {
+    "id": "fw-201",
+    "title": "merge 3 files into one namespace",
+    "difficulty": "Medium",
+    "description": "`a.clj`, `b.clj`, `c.clj` form a dependency chain (a \u2190 b \u2190 c). Create a single new file `merged.clj` in namespace `merged` that inlines every var from the three originals. `merged/final` must behave identically to `c/final`. The new file must NOT contain any `:require` form \u2014 everything is internal.",
+    "starter": [
+      {
+        "path": "a.clj",
+        "content": "(ns a)\n\n(def base 10)\n"
+      },
+      {
+        "path": "b.clj",
+        "content": "(ns b\n  (:require [a]))\n\n(def doubled (* a/base 2))\n"
+      },
+      {
+        "path": "c.clj",
+        "content": "(ns c\n  (:require [b]))\n\n(defn final [] (+ b/doubled 5))\n"
+      }
+    ],
+    "verify": "(require 'merged) (assert (= 25 (merged/final))) (let [src (slurp \"merged.clj\")] (assert (re-find #\"\\(ns\\s+merged\\b\" src) \"namespace must be `merged`\") (assert (not (re-find #\":require\" src)) \"merged.clj must have no :require\")) (println :pass)"
+  },
+  {
+    "id": "fw-202",
+    "title": "merge 3-tier api into one report",
+    "difficulty": "Medium",
+    "description": "Collapse `nums.clj`, `math.clj`, and `api.clj` into a single `report.clj` in namespace `report`. Expose `report/report` returning `{:even 20 :odd 16}`. No `:require` in the merged file.",
+    "starter": [
+      {
+        "path": "nums.clj",
+        "content": "(ns nums)\n\n(def evens [2 4 6 8])\n(def odds [1 3 5 7])\n"
+      },
+      {
+        "path": "math.clj",
+        "content": "(ns math\n  (:require [nums]))\n\n(defn sum-evens [] (apply + nums/evens))\n(defn sum-odds [] (apply + nums/odds))\n"
+      },
+      {
+        "path": "api.clj",
+        "content": "(ns api\n  (:require [math]))\n\n(defn report [] {:even (math/sum-evens) :odd (math/sum-odds)})\n"
+      }
+    ],
+    "verify": "(require 'report) (assert (= {:even 20 :odd 16} (report/report))) (let [src (slurp \"report.clj\")] (assert (re-find #\"\\(ns\\s+report\\b\" src) \"namespace must be `report`\") (assert (not (re-find #\":require\" src)) \"report.clj must have no :require\")) (println :pass)"
+  },
+  {
+    "id": "fw-203",
+    "title": "merge geometry pipeline",
+    "difficulty": "Medium",
+    "description": "Merge `util.clj`, `shape.clj`, `main.clj` into `combined.clj` (namespace `combined`). The new file must expose `combined/total` equal to `37` (= rectangle 3\u00d74 + square of 5) without any `:require`.",
+    "starter": [
+      {
+        "path": "util.clj",
+        "content": "(ns util)\n\n(defn square [x] (* x x))\n"
+      },
+      {
+        "path": "shape.clj",
+        "content": "(ns shape\n  (:require [util]))\n\n(defn area-rect [w h] (* w h))\n(defn area-sq [n] (util/square n))\n"
+      },
+      {
+        "path": "main.clj",
+        "content": "(ns main\n  (:require [shape]))\n\n(def total (+ (shape/area-rect 3 4) (shape/area-sq 5)))\n"
+      }
+    ],
+    "verify": "(require 'combined) (assert (= 37 combined/total)) (let [src (slurp \"combined.clj\")] (assert (re-find #\"\\(ns\\s+combined\\b\" src) \"namespace must be `combined`\") (assert (not (re-find #\":require\" src)) \"combined.clj must have no :require\")) (println :pass)"
   }
 ]

@@ -26,25 +26,35 @@ verification.
   `sum over tasks of (iterations if passed else 30)`. Failed tasks are
   penalized at 30 so the optimizer can't get a "good" score by skipping work.
 - **Secondary** (we actively shrink the * starred * ones too):
-  - `pass_count` (out of 3) — number of solved tasks. MUST stay at 3
-    or `iter_score` is meaningless.
-  - `pass_rate` (%) — pass_count / 3
+  - `pass_count` (out of N tasks) — number of solved tasks. MUST stay at
+    `task_count` or `iter_score` is meaningless.
+  - `pass_rate` (%) — pass_count / task_count
   - `mean_iterations_pass` — mean iter count over passed tasks (sanity)
   - `max_iterations` — slowest passed task's iter count
-  - `total_cost_usd` * — Z.ai cost across 3 tasks (USD, glm-5.1 pricing)
+  - `block_errors` * — number of per-form eval errors (SCI throw,
+    `(spit ...)` blocked, `v/patch :search must be non-blank`, ...).
+    Each one wastes an iteration. Driving this to 0 is one of the
+    biggest iteration-shrink levers we have.
+  - `total_cost_usd` * — Z.ai cost across tasks (USD, glm-5.1 pricing)
   - `total_tokens` * — sum of input+output+reasoning tokens
   - `mean_prompt_chars` * — mean USER-prompt size sent per task
-  - `system_prompt_chars` * — current Vis core system prompt size
-    (constant per Vis build; cached, recomputed only when prompt.clj
-    changes). We want this as small as possible without breaking the
-    answer gate or extension dispatch.
-  - `context_score` * — `system_prompt_chars + mean_prompt_chars`, the
+  - `system_prompt_chars` * — Vis core system prompt size (constant per
+    Vis build; cached, recomputed only when `prompt.clj` changes).
+  - `foundation_prompt_chars` * — `v/` extension prompt size.
+  - `z_prompt_chars` * — `z/` extension prompt size.
+  - `ext_prompt_chars` * — system + foundation + z prompt sizes combined.
+  - `context_score` * — `ext_prompt_chars + mean_prompt_chars`, the
     combined floor of context sent on iteration 1.
-  - `wall_seconds` — total walltime for the 3 tasks
+  - `z_patch_calls` / `v_patch_calls` — count of each patch surface used.
+  - `z_patch_share` (%) — share of patch ops that went through `z/patch`.
+    For Clojure/EDN edits `z/patch` is the right tool; higher is better.
+  - `wall_seconds` — total walltime
 
   Keep-blockers (auto-discard if violated, even with iter_score win):
-  - `pass_count` drops below 3
-  - `system_prompt_chars` increases by more than 5% vs. previous keep
+  - `pass_count` drops below `task_count`
+  - `block_errors` increases by more than 1 vs. previous keep
+  - `system_prompt_chars` or `ext_prompt_chars` increases by more than 5%
+    vs. previous keep
   - `mean_prompt_chars` increases by more than 25% vs. previous keep
   - `total_cost_usd` increases by more than 50% vs. previous keep
 
