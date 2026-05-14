@@ -11,6 +11,8 @@
 .lsp/
 .shadow-cljs/
 target/
+.pi/extensions/*/node_modules/
+.pi/chiasmus/
 
 # IDE
 .idea/

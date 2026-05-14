@@ -1,0 +1,9 @@
+{
+  "name": "vis-pi-chiasmus-extension",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "chiasmus": "^0.1.17"
+  }
+}

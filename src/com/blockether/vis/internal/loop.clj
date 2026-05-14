@@ -1,30 +1,4 @@
 (ns com.blockether.vis.internal.loop
-  "vis iteration runtime + conversations - the library surface.
-
-   Owns:
-     - Query runtime settings (`*rlm-context*`, `*eval-timeout-ms*`, ...)
-     - Single-iteration runner (`run-iteration`)
-     - Multi-iteration turn engine + router cache (`turn!`,
-       `get-router`, `rebuild-router!`)
-     - Environment lifecycle (`create-environment`, `dispose-environment!`)
-     - Conversation env cache (`create!`, `by-id`, `by-channel`,
-       `send!`, `close!`, `delete!`, ...)
-
-   The binary entry point (`-main`), the persistence-backed Telemere
-   `:db` handler, the one-shot agent helper, and every built-in CLI
-   command live in `com.blockether.vis.internal.main`. Channels and embedded
-   consumers reach this namespace directly for `send!` / `turn!` /
-   `create!` / `create-environment`; the binary reaches it through
-   `main.clj`.
-
-   Prompt / env / persistance / config / extension / error are all
-   required directly. The SCI sandbox machinery lives in
-   `com.blockether.vis.internal.env`; system-prompt assembly +
-   per-iteration context blocks in `com.blockether.vis.internal.prompt`;
-   the storage facade in `com.blockether.vis.internal.persistance`;
-   configuration + active provider state in
-   `com.blockether.vis.internal.config`; the extension subsystem in
-   `com.blockether.vis.internal.extension`."
   (:refer-clojure)
   (:require
    [clojure.set :as set]
@@ -52,14 +26,8 @@
    [java.security MessageDigest]
    [java.util.concurrent ConcurrentHashMap Semaphore]))
 
-;; ===========================================================================
-
 ;; =============================================================================
 ;; Query runtime settings
-;; =============================================================================
-
-;; =============================================================================
-;; Eval timeout
 ;; =============================================================================
 
 (def DEFAULT_EVAL_TIMEOUT_MS
@@ -67,60 +35,21 @@
   120000)
 
 (def MIN_EVAL_TIMEOUT_MS
-  "Floor for :eval-timeout-ms. 3 s gives filesystem tools (grep, list-dir)
-   headroom on medium-sized repos. Below about 1 s nearly every grep timed out
-   at the race boundary; 3 s leaves comfortable margin without masking
-   genuine infinite loops."
+  "Floor for :eval-timeout-ms."
   3000)
 
 (def MAX_EVAL_TIMEOUT_MS
-  "Hard ceiling for :eval-timeout-ms to prevent runaway SCI futures.
-   30 minutes - anything longer is a bug, not a feature."
+  "Hard ceiling for :eval-timeout-ms."
   (* 30 60 1000))
 
 (def ^:dynamic *eval-timeout-ms*
-  "Dynamic timeout in milliseconds for SCI code evaluation. Bound per turn!
-   call via :eval-timeout-ms. Nested turns inherit the outer binding.
-   Clamped at the turn API boundary to
-   [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
+  "Dynamic timeout in milliseconds for SCI code evaluation."
   DEFAULT_EVAL_TIMEOUT_MS)
 
-;; Note (provider HTTP timeout): pre-Fix 2 we considered adding a hard
-;; wall-clock cap (`*provider-timeout-ms*`) and threading it into
-;; `svar/ask-code!` as `:timeout-ms`. We deliberately don't:
-;;   1. svar's existing 5-minute default already flows through
-;;      `babashka.http-client` -> JDK `HttpRequest.Builder.timeout`.
-;;      The iter-7 hang on `1b7603b9-...` proved that timer doesn't
-;;      reliably fire for HTTP/2 + `BodyHandlers.ofInputStream` on
-;;      JDK 25 when the upstream never sends body frames — piling on
-;;      a second timer through the same code path wouldn't help.
-;;   2. Reasoning models (Claude extended thinking, o1, deepseek-r1)
-;;      legitimately take several minutes for a single response. A
-;;      defensive 2-minute cap was killing valid responses to mask a
-;;      cancellation-reachability bug.
-;;   3. The control axis is cancellation, not time. The `vis/cancel!`
-;;      pipeline (`FutureTask.cancel(true)` -> `Thread.interrupt()`
-;;      -> JDK unparks the virtual thread -> `HttpClient.send`
-;;      throws and closes the HTTP/2 stream) terminates a hung call
-;;      in milliseconds once the user hits Esc. The fix is making
-;;      Esc reach `:cancel-turn` while the draft is non-empty (see
-;;      `channel_tui/screen.clj`), not capping every request.
-;; This mirrors how pi (`@earendil-works/pi-coding-agent`) does it:
-;; its default `providerRetrySettings.timeoutMs` is `undefined`; user
-;; cancellation flows through an `AbortController` plumbed into the
-;; provider fetch on every call.
-
 (defn clamp-eval-timeout-ms
-  "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS].
-   `candidate` may be nil - callers should resolve the fallback before calling.
-   Accepts any integer, coerces to long. Prevents runaway SCI futures from
-   absurdly high values and sub-second timeouts from absurdly low values."
+  "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
   [candidate]
   (-> candidate long (max MIN_EVAL_TIMEOUT_MS) (min MAX_EVAL_TIMEOUT_MS)))
-
-;; =============================================================================
-;; Concurrency settings
-;; =============================================================================
 
 (def DEFAULT_CONCURRENCY
   "Default concurrency settings. Applied when :concurrency is absent from turn!."
@@ -131,13 +60,8 @@
   "Merged concurrency settings for the current turn! process."
   DEFAULT_CONCURRENCY)
 
-;; =============================================================================
-;; RLM debug context
-;; =============================================================================
-
 (def ^:dynamic *rlm-context*
-  "Dynamic context for RLM debug logging. Bind with
-   {:rlm-debug? true :rlm-phase :phase-name :rlm-environment-id \"...\"}."
+  "Dynamic context for RLM debug logging."
   nil)
 
 ;; =============================================================================
@@ -178,10 +102,6 @@
   [started-ns]
   (/ (double (- (System/nanoTime) started-ns)) 1000000.0))
 
-;; `parse-repair-timeout-ms` removed with the splitter chain. No
-;; parinfer/quote-rebalance repair runs anymore — SCI parses each block as
-;; one chunk and surfaces its own error.
-
 (defn normalize-reasoning-level [v]
   (svar/normalize-reasoning-level v))
 
@@ -198,7 +118,7 @@
     (boolean (re-find #"(?i)claude" (str (:name resolved-model))))))
 
 (def ^:private casual-request-pattern
-  #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋|ping)[\s!.?,]*\s*$")
+  #"(?iu)^\s*(hi|hey|hello|yo|sup|siema|cześć|czesc|hej|dzień dobry|dzie dobry|thanks|thank you|thx|ok|okay|👍|👋)[\s!.?,]*\s*$")
 
 (defn- casual-user-request?
   [s]
@@ -282,35 +202,9 @@
   {:all true
    :readers (fn [_tag] (fn [val] (list 'do val)))})
 
-;; ---------------------------------------------------------------------------
-;; Removed Phase B — the entire splitter / lint / repair stack:
-;;
-;;   check-syntax, check-bare-list, parse-clojure-syntax,
-;;   string-as-fn-call?, answer-form?, find-string-as-fn-in-answer,
-;;   string-as-fn-mistake-message, detect-common-mistakes,
-;;   quote-rebalance, parinfer-rebalance, try-repair-with-timeout,
-;;   split-top-level-forms.
-;;
-;; Vis no longer parses, lints, or repairs Clojure source before SCI eval.
-;; Each Markdown code block svar extracts becomes one code-entry; the entry's
-;; :expr is fed verbatim to `sci/eval-string+` and SCI's parse / runtime
-;; error surfaces as the block's :error map. The model self-corrects from
-;; that error next iteration.
-;;
-;; Forward declare for `raw-markdown-fence-leak-error` no longer needed —
-;; the only caller that ran before it was `detect-common-mistakes` (gone).
-;; The fn is now defined in source order alongside the other preflight
-;; helpers and called directly from `code-entries-preflight`.
-;; ---------------------------------------------------------------------------
-
-;; The pre-Phase-B splitter (and its parinfer / quote-rebalance /
-;; answer-escape-e repair pipeline) was a ~140-line edamame-based slicer
-;; that lived here. With per-block eval the splitter is never called — SCI
-;; parses each Markdown code block's source directly. Body removed; commit
-;; history (`split-top-level-forms`) preserves the original.
-
 (def ^:private BARE_STRING_RE #"^\s*\"[^\"]*\"\s*$")
 (def ^:private MARKDOWN_FENCE_RE #"^\s*`{3,}[A-Za-z0-9_-]*\s*$")
+
 (defn- bare-string-code-block? [expr]
   (boolean (re-matches BARE_STRING_RE (str expr))))
 
@@ -4031,7 +3925,9 @@
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom               (atom 0)
         db-info                  (persistance/db-create-connection! db)
-        bindings-atom           (atom {:index nil :revision -1 :current-revision 0})
+        bindings-atom           (atom {:index            nil 
+                                       :revision         -1 
+                                       :current-revision 0})
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
                                         :conversation-id nil})
@@ -4153,31 +4049,31 @@
         ;; `(v/conversation-state)` -> :current-turn :user-request (and through
         ;; :transcript :turns for cross-turn history), so a separate
         ;; sandbox primitive would just duplicate the surface.
-        env-bindings             {'turn-answer!         answer-fn
+        env-bindings             {'turn-answer!            answer-fn
                                   'set-conversation-title! conversation-title-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings
                                   (:custom-bindings @state-atom)))
-        env {:environment-id  environment-id
-             :conversation-id conversation-id
-             :channel         (or channel :tui)
-             :depth-atom      depth-atom
-             :db-info         db-info
-             :bindings-atom  bindings-atom
-             :state-atom      state-atom
-             :sci-ctx         sci-ctx
-             :sandbox-ns      sandbox-ns
-             :initial-ns-keys initial-ns-keys
-             :router          router
-             :answer-atom           answer-atom
-             :current-form-idx-atom current-form-idx-atom
-             :current-iteration-atom current-iteration-atom
-             :current-iteration-id-atom current-iteration-id-atom
+        env {:environment-id                    environment-id
+             :conversation-id                   conversation-id
+             :channel                           (or channel :tui)
+             :depth-atom                        depth-atom
+             :db-info                           db-info
+             :bindings-atom                     bindings-atom
+             :state-atom                        state-atom
+             :sci-ctx                           sci-ctx
+             :sandbox-ns                        sandbox-ns
+             :initial-ns-keys                   initial-ns-keys
+             :router                            router
+             :answer-atom                       answer-atom
+             :current-form-idx-atom             current-form-idx-atom
+             :current-iteration-atom            current-iteration-atom
+             :current-iteration-id-atom         current-iteration-id-atom
              :current-conversation-turn-id-atom current-conversation-turn-id-atom
-             :current-turn-position-atom current-turn-position-atom
-             :current-user-request-atom current-user-request-atom
-             :conversation-title-atom            conversation-title-atom
-             :extensions            (atom [])}]
+             :current-turn-position-atom        current-turn-position-atom
+             :current-user-request-atom         current-user-request-atom
+             :conversation-title-atom           conversation-title-atom
+             :extensions                        (atom [])}]
     (reset! environment-atom env)
     (swap! state-atom assoc :environment env :conversation-id conversation-id)
     ;; Restore persisted vars when resuming an existing conversation.
