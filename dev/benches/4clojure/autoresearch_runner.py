@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
-"""Autoresearch driver for 4Clojure iteration-minimization.
+"""Autoresearch driver: minimize Vis iterations on a mixed Clojure workload.
 
-For one autoresearch iteration:
-  * choose 3 problems by deterministic rotation (no repeats),
-  * run `bin/vis run --json` per problem in a fresh tmp workdir,
-  * parse {iteration-count, tokens, cost} from the Vis JSON envelope,
-  * read `solution.edn`, judge with `eval_one.clj`,
-  * emit `METRIC name=value` lines.
+Each autoresearch iteration picks N tasks from two pools by deterministic
+rotation: 4Clojure (`dev/benches/4clojure/problems.json`) and filewrite
+(`dev/benches/filewrite/problems.json`). With the default split 2:1 each
+iter scores 2 4clojure tasks + 1 filewrite task, but the offsets advance
+independently so we always see fresh problems.
 
-Failed tasks are penalized at FAIL_PENALTY iterations so the optimizer
-cannot improve `iter_score` by skipping work.
+For each task we run `bin/vis run --full-trace-json-stream` in a fresh
+tmp workdir, parse the trace stream for `iteration-count`, `tokens`,
+`cost`, and grade locally:
 
-Environment variables (used by tests and ad-hoc reruns):
-  VIS_PROVIDER             - default "zai-coding-plan"
-  VIS_MODEL                - default "glm-5.1"
-  VIS_BIN                  - default <repo>/bin/vis
-  AUTORESEARCH_N           - tasks per iteration (default 3)
-  AUTORESEARCH_TIMEOUT     - per-task wall timeout, seconds (default 120)
-  AUTORESEARCH_FAIL_PENALTY- iterations attributed to a failed task (default 30)
-  AUTORESEARCH_OFFSET      - override rotation offset (default = wc -l autoresearch.jsonl)
-  AUTORESEARCH_OUT         - artifact directory (default ./dev/benches/4clojure/autoresearch/<ts>)
+  * 4Clojure  → `dev/benches/4clojure/eval_one.clj` runs the public tests
+  * filewrite → `clojure -Sdeps '{:paths ["<workdir>"]}' -M -e <verify>`
+                expecting `:pass` on stdout
 
-Do NOT log final answers to autoresearch.jsonl: hashes only. The judge IS
-the eval_one.clj evaluator; this script never grades.
+Output: `METRIC name=value` lines on stdout.
+
+Environment overrides:
+  VIS_PROVIDER             default "zai-coding-plan"
+  VIS_MODEL                default "glm-5.1"
+  VIS_BIN                  default <repo>/bin/vis
+  AUTORESEARCH_N           total tasks per iteration (default 3)
+  AUTORESEARCH_FILEWRITE_PER_ITER  filewrite slice size (default 1)
+  AUTORESEARCH_TIMEOUT     per-task wall timeout, seconds (default 240)
+  AUTORESEARCH_FAIL_PENALTY iter count attributed to a failed task (30)
+  AUTORESEARCH_EVAL_TIMEOUT judge timeout, seconds (default 30)
+  AUTORESEARCH_OFFSET      override rotation offset (default = len(jsonl))
+  AUTORESEARCH_OUT         artifact dir (default ./dev/benches/4clojure/autoresearch/<ts>)
 """
 from __future__ import annotations
 
@@ -39,9 +44,16 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[2]
-PROBLEMS_JSON = HERE / "problems.json"
-EVALUATOR = HERE / "eval_one.clj"
-PROMPT_TEMPLATE = HERE / "autoresearch_prompt.md"
+FOURCLOJURE_PROBLEMS = HERE / "problems.json"
+FOURCLOJURE_EVALUATOR = HERE / "eval_one.clj"
+FOURCLOJURE_PROMPT_TEMPLATE = HERE / "autoresearch_prompt.md"
+FILEWRITE_DIR = REPO_ROOT / "dev" / "benches" / "filewrite"
+FILEWRITE_PROBLEMS = FILEWRITE_DIR / "problems.json"
+FILEWRITE_PROMPT_TEMPLATE = FILEWRITE_DIR / "autoresearch_prompt.md"
+SYS_PROMPT_SRC = REPO_ROOT / "src" / "com" / "blockether" / "vis" / "internal" / "prompt.clj"
+FOUNDATION_PROMPT_SRC = REPO_ROOT / "extensions" / "common" / "vis-foundation" / "src" / "com" / "blockether" / "vis" / "ext" / "foundation" / "core.clj"
+Z_PROMPT_SRC = REPO_ROOT / "extensions" / "languages" / "clojure" / "src" / "com" / "blockether" / "vis" / "ext" / "lang_clojure" / "core.clj"
+PROMPT_SIZE_CACHE = HERE / ".prompt_sizes.cache.json"
 JSONL = REPO_ROOT / "autoresearch.jsonl"
 
 VIS_BIN = os.environ.get("VIS_BIN", str(REPO_ROOT / "bin" / "vis"))
@@ -49,9 +61,10 @@ VIS_PROVIDER = os.environ.get("VIS_PROVIDER", "zai-coding-plan")
 VIS_MODEL = os.environ.get("VIS_MODEL", "glm-5.1")
 CLOJURE = os.environ.get("CLOJURE", "clojure")
 N_TASKS = int(os.environ.get("AUTORESEARCH_N", "3"))
-TIMEOUT = int(os.environ.get("AUTORESEARCH_TIMEOUT", "120"))
+FILEWRITE_PER_ITER = int(os.environ.get("AUTORESEARCH_FILEWRITE_PER_ITER", "1"))
+TIMEOUT = int(os.environ.get("AUTORESEARCH_TIMEOUT", "240"))
 FAIL_PENALTY = int(os.environ.get("AUTORESEARCH_FAIL_PENALTY", "30"))
-EVAL_TIMEOUT = int(os.environ.get("AUTORESEARCH_EVAL_TIMEOUT", "20"))
+EVAL_TIMEOUT = int(os.environ.get("AUTORESEARCH_EVAL_TIMEOUT", "30"))
 SENTINEL = "__VIS_4CLOJURE_SOLUTION__"
 
 
@@ -59,9 +72,73 @@ def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
+# ---------------------------------------------------------------------------
+# Static prompt-size measurement (cached; one JVM call when sources change).
+# ---------------------------------------------------------------------------
+
+def _prompt_sizes_via_clojure() -> dict[str, int]:
+    form = (
+        "(require '[com.blockether.vis.internal.prompt :as p] "
+        "         '[com.blockether.vis.ext.foundation.core :as f] "
+        "         '[com.blockether.vis.ext.lang-clojure.core :as zc]) "
+        "(println (count (p/build-system-prompt {}))) "
+        "(println (count ((:ext/prompt f/vis-extension) {}))) "
+        "(println (count ((:ext/prompt zc/clojure-extension) {})))"
+    )
+    proc = subprocess.run(
+        [CLOJURE, "-M", "-e", form],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=180,
+    )
+    lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
+    nums = [int(l) for l in lines if l.lstrip("-").isdigit()][-3:]
+    if len(nums) != 3:
+        raise RuntimeError(f"prompt-size probe parse failed; stdout={proc.stdout[-200:]} stderr={proc.stderr[-200:]}")
+    return {
+        "system_prompt_chars": nums[0],
+        "foundation_prompt_chars": nums[1],
+        "z_prompt_chars": nums[2],
+    }
+
+
+def prompt_sizes() -> dict[str, int]:
+    """Return {system_prompt_chars, foundation_prompt_chars, z_prompt_chars}.
+
+    Cached on disk; invalidates when any of the relevant sources change.
+    """
+    fingerprint = {}
+    for src in (SYS_PROMPT_SRC, FOUNDATION_PROMPT_SRC, Z_PROMPT_SRC):
+        try:
+            fingerprint[src.name] = src.stat().st_mtime
+        except OSError:
+            fingerprint[src.name] = 0.0
+    if PROMPT_SIZE_CACHE.exists():
+        try:
+            cached = json.loads(PROMPT_SIZE_CACHE.read_text())
+            if cached.get("fingerprint") == fingerprint and isinstance(cached.get("sizes"), dict):
+                return dict(cached["sizes"])
+        except Exception:
+            pass
+    try:
+        sizes = _prompt_sizes_via_clojure()
+    except Exception as e:
+        log(f"[autoresearch] prompt_sizes probe failed: {e}")
+        return {"system_prompt_chars": -1, "foundation_prompt_chars": -1, "z_prompt_chars": -1}
+    try:
+        PROMPT_SIZE_CACHE.write_text(
+            json.dumps({"fingerprint": fingerprint, "sizes": sizes})
+        )
+    except OSError:
+        pass
+    return sizes
+
+
+# ---------------------------------------------------------------------------
+# Workload selection
+# ---------------------------------------------------------------------------
+
 def autoresearch_offset() -> int:
     raw = os.environ.get("AUTORESEARCH_OFFSET")
-    if raw:
+    if raw is not None:
         return int(raw)
     if JSONL.exists():
         with JSONL.open() as f:
@@ -69,13 +146,32 @@ def autoresearch_offset() -> int:
     return 0
 
 
-def pick_problems(problems: list[dict], offset: int, n: int) -> list[dict]:
-    if not problems:
-        raise RuntimeError("problems.json is empty")
-    return [problems[(offset * n + i) % len(problems)] for i in range(n)]
+def pick_workload(offset: int) -> list[dict]:
+    """Mixed slice: FILEWRITE_PER_ITER filewrite + remaining 4Clojure tasks.
+
+    Both pools rotate independently. Returns task dicts with a `kind` field.
+    """
+    fc = json.loads(FOURCLOJURE_PROBLEMS.read_text())
+    fw = json.loads(FILEWRITE_PROBLEMS.read_text())
+    fw_n = max(0, min(FILEWRITE_PER_ITER, N_TASKS))
+    fc_n = max(0, N_TASKS - fw_n)
+    tasks: list[dict] = []
+    for i in range(fc_n):
+        problem = dict(fc[(offset * fc_n + i) % len(fc)])
+        problem["kind"] = "4clojure"
+        tasks.append(problem)
+    for i in range(fw_n):
+        problem = dict(fw[(offset * fw_n + i) % len(fw)])
+        problem["kind"] = "filewrite"
+        tasks.append(problem)
+    return tasks
 
 
-def render_problem(problem: dict) -> str:
+# ---------------------------------------------------------------------------
+# Prompt rendering
+# ---------------------------------------------------------------------------
+
+def render_fc_problem_body(problem: dict) -> str:
     lines = [
         f"# 4Clojure problem {problem['id']}: {problem['title']}",
         "",
@@ -102,14 +198,46 @@ def render_problem(problem: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def render_prompt(problem: dict, solution_path: Path) -> str:
-    template = PROMPT_TEMPLATE.read_text()
+def render_fc_prompt(problem: dict, solution_path: Path) -> str:
+    template = FOURCLOJURE_PROMPT_TEMPLATE.read_text()
     return template.format(
-        problem=render_problem(problem),
+        problem=render_fc_problem_body(problem),
         solution_path=str(solution_path),
         sentinel=SENTINEL,
     )
 
+
+def render_fw_problem_body(problem: dict) -> str:
+    return "\n".join([
+        f"# {problem['id']}: {problem['title']}",
+        "",
+        f"Difficulty: {problem.get('difficulty', 'Unknown')}",
+        "",
+        problem["description"],
+    ]) + "\n"
+
+
+def render_fw_starter_listing(problem: dict) -> str:
+    lines = []
+    for f in problem.get("starter", []):
+        lines.append(f"`{f['path']}`:")
+        lines.append("```clojure")
+        lines.append(f["content"].rstrip())
+        lines.append("```")
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+def render_fw_prompt(problem: dict) -> str:
+    template = FILEWRITE_PROMPT_TEMPLATE.read_text()
+    return template.format(
+        problem=render_fw_problem_body(problem),
+        starter_listing=render_fw_starter_listing(problem),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Judges
+# ---------------------------------------------------------------------------
 
 def safe_get(d: dict | None, *path, default=None):
     cur: Any = d
@@ -122,14 +250,14 @@ def safe_get(d: dict | None, *path, default=None):
     return cur if cur is not None else default
 
 
-def judge(problem: dict, solution: str, workdir: Path) -> dict:
+def judge_fourclojure(problem: dict, solution: str, workdir: Path) -> dict:
     p_path = workdir / "judge_problem.json"
     s_path = workdir / "judge_solution.edn"
     p_path.write_text(json.dumps(problem, ensure_ascii=False))
     s_path.write_text(solution)
     try:
         proc = subprocess.run(
-            [CLOJURE, "-M", str(EVALUATOR), str(p_path), str(s_path)],
+            [CLOJURE, "-M", str(FOURCLOJURE_EVALUATOR), str(p_path), str(s_path)],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,
@@ -151,21 +279,125 @@ def judge(problem: dict, solution: str, workdir: Path) -> dict:
         }
 
 
+def judge_filewrite(problem: dict, workdir: Path) -> dict:
+    """Run the task's verify form with workdir on classpath; check for :pass."""
+    verify = problem.get("verify")
+    if not verify:
+        return {"passed": False, "judge_error": "missing verify"}
+    # `-Sdeps` expects EDN, not JSON. Path is a plain string so a literal
+    # `{:paths ["..."]}` is safe (the workdir comes from tempfile).
+    deps_edn = '{:paths ["' + str(workdir).replace('\\', '\\\\').replace('"', '\\"') + '"]}'
+    try:
+        proc = subprocess.run(
+            [CLOJURE, "-Sdeps", deps_edn, "-M", "-e", verify],
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=EVAL_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return {"passed": False, "judge_error": f"timeout after {EVAL_TIMEOUT}s"}
+    out = proc.stdout
+    if proc.returncode != 0:
+        return {
+            "passed": False,
+            "judge_error": f"verify-exit-{proc.returncode}: {proc.stderr[-300:] or out[-300:]}",
+            "stdout": out[-300:],
+        }
+    return {"passed": ":pass" in out, "stdout": out[-300:]}
+
+
+# ---------------------------------------------------------------------------
+# Trace stream parsing
+# ---------------------------------------------------------------------------
+
+def parse_trace_stream(raw: str) -> dict:
+    result_payload: dict | None = None
+    iteration_seen = -1
+    last_phase: str | None = None
+    events = 0
+    for raw_line in raw.splitlines():
+        line = raw_line.strip()
+        if not line or not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            frame = json.loads(line)
+        except Exception:
+            continue
+        events += 1
+        ev = frame.get("event")
+        payload = frame.get("payload")
+        if ev == "result" and isinstance(payload, dict):
+            result_payload = payload
+            continue
+        if not isinstance(payload, dict):
+            continue
+        last_phase = payload.get("phase") or last_phase
+        for k in ("iteration", "iteration-count"):
+            v = payload.get(k)
+            if isinstance(v, int) and v > iteration_seen:
+                iteration_seen = v
+    return {
+        "result": result_payload,
+        "iterations_observed": max(iteration_seen, 0),
+        "last_phase": last_phase,
+        "events": events,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Task runner
+# ---------------------------------------------------------------------------
+
+def setup_workdir(problem: dict, workdir: Path) -> str:
+    """Seed task-specific files, return the prompt string to send to Vis."""
+    if problem["kind"] == "4clojure":
+        (workdir / "problem.md").write_text(render_fc_problem_body(problem))
+        (workdir / "solution.edn").write_text(SENTINEL)
+        return render_fc_prompt(problem, workdir / "solution.edn")
+    if problem["kind"] == "filewrite":
+        for f in problem.get("starter", []):
+            (workdir / f["path"]).write_text(f["content"])
+        return render_fw_prompt(problem)
+    raise ValueError(f"unknown task kind: {problem['kind']}")
+
+
+def grade_task(problem: dict, workdir: Path) -> tuple[bool, dict, str]:
+    """Return (passed, verdict, solution_payload_for_logging)."""
+    if problem["kind"] == "4clojure":
+        raw = (workdir / "solution.edn").read_text().strip() if (workdir / "solution.edn").exists() else ""
+        solution = "" if raw == SENTINEL else raw
+        if not solution:
+            return False, {"passed": False, "judge_error": "empty-solution"}, ""
+        verdict = judge_fourclojure(problem, solution, workdir)
+        return bool(verdict.get("passed")), verdict, solution
+    if problem["kind"] == "filewrite":
+        # For logging, save the modified file paths' SHA + length.
+        snapshot = {}
+        for f in problem.get("starter", []):
+            p = workdir / f["path"]
+            if p.exists():
+                snapshot[f["path"]] = {
+                    "bytes": p.stat().st_size,
+                    "head": p.read_text()[:200],
+                }
+        verdict = judge_filewrite(problem, workdir)
+        return bool(verdict.get("passed")), verdict, json.dumps(snapshot, indent=2)
+    raise ValueError(f"unknown task kind: {problem['kind']}")
+
+
 def run_one(problem: dict, out_dir: Path) -> dict:
-    workdir = Path(tempfile.mkdtemp(prefix=f"4clojure-{problem['id']}-"))
+    workdir = Path(tempfile.mkdtemp(prefix=f"{problem['kind']}-{problem['id']}-"))
     started = time.time()
-    raw_envelope: dict | None = None
     rc = None
     stdout = ""
     stderr = ""
     timed_out = False
     try:
-        (workdir / "problem.md").write_text(render_problem(problem))
-        (workdir / "solution.edn").write_text(SENTINEL)
-        prompt = render_prompt(problem, workdir / "solution.edn")
+        prompt = setup_workdir(problem, workdir)
         prompt_chars = len(prompt)
         cmd = [
-            VIS_BIN, "run", "--json",
+            VIS_BIN, "run", "--full-trace-json-stream",
             "--db", ":memory",
             "--provider", VIS_PROVIDER,
             "--model", VIS_MODEL,
@@ -180,52 +412,57 @@ def run_one(problem: dict, out_dir: Path) -> dict:
             stderr = proc.stderr
         except subprocess.TimeoutExpired as e:
             timed_out = True
-            stdout = (e.stdout or b"").decode("utf-8", "replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-            stderr = (e.stderr or b"").decode("utf-8", "replace") if isinstance(e.stderr, bytes) else (e.stderr or "")
+            stdout = (
+                e.stdout.decode("utf-8", "replace")
+                if isinstance(e.stdout, (bytes, bytearray))
+                else (e.stdout or "")
+            )
+            stderr = (
+                e.stderr.decode("utf-8", "replace")
+                if isinstance(e.stderr, (bytes, bytearray))
+                else (e.stderr or "")
+            )
 
-        if stdout.strip():
-            try:
-                raw_envelope = json.loads(stdout)
-            except Exception:
-                # Trace stream concatenation, salvage last { ... }
-                raw_envelope = None
+        trace = parse_trace_stream(stdout)
+        envelope = trace["result"] or {}
 
-        raw_solution = ""
-        if (workdir / "solution.edn").exists():
-            raw_solution = (workdir / "solution.edn").read_text().strip()
-        solution = "" if raw_solution == SENTINEL else raw_solution
+        passed, verdict, solution_payload = grade_task(problem, workdir)
 
-        verdict = judge(problem, solution, workdir) if solution else {
-            "passed": False,
-            "judge_error": "empty-solution",
-        }
+        envelope_iters = envelope.get("iteration-count")
+        observed_iters = trace["iterations_observed"]
+        if isinstance(envelope_iters, int) and envelope_iters > 0:
+            iterations: int | None = envelope_iters
+            iter_source = "envelope"
+        elif observed_iters > 0:
+            iterations = observed_iters
+            iter_source = "trace"
+        else:
+            iterations = None
+            iter_source = "unknown"
 
-        iterations_from_envelope = safe_get(raw_envelope, "iteration-count", default=None)
-        # Fail-safe: when Vis exits cleanly but never called turn-answer!, it
-        # still returns iteration-count. When it timed out, we don't know.
-        iterations = (
-            int(iterations_from_envelope)
-            if isinstance(iterations_from_envelope, (int, float))
-            else None
-        )
-
-        tokens_total = safe_get(raw_envelope, "tokens", "total", default=0)
-        prompt_tokens = safe_get(raw_envelope, "tokens", "input", default=0)
-        output_tokens = safe_get(raw_envelope, "tokens", "output", default=0)
-        reasoning_tokens = safe_get(raw_envelope, "tokens", "reasoning", default=0)
-        cost_usd = safe_get(raw_envelope, "cost", "total-cost", default=0.0)
-
+        tokens_total = safe_get(envelope, "tokens", "total", default=0)
+        prompt_tokens = safe_get(envelope, "tokens", "input", default=0)
+        output_tokens = safe_get(envelope, "tokens", "output", default=0)
+        reasoning_tokens = safe_get(envelope, "tokens", "reasoning", default=0)
+        cost_usd = safe_get(envelope, "cost", "total-cost", default=0.0)
         elapsed = round(time.time() - started, 2)
-        passed = bool(verdict.get("passed"))
+
+        if not passed:
+            iterations_score = FAIL_PENALTY
+        elif isinstance(iterations, int):
+            iterations_score = iterations
+        else:
+            iterations_score = FAIL_PENALTY
+
         outcome = {
+            "kind": problem["kind"],
             "id": problem["id"],
             "title": problem.get("title"),
             "difficulty": problem.get("difficulty"),
             "passed": passed,
             "iterations": iterations,
-            "iterations_score": (
-                iterations if (passed and isinstance(iterations, int)) else FAIL_PENALTY
-            ),
+            "iter_source": iter_source,
+            "iterations_score": iterations_score,
             "timed_out": timed_out,
             "returncode": rc,
             "tokens_total": tokens_total,
@@ -234,32 +471,49 @@ def run_one(problem: dict, out_dir: Path) -> dict:
             "reasoning_tokens": reasoning_tokens,
             "cost_usd": float(cost_usd) if isinstance(cost_usd, (int, float)) else 0.0,
             "prompt_chars": prompt_chars,
-            "solution": solution,
             "verdict": verdict,
+            "trace_events": trace["events"],
+            "trace_last_phase": trace["last_phase"],
             "elapsed_s": elapsed,
         }
 
-        # Persist artifacts per task.
-        task_dir = out_dir / f"task-{problem['id']:03d}"
+        task_dir = out_dir / f"{problem['kind']}-{problem['id']}"
         task_dir.mkdir(parents=True, exist_ok=True)
         (task_dir / "prompt.txt").write_text(prompt)
-        (task_dir / "vis-stdout.json").write_text(stdout)
+        (task_dir / "vis-trace.jsonl").write_text(stdout)
         (task_dir / "vis-stderr.log").write_text(stderr)
         (task_dir / "outcome.json").write_text(
             json.dumps(outcome, indent=2, ensure_ascii=False) + "\n"
         )
+        if solution_payload:
+            (task_dir / "solution.txt").write_text(solution_payload)
         return outcome
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# Aggregation
+# ---------------------------------------------------------------------------
+
 def aggregate(outcomes: list[dict]) -> dict:
     pass_count = sum(1 for o in outcomes if o["passed"])
     iter_score = sum(o["iterations_score"] for o in outcomes)
-    iters_pass = [o["iterations"] for o in outcomes if o["passed"] and isinstance(o["iterations"], int)]
+    iters_pass = [
+        o["iterations"] for o in outcomes
+        if o["passed"] and isinstance(o["iterations"], int)
+    ]
     cost_total = round(sum(o["cost_usd"] for o in outcomes), 6)
     tokens_total = sum(int(o["tokens_total"] or 0) for o in outcomes)
     prompt_chars = [o["prompt_chars"] for o in outcomes]
+    by_kind: dict[str, dict[str, int]] = {}
+    for o in outcomes:
+        k = o["kind"]
+        bucket = by_kind.setdefault(k, {"total": 0, "passed": 0, "iter_score": 0})
+        bucket["total"] += 1
+        bucket["iter_score"] += o["iterations_score"]
+        if o["passed"]:
+            bucket["passed"] += 1
     return {
         "task_count": len(outcomes),
         "pass_count": pass_count,
@@ -268,17 +522,23 @@ def aggregate(outcomes: list[dict]) -> dict:
         "mean_iterations_pass": (
             round(statistics.mean(iters_pass), 2) if iters_pass else None
         ),
+        "max_iterations": max(iters_pass) if iters_pass else None,
         "total_cost_usd": cost_total,
         "total_tokens": tokens_total,
         "mean_prompt_chars": int(statistics.mean(prompt_chars)) if prompt_chars else 0,
         "wall_seconds": round(sum(o["elapsed_s"] for o in outcomes), 2),
+        "by_kind": by_kind,
     }
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main() -> int:
-    problems = json.loads(PROBLEMS_JSON.read_text())
     offset = autoresearch_offset()
-    chosen = pick_problems(problems, offset, N_TASKS)
+    sizes = prompt_sizes()
+    workload = pick_workload(offset)
 
     out_root = Path(
         os.environ.get(
@@ -289,19 +549,33 @@ def main() -> int:
     out_root.mkdir(parents=True, exist_ok=True)
     (out_root / "chosen.json").write_text(
         json.dumps(
-            [{"id": p["id"], "title": p["title"], "difficulty": p["difficulty"]} for p in chosen],
+            [
+                {
+                    "kind": p["kind"], "id": p["id"], "title": p.get("title"),
+                    "difficulty": p.get("difficulty"),
+                }
+                for p in workload
+            ],
             indent=2,
             ensure_ascii=False,
         ) + "\n"
     )
-    log(f"[autoresearch] offset={offset} tasks={[p['id'] for p in chosen]} out={out_root}")
+    log(f"[autoresearch] offset={offset} workload={[(p['kind'], p['id']) for p in workload]} out={out_root}")
+    log(f"[autoresearch] prompt sizes: system={sizes['system_prompt_chars']} foundation={sizes['foundation_prompt_chars']} z={sizes['z_prompt_chars']}")
 
     outcomes: list[dict] = []
-    for problem in chosen:
-        log(f"[autoresearch] running task {problem['id']} ({problem.get('difficulty')}): {problem.get('title')}")
+    for problem in workload:
+        log(
+            f"[autoresearch] running {problem['kind']} {problem['id']} "
+            f"({problem.get('difficulty')}): {problem.get('title')}"
+        )
         o = run_one(problem, out_root)
         verdict_str = "PASS" if o["passed"] else "FAIL"
-        iters_str = o["iterations"] if o["iterations"] is not None else "?"
+        iters_str = (
+            f"{o['iterations']}({o['iter_source']})"
+            if o["iterations"] is not None
+            else f"?({o['iter_source']})"
+        )
         log(
             f"  -> {verdict_str}  iters={iters_str}  "
             f"score={o['iterations_score']}  "
@@ -313,13 +587,28 @@ def main() -> int:
         outcomes.append(o)
 
     summary = aggregate(outcomes)
+    summary["offset"] = offset
+    summary["system_prompt_chars"] = sizes["system_prompt_chars"]
+    summary["foundation_prompt_chars"] = sizes["foundation_prompt_chars"]
+    summary["z_prompt_chars"] = sizes["z_prompt_chars"]
+    summary["ext_prompt_chars"] = (
+        sizes["system_prompt_chars"]
+        + sizes["foundation_prompt_chars"]
+        + sizes["z_prompt_chars"]
+    )
+    summary["context_score"] = (
+        summary["ext_prompt_chars"] + summary["mean_prompt_chars"]
+    )
     summary["chosen"] = [
         {
+            "kind": o["kind"],
             "id": o["id"],
             "passed": o["passed"],
             "iterations": o["iterations"],
+            "iter_source": o["iter_source"],
             "iterations_score": o["iterations_score"],
             "cost_usd": o["cost_usd"],
+            "timed_out": o["timed_out"],
         }
         for o in outcomes
     ]
@@ -330,9 +619,15 @@ def main() -> int:
         "pass_count",
         "pass_rate",
         "mean_iterations_pass",
+        "max_iterations",
         "total_cost_usd",
         "total_tokens",
         "mean_prompt_chars",
+        "system_prompt_chars",
+        "foundation_prompt_chars",
+        "z_prompt_chars",
+        "ext_prompt_chars",
+        "context_score",
         "wall_seconds",
     ]
     for k in metric_keys:

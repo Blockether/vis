@@ -1,35 +1,52 @@
-# Autoresearch: minimize Vis iterations on 4Clojure
+# Autoresearch: minimize Vis iterations on a mixed Clojure workload
 
 ## Objective
 
-For each 4Clojure problem, Vis takes one or more agent "iterations" (model
-round-trips) before it produces a final `(turn-answer! …)`. We want to
-**minimize the number of iterations Vis needs to correctly solve a 4Clojure
-task** while still solving it.
+For each task, Vis spends one or more agent "iterations" before producing
+a final `(turn-answer! …)`. We **minimize the sum of iterations Vis needs
+to correctly solve N tasks** without sacrificing pass rate. We also keep
+context (system + extension prompts and user prompt) as small as possible.
 
 Each autoresearch iteration:
-- picks 3 fresh 4Clojure problems (deterministic rotation, no repeats),
-- runs `bin/vis run --json --provider zai-coding-plan --model glm-5.1`,
-- writes the answer to `solution.edn` and judges it locally,
-- reports per-task iteration count, tokens, cost, context size,
+- picks 2 fresh 4Clojure problems and 1 fresh filewrite problem by
+  deterministic per-pool rotation (no repeats inside a run),
+- runs `bin/vis run --full-trace-json-stream --provider zai-coding-plan --model glm-5.1`
+  per task in a fresh tmp workdir,
+- judges locally (`eval_one.clj` for 4Clojure, a `:pass`-or-throw verify
+  form for filewrite),
 - aggregates into one primary score: `iter_score` (lower is better).
 
-No iteration-cap or test-set hardcoding is allowed. The judge runs every
-problem's actual tests; we don't dial down the gate or cherry-pick problems.
+No iteration-cap or test-set hardcoding is allowed. The judges run the
+problems' actual tests verbatim; we never cherry-pick tasks or relax
+verification.
 
 ## Metrics
 
 - **Primary**: `iter_score` (count, lower is better)
   `sum over tasks of (iterations if passed else 30)`. Failed tasks are
   penalized at 30 so the optimizer can't get a "good" score by skipping work.
-- **Secondary**:
-  - `pass_count` (out of 3) — number of solved tasks
+- **Secondary** (we actively shrink the * starred * ones too):
+  - `pass_count` (out of 3) — number of solved tasks. MUST stay at 3
+    or `iter_score` is meaningless.
   - `pass_rate` (%) — pass_count / 3
-  - `mean_iterations_pass` — mean iteration count over passed tasks
-  - `total_cost_usd` — Z.ai cost across 3 tasks (USD, glm-5.1 pricing)
-  - `total_tokens` — sum of input+output+reasoning tokens
-  - `mean_prompt_chars` — mean prompt size we sent
+  - `mean_iterations_pass` — mean iter count over passed tasks (sanity)
+  - `max_iterations` — slowest passed task's iter count
+  - `total_cost_usd` * — Z.ai cost across 3 tasks (USD, glm-5.1 pricing)
+  - `total_tokens` * — sum of input+output+reasoning tokens
+  - `mean_prompt_chars` * — mean USER-prompt size sent per task
+  - `system_prompt_chars` * — current Vis core system prompt size
+    (constant per Vis build; cached, recomputed only when prompt.clj
+    changes). We want this as small as possible without breaking the
+    answer gate or extension dispatch.
+  - `context_score` * — `system_prompt_chars + mean_prompt_chars`, the
+    combined floor of context sent on iteration 1.
   - `wall_seconds` — total walltime for the 3 tasks
+
+  Keep-blockers (auto-discard if violated, even with iter_score win):
+  - `pass_count` drops below 3
+  - `system_prompt_chars` increases by more than 5% vs. previous keep
+  - `mean_prompt_chars` increases by more than 25% vs. previous keep
+  - `total_cost_usd` increases by more than 50% vs. previous keep
 
 ## How to Run
 
@@ -46,26 +63,35 @@ gitignored.
 ## Files in Scope
 
 - `dev/benches/4clojure/autoresearch_runner.py` — the harness:
-  picks tasks, builds prompt, runs Vis, parses envelope, judges, aggregates.
-- `dev/benches/4clojure/eval_one.clj` — local 4Clojure evaluator (judge).
-- `dev/benches/4clojure/autoresearch_prompt.md` — prompt template
-  with `{problem}`, `{solution_path}`, `{sentinel}` placeholders.
+  picks tasks, builds prompt, runs Vis, parses trace, judges, aggregates.
+- `dev/benches/4clojure/eval_one.clj` — 4Clojure judge.
+- `dev/benches/4clojure/autoresearch_prompt.md` — 4Clojure prompt template.
+- `dev/benches/filewrite/autoresearch_prompt.md` — filewrite prompt template.
 - `src/com/blockether/vis/internal/prompt.clj` — Vis core system prompt;
   the gate language here drives how many iterations Vis insists on
   before allowing `(turn-answer! …)`.
 - `src/com/blockether/vis/internal/loop.clj` — gate logic
-  (`final-answer-structural-criteria-errors`, `answer-with-extension-preflight-mismatch`,
-  etc.). Tuning here is allowed iff `./verify.sh --quick` keeps passing
-  and existing test suites stay green.
+  (`final-answer-structural-criteria-errors`,
+  `answer-with-extension-preflight-mismatch`, etc.). Tuning here is
+  allowed iff `./verify.sh --quick` keeps passing.
+- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/core.clj`
+  and its sibling sources (`editing/core.clj`, `introspection.clj`,
+  `nudges.clj`) — the `v/` extension prompt (8k+ chars today; biggest
+  context shrink opportunity).
+- `extensions/languages/clojure/src/com/blockether/vis/ext/lang_clojure/core.clj`
+  and `patch.clj` — the `z/` extension prompt.
 
 ## Off Limits
 
-- `dev/benches/4clojure/problems.json` and `instances.json` — the workload.
-- `dev/benches/4clojure/eval_one.clj`'s scoring logic (it IS the judge).
-  Bug fixes are fine; relaxing what counts as "passed" is cheating.
+- `dev/benches/4clojure/problems.json` and `instances.json` — 4Clojure workload.
+- `dev/benches/filewrite/problems.json` — filewrite workload (the verify
+  forms ARE the judge). Bug fixes to the assertions are fine; relaxing
+  what counts as "passed" is cheating.
+- `dev/benches/4clojure/eval_one.clj`'s scoring logic. Bug fixes are fine;
+  relaxing what counts as "passed" is cheating.
 - The rest of `src/`, `extensions/` — touch only when there's a concrete
-  hypothesis that a change will reduce Vis iterations on this workload.
-  Run `./verify.sh --quick` first.
+  hypothesis that a change reduces Vis iterations / context. Run
+  `./verify.sh --quick` first.
 
 ## Constraints
 
@@ -77,6 +103,22 @@ gitignored.
   (fresh JVM, fresh in-memory DB) per task — no cross-task state.
 - Judge IS this Claude session; it must compare against the public
   4Clojure tests verbatim, never a hand-written shortcut.
+
+## Anti-overfitting protocol
+
+The rotation guarantees each iteration sees a fresh 3-task slice, so a
+change that only memorizes 3 problems will score badly on the next
+iteration's slice. Still, individual `keep` decisions must be confirmed:
+
+1. After every primary-metric improvement, run
+   `./autoresearch.revalidate.sh` (defaults to offset+7 and offset+13).
+2. Combine: total `iter_score` over the 6 confirmation tasks vs.
+   what the baseline scored at *those* offsets.
+3. Keep only when the confirmation slices don't regress more than 10%
+   relative to baseline at the same offsets. Otherwise → discard and
+   revert.
+4. When a `keep` is borderline (within 1.0× noise from `log_experiment`),
+   run an extra single-slice run at offset+19 before moving on.
 
 ## What's Been Tried
 
