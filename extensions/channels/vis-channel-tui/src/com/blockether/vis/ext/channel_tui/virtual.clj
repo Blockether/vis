@@ -741,5 +741,5 @@
      (.interrupt t)
      (when (pos? join-ms)
        (try (.join t join-ms)
-            (catch InterruptedException _
-              (.interrupt (Thread/currentThread))))))))
+         (catch InterruptedException _
+           (.interrupt (Thread/currentThread))))))))

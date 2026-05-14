@@ -190,23 +190,30 @@
                                              ;; 3. structurally-silent host bookkeeping such as
                                              ;;    `(set-conversation-title! ...)` and answer
                                              ;;    emission forms. They affect chrome/final answer,
-                                             ;;    but should never render as trace code/results.
+                                             ;;    but should not render as normal trace code.
                                              ;; Other successful `:vis/silent` forms are retained
                                              ;; and marked in `:silents`; the TUI setting decides
                                              ;; whether to render them.
                                              visible-code-segments?
                                              (fn [b]
                                                (boolean (some #(= :code (:kind %)) (:render-segments b))))
+                                             structurally-silent-block?
+                                             (fn [b]
+                                               (boolean
+                                                 (or (:vis/structurally-silent? b)
+                                                   (and (not (visible-code-segments? b))
+                                                     (let [code (str (:code b))]
+                                                       (or (str/includes? code "(set-conversation-title!")
+                                                         (str/includes? code "(turn-answer!"))))
+                                                   (and (= :vis/silent (:result b))
+                                                     (not (seq (:render-segments b)))
+                                                     (let [code (str (:code b))]
+                                                       (or (str/includes? code "(set-conversation-title!")
+                                                         (str/includes? code "(turn-answer!")))))))
                                              preflight-idxs (into #{}
                                                               (keep-indexed
                                                                 (fn [i b] (when (:vis/preflight? b) i)))
                                                               all-exprs)
-                                             structural-silent-idxs
-                                             (into #{}
-                                               (keep-indexed
-                                                 (fn [i b]
-                                                   (when (:vis/structurally-silent? b) i)))
-                                               all-exprs)
                                              answer-idx  (when answer-here?
                                                            (let [idx (or (:answer-position it)
                                                                        (dec (count all-exprs)))
@@ -216,7 +223,7 @@
                                                                          (get all-exprs idx))]
                                                              (when (and block (not (visible-code-segments? block)))
                                                                idx)))
-                                             elide-idxs  (cond-> (into preflight-idxs structural-silent-idxs)
+                                             elide-idxs  (cond-> preflight-idxs
                                                            (some? answer-idx) (conj answer-idx))
                                              exprs       (into []
                                                            (keep-indexed
@@ -224,6 +231,10 @@
                                                                (when-not (contains? elide-idxs idx)
                                                                  expr)))
                                                            all-exprs)
+                                             code-exprs  (if (and (seq exprs)
+                                                               (every? structurally-silent-block? exprs))
+                                                           []
+                                                           exprs)
                                              result-kind (fn [{:keys [result error]}]
                                                            (cond
                                                              error :error
@@ -280,14 +291,15 @@
                                              silents     (mapv (fn [expr]
                                                                  (and (nil? (:error expr))
                                                                    (or (:vis/silent expr)
-                                                                     (= :vis/silent (:result expr)))))
+                                                                     (= :vis/silent (:result expr))
+                                                                     (structurally-silent-block? expr))))
                                                            exprs)]
                                          {:position  (when-let [p (:position it)] (dec (long p)))
                                           :thinking  (visible-thinking (:thinking it))
                                           :provider-fallbacks (get-in it [:metadata :llm :fallback-trace])
-                                          :code      (mapv :code exprs)
-                                          :comments  (mapv :comment exprs)
-                                          :render-segments (mapv :render-segments exprs)
+                                          :code      (mapv :code code-exprs)
+                                          :comments  (mapv :comment code-exprs)
+                                          :render-segments (mapv :render-segments code-exprs)
                                           :results   result-strs
                                           :result-kinds (mapv result-kind exprs)
                                           :result-details result-details

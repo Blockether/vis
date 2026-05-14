@@ -327,9 +327,9 @@
           patch-fn (private-fn "patch-safe")
           partial  "(defn- build-segments\n  [db now-ms]\n  (let [m ..."
           thrown   (try (patch-fn [{:path path :search partial :replace "(def y 1)"}])
-                        ::no-throw
-                        (catch clojure.lang.ExceptionInfo e
-                          {:msg (ex-message e) :data (ex-data e)}))]
+                     ::no-throw
+                     (catch clojure.lang.ExceptionInfo e
+                       {:msg (ex-message e) :data (ex-data e)}))]
       (expect (map? thrown))
       (expect (= :ext.lang-clojure/invalid-patch-source (-> thrown :data :type)))
       (expect (str/includes? (:msg thrown) "must be parseable Clojure/EDN source"))
@@ -361,8 +361,8 @@
                      :search  "[provider-seg model-seg reasoning-seg verbosity-seg git-segs]"
                      :replace "[provider-seg model-seg reasoning-seg verbosity-seg git-segs]"}]
           thrown   (try (patch-fn edits) ::no-throw
-                        (catch clojure.lang.ExceptionInfo e
-                          {:msg (ex-message e) :data (ex-data e)}))]
+                     (catch clojure.lang.ExceptionInfo e
+                       {:msg (ex-message e) :data (ex-data e)}))]
       ;; Outer fn promotes to a typed throw with smoking-gun ex-data.
       (expect (map? thrown))
       (expect (= :ext.lang-clojure/patch-no-op (-> thrown :data :type)))
@@ -380,7 +380,7 @@
         (expect (false? (:success? env)))
         (let [hint (get-in env [:error :hint])]
           (expect (string? hint))
-          (expect (str/includes? hint "identical source")))))) 
+          (expect (str/includes? hint "identical source"))))))
 
   (it "z/inspect turns raw rewrite-clj zlocs into serializable summaries"
     (let [inspect-fn (:ext.symbol/fn patch/inspect-symbol)
