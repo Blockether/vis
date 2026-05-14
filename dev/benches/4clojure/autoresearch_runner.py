@@ -311,11 +311,29 @@ def judge_filewrite(problem: dict, workdir: Path) -> dict:
 # Trace stream parsing
 # ---------------------------------------------------------------------------
 
+def _classify_patch_extension(ext: str) -> str | None:
+    """Return 'z' for z/patch, 'v' for v/patch, None otherwise.
+
+    Both surfaces register the tool symbol `patch`; they differ by the
+    `:extension` namespace (`...lang-clojure...` vs `...foundation...`).
+    """
+    e = (ext or "").lower()
+    if "lang-clojure" in e or "lang_clojure" in e:
+        return "z"
+    if "foundation" in e:
+        return "v"
+    return None
+
+
 def parse_trace_stream(raw: str) -> dict:
     result_payload: dict | None = None
     iteration_seen = -1
     last_phase: str | None = None
     events = 0
+    z_patch_calls = 0
+    v_patch_calls = 0
+    block_errors = 0           # per-form eval errors during the turn
+    error_iterations: set[int] = set()  # distinct iters that had >=1 error
     for raw_line in raw.splitlines():
         line = raw_line.strip()
         if not line or not (line.startswith("{") and line.endswith("}")):
@@ -337,11 +355,38 @@ def parse_trace_stream(raw: str) -> dict:
             v = payload.get(k)
             if isinstance(v, int) and v > iteration_seen:
                 iteration_seen = v
+        te = payload.get("tool-event")
+        if (
+            isinstance(te, dict)
+            and te.get("op") == "patch"
+            and te.get("phase") == "tool-start"
+        ):
+            bucket = _classify_patch_extension(te.get("extension", ""))
+            if bucket == "z":
+                z_patch_calls += 1
+            elif bucket == "v":
+                v_patch_calls += 1
+        # Per-form errors: form-result frames where info.status == "error".
+        # Dedup by `ref` so a repaired form doesn't double-count.
+        info = payload.get("info")
+        if (
+            isinstance(info, dict)
+            and info.get("status") == "error"
+            and payload.get("phase") == "form-result"
+        ):
+            block_errors += 1
+            iter_n = info.get("iteration")
+            if isinstance(iter_n, int):
+                error_iterations.add(iter_n)
     return {
         "result": result_payload,
         "iterations_observed": max(iteration_seen, 0),
         "last_phase": last_phase,
         "events": events,
+        "z_patch_calls": z_patch_calls,
+        "v_patch_calls": v_patch_calls,
+        "block_errors": block_errors,
+        "error_iterations": sorted(error_iterations),
     }
 
 
@@ -474,6 +519,10 @@ def run_one(problem: dict, out_dir: Path) -> dict:
             "verdict": verdict,
             "trace_events": trace["events"],
             "trace_last_phase": trace["last_phase"],
+            "z_patch_calls": trace["z_patch_calls"],
+            "v_patch_calls": trace["v_patch_calls"],
+            "block_errors": trace["block_errors"],
+            "error_iterations": trace["error_iterations"],
             "elapsed_s": elapsed,
         }
 
@@ -506,6 +555,10 @@ def aggregate(outcomes: list[dict]) -> dict:
     cost_total = round(sum(o["cost_usd"] for o in outcomes), 6)
     tokens_total = sum(int(o["tokens_total"] or 0) for o in outcomes)
     prompt_chars = [o["prompt_chars"] for o in outcomes]
+    z_patch_total = sum(int(o.get("z_patch_calls") or 0) for o in outcomes)
+    v_patch_total = sum(int(o.get("v_patch_calls") or 0) for o in outcomes)
+    patch_total   = z_patch_total + v_patch_total
+    block_errors_total = sum(int(o.get("block_errors") or 0) for o in outcomes)
     by_kind: dict[str, dict[str, int]] = {}
     for o in outcomes:
         k = o["kind"]
@@ -527,7 +580,13 @@ def aggregate(outcomes: list[dict]) -> dict:
         "total_tokens": tokens_total,
         "mean_prompt_chars": int(statistics.mean(prompt_chars)) if prompt_chars else 0,
         "wall_seconds": round(sum(o["elapsed_s"] for o in outcomes), 2),
-        "by_kind": by_kind,
+        "by_kind":         by_kind,
+        "z_patch_calls":   z_patch_total,
+        "v_patch_calls":   v_patch_total,
+        "z_patch_share":   (
+            round(100.0 * z_patch_total / patch_total, 2) if patch_total else 0.0
+        ),
+        "block_errors":    block_errors_total,
     }
 
 
@@ -609,6 +668,10 @@ def main() -> int:
             "iterations_score": o["iterations_score"],
             "cost_usd": o["cost_usd"],
             "timed_out": o["timed_out"],
+            "z_patch_calls": o.get("z_patch_calls", 0),
+            "v_patch_calls": o.get("v_patch_calls", 0),
+            "block_errors":  o.get("block_errors", 0),
+            "error_iterations": o.get("error_iterations", []),
         }
         for o in outcomes
     ]
@@ -628,6 +691,10 @@ def main() -> int:
         "z_prompt_chars",
         "ext_prompt_chars",
         "context_score",
+        "z_patch_calls",
+        "v_patch_calls",
+        "z_patch_share",
+        "block_errors",
         "wall_seconds",
     ]
     for k in metric_keys:
