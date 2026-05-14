@@ -879,50 +879,6 @@
       (stdout! (str head (trace-title "•" (name (or phase :unknown)))
                  (pretty-block "chunk" (trace-pr-str chunk)))))))
 
-(defn- trace-entry-header [entry]
-  (str (trace-dim "╭─") " "
-    (trace-title "λ" "trace") " "
-    (trace-dim (str "iteration " (:iteration entry)))
-    (when-let [activity (:activity entry)]
-      (str " " (trace-warn (name activity))))))
-
-(defn- render-trace-form [entry idx]
-  (let [code      (get (:code entry) idx)
-        comment   (get (:comments entry) idx)
-        result    (get (:results entry) idx)
-        success?  (get (:successes entry) idx)
-        duration  (get (:durations entry) idx)
-        started?  (some? (get (:started-at-ms entry) idx))
-        kind      (get (:result-kinds entry) idx)
-        title     (str (if (some? success?)
-                         (if success? (trace-ok "✓") (trace-bad "✗"))
-                         (if started? (trace-warn "▶") (trace-dim "·")))
-                    " form " (inc idx)
-                    (when duration (str " " (trace-dim (str duration "ms"))))
-                    (when kind (str " " (trace-dim (name kind)))))]
-    (str "\n" title
-      (pretty-block "comment" comment)
-      (pretty-block "code" code)
-      (pretty-block (if success? "result" "error") result))))
-
-(defn- render-pretty-trace-entry [entry]
-  (str (trace-entry-header entry)
-    (pretty-block "thinking" (:thinking entry))
-    (when (seq (:provider-fallbacks entry))
-      (pretty-block "provider fallback" (trace-pr-str (:provider-fallbacks entry))))
-    (apply str
-      (map #(render-trace-form entry %)
-        (remove #(true? (get (:silents entry) %))
-          (range (count (:code entry))))))
-    (when-let [err (:error entry)]
-      (pretty-block "iteration error" (trace-error-summary err)))
-    (when-let [final (:final entry)]
-      (pretty-block (if (:done? entry) "turn complete" "iteration complete")
-        (trace-pr-str (select-keys final [:status :iteration-count]))))))
-
-(defn- render-pretty-trace-timeline [timeline]
-  (str/join "\n" (map render-pretty-trace-entry timeline)))
-
 (defn- trace-final-summary-prose
   "Human prose for the pretty terminal trace footer. Keep raw maps for the
    EDN/JSON stream modes; the terminal trace should read like a tiny run
@@ -954,10 +910,6 @@
            (str "Final status: " status "."))
          (when-let [err (:error result)]
            (str "Error: " err))]))))
-
-(defn- terminal-erase-lines! [n]
-  (when (and (trace-terminal?) (pos? n))
-    (write-stdout! (apply str (repeat n "\u001b[1A\u001b[2K")))))
 
 ;; ---------------------------------------------------------------------------
 ;; Append-only pretty trace printer.
@@ -1304,9 +1256,9 @@
     ;; explicit --plain stays plain. The trace-stream flags own their own
     ;; output path and are unaffected.
     (let [structured-output? (or json? edn? code?
-                              full-trace-stream?
-                              full-trace-edn-stream?
-                              full-trace-json-stream?)
+                               full-trace-stream?
+                               full-trace-edn-stream?
+                               full-trace-json-stream?)
           effective-plain?   (or plain?
                                (and (not structured-output?)
                                  (not (trace-terminal?))))

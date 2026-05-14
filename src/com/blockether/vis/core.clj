@@ -391,12 +391,9 @@
 (def ask-code!                    lp/ask-code!)
 (def llm-text!                    lp/llm-text!)
 (def get-router                   lp/get-router)
-(def reset-router!                lp/reset-router!)
 (def rebuild-router!              lp/rebuild-router!)
 (def resolve-effective-model      lp/resolve-effective-model)
-(def provider-has-reasoning?      lp/provider-has-reasoning?)
 (def set-provider!                lp/set-provider!)
-(def remove-provider!             lp/remove-provider!)
 
 ;; SCI execution helpers.
 (def extract-defining-name        lp/extract-defining-name)

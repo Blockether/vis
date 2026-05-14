@@ -1,10 +1,11 @@
 (ns com.blockether.vis.internal.env
   "SCI sandbox machinery: bindings, sandbox bindings, restore.
 
-   INTERNAL - only `com.blockether.vis.internal.loop` imports this namespace.
-   Foundation utilities (storage facade, extension specs, format helpers,
-   etc.) live across `com.blockether.vis.internal.{persistance,extension,config,registry}`. Channels and extensions never
-   reach into here; they go through the public iteration entry points
+   INTERNAL - loop and prompt own this namespace; core re-exports selected
+   helpers for extensions/tests. Foundation utilities (storage facade,
+   extension specs, format helpers, etc.) live across
+   `com.blockether.vis.internal.{persistance,extension,config,registry}`.
+   Channels and extensions should prefer the public iteration entry points
    in `com.blockether.vis.internal.loop` (`send!`, `create!`, `turn!`, ...)."
   (:require
    [clojure.set]
