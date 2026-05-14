@@ -150,20 +150,32 @@ def pick_workload(offset: int) -> list[dict]:
     """Mixed slice: FILEWRITE_PER_ITER filewrite + remaining 4Clojure tasks.
 
     Both pools rotate independently. Returns task dicts with a `kind` field.
+    Raises when the resulting workload would be empty so the optimizer
+    never sees a degenerate `iter_score=0` "perfect" run.
     """
+    if N_TASKS <= 0:
+        raise RuntimeError(
+            f"AUTORESEARCH_N must be >= 1, got {N_TASKS}; refusing to emit a degenerate iter_score=0."
+        )
     fc = json.loads(FOURCLOJURE_PROBLEMS.read_text())
     fw = json.loads(FILEWRITE_PROBLEMS.read_text())
     fw_n = max(0, min(FILEWRITE_PER_ITER, N_TASKS))
     fc_n = max(0, N_TASKS - fw_n)
     tasks: list[dict] = []
-    for i in range(fc_n):
-        problem = dict(fc[(offset * fc_n + i) % len(fc)])
-        problem["kind"] = "4clojure"
-        tasks.append(problem)
-    for i in range(fw_n):
-        problem = dict(fw[(offset * fw_n + i) % len(fw)])
-        problem["kind"] = "filewrite"
-        tasks.append(problem)
+    if fc_n > 0 and fc:
+        for i in range(fc_n):
+            problem = dict(fc[(offset * fc_n + i) % len(fc)])
+            problem["kind"] = "4clojure"
+            tasks.append(problem)
+    if fw_n > 0 and fw:
+        for i in range(fw_n):
+            problem = dict(fw[(offset * fw_n + i) % len(fw)])
+            problem["kind"] = "filewrite"
+            tasks.append(problem)
+    if not tasks:
+        raise RuntimeError(
+            "Workload selection produced zero tasks; check FILEWRITE_PER_ITER, AUTORESEARCH_N, and problem files."
+        )
     return tasks
 
 
@@ -647,16 +659,19 @@ def main() -> int:
 
     summary = aggregate(outcomes)
     summary["offset"] = offset
-    summary["system_prompt_chars"] = sizes["system_prompt_chars"]
-    summary["foundation_prompt_chars"] = sizes["foundation_prompt_chars"]
-    summary["z_prompt_chars"] = sizes["z_prompt_chars"]
-    summary["ext_prompt_chars"] = (
-        sizes["system_prompt_chars"]
-        + sizes["foundation_prompt_chars"]
-        + sizes["z_prompt_chars"]
+    # Prompt-size probe can fail (e.g., Clojure missing). When it does
+    # every size is -1 — propagate as None so the metric loop skips them
+    # rather than emitting negative numbers.
+    valid_sizes = all(v >= 0 for v in sizes.values())
+    summary["system_prompt_chars"]     = sizes["system_prompt_chars"]     if valid_sizes else None
+    summary["foundation_prompt_chars"] = sizes["foundation_prompt_chars"] if valid_sizes else None
+    summary["z_prompt_chars"]          = sizes["z_prompt_chars"]          if valid_sizes else None
+    summary["ext_prompt_chars"]        = (
+        sum(sizes.values()) if valid_sizes else None
     )
-    summary["context_score"] = (
+    summary["context_score"]           = (
         summary["ext_prompt_chars"] + summary["mean_prompt_chars"]
+        if valid_sizes else None
     )
     summary["chosen"] = [
         {
@@ -702,6 +717,19 @@ def main() -> int:
         if v is None:
             continue
         print(f"METRIC {k}={v}")
+
+    # Self-consistency assertions — fail loudly if invariants break.
+    assert summary["task_count"] == len(workload), (
+        f"task_count {summary['task_count']} != workload size {len(workload)}"
+    )
+    assert 0 <= summary["pass_count"] <= summary["task_count"], (
+        f"pass_count out of range: {summary['pass_count']} / {summary['task_count']}"
+    )
+    if summary["pass_count"] > 0:
+        assert summary["mean_iterations_pass"] is not None, "mean_iterations_pass missing despite pass_count > 0"
+        assert summary["max_iterations"] is not None, "max_iterations missing despite pass_count > 0"
+    if summary["z_patch_calls"] + summary["v_patch_calls"] == 0:
+        assert summary["z_patch_share"] == 0.0, "z_patch_share must be 0 when there are no patch calls"
     return 0
 
 
