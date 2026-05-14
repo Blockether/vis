@@ -1,0 +1,359 @@
+[
+  {
+    "id": "fw-001",
+    "title": "add two numbers",
+    "difficulty": "Elementary",
+    "description": "Edit `core.clj` so that `(core/add a b)` returns the sum of two numbers. Keep the namespace declaration intact.",
+    "starter": [
+      {
+        "path": "core.clj",
+        "content": "(ns core)\n\n;; TODO: define `add`\n"
+      }
+    ],
+    "verify": "(require 'core) (assert (= 5 (core/add 2 3))) (assert (= -2 (core/add -1 -1))) (assert (zero? (core/add 0 0))) (println :pass)"
+  },
+  {
+    "id": "fw-002",
+    "title": "square a number",
+    "difficulty": "Elementary",
+    "description": "Define `math/square` in `math.clj` so `(math/square n)` returns n*n for any integer n.",
+    "starter": [
+      {
+        "path": "math.clj",
+        "content": "(ns math)\n\n;; TODO: define `square`\n"
+      }
+    ],
+    "verify": "(require 'math) (assert (= 25 (math/square 5))) (assert (= 0 (math/square 0))) (assert (= 81 (math/square -9))) (println :pass)"
+  },
+  {
+    "id": "fw-003",
+    "title": "string reverse",
+    "difficulty": "Elementary",
+    "description": "Define `strings/rev` in `strings.clj` that returns its single string argument reversed. Empty string returns empty string.",
+    "starter": [
+      {
+        "path": "strings.clj",
+        "content": "(ns strings)\n\n;; TODO: define `rev`\n"
+      }
+    ],
+    "verify": "(require 'strings) (assert (= \"olleh\" (strings/rev \"hello\"))) (assert (= \"\" (strings/rev \"\"))) (assert (= \"a\" (strings/rev \"a\"))) (println :pass)"
+  },
+  {
+    "id": "fw-004",
+    "title": "count vowels",
+    "difficulty": "Easy",
+    "description": "Define `text/count-vowels` in `text.clj`. Vowels are a, e, i, o, u (case-insensitive). Returns an integer.",
+    "starter": [
+      {
+        "path": "text.clj",
+        "content": "(ns text\n  (:require [clojure.string :as str]))\n\n;; TODO: define `count-vowels`\n"
+      }
+    ],
+    "verify": "(require 'text) (assert (= 2 (text/count-vowels \"hello\"))) (assert (= 5 (text/count-vowels \"AEIOU\"))) (assert (= 0 (text/count-vowels \"bcdfg\"))) (assert (= 5 (text/count-vowels \"Sequoia\"))) (println :pass)"
+  },
+  {
+    "id": "fw-005",
+    "title": "sum a sequence",
+    "difficulty": "Elementary",
+    "description": "Define `coll/sum` in `coll.clj` that returns the sum of a sequence of numbers. Empty sequence returns 0.",
+    "starter": [
+      {
+        "path": "coll.clj",
+        "content": "(ns coll)\n\n;; TODO: define `sum`\n"
+      }
+    ],
+    "verify": "(require 'coll) (assert (= 0 (coll/sum []))) (assert (= 6 (coll/sum [1 2 3]))) (assert (= 10 (coll/sum (range 1 5)))) (println :pass)"
+  },
+  {
+    "id": "fw-006",
+    "title": "flatten one level",
+    "difficulty": "Easy",
+    "description": "Define `coll/flatten-1` in `coll.clj` that flattens exactly one level of nesting. Inner non-sequence values pass through unchanged.",
+    "starter": [
+      {
+        "path": "coll.clj",
+        "content": "(ns coll)\n\n;; TODO: define `flatten-1`\n"
+      }
+    ],
+    "verify": "(require 'coll) (assert (= [1 2 3 4 5 6] (vec (coll/flatten-1 [[1 2] [3 4] [5 6]])))) (assert (= [1 2 [3]] (vec (coll/flatten-1 [[1 2 [3]]])))) (assert (= [] (vec (coll/flatten-1 [])))) (println :pass)"
+  },
+  {
+    "id": "fw-007",
+    "title": "max without max",
+    "difficulty": "Easy",
+    "description": "Define `bigger/biggest` in `bigger.clj` that returns the largest number in a non-empty vector. You may NOT use clojure.core/max or clojure.core/max-key.",
+    "starter": [
+      {
+        "path": "bigger.clj",
+        "content": "(ns bigger)\n\n;; TODO: define `biggest` without using clojure.core/max or clojure.core/max-key\n"
+      }
+    ],
+    "verify": "(require 'bigger) (let [src (slurp \"bigger.clj\")] (assert (not (re-find #\"\\bmax\\b|\\bmax-key\\b\" src)) \"biggest must not use max or max-key\")) (assert (= 9 (bigger/biggest [1 9 3 7]))) (assert (= 1 (bigger/biggest [1]))) (assert (= -1 (bigger/biggest [-5 -1 -10]))) (println :pass)"
+  },
+  {
+    "id": "fw-008",
+    "title": "title case",
+    "difficulty": "Easy",
+    "description": "Define `text/title-case` in `text.clj`. Uppercases the first letter of each whitespace-separated word and lowercases the rest. Multiple spaces between words must be preserved verbatim.",
+    "starter": [
+      {
+        "path": "text.clj",
+        "content": "(ns text\n  (:require [clojure.string :as str]))\n\n;; TODO: define `title-case`\n"
+      }
+    ],
+    "verify": "(require 'text) (assert (= \"Hello World\" (text/title-case \"hello world\"))) (assert (= \"Foo  Bar\" (text/title-case \"foo  bar\"))) (assert (= \"Already Title\" (text/title-case \"ALREADY TITLE\"))) (println :pass)"
+  },
+  {
+    "id": "fw-009",
+    "title": "fib n",
+    "difficulty": "Easy",
+    "description": "Define `nums/fib` in `nums.clj` returning the nth Fibonacci number, 0-indexed: fib(0)=0, fib(1)=1, fib(n)=fib(n-1)+fib(n-2). Must answer fib(30) within 1 second.",
+    "starter": [
+      {
+        "path": "nums.clj",
+        "content": "(ns nums)\n\n;; TODO: define `fib`\n"
+      }
+    ],
+    "verify": "(require 'nums) (assert (= 0 (nums/fib 0))) (assert (= 1 (nums/fib 1))) (assert (= 55 (nums/fib 10))) (let [start (System/nanoTime) v (nums/fib 30) elapsed-ms (/ (- (System/nanoTime) start) 1.0e6)] (assert (= 832040 v)) (assert (< elapsed-ms 1000.0) (str \"fib(30) too slow: \" elapsed-ms \" ms\"))) (println :pass)"
+  },
+  {
+    "id": "fw-010",
+    "title": "group by parity",
+    "difficulty": "Easy",
+    "description": "Define `parts/parity` in `parts.clj` that takes a sequence of integers and returns a map `{:even <vec-of-evens> :odd <vec-of-odds>}` preserving input order. Empty input returns `{:even [] :odd []}`.",
+    "starter": [
+      {
+        "path": "parts.clj",
+        "content": "(ns parts)\n\n;; TODO: define `parity`\n"
+      }
+    ],
+    "verify": "(require 'parts) (assert (= {:even [] :odd []} (parts/parity []))) (assert (= {:even [2 4] :odd [1 3 5]} (parts/parity [1 2 3 4 5]))) (assert (= {:even [0 -2] :odd [-1 7]} (parts/parity [0 -1 -2 7]))) (println :pass)"
+  },
+  {
+    "id": "fw-011",
+    "title": "two-file project",
+    "difficulty": "Medium",
+    "description": "Project has two files. `util.clj` must define `util/double` returning n*2. `app.clj` must require `util` and define `app/triple-double` returning `(util/double (* 3 n))`. Keep both namespace forms intact.",
+    "starter": [
+      {
+        "path": "util.clj",
+        "content": "(ns util)\n\n;; TODO: define `double`\n"
+      },
+      {
+        "path": "app.clj",
+        "content": "(ns app)\n\n;; TODO: require `util` and define `triple-double`\n"
+      }
+    ],
+    "verify": "(require 'util 'app) (assert (= 6 (util/double 3))) (assert (= 24 (app/triple-double 4))) (assert (= 0 (app/triple-double 0))) (println :pass)"
+  },
+  {
+    "id": "fw-012",
+    "title": "patch existing function",
+    "difficulty": "Medium",
+    "description": "`bug.clj` contains a buggy `bug/sum-positives` that sums all numbers, including negatives. Fix it so it only sums numbers strictly greater than 0. Do not rename or remove anything else.",
+    "starter": [
+      {
+        "path": "bug.clj",
+        "content": "(ns bug)\n\n(defn sum-positives\n  \"Sum only the strictly positive numbers in xs.\"\n  [xs]\n  (apply + xs))\n"
+      }
+    ],
+    "verify": "(require 'bug) (assert (= 6 (bug/sum-positives [1 -2 3 -4 2]))) (assert (= 0 (bug/sum-positives [-1 -2 -3]))) (assert (= 0 (bug/sum-positives []))) (let [doc (:doc (meta #'bug/sum-positives))] (assert (and doc (re-find #\"strictly\" doc)) \"keep the original docstring\")) (println :pass)"
+  },
+  {
+    "id": "fw-101",
+    "title": "promote def above its first use",
+    "difficulty": "Easy",
+    "description": "`refs.clj` loads with `Unable to resolve symbol: x` because `(def x 5)` sits below `(defn use-x ...)`. Reorder the top-level forms so the file loads cleanly. Do not change the bodies.",
+    "starter": [
+      {
+        "path": "refs.clj",
+        "content": "(ns refs)\n\n(defn use-x [] (+ x 10))\n\n(def x 5)\n"
+      }
+    ],
+    "verify": "(require 'refs) (assert (= 15 (refs/use-x))) (let [src (slurp \"refs.clj\")] (assert (< (.indexOf src \"(def x\") (.indexOf src \"(defn use-x\")) \"`def x` must appear before `defn use-x`\")) (println :pass)"
+  },
+  {
+    "id": "fw-102",
+    "title": "drop redundant declare",
+    "difficulty": "Easy",
+    "description": "`nodec.clj` uses a `(declare helper)` only because `caller` is defined before `helper`. Reorder so `helper` comes first, then remove the `(declare helper)` form. Keep behavior identical.",
+    "starter": [
+      {
+        "path": "nodec.clj",
+        "content": "(ns nodec)\n\n(declare helper)\n\n(defn caller [x] (helper x))\n\n(defn helper [x] (* x 2))\n"
+      }
+    ],
+    "verify": "(require 'nodec) (assert (= 10 (nodec/caller 5))) (let [src (slurp \"nodec.clj\")] (assert (not (re-find #\"\\bdeclare\\b\" src)) \"declare must be removed\") (assert (< (.indexOf src \"(defn helper\") (.indexOf src \"(defn caller\")) \"helper must be defined before caller\")) (println :pass)"
+  },
+  {
+    "id": "fw-103",
+    "title": "rewrite docstring",
+    "difficulty": "Elementary",
+    "description": "Replace `add`'s placeholder docstring in `docs.clj` with exactly: \"Return the sum of a and b.\" (verbatim, including the trailing period). Keep the body unchanged.",
+    "starter": [
+      {
+        "path": "docs.clj",
+        "content": "(ns docs)\n\n(defn add\n  \"TODO: write a proper docstring describing what this does\"\n  [a b]\n  (+ a b))\n"
+      }
+    ],
+    "verify": "(require 'docs) (assert (= 7 (docs/add 3 4))) (assert (= \"Return the sum of a and b.\" (:doc (meta #'docs/add)))) (println :pass)"
+  },
+  {
+    "id": "fw-104",
+    "title": "extend a vector literal",
+    "difficulty": "Elementary",
+    "description": "`nums.clj` defines `nums/primes` as `[2 3 5 7]`. Extend the vector literal so it lists the first ten primes in order. Do not change the var name.",
+    "starter": [
+      {
+        "path": "nums.clj",
+        "content": "(ns nums)\n\n(def primes [2 3 5 7])\n"
+      }
+    ],
+    "verify": "(require 'nums) (assert (= [2 3 5 7 11 13 17 19 23 29] nums/primes)) (println :pass)"
+  },
+  {
+    "id": "fw-105",
+    "title": "merge two lets into one",
+    "difficulty": "Easy",
+    "description": "`leet.clj` nests two `let` forms. Collapse them into a single `(let [a \u2026 b \u2026] body)`. Behavior must stay the same.",
+    "starter": [
+      {
+        "path": "leet.clj",
+        "content": "(ns leet)\n\n(defn compute [n]\n  (let [a (+ n 1)]\n    (let [b (* a 2)]\n      (- b 3))))\n"
+      }
+    ],
+    "verify": "(require 'leet) (assert (= 9 (leet/compute 5))) (assert (= -3 (leet/compute -1))) (let [src (slurp \"leet.clj\")] (assert (= 1 (count (re-seq #\"\\(let\\s+\\[\" src))) \"file must contain exactly one (let [\u2026] \u2026) form\")) (println :pass)"
+  },
+  {
+    "id": "fw-106",
+    "title": "if-with-nil-else \u2192 when",
+    "difficulty": "Easy",
+    "description": "`ifwn.clj` returns nil in the else branch \u2014 perfect candidate for `when`. Rewrite the body so it uses `when`. Do not introduce other branching forms.",
+    "starter": [
+      {
+        "path": "ifwn.clj",
+        "content": "(ns ifwn)\n\n(defn maybe-double [n]\n  (if (pos? n)\n    (* n 2)\n    nil))\n"
+      }
+    ],
+    "verify": "(require 'ifwn) (assert (= 6 (ifwn/maybe-double 3))) (assert (nil? (ifwn/maybe-double 0))) (assert (nil? (ifwn/maybe-double -1))) (let [src (slurp \"ifwn.clj\")] (assert (not (re-find #\"\\(if\\s\" src)) \"`if` form must be replaced\") (assert (re-find #\"\\(when\\s\" src) \"use `when`\")) (println :pass)"
+  },
+  {
+    "id": "fw-107",
+    "title": "rename private helper",
+    "difficulty": "Easy",
+    "description": "Rename the private function `helper` in `rn.clj` to `square`. Update every reference (there is one inside `rn/compute`). Keep `defn-` (still private).",
+    "starter": [
+      {
+        "path": "rn.clj",
+        "content": "(ns rn)\n\n(defn- helper [x] (* x x))\n\n(defn compute [xs]\n  (map helper xs))\n"
+      }
+    ],
+    "verify": "(require 'rn) (assert (= [1 4 9 16] (vec (rn/compute [1 2 3 4])))) (let [src (slurp \"rn.clj\")] (assert (not (re-find #\"helper\" src)) \"all `helper` references must be renamed\") (assert (re-find #\"\\(defn-\\s+square\\b\" src) \"rename to `square` and keep it private\")) (println :pass)"
+  },
+  {
+    "id": "fw-108",
+    "title": "dedup ns require",
+    "difficulty": "Elementary",
+    "description": "`dup.clj` requires `clojure.string` twice in its `:require` form. Remove the duplicate while keeping the other requires intact.",
+    "starter": [
+      {
+        "path": "dup.clj",
+        "content": "(ns dup\n  (:require [clojure.string :as str]\n            [clojure.set :as set]\n            [clojure.string :as str]))\n\n(defn upper [s] (str/upper-case s))\n"
+      }
+    ],
+    "verify": "(require 'dup) (assert (= \"HELLO\" (dup/upper \"hello\"))) (let [src (slurp \"dup.clj\")] (assert (= 1 (count (re-seq #\"clojure\\.string\" src))) \"clojure.string must appear exactly once\") (assert (re-find #\"clojure\\.set\" src) \"clojure.set require must stay\")) (println :pass)"
+  },
+  {
+    "id": "fw-109",
+    "title": "drop unused parameter",
+    "difficulty": "Easy",
+    "description": "In `unused.clj`, `greet` takes an `age` parameter that the body never reads. Remove it so the signature is `[name]` only. The single caller in `caller.clj` must be updated to match.",
+    "starter": [
+      {
+        "path": "unused.clj",
+        "content": "(ns unused)\n\n(defn greet [name age]\n  (str \"Hello, \" name))\n"
+      },
+      {
+        "path": "caller.clj",
+        "content": "(ns caller\n  (:require [unused]))\n\n(defn welcome [n] (unused/greet n 0))\n"
+      }
+    ],
+    "verify": "(require 'caller) (assert (= \"Hello, Bob\" (caller/welcome \"Bob\"))) (assert (= '([name]) (:arglists (meta #'unused/greet))) \"signature must be exactly [name]\") (let [src (slurp \"caller.clj\")] (assert (re-find #\"\\(unused/greet\\s+n\\)\" src) \"caller must pass exactly one arg\")) (println :pass)"
+  },
+  {
+    "id": "fw-110",
+    "title": "extract magic number",
+    "difficulty": "Easy",
+    "description": "`mag.clj` hardcodes the literal `0.85` inside `discount`. Introduce a top-level `(def discount-rate 0.85)` and rewrite `discount` to use it. Behavior must stay identical.",
+    "starter": [
+      {
+        "path": "mag.clj",
+        "content": "(ns mag)\n\n(defn discount [price]\n  (* price 0.85))\n"
+      }
+    ],
+    "verify": "(require 'mag) (assert (resolve 'mag/discount-rate) \"must define `mag/discount-rate`\") (assert (= 0.85 (deref (resolve 'mag/discount-rate)))) (assert (= 85.0 (mag/discount 100))) (let [src (slurp \"mag.clj\")] (assert (= 1 (count (re-seq #\"0\\.85\" src))) \"literal 0.85 should appear exactly once (in the def)\") (assert (re-find #\"\\(def\\s+discount-rate\\b\" src) \"use `def discount-rate`\")) (println :pass)"
+  },
+  {
+    "id": "fw-201",
+    "title": "merge 3 files into one namespace",
+    "difficulty": "Medium",
+    "description": "`a.clj`, `b.clj`, `c.clj` form a dependency chain (a \u2190 b \u2190 c). Create a single new file `merged.clj` in namespace `merged` that inlines every var from the three originals. `merged/final` must behave identically to `c/final`. The new file must NOT contain any `:require` form \u2014 everything is internal.",
+    "starter": [
+      {
+        "path": "a.clj",
+        "content": "(ns a)\n\n(def base 10)\n"
+      },
+      {
+        "path": "b.clj",
+        "content": "(ns b\n  (:require [a]))\n\n(def doubled (* a/base 2))\n"
+      },
+      {
+        "path": "c.clj",
+        "content": "(ns c\n  (:require [b]))\n\n(defn final [] (+ b/doubled 5))\n"
+      }
+    ],
+    "verify": "(require 'merged) (assert (= 25 (merged/final))) (let [src (slurp \"merged.clj\")] (assert (re-find #\"\\(ns\\s+merged\\b\" src) \"namespace must be `merged`\") (assert (not (re-find #\":require\" src)) \"merged.clj must have no :require\")) (println :pass)"
+  },
+  {
+    "id": "fw-202",
+    "title": "merge 3-tier api into one report",
+    "difficulty": "Medium",
+    "description": "Collapse `nums.clj`, `math.clj`, and `api.clj` into a single `report.clj` in namespace `report`. Expose `report/report` returning `{:even 20 :odd 16}`. No `:require` in the merged file.",
+    "starter": [
+      {
+        "path": "nums.clj",
+        "content": "(ns nums)\n\n(def evens [2 4 6 8])\n(def odds [1 3 5 7])\n"
+      },
+      {
+        "path": "math.clj",
+        "content": "(ns math\n  (:require [nums]))\n\n(defn sum-evens [] (apply + nums/evens))\n(defn sum-odds [] (apply + nums/odds))\n"
+      },
+      {
+        "path": "api.clj",
+        "content": "(ns api\n  (:require [math]))\n\n(defn report [] {:even (math/sum-evens) :odd (math/sum-odds)})\n"
+      }
+    ],
+    "verify": "(require 'report) (assert (= {:even 20 :odd 16} (report/report))) (let [src (slurp \"report.clj\")] (assert (re-find #\"\\(ns\\s+report\\b\" src) \"namespace must be `report`\") (assert (not (re-find #\":require\" src)) \"report.clj must have no :require\")) (println :pass)"
+  },
+  {
+    "id": "fw-203",
+    "title": "merge geometry pipeline",
+    "difficulty": "Medium",
+    "description": "Merge `util.clj`, `shape.clj`, `main.clj` into `combined.clj` (namespace `combined`). The new file must expose `combined/total` equal to `37` (= rectangle 3\u00d74 + square of 5) without any `:require`.",
+    "starter": [
+      {
+        "path": "util.clj",
+        "content": "(ns util)\n\n(defn square [x] (* x x))\n"
+      },
+      {
+        "path": "shape.clj",
+        "content": "(ns shape\n  (:require [util]))\n\n(defn area-rect [w h] (* w h))\n(defn area-sq [n] (util/square n))\n"
+      },
+      {
+        "path": "main.clj",
+        "content": "(ns main\n  (:require [shape]))\n\n(def total (+ (shape/area-rect 3 4) (shape/area-sq 5)))\n"
+      }
+    ],
+    "verify": "(require 'combined) (assert (= 37 combined/total)) (let [src (slurp \"combined.clj\")] (assert (re-find #\"\\(ns\\s+combined\\b\" src) \"namespace must be `combined`\") (assert (not (re-find #\":require\" src)) \"combined.clj must have no :require\")) (println :pass)"
+  }
+]
