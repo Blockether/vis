@@ -60,7 +60,12 @@
   ;;   rewrite-clj              -> vis-language-clojure
   ;;   lanterna                 -> vis-channel-tui
 
-  com.blockether/svar                             {:mvn/version "0.5.3"}
+  ;; svar pinned to the local checkout at `../svar` so vis tracks the
+  ;; iteration-loop-side changes (idle-stream watchdog, `:idle-timeout-ms`
+  ;; option, `::stream-started` telemetry) before the next svar mvn cut.
+  ;; Flip back to `{:mvn/version "X.Y.Z"}` after the release that contains
+  ;; commit `f61510b6` lands on Clojars.
+  com.blockether/svar                             {:local/root "../svar"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
   ;; to lift LLM-emitted thinking strings + user-typed messages into

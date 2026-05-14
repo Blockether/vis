@@ -12,17 +12,17 @@
      :reasoning        LLM is streaming reasoning text. Updates the
                        iteration entry's `:thinking` field.
 
-     :form-start       One top-level form is about to evaluate. Carries
-                       `:form-idx` and `:code`. The tracker writes the
+     :form-start       One block is about to evaluate. Carries
+                       `:position` and `:code`. The tracker writes the
                        code immediately so channels can show the
                        currently-running block before the result lands.
 
-     :form-result      One top-level form finished evaluating. Carries
-                       `:form-idx`, `:code`, `:result`/`:error`,
+     :form-result      One block finished evaluating. Carries
+                       `:position`, `:code`, `:result`/`:error`,
                        `:stdout`, `:stderr`, `:execution-time-ms`. The
-                       tracker writes per-form data into the
+                       tracker writes per-block data into the
                        iteration entry's parallel vectors at index
-                       `:form-idx`. Chunks tagged `:silent?` (or
+                       `:position`. Chunks tagged `:silent?` (or
                        returning `:vis/silent`) are retained with a
                        parallel `:silents` marker so channels can
                        toggle their visibility.
@@ -217,12 +217,12 @@
             (str/includes? code "(turn-answer!")))))))
 
 (defn- write-form-start-slot
-  "Per-form start chunks land at `:form-idx` before eval completes.
+  "Per-block start chunks land at `:position` before eval completes.
    Only `:code` / `:comments` / `:started-at-ms` are populated; result-
    side vectors intentionally stay empty so renderers can distinguish
    running code from completed success or failure."
   [entry chunk]
-  (let [idx  (display-form-idx entry (:form-idx chunk))
+  (let [idx  (display-form-idx entry (:position chunk))
         need (inc idx)]
     (-> entry
       (update :code     #(assoc (pad-to % need) idx (:code chunk)))
@@ -232,12 +232,12 @@
       (update :silents  #(assoc (pad-to % need) idx (silent-chunk? chunk))))))
 
 (defn- write-form-slot
-  "Per-form chunks land at `:form-idx`. Pad parallel vectors with
+  "Per-block chunks land at `:position`. Pad parallel vectors with
    nils up to that index, then assoc the chunk's data. This
    tolerates out-of-order arrivals (e.g. a future async eval)
    without crashing on `assoc out-of-bounds`."
   [entry chunk]
-  (let [idx (display-form-idx entry (:form-idx chunk))
+  (let [idx (display-form-idx entry (:position chunk))
         need (inc idx)]
     (-> entry
       (update :code      #(assoc (pad-to % need) idx (:code chunk)))
@@ -369,8 +369,8 @@
             (or (and (= :vis/answer (:result chunk))
                   (not (visible-code-segments? chunk)))
               (structurally-silent-chunk? chunk)))
-        (hide-form-slot entry (:form-idx chunk))
-        (write-form-slot (unhide-form-slot entry (:form-idx chunk)) chunk))
+        (hide-form-slot entry (:position chunk))
+        (write-form-slot (unhide-form-slot entry (:position chunk)) chunk))
       :activity nil)
 
     :iteration-final
@@ -388,7 +388,7 @@
           ;; `:vis/silent` forms stay in the timeline and are marked in
           ;; `:silents`; channel settings decide whether to render them.
           answer-idx   (when-not duplicate-final?
-                         (when (:final chunk) (:answer-form-idx chunk)))
+                         (when (:final chunk) (:answer-position chunk)))
           silent-idxs  (if duplicate-final? #{} (or (:silent-form-idxs chunk) #{}))
           base         (reduce (fn [e idx]
                                  (let [display-idx (display-form-idx e idx)]
@@ -426,7 +426,7 @@
    (let [timeline (atom (sorted-map))
          as-vec   #(vec (vals %))]
      {:on-chunk     (fn [chunk]
-                      (let [iteration (:iteration chunk)
+                      (let [iteration (:iteration-count chunk)
                             tl        (swap! timeline update iteration
                                         (fn [entry]
                                           (update-entry

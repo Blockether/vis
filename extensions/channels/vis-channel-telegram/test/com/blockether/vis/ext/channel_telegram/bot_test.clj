@@ -30,7 +30,7 @@
   (it "uses render-segments for the running form preview and hides answer/title source"
     (let [status-line (private-var 'bubble-form-status-line)]
       (expect (= "⏳ Running form #1 — (def x 1)"
-                (status-line {:form-idx 0
+                (status-line {:position 0
                               :code (str "(def x 1)\n"
                                       "(set-conversation-title! \"Mixed\")\n"
                                       "(turn-answer! [:ir [:p \"Done\"]])")

@@ -47,7 +47,7 @@
           [{:id :position :status :duration-ms
             :provider :model :thinking :error
             :tokens :cost-usd
-            :answer-form-idx :returned-empty-blocks?
+            :answer-position :returned-empty-blocks?
             :llm-system-prompt :llm-user-prompt
             :llm-raw-response :llm-raw-response-preview :llm-raw-response-length
             :llm-raw-response-sha256
@@ -56,7 +56,7 @@
             :vars
             [{:name :code :value :version}]
             :blocks
-            [{:idx :code :comment :result :error
+            [{:position :code :comment :result :error
               :stdout :stderr :duration-ms
               :timeout? :repaired?}]}]}]}
 
@@ -225,7 +225,7 @@
 
 (defn- block-index
   [block]
-  (or (:idx block) (:id block) 0))
+  (or (:position block) (:idx block) (:id block) 0))
 
 (defn- block-ref
   [turn iteration block]
@@ -560,7 +560,7 @@
   "Per-block forensic dump: status header, optional comment, full code
    in a fenced ```clojure block, result line, fenced stdout/stderr,
    fenced error. `answer?` flips on the block the iteration's
-   `:answer-form-idx` points at - the form that called `(turn-answer! ...)` -
+   `:answer-position` points at - the block that called `(turn-answer! ...)` -
    so the reader spots the terminal block at a glance.
 
    Truncation budgets stay generous (4KB stdout / stderr, 800 chars
@@ -864,7 +864,7 @@
         ;; Index of the block that called `(turn-answer! ...)`. nil for
         ;; non-terminal iterations - the marker only fires on the
         ;; right block.
-        ans-idx (:answer-form-idx iter)]
+        ans-idx (:answer-position iter)]
     (str "\n#### Iteration " pos " - " status
       " (" in "/" out " tokens, " (format-cost-usd cost) ", " (long dur) "ms)\n\n"
       (render-thinking (:thinking iter))
