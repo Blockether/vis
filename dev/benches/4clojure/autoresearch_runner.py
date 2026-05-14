@@ -107,6 +107,14 @@ def log(msg: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _prompt_sizes_via_clojure() -> dict[str, int]:
+    """Probe the size of the three prompt fragments Vis actually sends.
+
+    The foundation `:ext/prompt` is cwd-aware (it reads AGENTS.md /
+    CLAUDE.md from the working directory). The bench runs Vis from a
+    fresh tmp workdir per task, so we measure from a similarly empty
+    tmp dir to avoid inflating the number with vis's own AGENTS.md.
+    """
+    deps_edn = '{:deps {com.blockether/vis {:local/root "' + str(REPO_ROOT) + '"}}}'
     form = (
         "(require '[com.blockether.vis.internal.prompt :as p] "
         "         '[com.blockether.vis.ext.foundation.core :as f] "
@@ -115,14 +123,17 @@ def _prompt_sizes_via_clojure() -> dict[str, int]:
         "(println (count ((:ext/prompt f/vis-extension) {}))) "
         "(println (count ((:ext/prompt zc/clojure-extension) {})))"
     )
-    proc = subprocess.run(
-        [CLOJURE, "-M", "-e", form],
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=180,
-    )
+    with tempfile.TemporaryDirectory(prefix="vis-prompt-probe-") as d:
+        proc = subprocess.run(
+            [CLOJURE, "-Sdeps", deps_edn, "-M", "-e", form],
+            cwd=d, capture_output=True, text=True, timeout=180,
+        )
     lines = [l.strip() for l in proc.stdout.splitlines() if l.strip()]
     nums = [int(l) for l in lines if l.lstrip("-").isdigit()][-3:]
     if len(nums) != 3:
-        raise RuntimeError(f"prompt-size probe parse failed; stdout={proc.stdout[-200:]} stderr={proc.stderr[-200:]}")
+        raise RuntimeError(
+            f"prompt-size probe parse failed; stdout={proc.stdout[-200:]} stderr={proc.stderr[-200:]}"
+        )
     return {
         "system_prompt_chars": nums[0],
         "foundation_prompt_chars": nums[1],
