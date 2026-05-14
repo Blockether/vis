@@ -208,7 +208,7 @@
                                                    (when (:vis/structurally-silent? b) i)))
                                                all-exprs)
                                              answer-idx  (when answer-here?
-                                                           (let [idx (or (:answer-form-idx it)
+                                                           (let [idx (or (:answer-position it)
                                                                        (dec (count all-exprs)))
                                                                  block (when (and (integer? idx)
                                                                                (not (neg? idx))
@@ -282,7 +282,8 @@
                                                                    (or (:vis/silent expr)
                                                                      (= :vis/silent (:result expr)))))
                                                            exprs)]
-                                         {:thinking  (visible-thinking (:thinking it))
+                                         {:position  (when-let [p (:position it)] (dec (long p)))
+                                          :thinking  (visible-thinking (:thinking it))
                                           :provider-fallbacks (get-in it [:metadata :llm :fallback-trace])
                                           :code      (mapv :code exprs)
                                           :comments  (mapv :comment exprs)

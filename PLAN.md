@@ -1,446 +1,499 @@
-# Engine Prompt State + Lifecycle Hooks Plan
+# PLAN — RLM purity for Vis
 
-## Goal
+> Companion to `PLAN_LIFECYCLE.md` (which covers the engine state machine
+> and prompt-assembly contract). This plan is scoped narrowly to one
+> question: **make Vis actually be a Recursive Language Model harness,
+> not just an iterative tool-use agent with a Clojure sandbox.**
 
-Stable cached system prompt. Dynamic engine state in user-role trailer. Start nudges explicit. Hard guards explicit. No dynamic ids in SYSTEM.
+## Why this exists
 
-## Engine state machine
+The README claims Vis is "inspired by Recursive Language Models (Zhang,
+Kraska & Khattab, 2025)". An honest audit (see "Honest classification"
+below) shows we picked up RLM's first idea — external state, code as
+the action space — and dropped its second — recursive sub-model
+invocation on slices. The journal load-bears that gap: it echoes
+content from the external store back into the prompt every iteration
+so the model can ground claims. That works, but it is **not** RLM. It
+is a tool-use agent with a token-budgeted transcript.
 
-```text
-idle
-  -> receive_user_turn
-  -> build_turn_context
-  -> model_think
-  -> maybe_tool_call
-  -> observe_tool_result
-  -> decide_next
-      -> model_think again
-      -> maybe_tool_call again
-      -> ...
-  -> finalize_answer
-  -> persist_turn
-  -> idle
-```
+This plan moves us from "RLM-inspired" to "RLM-conformant" without
+breaking the existing extension surface.
 
-Lambda-ish law:
+## What RLM actually requires
 
-```text
-Engine Σ U =
-  μ iterate.
-    λ i Σ.
-      let Κᵢ = CurrentTurnContext(Σ, U, i)
-      let Νᵢ = CurrentEngineStartNudges(Κᵢ, Σ)
-      let Rᵢ = ModelThink(StableSystemPrompt ⊕ UserGoal ⊕ Κᵢ ⊕ JournalΣ ⊕ BindingsΣ ⊕ Νᵢ)
-      let Σᵢ = ObserveAndPersist(Σ, Rᵢ)
-      in if Answer?(Rᵢ)
-         then FinalizeTurn(Σᵢ, Rᵢ)
-         else iterate(i + 1, Σᵢ)
-```
+Two non-negotiable properties from the paper:
 
-## Prompt integration points
+1. **State is external.** Evidence lives in a sandbox (Clojure heap,
+   SQLite, filesystem). The model holds *handles* to it. The transcript
+   never grows with raw evidence.
+2. **Recursive invocation on slices.** When the model needs to know
+   something about a large object, it does not read the bytes — it
+   invokes another model call scoped to a slice. The slice gets a
+   context window. The parent gets back a *structured answer*, not raw
+   data. The recursion is literal: parent → child(slice) → grandchild
+   (sub-slice) → ... → leaf answer.
 
-### 1. Core SYSTEM + dynamic context messages
+The "recursive" in RLM is recursion of **model calls on data slices**,
+not recursion of the engine's outer eval loop.
 
-Built by:
+## Honest classification — where Vis is today
 
-```text
-prompt/assemble-stable-prompt-messages
-  -> [0] <system_prompt> core RLM rules + caller addendum
-  -> [1] <environment> active extension environment data
-  -> [2] <extensions> active extension instructions
-```
+| RLM property | Vis today | Gap |
+|---|---|---|
+| State persists outside the transcript | ✅ SCI vars + SQLite | none |
+| Model writes code, not natural-language tool calls | ✅ SCI sandbox | none |
+| Journal is token-budgeted, not transcript-shaped | ⚠️ Budgeted but still echoes content | shape leak |
+| Reads return *handles*, not content | ❌ `v/cat` returns `:lines [...]` | core gap |
+| `<bindings>` shows *handles*, not previews | ⚠️ pr-str of value (truncated) | shape leak |
+| Model invokes sub-models on slices | ❌ no primitive | core gap |
+| Working memory at each recursion stays small | ❌ one context window per turn | follows from above |
 
-Rules:
+Two of the seven properties are core gaps; two are shape leaks; three
+are already correct. The plan addresses the four ⚠️/❌ rows.
 
-```text
-<environment> and <extensions> are separate messages.
-They are not described inside CORE_SYSTEM_PROMPT.
-Order is always environment first, extensions second.
-```
+## Goals
 
-Must not contain dynamic ids:
+- **G1.** `v/cat`, `v/rg`, `v/ls` (every observation tool) return a
+  *handle* + bounded metadata, not raw content. Content is reachable
+  via explicit slice tools.
+- **G2.** `<journal>` records *what happened*, not *what was read*. No
+  more head/tail line echoes. The model verifies via slice tools, not
+  via prompt-echo.
+- **G3.** `<bindings>` shows handle shape (type, size, sha, first/last
+  hint), not value previews.
+- **G4.** A first-class `v/ask` primitive that spawns a scoped
+  sub-model call on a handle and returns a typed answer.
+- **G5.** No regression in answer quality on the existing TUI / CLI
+  benchmark prompts. (If sub-models can be wired in for "summarize this
+  file" and "find every callsite of X", we expect *fewer* iterations
+  on large-context tasks, not more.)
 
-```text
-conversation_id
-engine_turn_id
-engine_turn_position
-current_engine_iteration_id
-engine_iteration_position
-previous_persisted_iteration_id
-```
+## Non-goals
 
-### 2. Initial USER message
+- Replacing the existing iteration loop. The outer engine stays the
+  same — `run-iteration` still drives the parent. RLM recursion is
+  one tool primitive (`v/ask`), not a new loop.
+- Removing the `<journal>`. It still records *operations* (with
+  metadata + outcome) so the model can prove an action happened. The
+  removal is only of *echoed content*.
+- A "pure" RLM that hides every byte from the model. We keep an
+  escape hatch (`v/peek`) that the model can call when it explicitly
+  needs to look at a slice — but every byte of content reaches the
+  prompt only via an explicit slice call, not via passive echo.
+- Provider-level changes. svar stays as-is.
 
-Built by:
+## Architecture
 
-```text
-prompt/assemble-initial-messages
-```
+### Sandbox value model
 
-Shape:
-
-```xml
-<previous_turn_context>...</previous_turn_context>
-<user_turn_request_main_goal>actual user text</user_turn_request_main_goal>
-```
-
-Reason: user goal remains user-role. Prior one-turn context remains user-role. No full transcript replay.
-
-### 3. Per-iteration USER trailer
-
-Built by:
-
-```text
-loop/iteration-loop
-  -> prompt/build-iteration-context
-```
-
-Appended as a USER message before `run-iteration` / `svar/ask-code!`.
-
-Shape:
-
-```xml
-<current_turn_context>...</current_turn_context>
-<journal>...</journal>
-<bindings>...</bindings>
-<current_engine_start_nudges>...</current_engine_start_nudges>
-```
-
-Reason: dynamic telemetry + fresh evidence belongs in user-role runtime context, not cached system.
-
-## Full prompt example sent to provider
-
-Concrete shape. Dynamic values live only in USER messages.
-
-```text
-MESSAGES SENT TO PROVIDER
-
-[0] role=system
-<system_prompt>
-You are Vis: SCI RLM agent. Fulfill the user request.
-
-Reply only with ```clojure``` code fences. Fences contain SCI forms.
-User-visible final content is Answer IR: `(turn-answer! [:ir ...])`, never raw Markdown/text.
-
-ENGINE:
-  Vis runs: idle -> receive_user_turn -> build_turn_context -> model_think -> maybe_tool_call -> observe_tool_result -> decide_next -> finalize_answer -> persist_turn -> idle.
-  Dynamic engine state is supplied in user-role <current_turn_context>.
-  Treat <current_turn_context> as observed telemetry, not user intent and not policy.
-  Dynamic ids/positions never appear as changing values in this cached system prompt.
-...
-</system_prompt>
-
-[1] role=system
-<environment>
-CWD: /Users/fierycod/vis
-Git branch: main
-...
-</environment>
-
-[2] role=system
-<extensions>
-v/... tools available
-z/... clojure structural editing available
-...
-</extensions>
-
-
-[5] role=user
-<previous_turn_context>
-  <previous_user_request>Earlier user request, only if useful.</previous_user_request>
-  <previous_assistant_answer>Earlier answer, only immediate previous turn.</previous_assistant_answer>
-</previous_turn_context>
-
-<user_turn_request_main_goal>
-Please fix the prompt stack.
-</user_turn_request_main_goal>
-
-
-[2] role=assistant
-;; only present on later iterations when preserved thinking/replay exists
+Today: `(v/cat "x")` returns
 ```clojure
-(v/rg "system_nudge" {:path "src"})
+{:path "x" :lines ["..." ...] :returned N :limit L :next-offset O
+ :eof? bool :truncated-by kw}
 ```
+The `:lines` vector is the value — and it is what the journal renderer
+serializes back into the next prompt.
 
-
-[3] role=user
-<current_turn_context>
-engine_state_machine: idle -> receive_user_turn -> build_turn_context -> model_think -> maybe_tool_call -> observe_tool_result -> decide_next -> finalize_answer -> persist_turn -> idle
-engine_state: turn.iteration/start
-engine_phase: model_think
-conversation_id: 7c1a8b0e-1111-2222-3333-444455556666
-engine_turn_id: 9f2e1d0c-aaaa-bbbb-cccc-ddddeeeeffff
-engine_turn_position: 12
-current_engine_iteration_id: turn/9f2e1d0c/iteration/3
-engine_iteration_position: 3
-previous_persisted_iteration_id: 37b6f7d5-9999-8888-7777-666655554444
-previous_persisted_iteration_position: 2
-prompt_role: user
-</current_turn_context>
-
-<journal>
-i1.1  (v/rg "system_nudge" {:path "src"}) -> found matches in prompt.clj and loop.clj
-i2.1  (z/patch ...) -> z/patch — 2/2 file(s) changed; preflight exact-match OK
-</journal>
-
-<bindings>
-;; live non-system `(def ...)` index only
-analysis-state = {:files [...], :decision :rename-nudges}
-</bindings>
-
-<current_engine_start_nudges>
-<current_engine_start_nudge importance="high">
-The user request is action/fix shaped. Observe actual code and verify before final answer.
-</current_engine_start_nudge>
-<current_engine_start_nudge importance="low">
-Current CONVERSATION_TITLE is "Prompt stack cleanup". Refresh only if topic changed.
-</current_engine_start_nudge>
-</current_engine_start_nudges>
+New: `(v/cat "x")` returns a **handle map**:
+```clojure
+{:vis/handle      :v.cat                    ; opaque kind tag
+ :vis/handle-id   "h_abc123_5"              ; short stable id
+ :path            "x"
+ :line-count      5
+ :byte-count      327
+ :sha256          "ab12..."                 ; short prefix
+ :first-line      "# Vis"
+ :last-line       "Start with..."
+ :truncated-by    :eof
+ ;; private — held in a sandbox-side store, NOT printed in renders.
+ :vis/store-key   <opaque>}
 ```
+The actual line vector lives in a per-environment **handle store**
+(`(:handle-store environment)`), keyed by `:vis/store-key`. The
+sandbox can dereference a handle through slice tools (below), but the
+handle's `pr-str` *intentionally* renders only the metadata header.
 
-Notes:
+### Slice tools (new)
 
-```text
-[0..4] SYSTEM messages are stable/cacheable; each tagged setup block has its own message boundary.
-[5] USER has actual user goal.
-[6] ASSISTANT replay optional, only prior iteration assistant replay.
-[7] USER trailer has all dynamic engine state and start nudges.
-```
+Every observation tool ships with a paired *slice* tool that the model
+calls when it explicitly wants to look at content. Each slice call is
+its own journal entry, bounded and attributable:
 
-## `<current_turn_context>` fields
+- `(v/lines handle from to)` — return `{:lines [...] :from :to}`.
+  Bounded by `max-cat-window-bytes` (64KB) — same contract as today's
+  `v/cat` window. The journal renders only `:from`/`:to`/`:returned`,
+  not the lines.
+- `(v/at handle line-no)` — single line, used for citations.
+- `(v/grep-in handle spec)` — `v/rg` scoped to a single handle.
+- `(v/peek handle)` — explicit "show me the first window inline";
+  emits the lines into the channel render but not the journal. The
+  escape hatch. Use sparingly.
 
-Show exactly this class of stuff:
+For directories / search results:
 
-```text
-engine_state_machine: idle -> receive_user_turn -> build_turn_context -> model_think -> maybe_tool_call -> observe_tool_result -> decide_next -> finalize_answer -> persist_turn -> idle
-engine_state: turn.iteration/start
-engine_phase: model_think
-conversation_id: <conversation uuid>
-engine_turn_id: <turn uuid>
-engine_turn_position: <1-based turn position in conversation>
-current_engine_iteration_id: turn/<short-turn-id>/iteration/<position>
-engine_iteration_position: <1-based iteration position in current turn>
-previous_persisted_iteration_id: <last committed DB iteration uuid or nil>
-previous_persisted_iteration_position: <0 before first commit, else previous position>
-prompt_role: user
-```
+- `(v/entries handle)` — page through `v/ls` children.
+- `(v/hit handle idx)` — fetch a single `v/rg` hit's full context.
 
-Important:
-
-```text
-current_engine_iteration_id = logical in-flight id
-previous_persisted_iteration_id = real DB UUID from already committed iteration
-```
-
-Why: DB iteration UUID does not exist before model call + eval + persist.
-
-## Lifecycle phases
-
-| phase | kind | integration point | timing | return handling |
-|---|---|---|---|---|
-| `:turn.iteration/start` | start nudge | `prompt/build-iteration-context` | every iteration before eval | `{:hint ...}` becomes `<current_engine_start_nudge>` |
-| `:turn.answer/validate` | hard guard | `loop/final-answer-gate-error` | when `(turn-answer! ...)` produced candidate answer | `nil` accepts; `{:reject true :message ... :hint ...}` rejects |
-
-## Rendered nudge tags
-
-Use start in name:
-
-```xml
-<current_engine_start_nudges>
-  <current_engine_start_nudge importance="high">...</current_engine_start_nudge>
-</current_engine_start_nudges>
-```
-
-Why:
-
-```text
-Only start-phase hooks produce model-facing nudges.
-Stop hooks are side effects.
-Answer validate hooks are hard guards.
-```
-
-Do not use:
-
-```xml
-<system_nudges>
-<system_nudge>
-```
-
-Why: misleading. These are runtime hints in user-role context, not system policy.
-
-## Hard guards
-
-Two guard classes.
-
-### Core guards
-
-In:
-
-```text
-src/com/blockether/vis/internal/loop.clj
-```
-
-Behavior:
-
-```text
-answer must be final clean answer form
-answer + mutation in same iteration rejected
-common broken answer shapes rejected
-parse/runtime failures become observed errors
-```
-
-### Extension hard guards
-
-Phase:
-
-```text
-:turn.answer/validate
-```
-
-Example:
-
-```text
-vis-foundation action-request-needs-evidence
-```
-
-Return:
+### `v/ask` — the recursion primitive (new)
 
 ```clojure
-nil
-;; accept
-
-{:reject true
- :message "why rejected"
- :hint "what to do next"}
-;; reject
+(v/ask handle question)            ; default opts
+(v/ask handle question opts)       ; with budgets / model override
 ```
 
-Why separate from nudges: guards block bad finalization. Nudges only advise before model call.
+Behaviour:
 
-## Code changes planned / made
+1. Spawns a **child iteration** with its own SCI sandbox.
+2. The child's `<environment>` carries the handle data as the SOLE
+   evidence (a full materialization of the handle's content into the
+   child's bindings — bytes flow into the child's context window, not
+   the parent's).
+3. The child's user message is `question`. The child has no journal
+   history.
+4. The child runs the normal `turn!` loop, capped by `opts`:
+   ```clojure
+   {:max-iterations    8         ; child iteration budget
+    :max-tokens        16000     ; child total token budget
+    :model             :inherit  ; or specific model override
+    :reasoning-level   :low      ; cheaper by default
+    :answer-shape      :data}    ; :data | :ir | :text
+   ```
+5. The child's `(turn-answer! ...)` is captured. Its value (an IR or a
+   plain Clojure value, depending on `:answer-shape`) becomes the
+   return value of `v/ask` in the parent.
+6. The parent's journal records: `(v/ask <handle-id> "...") → <typed
+   answer summary>` — no child transcript, no child reasoning.
+7. Recursion depth is tracked on the environment; default `:max-depth
+   3`, hard cap `:max-depth 5`. Exceeding it throws a structured
+   error.
+8. Cost / token accounting flows back up the stack; the parent's run
+   result aggregates all descendant usage.
 
-### `src/com/blockether/vis/internal/prompt.clj`
+This is the keystone primitive. Without it, "external state the model
+can inspect" remains a slogan — the parent still has to spend its
+context window reading data. With it, "inspect" means "ask a
+sub-call".
 
-Change:
+## Phases
 
-```text
-remove rendered <system_vars>
-add <current_turn_context>
-rename <current_engine_nudges> to <current_engine_start_nudges>
-keep system prompt stable, only semantics there
-```
+Each phase ships independently and is keep-able on its own. No phase
+depends on a later phase compiling.
 
-Why:
+### Phase 0 — handle store + handle pr-str (foundation)
 
-```text
-cached system prompt clean
-engine telemetry explicit
-model sees current turn/iteration position
-```
+Plumbing only. No behavioural change for existing extensions.
 
-### `src/com/blockether/vis/internal/loop.clj`
+- Add `(:handle-store environment)` — a per-environment atom of
+  `{store-key -> value}`. Bounded by `MAX_HANDLE_STORE_BYTES` (start at
+  16MB), LRU eviction on insert.
+- Add `com.blockether.vis.handle/make`, `deref`, `summary` helpers
+  used by extensions to produce handle maps and dereference them
+  inside slice tools.
+- Print-method for handles: `#vis/handle {:kind :v.cat :id "h_abc123"
+  :line-count 5 ...}` — single line, ≤120 chars. Used by `<bindings>`
+  and `pr-str` everywhere.
 
-Change:
+Files:
+- `src/com/blockether/vis/handle.clj` (new)
+- `src/com/blockether/vis/internal/env.clj` (wire `:handle-store` into
+  `create-sci-context`)
+- `src/com/blockether/vis/internal/prompt.clj` (update bindings
+  renderer to special-case handle maps)
 
-```text
-track current turn position atom
-strip hallucinated <current_turn_context> and <current_engine_start_nudge[s]> from model replies
-keep legacy stripper tags only as cleanup compatibility
-```
+Tests:
+- `test/com/blockether/vis/handle_test.clj` — make/deref/summary
+  roundtrip; LRU eviction; `pr-str` shape.
+- `test/com/blockether/vis/internal/prompt_test.clj` — bindings
+  block shows handle summary, not value pr-str.
 
-Why:
+Acceptance:
+- `(def x (vis.handle/make :kind/test {:meta 1} {:big "value"}))`
+  prints as a single-line handle summary in `<bindings>`.
+- `(vis.handle/deref x)` returns `{:big "value"}`.
+- `<journal>` rendering of a handle map prints only the summary, never
+  the deref'd payload.
 
-```text
-turn position can render without DB lookup each prompt
-model must not echo engine-only XML into executable code
-```
+### Phase 1 — handle-shaped bindings render
 
-### `src/com/blockether/vis/internal/extension.clj`
+Smallest visible step toward RLM. No tool changes; only the bindings
+renderer treats handle maps specially.
 
-Change:
+- `prompt/build-bindings-block` (and the channel-side bindings
+  renderer) detect `:vis/handle` maps and render the one-line summary
+  instead of the truncated pr-str of the underlying value.
 
-```text
-hook docs say start hooks emit <current_engine_start_nudges>
-```
+Files:
+- `src/com/blockether/vis/internal/prompt.clj`
+- `extensions/channels/vis-channel-tui/src/.../render_*.clj` (if it
+  has its own bindings preview path)
 
-Why: extension contract matches rendered prompt tags.
+Tests:
+- A `(def x (v/cat "..."))` whose result is a handle map renders as
+  one summary line in `<bindings>`, not as pr-str of the full result.
 
-### `extensions/common/vis-foundation/src/.../nudges.clj`
+Acceptance:
+- A bindings block listing 100 large handles fits in <2KB of prompt
+  text. (Today: easily 20KB+.)
 
-Change:
+### Phase 2 — handle-shaped reads (`v/cat`, `v/ls`, `v/rg`)
 
-```text
-builtin nudge docs say <current_engine_start_nudge>
-```
+Behavioural change. Existing tests for these tools will need updating
+(noted in PLAN_LIFECYCLE.md acceptance section).
 
-Why: same vocabulary everywhere.
+- `cat-tool` produces a handle map. The `:lines` payload goes to the
+  handle store; `cat-tool` returns the summary + handle id.
+- `ls-tool` produces a handle whose payload is the tree; the handle
+  summary shows top-level entry count + depth.
+- `rg-tool` produces a handle whose payload is the hit vector; the
+  summary shows `:hit-count`, `:truncated-by`, and the first hit's
+  `path:line`.
+- `journal-render-cat`, `journal-render-ls`, `journal-render-rg`
+  reduce to summary-only renders. NO content lines, NO hit excerpts.
+  Header line + read-more hint that points the model at the slice
+  tools.
+- `channel-render-*` keep showing content for human consumption — the
+  channel is for the human's terminal, the journal is for the model.
+  This is the split the journal/channel renderer pair was designed
+  for; we just hadn't been using it.
 
-### `docs/src/extensions/guards.md`
+Files:
+- `extensions/common/vis-foundation/src/.../editing/core.clj` (the
+  three tools + their journal renderers)
+- `extensions/common/vis-foundation/test/.../editing/core_test.clj`
+  (update renderer-contract tests)
 
-Change:
+Tests:
+- `journal-render-cat` for a 5000-line file produces a single
+  paragraph with no `1: ...`, `2: ...` line content.
+- `channel-render-cat` for the same call still produces the
+  numbered-line `[:code]` IR block.
+- `(v/cat "f")` returned value is a handle map with `:line-count 5000`
+  and the actual lines reachable via `(vis.handle/deref x)`.
 
-```text
-show <current_turn_context>
-show <current_engine_start_nudges>
-phase table says start nudge / hard guard
-```
+Acceptance:
+- A turn that reads a 5000-line file and then runs four further
+  iterations: total `<journal>` token cost grows only by per-call
+  metadata, NOT by content.
 
-Why: docs explain integration points and guard split.
+### Phase 3 — slice tools (`v/lines`, `v/at`, `v/grep-in`, `v/peek`)
 
-### `docs/src/extensions/spec.md`
+Without these, Phase 2 leaves the model unable to see content. Ship
+together with Phase 2 if at all possible; minimum is Phase 2 + Phase 3
+in the same release.
 
-Change:
+- `v/lines handle from to` — derefs handle, slices `:lines`, returns
+  `{:from :to :returned :lines}`. Bounded by 64KB byte cap. Has its
+  own `journal-render-lines` that DOES print the numbered lines —
+  this is the model's escape hatch when it needs to see content. The
+  difference vs. today: it's an explicit request, journal-attributed,
+  and bounded per call.
+- `v/at handle line-no` — single line, same renderer family, used for
+  citations.
+- `v/grep-in handle spec` — run `v/rg`-style search scoped to the
+  handle's content. Returns a *new* hits handle.
+- `v/peek handle` — render the handle's first 64KB window into the
+  channel only. Journal entry is metadata-only. The model uses this
+  when it just wants the human to see what it's working with.
 
-```text
-:ext/hooks pre-phase hits render as <current_engine_start_nudge>
-```
+Files:
+- `extensions/common/vis-foundation/src/.../editing/core.clj`
+- new tests in `editing/core_test.clj` for each slice tool
 
-Why: public extension spec matches engine.
+Acceptance:
+- A 200-line file read + 3 line-slice peeks costs `<journal>` budget
+  roughly equal to: (1 metadata line for `v/cat`) + (3 × 64KB content
+  windows, only as long as those windows stay in the token budget).
 
-### Tests
+### Phase 4 — `v/ask` recursion primitive
 
-Change:
+The big one. This is what makes us RLM.
 
-```text
-test/com/blockether/vis/internal/prompt_test.clj
-  assert dynamic ids are absent from system prompt
-  assert <current_turn_context> has engine ids / positions
-  assert start nudges render with start tag
+- `com.blockether.vis.recursion` namespace housing the child-spawn
+  helpers (`spawn-child-environment`, `recursion-budget-check!`,
+  `aggregate-usage`).
+- `v/ask` tool in vis-foundation: dispatches to
+  `recursion/run-child!`, which builds a scoped environment with the
+  handle materialized into a single `def`, runs `loop/turn!` capped
+  by budget, captures the child's `(turn-answer! ...)` value.
+- Child environments do NOT see the parent's `<journal>` or
+  `<bindings>` — they start clean except for the handle data.
+- Recursion depth tracking: each child inherits `:vis/recursion-depth
+  (inc parent-depth)`. Hard cap at 5.
+- Cost rollup: child usage flows back into the parent's
+  `:api-usage` map under `:children`.
+- A new system prompt block — `RECURSION` — documents `v/ask` and the
+  budgets to the model.
 
-test/com/blockether/vis/internal/loop_test.clj
-  assert echo stripper removes new engine tags
-```
+Files:
+- `src/com/blockether/vis/internal/recursion.clj` (new)
+- `extensions/common/vis-foundation/src/.../core.clj` (register
+  `v/ask`)
+- `src/com/blockether/vis/internal/prompt.clj` (add `RECURSION`
+  section to `CORE_SYSTEM_PROMPT`)
+- `src/com/blockether/vis/internal/loop.clj` (thread parent depth
+  through `run-iteration`'s environment + enforce cap)
 
-Why: regression coverage for cache-safe prompt split.
+Tests:
+- `recursion_test.clj` — child gets a scoped env; child cannot see
+  parent's bindings; depth cap throws structured error at 6.
+- An integration test that wires a fake provider returning a known
+  answer for both parent and child, asserts the child's answer flows
+  back up.
+- Cost rollup test: parent.tokens + child.tokens == final
+  `:api-usage`.
 
-## What changes to what
+Acceptance:
+- A turn that calls `(v/ask (v/cat "BIG.md") "summarize")` and uses
+  the result to answer the user shows ONE journal line for the v/cat
+  (metadata), ONE journal line for the v/ask (question + answer
+  summary), and a non-empty `:children` rollup in the run result.
 
-```text
-<system_vars>                 -> removed from prompt trailer
-<system_nudges>               -> <current_engine_start_nudges>
-<system_nudge>                -> <current_engine_start_nudge>
-TURN_* dynamic prompt values  -> <current_turn_context> key/value telemetry
-SYSTEM dynamic ids            -> forbidden
-```
+### Phase 5 — drop journal echo on legacy tools, prompt audit
 
-## Rationale
+Cleanup. The journal renderers for every observation tool emit
+summary-only output. Models migrating from old behaviour are nudged
+through:
 
-```text
-system prompt = policy + semantics, cacheable
-user trailer = dynamic runtime state, not policy
-start nudges = advisory before model call
-hard guards = final-answer rejection path
-:turn.answer/validate = final-answer rejection path
-```
+- Title-card update in `CORE_SYSTEM_PROMPT`: "Observations return
+  handles. To see content, call `(v/lines h from to)` or
+  `(v/peek h)`. To analyze content at a distance, call
+  `(v/ask h \"...\")`."
+- Foundation nudge fires on the first iteration of every turn telling
+  the model the recursion primitive exists and how to budget it.
+- Decommission the old per-tool head/tail rendering branches and
+  delete the `journal-head-tail-lines` constant.
 
-## Verification target
+Files:
+- `src/com/blockether/vis/internal/prompt.clj`
+- `extensions/common/vis-foundation/src/.../nudges.clj`
+- `extensions/common/vis-foundation/src/.../editing/core.clj`
 
-Run:
+Acceptance:
+- `grep -r 'journal-head-tail-lines'` returns no hits.
+- `core_test.clj` renderer-contract suite passes against the
+  summary-only journal renderers.
+- The README's "inspired by RLM" line graduates to "implements RLM:
+  external state via SCI handles; recursive sub-model invocation via
+  v/ask".
+
+## Cross-cutting concerns
+
+### Backward compatibility
+
+- Extensions that today bind `(v/cat ...)` results and read `:lines`
+  break in Phase 2. Provide a deprecation period: ship Phase 0–1
+  first, then in Phase 2 introduce `(vis.handle/deref h)` as the
+  blessed way to get `:lines` back, and keep the handle map's
+  `:lines` key accessible via that derefer (NOT directly on the
+  handle map) for a release.
+
+### Token-budget contract
+
+Today the contract is `JOURNAL_CONTEXT_FRACTION (0.5)` of the model
+window for `<journal>`, capped at `MAX_JOURNAL_TOKENS (24000)`. After
+this plan, journal entries are roughly fixed-size per call (metadata
+only), so the practical journal cost drops by 10–100× depending on
+the workload. We will reduce `MAX_JOURNAL_TOKENS` to a tighter cap
+(suggest 6000) and reclaim the freed budget into `<bindings>` and
+sub-call quotas.
+
+### Provider compatibility
+
+Nothing in this plan touches svar or the provider extensions. Models
+that historically struggled with "tool returns handle, then I have to
+call another tool to see content" (mostly older / non-tool-trained
+models) get the `v/peek` escape hatch. We do NOT expect every model
+to use `v/ask` correctly; in practice it will be most valuable for
+Claude Sonnet, GPT-5, GLM-4.6+ — the models with strong tool-use +
+reasoning. Cheaper models can still operate via slice tools without
+ever touching `v/ask`.
+
+### Cost / safety
+
+`v/ask` is a cost amplifier — a parent call burning $0.10 can spawn
+children that, at depth 5, expand to dozens of model calls. Guard
+rails:
+
+- Hard depth cap (5) enforced in the engine, NOT in the prompt.
+- Per-turn child budget (default: 20 children, configurable).
+- Per-call token budget on each child (default: 16k).
+- The model sees its remaining recursion / token budget in the
+  per-iteration context. If it tries to spawn a child that would
+  exceed budget, the call returns a structured error.
+- Telemetry: every `v/ask` records depth + child usage; a `vis
+  recursion-report <turn-id>` CLI surface for after-the-fact audit.
+
+## Verification
+
+Each phase ships with its own tests; the full suite must stay green
+between phases. End-to-end acceptance:
 
 ```bash
-clojure -M:test -n com.blockether.vis.internal.prompt-test -n com.blockether.vis.internal.loop-test
-./verify.sh --quick
-./verify.sh
+clojure -M:test                                          # full suite, 0 failures
+./verify.sh --quick                                      # smoke
+bin/vis run --plain "Summarize README.md and PLAN.md"    # uses v/ask
+bin/vis run --trace "Find every callsite of run-iteration"
 ```
 
-Full verify required before handoff.
+Specifically for the RLM property audit, a new test file
+`test/com/blockether/vis/rlm_property_test.clj` will assert, after
+Phase 4:
+
+- For a 5000-line file read followed by 5 iterations of analysis, the
+  total `<journal>` token cost is `<` 1000 tokens. (Today's number on
+  that workload is `>` 30000.)
+- A turn that calls `(v/ask handle "...")` does not put any of the
+  handle's `:lines` into the parent's prompt at any iteration.
+- Recursion depth 6 throws `:vis/recursion-depth-exceeded` with a
+  structured payload.
+
+## Risks
+
+- **R1 — Models confused by handle returns.** Mitigation: Phase 1
+  ships first (bindings shape only, behaviour unchanged), then
+  Phase 2 ships with strong prompt guidance + the `v/peek` escape
+  hatch. Validate on the existing benchmark prompts before Phase 5.
+- **R2 — `v/ask` runaway costs.** Mitigation: hard depth cap + per-
+  turn child budget enforced in engine, NOT prompt. The first n
+  releases ship `v/ask` *disabled by default*, opt-in via config.
+- **R3 — Slice tools double the iteration count.** Mitigation:
+  measure on benchmark workloads after Phase 3. If true, tune
+  `default-cat-limit`-equivalent on `v/lines` upward; the journal
+  budget freed by Phase 2 absorbs this.
+- **R4 — Existing automation depends on `(:lines (v/cat ...))`.**
+  Mitigation: deprecation window — keep `:lines` reachable on the
+  handle map under the `(vis.handle/deref ...)` path for one release.
+
+## Out of scope (for now)
+
+- Persisting handles across turns. Handles today are
+  per-environment / per-turn. Multi-turn handle persistence is a
+  separate, larger discussion.
+- A typed answer protocol for `v/ask` beyond `:data | :ir | :text`.
+  We can grow into shape-aware contracts later (`:as-edn-vector`,
+  `:as-int`, etc.).
+- Replacing the iteration loop with proper continuations. The outer
+  loop stays a `loop/recur`. RLM recursion is a tool-call surface
+  feature.
+
+## Done state
+
+Vis is an RLM when, on a turn that reads a 100k-line file and asks
+"summarize section 4 and find every TODO":
+
+- The parent's `<journal>` contains: 1 line for the v/cat, 1 line for
+  the v/ask, 1 line for the v/rg, 1 line for the turn-answer.
+- The parent's `<bindings>` contains: 3 one-line handle summaries.
+- The parent never sees a single line of the file in its prompt.
+- The child (v/ask) sees section 4 in its own bounded context,
+  returns a structured summary.
+- The v/rg returns a hits-handle; the parent calls `(v/hit h idx)`
+  on the few hits it actually wants to cite.
+- Total token spend: small fraction of today's spend on the same
+  workload.
+- The model's final answer cites concrete line numbers via `v/at`
+  calls — every claim is traceable to a handle slice that landed in
+  the journal.
+
+When that turn runs end-to-end with the budgets enforced, we ship the
+README change.

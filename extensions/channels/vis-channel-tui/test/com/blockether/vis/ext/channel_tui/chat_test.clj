@@ -63,7 +63,7 @@
                       :answer [:ir {} [:p {} [:span {} "Siema!"]]]}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id]
-                    [{:id :iter-1 :answer-form-idx 1}])
+                    [{:id :iter-1 :answer-position 1}])
                   vis/db-list-iteration-blocks
                   (fn [_db _iteration-id]
                     [{:code "(set-conversation-title! \"Greeting\")"
@@ -85,7 +85,7 @@
                       :answer [:ir {} [:p {} [:span {} "Done"]]]}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id]
-                    [{:id :iter-1 :answer-form-idx 0}])
+                    [{:id :iter-1 :answer-position 0}])
                   vis/db-list-iteration-blocks
                   (fn [_db _iteration-id]
                     [{:code (str "(def x 1)\n"
