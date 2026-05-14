@@ -1,2 +1,0 @@
-{bridge
- {:nses [com.blockether.vis.ext.bridge.core]}}
