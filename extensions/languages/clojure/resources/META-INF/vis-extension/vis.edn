@@ -1,2 +1,0 @@
-{clj
- {:nses [com.blockether.vis.ext.lang-clojure.core]}}
