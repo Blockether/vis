@@ -35,9 +35,23 @@
       (expect (false? (direct-answer? "(when ok? (turn-answer! [:ir [:p \"Done\"]]))")))
       (expect (nil? (#'loop/answer-with-extension-preflight-mismatch
                      [{:expr "(when ok? (turn-answer! [:ir [:p \"Done\"]]))"}])))
+      ;; Observation extension + answer in the same iteration: rejected
+      ;; (broadened P0.2 invariant, commit 87acfe1c). The model has no
+      ;; chance to observe v/cat's journal before composing the answer.
       (expect (some? (#'loop/answer-with-extension-preflight-mismatch
                       [{:expr "(v/cat \"README.md\")"}
                        {:expr "(turn-answer! [:ir [:p \"Done\"]])"}])))
+      ;; Mutating extension + answer in the same iteration: also rejected.
+      ;; This is the original (pre-P0.2) invariant and must still hold;
+      ;; without it the answer could not observe whether the mutation
+      ;; succeeded (its :success?/:error only lands in next iter's journal).
+      (expect (some? (#'loop/answer-with-extension-preflight-mismatch
+                      [{:expr "(z/patch {:path \"a.clj\" :search \"x\" :replace \"y\"})"}
+                       {:expr "(turn-answer! [:ir [:p \"Done\"]])"}])))
+      ;; Same form holding both (worst case) must trip too — form-contains-*
+      ;; checks walk the tree, not just top-level head.
+      (expect (some? (#'loop/answer-with-extension-preflight-mismatch
+                      [{:expr "(do (v/cat \"README.md\") (turn-answer! [:ir [:p \"Done\"]]))"}])))
       (expect (true? (title-form? "(set-conversation-title! \"Prompt cleanup\")")))
       (expect (false? (title-form? "(conversation-title \"Prompt cleanup\")")))))
 

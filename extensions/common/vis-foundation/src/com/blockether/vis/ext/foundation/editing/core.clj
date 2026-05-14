@@ -882,7 +882,19 @@
 
 (defn- journal-render-cat
   "v/cat journal preview: window head/tail with line numbers + pagination
-   hint. Plaintext for token-budgeted <journal>."
+   hint. Plaintext for token-budgeted <journal>.
+
+   Header reads differently per truncation state so the model never sees
+   the misleading old `lines 1–5 (5/200), truncated-by eof (eof)` shape
+   that made a 5-line file look like a 5-of-200-line truncated read:
+
+   - eof   — `v/cat PATH — lines A–B (N lines, eof)`. No window limit
+             printed; eof already says 'that's the whole rest of the file'.
+   - limit — `v/cat PATH — lines A–B (N lines, more available; window
+             limit LIMIT) — next: (v/cat ...)`. Only here does the
+             window limit matter, because that's what clipped the read.
+   - bytes — `v/cat PATH — lines A–B (N lines, truncated by 64KB byte
+             cap)`. Bytes is the cause; window line-limit is irrelevant."
   [result]
   (let [{:keys [path lines offset returned limit next-offset eof? truncated-by]} result
         n          (or returned (count lines))
@@ -893,15 +905,32 @@
         tail-block (numbered-line-block (+ offset tail-skip) tail)
         elided     (max 0 (- n (* 2 journal-head-tail-lines)))
         last-line  (+ offset (max 0 (dec n)))
-        hint       (cond
-                     eof?        "(eof)"
-                     next-offset (str "(more: (v/cat \"" path "\" " next-offset " " limit "))")
-                     :else       "")
-        header     (if (zero? n)
+        next-hint  (when next-offset
+                     (str " — next: (v/cat \"" path "\" " next-offset " " limit ")"))
+        header     (cond
+                     (zero? n)
                      (str "v/cat " path " — empty window at offset " offset " (eof)")
+
+                     eof?
                      (str "v/cat " path " — lines " offset "–" last-line
-                       " (" n "/" limit "), truncated-by "
-                       (name (or truncated-by :none)) " " hint))]
+                       " (" n " line" (when (not= n 1) "s") ", eof)")
+
+                     (= :limit truncated-by)
+                     (str "v/cat " path " — lines " offset "–" last-line
+                       " (" n " line" (when (not= n 1) "s")
+                       ", more available; window limit " limit ")"
+                       next-hint)
+
+                     (= :bytes truncated-by)
+                     (str "v/cat " path " — lines " offset "–" last-line
+                       " (" n " line" (when (not= n 1) "s")
+                       ", truncated by 64KB byte cap)"
+                       next-hint)
+
+                     :else
+                     (str "v/cat " path " — lines " offset "–" last-line
+                       " (" n " line" (when (not= n 1) "s") ")"
+                       next-hint))]
     (str header "\n"
       head-block
       (when (pos? elided) (str "\n… (" elided " line(s) elided)\n"))

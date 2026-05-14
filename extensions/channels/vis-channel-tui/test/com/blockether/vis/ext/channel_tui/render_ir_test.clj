@@ -28,6 +28,12 @@
 (defn- styled? [lines kw]
   (some (fn [l] (some (fn [r] (contains? (or (:style r) #{}) kw)) (:runs l))) lines))
 
+(defn- markers [strings]
+  (mapv #(subs % 0 1) strings))
+
+(defn- bodies [strings]
+  (mapv #(subs % 1) strings))
+
 ;; ---------------------------------------------------------------------------
 ;; basic blocks
 ;; ---------------------------------------------------------------------------
@@ -97,6 +103,50 @@
       (expect (some #(= "  (println x))" %) ts))
       (expect (every? #(contains? (or (:style %) #{}) :code)
                 (mapcat :runs (filter #(seq (:runs %)) lines)))))))
+
+;; ---------------------------------------------------------------------------
+;; tables
+;; ---------------------------------------------------------------------------
+
+(defdescribe table-test
+  (it "renders IR tables as boxed rows with semantic table tags"
+    (let [lines (ir-tui/ir->lines
+                  [:ir [:table
+                        [:tr [:th "Name"] [:th "Count"]]
+                        [:tr [:td "apples"] [:td "12"]]]]
+                  80)
+          ts    (texts lines)
+          tags  (mapv :block-tag lines)]
+      (expect (= [:table-sep :table-head :table-sep :table-row :table-sep] tags))
+      (expect (= "┌────────┬───────┐" (first ts)))
+      (expect (= "│ Name   │ Count │" (second ts)))
+      (expect (= "├────────┼───────┤" (nth ts 2)))
+      (expect (= "│ apples │ 12    │" (nth ts 3)))
+      (expect (= "└────────┴───────┘" (nth ts 4)))))
+
+  (it "emits table head/separator/body markers for the painter"
+    (let [out (ir-tui/ir->sentinel-strings
+                [:ir [:table
+                      [:tr [:th "A"] [:th "B"]]
+                      [:tr [:td "1"] [:td "2"]]]]
+                80)
+          ms  (markers out)]
+      (expect (= [p/MARKER_MD_TABLE_SEP
+                  p/MARKER_MD_TABLE_HEAD
+                  p/MARKER_MD_TABLE_SEP
+                  p/MARKER_MD_TABLE_ROW
+                  p/MARKER_MD_TABLE_SEP]
+                ms))))
+
+  (it "uses thinking table markers in thinking mode"
+    (let [out (ir-tui/ir->sentinel-strings
+                [:ir [:table [:tr [:th "A"]] [:tr [:td "1"]]]]
+                80
+                {:mode :thinking})
+          ms  (markers out)]
+      (expect (= p/MARKER_TH_MD_TABLE_HEAD (second ms)))
+      (expect (= p/MARKER_TH_MD_TABLE_SEP (first ms)))
+      (expect (= p/MARKER_TH_MD_TABLE_ROW (nth ms 3))))))
 
 ;; ---------------------------------------------------------------------------
 ;; bdc79ae9 fixture — end-to-end regression
@@ -183,12 +233,6 @@
   (it ":ul list stamps :block-tag :ul on marker + continuation lines"
     (let [lines (ir-tui/ir->lines [:ir [:ul [:li "x"] [:li "y"]]] 80)]
       (expect (every? #(= :ul (:block-tag %)) lines)))))
-
-(defn- markers [strings]
-  (mapv #(subs % 0 1) strings))
-
-(defn- bodies [strings]
-  (mapv #(subs % 1) strings))
 
 (defdescribe sentinel-adapter-test
   (it "emits H1/H2/H3 markers for headings, picking by :level"

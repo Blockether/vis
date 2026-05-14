@@ -84,6 +84,9 @@
     :ext.lang-clojure/invalid-patch-source
     "Use parseable Clojure/EDN source for :search/:replace, or patch a locator row returned by z/forms/z/locators."
 
+    :ext.lang-clojure/patch-no-op
+    "All :search/:replace pairs render to identical source, so nothing was written. Re-read the file with v/cat or z/forms; the form you intended to change may already be in the target shape (someone else patched it, or your :replace duplicates :search). If the no-op is intentional, drop the edit."
+
     :ext.lang-clojure/non-clojure-file
     "Use v/patch or v/write for non-Clojure files; z/ only parses .clj/.cljc/.cljs/.edn."
 
@@ -450,8 +453,14 @@
 
 (defn- write-plans!
   [plans]
-  (doseq [{:keys [file after]} plans]
-    (spit file after))
+  ;; Skip the spit when the rewrite renders identical source. The bytes
+  ;; would be the same but the mtime would still bump, which is
+  ;; misleading for downstream watchers and confusing for the agent
+  ;; ("my patch landed"). `patch-file` enforces a hard no-op failure
+  ;; on top of this; this `when` is the belt to that suspenders.
+  (doseq [{:keys [file before after]} plans]
+    (when (not= before after)
+      (spit file after)))
   plans)
 
 (defn patch-safe
@@ -509,10 +518,22 @@
        :total-changes (count (filter :changed? files))})))
 
 (defn- patch-file
-  "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator row/span or locator form/source snippet and must match exactly once before any write. Tool result envelope returns the changed file diffs in :result."
+  "Canonical zipper patch for Clojure/EDN files. Same input shape as v/patch: one edit map or vector of maps with required keys `:path`, `:search`, `:replace`. `:search` is a locator row/span or locator form/source snippet and must match exactly once before any write. Tool result envelope returns the changed file diffs in :result.
+
+  Fails the tool call (rather than returning a misleading success) when every plan is a byte-level no-op — i.e. `:total-files > 0` but `:total-changes == 0`. Without this, the model would see a 'Patched N file(s)' headline while the workspace was untouched."
   [edits]
-  (let [plans (patch-safe edits)
+  (let [plans  (patch-safe edits)
         result (patch-file-result plans)]
+    (when (and (pos? (:total-files result))
+            (zero? (:total-changes result)))
+      (throw (ex-info
+               (str "z/patch wrote no changes: all " (:total-files result)
+                 " file(s) were no-ops (:search and :replace render to identical source). "
+                 "Nothing in the workspace was modified.")
+               {:type        :ext.lang-clojure/patch-no-op
+                :total-files (:total-files result)
+                :total-changes 0
+                :paths       (mapv :path (:files result))})))
     (tool-success
       {:op :z/patch
        :path (or (:path (first plans)) ".")
@@ -573,9 +594,10 @@
                 [[:h {:level 3} [:c {} path] [:span {} " — changed"]]
                  [:code {:lang "diff"}
                   (str "@@ line " start-line " @@\n" (preview-text (render-lines hunk)))]])))]
-    (let [files (patch-result-files result)]
+    (let [files   (patch-result-files result)
+          changed (count (filter :changed? files))]
       (into [:ir {}
-             [:p {} [:span {} (str "Patched " (count files)
+             [:p {} [:span {} (str "Patched " changed "/" (count files)
                                 " Clojure file(s). z/patch preflight validated exact matches before writing.")]]]
         (mapcat render-file (take 6 files))))))
 

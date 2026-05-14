@@ -810,6 +810,12 @@ LOOP DISCIPLINE
   Before emitting, disprove at least one plausible alternative from
   <journal>. Every claim in the final answer must trace to a
   <journal> or <bindings> entry — never memory.
+  Never spend an iteration on metadata-only meta forms (forms that
+  produce no <journal> evidence and call no extension tool). Bundle
+  them into the SAME iteration as your first real probe — e.g. inside
+  a `(do <meta-form> <real-probe>)` — so the iteration carries
+  evidence. An iteration whose only top-level form is structurally
+  silent is a wasted round-trip.
 
 EMIT_FINAL
   (turn-answer! <IR>)

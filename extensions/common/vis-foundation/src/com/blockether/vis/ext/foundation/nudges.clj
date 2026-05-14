@@ -88,7 +88,15 @@
        :text (str "The conversation title is currently empty. "
                "Set it via `(set-conversation-title! \"...\")` (3-7-word noun phrase, "
                "e.g. \"Refactor auth flow\" or \"Triage 148 path failures\") so "
-               "the conversation is discoverable in the sidebar.")}
+               "the conversation is discoverable in the sidebar. "
+               ;; Bundle with the first real probe so we don't spend a
+               ;; whole iteration on metadata. Title-setting is
+               ;; structurally silent: no extension tool, no journal
+               ;; evidence — by itself it's a wasted round-trip.
+               "Bundle this call into the SAME iteration as your first "
+               "real probe, e.g. "
+               "`(do (set-conversation-title! \"...\") (def x (v/cat \"...\")))`, "
+               "so the iteration also carries evidence.")}
 
       ;; Periodic refresh stays :low — the existing title already labels
       ;; the conversation; this branch only nudges when focus may have

@@ -401,6 +401,107 @@
         bar   {:text "│ " :style #{:quote} :node nil}]
     (mapv (fn [l] (update l :runs #(into [bar] %))) inner)))
 
+(defn- inline-text
+  "Visible one-line text for inline children. Used by table cells,
+   where the table grid painter owns the row style and cannot safely
+   consume inline sentinels inside cells. Hard breaks collapse to a
+   space; links keep their visible label only."
+  ^String [children]
+  (->> (inlines->runs children #{} nil)
+    (map (fn [{:keys [text break?]}] (if break? " " (or text ""))))
+    (apply str)
+    (#(str/replace % #"\s+" " "))
+    str/trim))
+
+(defn- table-cell-text [cell]
+  (inline-text (node-children cell)))
+
+(defn- pad-right-cols ^String [s width]
+  (let [width (max 0 (long width))
+        s     (p/truncate-cols (or s "") width)
+        w     (p/display-width s)]
+    (str s (apply str (repeat (max 0 (- width w)) \space)))))
+
+(defn- shrink-table-widths
+  "Shrink natural cell widths to fit `cap` terminal columns, preserving
+   at least one column per cell when possible. If the chrome alone is
+   wider than `cap`, callers still truncate the final lines as a last
+   resort."
+  [widths cap]
+  (let [widths (mapv #(max 1 (long %)) widths)
+        cols   (count widths)
+        budget (- (long cap) (+ 1 (* 3 cols)))]
+    (cond
+      (empty? widths) widths
+      (>= budget (reduce + widths)) widths
+      :else
+      (loop [ws widths]
+        (if (or (<= (reduce + ws) budget)
+              (every? #(<= (long %) 1) ws))
+          ws
+          (let [max-w (apply max ws)
+                idx   (first (keep-indexed (fn [i w] (when (= w max-w) i)) ws))]
+            (recur (update ws idx dec))))))))
+
+(defn- table-border-line [left join right widths]
+  (str left
+    (str/join join (map #(apply str (repeat (+ 2 (long %)) "─")) widths))
+    right))
+
+(defn- table-data-line [cells widths]
+  (str "│"
+    (apply str
+      (map-indexed
+        (fn [i w]
+          (str " " (pad-right-cols (nth cells i "") w) " │"))
+        widths))))
+
+(defn- table->lines
+  "Render canonical `:table` IR as TUI table rows. Unlike the old plain
+   projection fallback, this emits semantic header/separator/body line
+   tags so the existing bubble painter can draw muted grid chrome,
+   bold headers, and answer/thinking-zone backgrounds."
+  [node width _opts]
+  (let [rows        (vec (node-children node))
+        header?     (= :th (some-> rows first node-children first node-tag))
+        raw-rows     (mapv (fn [tr]
+                             (mapv table-cell-text (node-children tr)))
+                       rows)
+        cols        (apply max 0 (map count raw-rows))
+        norm-rows   (mapv (fn [row]
+                            (mapv #(or (nth row % nil) "") (range cols)))
+                      raw-rows)]
+    (if (or (zero? cols) (empty? norm-rows))
+      []
+      (let [natural-widths (vec (for [i (range cols)]
+                                  (apply max 1
+                                    (map #(p/display-width (nth % i "")) norm-rows))))
+            cap            (max 1 (long width))
+            widths         (shrink-table-widths natural-widths cap)
+            fit            (fn [s] (p/truncate-cols s cap))
+            sep-line       (fn [s tag]
+                             {:runs [{:text  (fit s)
+                                      :style #{:table}
+                                      :node  node}]
+                              :block-tag tag})
+            data-line      (fn [row tag]
+                             {:runs [{:text  (fit (table-data-line row widths))
+                                      :style #{:table}
+                                      :node  node}]
+                              :block-tag tag})
+            top            (sep-line (table-border-line "┌" "┬" "┐" widths) :table-sep)
+            mid            (sep-line (table-border-line "├" "┼" "┤" widths) :table-sep)
+            bottom         (sep-line (table-border-line "└" "┴" "┘" widths) :table-sep)]
+        (if header?
+          (vec (concat [top
+                        (data-line (first norm-rows) :table-head)
+                        mid]
+                 (map #(data-line % :table-row) (rest norm-rows))
+                 [bottom]))
+          (vec (concat [top]
+                 (map #(data-line % :table-row) norm-rows)
+                 [bottom])))))))
+
 (defn- tag-lines
   "Stamp every produced line with `:block-tag` so downstream adapters
    (sentinel-string emitter, click/select region builder) can map
@@ -452,18 +553,9 @@
       (conj (vec (tag-lines (quote->lines (node-children node) width opts) :quote))
         (assoc (empty-line) :block-tag :quote))
 
-      ;; tables fall back to plain projection for v1; truncate lines
-      ;; to width so they don't blow past the terminal
       :table
-      (let [md (ir/render [:ir node] :plain)
-            cap (max 1 (long width))
-            ls (mapv (fn [l]
-                       (let [t (if (> (count l) cap)
-                                 (str (subs l 0 (max 0 (- cap 1))) "…")
-                                 l)]
-                         {:runs (if (= "" t) [] [{:text t :style #{} :node node}])}))
-                 (str/split-lines md))]
-        (conj (vec (tag-lines ls :table)) (assoc (empty-line) :block-tag :table)))
+      (conj (vec (table->lines node width opts))
+        (assoc (empty-line) :block-tag :p))
 
       ;; unknown / leftover inline at block position
       [(assoc (empty-line) :block-tag :p)])))
@@ -646,37 +738,46 @@
 ;; stays bivalent.
 
 (def ^:private answer-marker-set
-  {:h1      p/MARKER_MD_H1
-   :h2      p/MARKER_MD_H2
-   :h3      p/MARKER_MD_H3
-   :code    p/MARKER_MD_CODE
-   :bullet  p/MARKER_MD_BULLET
-   :quote   p/MARKER_MD_QUOTE
-   :table   p/MARKER_MD_TABLE_ROW
-   :plain   p/MARKER_ANSWER_TXT})
+  {:h1          p/MARKER_MD_H1
+   :h2          p/MARKER_MD_H2
+   :h3          p/MARKER_MD_H3
+   :code        p/MARKER_MD_CODE
+   :bullet      p/MARKER_MD_BULLET
+   :quote       p/MARKER_MD_QUOTE
+   :table       p/MARKER_MD_TABLE_ROW
+   :table-head  p/MARKER_MD_TABLE_HEAD
+   :table-sep   p/MARKER_MD_TABLE_SEP
+   :table-row   p/MARKER_MD_TABLE_ROW
+   :plain       p/MARKER_ANSWER_TXT})
 
 (def ^:private thinking-marker-set
-  {:h1      p/MARKER_TH_MD_H1
-   :h2      p/MARKER_TH_MD_H2
-   :h3      p/MARKER_TH_MD_H3
-   :code    p/MARKER_TH_MD_CODE
-   :bullet  p/MARKER_TH_MD_BULLET
-   :quote   p/MARKER_TH_MD_QUOTE
-   :table   p/MARKER_TH_MD_TABLE_ROW
-   :plain   p/MARKER_THINKING})
+  {:h1          p/MARKER_TH_MD_H1
+   :h2          p/MARKER_TH_MD_H2
+   :h3          p/MARKER_TH_MD_H3
+   :code        p/MARKER_TH_MD_CODE
+   :bullet      p/MARKER_TH_MD_BULLET
+   :quote       p/MARKER_TH_MD_QUOTE
+   :table       p/MARKER_TH_MD_TABLE_ROW
+   :table-head  p/MARKER_TH_MD_TABLE_HEAD
+   :table-sep   p/MARKER_TH_MD_TABLE_SEP
+   :table-row   p/MARKER_TH_MD_TABLE_ROW
+   :plain       p/MARKER_THINKING})
 
 (def ^:private channel-marker-set
   ;; Channel/tool IR renders in place inside the surrounding bubble.
   ;; Structural IR (headings, code, lists, tables) keeps explicit row
   ;; styling; plain paragraphs get no hidden answer/result background.
-  {:h1      p/MARKER_MD_H1
-   :h2      p/MARKER_MD_H2
-   :h3      p/MARKER_MD_H3
-   :code    p/MARKER_MD_CODE
-   :bullet  p/MARKER_MD_BULLET
-   :quote   p/MARKER_MD_QUOTE
-   :table   p/MARKER_MD_TABLE_ROW
-   :plain   ""})
+  {:h1          p/MARKER_MD_H1
+   :h2          p/MARKER_MD_H2
+   :h3          p/MARKER_MD_H3
+   :code        p/MARKER_MD_CODE
+   :bullet      p/MARKER_MD_BULLET
+   :quote       p/MARKER_MD_QUOTE
+   :table       p/MARKER_MD_TABLE_ROW
+   :table-head  p/MARKER_MD_TABLE_HEAD
+   :table-sep   p/MARKER_MD_TABLE_SEP
+   :table-row   p/MARKER_MD_TABLE_ROW
+   :plain       ""})
 
 (defn- marker-set-for [mode]
   (case mode
@@ -699,6 +800,9 @@
     :li           (:bullet marker-set)
     :quote        (:quote marker-set)
     :table        (:table marker-set)
+    :table-head   (:table-head marker-set)
+    :table-sep    (:table-sep marker-set)
+    :table-row    (:table-row marker-set)
     ;; :p, nil, anything else → plain text marker
     (:plain marker-set)))
 

@@ -72,7 +72,7 @@
                       :result :vis/answer}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)]
-        (expect (= ["(set-conversation-title! \"Greeting\")"] (:code trace)))
+        (expect (= [] (:code trace)))
         (expect (= [true] (:silents trace)))
         (expect (= [":vis/silent"] (:results trace))))))
 

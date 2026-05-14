@@ -63,6 +63,14 @@
   (alter-var-root #'*out* (constantly (io/writer log-path :append true)))
   (alter-var-root #'*err* (constantly (io/writer log-path :append true)))
   (tel/remove-handler! :default/console)
+  ;; `main/configure-logging!` may have already installed a `:file`
+  ;; handler that points at the same `vis.log` path. Without this
+  ;; removal both handlers stay live and every signal is appended
+  ;; twice — the doubled mouse-event lines that flooded the log file
+  ;; during scroll were the visible symptom. We own `:file/vis` here
+  ;; (rolling, sized, retention-aware); drop the simpler `:file`
+  ;; handler so only one writer remains.
+  (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
     (tel/handler:file {:path              log-path
                        :interval          :monthly
@@ -87,6 +95,11 @@
   (alter-var-root #'*out* (constantly (io/writer log-path :append true)))
   (alter-var-root #'*err* (constantly (io/writer log-path :append true)))
   (tel/remove-handler! :default/console)
+  ;; Mirror `init!`: `main/configure-logging!` already installed a
+  ;; `:file` handler pointing at the same path. Leaving it alive
+  ;; doubles every signal. Drop it before our `:file/vis` handler
+  ;; takes over as the single writer.
+  (tel/remove-handler! :file)
   (tel/add-handler! :file/vis
     (tel/handler:file {:path              log-path
                        :interval          :monthly

@@ -4,6 +4,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.ext.foundation.core :as foundation]
+   [com.blockether.vis.ext.foundation.environment.agents :as agents]
    [lazytest.core :refer [defdescribe expect it]]))
 
 (defn- foundation-manifest-file []
@@ -22,14 +23,25 @@
   ;; assertion drifted from the live extension shape.
 
   (it "keeps the unified prompt compact with environment owned by the extension"
-    (let [prompt ((:ext/prompt foundation/vis-extension) {})]
-      (expect (str/includes? prompt "<environment>"))
-      (expect (str/includes? prompt "`v/` strategy"))
-      (expect (str/includes? prompt "combine v/rg and v/ls"))
-      (expect (not (str/includes? prompt "clojure.repl/doc")))
-      (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
-      (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-      (expect (< (count prompt) 3000))))
+    ;; Budget asserts the foundation's *own* contribution is compact
+    ;; (FN_INDEX + introspection prompt + editing prompt + env headers).
+    ;; User-supplied project guidance (AGENTS.md / CLAUDE.md) is
+    ;; conditional content of unbounded size — if the user writes a
+    ;; 50KB AGENTS.md it must still flow into the prompt, but the
+    ;; budget test is not about *that* size. Stub the project-guidance
+    ;; source so the assertion measures only what foundation owns.
+    (with-redefs [agents/instructions (fn [] {:found? false})]
+      (let [prompt ((:ext/prompt foundation/vis-extension) {})]
+        (expect (str/includes? prompt "<environment>"))
+        (expect (str/includes? prompt "`v/` strategy"))
+        (expect (str/includes? prompt "combine v/rg and v/ls"))
+        (expect (not (str/includes? prompt "clojure.repl/doc")))
+        (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
+        (expect (not (str/includes? prompt "Do not render Markdown as IR")))
+        ;; AGENTS.md is stubbed out — the `<project-guidance>` block must
+        ;; be omitted entirely (not present-but-empty).
+        (expect (not (str/includes? prompt "<project-guidance")))
+        (expect (< (count prompt) 3000)))))
 
   (it "contributes environment info through its extension prompt"
     (let [prompt ((:ext/prompt foundation/vis-extension) {})]
