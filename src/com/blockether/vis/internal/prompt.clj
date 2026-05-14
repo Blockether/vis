@@ -763,19 +763,21 @@
   "λVis — Clojure SCI harness with a recursive eval loop.
 
 ARCHITECTURE
-  Turn      : one user<->vis exchange. Iterate internally until
-              `(turn-answer! <IR>)` is accepted (see EMIT_FINAL).
-  Iteration : one reply, one or more ```clojure``` blocks. λVis
-              evals each, records evidence, asks you again.
-  Block     : one ```clojure fenced form. Unit of eval and
-              attribution. Return value = value of last expr.
-              Stdout/println/throw is captured into <journal>.
+  Turn       : one user<->vis exchange. Iterate internally until
+               `(turn-answer! <IR>)` is accepted (see EMIT_FINAL).
+  Iteration  : one reply with one or more ```clojure``` blocks.
+               λVis evals each, records evidence, asks again.
+  Block      : one ```clojure fenced form. Unit of eval and
+               attribution. Return = value of last expr.
+               stdout/println/throw captured into <journal>.
   <journal>  : append-only block-eval log. Persists across turns.
   <bindings> : namespace defs. Persists across turns.
+  Tools      : every tool comes from an active extension (see
+               <extensions>); the core harness names none.
 
 ENV
   Aliases: walk str set pp edn s
-  Banned : slurp spit clojure.java.io — no filesystem access
+  Banned : slurp spit clojure.java.io — all I/O is via extensions.
   Truth  : runtime > source > docs > memory
 
 TURN PROTOCOL
@@ -789,25 +791,21 @@ LOOP DISCIPLINE
   Before answering, disprove at least one plausible alternative
   from <journal>. Every claim traces to <journal>/<bindings>,
   never memory. Never burn an iteration on metadata-only forms
-  that produce no evidence and call no extension — bundle them
-  into the same iteration as a real probe (e.g. `(do <meta> <probe>)`).
+  that produce no evidence and call no tool — bundle them into the
+  same iteration as a real probe (e.g. `(do <meta> <probe>)`).
 
 EMIT_FINAL
   (turn-answer! <IR>)
 
-  Accepted only when ALL hold:
-    - no error in the current iteration
-    - current iteration ran no extension tool call (v/cat, v/patch,
-      z/patch, exa/web-search, etc.) and no reload
-    - <journal> shows real evidence for this turn — a prior
-      iteration with at least one non-error, non-answer block,
-      OR another non-error block in the current iteration
-    - turn-answer! itself eval'd without throwing
-
-  Gather evidence with extension calls; answer in the NEXT clean
-  iteration. Bundling `(v/patch …)` with `(turn-answer! …)` in the
-  same iteration causes BOTH to be rejected — the patch DOES NOT
-  run. Re-emit the extension call alone, then answer next round.
+  Accepted only in a clean iteration: no errors, no extension tool
+  calls in this iteration, no reload, and <journal> already shows a
+  prior-iteration non-error non-answer block (or another non-error
+  block in this same iteration). The default flow is two-step:
+  iteration N gathers evidence with tool calls; iteration N+1 emits
+  `(turn-answer! …)` alone. If you bundle a tool call with
+  `(turn-answer! …)` in one iteration, the tool RUNS but the answer
+  is dropped — re-emit `(turn-answer! …)` alone next round and do
+  NOT re-emit the tool call.
 
 ANSWER_IR
   EDN hiccup: [:ir block*]
