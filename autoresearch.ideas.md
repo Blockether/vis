@@ -2,6 +2,34 @@
 
 Promising directions that aren't the next experiment.
 
+## Session 2026-05-14 wrap-up
+
+Baseline 39 → 6 iter_score (-85%); 6/6 pass on rotated workload; block_errors
+9 → 0; cost $0.030 → $0.017 (-43%); z_patch_share 0% → ~67% (honest count).
+
+What worked (cumulative):
+  1. Preflight final-answer gate threads prior-iterations through — stopped
+     the spurious 'no evidence for this turn' rejections that wasted ~6 iters
+     per task pre-fix.
+  2. Evidence-prior? requires a real non-error non-answer block (not just
+     `(seq prior-iters)`); closes the loophole where preflight-rejected iters
+     falsely counted as evidence.
+  3. answer-with-extension preflight no longer rejects whole iteration; drops
+     only the turn-answer form so the extension call still runs. Stops the
+     model's 'keeps re-emitting same bundle because patch never lands' loop.
+  4. CORE prompt layering refactor: no extension names in core, extensions
+     own their surfaces. -27% chars on CORE_SYSTEM_PROMPT.
+  5. z/ ext prompt rewritten as STRUCTURAL EDITING manifesto + SCI reader-
+     macro gotcha + (z/source) escape hatch with concrete example.
+  6. Foundation v/ editing prompt -10% with explicit 'trust patch result'
+     anti-verify hint.
+  7. 4Clojure user prompt uses z/patch + (z/source) shape with conj-list
+     example (was a v/patch shape that triggered quote-strip).
+  8. Runner cache fingerprint uses relative path (multiple core.clj files
+     no longer collide on basename).
+  9. Metric parser counts patch calls from form-result channel entries
+     (catches calls inside `(do ...)` wrappers; tool-event chunk missed them).
+
 ## Tighten the prompt
 
 - Drop the long "## Restrictions" / "## Restricted symbols" / "## Extra
