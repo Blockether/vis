@@ -1016,13 +1016,14 @@
       :tool)))
 
 (defn- prepare-blocks-blob
-  "Encode the per-iteration code-block log as one Nippy-frozen vec."
+  "Encode the per-iteration code-block log as one Nippy-frozen vec.
+   Each block carries :position (0-based ordinal in the iteration)."
   [_turn-id-s _iteration-position blocks]
   (let [blank? (fn [s] (or (nil? s) (and (string? s) (str/blank? s))))]
     (->> (or blocks [])
       (map-indexed
         (fn [pos exec]
-          (cond-> {:idx pos
+          (cond-> {:position pos
                    :code (:code exec)
                    :role (normalize-role exec)}
             (some? (:comment exec))            (assoc :comment (:comment exec))
@@ -1049,7 +1050,7 @@
    rows. The iteration's full code-block log is written inline as a
    Nippy blob in `iteration.code_blocks` (no per-call rows; see V1 schema
    migration banner). Returns the iteration UUID."
-  [db-info {:keys [conversation-turn-id blocks thinking answer answer-form-idx duration-ms vars error metadata
+  [db-info {:keys [conversation-turn-id blocks thinking answer answer-position duration-ms vars error metadata
                    llm-messages llm-provider llm-model llm-raw-response
                    llm-executable-blocks llm-assistant-message tokens cost-usd]}]
   (when (ds db-info)
@@ -1116,8 +1117,8 @@
                                                           (->json llm-assistant-message))
                                  :created_at           now
                                  :finished_at          now}
-                          (some? answer-form-idx)
-                          (assoc :answer_form_idx answer-form-idx)
+                          (some? answer-position)
+                          (assoc :answer_form_idx answer-position)
                           raw-response-s
                           (assoc :llm_raw_response         raw-response-s
                             :llm_raw_response_preview (raw-response-preview raw-response-s)
@@ -1297,7 +1298,7 @@
     ;; on resume so preserved-thinking replay survives a vis restart.
     (some? (:llm_assistant_message row))
     (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
-    (some? (:answer_form_idx row))      (assoc :answer-form-idx   (:answer_form_idx row))
+    (some? (:answer_form_idx row))      (assoc :answer-position   (:answer_form_idx row))
     (some? (:llm_returned_empty_code_blocks row))
     (assoc :returned-empty-blocks? (= 1 (long (:llm_returned_empty_code_blocks row))))
     ;; Token / cost columns - ALWAYS present on the read side, with
@@ -1346,13 +1347,16 @@
     []))
 
 (defn db-list-iteration-blocks
-  "Return code blocks for an iteration, ordered by 0-based `:idx`.
-   Each entry carries :idx + :code (and optionally :comment :result
+  "Return code blocks for an iteration, ordered by 0-based `:position`.
+   Each entry carries :position + :code (and optionally :comment :result
    :error :stdout :stderr :duration-ms :timeout? :repaired?).
 
    Source: the Nippy-encoded `iteration.code_blocks` BLOB. Per-form calls are
    read directly from that blob; expression_soul/expression_state are
-   reserved for named vars."
+   reserved for named vars.
+
+   Backward-compat: old blobs persisted before the :idx→:position rename
+   are normalized at read time so a single canonical key is exposed."
   [db-info iteration-id]
   (if (and (ds db-info) iteration-id)
     (let [iteration-id-s (->ref iteration-id)
@@ -1360,8 +1364,12 @@
                            {:select [:code_blocks]
                             :from   :conversation_turn_iteration
                             :where  [:= :id iteration-id-s]})
-          decoded        (<-blob (:code_blocks row))]
-      (vec (or decoded [])))
+          decoded        (<-blob (:code_blocks row))
+          normalize      (fn [b]
+                           (cond-> b
+                             (and (contains? b :idx) (not (contains? b :position)))
+                             (-> (assoc :position (:idx b)) (dissoc :idx))))]
+      (mapv normalize (or decoded [])))
     []))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}

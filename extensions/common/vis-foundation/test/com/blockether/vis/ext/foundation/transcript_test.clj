@@ -62,7 +62,7 @@
                                           :result            :vis/answer
                                           :execution-time-ms 2}]
                                 :answer        "42"
-                                :answer-form-idx 1
+                                :answer-position 1
                                 :thinking      "Reasoning about arithmetic"
                                 :vars          [{:name "x" :value 42 :code "(def x 42)"}]
                                 :duration-ms 12
@@ -236,7 +236,7 @@
           ;; Reasoning trace surfaces verbatim on the iteration.
           (expect (= "Reasoning about arithmetic" (:thinking iter)))
           ;; The terminal block index points at the `(turn-answer! ...)` form.
-          (expect (= 1 (:answer-form-idx iter)))
+          (expect (= 1 (:answer-position iter)))
           ;; Per-iteration vars carry the (def ...) we persisted.
           (let [vars (:vars iter)]
             (expect (= 1 (count vars)))
@@ -299,7 +299,7 @@
                                                 :execution-time-ms 6}]
                                       :vars [{:name "out" :value value :code code}]
                                       :answer "done"
-                                      :answer-form-idx nil
+                                      :answer-position nil
                                       :duration-ms 10})
           (vis/db-update-conversation-turn! s turn {:status :done :answer "done"})
           (let [data      (transcript/transcript s cid)
@@ -430,7 +430,7 @@
                                                 :result :vis/answer
                                                 :execution-time-ms 1}]
                                       :answer "Done"
-                                      :answer-form-idx 0})
+                                      :answer-position 0})
           (vis/db-update-conversation-turn! s qid {:status :done :answer "Done"})
           (let [out (transcript/transcript-md s cid)]
             (expect (str/includes? out "```clojure\n(def x 1)\n```"))

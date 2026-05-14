@@ -1137,7 +1137,7 @@
         either a non-answer block ran in this iteration, or any prior
         iteration exists in `previous-iterations`. Blocks the trivial
         zero-probe answer on turn open."
-  [{:keys [blocks form-idx code-entries previous-iterations]}]
+  [{:keys [blocks code-entries previous-iterations] form-idx :position}]
   (let [errored-idxs   (->> blocks
                          (keep-indexed (fn [i b]
                                          (when (and (not= i form-idx)
@@ -1189,7 +1189,7 @@
   ([environment iteration blocks answer-value active-extensions extra-ctx]
    (let [structural (final-answer-structural-criteria-errors
                       {:blocks blocks
-                       :form-idx (:form-idx extra-ctx)
+                       :position (:position extra-ctx)
                        :code-entries (:code-entries extra-ctx)
                        :previous-iterations (:previous-iterations extra-ctx)})]
      (if (seq structural)
@@ -1723,21 +1723,21 @@
                                    (not suppress-form-start?)
                                    (not (conversation-title-meta-form? entry))
                                    (not (form-contains-turn-answer-call? entry)))
-                             (on-chunk {:phase         :form-start
-                                        :iteration     iteration-position
-                                        :form-idx      idx
-                                        :form-of       total-blocks
-                                        :iteration-id  (form-ref idx)
-                                        :code          expr
+                             (on-chunk {:phase           :form-start
+                                        :iteration-count iteration-position
+                                        :position        idx
+                                        :count           total-blocks
+                                        :scope           (form-ref idx)
+                                        :code            expr
                                         :render-segments render-segments
                                         :vis/structurally-silent? (boolean structurally-silent?)
-                                        :started-at-ms (System/currentTimeMillis)}))
+                                        :started-at-ms   (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
                            ;; `(turn-answer! ...)` call inside this form
                            ;; captures the right index on the
                            ;; answer-atom payload.
                            (reset! current-form-idx-atom idx)
-                           (let [iteration-id (form-ref idx)
+                           (let [scope (form-ref idx)
                                  raw-result (cond
                                               preflight-error
                                               {:result nil
@@ -1782,15 +1782,15 @@
                                                                             (not suppress-form-start?)
                                                                             (not structurally-silent?))
                                                                       (fn [tool-event]
-                                                                        (on-chunk {:phase :tool-start
-                                                                                   :iteration iteration-position
-                                                                                   :form-idx idx
-                                                                                   :form-of total-blocks
-                                                                                   :iteration-id iteration-id
-                                                                                   :code expr
+                                                                        (on-chunk {:phase           :tool-start
+                                                                                   :iteration-count iteration-position
+                                                                                   :position        idx
+                                                                                   :count           total-blocks
+                                                                                   :scope           scope
+                                                                                   :code            expr
                                                                                    :render-segments render-segments
                                                                                    :vis/structurally-silent? (boolean structurally-silent?)
-                                                                                   :tool-event tool-event})))
+                                                                                   :tool-event     tool-event})))
                                                       r (if tool-event-fn
                                                           (execute-code environment expr :tool-event-fn tool-event-fn)
                                                           (execute-code environment expr))]
@@ -1841,10 +1841,10 @@
                              ;; (mirrors `suppress-form-start?`).
                              (when (and on-chunk (not preflight-error))
                                (on-chunk {:phase             :form-result
-                                          :iteration         iteration-position
-                                          :form-idx          idx
-                                          :form-of           total-blocks
-                                          :iteration-id      iteration-id
+                                          :iteration-count   iteration-position
+                                          :position          idx
+                                          :count             total-blocks
+                                          :scope             scope
                                           :code              expr
                                           :render-segments   render-segments
                                           :vis/structurally-silent? (boolean structurally-silent?)
@@ -1918,7 +1918,7 @@
                                                      (:vis/structurally-silent? block))
                                                idx)))
                              blocks)]
-      (if-let [{:keys [value form-idx]} @answer-atom]
+      (if-let [{value :value form-idx :position} @answer-atom]
           ;; FINAL path: model called `(turn-answer! "...")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. The
           ;; form-scoped error gate fires if the answer-bearing form's
@@ -1944,7 +1944,7 @@
               gate-error      (when (nil? own-form-error)
                                 (final-answer-gate-error environment iteration-position blocks value active-extensions
                                   (assoc answer-validation-context
-                                    :form-idx form-idx
+                                    :position form-idx
                                     :code-entries code-entries)))
               validation-error (cond
                                  own-form-error
@@ -1973,10 +1973,10 @@
                         (< form-idx (count blocks*)))
                   (let [b (get blocks* form-idx)]
                     (on-chunk {:phase             :form-result
-                               :iteration         iteration-position
-                               :form-idx          form-idx
-                               :form-of           total-forms
-                               :iteration-id      (form-ref form-idx)
+                               :iteration-count   iteration-position
+                               :position          form-idx
+                               :count             total-forms
+                               :scope             (form-ref form-idx)
                                :code              (:code b)
                                :render-segments   (:render-segments b)
                                :vis/structurally-silent? (boolean (:vis/structurally-silent? b))
@@ -2027,7 +2027,7 @@
                             ;; renders the answer text below; showing
                             ;; `(turn-answer! "...")` above it is
                               ;; redundant prose-as-code).
-                              :answer-form-idx  form-idx}
+                              :answer-position  form-idx}
                :api-usage api-usage
                :duration-ms (or (:duration-ms ask-result) 0)
                :engine-timing engine-timing
@@ -3194,7 +3194,7 @@
                                            (cond-> {:conversation-turn-id conversation-turn-id :blocks blocks :vars vars-snapshot
                                                     :thinking thinking
                                                     :answer (when final-result (answer-str (:answer final-result)))
-                                                    :answer-form-idx (when final-result (:answer-form-idx final-result))
+                                                    :answer-position (when final-result (:answer-position final-result))
                                                     :duration-ms (or (:duration-ms iteration-result) 0)
                                                     :llm-messages (:llm-messages iteration-result)
                                                     :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
@@ -3227,19 +3227,19 @@
                         ;; signal. Consumers attach `:final` to
                         ;; whatever's already on screen.
                         ;;
-                        ;; `:answer-form-idx` tells the channel which
-                        ;; per-form slot was the `(turn-answer! ...)` call;
+                        ;; `:answer-position` tells the channel which
+                        ;; per-block slot was the `(turn-answer! ...)` call;
                         ;; the progress tracker elides that slot so
                         ;; the renderer doesn't paint the answer
                         ;; call's code above the answer text.
                           (when on-chunk
                             (on-chunk {:phase            :iteration-final
-                                       :iteration        (inc (long iteration))
+                                       :iteration-count  (inc (long iteration))
                                        :thinking         thinking
                                        :final            {:answer          (:answer final-result)
                                                           :iteration-count (inc iteration)
                                                           :status          :success}
-                                       :answer-form-idx  (:answer-form-idx final-result)
+                                       :answer-position  (:answer-position final-result)
                                        :silent-form-idxs (:silent-form-idxs iteration-result)
                                        :done?            true}))
                           (let [result (-> (merge {:answer (:answer final-result) :trace (conj trace trace-entry)
@@ -4122,7 +4122,7 @@
                                      {:value    (if (needs-input-answer? s)
                                                   s
                                                   (render/->ast s))
-                                      :form-idx @current-form-idx-atom})
+                                      :position @current-form-idx-atom})
                                    :vis/answer)
         ;; SCI binding for the conversation title:
         ;;   `(set-conversation-title! \"...\")` - writes the title through
