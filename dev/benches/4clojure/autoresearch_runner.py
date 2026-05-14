@@ -455,17 +455,24 @@ def parse_trace_stream(raw: str) -> dict:
             v = payload.get(k)
             if isinstance(v, int) and v > iteration_seen:
                 iteration_seen = v
-        te = payload.get("tool-event")
-        if (
-            isinstance(te, dict)
-            and te.get("op") == "patch"
-            and te.get("phase") == "tool-start"
-        ):
-            bucket = _classify_patch_extension(te.get("extension", ""))
-            if bucket == "z":
-                z_patch_calls += 1
-            elif bucket == "v":
-                v_patch_calls += 1
+        # Count patch calls by scanning form-result channel entries. The
+        # `tool-event` trace chunk only fires for BARE top-level tool calls;
+        # `(do ... (z/patch ...))` wraps would otherwise undercount. The
+        # `channel` array in every form-result lists each tool call that
+        # actually ran in that form, with its source form string.
+        if payload.get("phase") == "form-result":
+            channel = payload.get("channel") or []
+            if isinstance(channel, list):
+                for ce in channel:
+                    if not isinstance(ce, dict):
+                        continue
+                    if not ce.get("success?"):
+                        continue
+                    form_str = str(ce.get("form") or "")
+                    if form_str.startswith("(z/patch"):
+                        z_patch_calls += 1
+                    elif form_str.startswith("(v/patch"):
+                        v_patch_calls += 1
         # Per-form errors: form-result frames where info.status == "error".
         # Dedup by `ref` so a repaired form doesn't double-count.
         info = payload.get("info")
