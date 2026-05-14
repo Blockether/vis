@@ -52,7 +52,11 @@ FILEWRITE_PROBLEMS = FILEWRITE_DIR / "problems.json"
 FILEWRITE_PROMPT_TEMPLATE = FILEWRITE_DIR / "autoresearch_prompt.md"
 SYS_PROMPT_SRC = REPO_ROOT / "src" / "com" / "blockether" / "vis" / "internal" / "prompt.clj"
 FOUNDATION_PROMPT_SRC = REPO_ROOT / "extensions" / "common" / "vis-foundation" / "src" / "com" / "blockether" / "vis" / "ext" / "foundation" / "core.clj"
+FOUNDATION_EDITING_SRC = REPO_ROOT / "extensions" / "common" / "vis-foundation" / "src" / "com" / "blockether" / "vis" / "ext" / "foundation" / "editing" / "core.clj"
+FOUNDATION_INTROSPECTION_SRC = REPO_ROOT / "extensions" / "common" / "vis-foundation" / "src" / "com" / "blockether" / "vis" / "ext" / "foundation" / "introspection.clj"
+FOUNDATION_ENVIRONMENT_SRC = REPO_ROOT / "extensions" / "common" / "vis-foundation" / "src" / "com" / "blockether" / "vis" / "ext" / "foundation" / "environment" / "core.clj"
 Z_PROMPT_SRC = REPO_ROOT / "extensions" / "languages" / "clojure" / "src" / "com" / "blockether" / "vis" / "ext" / "lang_clojure" / "core.clj"
+Z_PATCH_SRC = REPO_ROOT / "extensions" / "languages" / "clojure" / "src" / "com" / "blockether" / "vis" / "ext" / "lang_clojure" / "patch.clj"
 PROMPT_SIZE_CACHE = HERE / ".prompt_sizes.cache.json"
 JSONL = REPO_ROOT / "autoresearch.jsonl"
 
@@ -150,11 +154,19 @@ def prompt_sizes() -> dict[str, int | None]:
     return None for each (the metric loop skips None entries).
     """
     fingerprint: dict[str, float] = {}
-    for src in (SYS_PROMPT_SRC, FOUNDATION_PROMPT_SRC, Z_PROMPT_SRC):
+    for src in (SYS_PROMPT_SRC, FOUNDATION_PROMPT_SRC, FOUNDATION_EDITING_SRC,
+                FOUNDATION_INTROSPECTION_SRC, FOUNDATION_ENVIRONMENT_SRC,
+                Z_PROMPT_SRC, Z_PATCH_SRC):
+        # Use relative path so files with the same name (multiple core.clj)
+        # don't collide in the fingerprint map.
         try:
-            fingerprint[src.name] = src.stat().st_mtime
+            key = str(src.relative_to(REPO_ROOT))
+        except ValueError:
+            key = str(src)
+        try:
+            fingerprint[key] = src.stat().st_mtime
         except OSError:
-            fingerprint[src.name] = 0.0
+            fingerprint[key] = 0.0
     cached_sizes: dict[str, int] | None = None
     if PROMPT_SIZE_CACHE.exists():
         try:
