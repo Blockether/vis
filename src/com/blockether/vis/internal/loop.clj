@@ -1031,7 +1031,22 @@
                                  (and (not= i form-idx)
                                    (nil? (:error (nth blocks i)))))
                            (range (count blocks))))
-        evidence-prior? (boolean (seq previous-iterations))]
+        ;; A prior iteration only counts as "evidence" if at least one
+        ;; of its non-error blocks actually ran. Empty/preflight-only
+        ;; iterations do NOT establish evidence — otherwise the model
+        ;; can game the gate: emit `(v/patch …)+(turn-answer! …)` once
+        ;; (preflight rejects the whole iteration; nothing executes,
+        ;; nothing is patched), then on the next turn emit a clean
+        ;; `(turn-answer! …)` and have it accepted because some prior
+        ;; iteration "exists". The patch never happened.
+        evidence-prior? (boolean
+                          (some (fn [[_ {ibs :blocks}]]
+                                  (some (fn [b]
+                                          (and (nil? (:error b))
+                                            (not (form-contains-turn-answer-call?
+                                                   (or (:code b) (:expr b) (:source b) "")))))
+                                    (or ibs [])))
+                            (or previous-iterations [])))]
     (cond-> []
       (seq errored-idxs)
       (conj (str "latest iteration had errors in form(s) "
@@ -1575,7 +1590,17 @@
                   (not (:vis/preflight-error direct-answer-entry))
                   (direct-answer-entry? direct-answer-entry)
                   (not (form-contains-needs-input-call? direct-answer-entry)))
-            (final-answer-gate-error environment iteration-position [] nil))
+            ;; Pass prior-iteration context so the structural gate sees
+            ;; evidence-prior? correctly. Without this, a clean answer-only
+            ;; iteration after several probe iterations is falsely rejected
+            ;; as "no evidence for this turn yet" because the gate's
+            ;; `previous-iterations` defaults to nil. That bug burns 5-7+
+            ;; iterations on simple tasks (see autoresearch fw-005 trace).
+            (final-answer-gate-error environment iteration-position [] nil
+              active-extensions
+              (assoc answer-validation-context
+                :position 0
+                :code-entries code-entries)))
           code-entries (if final-answer-preflight-error
                          [{:expr "(vis/preflight-error :final-answer-gate)"
                            :vis/preflight-error final-answer-preflight-error}]
