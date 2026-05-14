@@ -666,17 +666,14 @@
       (:journal result))))
 
 (defn- answer-with-extension-preflight-error-message
-  [{:keys [answer-idx extension-idx total-forms]}]
-  (str "Answer/extension preflight rejected this iteration before evaluation: "
-    "(turn-answer! ...) at top-level form " (inc (or answer-idx 0))
-    " and an extension tool call (observation or mutation, e.g. v/cat, v/rg, "
-    "z/locators, exa/web-search, v/patch, z/patch) at top-level form "
-    (inc (or extension-idx 0))
-    " appeared together in the same " total-forms "-form iteration. "
-    "This is structurally unobservable: the SCI loop must first gather all "
-    "tool evidence and render it into <journal>. Recovery: keep the extension "
-    "call in THIS iteration, drop the (turn-answer! ...). The host will loop; "
-    "answer in the next clean iteration with no extension calls."))
+  [{:keys [answer-idx extension-idx]}]
+  (str "(turn-answer! ...) at form " (inc (or answer-idx 0))
+    " was DROPPED because this iteration also contains an extension tool "
+    "call (form " (inc (or extension-idx 0))
+    ") — the SCI loop must observe tool evidence before composing an answer. "
+    "The extension call(s) in this iteration DID run; their results are in "
+    "<journal> below. Do NOT re-emit them. Next iteration: emit "
+    "(turn-answer! ...) ALONE with no extension calls."))
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
@@ -946,8 +943,19 @@
                                            answer-with-extension-mismatch))]
     {:code-entries                  (cond
                                       answer-with-extension-error
-                                      [{:expr "(vis/preflight-error :answer-with-extension)"
-                                        :vis/preflight-error answer-with-extension-error}]
+                                      ;; Don't reject the whole iteration — drop
+                                      ;; ONLY the turn-answer forms and let the
+                                      ;; extension/other forms execute. Otherwise the
+                                      ;; model loops re-emitting the same shape because
+                                      ;; its work never lands.
+                                      (mapv (fn [entry]
+                                              (if (form-contains-turn-answer-call? entry)
+                                                {:expr (:expr entry)
+                                                 :block-lang (:block-lang entry)
+                                                 :render-segments (:render-segments entry)
+                                                 :vis/preflight-error answer-with-extension-error}
+                                                entry))
+                                        raw-entries)
 
                                       :else
                                       raw-entries)
