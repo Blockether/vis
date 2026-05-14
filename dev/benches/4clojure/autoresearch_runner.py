@@ -65,7 +65,37 @@ FILEWRITE_PER_ITER = int(os.environ.get("AUTORESEARCH_FILEWRITE_PER_ITER", "1"))
 TIMEOUT = int(os.environ.get("AUTORESEARCH_TIMEOUT", "240"))
 FAIL_PENALTY = int(os.environ.get("AUTORESEARCH_FAIL_PENALTY", "30"))
 EVAL_TIMEOUT = int(os.environ.get("AUTORESEARCH_EVAL_TIMEOUT", "30"))
+ROTATE = os.environ.get("AUTORESEARCH_ROTATE", "0") == "1"
 SENTINEL = "__VIS_4CLOJURE_SOLUTION__"
+
+# Heuristic for inferring iteration count from wall-clock when neither
+# the envelope nor the trace stream carries one (e.g., on timeout).
+# Calibrated on this machine against glm-5.1 on zai-coding-plan:
+#   `vis run --json` for a 1-iteration trivial answer took 12.5 s wall.
+# Decomposed as: ~5 s JVM bootstrap + ~7 s per iteration.
+WALL_BOOTSTRAP_SECONDS = float(os.environ.get("AUTORESEARCH_WALL_BOOTSTRAP", "5"))
+WALL_SECONDS_PER_ITER  = float(os.environ.get("AUTORESEARCH_WALL_PER_ITER", "7"))
+
+
+def estimate_iters_from_wall(elapsed_s: float) -> int:
+    """Wall-time fallback iteration estimate. Clamped to >= 1."""
+    return max(1, round((max(0.0, elapsed_s - WALL_BOOTSTRAP_SECONDS)) / WALL_SECONDS_PER_ITER))
+
+# Fixed workload for the primary `./autoresearch.sh` run. Same problems
+# every iteration => `iter_score` is comparable across runs and a code
+# change is the only thing that can move it. Anti-overfit rotation is
+# triggered by `./autoresearch.revalidate.sh` (sets AUTORESEARCH_ROTATE=1).
+#
+# Picked for mixed difficulty + non-trivial iteration count so the
+# optimizer has visible headroom:
+#   - 4Clojure #5  (Lists: conj)       - Elementary, ~12 iters at baseline
+#   - 4Clojure #15 (Double Down)       - Elementary, single-form fragment
+#   - filewrite fw-005 (sum a sequence)- Elementary, single-file v/patch
+FIXED_WORKLOAD = [
+    {"kind": "4clojure",  "id": 5},
+    {"kind": "4clojure",  "id": 15},
+    {"kind": "filewrite", "id": "fw-005"},
+]
 
 
 def log(msg: str) -> None:
@@ -100,29 +130,37 @@ def _prompt_sizes_via_clojure() -> dict[str, int]:
     }
 
 
-def prompt_sizes() -> dict[str, int]:
+def prompt_sizes() -> dict[str, int | None]:
     """Return {system_prompt_chars, foundation_prompt_chars, z_prompt_chars}.
 
     Cached on disk; invalidates when any of the relevant sources change.
+    On probe failure: prefer last-known cached value over a sentinel so a
+    transient JVM blip doesn't hide the metric. If no cache exists either,
+    return None for each (the metric loop skips None entries).
     """
-    fingerprint = {}
+    fingerprint: dict[str, float] = {}
     for src in (SYS_PROMPT_SRC, FOUNDATION_PROMPT_SRC, Z_PROMPT_SRC):
         try:
             fingerprint[src.name] = src.stat().st_mtime
         except OSError:
             fingerprint[src.name] = 0.0
+    cached_sizes: dict[str, int] | None = None
     if PROMPT_SIZE_CACHE.exists():
         try:
             cached = json.loads(PROMPT_SIZE_CACHE.read_text())
-            if cached.get("fingerprint") == fingerprint and isinstance(cached.get("sizes"), dict):
-                return dict(cached["sizes"])
+            if isinstance(cached.get("sizes"), dict):
+                cached_sizes = {k: int(v) for k, v in cached["sizes"].items()}
+                if cached.get("fingerprint") == fingerprint:
+                    return dict(cached_sizes)
         except Exception:
-            pass
+            cached_sizes = None
     try:
         sizes = _prompt_sizes_via_clojure()
     except Exception as e:
-        log(f"[autoresearch] prompt_sizes probe failed: {e}")
-        return {"system_prompt_chars": -1, "foundation_prompt_chars": -1, "z_prompt_chars": -1}
+        log(f"[autoresearch] prompt_sizes probe failed: {e}; falling back to cache={bool(cached_sizes)}")
+        if cached_sizes:
+            return cached_sizes
+        return {"system_prompt_chars": None, "foundation_prompt_chars": None, "z_prompt_chars": None}
     try:
         PROMPT_SIZE_CACHE.write_text(
             json.dumps({"fingerprint": fingerprint, "sizes": sizes})
@@ -146,35 +184,62 @@ def autoresearch_offset() -> int:
     return 0
 
 
-def pick_workload(offset: int) -> list[dict]:
-    """Mixed slice: FILEWRITE_PER_ITER filewrite + remaining 4Clojure tasks.
+def _problem_by_id(pool: list[dict], pid) -> dict:
+    """Look up a problem by `id` (4Clojure ids are ints, filewrite are strs)."""
+    for p in pool:
+        if p.get("id") == pid:
+            return p
+    raise RuntimeError(f"problem id {pid!r} not found in pool of {len(pool)} entries")
 
-    Both pools rotate independently. Returns task dicts with a `kind` field.
+
+def workload_signature(workload: list[dict]) -> str:
+    """Stable signature of the chosen tasks. Two runs with the same
+    signature should yield comparable `iter_score` modulo LLM nondeterminism.
+    """
+    parts = [f"{p['kind']}:{p['id']}" for p in workload]
+    return ",".join(parts)
+
+
+def pick_workload(offset: int) -> list[dict]:
+    """Default: return FIXED_WORKLOAD (comparable iter_score across iters).
+
+    With AUTORESEARCH_ROTATE=1, return a deterministic rotation slice of
+    `N_TASKS` problems: FILEWRITE_PER_ITER from filewrite + the rest from
+    4Clojure. The two pools rotate independently. Used by
+    `./autoresearch.revalidate.sh` for anti-overfit confirmation.
+
     Raises when the resulting workload would be empty so the optimizer
     never sees a degenerate `iter_score=0` "perfect" run.
     """
     if N_TASKS <= 0:
         raise RuntimeError(
-            f"AUTORESEARCH_N must be >= 1, got {N_TASKS}; refusing to emit a degenerate iter_score=0."
+            f"AUTORESEARCH_N must be >= 1, got {N_TASKS}; refusing degenerate iter_score=0."
         )
     fc = json.loads(FOURCLOJURE_PROBLEMS.read_text())
     fw = json.loads(FILEWRITE_PROBLEMS.read_text())
-    fw_n = max(0, min(FILEWRITE_PER_ITER, N_TASKS))
-    fc_n = max(0, N_TASKS - fw_n)
     tasks: list[dict] = []
-    if fc_n > 0 and fc:
-        for i in range(fc_n):
-            problem = dict(fc[(offset * fc_n + i) % len(fc)])
-            problem["kind"] = "4clojure"
+    if not ROTATE:
+        for entry in FIXED_WORKLOAD:
+            pool = fc if entry["kind"] == "4clojure" else fw
+            problem = dict(_problem_by_id(pool, entry["id"]))
+            problem["kind"] = entry["kind"]
             tasks.append(problem)
-    if fw_n > 0 and fw:
-        for i in range(fw_n):
-            problem = dict(fw[(offset * fw_n + i) % len(fw)])
-            problem["kind"] = "filewrite"
-            tasks.append(problem)
+    else:
+        fw_n = max(0, min(FILEWRITE_PER_ITER, N_TASKS))
+        fc_n = max(0, N_TASKS - fw_n)
+        if fc_n > 0 and fc:
+            for i in range(fc_n):
+                problem = dict(fc[(offset * fc_n + i) % len(fc)])
+                problem["kind"] = "4clojure"
+                tasks.append(problem)
+        if fw_n > 0 and fw:
+            for i in range(fw_n):
+                problem = dict(fw[(offset * fw_n + i) % len(fw)])
+                problem["kind"] = "filewrite"
+                tasks.append(problem)
     if not tasks:
         raise RuntimeError(
-            "Workload selection produced zero tasks; check FILEWRITE_PER_ITER, AUTORESEARCH_N, and problem files."
+            "Workload selection produced zero tasks; check FILEWRITE_PER_ITER, AUTORESEARCH_N, problem pools."
         )
     return tasks
 
@@ -479,6 +544,9 @@ def run_one(problem: dict, out_dir: Path) -> dict:
                 if isinstance(e.stderr, (bytes, bytearray))
                 else (e.stderr or "")
             )
+        except FileNotFoundError:
+            rc = -1
+            stderr = f"VIS_BIN not found: {VIS_BIN}"
 
         trace = parse_trace_stream(stdout)
         envelope = trace["result"] or {}
@@ -487,12 +555,19 @@ def run_one(problem: dict, out_dir: Path) -> dict:
 
         envelope_iters = envelope.get("iteration-count")
         observed_iters = trace["iterations_observed"]
+        elapsed_now   = time.time() - started
         if isinstance(envelope_iters, int) and envelope_iters > 0:
             iterations: int | None = envelope_iters
             iter_source = "envelope"
         elif observed_iters > 0:
             iterations = observed_iters
             iter_source = "trace"
+        elif elapsed_now > 0:
+            # Wall-time heuristic: timeouts / truncated streams reach
+            # here. We attribute (elapsed - bootstrap) / per_iter to a
+            # whole number of iterations (>= 1).
+            iterations = estimate_iters_from_wall(elapsed_now)
+            iter_source = "wall-estimate"
         else:
             iterations = None
             iter_source = "unknown"
@@ -658,16 +733,17 @@ def main() -> int:
         outcomes.append(o)
 
     summary = aggregate(outcomes)
-    summary["offset"] = offset
-    # Prompt-size probe can fail (e.g., Clojure missing). When it does
-    # every size is -1 — propagate as None so the metric loop skips them
-    # rather than emitting negative numbers.
-    valid_sizes = all(v >= 0 for v in sizes.values())
+    summary["offset"]   = offset
+    summary["rotated"]  = ROTATE
+    summary["workload_signature"] = workload_signature(workload)
+    # Prompt-size probe can fail. When it does every size is None;
+    # propagate that to derived metrics so the metric loop skips them.
+    valid_sizes = all(isinstance(v, int) and v >= 0 for v in sizes.values())
     summary["system_prompt_chars"]     = sizes["system_prompt_chars"]     if valid_sizes else None
     summary["foundation_prompt_chars"] = sizes["foundation_prompt_chars"] if valid_sizes else None
     summary["z_prompt_chars"]          = sizes["z_prompt_chars"]          if valid_sizes else None
     summary["ext_prompt_chars"]        = (
-        sum(sizes.values()) if valid_sizes else None
+        sum(v for v in sizes.values() if isinstance(v, int)) if valid_sizes else None
     )
     summary["context_score"]           = (
         summary["ext_prompt_chars"] + summary["mean_prompt_chars"]

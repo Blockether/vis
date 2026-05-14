@@ -156,11 +156,52 @@ class PickWorkloadTest(unittest.TestCase):
         finally:
             ar.N_TASKS = original
 
-    def test_mixed_default(self) -> None:
-        wl = ar.pick_workload(0)
-        self.assertGreater(len(wl), 0)
-        kinds = {t["kind"] for t in wl}
-        self.assertTrue(kinds.issubset({"4clojure", "filewrite"}))
+    def test_fixed_workload_is_default_and_stable(self) -> None:
+        original = ar.ROTATE
+        ar.ROTATE = False
+        try:
+            a = ar.pick_workload(0)
+            b = ar.pick_workload(17)
+            c = ar.pick_workload(99)
+        finally:
+            ar.ROTATE = original
+        self.assertEqual(len(a), len(ar.FIXED_WORKLOAD))
+        self.assertEqual([t["id"] for t in a], [e["id"] for e in ar.FIXED_WORKLOAD])
+        self.assertEqual([t["id"] for t in a], [t["id"] for t in b])
+        self.assertEqual([t["id"] for t in b], [t["id"] for t in c])
+
+    def test_rotation_changes_with_offset(self) -> None:
+        original = ar.ROTATE
+        ar.ROTATE = True
+        try:
+            a = ar.pick_workload(0)
+            b = ar.pick_workload(1)
+        finally:
+            ar.ROTATE = original
+        sig_a = [t["id"] for t in a]
+        sig_b = [t["id"] for t in b]
+        self.assertNotEqual(sig_a, sig_b)
+
+    def test_workload_signature_is_stable(self) -> None:
+        wl = [
+            {"kind": "4clojure",  "id": 5},
+            {"kind": "filewrite", "id": "fw-005"},
+        ]
+        self.assertEqual(ar.workload_signature(wl), "4clojure:5,filewrite:fw-005")
+
+
+class WallEstimateTest(unittest.TestCase):
+    def test_minimum_is_one(self) -> None:
+        self.assertEqual(ar.estimate_iters_from_wall(0.0), 1)
+        self.assertEqual(ar.estimate_iters_from_wall(1.5), 1)
+        # User rule of thumb: 10 s → 1 iter (calibrated against real 12.5 s).
+        self.assertEqual(ar.estimate_iters_from_wall(12.0), 1)
+
+    def test_scales_with_wall(self) -> None:
+        # ~7 s/iter after a ~5 s bootstrap. 60 s → round((60-5)/7) = 8.
+        self.assertEqual(ar.estimate_iters_from_wall(60.0), 8)
+        # 240 s timeout → round((240-5)/7) = 34 (caps at FAIL_PENALTY upstream).
+        self.assertGreaterEqual(ar.estimate_iters_from_wall(240.0), 30)
 
 
 if __name__ == "__main__":
