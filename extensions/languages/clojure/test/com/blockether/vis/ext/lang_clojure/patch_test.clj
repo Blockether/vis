@@ -316,6 +316,72 @@
       (expect (str/includes? (get-in envelope [:error :hint]) "Use z/forms"))
       (expect (str/includes? rendered "ERROR"))))
 
+  (it "rejects partial-form :search before any write (regression: ANALYSIS turn 4 — z/patch :search must be parseable Clojure/EDN)"
+    ;; Models occasionally elide the middle of a form with `...` when
+    ;; building :search. That string is not parseable EDN. The locator
+    ;; pipeline must refuse it with a typed error before touching the
+    ;; file, so the agent sees an actionable hint instead of a partial
+    ;; rewrite.
+    (let [path     (write-temp! "patch/partial-search.clj" "(ns demo)\n(defn- build-segments [db now-ms] (let [m {}] m))\n")
+          before   (slurp path)
+          patch-fn (private-fn "patch-safe")
+          partial  "(defn- build-segments\n  [db now-ms]\n  (let [m ..."
+          thrown   (try (patch-fn [{:path path :search partial :replace "(def y 1)"}])
+                        ::no-throw
+                        (catch clojure.lang.ExceptionInfo e
+                          {:msg (ex-message e) :data (ex-data e)}))]
+      (expect (map? thrown))
+      (expect (= :ext.lang-clojure/invalid-patch-source (-> thrown :data :type)))
+      (expect (str/includes? (:msg thrown) "must be parseable Clojure/EDN source"))
+      ;; File is untouched on locator/parse error — patch-safe writes only via plan-path-edits.
+      (expect (= before (slurp path)))
+      ;; Registered :on-error-fn rewrites the throw into a structured failure
+      ;; with a recovery hint the agent can act on.
+      (let [on-error (:ext.symbol/on-error-fn patch/patch-symbol)
+            wrapped  (on-error (ex-info (:msg thrown) (:data thrown))
+                       nil nil [{:path path}])
+            env      (:result wrapped)]
+        (expect (false? (:success? env)))
+        (expect (str/includes? (get-in env [:error :hint]) "z/forms")))))
+
+  (it "promotes a byte-level no-op patch to a hard failure (regression: ANALYSIS turn 6 — silent-success foot-gun)"
+    ;; Pre-fix, `patch-file` returned :success? true with a green
+    ;; 'Patched 1 Clojure file(s)' headline whenever :search matched
+    ;; exactly once — even when :replace rendered to identical source
+    ;; and zero bytes were written. The model then 'moved on' thinking
+    ;; the edit landed. Post-fix, this is a hard ex-info failure with
+    ;; :type :ext.lang-clojure/patch-no-op; the registered :on-error-fn
+    ;; surfaces it as a structured failure envelope with a recovery hint.
+    (let [path     (write-temp! "patch/no-op-promotion.clj"
+                     "(ns demo)\n(def segs [provider-seg model-seg reasoning-seg verbosity-seg git-segs])\n")
+          before   (slurp path)
+          before-mtime (.lastModified (fs/file path))
+          patch-fn (private-fn "patch-file")
+          edits    [{:path path
+                     :search  "[provider-seg model-seg reasoning-seg verbosity-seg git-segs]"
+                     :replace "[provider-seg model-seg reasoning-seg verbosity-seg git-segs]"}]
+          thrown   (try (patch-fn edits) ::no-throw
+                        (catch clojure.lang.ExceptionInfo e
+                          {:msg (ex-message e) :data (ex-data e)}))]
+      ;; Outer fn promotes to a typed throw with smoking-gun ex-data.
+      (expect (map? thrown))
+      (expect (= :ext.lang-clojure/patch-no-op (-> thrown :data :type)))
+      (expect (= 1 (-> thrown :data :total-files)))
+      (expect (= 0 (-> thrown :data :total-changes)))
+      (expect (str/includes? (:msg thrown) "Nothing in the workspace was modified."))
+      ;; write-plans! skips spits on byte-level no-ops; mtime stays stable too.
+      (expect (= before (slurp path)))
+      (expect (= before-mtime (.lastModified (fs/file path))))
+      ;; Registered :on-error-fn supplies the actionable recovery hint.
+      (let [on-error (:ext.symbol/on-error-fn patch/patch-symbol)
+            wrapped  (on-error (ex-info (:msg thrown) (:data thrown))
+                       nil nil [(first edits)])
+            env      (:result wrapped)]
+        (expect (false? (:success? env)))
+        (let [hint (get-in env [:error :hint])]
+          (expect (string? hint))
+          (expect (str/includes? hint "identical source")))))) 
+
   (it "z/inspect turns raw rewrite-clj zlocs into serializable summaries"
     (let [inspect-fn (:ext.symbol/fn patch/inspect-symbol)
           zloc       ((deref (resolve 'rewrite-clj.zip/of-string)) "(defn f [] :ok)" {:track-position? true})

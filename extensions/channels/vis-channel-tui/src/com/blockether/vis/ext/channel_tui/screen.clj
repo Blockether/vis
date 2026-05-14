@@ -1026,7 +1026,13 @@
     (when (and live-entry
             (not= (long (or (:height old-entry) -1))
               (long (:height live-entry))))
-      (tel/log! {:level :info :id ::live-bubble-tick
+      ;; Per-tick geometry diagnostic. Fires every paint where the
+      ;; live bubble's height changed — several times per second
+      ;; while an iteration is streaming. At `:info` it dominated
+      ;; vis.log alongside the mouse-event flood. Demote to `:debug`
+      ;; so the default file handler drops it; flip min-level to
+      ;; `:debug` to re-enable.
+      (tel/log! {:level :debug :id ::live-bubble-tick
                  :data  {:iteration-count (count (or (:iterations progress) []))
                          :total-h         (long (:total-h layout))
                          :inner-h         inner-h
@@ -1810,21 +1816,22 @@
                        my        (.getRow pos)
                        _         (when-not (or (= atype MouseActionType/MOVE)
                                              (= atype MouseActionType/DRAG))
-                                   ;; MOVE/DRAG fire dozens of times
-                                   ;; per second - logging them would
-                                   ;; flood the file. Every other
-                                   ;; mouse event (CLICK_DOWN,
-                                   ;; CLICK_RELEASE, SCROLL_UP/DOWN)
-                                   ;; is rare and worth recording so
-                                   ;; \"my click does nothing\" reports
-                                   ;; can be diagnosed against the
-                                   ;; log: `tail ~/.vis/vis.log` shows
-                                   ;; the cursor coords + hit-test
-                                   ;; result for every received event.
+                                   ;; MOVE/DRAG fire dozens of times per
+                                   ;; second; CLICK_*/SCROLL_* can still
+                                   ;; spew tens of events per second
+                                   ;; while the user scroll-wheels through
+                                   ;; a long bubble — enough to make the
+                                   ;; file handler's IO the dominant cost.
+                                   ;; Keep the diagnostic ("my click did
+                                   ;; nothing" reports), but emit at
+                                   ;; `:debug` so the default `:info`-min
+                                   ;; file handler drops the line. Flip
+                                   ;; min-level to `:debug` (or attach a
+                                   ;; console handler) to get it back.
                                    (try
                                      (let [hit-kind (some-> (cr/lookup mx my) :kind)]
                                        (tel/log!
-                                         {:level :info
+                                         {:level :debug
                                           :id    ::mouse-event
                                           :data  {:type   (str atype)
                                                   :mx     mx
@@ -2318,14 +2325,35 @@
                             ;; entry; Ctrl+C is the only quit path.
                                    nil)))))]
                      (case action
-                       :quit nil
+                       :quit
+                       ;; Ctrl+C with an empty draft normally exits the
+                       ;; TUI. While a turn is in flight that exit path
+                       ;; orphans the worker future — and worse, gives
+                       ;; the user no way to abort a stuck iteration
+                       ;; (e.g. an LLM HTTP response that never starts
+                       ;; streaming). Intercept: cancel the in-flight
+                       ;; turn instead of quitting. A second Ctrl+C
+                       ;; with no turn running falls through to nil and
+                       ;; the TUI exits as before.
+                       (if (:loading? @state/app-db)
+                         (do (state/dispatch [:cancel-turn])
+                           (recur))
+                         nil)
 
                        :clear-input
-                       ;; If the in-conversation search overlay is active,
-                       ;; the FIRST Esc clears search (keeping the input
-                       ;; draft intact); subsequent Esc clears the draft
-                       ;; as usual.
+                       ;; Priority order while a turn is loading:
+                       ;;  1. cancel the turn (Esc/Ctrl+C is the user's
+                       ;;     only escape hatch from a stuck iteration)
+                       ;;  2. clear the search overlay if active
+                       ;;  3. clear the input draft
+                       ;; The pre-fix behaviour skipped (1) whenever the
+                       ;; user had typed even one character into the
+                       ;; draft, which made hung turns unrecoverable
+                       ;; short of killing the JVM.
                        (cond
+                         (:loading? @state/app-db)
+                         (do (state/dispatch [:cancel-turn])
+                           (recur))
                          (get-in @state/app-db [:search :active?])
                          (do (state/dispatch [:search-clear])
                            (vis/notify! "Search cleared" :level :info :ttl-ms copy-success-ttl-ms)

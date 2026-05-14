@@ -85,6 +85,31 @@
    [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
   DEFAULT_EVAL_TIMEOUT_MS)
 
+;; Note (provider HTTP timeout): pre-Fix 2 we considered adding a hard
+;; wall-clock cap (`*provider-timeout-ms*`) and threading it into
+;; `svar/ask-code!` as `:timeout-ms`. We deliberately don't:
+;;   1. svar's existing 5-minute default already flows through
+;;      `babashka.http-client` -> JDK `HttpRequest.Builder.timeout`.
+;;      The iter-7 hang on `1b7603b9-...` proved that timer doesn't
+;;      reliably fire for HTTP/2 + `BodyHandlers.ofInputStream` on
+;;      JDK 25 when the upstream never sends body frames — piling on
+;;      a second timer through the same code path wouldn't help.
+;;   2. Reasoning models (Claude extended thinking, o1, deepseek-r1)
+;;      legitimately take several minutes for a single response. A
+;;      defensive 2-minute cap was killing valid responses to mask a
+;;      cancellation-reachability bug.
+;;   3. The control axis is cancellation, not time. The `vis/cancel!`
+;;      pipeline (`FutureTask.cancel(true)` -> `Thread.interrupt()`
+;;      -> JDK unparks the virtual thread -> `HttpClient.send`
+;;      throws and closes the HTTP/2 stream) terminates a hung call
+;;      in milliseconds once the user hits Esc. The fix is making
+;;      Esc reach `:cancel-turn` while the draft is non-empty (see
+;;      `channel_tui/screen.clj`), not capping every request.
+;; This mirrors how pi (`@earendil-works/pi-coding-agent`) does it:
+;; its default `providerRetrySettings.timeoutMs` is `undefined`; user
+;; cancellation flows through an `AbortController` plumbed into the
+;; provider fetch on every call.
+
 (defn clamp-eval-timeout-ms
   "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS].
    `candidate` may be nil - callers should resolve the fallback before calling.
@@ -1540,6 +1565,19 @@
           ;;   :form-result    - one form finished evaluating (per-form)
           ;;   :iteration-final - iteration complete (final-result
           ;;                      or normal end-of-iteration marker)
+          ;;
+          ;; Reasoning DELTA contract: providers (via svar) emit `:reasoning`
+          ;; as the FULL accumulated reasoning text on every SSE tick.
+          ;; Forwarding that verbatim makes append-only consumers (CLI
+          ;; trace, JSON/EDN trace streams) re-emit the entire growing
+          ;; block on every tick — the screenshotted "sending and sending"
+          ;; bug. We close that here at the producer: track per-iteration
+          ;; accumulated length, compute `:delta` (just the new tail) and
+          ;; ship it alongside `:thinking` (still the full accumulated text
+          ;; for redraw-style consumers like the TUI timeline). Consumers
+          ;; that want append-only streaming append `:delta`; the others
+          ;; ignore it and read `:thinking` as before.
+          reasoning-len-volatile (volatile! 0)
           streaming-fn (when on-chunk
                          (fn [{:keys [reasoning done? reset? reason failed-provider new-provider] :as chunk}]
                            (cond
@@ -1552,10 +1590,23 @@
                                         :fallback        (select-keys chunk [:reason :failed-provider :new-provider])})
 
                              (or (some? reasoning) done?)
-                             (on-chunk {:phase     :reasoning
-                                        :iteration iteration-position
-                                        :thinking  (some-> reasoning str)
-                                        :done?     (boolean done?)}))))
+                             (let [thinking (some-> reasoning str)
+                                   prev-len (long @reasoning-len-volatile)
+                                   cur-len  (long (count (or thinking "")))
+                                   ;; If the accumulator shrank (rare:
+                                   ;; provider reset mid-stream) treat the
+                                   ;; whole new text as fresh delta.
+                                   delta (cond
+                                           (nil? thinking)        nil
+                                           (< cur-len prev-len)   thinking
+                                           (= cur-len prev-len)   ""
+                                           :else                  (subs thinking prev-len))]
+                               (vreset! reasoning-len-volatile cur-len)
+                               (on-chunk {:phase     :reasoning
+                                          :iteration iteration-position
+                                          :thinking  thinking
+                                          :delta     delta
+                                          :done?     (boolean done?)})))))
           copilot-initiator (copilot-initiator-for-iteration iteration)
           effective-llm-headers (not-empty
                                   (merge (copilot-llm-headers resolved-model copilot-initiator)
