@@ -4,14 +4,25 @@
 
 For each task, Vis spends one or more agent "iterations" before producing
 a final `(turn-answer! …)`. We **minimize the sum of iterations Vis needs
-to correctly solve N tasks** without sacrificing pass rate. We also keep
-context (system + extension prompts and user prompt) as small as possible.
+to correctly solve a fixed set of tasks** without sacrificing pass rate.
+We also keep context (system + extension prompts and user prompt) as
+small as possible.
 
-Each autoresearch iteration:
-- picks 2 fresh 4Clojure problems and 1 fresh filewrite problem by
-  deterministic per-pool rotation (no repeats inside a run),
+Each autoresearch iteration runs the **fixed workload** (see
+`FIXED_WORKLOAD` in `dev/benches/4clojure/autoresearch_runner.py`):
+
+- 4Clojure #5  — Lists: conj
+- 4Clojure #15 — Double Down
+- filewrite fw-005 — sum a sequence
+
+Same three problems every iteration so `iter_score` is comparable
+across runs and only code changes (Vis core / prompts / extensions)
+can move the metric. The anti-overfit guard rotates through other
+tasks via `./autoresearch.revalidate.sh` (sets `AUTORESEARCH_ROTATE=1`).
+
+Per task:
 - runs `bin/vis run --full-trace-json-stream --provider zai-coding-plan --model glm-5.1`
-  per task in a fresh tmp workdir,
+  in a fresh tmp workdir,
 - judges locally (`eval_one.clj` for 4Clojure, a `:pass`-or-throw verify
   form for filewrite),
 - aggregates into one primary score: `iter_score` (lower is better).
@@ -19,6 +30,12 @@ Each autoresearch iteration:
 No iteration-cap or test-set hardcoding is allowed. The judges run the
 problems' actual tests verbatim; we never cherry-pick tasks or relax
 verification.
+
+When Vis times out before emitting an iteration count, the runner
+falls back to a wall-clock estimate calibrated on this machine:
+`max(1, round((wall_seconds - 5) / 7))` (5 s JVM bootstrap, ~7 s per
+iter; configurable via `AUTORESEARCH_WALL_BOOTSTRAP` and
+`AUTORESEARCH_WALL_PER_ITER`).
 
 ## Metrics
 
