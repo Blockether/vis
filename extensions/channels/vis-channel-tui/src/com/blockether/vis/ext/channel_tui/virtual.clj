@@ -719,8 +719,27 @@
         t))))
 
 (defn stop-pre-warm!
-  "Interrupt and forget a pre-warm thread previously returned by
-   `pre-warm!`. Safe on `nil` and on already-finished threads."
-  [^Thread t]
-  (when (and t (.isAlive t))
-    (.interrupt t)))
+  "Interrupt a pre-warm thread previously returned by `pre-warm!` and
+   wait briefly for it to acknowledge the interrupt. Safe on `nil` and
+   on already-finished threads.
+
+   Why join instead of fire-and-forget: the daemon checks
+   `(.isInterrupted …)` BETWEEN `warm-message-height!` calls, not
+   inside one. A fire-and-forget interrupt lets the daemon finish its
+   in-flight bubble and write one more cache entry AFTER this returns,
+   which (a) flakes the next test that just called `invalidate-heights!`
+   and (b) in production silently leaks one cache entry for the
+   previous conversation across a conv switch. Joining with a tight
+   budget bounds both: a typical interrupt lands within microseconds;
+   the 200 ms ceiling covers the worst-case bubble already mid-format.
+
+   Optional second arg overrides the join budget (ms). Pass 0 for the
+   old fire-and-forget behavior."
+  ([^Thread t] (stop-pre-warm! t 200))
+  ([^Thread t ^long join-ms]
+   (when (and t (.isAlive t))
+     (.interrupt t)
+     (when (pos? join-ms)
+       (try (.join t join-ms)
+            (catch InterruptedException _
+              (.interrupt (Thread/currentThread))))))))
