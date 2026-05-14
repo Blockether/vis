@@ -127,9 +127,7 @@
 
 (defn- clojure-prompt
   [_environment]
-  (str "Clojure/EDN: use z/forms, z/locators, or z/symbols to pick rows; add :replace and call z/patch. Use data replacements by default, z/source only for exact bytes, z/patch-check for risky batches, and v/patch outside Clojure/EDN."
-    "\n\n"
-    patch/z-prompt))
+  patch/z-prompt)
 
 (defn- lazy-lsp-call
   [sym & args]

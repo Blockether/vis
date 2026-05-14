@@ -1187,12 +1187,14 @@
 (defn available-editing-prompt
   []
   (str
-    "`v/` strategy: combine v/rg and v/ls to locate. v/rg takes exactly one literal spec map: `(v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]})` for OR, or `{:all [\"defn\" \"foo\"]}` for same-line AND; no regex/query+opts shorthand. v/cat reads a window; bind raw payloads and slice with normal Clojure. "
-    "`v/cat` reads the whole file in one call only when it fits one window; for larger files, page with `(v/cat path offset n)` and advance via `(:next-offset prev)` until `(:eof? prev)`. Bind windows, not whole files: each call persists one bounded Nippy blob keyed by `[:result :lines]`. "
-    "Edit text with canonical (v/patch [{:path :search :replace}]); every :search must match exactly once or the whole batch fails. Use v/patch-check when uniqueness is uncertain; use z/patch for Clojure/EDN when `z/` is active. "
-    "Read back after writes only when exact persisted bytes matter; otherwise rely on the patch result. "
-    "Use path ops for filesystem moves/deletes/copies. "
-    "No shell tool: process boundaries (git, verify, CLI) are outside the sandbox; stay in tools/REPL."))
+    "`v/` editing. Locate with v/rg + v/ls. v/rg takes one literal spec map: "
+    "`{:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]}` (OR) or "
+    "`{:all [\"defn\" \"foo\"]}` (same-line AND); no regex/shorthand. "
+    "v/cat reads one window: `(v/cat path offset n)`; page via `(:next-offset prev)` until `(:eof? prev)`. Bind windows, not whole files. "
+    "Edit non-Clojure text with `(v/patch [{:path :search :replace}])`; each :search must match exactly once or the whole batch fails. v/patch-check verifies uniqueness. For .clj/.cljs/.cljc/.edn use the `z/` extension (structural) when active. "
+    "v/patch returns the unified diff + post-image — that IS the evidence the write happened. Do NOT v/cat to verify; trust the patch result. "
+    "Path ops: v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists, v/exists?. "
+    "No shell: git/verify/CLI live outside the sandbox — stay in tools/REPL."))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests."
