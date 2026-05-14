@@ -18,20 +18,27 @@ def main() -> int:
     a = p.parse_args()
 
     preds = [json.loads(l) for l in a.predictions.read_text().splitlines() if l.strip()]
-    by_id = {r["instance_id"]: r for r in preds}
 
-    # SWE-bench writes a report-<run_id>.json with resolved instance ids.
+    # SWE-bench 2.x writes the final report as
+    #   <model_name_or_path-with-slashes-replaced>.<run_id>.json
+    # in the evaluator cwd. Older/forked harnesses may write report.json or
+    # *report*.json. Accept all known shapes, but only treat sequence-valued
+    # fields as ids; count-valued fields such as resolved_instances are not ids.
     resolved: set[str] = set()
-    report_files = list(a.report_dir.glob(f"*{a.run_id}*report*.json")) + \
-                   list(a.report_dir.glob("report.json"))
-    for f in report_files:
+    report_files = []
+    for pattern in (f"*{a.run_id}*.json", f"*{a.run_id}*report*.json", "report.json", "report*.json"):
+        report_files.extend(a.report_dir.glob(pattern))
+    for f in dict.fromkeys(report_files):
         try:
             data = json.loads(f.read_text())
-            for k in ("resolved", "resolved_ids", "resolved_instances"):
-                if k in data:
-                    resolved.update(data[k])
         except Exception:
             continue
+        for k in ("resolved", "resolved_ids", "resolved_instances"):
+            ids = data.get(k)
+            if isinstance(ids, list):
+                resolved.update(str(x) for x in ids)
+            elif isinstance(ids, set):
+                resolved.update(str(x) for x in ids)
 
     solved_n = sum(1 for r in preds if not r.get("empty") and not r.get("error"))
     empty_n  = sum(1 for r in preds if r.get("empty"))
@@ -67,6 +74,13 @@ def main() -> int:
         "cost_usd":        round(sum(costs), 4) if costs else None,
     }
     a.out.write_text(json.dumps(summary, indent=2))
+
+    # Autoresearch parses these lines directly from stdout.
+    for key in ("resolved_pct", "resolved", "instances_run", "patches_emitted", "empty_patches", "errors"):
+        print(f"METRIC {key}={summary[key]}")
+    for key in ("median_seconds", "p95_seconds", "tokens_total", "cost_usd"):
+        if summary[key] is not None:
+            print(f"METRIC {key}={summary[key]}")
     return 0
 
 

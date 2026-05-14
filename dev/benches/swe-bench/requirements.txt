@@ -1,0 +1,5 @@
+# Python dependencies for the Vis SWE-bench Lite harness.
+# Keep this small; repository-under-test dependencies are installed by SWE-bench.
+swebench==2.1.*
+datasets>=2.19
+unidiff>=0.7
