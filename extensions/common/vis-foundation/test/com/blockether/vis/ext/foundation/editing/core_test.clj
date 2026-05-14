@@ -268,9 +268,14 @@
           out (journal-render-cat result)]
       (expect (string/includes? out "v/cat src/demo.clj"))
       (expect (string/includes? out "lines 1\u20136"))   ; en-dash
-      (expect (string/includes? out "6/200"))
+      ;; New header format: eof case prints `(N lines, eof)` instead of
+      ;; the misleading `(N/limit), truncated-by eof (eof)` shape, which
+      ;; made a 5-line file look like 5-of-200 truncated. Window limit is
+      ;; irrelevant when eof terminates the read.
+      (expect (string/includes? out "(6 lines, eof)"))
+      (expect (not (string/includes? out "6/200")))
+      (expect (not (string/includes? out "truncated-by")))
       (expect (string/includes? out "1: alpha"))
-      (expect (string/includes? out "(eof)"))
       (expect (string/includes? out "<your binding>"))))
 
   (it "v/cat journal renderer emits a (v/cat ...) hint when more remains"
@@ -279,7 +284,11 @@
                   :next-offset 5 :eof? false :truncated-by :limit
                   :lines ["a" "b" "c" "d"]}
           out (journal-render-cat result)]
-      (expect (string/includes? out "truncated-by limit"))
+      ;; New header format: `:limit` truncation is reported as
+      ;; "more available; window limit N" — unambiguous that the window
+      ;; line-budget is what clipped the read, not the file size.
+      (expect (string/includes? out "more available"))
+      (expect (string/includes? out "window limit 4"))
       (expect (string/includes? out "(v/cat \"big.log\" 5 4)"))))
 
   (it "v/cat channel renderer returns canonical [:ir ...] with a :code block, line-numbered from :offset"

@@ -815,7 +815,17 @@
                  (when-let [reason (:reason chunk)] (str " " (trace-dim (str "(" reason ")"))))))
 
       :reasoning
-      (when-not (str/blank? (str (:thinking chunk)))
+      ;; Discrete one-shot render: only fires once per iteration when
+      ;; `:done?` is true. Append-only streaming during reasoning happens
+      ;; in `make-pretty-trace-printer` via the `:delta` path. We keep
+      ;; this branch tidy so callers that bypass the printer wrapper
+      ;; still get the full block rendered once provider streaming
+      ;; completes. Mid-stream chunks (`:done? false`) are no-ops here —
+      ;; they used to re-print the entire accumulated thinking block
+      ;; every SSE tick, producing the "sending and sending and sending"
+      ;; wall of duplicates.
+      (when (and (:done? chunk)
+              (not (str/blank? (str (:thinking chunk)))))
         (stdout! (str head (trace-title "🧠" "reasoning")
                    (pretty-block "thinking" (:thinking chunk)))))
 
@@ -949,23 +959,105 @@
   (when (and (trace-terminal?) (pos? n))
     (write-stdout! (apply str (repeat n "\u001b[1A\u001b[2K")))))
 
+;; ---------------------------------------------------------------------------
+;; Append-only pretty trace printer.
+;;
+;; The OLD implementation used a `progress/make-progress-tracker` timeline
+;; + cursor-erase redraw (`[1A[2K`). Two problems:
+;;
+;;   1. Cursor-erase can only move within the visible terminal window. As
+;;      soon as a frame grew taller than the screen (long reasoning blocks,
+;;      common on zai-coding-plan / Anthropic thinking-heavy models), the
+;;      previous frame's tail scrolled off into history and could no longer
+;;      be erased. Every subsequent redraw appended a fresh copy below the
+;;      old one, producing the "╭─ λ trace iteration 1" block repeated
+;;      dozens of times with the same thinking text growing slightly each
+;;      copy.
+;;
+;;   2. Non-TTY consumers (pi harness, CI logs, `vis run | tee`) silently
+;;      got nothing. The printer's `else nil` swallowed everything.
+;;
+;; The NEW printer is strictly append-only. It dedups iteration headers per
+;; iteration, and streams reasoning as DELTAS (`:delta` is computed in
+;; `loop.clj`'s `streaming-fn` as the new tail since the previous chunk) so
+;; each reasoning character is emitted exactly once across the whole run.
+;; Output is identical in a TTY, a pipe, or pi's pty wrapper — no escape-
+;; code games, no lost frames.
+;; ---------------------------------------------------------------------------
+
 (defn- make-pretty-trace-printer []
-  (let [printed-lines (atom 0)
-        tracker (progress/make-progress-tracker
-                  {:on-update
-                   (fn [timeline _chunk]
-                     (let [frame (render-pretty-trace-timeline timeline)
-                           line-count (max 1 (count (str/split-lines frame)))]
-                       (if (trace-terminal?)
-                         (do
-                           (terminal-erase-lines! @printed-lines)
-                           (write-stdout! (str frame "\n"))
-                           (reset! printed-lines line-count))
-                         ;; Non-TTY: don't spam repeated reasoning snapshots.
-                         ;; Use --full-trace-edn-stream/--full-trace-json-stream
-                         ;; for pipe-friendly raw streaming.
-                         nil)))})]
-    (:on-chunk tracker)))
+  (let [;; Per-iteration display state:
+        ;;   :reasoning-open? - whether the `╭─ λ trace iteration N 🧠
+        ;;                      reasoning` header + `┌─ thinking` rail have
+        ;;                      already been printed; subsequent deltas
+        ;;                      append directly with the dim left rail.
+        ;;   :pending-line    - in-flight partial line (no trailing newline)
+        ;;                      so we can re-prefix correctly when more
+        ;;                      delta text arrives.
+        state (atom {})]
+    (letfn [(close-reasoning! [iter]
+              (let [s (get @state iter)]
+                (when (:reasoning-open? s)
+                  (when-not (str/blank? (str (:pending-line s)))
+                    (stdout! ""))
+                  (stdout! (trace-dim "  └"))
+                  (swap! state assoc iter
+                    (assoc s :reasoning-open? false :pending-line nil)))))
+            (emit-reasoning-delta! [iter delta]
+              (when-not (get-in @state [iter :reasoning-open?])
+                (stdout! (str (trace-dim "\n╭─") " "
+                           (trace-title "λ" "trace")
+                           (when iter (str " " (trace-dim (str "iteration " iter))))
+                           " " (trace-title "🧠" "reasoning")))
+                (stdout! (trace-dim "  ┌─ thinking"))
+                (write-stdout! (trace-dim "  │ "))
+                (swap! state update iter assoc
+                  :reasoning-open? true
+                  :pending-line ""))
+              ;; `parts` splits on '\n' preserving empty trailing segments.
+              ;; Every segment except the LAST was followed by a newline in
+              ;; the source delta; print it, end the line, and start a fresh
+              ;; rail. The last segment may be a partial (no trailing \n)
+              ;; that we keep buffered as `:pending-line` for the next
+              ;; delta to extend.
+              (let [parts (str/split (str delta) #"\n" -1)]
+                (dotimes [i (dec (count parts))]
+                  (write-stdout! (nth parts i))
+                  (stdout! "")                       ; newline
+                  (write-stdout! (trace-dim "  │ "))
+                  (swap! state assoc-in [iter :pending-line] ""))
+                (let [tail (peek parts)]
+                  (when (and tail (pos? (count tail)))
+                    (write-stdout! tail))
+                  (swap! state update-in [iter :pending-line]
+                    #(str (or % "") tail)))))]
+      (fn pretty-trace-on-chunk [chunk]
+        (let [phase (:phase chunk)
+              iter  (:iteration chunk)]
+          (case phase
+            :reasoning
+            (let [delta    (:delta chunk)
+                  thinking (str (:thinking chunk))
+                  done?    (boolean (:done? chunk))
+                  ;; Backward-compat: if `:delta` was not provided (older
+                  ;; host), fall back to printing the full text only on
+                  ;; `:done?` — still better than re-printing on every tick.
+                  effective (cond
+                              (some? delta)             delta
+                              (and done?
+                                (not (str/blank? thinking))) thinking
+                              :else                     "")]
+              (when-not (str/blank? effective)
+                (emit-reasoning-delta! iter effective))
+              (when done?
+                (close-reasoning! iter)))
+
+            ;; Any non-reasoning phase implies this iteration's reasoning
+            ;; stream is over: close the rail before printing the next
+            ;; discrete event.
+            (do
+              (when iter (close-reasoning! iter))
+              (print-pretty-trace-chunk! chunk))))))))
 
 (defn- wrap-str
   "Word-wrap `s` into a vector of lines, each <= `width` chars. Splits on
@@ -1139,6 +1231,8 @@
           "--json"           (recur more (assoc opts :json? true) prompt-parts)
           "--edn"            (recur more (assoc opts :edn? true) prompt-parts)
           "--code"           (recur more (assoc opts :code? true) prompt-parts)
+          ("--plain" "--raw")
+          (recur more (assoc opts :plain? true) prompt-parts)
           ("--full-trace-stream" "--trace")
           (recur more (assoc opts :full-trace-stream? true) prompt-parts)
           ("--full-trace-edn-stream" "--trace-stream")
@@ -1165,6 +1259,11 @@
   (stdout! "                    no fences, no language tags. Pipes cleanly")
   (stdout! "                    into editors / interpreters. Errors when")
   (stdout! "                    the answer contains no [:code] blocks.")
+  (stdout! "  --plain, --raw    Render the answer as plain text (no markdown")
+  (stdout! "                    bold/italics/heading bars). This is also the")
+  (stdout! "                    auto-default when stdout is not a TTY (piped")
+  (stdout! "                    or redirected), so `vis run ... > out.txt`")
+  (stdout! "                    produces clean text without ANSI noise.")
   (stdout! "  --full-trace-stream")
   (stdout! "                    Stream a pretty terminal trace while the run is")
   (stdout! "                    happening, then print the answer.")
@@ -1192,14 +1291,26 @@
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
-  (let [{:keys [prompt json? edn? code? full-trace-stream?
+  (let [{:keys [prompt json? edn? code? plain? full-trace-stream?
                 full-trace-edn-stream? full-trace-json-stream?
                 help? agent-name db] :as opts}
         (parse-run-args residual)]
     (when (or help? (str/blank? prompt))
       (print-run-usage!)
       (System/exit 0))
-    (let [agent-def (agent {:name (or agent-name "cli")})
+    ;; Auto-promote to plain when stdout is NOT a TTY (piped/redirected).
+    ;; Otherwise `vis run ... > out.txt` leaves bold/italic ANSI markers in
+    ;; the file. Structured output flags (--json/--edn/--code) win, and an
+    ;; explicit --plain stays plain. The trace-stream flags own their own
+    ;; output path and are unaffected.
+    (let [structured-output? (or json? edn? code?
+                              full-trace-stream?
+                              full-trace-edn-stream?
+                              full-trace-json-stream?)
+          effective-plain?   (or plain?
+                               (and (not structured-output?)
+                                 (not (trace-terminal?))))
+          agent-def (agent {:name (or agent-name "cli")})
           trace-on-chunk (cond
                            full-trace-json-stream?
                            #(print-full-trace-json-frame! :trace-chunk %)
@@ -1209,7 +1320,7 @@
 
                            full-trace-stream?
                            (make-pretty-trace-printer))
-          run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code?
+          run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code? :plain?
                               :full-trace-stream? :full-trace-edn-stream?
                               :full-trace-json-stream? :compact? :agent-name :db)
                       trace-on-chunk (assoc :on-chunk trace-on-chunk)
@@ -1244,7 +1355,8 @@
           (stdout! (str "\n" (trace-title "◆" "final result")
                      (pretty-block "summary" (trace-final-summary-prose result))))
           (stdout! (str "\n" (trace-title "◆" "answer") "\n"))
-          (stdout! (render/render (:answer result) :markdown))
+          (stdout! (render/render (:answer result)
+                     (if (trace-terminal?) :markdown :plain)))
           (when (:error result)
             (when-let [ex (:exception result)]
               (stdout! "\nStack trace:")
@@ -1277,8 +1389,9 @@
           (System/exit 1))
 
         :else
-        (do (stdout! (render/render (:answer result) :markdown))
-          (when (:duration-ms result)
+        (do (stdout! (render/render (:answer result)
+                       (if effective-plain? :plain :markdown)))
+          (when (and (:duration-ms result) (not effective-plain?))
             (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents))))
 
@@ -2011,74 +2124,75 @@
 ;; is the host, never an extension. So it registers directly via
 ;; `registry/register-cmd!` with `:cmd/parent ["extensions"]`, the
 ;; same plumbing the top-level built-ins above use.
-
-(doseq [spec
-        [{:cmd/name   "list"
-          :cmd/parent ["providers"]
-          :cmd/doc    "List registered providers with auth state, static limits, and base URLs."
-          :cmd/usage  "vis providers list"
-          :cmd/run-fn cli-providers-list!}
-         {:cmd/name   "status"
-          :cmd/parent ["providers"]
-          :cmd/doc    "Show provider authentication status together with static/dynamic limits."
-          :cmd/usage  "vis providers status [provider]"
-          :cmd/examples ["vis providers status"
-                         "vis providers status github-copilot-business"
-                         "vis providers status openai-codex"]
-          :cmd/run-fn cli-providers-status!}
-         {:cmd/name   "limits"
-          :cmd/parent ["providers"]
-          :cmd/doc    "Show provider rate-limit metadata and any dynamic quota report."
-          :cmd/usage  "vis providers limits [provider]"
-          :cmd/examples ["vis providers limits"
-                         "vis providers limits openai-codex"
-                         "vis providers limits ollama"]
-          :cmd/run-fn cli-providers-limits!}
-         {:cmd/name   "auth"
-          :cmd/parent ["providers"]
-          :cmd/doc    "Run a provider's interactive authentication flow."
-          :cmd/usage  "vis providers auth <provider>"
-          :cmd/args   [{:name "provider" :kind :positional :type :string
-                        :doc  "Registered provider id (for example: github-copilot-business or openai-codex)."}]
-          :cmd/examples ["vis providers auth github-copilot-business"
-                         "vis providers auth github-copilot-individual"
-                         "vis providers auth openai-codex"]
-          :cmd/run-fn cli-providers-auth!}
-         {:cmd/name   "logout"
-          :cmd/parent ["providers"]
-          :cmd/doc    "Clear saved credentials for a provider."
-          :cmd/usage  "vis providers logout <provider>"
-          :cmd/args   [{:name "provider" :kind :positional :type :string
-                        :doc  "Registered provider id."}]
-          :cmd/examples ["vis providers logout github-copilot-business"
-                         "vis providers logout github-copilot-individual"
-                         "vis providers logout openai-codex"]
-          :cmd/run-fn cli-providers-logout!}
-         {:cmd/name   "search"
-          :cmd/parent ["conversations"]
-          :cmd/doc    "Full-text search across answers, thinking, comments, prompts, and expressions."
-          :cmd/usage  "vis conversations search <query> [--limit N]"
-          :cmd/args   [{:name "query" :kind :positional :type :string
-                        :doc  "FTS5 query (`foo bar` for AND, `foo OR bar`, `foo*` for prefix)."}
-                       {:name "limit" :kind :flag :type :string
-                        :doc  "Max hits to print (default 25)."}]
-          :cmd/examples ["vis conversations search \"znajduje nodes\""
-                         "vis conversations search \"refactor*\""
-                         "vis conversations search \"foo OR bar\" --limit 100"]
-          :cmd/run-fn cli-conversations-search!}
-         {:cmd/name   "list"
-          :cmd/parent ["extensions"]
-          :cmd/doc    "List every registered extension with metadata."
-          :cmd/usage  "vis extensions list"
-          :cmd/run-fn cli-extensions!}
-         {:cmd/name   "scaffold"
-          :cmd/parent ["extensions"]
-          :cmd/doc    "Create a user extension project scaffold."
-          :cmd/usage  "vis extensions scaffold <name> [--dir DIR] [--namespace NS] [--force]"
-          :cmd/examples ["vis extensions scaffold my-tools"
-                         "vis extensions scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
-          :cmd/run-fn cli-extensions-scaffold!}]]
-  (registry/register-cmd! spec))
+#_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
+(defonce --extensions-subcommands--init
+  (doseq [spec
+          [{:cmd/name   "list"
+            :cmd/parent ["providers"]
+            :cmd/doc    "List registered providers with auth state, static limits, and base URLs."
+            :cmd/usage  "vis providers list"
+            :cmd/run-fn cli-providers-list!}
+           {:cmd/name   "status"
+            :cmd/parent ["providers"]
+            :cmd/doc    "Show provider authentication status together with static/dynamic limits."
+            :cmd/usage  "vis providers status [provider]"
+            :cmd/examples ["vis providers status"
+                           "vis providers status github-copilot-business"
+                           "vis providers status openai-codex"]
+            :cmd/run-fn cli-providers-status!}
+           {:cmd/name   "limits"
+            :cmd/parent ["providers"]
+            :cmd/doc    "Show provider rate-limit metadata and any dynamic quota report."
+            :cmd/usage  "vis providers limits [provider]"
+            :cmd/examples ["vis providers limits"
+                           "vis providers limits openai-codex"
+                           "vis providers limits ollama"]
+            :cmd/run-fn cli-providers-limits!}
+           {:cmd/name   "auth"
+            :cmd/parent ["providers"]
+            :cmd/doc    "Run a provider's interactive authentication flow."
+            :cmd/usage  "vis providers auth <provider>"
+            :cmd/args   [{:name "provider" :kind :positional :type :string
+                          :doc  "Registered provider id (for example: github-copilot-business or openai-codex)."}]
+            :cmd/examples ["vis providers auth github-copilot-business"
+                           "vis providers auth github-copilot-individual"
+                           "vis providers auth openai-codex"]
+            :cmd/run-fn cli-providers-auth!}
+           {:cmd/name   "logout"
+            :cmd/parent ["providers"]
+            :cmd/doc    "Clear saved credentials for a provider."
+            :cmd/usage  "vis providers logout <provider>"
+            :cmd/args   [{:name "provider" :kind :positional :type :string
+                          :doc  "Registered provider id."}]
+            :cmd/examples ["vis providers logout github-copilot-business"
+                           "vis providers logout github-copilot-individual"
+                           "vis providers logout openai-codex"]
+            :cmd/run-fn cli-providers-logout!}
+           {:cmd/name   "search"
+            :cmd/parent ["conversations"]
+            :cmd/doc    "Full-text search across answers, thinking, comments, prompts, and expressions."
+            :cmd/usage  "vis conversations search <query> [--limit N]"
+            :cmd/args   [{:name "query" :kind :positional :type :string
+                          :doc  "FTS5 query (`foo bar` for AND, `foo OR bar`, `foo*` for prefix)."}
+                         {:name "limit" :kind :flag :type :string
+                          :doc  "Max hits to print (default 25)."}]
+            :cmd/examples ["vis conversations search \"znajduje nodes\""
+                           "vis conversations search \"refactor*\""
+                           "vis conversations search \"foo OR bar\" --limit 100"]
+            :cmd/run-fn cli-conversations-search!}
+           {:cmd/name   "list"
+            :cmd/parent ["extensions"]
+            :cmd/doc    "List every registered extension with metadata."
+            :cmd/usage  "vis extensions list"
+            :cmd/run-fn cli-extensions!}
+           {:cmd/name   "scaffold"
+            :cmd/parent ["extensions"]
+            :cmd/doc    "Create a user extension project scaffold."
+            :cmd/usage  "vis extensions scaffold <name> [--dir DIR] [--namespace NS] [--force]"
+            :cmd/examples ["vis extensions scaffold my-tools"
+                           "vis extensions scaffold my-tools --dir ~/.vis/vis-extensions/my-tools"]
+            :cmd/run-fn cli-extensions-scaffold!}]]
+    (registry/register-cmd! spec)))
 
 ;; =============================================================================
 ;; Dispatcher entry point (-main)
