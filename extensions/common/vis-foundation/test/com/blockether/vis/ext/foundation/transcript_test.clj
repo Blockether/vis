@@ -43,6 +43,7 @@
   [s]
   (let [cid (vis/db-store-conversation! s {:channel :tui
                                            :title "Transcript fixture"
+                                           :provider :openai
                                            :model "gpt-4o"
                                            :system-prompt "sys"})
         q1  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
@@ -370,6 +371,28 @@
       (expect (not (str/includes? help "--prompts")))
       (expect (not (str/includes? help "--dialog")))
       (expect (str/includes? help "always complete"))))
+
+  (it "resolves an unambiguous short id prefix end-to-end (regression for the CLI — the help text advertises prefix support, the code must deliver)"
+    (let [s (vis/db-create-connection! :memory)]
+      (try
+        (let [cid    (seed! s)
+              resolve (var-get (resolve 'com.blockether.vis.ext.foundation.transcript/resolve-conversation-ref))
+              prefix (subs (str cid) 0 8)
+              full   (str cid)
+              md     (transcript/transcript-md s prefix)]
+          ;; The prefix-aware resolver returns the canonical UUID.
+          (expect (= (str cid) (str (resolve s prefix))))
+          (expect (= (str cid) (str (resolve s full))))
+          ;; And the prefix flows through `transcript-md` so the reproduction
+          ;; CLI (which calls the same helper now) renders a real artifact
+          ;; instead of the "Conversation not found" fallback string.
+          (expect (string? md))
+          (expect (str/includes? md "# Diagnostic report"))
+          (expect (not (str/includes? md "Conversation not found")))
+          ;; Unknown well-formed UUIDs still miss; bogus garbage still misses.
+          (expect (nil? (resolve s "00000000-0000-0000-0000-000000000000")))
+          (expect (nil? (resolve s "definitely-not-a-uuid-prefix"))))
+        (finally (vis/db-dispose-connection! s)))))
 
   ;; Removed: "accepts an unambiguous string prefix in the Markdown
   ;; renderer too" and "can render dialog-only Markdown from the same
