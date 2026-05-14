@@ -374,7 +374,7 @@
          (let [line-tokens (or (count-prompt-tokens model line)
                              (long (quot (count line) 4)))
                next-used  (+ used line-tokens 1)]
-           (if (and (seq kept) (> next-used budget-tokens))
+           (if (> next-used budget-tokens)
              [(vec kept) (count remaining) budget-tokens used]
              (recur (rest remaining) (conj kept line) next-used)))
          [(vec kept) 0 budget-tokens used])))))
@@ -470,10 +470,10 @@
           (let [entry-tokens (or (count-prompt-tokens model entry)
                                (long (quot (count entry) 4)))
                 next-used    (+ used entry-tokens 1)]
-            (if (and (seq kept) (> next-used budget))
+            (if (> next-used budget)
               (let [dropped (count remaining)
                     marker  (str ";; ... " dropped
-                              " older <bindings> entries omitted to fit bindings token budget "
+                              " <bindings> entries omitted to fit bindings token budget "
                               used "/" budget " tokens ("
                               (long (* 100 BINDINGS_CONTEXT_FRACTION))
                               "% of model context max)")]
@@ -1000,10 +1000,3 @@ ANSWER_IR
     (vec
       (keep stable-prompt-message
         [core-block turn-system-block]))))
-
-(defn assemble-system-prompt
-  "Backward-compatible joined-text view of `assemble-stable-prompt-messages`.
-   Provider send path uses the message vector; tests and diagnostics can use
-   this to assert on rendered prompt text."
-  [environment opts]
-  (stable-prompt-text (assemble-stable-prompt-messages environment opts)))

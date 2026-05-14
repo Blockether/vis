@@ -236,14 +236,18 @@
 ;; Extension self-hook — :ext/prompt fragment lands inside <extensions>
 ;; =============================================================================
 
+(defn- stable-prompt-text-for-goal [env]
+  (prompt/stable-prompt-text
+    (prompt/assemble-stable-prompt-messages env
+      {:active-extensions [goal/vis-extension]
+       :system-prompt     nil})))
+
 (defdescribe goal-ext-prompt-hook-test
   (it "emits no <conversation_goal> when there is no goal"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           env {:db-info s :conversation-id cid}
-          out (prompt/assemble-system-prompt env
-                {:active-extensions [goal/vis-extension]
-                 :system-prompt nil})]
+          out (stable-prompt-text-for-goal env)]
       (expect (false? (str/includes? out "<conversation_goal")))))
 
   (it "emits the <conversation_goal> block (inside <extensions>) when goal is :active"
@@ -251,9 +255,7 @@
           cid (vis/db-store-conversation! s {:channel :tui})
           env {:db-info s :conversation-id cid}
           _   (goal/set-goal! s cid {:objective "Ship goal feature" :set-by :user})
-          out (prompt/assemble-system-prompt env
-                {:active-extensions [goal/vis-extension]
-                 :system-prompt nil})]
+          out (stable-prompt-text-for-goal env)]
       (expect (str/includes? out "<conversation_goal"))
       (expect (str/includes? out "Ship goal feature"))
       (expect (str/includes? out "<extensions>"))))
@@ -264,9 +266,7 @@
           env {:db-info s :conversation-id cid}
           _   (goal/set-goal!         s cid {:objective "x" :set-by :user})
           _   (goal/mark-goal-done!  s cid :achieved)
-          out (prompt/assemble-system-prompt env
-                {:active-extensions [goal/vis-extension]
-                 :system-prompt nil})]
+          out (stable-prompt-text-for-goal env)]
       (expect (false? (str/includes? out "<conversation_goal"))))))
 
 ;; =============================================================================
