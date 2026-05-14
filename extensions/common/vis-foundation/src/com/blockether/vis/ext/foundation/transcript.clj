@@ -1050,9 +1050,11 @@
         (System/exit 1))
 
       :else
+      ;; `resolve-conversation-ref` is prefix-aware and existence-checks the
+      ;; result; `vis/db-resolve-conversation-id` only accepts full UUIDs and
+      ;; would silently fail on the very prefixes the help text advertises.
       (let [d        (vis/db-info)
-            resolved (try (vis/db-resolve-conversation-id d cid-input)
-                       (catch Throwable _ nil))]
+            resolved (resolve-conversation-ref d cid-input)]
         (if (nil? resolved)
           (do (println-original! (str "Conversation not found: " cid-input))
             (System/exit 1))

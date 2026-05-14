@@ -102,14 +102,53 @@
       (expect (= [:code :answer-ref] (mapv :kind segs)))
       (expect (= "(def a 1)\n(def b 2)" (:source (first segs))))))
 
-  (it "treats compound bodies opaquely — (do (turn-answer! ...)) is one :code segment"
-    ;; Only TOP-LEVEL forms get classified. An answer call buried inside a
-    ;; `do` / `let` / `when` body stays inside the surrounding :code segment;
-    ;; the engine's preflight catches embedded extension calls but doesn't
-    ;; rewrite the source. Renderer follows the same rule.
+  (it "strips nested (turn-answer! ...) from a `do` body — surrounding code stays"
+    ;; Nested filtered calls are pruned from displayed `:source`; the `do`
+    ;; body keeps the rest. SCI still evaluates the original block, so the
+    ;; answer-emission side effect runs as before.
     (let [segs (render/code-block-segments "(do (def x 1) (turn-answer! [:ir [:p \"hi\"]]))")]
       (expect (= 1 (count segs)))
-      (expect (= :code (:kind (first segs))))))
+      (expect (= :code (:kind (first segs))))
+      (expect (not (re-find #"turn-answer!" (:source (first segs)))))
+      (expect (re-find #"\(def x 1\)" (:source (first segs))))))
+
+  (it "strips nested (set-conversation-title! ...) from a `do` body — actual repro"
+    ;; The block-source that surfaced the bug — model wrote `(do <title> <work>)`
+    ;; in a single iteration; the title call must not appear in the trace.
+    (let [src  (str "(do\n"
+                 "  (set-conversation-title! \"Polish casual greeting\")\n"
+                 "  (def user-msg \"siema\")\n"
+                 "  (= user-msg \"siema\"))")
+          segs (render/code-block-segments src)]
+      (expect (= 1 (count segs)))
+      (expect (= :code (:kind (first segs))))
+      (expect (not (re-find #"set-conversation-title!" (:source (first segs)))))
+      (expect (re-find #"user-msg" (:source (first segs))))))
+
+  (it "drops the :code segment when a wrapper hosts ONLY filtered calls"
+    ;; `(do (set-conversation-title! "X"))` collapses to `(do)` after pruning;
+    ;; the segment goes away entirely and the block reads as silent.
+    (expect (= [] (render/code-block-segments "(do (set-conversation-title! \"X\"))")))
+    (expect (= [] (render/code-block-segments
+                    "(do (set-conversation-title! \"X\") (turn-answer! [:ir [:p \"d\"]]))"))))
+
+  (it "preserves position-sensitive slots by replacing filtered calls with nil"
+    ;; `if` / `let`-binding / `cond` / `case` etc. lose their meaning if you
+    ;; just DROP a sub-form. Replace with nil so the shape stays intact and
+    ;; the model can self-correct from a real evaluation trace.
+    (let [if-segs   (render/code-block-segments "(if c (set-conversation-title! \"X\") :else)")
+          let-segs  (render/code-block-segments "(let [_ (set-conversation-title! \"X\")] :ok)")
+          cond-segs (render/code-block-segments "(cond a (set-conversation-title! \"X\") :else :y)")]
+      (expect (re-find #"\(if c nil :else\)" (:source (first if-segs))))
+      (expect (re-find #"\(let \[_ nil\] :ok\)" (:source (first let-segs))))
+      (expect (re-find #"\(cond a nil :else :y\)" (:source (first cond-segs))))))
+
+  (it "leaves quoted data untouched — (quote ...) is data, not a call"
+    ;; A literal `'(set-conversation-title! "X")` inside a `do` is data the
+    ;; model is reasoning about, not a call to suppress.
+    (let [segs (render/code-block-segments "(do '(set-conversation-title! \"X\") :ok)")]
+      (expect (= 1 (count segs)))
+      (expect (re-find #"set-conversation-title!" (:source (first segs))))))
 
   (it "falls back to one :code segment when the source fails to parse"
     ;; Renderer never throws on bad source. Engine surfaces SCI's parse
@@ -158,4 +197,13 @@
 
   (it "false for a pure-code block"
     (expect (false? (render/block-structurally-silent?
-                      "(def x 1)")))))
+                      "(def x 1)"))))
+
+  (it "true for a `(do …)` whose only payload is filtered calls"
+    ;; Wrapper-only-filtered blocks now collapse to no segments via
+    ;; `prune-filtered`; `block-structurally-silent?` must treat the
+    ;; resulting empty segment list as silent, same as the top-level case.
+    (expect (true? (render/block-structurally-silent?
+                     "(do (set-conversation-title! \"X\"))")))
+    (expect (true? (render/block-structurally-silent?
+                     "(do (set-conversation-title! \"X\") (turn-answer! [:ir [:p \"d\"]]))")))))

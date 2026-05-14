@@ -1,10 +1,5 @@
 # PLAN — RLM purity for Vis
 
-> Companion to `PLAN_LIFECYCLE.md` (which covers the engine state machine
-> and prompt-assembly contract). This plan is scoped narrowly to one
-> question: **make Vis actually be a Recursive Language Model harness,
-> not just an iterative tool-use agent with a Clojure sandbox.**
-
 ## Why this exists
 
 The README claims Vis is "inspired by Recursive Language Models (Zhang,
