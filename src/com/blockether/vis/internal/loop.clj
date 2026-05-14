@@ -666,17 +666,14 @@
       (:journal result))))
 
 (defn- answer-with-extension-preflight-error-message
-  [{:keys [answer-idx extension-idx total-forms]}]
-  (str "Answer/extension preflight rejected this iteration before evaluation: "
-    "(turn-answer! ...) at top-level form " (inc (or answer-idx 0))
-    " and an extension tool call (observation or mutation, e.g. v/cat, v/rg, "
-    "z/locators, exa/web-search, v/patch, z/patch) at top-level form "
-    (inc (or extension-idx 0))
-    " appeared together in the same " total-forms "-form iteration. "
-    "This is structurally unobservable: the SCI loop must first gather all "
-    "tool evidence and render it into <journal>. Recovery: keep the extension "
-    "call in THIS iteration, drop the (turn-answer! ...). The host will loop; "
-    "answer in the next clean iteration with no extension calls."))
+  [{:keys [answer-idx extension-idx]}]
+  (str "(turn-answer! ...) at form " (inc (or answer-idx 0))
+    " was DROPPED because this iteration also contains an extension tool "
+    "call (form " (inc (or extension-idx 0))
+    ") — the SCI loop must observe tool evidence before composing an answer. "
+    "The extension call(s) in this iteration DID run; their results are in "
+    "<journal> below. Do NOT re-emit them. Next iteration: emit "
+    "(turn-answer! ...) ALONE with no extension calls."))
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
@@ -946,8 +943,19 @@
                                            answer-with-extension-mismatch))]
     {:code-entries                  (cond
                                       answer-with-extension-error
-                                      [{:expr "(vis/preflight-error :answer-with-extension)"
-                                        :vis/preflight-error answer-with-extension-error}]
+                                      ;; Don't reject the whole iteration — drop
+                                      ;; ONLY the turn-answer forms and let the
+                                      ;; extension/other forms execute. Otherwise the
+                                      ;; model loops re-emitting the same shape because
+                                      ;; its work never lands.
+                                      (mapv (fn [entry]
+                                              (if (form-contains-turn-answer-call? entry)
+                                                {:expr (:expr entry)
+                                                 :block-lang (:block-lang entry)
+                                                 :render-segments (:render-segments entry)
+                                                 :vis/preflight-error answer-with-extension-error}
+                                                entry))
+                                        raw-entries)
 
                                       :else
                                       raw-entries)
@@ -1031,7 +1039,22 @@
                                  (and (not= i form-idx)
                                    (nil? (:error (nth blocks i)))))
                            (range (count blocks))))
-        evidence-prior? (boolean (seq previous-iterations))]
+        ;; A prior iteration only counts as "evidence" if at least one
+        ;; of its non-error blocks actually ran. Empty/preflight-only
+        ;; iterations do NOT establish evidence — otherwise the model
+        ;; can game the gate: emit `(v/patch …)+(turn-answer! …)` once
+        ;; (preflight rejects the whole iteration; nothing executes,
+        ;; nothing is patched), then on the next turn emit a clean
+        ;; `(turn-answer! …)` and have it accepted because some prior
+        ;; iteration "exists". The patch never happened.
+        evidence-prior? (boolean
+                          (some (fn [[_ {ibs :blocks}]]
+                                  (some (fn [b]
+                                          (and (nil? (:error b))
+                                            (not (form-contains-turn-answer-call?
+                                                   (or (:code b) (:expr b) (:source b) "")))))
+                                    (or ibs [])))
+                            (or previous-iterations [])))]
     (cond-> []
       (seq errored-idxs)
       (conj (str "latest iteration had errors in form(s) "
@@ -1575,7 +1598,17 @@
                   (not (:vis/preflight-error direct-answer-entry))
                   (direct-answer-entry? direct-answer-entry)
                   (not (form-contains-needs-input-call? direct-answer-entry)))
-            (final-answer-gate-error environment iteration-position [] nil))
+            ;; Pass prior-iteration context so the structural gate sees
+            ;; evidence-prior? correctly. Without this, a clean answer-only
+            ;; iteration after several probe iterations is falsely rejected
+            ;; as "no evidence for this turn yet" because the gate's
+            ;; `previous-iterations` defaults to nil. That bug burns 5-7+
+            ;; iterations on simple tasks (see autoresearch fw-005 trace).
+            (final-answer-gate-error environment iteration-position [] nil
+              active-extensions
+              (assoc answer-validation-context
+                :position 0
+                :code-entries code-entries)))
           code-entries (if final-answer-preflight-error
                          [{:expr "(vis/preflight-error :final-answer-gate)"
                            :vis/preflight-error final-answer-preflight-error}]
