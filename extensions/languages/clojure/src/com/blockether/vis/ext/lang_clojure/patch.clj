@@ -996,4 +996,17 @@
      :channel-render-fn channel-render-inspect}))
 
 (def z-prompt
-  "`z/` strategy for Clojure/EDN edits.\nCombine discovery rows with one patch: z/forms for top-level defs/ns, z/locators {:depth :all} for nested forms, z/symbols for symbol sites; choose the row by :span/:digest and add :replace. Prefer data replacements for structural changes; use z/source only when comments/formatting/reader syntax must be exact. Use z/patch-check for risky batches, z/repair-* after parse damage, and v/patch for non-Clojure text.")
+  "`z/` = STRUCTURAL editing for Clojure/EDN (zipper/AST, whitespace-immune).
+Prefer `z/patch` over `v/patch` on .clj/.cljs/.cljc/.edn.
+
+Pick a row with `z/forms` (top-level), `z/locators {:depth :all}` (nested),
+or `z/symbols` (call-sites); add `:replace` and call
+`(z/patch [(assoc row :replace NEW) ...])`. Batch many edits per call; each
+`:search` must match once. `z/patch-check` for risky; `z/repair-*` for parse
+damage.
+
+Gotcha: `:search`/`:replace` are VALUES at SCI boundary — reader macros
+(`'`, `#()`, `@`, `^`) are already consumed. `:replace '(1 2 3)` writes
+`(1 2 3)` (quote gone). Use `(z/source \"'(1 2 3)\")` to keep reader macros.
+To match a literal form use `(z/source \"(foo bar)\")`; symbol tokens via
+`'foo` are fine.")
