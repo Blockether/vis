@@ -1357,12 +1357,12 @@
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "double-it" :value (fn [x] (* x 2))
-                                                  :code "(defn double-it [x] (* x 2))"}]})
+                                                  :code "(defn double-it \"double the input\" [x] (* x 2))"}]})
           restored (vis/db-restore-blocks s cid)
           entry    (first restored)]
       (expect (= "double-it" (:name entry)))
       (expect (= {:vis/ref :expr} (:result entry)))
-      (expect (= "(defn double-it [x] (* x 2))" (:expr entry)))))
+      (expect (= "(defn double-it \"double the input\" [x] (* x 2))" (:expr entry)))))
 
   (it "linear dependency chain A -> B -> C restored in correct order"
     (let [s      (h/store)
@@ -1843,7 +1843,7 @@
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
           ;; Create SCI sandbox, def a var
           {:keys [sci-ctx]} (env/create-sci-context nil)
-          _   (sci/eval-string+ sci-ctx "(def data [10 20 30])" {:ns (sci/find-ns sci-ctx 'sandbox)})
+          _   (sci/eval-string+ sci-ctx "(def data \"test fixture\" [10 20 30])" {:ns (sci/find-ns sci-ctx 'sandbox)})
           ;; Store it
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "data" :value [10 20 30] :code "(def data [10 20 30])"}]})
@@ -1867,7 +1867,7 @@
           ;; Store a fn (result will be {:vis/ref :expr})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "double-it" :value (fn [x] (* x 2))
-                                                  :code "(defn double-it [x] (* x 2))"}]})
+                                                  :code "(defn double-it \"double the input\" [x] (* x 2))"}]})
           ;; Fresh sandbox
           {:keys [sci-ctx]} (env/create-sci-context nil)]
       ;; Restore
@@ -1884,13 +1884,13 @@
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
           ;; Store chain: rate -> calc -> answer
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
-                                          :vars [{:name "rate" :value 0.1 :code "(def rate 0.1)"}]})
+                                          :vars [{:name "rate" :value 0.1 :code "(def rate \"interest rate\" 0.1)"}]})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "calc" :value (fn [x] (* x 0.1))
-                                                  :code "(defn calc [amount] (* amount rate))"}]})
+                                                  :code "(defn calc \"compute interest\" [amount] (* amount rate))"}]})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "answer" :value 100.0
-                                                  :code "(def answer (calc 1000))"}]})
+                                                  :code "(def answer \"final amount\" (calc 1000))"}]})
           ;; Wire dependencies
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
@@ -1925,10 +1925,10 @@
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :done})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "make-adder" :value (fn [n] (fn [x] (+ x n)))
-                                                  :code "(defn make-adder [n] (fn [x] (+ x n)))"}]})
+                                                  :code "(defn make-adder \"adder factory\" [n] (fn [x] (+ x n)))"}]})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :blocks [] :duration-ms 0
                                           :vars [{:name "add-5" :value (fn [x] (+ x 5))
-                                                  :code "(def add-5 (make-adder 5))"}]})
+                                                  :code "(def add-5 \"adder for 5\" (make-adder 5))"}]})
           ;; Wire: make-adder -> add-5
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
           souls    (raw-query s {:select [:id :name] :from :expression_soul :where [:= :kind "var"]})
