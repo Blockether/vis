@@ -171,3 +171,70 @@
   (it "returns nil when every section is empty"
     (expect (nil? (prompt/format-user-role-tape-message
                     {:system-vars [] :live-vars [] :iters []})))))
+
+(defdescribe iteration->tape-iter-test
+  (it "single-block clean iteration becomes a clean tape-iter"
+    (let [out (prompt/iteration->tape-iter
+                {:position 3
+                 :blocks [{:code "(def x \"the answer\" 42)"
+                           :result 42}]})]
+      (expect (= 3 (:iteration-position out)))
+      (expect (= :done (:status out)))
+      (expect (= "(def x \"the answer\" 42)" (:code out)))
+      (expect (= 42 (:result out)))
+      (expect (nil? (:error out)))
+      (expect (false? (:timeout? out)))))
+  (it "multi-block iteration joins code by newline; result is last successful block"
+    (let [out (prompt/iteration->tape-iter
+                {:position 4
+                 :blocks [{:code "(def a \"a\" 1)" :result 1}
+                          {:code "(def b \"b\" 2)" :result 2}
+                          {:code "(+ a b)" :result 3}]})]
+      (expect (string/includes? (:code out) "(def a"))
+      (expect (string/includes? (:code out) "(def b"))
+      (expect (string/includes? (:code out) "(+ a b)"))
+      (expect (= 3 (:result out)))
+      (expect (= :done (:status out)))))
+  (it "block error → status :error, :result is :vis/no-result, :error is the first error"
+    (let [out (prompt/iteration->tape-iter
+                {:position 2
+                 :blocks [{:code "(def a \"a\" 1)" :result 1}
+                          {:code "(/ 1 0)" :error {:message "Divide by zero"}}
+                          {:code "(def b \"b\" 2)" :error {:message "skipped"}}]})]
+      (expect (= :error (:status out)))
+      (expect (= :vis/no-result (:result out)))
+      (expect (= "Divide by zero" (-> out :error :message)))))
+  (it "stdout / stderr joined with newlines, blanks dropped"
+    (let [out (prompt/iteration->tape-iter
+                {:position 1
+                 :blocks [{:code "(println :hi)" :result nil :stdout "hi\n" :stderr ""}
+                          {:code "(println :bye)" :result nil :stdout "bye\n" :stderr ""}
+                          {:code ":done" :result :done :stdout ""}]})]
+      (expect (string/includes? (:stdout out) "hi"))
+      (expect (string/includes? (:stdout out) "bye"))
+      (expect (= "" (:stderr out)))))
+  (it "timeout? bubbles up if any block timed out"
+    (let [out (prompt/iteration->tape-iter
+                {:position 5
+                 :blocks [{:code "(slow)" :timeout? true :error {:message "Timeout"}}]})]
+      (expect (true? (:timeout? out)))
+      (expect (= :error (:status out)))))
+  (it "coords overrides supply optional telemetry the iteration row doesn't carry"
+    (let [out (prompt/iteration->tape-iter
+                {:position 1 :blocks [{:code "42" :result 42}]}
+                {:turn-position 7 :conv-id "ab12" :state-id "cd34" :status :current})]
+      (expect (= 7 (:turn-position out)))
+      (expect (= "ab12" (:conv-id out)))
+      (expect (= "cd34" (:state-id out)))
+      (expect (= :current (:status out)))))
+  (it "renders cleanly through format-tape-iteration"
+    (let [iter (prompt/iteration->tape-iter
+                 {:position 1
+                  :blocks [{:code "(def x \"doc\" 42)" :result 42}]}
+                 {:turn-position 1 :conv-id "ab12" :status :done})
+          out  (prompt/format-tape-iteration iter)]
+      (expect (string/includes? out "iteration 1"))
+      (expect (string/includes? out "turn=1"))
+      (expect (string/includes? out "conv=ab12"))
+      (expect (string/includes? out "(def x \"doc\" 42)"))
+      (expect (string/includes? out ";; => 42")))))

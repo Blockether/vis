@@ -1127,3 +1127,56 @@ ANSWER_IR
         parts      (keep identity [sys-block live-block tape-block])]
     (when (seq parts)
       (str/join "\n\n" parts))))
+
+(defn iteration->tape-iter
+  "Adapt an engine iteration map (the multi-block shape from the legacy
+   loop) into the tape-iter shape `format-tape-iteration` expects.
+
+   Engine input:
+     {:position N
+      :blocks   [{:code :result :error :stdout :stderr
+                  :execution-time-ms :timeout?} …]
+      :answer   \"…\"          ; optional}
+
+   Optional `coords` map carries per-iteration telemetry that does not
+   live on the iteration row itself: turn-position, conv-id, state-id,
+   status. Engine-side caller fills these from env / state.
+
+   Joins block fields conservatively: code by `\\n`; stdout/stderr
+   joined with `\\n` after dropping blanks; result is the LAST
+   successful block's value (model's intended return); error is the
+   FIRST error encountered (root cause); timeout? true if any block
+   timed out. Status defaults to :error if any block errored, :done
+   otherwise — caller can override via `coords`.
+
+   Phase 7 main wires this in `build-iteration-context`. Single-form
+   iterations (post-Phase-4) round-trip identity-preserved through
+   the same adapter — the join over a 1-element blocks vec is still
+   the same single block."
+  ([iteration]
+   (iteration->tape-iter iteration {}))
+  ([iteration {:keys [iteration-position turn-position conv-id state-id status]}]
+   (let [blocks (or (:blocks iteration) [])
+         non-blank #(when (and (string? %) (not (str/blank? %))) %)
+         joined-code (->> blocks (keep :code) (str/join "\n"))
+         joined-stdout (->> blocks (keep :stdout) (keep non-blank) (str/join "\n"))
+         joined-stderr (->> blocks (keep :stderr) (keep non-blank) (str/join "\n"))
+         first-error  (some :error blocks)
+         last-success (->> blocks (remove :error) last)
+         last-result  (when last-success (:result last-success))
+         any-timeout? (boolean (some :timeout? blocks))
+         derived-status (cond
+                          first-error  :error
+                          any-timeout? :error
+                          :else        :done)]
+     (cond-> {:iteration-position (or iteration-position (:position iteration))
+              :status             (or status derived-status)
+              :code               joined-code
+              :result             (if first-error :vis/no-result last-result)
+              :error              first-error
+              :stdout             joined-stdout
+              :stderr             joined-stderr
+              :timeout?           any-timeout?}
+       turn-position (assoc :turn-position turn-position)
+       conv-id       (assoc :conv-id conv-id)
+       state-id      (assoc :state-id state-id)))))
