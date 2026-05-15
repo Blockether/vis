@@ -2908,23 +2908,25 @@
                         final-answer (when final-result (:answer final-result))
                         _ (update-system-vars! environment
                             {:thinking thinking :final-result final-result :final-answer final-answer})
-                        ;; Pivot: drive var persistence from the SCI def-sink,
-                        ;; not from post-eval source parsing. Every (def …)
-                        ;; the sandbox evaluated this iteration is captured
-                        ;; by the eval-def monkey-patch and lands on each
-                        ;; block's `:def-sink`. We concat across blocks (one
-                        ;; block per iteration post-Phase-4 main, but the
-                        ;; aggregator stays general) and produce one var
-                        ;; row per def.
-                        iteration-block-code (->> blocks
-                                               (map :code)
-                                               (remove str/blank?)
-                                               (str/join "\n\n"))
-                        iteration-time-ms (->> blocks
-                                            (keep :execution-time-ms)
-                                            (reduce + 0))
+                        ;; Pivot invariant: post-Phase-4 `blocks` is ALWAYS
+                        ;; a length-1 vec. The preflight rejects 0-fence
+                        ;; (empty-code-error) and N>1-fence (multi-block-
+                        ;; error) iterations BEFORE eval by synthesizing a
+                        ;; single error-bearing code-entry; the executed
+                        ;; mapv that follows always produces exactly one
+                        ;; output block. Bind the singleton up front so
+                        ;; the rest of the iteration-end aggregation reads
+                        ;; like the scalar reality — no more `mapcat` /
+                        ;; `reduce` / `(first blocks)` ceremony chasing a
+                        ;; one-element vec around. The `:blocks` field on
+                        ;; iteration-result + trace-entry stays as a vec
+                        ;; for consumer back-compat (transcript, tape
+                        ;; adapter, channel renderers).
+                        block (first blocks)
+                        iteration-block-code (or (some-> block :code str/trim not-empty) "")
+                        iteration-time-ms (long (or (:execution-time-ms block) 0))
                         vars-snapshot (def-sink->vars-snapshot
-                                        (vec (mapcat :def-sink blocks))
+                                        (vec (:def-sink block))
                                         iteration-block-code
                                         (when (pos? iteration-time-ms) iteration-time-ms))
                         ;; Phase 4b: dependency edges from a post-eval
@@ -2952,11 +2954,8 @@
                         ;; user vars out of the discovery line after
                         ;; `TAPE_LRU_TURN_WINDOW` quiet turns.
                         _ (when-let [lru-atom (:def-resolve-lru-atom environment)]
-                            (let [iteration-lru (reduce (fn [m b]
-                                                          (merge m (or (:lru b) {})))
-                                                  {} blocks)]
-                              (when (seq iteration-lru)
-                                (swap! lru-atom merge iteration-lru))))
+                            (when-let [iteration-lru (not-empty (:lru block))]
+                              (swap! lru-atom merge iteration-lru)))
                         previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
                         conversation-row (try
                                            (persistance/db-get-conversation
@@ -2999,7 +2998,7 @@
                                          ;; round-trip when it just needs one of
                                          ;; those fields.
                                          :conversation-metadata conversation-metadata})
-                        store-block (or (first blocks) {:code "" :error {:message "empty iteration"}})
+                        store-block (or block {:code "" :error {:message "empty iteration"}})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
                                        (let [tc (iteration-token-cost (:api-usage iteration-result))]
                                          (cond-> {:conversation-turn-id conversation-turn-id
