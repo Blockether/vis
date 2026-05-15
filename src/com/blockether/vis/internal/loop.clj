@@ -2756,6 +2756,7 @@
                                                   :error (:error store-block)
                                                   :stdout (:stdout store-block)
                                                   :stderr (:stderr store-block)
+                                                  :render-segments (:render-segments store-block)
                                                   :duration-ms (or (:execution-time-ms store-block) (:duration-ms iteration-result) 0)
                                                   :vars vars-snapshot
                                                   :dependencies deps-snapshot
