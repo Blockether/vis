@@ -56,17 +56,6 @@
   ;;   org.babashka/http-client -> vis-channel-telegram + vis-provider-github-copilot + vis-exa
   ;;   rewrite-clj              -> vis-language-clojure
   ;;   lanterna                 -> vis-channel-tui
-
-  ;; svar pinned to the local checkout at `../svar` so vis picks up the
-  ;; streaming-timeout work before the next svar mvn cut:
-  ;;   - `0631b6f37b` feat: TTFT watchdog + unified opts (`:ttft-timeout-ms`,
-  ;;                 `:idle-timeout-ms`, `:timeout-ms` flow through
-  ;;                 `LLM_PASSTHROUGH_KEYS` to every public entrypoint)
-  ;;   - `f61510b6fb` fix:  raise DEFAULT_IDLE_TIMEOUT_MS 60s -> 120s
-  ;;   - `fb802675e3` feat: idle-stream watchdog + `::stream-started`
-  ;;                 telemetry
-  ;; Flip back to `{:mvn/version "X.Y.Z"}` once the release containing
-  ;; commit `0631b6f37b` lands on Clojars.
   com.blockether/svar                             {:local/root "../svar"}
   com.blockether/anomaly                          {:mvn/version "1.0.1"}
   ;; commonmark-java — GFM markdown parser used by `internal/render/text->ir`
