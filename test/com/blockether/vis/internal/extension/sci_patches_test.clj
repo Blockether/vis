@@ -127,3 +127,71 @@
     (expect (= 1 (sp/count-top-level-forms "42")))
     (expect (= 2 (sp/count-top-level-forms "(+ 1 2) (+ 3 4)")))
     (expect (= 1 (sp/count-top-level-forms "(do (+ 1 2) (+ 3 4))")))))
+
+(defdescribe sci-patches-banned-def-heads-test
+  (it "plain (def …) / (defn …) pass through silently"
+    (expect (nil? (sp/validate-no-banned-defs! "(def x \"d\" 42)")))
+    (expect (nil? (sp/validate-no-banned-defs! "(defn f \"d\" [x] (* x 2))")))
+    (expect (nil? (sp/validate-no-banned-defs! "(defonce a \"d\" (atom 0))")))
+    (expect (nil? (sp/validate-no-banned-defs! "(defmulti dispatch \"d\" :kind)")))
+    (expect (nil? (sp/validate-no-banned-defs! "(defmacro m \"d\" [x] `(inc ~x))"))))
+
+  (it "top-level defrecord is rejected with :vis/banned-def-head"
+    (try
+      (sp/validate-no-banned-defs! "(defrecord Foo [a b])")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis/banned-def-head (:type (ex-data e))))
+        (expect (= 'defrecord (:head (ex-data e)))))))
+
+  (it "deftype / defprotocol / gen-class / extend-type / extend-protocol / definterface / reify are rejected"
+    (doseq [head '[deftype defprotocol gen-class extend-type extend-protocol
+                   definterface reify]]
+      (try
+        (sp/validate-no-banned-defs! (str "(" head " Foo)"))
+        (expect false)
+        (catch clojure.lang.ExceptionInfo e
+          (expect (= :vis/banned-def-head (:type (ex-data e))))
+          (expect (= head (:head (ex-data e))))))))
+
+  (it "clojure.core/-qualified banned heads are rejected too"
+    (try
+      (sp/validate-no-banned-defs! "(clojure.core/defrecord Foo [a])")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis/banned-def-head (:type (ex-data e))))
+        (expect (= 'clojure.core/defrecord (:head (ex-data e)))))))
+
+  (it "banned head nested inside (do …) is still caught"
+    (try
+      (sp/validate-no-banned-defs! "(do (def ok \"d\" 1) (defrecord Hidden [a]))")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis/banned-def-head (:type (ex-data e))))
+        (expect (= 'defrecord (:head (ex-data e)))))))
+
+  (it "banned head buried in a let/when body is caught"
+    (try
+      (sp/validate-no-banned-defs! "(let [_ 1] (when true (deftype T [])))")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis/banned-def-head (:type (ex-data e))))
+        (expect (= 'deftype (:head (ex-data e)))))))
+
+  (it "parse errors are silent — SCI eval will surface them"
+    (expect (nil? (sp/validate-no-banned-defs! "(unbalanced ["))))
+
+  (it "banned heads appearing only as data (quoted/in a string) do NOT trigger"
+    ;; tree-seq traverses code structurally; a quoted form '(defrecord Foo)
+    ;; parses as (quote (defrecord Foo)) — the inner list IS still walked.
+    ;; Document the conservative behavior: quoted banned heads are also
+    ;; rejected (intentional: easier to enforce than to whitelist quoted
+    ;; contexts; the model can use the symbol via str/keyword if it really
+    ;; needs the name).
+    (try
+      (sp/validate-no-banned-defs! "'(defrecord Foo)")
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis/banned-def-head (:type (ex-data e))))))
+    ;; Strings are not parsed as code — they pass through.
+    (expect (nil? (sp/validate-no-banned-defs! "(def s \"d\" \"defrecord-in-a-string\")")))))
