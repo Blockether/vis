@@ -50,7 +50,7 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 12 (count editing/editing-symbols)))
+    (expect (= 11 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize 'bash}
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
