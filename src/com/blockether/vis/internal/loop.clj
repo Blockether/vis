@@ -717,82 +717,21 @@
       (symbol? (first form))
       (= 'set-conversation-title! (first form)))))
 
-(defn- call-symbol->op-keyword
-  "Convert a head symbol like `v/patch` or `spit` to the canonical
-   op-keyword the engine knows about: `:v/patch` or `:spit`. Returns
-   nil for non-symbols."
-  [head]
-  (when (symbol? head)
-    (let [ns* (namespace head)
-          nm  (name head)]
-      (if ns*
-        (keyword ns* nm)
-        (keyword nm)))))
+;; Pivot: `extension-call-form?` / `form-contains-extension-call?` /
+;; `call-symbol->op-keyword` lived here to feed the legacy structural
+;; floor ("no extension call in the same iteration as (done …)"). The
+;; floor was removed with the pivot — mixing tool calls and `(done …)`
+;; in one `(do …)` is the canonical post-pivot shape, so the three
+;; helpers had no live callers and went with it.
 
-(defn- extension-call-form?
-  "True when `form` is a call whose head is a registered extension op.
-   The final-answer rule is intentionally strict: ANY observed extension
-   tool call (observation or mutation) makes the
-   current iteration an evidence-gathering iteration, so `(done ...)`
-   must wait for the next clean iteration after the journal is rendered."
-  [form]
-  (and (seq? form)
-    (when-let [op-kw (call-symbol->op-keyword (first form))]
-      (extension/registered-op? op-kw))))
-
-(defn- form-contains-extension-call?
-  [entry-or-form-or-source]
-  (let [form (parsed-entry-form entry-or-form-or-source)]
-    (boolean (some extension-call-form? (tree-seq coll? seq form)))))
-
-(defn- answer-with-extension-preflight-mismatch
-  "When an iteration contains BOTH a top-level form that holds an
-   `(done ...)` call AND a top-level form that holds any registered
-   extension tool call (anywhere in its tree), return a map describing the
-   violation so the engine can reject the iteration before evaluation.
-
-   The two forms may be the same form (e.g. `(do (v/cat ...) (done
-   ...))`) or different forms. Either way the model has no chance to observe
-   the tool's final journal entry before the answer is composed."
-  [code-entries]
-  (let [answer-idx    (first (keep-indexed (fn [idx entry]
-                                             (when (form-contains-turn-answer-call? entry) idx))
-                               code-entries))
-        extension-idx (first (keep-indexed (fn [idx entry]
-                                             (when (form-contains-extension-call? entry) idx))
-                               code-entries))]
-    (when (and (some? answer-idx) (some? extension-idx))
-      {:answer-idx    answer-idx
-       :extension-idx extension-idx
-       :total-forms   (count code-entries)})))
-
-(defn- block-result-error-summary
-  "Return a short string describing the error in a per-form result map
-   for the answer-after-error gate. Picks the block-level `:error`
-   first; falls back to the first `:journal` sink-entry whose
-   `:success?` is false (lifted tool-failure). Returns nil when the
-   form ran cleanly.
-
-   Per PLAN §2.1 + §7.3.5: `:error` is the structured `:error` map
-   (`{:message :trace? :hint? :block?}`). This fn extracts `:message`
-   for the answer-after-error gate's terse one-line display."
-  [result]
-  (or (some-> (:error result) :message)
-    (some (fn [j]
-            (when (false? (:success? j))
-              (or (some-> (:error j) :message)
-                (str "tool failure in " (pr-str (:form j))))))
-      (:journal result))))
-
-(defn- answer-with-extension-preflight-error-message
-  [{:keys [answer-idx extension-idx]}]
-  (str "(done ...) at form " (inc (or answer-idx 0))
-    " was DROPPED because this iteration also contains an extension tool "
-    "call (form " (inc (or extension-idx 0))
-    ") — the SCI loop must observe tool evidence before composing an answer. "
-    "The extension call(s) in this iteration DID run; their results are in "
-    "<journal> below. Do NOT re-emit them. Next iteration: emit "
-    "(done ...) ALONE with no extension calls."))
+;; Pivot: with one form per iteration, the legacy three-fn gate
+;; complex (`answer-with-extension-preflight-mismatch`,
+;; `block-result-error-summary`, `answer-with-extension-preflight-error-message`)
+;; is no longer needed. Tool calls and `(done …)` legitimately co-exist
+;; in a single form via handles — `(do (def h (v/cat …)) (done [:ir [:p …]]))`
+;; is the canonical one-iteration shape. If the form throws, `(done …)`
+;; never runs; if it succeeds, the answer is observed inside the same
+;; eval. No separate "observed tool evidence first" check applies.
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
@@ -989,11 +928,13 @@
      - `raw-markdown-fence-leak-error` per block. A nested ``` inside the
        extracted source means svar's normalizer fell into a recursive shape;
        structured rejection beats a JVM crash.
-     - `answer-with-extension-preflight-mismatch` across blocks. An iteration
-       containing both `(done …)` and any extension tool call is
-       structurally unobservable; gather evidence first, answer next.
      - Duplicate-block dedup. Some providers stutter and emit the same
-       block twice; we keep the first copy and drop the rest."
+       block twice; we keep the first copy and drop the rest.
+
+  Removed in the pivot: the answer-with-extension pre-eval gate. With
+  one form per iteration + handle returns, `(do (def h (v/cat …))
+  (done …))` IS the canonical answer shape; rejecting it here was a
+  false positive that re-introduced multi-iteration probe overhead."
   [_iteration-position blocks]
   (let [blocks                       (vec (or blocks []))
         ;; Dedupe by source. Same as the old `dedupe-fenced-block-code`
@@ -1053,18 +994,7 @@
                                        (remove str/blank?)
                                        (str/join "\n"))
         code-hash                    (when-not (str/blank? normalized-code)
-                                       (sha256-hex normalized-code))
-        ;; Answer-with-extension gate — fires when BOTH an answer and any
-        ;; extension tool call exist in the same iteration's block set.
-        ;; Operates on `:expr` strings; the helper parses each lazily via
-        ;; `parsed-entry-form`. Skip when any block already flagged a
-        ;; fence-leak so the first error stays the primary one.
-        answer-with-extension-mismatch (when (and (not raw-fence-error)
-                                               (pos? parsed-total-blocks))
-                                         (answer-with-extension-preflight-mismatch raw-entries))
-        answer-with-extension-error    (when answer-with-extension-mismatch
-                                         (answer-with-extension-preflight-error-message
-                                           answer-with-extension-mismatch))]
+                                       (sha256-hex normalized-code))]
     {:code-entries                  (cond
                                       empty-code-error
                                       [{:expr ""
@@ -1074,24 +1004,8 @@
                                       [{:expr normalized-code
                                         :vis/preflight-error multi-block-error}]
 
-                                      answer-with-extension-error
-                                      ;; Don't reject the whole iteration — drop
-                                      ;; ONLY the turn-answer forms and let the
-                                      ;; extension/other forms execute. Otherwise the
-                                      ;; model loops re-emitting the same shape because
-                                      ;; its work never lands.
-                                      (mapv (fn [entry]
-                                              (if (form-contains-turn-answer-call? entry)
-                                                {:expr (:expr entry)
-                                                 :block-lang (:block-lang entry)
-                                                 :render-segments (:render-segments entry)
-                                                 :vis/preflight-error answer-with-extension-error}
-                                                entry))
-                                        raw-entries)
-
                                       :else
                                       raw-entries)
-     :answer-with-extension-preflight-error answer-with-extension-error
      :empty-code-preflight-error    empty-code-error
      :raw-fence-preflight-error     raw-fence-error
      :duplicate-blocks-normalized?  duplicate-blocks-normalized?
@@ -1133,87 +1047,29 @@
   (or (seq active-extensions)
     (some-> (:extensions environment) deref seq)))
 
-(defn- final-answer-structural-criteria-errors
-  "Built-in structural gate for `(done ...)`. Returns a vector
-   of human-readable reason strings; empty when all criteria pass.
-
-   Distinct from `final-answer-gate-error`'s extension hook dispatch:
-   this is the harness's own floor that always runs first, regardless
-   of which extensions are active. Three criteria are enforced here
-   (a fourth — the answer-form's own evaluation — is gated upstream by
-   `answer-form-error`):
-
-     #1 No error in any non-answer block of the latest iteration.
-        Sibling errors in the same iteration as `done` mean
-        the model has not yet observed a clean state to derive from.
-
-     #2 No extension tool call in the latest iteration.
-        Belt-and-suspenders for `answer-with-extension-preflight-mismatch`
-        (which rejects this shape at parse time before SCI eval). If a
-        refactor ever shifts ordering, this gate still catches it.
-
-     #3 <journal> for this turn carries at least one evidence entry —
-        either a non-answer block ran in this iteration, or any prior
-        iteration exists in `previous-iterations`. Blocks the trivial
-        zero-probe answer on turn open."
-  [{:keys [blocks code-entries previous-iterations] form-idx :position}]
-  (let [errored-idxs   (->> blocks
-                         (keep-indexed (fn [i b]
-                                         (when (and (not= i form-idx)
-                                                 (some? (:error b)))
-                                           i)))
-                         vec)
-        extension-idxs (->> (or code-entries [])
-                         (keep-indexed (fn [i e]
-                                         (when (form-contains-extension-call? e) i)))
-                         vec)
-        evidence-this? (boolean
-                         (some (fn [i]
-                                 (and (not= i form-idx)
-                                   (nil? (:error (nth blocks i)))))
-                           (range (count blocks))))
-        ;; A prior iteration only counts as "evidence" if at least one
-        ;; of its non-error blocks actually ran. Empty/preflight-only
-        ;; iterations do NOT establish evidence — otherwise the model
-        ;; can game the gate: emit `(v/patch …)+(done …)` once
-        ;; (preflight rejects the whole iteration; nothing executes,
-        ;; nothing is patched), then on the next turn emit a clean
-        ;; `(done …)` and have it accepted because some prior
-        ;; iteration "exists". The patch never happened.
-        evidence-prior? (boolean
-                          (some (fn [[_ {ibs :blocks}]]
-                                  (some (fn [b]
-                                          (and (nil? (:error b))
-                                            (not (form-contains-turn-answer-call?
-                                                   (or (:code b) (:expr b) (:source b) "")))))
-                                    (or ibs [])))
-                            (or previous-iterations [])))]
-    (cond-> []
-      (seq errored-idxs)
-      (conj (str "latest iteration had errors in form(s) "
-              (str/join ", " (map (comp str inc) errored-idxs))
-              " — resolve before done"))
-
-      (seq extension-idxs)
-      (conj (str "latest iteration contains extension tool call(s) in form(s) "
-              (str/join ", " (map (comp str inc) extension-idxs))
-              " — gather evidence first; answer in a later clean iteration with no extension calls"))
-
-      (and (not evidence-this?) (not evidence-prior?))
-      (conj "<journal> contains no evidence for this turn yet — probe before done"))))
-
 (defn final-answer-gate-error
-  "Run final-answer validation, structural floor first then extension hooks.
-   Returns nil when the candidate answer is accepted, otherwise a string
-   error surfaced as the rejected answer form's validation error.
+  "Dispatch `:turn.answer/validate` extension hooks against the
+   candidate `(done …)` answer. Returns nil when every hook accepts,
+   otherwise a single string surfaced as the rejected answer form's
+   validation error.
 
-   Structural criteria (`final-answer-structural-criteria-errors`) run
-   unconditionally and short-circuit the extension dispatch; their
-   failures compose into a single multi-line refusal so the model sees
-   every failing criterion in one journal entry instead of one per
-   iteration. `active-extensions` is passed by the turn loop so
-   activation is computed once per turn; direct callers may omit it
-   and provide `:extensions` on the environment."
+   Pivot note: this used to run a structural floor first (no sibling
+   errors / no extension calls in this iter / prior-iteration
+   evidence required). With one form per iteration:
+     #1 own-form-error is enforced upstream by `answer-form-error`
+        (if the (done …) form itself threw, the answer is dropped).
+     #2 mixing tool + (done …) inside one `(do …)` is the canonical
+        one-iteration shape post-pivot — handles return synchronously,
+        the answer is composed in the same eval frame.
+     #3 evidence-prior gating became a false-positive engine: probe-
+        and-answer in a single iteration is the intended flow.
+   So the floor is gone. Extensions that need an additional veto
+   (e.g. user-facing safety / format gates) still get their
+   `:turn.answer/validate` hook fired here.
+
+   `active-extensions` is passed by the turn loop so activation is
+   computed once per turn; direct callers may omit it and provide
+   `:extensions` on the environment."
   ([environment iteration blocks]
    (final-answer-gate-error environment iteration blocks nil nil))
   ([environment iteration blocks answer-value]
@@ -1221,37 +1077,29 @@
   ([environment iteration blocks answer-value active-extensions]
    (final-answer-gate-error environment iteration blocks answer-value active-extensions nil))
   ([environment iteration blocks answer-value active-extensions extra-ctx]
-   (let [structural (final-answer-structural-criteria-errors
-                      {:blocks blocks
-                       :position (:position extra-ctx)
-                       :code-entries (:code-entries extra-ctx)
-                       :previous-iterations (:previous-iterations extra-ctx)})]
-     (if (seq structural)
-       (str "done refused. Failing criteria:\n  - "
-         (str/join "\n  - " structural))
-       (let [ctx (merge {:environment environment
-                         :phase :turn.answer/validate
-                         :iteration iteration
-                         :blocks blocks
-                         :answer answer-value}
-                   extra-ctx)]
-         (some (fn [ext]
-                 (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
-                         (when (= :turn.answer/validate phase)
-                           (binding [extension/*current-extension* ext
-                                     extension/*current-symbol* nil]
-                             (try
-                               (let [hit (hook-fn ctx)]
-                                 (cond
-                                   (s/valid? ::extension/answer-validation-reject hit)
-                                   (answer-validation-rejection-message hook hit)
+   (let [ctx (merge {:environment environment
+                     :phase :turn.answer/validate
+                     :iteration iteration
+                     :blocks blocks
+                     :answer answer-value}
+               extra-ctx)]
+     (some (fn [ext]
+             (some (fn [{:keys [id phase] hook-fn :fn :as hook}]
+                     (when (= :turn.answer/validate phase)
+                       (binding [extension/*current-extension* ext
+                                 extension/*current-symbol* nil]
+                         (try
+                           (let [hit (hook-fn ctx)]
+                             (cond
+                               (s/valid? ::extension/answer-validation-reject hit)
+                               (answer-validation-rejection-message hook hit)
 
-                                   (and (map? hit) (:reject hit))
-                                   (answer-validation-invalid-return-message ext id hit)))
-                               (catch Throwable t
-                                 (answer-validation-hook-error-message ext id t))))))
-                   (or (:ext/hooks ext) [])))
-           (answer-validation-extensions environment active-extensions)))))))
+                               (and (map? hit) (:reject hit))
+                               (answer-validation-invalid-return-message ext id hit)))
+                           (catch Throwable t
+                             (answer-validation-hook-error-message ext id t))))))
+               (or (:ext/hooks ext) [])))
+       (answer-validation-extensions environment active-extensions)))))
 
 (defn- runtime-turn-prefix
   [environment]
@@ -1750,14 +1598,13 @@
           suppress-form-start? (or (some :vis/preflight-error code-entries)
                                  final-answer-preflight-error)
           total-blocks (count code-entries)
-          ;; Engine-level answer-after-error gate (ANALYSIS.md §4.2):
-          ;; an atom that flips true the moment a non-answer form errors.
-          ;; Any subsequent form containing an `(done ...)` call is
-          ;; rejected before SCI re-evals it, so a model that emits
-          ;; `(z/patch ...)`-fails-then-(done "shipped") gets a
-          ;; structured preflight error in place of the answer instead
-          ;; of a fabricated success-claim.
-          prior-error-atom (atom nil)
+          ;; Pivot: the legacy answer-after-error gate (engine-level
+          ;; `prior-error-atom` + `block-result-error-summary`) was
+          ;; deleted. One form per iteration means "prior form errored
+          ;; in this same iteration" is structurally impossible — the
+          ;; form either throws (and `(done …)` never runs) or
+          ;; succeeds (and the answer is observed inside the same
+          ;; eval frame).
           executed (mapv (fn [idx {:keys [expr parse-error render-segments]
                                    :vis/keys [preflight-error structurally-silent?]
                                    form-repaired? :repaired?
@@ -1796,27 +1643,6 @@
                                                         {:code expr :phase :edamame/parse})
                                                :stdout "" :stderr "" :execution-time-ms 0
                                                :op :edamame/parse}
-                                              ;; Answer-after-error gate: any prior form
-                                              ;; in this iteration errored, and this form
-                                              ;; carries an `(done ...)` call. Reject
-                                              ;; before eval so the answer can't claim
-                                              ;; success on top of an unobserved failure.
-                                              (and @prior-error-atom
-                                                (form-contains-turn-answer-call? entry))
-                                              {:result nil
-                                               :error  (op-error
-                                                         (str "Answer-after-error gate: form "
-                                                           (inc idx) " of " total-blocks
-                                                           " contains an `(done ...)` call, but "
-                                                           "a prior form in this iteration errored: "
-                                                           (truncate (str @prior-error-atom) 280)
-                                                           ". Recovery: drop the (done ...) so the host loops; "
-                                                           "the next iteration's <journal> carries the error "
-                                                           "and you can observe + repair before answering.")
-                                                         {:code expr :phase :vis/guard})
-                                               :stdout "" :stderr "" :execution-time-ms 0
-                                               :op :vis/guard}
-
                                               :else
                                               (if-let [err (literal-code-block-error expr)]
                                                 {:result nil
@@ -1852,13 +1678,6 @@
                                  ;; the same flag for the channel.
                                  result (cond-> raw-result
                                           form-repaired? (assoc :repaired? true))
-                                 _ (when-let [err (and (nil? @prior-error-atom)
-                                                    (block-result-error-summary result))]
-                                     ;; Capture the first error so subsequent
-                                     ;; answer-bearing forms get rejected. Lifted
-                                     ;; sink failures (`:success? false` in :journal)
-                                     ;; count too — same root cause as a thrown error.
-                                     (reset! prior-error-atom err))
                                  display-result (def-display-result environment expr result)
                                  ;; def-display-result is now a pass-through; kept on the
                                  ;; call path so future display-tweaks have a single seam.
