@@ -122,3 +122,52 @@
   (it "returns nil for empty vec"
     (expect (nil? (prompt/format-live-vars-block [])))
     (expect (nil? (prompt/format-live-vars-block nil)))))
+
+(defdescribe format-tape-test
+  (it "renders one iteration as a single block"
+    (let [out (prompt/format-tape
+                [{:iteration-position 1 :status :done
+                  :code "(def x \"the answer\" 42)"
+                  :result 42}])]
+      (expect (string/includes? out "iteration 1"))
+      (expect (string/includes? out ";; => 42"))))
+  (it "renders N-1 + N pair separated by a blank line on error recovery"
+    (let [out (prompt/format-tape
+                [{:iteration-position 4 :status :done
+                  :code "(def big \"handle\" 99)"
+                  :result 99}
+                 {:iteration-position 5 :status :error
+                  :code "(/ 1 0)"
+                  :result :vis/no-result
+                  :error {:message "Divide by zero"}}])]
+      (expect (string/includes? out "iteration 4"))
+      (expect (string/includes? out "iteration 5"))
+      (expect (string/includes? out "ERROR Divide by zero"))
+      (expect (string/includes? out "\n\n;;"))))
+  (it "returns nil for empty input"
+    (expect (nil? (prompt/format-tape [])))
+    (expect (nil? (prompt/format-tape nil)))))
+
+(defdescribe format-user-role-tape-message-test
+  (it "joins system-vars + live-vars + tape with blank-line separators"
+    (let [out (prompt/format-user-role-tape-message
+                {:system-vars [{:name "USER_REQUEST" :doc "current request"}]
+                 :live-vars   [{:name "big" :doc "README handle"}]
+                 :iters       [{:iteration-position 1 :status :current
+                                :code "(def big \"README handle\" (v/cat \"README.md\"))"
+                                :result :v.cat-handle}]})]
+      (expect (string/includes? out ";; system-vars:"))
+      (expect (string/includes? out ";; live-vars (1/30):"))
+      (expect (string/includes? out "iteration 1"))
+      (expect (string/includes? out "(def big"))))
+  (it "omits sections that produce nil"
+    (let [out (prompt/format-user-role-tape-message
+                {:system-vars []
+                 :live-vars [{:name "x" :doc ""}]
+                 :iters []})]
+      (expect (not (string/includes? out "system-vars:")))
+      (expect (string/includes? out ";; live-vars (1/30):"))
+      (expect (not (string/includes? out "iteration ")))))
+  (it "returns nil when every section is empty"
+    (expect (nil? (prompt/format-user-role-tape-message
+                    {:system-vars [] :live-vars [] :iters []})))))
