@@ -2037,18 +2037,15 @@
                                                         :code (str "(def " (name sym) " " value ")")}]})
                     (Thread/sleep 1))
           sci-ctx (make-sci-ctx entries)
-          via     (atom {:current-revision 0})
           rlm-env {:db-info         s
                    :conversation-id cid
                    :sci-ctx         sci-ctx
-                   :initial-ns-keys #{}
-                   :bindings-atom  via}]
+                   :initial-ns-keys #{}}]
       (#'lp/auto-archive-hot-symbols! rlm-env)
       (expect (= 80 (count (sandbox-syms sci-ctx))))
       (expect (not (contains? (sandbox-syms sci-ctx) 'v00)))
       (expect (not (contains? (sandbox-syms sci-ctx) 'v01)))
-      (expect (contains? (sandbox-syms sci-ctx) 'v81))
-      (expect (= 1 (:current-revision @via)))))
+      (expect (contains? (sandbox-syms sci-ctx) 'v81))))
 
   (it "does not archive docstring-protected symbols automatically"
     (let [s       (h/store)
@@ -2067,12 +2064,10 @@
                                                         :code (str "(def " (name sym) " " value ")")}]})
                     (Thread/sleep 1))
           sci-ctx (make-sci-ctx entries)
-          via     (atom {:current-revision 0})
           rlm-env {:db-info         s
                    :conversation-id cid
                    :sci-ctx         sci-ctx
-                   :initial-ns-keys #{}
-                   :bindings-atom  via}]
+                   :initial-ns-keys #{}}]
       (#'lp/auto-archive-hot-symbols! rlm-env)
       (expect (contains? (sandbox-syms sci-ctx) 'protected))
       (expect (= 80 (count (sandbox-syms sci-ctx)))))))

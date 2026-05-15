@@ -1050,9 +1050,10 @@
    bodies use `format-clojure-plain` instead: still pretty-printed,
    but with no ANSI syntax coloring.
 
-   The source may be a complete file or fenced block with leading
-   comments and multiple top-level forms. `fmt/format-clojure-ansi`
-   owns the zprint source/file contract (`:parse-string-all?`).
+   Channel render strips `(def NAME \"doc\" …)` docstring slots before
+   pretty-printing — the human reader sees the binding name + the
+   value, not the model-forced docstring noise. The persisted source
+   keeps the docstring so var meta + restore continue to work.
 
    Live progress redraws on the spinner cadence while a provider call
    is in flight. Without this cache, every tick re-ran zprint over
@@ -1060,19 +1061,24 @@
    could make the TUI look frozen even though app-db had advanced."
   [code-text width]
   (let [code-text (str code-text)
-        width     (long width)]
-    (cached* [:clojure-ansi width code-text]
-      #(fmt/format-clojure-ansi code-text width))))
+        width     (long width)
+        stripped  (fmt/strip-def-docstrings code-text)]
+    (cached* [:clojure-ansi width stripped]
+      #(fmt/format-clojure-ansi stripped width))))
 
 (defn- format-clojure-plain
   "Pretty-print Clojure/EDN source via zprint WITHOUT ANSI syntax
    coloring. This is the result-body formatter: pretty layout is OK,
-   ANSI syntax highlighting is not."
+   ANSI syntax highlighting is not.
+
+   Same docstring-strip pass as `format-clojure-ansi` runs before
+   zprint formats the source."
   [code-text width]
   (let [code-text (str code-text)
-        width     (long width)]
-    (cached* [:clojure-plain width code-text]
-      #(fmt/format-clojure code-text width))))
+        width     (long width)
+        stripped  (fmt/strip-def-docstrings code-text)]
+    (cached* [:clojure-plain width stripped]
+      #(fmt/format-clojure stripped width))))
 
 (defn- ^{:clj-kondo/ignore [:unused-private-var]} raw-result-lines
   "Pretty-print TUI result text without ANSI syntax coloring. Width

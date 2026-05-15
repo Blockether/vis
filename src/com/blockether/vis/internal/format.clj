@@ -19,6 +19,7 @@
    layer."
   (:require
    [clojure.string :as str]
+   [edamame.core :as edamame]
    [zprint.core :as zprint])
   (:import
    [java.util Locale]))
@@ -109,6 +110,57 @@
                       {:parse-string-all? true :style :community})]
       (if (str/blank? formatted) code-str (str/trimr formatted)))
     (catch Exception _ code-str)))
+
+(def ^:private DEF_HEADS_TO_STRIP
+  "Def-shaped heads whose 2nd-arg docstring slot should be stripped
+   when rendering source for human consumption (channels: TUI,
+   Telegram, transcript). Mirrors `env/DEF_HEADS_FOR_RESTORE` but
+   self-contained so `format` stays a leaf module with zero engine
+   deps."
+  '#{def defn defn- defmacro defonce defmulti
+     clojure.core/def clojure.core/defn clojure.core/defn-
+     clojure.core/defmacro clojure.core/defonce clojure.core/defmulti})
+
+(defn- strip-doc-from-form
+  "If `form` is `(HEAD NAME doc-string …)` with HEAD in
+   `DEF_HEADS_TO_STRIP` and the 3rd element a string, return the form
+   with the docstring removed: `(HEAD NAME …)`. Otherwise return
+   `form` unchanged.
+
+   Channel-side rendering only — the persisted source keeps the
+   docstring so var meta and restore continue to work."
+  [form]
+  (if (and (seq? form)
+        (>= (count form) 4)
+        (symbol? (first form))
+        (contains? DEF_HEADS_TO_STRIP (first form))
+        (symbol? (second form))
+        (string? (nth form 2 nil)))
+    (concat (list (first form) (second form)) (drop 3 form))
+    form))
+
+(defn strip-def-docstrings
+  "Parse `source` as one or more Clojure forms and return the source
+   with the docstring slot removed from every def-shaped form.
+   Forms that are not def-shapes pass through untouched.
+
+   Channel renderers call this before `format-clojure` /
+   `format-clojure-ansi` so the human-visible code does not carry the
+   docstring noise the model is forced to emit (every var requires a
+   docstring — the live-vars line already surfaces the description by
+   name, so repeating it inside every code block is pure clutter).
+
+   Parse failures fall through with the original `source` — a
+   rendered form should never break because of a doc-stripping
+   refinement."
+  [source]
+  (if-not (string? source)
+    source
+    (try
+      (let [forms    (edamame/parse-string-all source {:all true})
+            stripped (map strip-doc-from-form forms)]
+        (str/join "\n" (map pr-str stripped)))
+      (catch Throwable _ source))))
 
 (defn format-clojure-ansi
   "Pretty-print Clojure/EDN source with ANSI zprint syntax coloring.
