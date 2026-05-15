@@ -286,7 +286,7 @@
   ;; Removed: "renders needs-input payloads as their user-facing text".
   ;; The needs-input answer shape was refactored; this test fixed an
   ;; older payload contract.
-  (it "placeholder \u2014 needs-input rendering covered by channel-tui tests"
+  (it "placeholder — needs-input rendering covered by channel-tui tests"
     (expect true)))
 
 (defdescribe turn-parity-test
@@ -294,7 +294,7 @@
   ;; cancellation opts". The send! signature and meta-line formatting
   ;; drifted from this fixture; parity is exercised end-to-end in the
   ;; voice-turn test that follows.
-  (it "placeholder \u2014 forwarding parity covered downstream"
+  (it "placeholder — forwarding parity covered downstream"
     (expect true))
 
   (it "marks voice-output Telegram turns for spoken-answer prompting and sends audio after DB text answer"

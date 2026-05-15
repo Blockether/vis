@@ -1268,7 +1268,7 @@
    lines renders as one code block instead of N.
 
    Segment shapes:
-     `{:kind :code        :source \"\u2026\"}`   visible code, with leading prose
+     `{:kind :code        :source \"...\"}`   visible code, with leading prose
      `{:kind :title       :value  \"X\"}`   `(set-conversation-title! \"X\")` form
      `{:kind :answer-ref}`                  `(done …)` form (hide; answer below)
 

@@ -54,7 +54,7 @@
   ;; scanner now emits a different message shape (count and/or text)
   ;; depending on repo layout; cwd-cached behaviour is exercised by
   ;; the agents scanner tests directly.
-  (it "placeholder \u2014 AGENTS.md doctor message covered by agents scanner tests"
+  (it "placeholder — AGENTS.md doctor message covered by agents scanner tests"
     (expect true)))
 
 ;; ---------------------------------------------------------------------------
