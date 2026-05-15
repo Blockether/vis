@@ -1016,15 +1016,14 @@
 (defn- prepare-iteration-columns
   "Prepare the hard-cut single-form conversation_turn_iteration payload.
    Result and error stay Nippy BLOBs; side effects stay TEXT."
-  [{:keys [result error stdout stderr duration-ms render-segments] :as opts}]
+  [{:keys [result error stdout stderr duration-ms] :as opts}]
   (let [code (require-iteration-code! opts)]
     (cond-> {:code (str code)}
       (contains? opts :result)     (assoc :result (->blob (freeze-safe result)))
       (some? error)                (assoc :error (->blob (freeze-safe error)))
       (not (blank-text? stdout))   (assoc :stdout stdout)
       (not (blank-text? stderr))   (assoc :stderr stderr)
-      (some? duration-ms)          (assoc :duration_ms (long duration-ms))
-      (seq render-segments)        (assoc :render_segments (->blob (freeze-safe render-segments))))))
+      (some? duration-ms)          (assoc :duration_ms (long duration-ms)))))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
@@ -1303,7 +1302,6 @@
       (not (str/blank? (or (:stdout row) ""))) (assoc :stdout (:stdout row))
       (not (str/blank? (or (:stderr row) ""))) (assoc :stderr (:stderr row))
       (some? (:duration_ms row))         (assoc :execution-time-ms (:duration_ms row))
-      (some? (:render_segments row))     (assoc :render-segments (<-blob (:render_segments row)))
       (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
       (some? (:llm_full_duration_ms row)) (assoc :duration-ms (:llm_full_duration_ms row))
       (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
