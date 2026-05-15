@@ -45,6 +45,16 @@
   "Dynamic timeout in milliseconds for SCI code evaluation."
   DEFAULT_EVAL_TIMEOUT_MS)
 
+(def ASK_CODE_IDLE_TIMEOUT_MS
+  "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls."
+  (* 5 60 1000))
+
+(defn- with-default-ask-code-idle-timeout
+  [opts]
+  (if (contains? opts :idle-timeout-ms)
+    opts
+    (assoc opts :idle-timeout-ms ASK_CODE_IDLE_TIMEOUT_MS)))
+
 (defn clamp-eval-timeout-ms
   "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."
   [candidate]
@@ -1522,15 +1532,16 @@
                                                             :conversation-turn-id (:environment-id environment)
                                                             :iteration iteration-position)]
                            (svar/ask-code! (:router environment)
-                             (cond-> {:lang     "clojure"
-                                      :messages messages
-                                      :routing  (or routing {})
-                                      :check-context? true
-                                      :preserved-thinking? true}
-                               effective-reasoning  (assoc :reasoning effective-reasoning)
-                               streaming-fn         (assoc :on-chunk streaming-fn)
-                               effective-llm-headers (assoc :llm-headers effective-llm-headers)
-                               extra-body           (assoc :extra-body extra-body))))
+                             (with-default-ask-code-idle-timeout
+                               (cond-> {:lang     "clojure"
+                                        :messages messages
+                                        :routing  (or routing {})
+                                        :check-context? true
+                                        :preserved-thinking? true}
+                                 effective-reasoning  (assoc :reasoning effective-reasoning)
+                                 streaming-fn         (assoc :on-chunk streaming-fn)
+                                 effective-llm-headers (assoc :llm-headers effective-llm-headers)
+                                 extra-body           (assoc :extra-body extra-body)))))
           provider-duration-ms (elapsed-ms provider-start-ns)
           _ (log-stage! :provider-call/stop iteration
               {:duration-ms provider-duration-ms
@@ -2132,7 +2143,7 @@
    single string. `ask!` (JSON-spec) is gone; every Vis caller uses
    `ask-code!`."
   [opts]
-  (svar/ask-code! (get-router) opts))
+  (svar/ask-code! (get-router) (with-default-ask-code-idle-timeout opts)))
 
 (defn llm-text!
   "Fast helper LLM call for extensions.
@@ -2149,14 +2160,15 @@
                      (seq system) (conj {:role "system" :content system})
                      (seq prompt) (conj {:role "user" :content prompt})))
         resp     (svar/ask-code! (get-router)
-                   (merge (dissoc opts :system :prompt :temperature)
-                     {:messages           messages
-                      :lang               "text"
-                      :reasoning          (or reasoning :off)
-                      :routing            (or routing {:optimize :cost})
-                      :code-tail-pointer? true}
-                     (when (some? temperature)
-                       {:temperature temperature})))
+                   (with-default-ask-code-idle-timeout
+                     (merge (dissoc opts :system :prompt :temperature)
+                       {:messages           messages
+                        :lang               "text"
+                        :reasoning          (or reasoning :off)
+                        :routing            (or routing {:optimize :cost})
+                        :code-tail-pointer? true}
+                       (when (some? temperature)
+                         {:temperature temperature}))))
         text     (or (some-> resp :result str/trim not-empty)
                    (some-> resp :raw str/trim not-empty)
                    "")]
@@ -3377,11 +3389,12 @@
                                                         :conversation-id conversation-id
                                                         :internal-call :auto-title)]
                        (svar/ask-code! router
-                         (cond-> {:messages           [(svar/user prompt)]
-                                  :lang               "text"
-                                  :reasoning          :off
-                                  :code-tail-pointer? true}
-                           llm-headers (assoc :llm-headers llm-headers))))
+                         (with-default-ask-code-idle-timeout
+                           (cond-> {:messages           [(svar/user prompt)]
+                                    :lang               "text"
+                                    :reasoning          :off
+                                    :code-tail-pointer? true}
+                             llm-headers (assoc :llm-headers llm-headers)))))
                 raw  (or (some-> resp :result str/trim not-empty)
                        (some-> resp :raw str/trim not-empty))
                 title (clean-auto-title raw)]

@@ -805,7 +805,7 @@
                 :found? (:found? result)}}))
 
 (defn- engine-symbol-documentation-tool
-  "Return journal-visible documentation for a SCI symbol such as `v/cat`, `z/source`, or `map`."
+  "Return journal-visible documentation for a SCI symbol such as `v/cat`, `v/source`, or `map`."
   [env sym]
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success
@@ -813,7 +813,7 @@
       (select-keys info [:symbol :resolved-symbol :found? :doc :arglists :macro? :message]))))
 
 (defn- engine-symbol-source-code-tool
-  "Return journal-visible source code for a SCI symbol such as `v/cat` or `z/source`."
+  "Return journal-visible source code for a SCI symbol such as `v/cat` or `v/source`."
   [env sym]
   (let [info (sci-symbol-info env sym)]
     (symbol-tool-success

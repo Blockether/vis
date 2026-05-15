@@ -33,8 +33,8 @@
     (with-redefs [agents/instructions (fn [] {:found? false})]
       (let [prompt ((:ext/prompt foundation/vis-extension) {})]
         (expect (str/includes? prompt "<environment>"))
-        (expect (str/includes? prompt "`v/` strategy"))
-        (expect (str/includes? prompt "combine v/rg and v/ls"))
+        (expect (str/includes? prompt "`v/` env strategy"))
+        (expect (str/includes? prompt "Locate with v/rg + v/ls"))
         (expect (not (str/includes? prompt "clojure.repl/doc")))
         (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
         (expect (not (str/includes? prompt "Do not render Markdown as IR")))
