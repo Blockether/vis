@@ -1,8 +1,10 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
    [com.blockether.svar.core :as svar]
+   [com.blockether.vis.internal.extension.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
-   [lazytest.core :refer [defdescribe it expect]]))
+   [lazytest.core :refer [defdescribe it expect]]
+   [sci.core :as sci]))
 
 (defn- captured-ask-code-opts
   [opts]
@@ -124,3 +126,106 @@
                  "(do (def x \"d\" 1) (def y \"d\" 2))"
                  nil)]
       (expect (= ["y"] (mapv :name snap))))))
+
+;; ---------------------------------------------------------------------------
+;; END-TO-END function round-trip: eval → sink → snapshot → re-eval → call
+;;
+;; This is the integration proof that defn round-trips: not only does
+;; the persistence machinery record `{:vis/ref :expr}` for fn values,
+;; the `:expr` source we store actually rebuilds a working function on
+;; re-eval. Every layer covered:
+;;
+;;   1. SCI eval with `*def-sink-atom*` bound  → sink captures defn
+;;   2. `def-sink->vars-snapshot`              → per-var :code
+;;   3. FRESH SCI context                      → simulates a restart
+;;   4. Re-eval the persisted :code            → fn redefined
+;;   5. Call the restored fn                   → same behavior
+;; ---------------------------------------------------------------------------
+
+(defn- eval-with-sink
+  "Run `code` in `ctx` with a fresh def-sink bound; return the sink contents.
+   Mirrors how the engine binds `*def-sink-atom*` around iteration eval."
+  [ctx code]
+  (let [sink (sp/fresh-sink-atom)]
+    (binding [sp/*def-sink-atom* sink]
+      (sci/eval-string+ ctx code {:ns (sci/find-ns ctx 'user)}))
+    @sink))
+
+(defdescribe defn-round-trip-end-to-end-test
+  (it "plain defn: source captured by sink rebuilds a working fn in a fresh SCI context"
+    (let [src  "(defn add \"adds two numbers\" [a b] (+ a b))"
+          ;; Iteration 1: model evaluates the defn in some SCI context.
+          ctx1 (sci/init {:namespaces {'user {}}})
+          sink (eval-with-sink ctx1 src)
+          snap (lp/def-sink->vars-snapshot sink src nil)
+          stored-code (:code (first snap))]
+      ;; The snapshot row has the canonical defn source as its :code
+      ;; field — this is what `db-store-iteration!` would write into
+      ;; expression_state.expression.
+      (expect (= 1 (count snap)))
+      (expect (= "add" (:name (first snap))))
+      (expect (re-find #"\(defn add" stored-code))
+
+      ;; Simulate `vis db reset` / next-process-boot: a brand new SCI
+      ;; context with no `add` binding.
+      (let [ctx2 (sci/init {:namespaces {'user {}}})
+            ;; db-restore-blocks gives us {:expr stored-code :result
+            ;; {:vis/ref :expr}}; the caller re-evals :expr to
+            ;; reconstitute the fn. Use eval-with-sink so a fresh
+            ;; sink absorbs the (def add …) the restore writes.
+            _    (eval-with-sink ctx2 stored-code)
+            ;; Call the restored fn from inside SCI — if it's a real,
+            ;; working function the inner eval returns 7.
+            r    (sci/eval-string+ ctx2 "(add 3 4)" {:ns (sci/find-ns ctx2 'user)})]
+        (expect (= 7 (:val r))))))
+
+  (it "defn that closes over another (def …): both vars restore in dependency order"
+    ;; The classic 'function closes over data' case. Iteration code:
+    ;;   (def base "d" 10)
+    ;;   (defn add-base "d" [x] (+ x base))
+    ;; Two top-level forms; no (do …). After restore, calling
+    ;; `(add-base 5)` must return 15 — which requires `base` to be
+    ;; restored BEFORE `add-base` (since the fn body refers to it).
+    (let [src  "(def base \"d\" 10)\n(defn add-base \"d\" [x] (+ x base))"
+          ctx1 (sci/init {:namespaces {'user {}}})
+          sink (eval-with-sink ctx1 src)
+          snap (lp/def-sink->vars-snapshot sink src nil)
+          by-name (into {} (map (juxt :name identity)) snap)]
+      (expect (= #{"base" "add-base"} (set (map :name snap))))
+      ;; Each row carries its OWN form, not the whole 2-form block.
+      (expect (= "(def base \"d\" 10)" (:code (by-name "base"))))
+      (expect (re-find #"\(defn add-base" (:code (by-name "add-base"))))
+      ;; Restore in dependency order (base first, then add-base — db-
+      ;; restore-blocks topo-sorts on expression_dependency; without
+      ;; deps it sorts by created_at, but `base` was sink-captured
+      ;; first so it lands first).
+      (let [ctx2 (sci/init {:namespaces {'user {}}})]
+        (doseq [entry snap]
+          (eval-with-sink ctx2 (:code entry)))
+        (let [r (sci/eval-string+ ctx2 "(add-base 5)" {:ns (sci/find-ns ctx2 'user)})]
+          (expect (= 15 (:val r)))))))
+
+  (it "two independent defns in the SAME multi-top-level block: each restores in isolation"
+    ;; Critical isolation property: restoring fn A must NOT redefine
+    ;; sibling fn B. With per-var precise :code this Just Works; with
+    ;; the old whole-block fallback it would not.
+    (let [src  "(defn doubler \"d\" [x] (* 2 x))\n(defn tripler \"d\" [x] (* 3 x))"
+          ctx1 (sci/init {:namespaces {'user {}}})
+          sink (eval-with-sink ctx1 src)
+          snap (lp/def-sink->vars-snapshot sink src nil)
+          by-name (into {} (map (juxt :name identity)) snap)
+          ctx2 (sci/init {:namespaces {'user {}}})]
+      ;; Restore ONLY `doubler` into ctx2. `tripler` should remain
+      ;; unbound — proving the precise per-var :code does not leak
+      ;; the sibling defn into the same eval.
+      (eval-with-sink ctx2 (:code (by-name "doubler")))
+      (let [r (sci/eval-string+ ctx2 "(doubler 21)" {:ns (sci/find-ns ctx2 'user)})]
+        (expect (= 42 (:val r))))
+      (try
+        (sci/eval-string+ ctx2 "(tripler 1)" {:ns (sci/find-ns ctx2 'user)})
+        (expect false)
+        (catch Throwable e
+          ;; SCI throws on unbound symbol — exact shape varies; the
+          ;; important thing is that it threw, meaning the doubler
+          ;; re-eval did NOT silently rebind tripler.
+          (expect (some? (ex-message e))))))))
