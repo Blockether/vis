@@ -801,31 +801,33 @@ DEF DISCIPLINE
   multimethods (`defmulti` / `defmethod`).
 
 TURN PROTOCOL
-  One or more ```clojure blocks per turn. No prose outside blocks.
-  Each block evals; result/error/stdout/stderr attach in <journal>;
-  defs accumulate in <bindings>; both persist across turns.
-  Prefer several focused blocks over one monolith when distinct
-  probes benefit from separate attribution. Errors are evidence.
+  Exactly one ```clojure block per iteration; wrap multiple statements
+  in `(do …)`. No prose outside the block.
+  The block evals atomically: result attaches to <journal>; defs
+  persist across turns under the name you gave them.
+  Errors are evidence — a thrown form ends the iteration; the next
+  iteration sees the structured error and you correct.
 
 LOOP DISCIPLINE
-  Before answering, disprove at least one plausible alternative
-  from <journal>. Every claim traces to <journal>/<bindings>,
-  never memory. Never burn an iteration on metadata-only forms
-  that produce no evidence and call no tool — bundle them into the
-  same iteration as a real probe (e.g. `(do <meta> <probe>)`).
+  Vars are memory. When you need a probe result more than once, bind
+  it (e.g. give a `report` var the value `(summary (v/cat 'foo'))`).
+  The next iteration sees `report` in <bindings>; do not re-probe.
+  Every claim traces to a value you observed, never memory.
 
 EMIT_FINAL
   (done <IR>)
 
-  Accepted only in a clean iteration: no errors, no extension tool
-  calls in this iteration, no reload, and <journal> already shows a
-  prior-iteration non-error non-answer block (or another non-error
-  block in this same iteration). The default flow is two-step:
-  iteration N gathers evidence with tool calls; iteration N+1 emits
-  `(done …)` alone. If you bundle a tool call with
-  `(done …)` in one iteration, the tool RUNS but the answer
-  is dropped — re-emit `(done …)` alone next round and do
-  NOT re-emit the tool call.
+  Accepted whenever the form runs to completion without throwing. Tool
+  calls and `(done …)` legitimately co-exist in the same `(do …)`
+  block — handles return synchronously, so probe + answer can land in
+  one iteration. Canonical 1-iteration shape (replace the single
+  quotes with real double-quote strings when you emit code):
+
+    (do (def h 'README handle' (v/cat 'README.md'))
+        (done [:ir [:p (str 'lines: ' (:line-count (summary h)))]]))
+
+  If the form throws before `(done …)`, the answer is not composed
+  and the turn continues with the error in <journal>.
 
 ANSWER_IR
   EDN hiccup: [:ir block*]
