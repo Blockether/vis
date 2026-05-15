@@ -1131,12 +1131,12 @@
               (when-not (= "" thinking-s)
                 (reindex-search! tx-info "conversation_turn_iteration"
                   iteration-id-s "thinking_text" thinking-s))))
-          ;; 3. Vars -> expression_soul (kind=var, stateful) + expression_state (versioned)
+          ;; 3. Vars -> expression_soul + expression_state (versioned).
           (when conversation-state-id
-            (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
+            (doseq [{:keys [name value code]} (or vars [])]
               (when name
                 (let [name-s (str name)
-                      ;; Find-or-create: partial unique index can't use ON CONFLICT
+                      ;; Find-or-create by (state, name).
                       existing (:id (query-one! tx-info
                                       {:select [:id]
                                        :from   :expression_soul
@@ -1149,8 +1149,6 @@
                                     {:insert-into :expression_soul
                                      :values [{:id                    new-id
                                                :conversation_state_id conversation-state-id
-                                               :kind                  "var"
-                                               :state_mode            "stateful"
                                                :name                  name-s
                                                :created_at            now}]})
                                   new-id))
@@ -1161,17 +1159,13 @@
                                 -1)]
                   (execute! tx-info
                     {:insert-into :expression_state
-                     :values [{:id                 (new-id)
-                               :expression_soul_id soul-id
-                               :conversation_turn_iteration_id       iteration-id-s
-                               :version            (inc max-ver)
-                               :success            1
-                               :expression         code
-                               :result             (->blob (freeze-safe value))
-                               :metadata           (->json (cond-> {}
-                                                             time-ms  (assoc :time-ms time-ms)
-                                                             metadata (assoc :metadata metadata)))
-                               :created_at         now}]})))))
+                     :values [{:id                            (new-id)
+                               :expression_soul_id            soul-id
+                               :conversation_turn_iteration_id iteration-id-s
+                               :version                       (inc max-ver)
+                               :expression                    code
+                               :result                        (->blob (freeze-safe value))
+                               :created_at                    now}]})))))
           ;; 4. Dependencies -> expression_dependency. Filter to edges
           ;; whose BOTH endpoints resolve to a soul in this
           ;; conversation_state (either pre-existing from a prior
@@ -1183,9 +1177,7 @@
             (let [soul-rows (query! tx-info
                               {:select [:id :name]
                                :from   :expression_soul
-                               :where  [:and
-                                        [:= :conversation_state_id conversation-state-id]
-                                        [:= :kind "var"]]})
+                               :where  [:= :conversation_state_id conversation-state-id]})
                   by-name   (into {} (map (juxt :name :id)) soul-rows)
                   ;; Pre-existing edges (so we do not double-insert
                   ;; the same edge each iteration when a defn keeps
@@ -1374,9 +1366,7 @@
           {:select [:es.name [:est.result :result] [:est.expression :expr] :est.version]
            :from   [[:expression_state :est]]
            :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
-           :where  [:and
-                    [:= :est.conversation_turn_iteration_id iteration-id-s]
-                    [:= :es.kind "var"]]
+           :where  [:= :est.conversation_turn_iteration_id iteration-id-s]
            :order-by [[:est.created_at :asc]]})))
     []))
 
@@ -1404,7 +1394,6 @@
                        [:conversation_turn_state :qst]      [:= :qst.id :it.conversation_turn_state_id]]
               :where  [:and
                        [:= :es.conversation_state_id state-id-s]
-                       [:= :es.kind "var"]
                        [:= :est.version
                         {:select [[[:max :version]]]
                          :from   [[:expression_state :est2]]
@@ -1476,7 +1465,6 @@
                                [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
                       :where  [:and
                                [:= :es.conversation_state_id state-id-s]
-                               [:= :es.kind "var"]
                                [:= :est.version
                                 {:select [[[:max :version]]]
                                  :from   [[:expression_state :est2]]
@@ -1511,7 +1499,6 @@
                       [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
              :where  [:and
                       [:= :es.conversation_state_id state-id-s]
-                      [:= :es.kind "var"]
                       [:= :es.name (str var-sym)]]
              :order-by [[:est.version :asc]]}))
         []))
@@ -1550,8 +1537,7 @@
                                  [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
                                  [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
                         :where  (cond-> [:and
-                                         [:= :es.conversation_state_id state-id-s]
-                                         [:= :es.kind "var"]]
+                                         [:= :es.conversation_state_id state-id-s]]
                                   symbol (conj [:= :es.name (str symbol)]))
                         :order-by [[:est.created_at direction] [:es.name :asc] [:est.version direction]]}
                  (pos-int? limit) (assoc :limit limit)))))
@@ -1863,38 +1849,42 @@
 ;; =============================================================================
 
 (defn db-restore-blocks
-  "Returns all stateful var expression_souls with their latest expression_state,
-   ordered topologically (dependencies first, then by created_at).
+  "Returns all var expression_souls with their LATEST expression_state
+   row, ordered topologically (dependencies before dependents).
 
    Each entry:
      {:soul-id     uuid-str
       :name        string
-      :kind        'var'
-      :state-mode  'stateful'
-      :version     int
-      :expr        string (source code)
+      :version     int                   ; latest version stored
+      :expr        string                ; precise (def NAME ...) source
       :result      <thawed value or {:vis/ref :expr}>
       :depends-on  [upstream-soul-id ...]
       :depended-by [downstream-soul-id ...]}
 
-   The caller evals entries in order: for each entry, if result is
-   {:vis/ref :expr}, eval the :expr to reconstruct the value.
-   Dependencies are guaranteed to appear before dependents."
+   Behavior on var redefinition: when iteration N writes a new version
+   of var A, a new expression_state row lands with version = (max + 1)
+   pointing at the existing soul. Sibling vars whose soul was NOT
+   touched in iteration N keep their previous latest version. Restore
+   reads MAX(version) per soul so the consumer always sees the freshest
+   source + value, and untouched vars carry forward unchanged.
+
+   Caller evals entries in order. For each entry, if `:result` is
+   `{:vis/ref :expr}`, re-eval `:expr` to reconstruct the value
+   (functions / lazy seqs / runtime objects). Dependency order is
+   guaranteed."
   [db-info conversation-id]
   (when (ds db-info)
     (let [state-id-s (latest-state-id db-info conversation-id)]
       (when state-id-s
         ;; 1. All var souls with latest state
         (let [rows (query! db-info
-                     {:select [:es.id :es.name :es.kind :es.state_mode
-                               :est.version [:est.expression :expr] :est.result :est.success
+                     {:select [:es.id :es.name
+                               :est.version [:est.expression :expr] :est.result
                                :est.created_at]
                       :from   [[:expression_soul :es]]
                       :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]]
                       :where  [:and
                                [:= :es.conversation_state_id state-id-s]
-                               [:= :es.kind "var"]
-                               [:= :es.state_mode "stateful"]
                                [:= :est.version
                                 {:select [[[:max :version]]]
                                  :from   [[:expression_state :est2]]
@@ -1939,12 +1929,9 @@
                   (let [r (get by-id soul-id)]
                     {:soul-id    soul-id
                      :name       (:name r)
-                     :kind       (:kind r)
-                     :state-mode (:state_mode r)
                      :version    (:version r)
                      :expr       (:expr r)
                      :result     (<-blob (:result r))
-                     :success    (= 1 (:success r))
                      :depends-on (vec (filter soul-ids (get-in adj [soul-id :depends-on])))
                      :depended-by (vec (filter soul-ids (get-in adj [soul-id :depended-by])))}))
             sorted))))))

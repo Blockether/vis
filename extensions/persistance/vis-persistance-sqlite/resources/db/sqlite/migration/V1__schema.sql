@@ -13,7 +13,7 @@
 --          │                   Single-form iteration payload, directly readable
 --          │                   without a Nippy vec wrapper.
 --          │
---          └─ expression_soul (branch-local var identities, kind='var')
+--          └─ expression_soul (branch-local var identities)
 --               ├─ expression_state (var versions; each row points at the
 --               │                    iteration that produced it)
 --               └─ expression_dependency (var dep graph, soul-level)
@@ -316,33 +316,26 @@ END;
 -- on conversation_turn_iteration; nothing else queried call rows by id,
 -- so the indirection added cost without value.
 --
--- state_mode:
---   stateless | stateful
+-- Post-pivot scope cut: legacy `kind` + `state_mode` columns dropped
+-- (`kind` was always 'var', `state_mode` was always 'stateful', and the
+-- 'literal' / 'stateless' branches never landed in the writer). One
+-- soul row per persistent user var; one expression_state row per
+-- iteration that touched it.
 -- =============================================================================
 CREATE TABLE expression_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
   conversation_state_id  TEXT NOT NULL
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
 
-  kind                   TEXT NOT NULL
-                         CHECK (kind IN ('var', 'literal')),
-
-  state_mode             TEXT NOT NULL
-                         CHECK (state_mode IN ('stateless', 'stateful')),
-
-  name                   TEXT,
-  metadata               TEXT,             -- JSON-encoded object/string
-  created_at             INTEGER NOT NULL,
-
-  CHECK (kind <> 'literal' OR state_mode = 'stateless')
+  name                   TEXT NOT NULL CHECK (trim(name) <> ''),
+  created_at             INTEGER NOT NULL
 );
 
-CREATE INDEX idx_expression_soul_state_kind
-  ON expression_soul(conversation_state_id, kind, created_at);
-
 CREATE UNIQUE INDEX uq_expression_soul_state_name
-  ON expression_soul(conversation_state_id, name)
-  WHERE name IS NOT NULL;
+  ON expression_soul(conversation_state_id, name);
+
+CREATE INDEX idx_expression_soul_state_created
+  ON expression_soul(conversation_state_id, created_at);
 
 -- =============================================================================
 -- Expression dependency - downstream depends on upstream (soul-level graph).
@@ -361,7 +354,6 @@ CREATE TABLE expression_dependency (
                                  REFERENCES expression_soul(id) ON DELETE CASCADE,
   upstream_expression_soul_id    TEXT NOT NULL
                                  REFERENCES expression_soul(id) ON DELETE CASCADE,
-  metadata                       TEXT,      -- JSON-encoded object/string
   created_at                     INTEGER NOT NULL,
 
   CHECK (downstream_expression_soul_id <> upstream_expression_soul_id),
@@ -407,30 +399,31 @@ BEGIN
 END;
 
 -- =============================================================================
--- Expression state - versioned durable state emitted by expression_soul.
--- NOTE: write rows here only for expression_soul.state_mode='stateful'.
+-- Expression state - versioned durable state per var. Each row carries
+-- the source form (the smallest `(def NAME …)` shape that introduced
+-- this version) and the Nippy-frozen result value, freeze-safe so fn /
+-- lazy-seq / runtime-object values land as `{:vis/ref :expr}` and the
+-- caller re-evals `expression` to reconstitute them on restore.
 -- =============================================================================
 CREATE TABLE expression_state (
-  id                  TEXT PRIMARY KEY NOT NULL,
-  expression_soul_id  TEXT NOT NULL
-                      REFERENCES expression_soul(id) ON DELETE CASCADE,
-  conversation_turn_iteration_id        TEXT NOT NULL
-                      REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
+  id                              TEXT PRIMARY KEY NOT NULL,
+  expression_soul_id              TEXT NOT NULL
+                                  REFERENCES expression_soul(id) ON DELETE CASCADE,
+  conversation_turn_iteration_id  TEXT NOT NULL
+                                  REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
 
-  version             INTEGER NOT NULL CHECK (version >= 0),
+  version                         INTEGER NOT NULL CHECK (version >= 0),
 
-  success             INTEGER NOT NULL DEFAULT 1 CHECK (success IN (0, 1)),
-  expression          TEXT CHECK (expression IS NULL OR trim(expression) <> ''), -- expected to be valid Clojure expression text
-  result              BLOB,               -- Nippy-encoded result bytes
-  error               BLOB,               -- Nippy-encoded error bytes
-  stdout              TEXT,
-  stderr              TEXT,
-  duration_ms         INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
-  metadata            TEXT,               -- JSON-encoded object/string
-  created_at          INTEGER NOT NULL,
+  -- `expression` is the precise per-var source (e.g. "(def NAME ...)");
+  -- caller re-evals it on restore. Nullable for callers that only
+  -- want value persistence (no re-eval round-trip). NOT NULL would
+  -- enforce the restoration contract but breaks every direct-write
+  -- test fixture that skips the source-tracking step.
+  expression                      TEXT CHECK (expression IS NULL OR trim(expression) <> ''),
+  result                          BLOB,
+  created_at                      INTEGER NOT NULL,
 
-  UNIQUE (expression_soul_id, version),
-  CHECK ((success = 1 AND error IS NULL) OR (success = 0 AND error IS NOT NULL))
+  UNIQUE (expression_soul_id, version)
 );
 
 CREATE INDEX idx_expression_state_soul
@@ -439,10 +432,8 @@ CREATE INDEX idx_expression_state_soul
 CREATE INDEX idx_expression_state_iteration
   ON expression_state(conversation_turn_iteration_id);
 
--- Version constraints for expression_state:
--- - first row for an expression_soul must start at version = 0
--- - stateless blocks: exactly one row, fixed at version = 0
-CREATE TRIGGER trg_expression_state_stateless_ai
+-- First row for an expression_soul must start at version = 0.
+CREATE TRIGGER trg_expression_state_first_version_ai
 BEFORE INSERT ON expression_state
 BEGIN
   SELECT CASE
@@ -452,41 +443,6 @@ BEGIN
            WHERE es.expression_soul_id = NEW.expression_soul_id)
          AND NEW.version <> 0
     THEN RAISE(ABORT, 'first expression_state version must be 0')
-  END;
-
-  SELECT CASE
-    WHEN (SELECT state_mode FROM expression_soul WHERE id = NEW.expression_soul_id) = 'stateless'
-         AND NEW.version <> 0
-    THEN RAISE(ABORT, 'stateless expression_state must use version 0')
-  END;
-
-  SELECT CASE
-    WHEN (SELECT state_mode FROM expression_soul WHERE id = NEW.expression_soul_id) = 'stateless'
-         AND EXISTS (
-           SELECT 1
-           FROM expression_state es
-           WHERE es.expression_soul_id = NEW.expression_soul_id)
-    THEN RAISE(ABORT, 'stateless expression_state may have only one row')
-  END;
-END;
-
-CREATE TRIGGER trg_expression_state_stateless_au
-BEFORE UPDATE ON expression_state
-BEGIN
-  SELECT CASE
-    WHEN (SELECT state_mode FROM expression_soul WHERE id = NEW.expression_soul_id) = 'stateless'
-         AND NEW.version <> 0
-    THEN RAISE(ABORT, 'stateless expression_state must use version 0')
-  END;
-
-  SELECT CASE
-    WHEN (SELECT state_mode FROM expression_soul WHERE id = NEW.expression_soul_id) = 'stateless'
-         AND EXISTS (
-           SELECT 1
-           FROM expression_state es
-           WHERE es.expression_soul_id = NEW.expression_soul_id
-             AND es.id <> NEW.id)
-    THEN RAISE(ABORT, 'stateless expression_state may have only one row')
   END;
 END;
 
