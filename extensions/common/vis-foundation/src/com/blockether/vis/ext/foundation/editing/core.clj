@@ -57,7 +57,7 @@
 ;;   `max-cat-window-bytes`  - hard ceiling on a single window's bytes.
 ;;                             Doubles as the persistence-blob ceiling:
 ;;                             each call writes one Nippy blob to
-;;                             `expression_state.result`, bounded by this.
+;;                             `definition_state.result`, bounded by this.
 ;;                             Not user-tunable; it is the storage contract.
 (def ^:private default-cat-limit 200)
 (def ^:private max-cat-window-bytes 65536)

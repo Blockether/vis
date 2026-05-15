@@ -12,7 +12,7 @@
      conversation_soul, conversation_state,
      conversation_turn_soul, conversation_turn_state,
      conversation_turn_iteration,
-     expression_soul, expression_state, expression_dependency,
+     definition_soul, definition_state, definition_dependency,
      extension_aggregate,
      log
 
@@ -525,8 +525,8 @@
                       (:conversation-turn-soul-id entry)         (assoc :conversation_turn_soul_id (->id (:conversation-turn-soul-id entry)))
                       (:conversation-turn-state-id entry)        (assoc :conversation_turn_state_id (->id (:conversation-turn-state-id entry)))
                       (:iteration-id entry)          (assoc :conversation_turn_iteration_id (->id (:iteration-id entry)))
-                      (:expression-soul-id entry)    (assoc :expression_soul_id (->id (:expression-soul-id entry)))
-                      (:expression-state-id entry)   (assoc :expression_state_id (->id (:expression-state-id entry))))]})))))
+                      (:definition-soul-id entry)    (assoc :definition_soul_id (->id (:definition-soul-id entry)))
+                      (:definition-state-id entry)   (assoc :definition_state_id (->id (:definition-state-id entry))))]})))))
 
 ;; =============================================================================
 ;; Conversation - conversation_soul + conversation_state
@@ -1027,8 +1027,8 @@
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
-  "Store one iteration row + per-`(def ...)` expression_soul/expression_state
-   rows + optional expression_dependency edges. All writes go through
+  "Store one iteration row + per-`(def ...)` definition_soul/definition_state
+   rows + optional definition_dependency edges. All writes go through
    one SQLite transaction.
 
    Args:
@@ -1060,7 +1060,7 @@
               conversation-turn-state (when conversation-turn-soul-id-s
                                         (latest-conversation-turn-state tx-info conversation-turn-soul-id-s))
               conversation-turn-state-id-s (:id conversation-turn-state)
-              ;; Need conversation_state_id for expression_soul
+              ;; Need conversation_state_id for definition_soul
               conversation-state-id (when conversation-turn-state
                                       (:conversation_state_id
                                        (query-one! tx-info
@@ -1131,7 +1131,7 @@
               (when-not (= "" thinking-s)
                 (reindex-search! tx-info "conversation_turn_iteration"
                   iteration-id-s "thinking_text" thinking-s))))
-          ;; 3. Vars -> expression_soul + expression_state (versioned).
+          ;; 3. Vars -> definition_soul + definition_state (versioned).
           (when conversation-state-id
             (doseq [{:keys [name value code]} (or vars [])]
               (when name
@@ -1139,14 +1139,14 @@
                       ;; Find-or-create by (state, name).
                       existing (:id (query-one! tx-info
                                       {:select [:id]
-                                       :from   :expression_soul
+                                       :from   :definition_soul
                                        :where  [:and
                                                 [:= :conversation_state_id conversation-state-id]
                                                 [:= :name name-s]]}))
                       soul-id (or existing
                                 (let [new-id (new-id)]
                                   (execute! tx-info
-                                    {:insert-into :expression_soul
+                                    {:insert-into :definition_soul
                                      :values [{:id                    new-id
                                                :conversation_state_id conversation-state-id
                                                :name                  name-s
@@ -1154,19 +1154,19 @@
                                   new-id))
                       max-ver (or (:v (query-one! tx-info
                                         {:select [[[:max :version] :v]]
-                                         :from   :expression_state
-                                         :where  [:= :expression_soul_id soul-id]}))
+                                         :from   :definition_state
+                                         :where  [:= :definition_soul_id soul-id]}))
                                 -1)]
                   (execute! tx-info
-                    {:insert-into :expression_state
+                    {:insert-into :definition_state
                      :values [{:id                            (new-id)
-                               :expression_soul_id            soul-id
+                               :definition_soul_id            soul-id
                                :conversation_turn_iteration_id iteration-id-s
                                :version                       (inc max-ver)
                                :expression                    code
                                :result                        (->blob (freeze-safe value))
                                :created_at                    now}]})))))
-          ;; 4. Dependencies -> expression_dependency. Filter to edges
+          ;; 4. Dependencies -> definition_dependency. Filter to edges
           ;; whose BOTH endpoints resolve to a soul in this
           ;; conversation_state (either pre-existing from a prior
           ;; iteration or just-written from this iteration's :vars).
@@ -1176,18 +1176,18 @@
           (when (and conversation-state-id (seq dependencies))
             (let [soul-rows (query! tx-info
                               {:select [:id :name]
-                               :from   :expression_soul
+                               :from   :definition_soul
                                :where  [:= :conversation_state_id conversation-state-id]})
                   by-name   (into {} (map (juxt :name :id)) soul-rows)
                   ;; Pre-existing edges (so we do not double-insert
                   ;; the same edge each iteration when a defn keeps
                   ;; referencing the same upstream).
-                  existing  (set (map (juxt :downstream_expression_soul_id
-                                        :upstream_expression_soul_id)
+                  existing  (set (map (juxt :downstream_definition_soul_id
+                                        :upstream_definition_soul_id)
                                    (query! tx-info
-                                     {:select [:downstream_expression_soul_id
-                                               :upstream_expression_soul_id]
-                                      :from   :expression_dependency
+                                     {:select [:downstream_definition_soul_id
+                                               :upstream_definition_soul_id]
+                                      :from   :definition_dependency
                                       :where  [:= :conversation_state_id conversation-state-id]})))]
               (doseq [{:keys [upstream-name downstream-name]}
                       (->> dependencies
@@ -1200,11 +1200,11 @@
                       u-id (by-name upstream-name)]
                   (when-not (contains? existing [d-id u-id])
                     (execute! tx-info
-                      {:insert-into :expression_dependency
+                      {:insert-into :definition_dependency
                        :values [{:id                            (new-id)
                                  :conversation_state_id         conversation-state-id
-                                 :downstream_expression_soul_id d-id
-                                 :upstream_expression_soul_id   u-id
+                                 :downstream_definition_soul_id d-id
+                                 :upstream_definition_soul_id   u-id
                                  :created_at                    now}]}))))))
           iteration-id)))))
 
@@ -1364,8 +1364,8 @@
                :version (:version r)})
         (query! db-info
           {:select [:es.name [:est.result :result] [:est.expression :expr] :est.version]
-           :from   [[:expression_state :est]]
-           :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]
+           :from   [[:definition_state :est]]
+           :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]]
            :where  [:= :est.conversation_turn_iteration_id iteration-id-s]
            :order-by [[:est.created_at :asc]]})))
     []))
@@ -1388,16 +1388,16 @@
            (query! db-info
              {:select [:es.name :est.result [:est.expression :expr] :est.version :est.created_at
                        :qst.conversation_turn_soul_id]
-              :from   [[:expression_soul :es]]
-              :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]
+              :from   [[:definition_soul :es]]
+              :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
                        [:conversation_turn_iteration :it]         [:= :it.id :est.conversation_turn_iteration_id]
                        [:conversation_turn_state :qst]      [:= :qst.id :it.conversation_turn_state_id]]
               :where  [:and
                        [:= :es.conversation_state_id state-id-s]
                        [:= :est.version
                         {:select [[[:max :version]]]
-                         :from   [[:expression_state :est2]]
-                         :where  [:= :est2.expression_soul_id :es.id]}]]}))))
+                         :from   [[:definition_state :est2]]
+                         :where  [:= :est2.definition_soul_id :es.id]}]]}))))
      {})))
 
 (defn- var-result-ref?
@@ -1459,16 +1459,16 @@
                                [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
                                [:it.position :iteration_position]
                                :qst.conversation_turn_soul_id]
-                      :from   [[:expression_soul :es]]
-                      :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]
+                      :from   [[:definition_soul :es]]
+                      :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]
                                [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
                                [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
                       :where  [:and
                                [:= :es.conversation_state_id state-id-s]
                                [:= :est.version
                                 {:select [[[:max :version]]]
-                                 :from   [[:expression_state :est2]]
-                                 :where  [:= :est2.expression_soul_id :es.id]}]]
+                                 :from   [[:definition_state :est2]]
+                                 :where  [:= :est2.definition_soul_id :es.id]}]]
                       :order-by [[:est.created_at :desc] [:es.name :asc]]}
                (pos-int? limit) (assoc :limit limit))))
          []))
@@ -1493,8 +1493,8 @@
                       [:it.position :iteration_position]
                       :es.conversation_state_id
                       :qst.conversation_turn_soul_id]
-             :from   [[:expression_state :est]]
-             :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]
+             :from   [[:definition_state :est]]
+             :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]
                       [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
                       [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
              :where  [:and
@@ -1532,8 +1532,8 @@
                                  [:est.conversation_turn_iteration_id :conversation_turn_iteration_id]
                                  [:it.position :iteration_position]
                                  :qst.conversation_turn_soul_id]
-                        :from   [[:expression_state :est]]
-                        :join   [[:expression_soul :es] [:= :est.expression_soul_id :es.id]
+                        :from   [[:definition_state :est]]
+                        :join   [[:definition_soul :es] [:= :est.definition_soul_id :es.id]
                                  [:conversation_turn_iteration :it] [:= :it.id :est.conversation_turn_iteration_id]
                                  [:conversation_turn_state :qst] [:= :qst.id :it.conversation_turn_state_id]]
                         :where  (cond-> [:and
@@ -1816,18 +1816,18 @@
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-dependency!
   "Store an edge: downstream depends on upstream.
-   Both must be expression_souls in the same conversation_state."
+   Both must be definition_souls in the same conversation_state."
   [db-info {:keys [conversation-state-id downstream-soul-id upstream-soul-id]}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
       (fn [tx-info]
         (let [id (new-id)]
           (execute! tx-info
-            {:insert-into :expression_dependency
+            {:insert-into :definition_dependency
              :values [{:id                            id
                        :conversation_state_id         (->id conversation-state-id)
-                       :downstream_expression_soul_id (->id downstream-soul-id)
-                       :upstream_expression_soul_id   (->id upstream-soul-id)
+                       :downstream_definition_soul_id (->id downstream-soul-id)
+                       :upstream_definition_soul_id   (->id upstream-soul-id)
                        :created_at                    (now-ms)}]})
           id)))))
 
@@ -1837,11 +1837,11 @@
   (when (ds db-info)
     (mapv (fn [r]
             {:id         (:id r)
-             :downstream (:downstream_expression_soul_id r)
-             :upstream   (:upstream_expression_soul_id r)})
+             :downstream (:downstream_definition_soul_id r)
+             :upstream   (:upstream_definition_soul_id r)})
       (query! db-info
-        {:select [:id :downstream_expression_soul_id :upstream_expression_soul_id]
-         :from   :expression_dependency
+        {:select [:id :downstream_definition_soul_id :upstream_definition_soul_id]
+         :from   :definition_dependency
          :where  [:= :conversation_state_id (->id conversation-state-id)]}))))
 
 ;; =============================================================================
@@ -1849,7 +1849,7 @@
 ;; =============================================================================
 
 (defn db-restore-blocks
-  "Returns all var expression_souls with their LATEST expression_state
+  "Returns all var definition_souls with their LATEST definition_state
    row, ordered topologically (dependencies before dependents).
 
    Each entry:
@@ -1862,7 +1862,7 @@
       :depended-by [downstream-soul-id ...]}
 
    Behavior on var redefinition: when iteration N writes a new version
-   of var A, a new expression_state row lands with version = (max + 1)
+   of var A, a new definition_state row lands with version = (max + 1)
    pointing at the existing soul. Sibling vars whose soul was NOT
    touched in iteration N keep their previous latest version. Restore
    reads MAX(version) per soul so the consumer always sees the freshest
@@ -1881,14 +1881,14 @@
                      {:select [:es.id :es.name
                                :est.version [:est.expression :expr] :est.result
                                :est.created_at]
-                      :from   [[:expression_soul :es]]
-                      :join   [[:expression_state :est] [:= :est.expression_soul_id :es.id]]
+                      :from   [[:definition_soul :es]]
+                      :join   [[:definition_state :est] [:= :est.definition_soul_id :es.id]]
                       :where  [:and
                                [:= :es.conversation_state_id state-id-s]
                                [:= :est.version
                                 {:select [[[:max :version]]]
-                                 :from   [[:expression_state :est2]]
-                                 :where  [:= :est2.expression_soul_id :es.id]}]]})
+                                 :from   [[:definition_state :est2]]
+                                 :where  [:= :est2.definition_soul_id :es.id]}]]})
               by-id (into {} (map (fn [r] [(:id r) r])) rows)
               ;; 2. Dependencies
               deps  (db-list-dependencies db-info state-id-s)
