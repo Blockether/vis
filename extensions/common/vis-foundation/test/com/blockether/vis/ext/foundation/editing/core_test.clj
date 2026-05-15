@@ -15,6 +15,7 @@
    [clojure.set]
    [clojure.string :as string]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
+   [com.blockether.vis.internal.extension.handle :as handle]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
@@ -49,7 +50,7 @@
 (defdescribe editing-extension-loads-test
   (it "exposes structured helpers plus the required thin babashka.fs wrappers"
     (expect (vector? editing/editing-symbols))
-    (expect (= 11 (count editing/editing-symbols)))
+    (expect (= 12 (count editing/editing-symbols)))
     (expect (not-any? #{'edit 'write 'cwd 'parent 'file-name 'extension 'relativize 'bash}
               (map :ext.symbol/symbol editing/editing-symbols)))
     (expect (not-any? #{'read-all-lines}
@@ -139,7 +140,7 @@
       (expect (string/includes? editing/editing-prompt
                 "(:next-offset prev)"))
       (expect (string/includes? editing/editing-prompt
-                "Edit non-Clojure text with `(v/patch"))
+                "Edit text with `(v/patch"))
       (expect (string/includes? editing/editing-prompt
                 "each :search must match exactly once"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
@@ -259,48 +260,58 @@
         (expect (throws? clojure.lang.ExceptionInfo
                   #(apply read-file path bad)))))))
 
+(defn- cat-handle
+  "Construct a CatHandle directly for renderer-contract tests, mirroring
+   what `cat-tool` does internally."
+  [path offset lines next-offset eof? truncated-by]
+  (handle/clear-store!)
+  (handle/make-cat
+    {:path path
+     :lines lines
+     :offset offset
+     :next-offset next-offset
+     :eof? eof?
+     :truncated-by truncated-by}))
+
 (defdescribe new-renderer-contract-test
-  (it "v/cat journal renderer shows window range, eof hint, and read-more hint"
+  (it "v/cat journal renderer collapses to a one-line handle summary plus the read-more hint"
     (let [journal-render-cat (private-fn "journal-render-cat")
-          result {:path "src/demo.clj" :offset 1 :returned 6 :limit 200
-                  :next-offset nil :eof? true :truncated-by :eof
-                  :lines ["alpha" "beta" "gamma" "delta" "epsilon" "zeta"]}
-          out (journal-render-cat result)]
-      (expect (string/includes? out "v/cat src/demo.clj"))
-      (expect (string/includes? out "lines 1\u20136"))   ; en-dash
-      ;; New header format: eof case prints `(N lines, eof)` instead of
-      ;; the misleading `(N/limit), truncated-by eof (eof)` shape, which
-      ;; made a 5-line file look like 5-of-200 truncated. Window limit is
-      ;; irrelevant when eof terminates the read.
-      (expect (string/includes? out "(6 lines, eof)"))
-      (expect (not (string/includes? out "6/200")))
-      (expect (not (string/includes? out "truncated-by")))
-      (expect (string/includes? out "1: alpha"))
-      (expect (string/includes? out "<your binding>"))))
+          h    (cat-handle "src/demo.clj" 1
+                 ["alpha" "beta" "gamma" "delta" "epsilon" "zeta"]
+                 nil true :eof)
+          out  (journal-render-cat h)]
+      ;; New shape: handle's print-method emits `#vis/handle {...}` on
+      ;; one line. The journal must not echo file content (that path is
+      ;; closed in the pivot \u2014 see PLAN.md Phase 7).
+      (expect (string/starts-with? out "#vis/handle "))
+      (expect (string/includes? out ":kind :v.cat"))
+      (expect (string/includes? out ":path \"src/demo.clj\""))
+      (expect (string/includes? out ":line-count 6"))
+      (expect (string/includes? out "<your binding>"))
+      ;; The handle's :first-line / :last-line summary intentionally
+      ;; previews bookends, so a 6-line file's "alpha" / "zeta" can
+      ;; appear in the summary. The leak guarantee is only about
+      ;; numbered-line content blocks (`1: alpha` etc.), which the new
+      ;; renderer no longer emits.
+      (expect (not (string/includes? out "1: alpha")))))
 
-  (it "v/cat journal renderer emits a (v/cat ...) hint when more remains"
-    (let [journal-render-cat (private-fn "journal-render-cat")
-          result {:path "big.log" :offset 1 :returned 4 :limit 4
-                  :next-offset 5 :eof? false :truncated-by :limit
-                  :lines ["a" "b" "c" "d"]}
-          out (journal-render-cat result)]
-      ;; New header format: `:limit` truncation is reported as
-      ;; "more available; window limit N" — unambiguous that the window
-      ;; line-budget is what clipped the read, not the file size.
-      (expect (string/includes? out "more available"))
-      (expect (string/includes? out "window limit 4"))
-      (expect (string/includes? out "(v/cat \"big.log\" 5 4)"))))
+  (it "v/cat handle summary surfaces pagination metadata"
+    (let [h    (cat-handle "big.log" 1 ["a" "b" "c" "d"] 5 false :limit)
+          summ (handle/summary h)]
+      ;; Pagination state moves from the journal header into the
+      ;; handle's summary; the model reads :next-offset / :eof? off the
+      ;; summary to decide whether to page.
+      (expect (= 5 (:next-offset summ)))
+      (expect (false? (:eof? summ)))
+      (expect (= :limit (:truncated-by summ))))))
 
+(defdescribe channel-renderer-contract-test
   (it "v/cat channel renderer returns canonical [:ir ...] with a :code block, line-numbered from :offset"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          result {:path "src/demo.clj" :offset 1 :returned 1 :limit 200
-                  :next-offset nil :eof? true :truncated-by :eof
-                  :lines ["only-line"]}
-          out (channel-render-cat result)]
-      ;; Engine contract: channel renderer must return canonical IR.
+          h   (cat-handle "src/demo.clj" 1 ["only-line"] nil true :eof)
+          out (channel-render-cat h)]
       (expect (vector? out))
       (expect (= :ir (first out)))
-      ;; The code block carries the numbered window body verbatim.
       (let [code-blocks (filter #(and (vector? %) (= :code (first %))) (tree-seq sequential? seq out))
             body (last (first code-blocks))]
         (expect (= 1 (count code-blocks)))
@@ -308,32 +319,26 @@
 
   (it "v/cat channel renderer separates inline text/code tokens with spaces"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          result {:path "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
-                  :offset 1898 :returned 30 :limit 30
-                  :next-offset 1928 :eof? false :truncated-by :limit
-                  :lines ["x"]}
-          out (channel-render-cat result)
+          h   (cat-handle "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
+                1898 ["x"] 1928 false :limit)
+          out (channel-render-cat h)
           paragraph (nth out 2)
           text (apply str (filter string? (tree-seq sequential? seq paragraph)))]
       (expect (string/includes? text
-                "Read extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj — 30 line(s) from line 1898 (next-offset 1928)."))))
+                "Read extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj \u2014 1 line(s) from line 1898 (next-offset 1928)."))))
 
   (it "v/cat channel renderer respects :offset for mid-file windows"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          result {:path "f.txt" :offset 100 :returned 2 :limit 200
-                  :next-offset 102 :eof? false :truncated-by :limit
-                  :lines ["hundred" "hundred-one"]}
-          out (channel-render-cat result)
+          h   (cat-handle "f.txt" 100 ["hundred" "hundred-one"] 102 false :limit)
+          out (channel-render-cat h)
           body (last (first (filter #(and (vector? %) (= :code (first %)))
                               (tree-seq sequential? seq out))))]
       (expect (= :ir (first out)))
       (expect (string/includes? body "100: hundred"))
-      (expect (string/includes? body "101: hundred-one"))))
+      (expect (string/includes? body "101: hundred-one")))))
 
+(defdescribe error-formatter-contract-test
   (it "engine-default channel error formatter renders failures as canonical [:ir ...]"
-    ;; Per PLAN §2.1 (Phase 4): envelope is flat under :* and the
-    ;; error map is structured {:message :trace? :hint? :block?}.
-    ;; Channel errors return canonical IR (not Markdown strings).
     (let [out (extension/default-channel-error-ir
                 {:success? false
                  :symbol :v/cat
@@ -557,7 +562,12 @@
       ;; (e.g. :presentation, :stdout when set) may also appear.
       (expect (= required (clojure.set/intersection required (set (keys out)))))
       (expect (true? (:success? out)))
-      (expect (= ["alpha" "beta"] (get-in out [:result :lines])))
+      ;; v/cat now returns a CatHandle as :result. Lines are reachable
+      ;; via deref; the envelope shape (:success? :result ...) is unchanged.
+      (let [h (:result out)]
+        (expect (= ["alpha" "beta"] (deref h)))
+        (expect (= "alpha" (-> h :info :first-line)))
+        (expect (= "beta" (-> h :info :last-line))))
       (expect (not (contains? out :markdown)))
       (expect (nil? (:error out)))))
 

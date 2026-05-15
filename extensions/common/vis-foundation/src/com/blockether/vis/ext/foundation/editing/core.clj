@@ -37,6 +37,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.internal.extension.handle :as handle]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
@@ -124,7 +125,8 @@
 ;; the abstraction boundary (color-role lived here too). Use the engine
 ;; functions directly.
 
-(doseq [[op tag] [[:v/cat :op.tag/observation]
+(doseq [[op tag] [[:v/view :op.tag/observation]
+                  [:v/cat :op.tag/observation]
                   [:v/ls :op.tag/observation]
                   [:v/rg :op.tag/observation]
                   [:v/patch-check :op.tag/observation]
@@ -623,19 +625,26 @@
 ;; Tool-result facades
 ;; =============================================================================
 
+(defn- view-tool
+  "Materialize a bounded view of a handle's payload via the handle's `PHandle/view` protocol implementation. The op is a kind-specific keyword: for `:v.cat` handles, supported ops are `:peek` (no args), `:at` (1-based line number), and `:lines` (start, end). Throws `:vis.handle/unsupported-view` for unknown ops on a kind. Examples: `(v/view h :peek)` returns the first 50 lines; `(v/view h :at 117)` returns the 117th line; `(v/view h :lines 0 50)` returns lines 0..49."
+  ([h op] (handle/view h op))
+  ([h op a] (handle/view h op a))
+  ([h op a b] (handle/view h op a b)))
+
 (defn- cat-tool
-  "Read a window of a text file. Streams the file: never slurps the whole thing; each call writes one bounded Nippy blob to `expression_state.result`. Arities: `(v/cat path)` -> first 200 lines from line 1; `(v/cat path n)` -> first n lines; `(v/cat path offset n)` -> n lines starting at 1-based line `offset`. Page forward with `(:next-offset prev)`; stop when `(:eof? prev)`. Returns {:path :offset :returned :limit :next-offset :eof? :truncated-by :lines}; `:truncated-by` is `:limit | :bytes | :eof`. Each window is byte-capped at 64KB (the persistence contract)."
+  "Read a window of a text file as a CatHandle. The handle prints as a one-line summary; call `@h` to materialize the line vec, or `(v/view h :peek)` / `(v/view h :lines a b)` / `(v/view h :at n)` for bounded views. Arities: `(v/cat path)` -> first 200 lines; `(v/cat path n)` -> first n lines; `(v/cat path offset n)` -> n lines starting at 1-based offset. Pagination metadata lives in the handle summary: `(:next-offset (handle/summary h))` / `(:eof? (handle/summary h))`. Each window is byte-capped at 64KB."
   ([path]
    (cat-tool path 1 default-cat-limit))
   ([path n]
    (cat-tool path 1 n))
   ([path offset n]
-   (let [out (read-file path offset n)]
+   (let [out (read-file path offset n)
+         h   (handle/make-cat out)]
      (tool-success
        {:op :v/cat
         :path path
         :kind :file
-        :result out
+        :result h
         :info {:lines-returned (:returned out)
                :offset (:offset out)
                :limit (:limit out)
@@ -844,12 +853,6 @@
      :else
      [(str (apply str (repeat depth "  ")) "- " (pr-str entry))])))
 
-(def ^:private journal-head-tail-lines
-  "How many leading and trailing lines a bounded reader (v/cat) shows in
-   <journal>. The full value stays bound to the model's def; this slice is
-   only the working-memory peek."
-  50)
-
 (defn- numbered-line-block
   "Format a sub-vector of source lines with absolute 1-based line numbers.
    `start-line` is the 1-based line number of `(first lines)`."
@@ -877,74 +880,49 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- journal-render-cat
-  "v/cat journal preview: window head/tail with line numbers + pagination
-   hint. Plaintext for token-budgeted <journal>.
+  "v/cat journal preview: one-line handle summary plus the standard
+   read-more hint. The handle's `print-method` already emits the
+   summary form; the model sees `#vis/handle {:kind :v.cat :path X
+   :line-count N ...}` and reaches content via deref or `(v/view h …)`.
 
-   Header reads differently per truncation state so the model never sees
-   the misleading old `lines 1–5 (5/200), truncated-by eof (eof)` shape
-   that made a 5-line file look like a 5-of-200-line truncated read:
-
-   - eof   — `v/cat PATH — lines A–B (N lines, eof)`. No window limit
-             printed; eof already says 'that's the whole rest of the file'.
-   - limit — `v/cat PATH — lines A–B (N lines, more available; window
-             limit LIMIT) — next: (v/cat ...)`. Only here does the
-             window limit matter, because that's what clipped the read.
-   - bytes — `v/cat PATH — lines A–B (N lines, truncated by 64KB byte
-             cap)`. Bytes is the cause; window line-limit is irrelevant."
+   This renderer collapses to a single line in advance of Phase 7's
+   tape-rendering takeover."
   [result]
-  (let [{:keys [path lines offset returned limit next-offset eof? truncated-by]} result
-        n          (or returned (count lines))
-        head       (vec (take journal-head-tail-lines lines))
-        tail-skip  (max 0 (- n journal-head-tail-lines))
-        tail       (vec (drop tail-skip lines))
-        head-block (numbered-line-block offset head)
-        tail-block (numbered-line-block (+ offset tail-skip) tail)
-        elided     (max 0 (- n (* 2 journal-head-tail-lines)))
-        last-line  (+ offset (max 0 (dec n)))
-        next-hint  (when next-offset
-                     (str " — next: (v/cat \"" path "\" " next-offset " " limit ")"))
-        header     (cond
-                     (zero? n)
-                     (str "v/cat " path " — empty window at offset " offset " (eof)")
-
-                     eof?
-                     (str "v/cat " path " — lines " offset "–" last-line
-                       " (" n " line" (when (not= n 1) "s") ", eof)")
-
-                     (= :limit truncated-by)
-                     (str "v/cat " path " — lines " offset "–" last-line
-                       " (" n " line" (when (not= n 1) "s")
-                       ", more available; window limit " limit ")"
-                       next-hint)
-
-                     (= :bytes truncated-by)
-                     (str "v/cat " path " — lines " offset "–" last-line
-                       " (" n " line" (when (not= n 1) "s")
-                       ", truncated by 64KB byte cap)"
-                       next-hint)
-
-                     :else
-                     (str "v/cat " path " — lines " offset "–" last-line
-                       " (" n " line" (when (not= n 1) "s") ")"
-                       next-hint))]
-    (str header "\n"
-      head-block
-      (when (pos? elided) (str "\n… (" elided " line(s) elided)\n"))
-      (when (pos? elided) tail-block)
-      "\n" (read-more-hint "<your binding>"))))
+  (str (pr-str result)
+    "\n" (read-more-hint "<your binding>")))
 
 (defn- channel-render-cat
+  "Channel preview: derefs the handle to render the actual content for
+   human readers. The handle's summary supplies path / offset /
+   pagination metadata."
   [result]
-  (let [{:keys [path lines offset returned next-offset eof?]} result
-        body (numbered-line-block offset (vec lines))]
+  (let [{:keys [path offset next-offset eof? line-count]} (handle/summary result)
+        lines (deref result)
+        body  (numbered-line-block (or offset 1) (vec lines))]
     (ir-root
-      (ir-p "Read " (ir-code path) " — " (or returned (count lines))
-        " line(s) from line " offset
+      (ir-p "Read " (ir-code path) " — " (or line-count (count lines))
+        " line(s) from line " (or offset 1)
         (cond
           eof?        " (eof)."
           next-offset (str " (next-offset " next-offset ").")
           :else       "."))
       (ir-code-block "text" (bounded-render-text body)))))
+
+(defn- journal-render-view
+  "v/view journal preview: pr-str of the materialized view value. The
+   payload is already bounded by the handle's view op (e.g. :peek =
+   first 50 lines), so no further truncation here."
+  [result]
+  (str (pr-str result)
+    "\n" (read-more-hint "<your binding>")))
+
+(defn- channel-render-view
+  "Channel preview: render the view as a code block. View results are
+   bounded vectors; pr-str captures them faithfully for human eyes."
+  [result]
+  (ir-root
+    (ir-p "View result:")
+    (ir-code-block "edn" (bounded-render-text (pr-str result)))))
 
 (defn- journal-render-ls
   [result]
@@ -1078,6 +1056,14 @@
 ;; lives in opts because it has nothing to do with the function's signature.
 ;; -----------------------------------------------------------------------------
 
+(def view-symbol
+  (vis/symbol #'view-tool
+    {:symbol 'view
+
+     :journal-render-fn journal-render-view
+     :channel-render-fn channel-render-view
+     :on-error-fn (tool-failure-on-error :v/view :handle nil)}))
+
 (def cat-symbol
   (vis/symbol #'cat-tool
     {:symbol 'cat
@@ -1168,7 +1154,8 @@
 
 (defn available-editing-symbols
   []
-  [cat-symbol
+  [view-symbol
+   cat-symbol
    ls-symbol
    rg-symbol
    patch-symbol

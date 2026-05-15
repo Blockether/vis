@@ -1,4 +1,4 @@
-(ns com.blockether.vis.ext.foundation.handle
+(ns com.blockether.vis.internal.extension.handle
   "Handle: protocol-driven, deref-able reference to bounded payload data.
 
    `PHandle` is the contract every handle kind implements:
@@ -131,19 +131,12 @@
             :op op
             :arity arity})))
 
-(defrecord CatHandle [store-key path line-count sha first-line last-line]
+(defrecord CatHandle [store-key info]
   clojure.lang.IDeref
   (deref [_] (lookup-payload store-key :v.cat))
   PHandle
   (kind [_] :v.cat)
-  (summary [_]
-    {:kind        :v.cat
-     :path        path
-     :line-count  line-count
-     :sha         sha
-     :first-line  first-line
-     :last-line   last-line
-     :views       (vec cat-views)})
+  (summary [_] (assoc info :kind :v.cat :views (vec cat-views)))
   (view [h op]
     (case op
       :peek (let [lines @h]
@@ -173,9 +166,10 @@
 
 (defn make-cat
   "Construct a CatHandle from a `read-file`-style result map. Stashes
-   `:lines` into the store; returns a CatHandle whose summary captures
-   path / line-count / sha / first-line / last-line."
-  [{:keys [path lines]}]
+   `:lines` into the store; the handle's `:info` carries pagination
+   metadata (offset / next-offset / eof? / truncated-by) plus the
+   one-line summary keys (line-count / sha / first-line / last-line)."
+  [{:keys [path lines offset next-offset eof? truncated-by]}]
   (let [lines (vec lines)
         line-count (count lines)
         first-line (first lines)
@@ -183,7 +177,16 @@
         sha-hex    (when (pos? line-count)
                      (sha8 (str/join "\n" lines)))
         store-key  (intern-payload lines)]
-    (->CatHandle store-key path line-count sha-hex first-line last-line)))
+    (->CatHandle store-key
+      {:path         path
+       :offset       offset
+       :line-count   line-count
+       :next-offset  next-offset
+       :eof?         eof?
+       :truncated-by truncated-by
+       :sha          sha-hex
+       :first-line   first-line
+       :last-line    last-line})))
 
 ;; =============================================================================
 ;; print-method (single-line summary)
