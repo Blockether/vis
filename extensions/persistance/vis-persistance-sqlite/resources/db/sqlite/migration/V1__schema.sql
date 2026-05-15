@@ -13,10 +13,10 @@
 --          │                   Single-form iteration payload, directly readable
 --          │                   without a Nippy vec wrapper.
 --          │
---          └─ expression_soul (branch-local var identities)
---               ├─ expression_state (var versions; each row points at the
+--          └─ definition_soul (branch-local var identities)
+--               ├─ definition_state (var versions; each row points at the
 --               │                    iteration that produced it)
---               └─ expression_dependency (var dep graph, soul-level)
+--               └─ definition_dependency (var dep graph, soul-level)
 --
 -- Naming convention:
 --   *_soul   = immutable identity, branch-local
@@ -34,7 +34,7 @@
 --     -> conversation_turn_iteration(s)
 --          each conversation_turn_iteration writes its single code block inline into
 --          code/result/error/stdout/stderr/duration_ms plus one
---          expression_soul + expression_state row per named var
+--          definition_soul + definition_state row per named var
 --          `(def ...)` / `(defn ...)` it executed
 --     -> conversation_turn_state done/error
 --     -> next turn (or branch/fork to new conversation_state)
@@ -43,7 +43,7 @@
 --   conversation_state(v1)
 --        └─ fork -> conversation_state(v2, parent_state_id=v1)
 --   Each fork keeps isolated branch-local conversation_turn_soul +
---   expression_soul identity.
+--   definition_soul identity.
 -- =============================================================================
 
 PRAGMA foreign_keys = ON;
@@ -319,10 +319,10 @@ END;
 -- Post-pivot scope cut: legacy `kind` + `state_mode` columns dropped
 -- (`kind` was always 'var', `state_mode` was always 'stateful', and the
 -- 'literal' / 'stateless' branches never landed in the writer). One
--- soul row per persistent user var; one expression_state row per
+-- soul row per persistent user var; one definition_state row per
 -- iteration that touched it.
 -- =============================================================================
-CREATE TABLE expression_soul (
+CREATE TABLE definition_soul (
   id                     TEXT PRIMARY KEY NOT NULL,
   conversation_state_id  TEXT NOT NULL
                          REFERENCES conversation_state(id) ON DELETE CASCADE,
@@ -331,70 +331,70 @@ CREATE TABLE expression_soul (
   created_at             INTEGER NOT NULL
 );
 
-CREATE UNIQUE INDEX uq_expression_soul_state_name
-  ON expression_soul(conversation_state_id, name);
+CREATE UNIQUE INDEX uq_definition_soul_state_name
+  ON definition_soul(conversation_state_id, name);
 
-CREATE INDEX idx_expression_soul_state_created
-  ON expression_soul(conversation_state_id, created_at);
+CREATE INDEX idx_definition_soul_state_created
+  ON definition_soul(conversation_state_id, created_at);
 
 -- =============================================================================
 -- Expression dependency - downstream depends on upstream (soul-level graph).
 --
 -- Direction:
---   upstream_expression_soul_id -> downstream_expression_soul_id
+--   upstream_definition_soul_id -> downstream_definition_soul_id
 --
 -- This table stores pure recalculation edges.
 -- If edge (u -> d) exists, d must be recalculated when u changes.
 -- =============================================================================
-CREATE TABLE expression_dependency (
+CREATE TABLE definition_dependency (
   id                             TEXT PRIMARY KEY NOT NULL,
   conversation_state_id          TEXT NOT NULL
                                  REFERENCES conversation_state(id) ON DELETE CASCADE,
-  downstream_expression_soul_id  TEXT NOT NULL
-                                 REFERENCES expression_soul(id) ON DELETE CASCADE,
-  upstream_expression_soul_id    TEXT NOT NULL
-                                 REFERENCES expression_soul(id) ON DELETE CASCADE,
+  downstream_definition_soul_id  TEXT NOT NULL
+                                 REFERENCES definition_soul(id) ON DELETE CASCADE,
+  upstream_definition_soul_id    TEXT NOT NULL
+                                 REFERENCES definition_soul(id) ON DELETE CASCADE,
   created_at                     INTEGER NOT NULL,
 
-  CHECK (downstream_expression_soul_id <> upstream_expression_soul_id),
-  UNIQUE (downstream_expression_soul_id, upstream_expression_soul_id)
+  CHECK (downstream_definition_soul_id <> upstream_definition_soul_id),
+  UNIQUE (downstream_definition_soul_id, upstream_definition_soul_id)
 );
 
-CREATE INDEX idx_expr_dep_downstream
-  ON expression_dependency(downstream_expression_soul_id);
+CREATE INDEX idx_def_dep_downstream
+  ON definition_dependency(downstream_definition_soul_id);
 
-CREATE INDEX idx_expr_dep_upstream
-  ON expression_dependency(upstream_expression_soul_id);
+CREATE INDEX idx_def_dep_upstream
+  ON definition_dependency(upstream_definition_soul_id);
 
-CREATE INDEX idx_expr_dep_state
-  ON expression_dependency(conversation_state_id);
+CREATE INDEX idx_def_dep_state
+  ON definition_dependency(conversation_state_id);
 
-CREATE TRIGGER trg_expr_dep_same_state_ai
-BEFORE INSERT ON expression_dependency
+CREATE TRIGGER trg_def_dep_same_state_ai
+BEFORE INSERT ON definition_dependency
 BEGIN
   SELECT
     CASE
-      WHEN (SELECT conversation_state_id FROM expression_soul WHERE id = NEW.downstream_expression_soul_id) IS NULL
-        OR (SELECT conversation_state_id FROM expression_soul WHERE id = NEW.upstream_expression_soul_id) IS NULL
-      THEN RAISE(ABORT, 'expression_dependency endpoint not found')
-      WHEN (SELECT conversation_state_id FROM expression_soul WHERE id = NEW.downstream_expression_soul_id) <>
-           (SELECT conversation_state_id FROM expression_soul WHERE id = NEW.upstream_expression_soul_id)
-      THEN RAISE(ABORT, 'expression_dependency endpoints must be in same conversation_state')
-      WHEN (SELECT conversation_state_id FROM expression_soul WHERE id = NEW.downstream_expression_soul_id) <> NEW.conversation_state_id
-      THEN RAISE(ABORT, 'expression_dependency conversation_state_id mismatch')
+      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) IS NULL
+        OR (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id) IS NULL
+      THEN RAISE(ABORT, 'definition_dependency endpoint not found')
+      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <>
+           (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id)
+      THEN RAISE(ABORT, 'definition_dependency endpoints must be in same conversation_state')
+      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <> NEW.conversation_state_id
+      THEN RAISE(ABORT, 'definition_dependency conversation_state_id mismatch')
     END;
 END;
 
-CREATE TRIGGER trg_expr_dep_same_state_au
-BEFORE UPDATE ON expression_dependency
+CREATE TRIGGER trg_def_dep_same_state_au
+BEFORE UPDATE ON definition_dependency
 BEGIN
   SELECT
     CASE
-      WHEN (SELECT conversation_state_id FROM expression_soul WHERE id = NEW.downstream_expression_soul_id) <>
-           (SELECT conversation_state_id FROM expression_soul WHERE id = NEW.upstream_expression_soul_id)
-      THEN RAISE(ABORT, 'expression_dependency endpoints must be in same conversation_state')
-      WHEN (SELECT conversation_state_id FROM expression_soul WHERE id = NEW.downstream_expression_soul_id) <> NEW.conversation_state_id
-      THEN RAISE(ABORT, 'expression_dependency conversation_state_id mismatch')
+      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <>
+           (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.upstream_definition_soul_id)
+      THEN RAISE(ABORT, 'definition_dependency endpoints must be in same conversation_state')
+      WHEN (SELECT conversation_state_id FROM definition_soul WHERE id = NEW.downstream_definition_soul_id) <> NEW.conversation_state_id
+      THEN RAISE(ABORT, 'definition_dependency conversation_state_id mismatch')
     END;
 END;
 
@@ -405,10 +405,10 @@ END;
 -- lazy-seq / runtime-object values land as `{:vis/ref :expr}` and the
 -- caller re-evals `expression` to reconstitute them on restore.
 -- =============================================================================
-CREATE TABLE expression_state (
+CREATE TABLE definition_state (
   id                              TEXT PRIMARY KEY NOT NULL,
-  expression_soul_id              TEXT NOT NULL
-                                  REFERENCES expression_soul(id) ON DELETE CASCADE,
+  definition_soul_id              TEXT NOT NULL
+                                  REFERENCES definition_soul(id) ON DELETE CASCADE,
   conversation_turn_iteration_id  TEXT NOT NULL
                                   REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
 
@@ -423,26 +423,26 @@ CREATE TABLE expression_state (
   result                          BLOB,
   created_at                      INTEGER NOT NULL,
 
-  UNIQUE (expression_soul_id, version)
+  UNIQUE (definition_soul_id, version)
 );
 
-CREATE INDEX idx_expression_state_soul
-  ON expression_state(expression_soul_id, version);
+CREATE INDEX idx_definition_state_soul
+  ON definition_state(definition_soul_id, version);
 
-CREATE INDEX idx_expression_state_iteration
-  ON expression_state(conversation_turn_iteration_id);
+CREATE INDEX idx_definition_state_iteration
+  ON definition_state(conversation_turn_iteration_id);
 
--- First row for an expression_soul must start at version = 0.
-CREATE TRIGGER trg_expression_state_first_version_ai
-BEFORE INSERT ON expression_state
+-- First row for an definition_soul must start at version = 0.
+CREATE TRIGGER trg_definition_state_first_version_ai
+BEFORE INSERT ON definition_state
 BEGIN
   SELECT CASE
     WHEN NOT EXISTS (
            SELECT 1
-           FROM expression_state es
-           WHERE es.expression_soul_id = NEW.expression_soul_id)
+           FROM definition_state es
+           WHERE es.definition_soul_id = NEW.definition_soul_id)
          AND NEW.version <> 0
-    THEN RAISE(ABORT, 'first expression_state version must be 0')
+    THEN RAISE(ABORT, 'first definition_state version must be 0')
   END;
 END;
 
@@ -588,10 +588,10 @@ CREATE TABLE log (
                          REFERENCES conversation_turn_state(id) ON DELETE CASCADE,
   conversation_turn_iteration_id           TEXT
                          REFERENCES conversation_turn_iteration(id) ON DELETE CASCADE,
-  expression_soul_id     TEXT
-                         REFERENCES expression_soul(id) ON DELETE CASCADE,
-  expression_state_id    TEXT
-                         REFERENCES expression_state(id) ON DELETE CASCADE,
+  definition_soul_id     TEXT
+                         REFERENCES definition_soul(id) ON DELETE CASCADE,
+  definition_state_id    TEXT
+                         REFERENCES definition_state(id) ON DELETE CASCADE,
 
   created_at             INTEGER NOT NULL
 );
@@ -625,16 +625,16 @@ CREATE INDEX idx_log_iteration
   ON log(conversation_turn_iteration_id, created_at)
   WHERE conversation_turn_iteration_id IS NOT NULL;
 
-CREATE INDEX idx_log_expression_soul
-  ON log(expression_soul_id, created_at)
-  WHERE expression_soul_id IS NOT NULL;
+CREATE INDEX idx_log_definition_soul
+  ON log(definition_soul_id, created_at)
+  WHERE definition_soul_id IS NOT NULL;
 
-CREATE INDEX idx_log_expression_state
-  ON log(expression_state_id, created_at)
-  WHERE expression_state_id IS NOT NULL;
+CREATE INDEX idx_log_definition_state
+  ON log(definition_state_id, created_at)
+  WHERE definition_state_id IS NOT NULL;
 
 -- =============================================================================
--- FTS5 - full-text search over user requests + iteration code + expression state expression snapshots.
+-- FTS5 - full-text search over user requests + iteration code + definition state expression snapshots.
 -- =============================================================================
 CREATE VIRTUAL TABLE search USING fts5(
   owner_table  UNINDEXED,
@@ -662,7 +662,7 @@ CREATE TRIGGER trg_conversation_turn_soul_ad AFTER DELETE ON conversation_turn_s
   DELETE FROM search WHERE owner_table='conversation_turn_soul' AND owner_id=old.id;
 END;
 
--- Expression state indexing
+-- Definition state indexing
 
 -- Iteration code indexing
 CREATE TRIGGER trg_conversation_turn_iteration_ai AFTER INSERT ON conversation_turn_iteration BEGIN
@@ -682,19 +682,19 @@ CREATE TRIGGER trg_conversation_turn_iteration_ad AFTER DELETE ON conversation_t
   DELETE FROM search WHERE owner_table='conversation_turn_iteration' AND owner_id=old.id AND field='code';
 END;
 
-CREATE TRIGGER trg_expression_state_ai AFTER INSERT ON expression_state BEGIN
+CREATE TRIGGER trg_definition_state_ai AFTER INSERT ON definition_state BEGIN
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'expression_state', new.id, 'expression', new.expression
+    SELECT 'definition_state', new.id, 'expression', new.expression
     WHERE new.expression IS NOT NULL AND new.expression <> '';
 END;
 
-CREATE TRIGGER trg_expression_state_au AFTER UPDATE ON expression_state BEGIN
-  DELETE FROM search WHERE owner_table='expression_state' AND owner_id=old.id;
+CREATE TRIGGER trg_definition_state_au AFTER UPDATE ON definition_state BEGIN
+  DELETE FROM search WHERE owner_table='definition_state' AND owner_id=old.id;
   INSERT INTO search(owner_table, owner_id, field, text)
-    SELECT 'expression_state', new.id, 'expression', new.expression
+    SELECT 'definition_state', new.id, 'expression', new.expression
     WHERE new.expression IS NOT NULL AND new.expression <> '';
 END;
 
-CREATE TRIGGER trg_expression_state_ad AFTER DELETE ON expression_state BEGIN
-  DELETE FROM search WHERE owner_table='expression_state' AND owner_id=old.id;
+CREATE TRIGGER trg_definition_state_ad AFTER DELETE ON definition_state BEGIN
+  DELETE FROM search WHERE owner_table='definition_state' AND owner_id=old.id;
 END;

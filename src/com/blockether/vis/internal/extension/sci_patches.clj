@@ -4,7 +4,7 @@
    SCI 0.12.51 ships no public hook for `def` evaluation. The pivot
    contract needs both:
      1. Capture every def/defn/defmacro into a per-iteration sink so the
-        engine can flush expression_state rows in one transaction at
+        engine can flush definition_state rows in one transaction at
         iteration-end (no post-eval source parsing).
      2. Enforce mandatory docstring on every `def` the SCI sandbox runs.
 
@@ -39,7 +39,7 @@
   "Per-iteration atom (or nil). When bound, the patched `eval-def`
    appends `{:ns :name :init :meta :var}` for each def the SCI sandbox
    executes. The engine reads it after `(sci/eval-string+ …)` returns
-   and flushes to expression_state rows in the iteration's transaction."
+   and flushes to definition_state rows in the iteration's transaction."
   nil)
 
 (defn fresh-sink-atom

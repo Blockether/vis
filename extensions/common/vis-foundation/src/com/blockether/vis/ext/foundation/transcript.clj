@@ -104,7 +104,7 @@
 
      `:blocks` - every executed form (Nippy-encoded inline log).
      `:vars`   - every `(def ...)` this iteration produced; reads from
-                the separate `expression_soul` / `expression_state`
+                the separate `definition_soul` / `definition_state`
                 facade. Each entry is `{:name :code :value :version}`.
 
    Both reads degrade silently to `[]` so the renderer never
