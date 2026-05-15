@@ -780,6 +780,26 @@ ENV
   Banned : slurp spit clojure.java.io — all I/O is via extensions.
   Truth  : runtime > source > docs > memory
 
+DEF DISCIPLINE
+  Every (def …) requires a docstring as the second arg:
+    (def NAME 'short doc' VAL)
+    (defn NAME 'short doc' [args] body)
+    (defn- NAME 'short doc' [args] body)
+  (Use real Clojure double-quote strings; single quotes shown only
+  to keep this prompt body parseable.)
+  Vars persist across turns. λVis stores each def's source per name
+  so re-evaluating restores the var verbatim on the next process run.
+
+  ALLOWED def heads: def, defn, defn-, defonce, defmulti, defmacro.
+  BANNED def heads : defrecord, deftype, defprotocol, gen-class,
+                     extend-type, extend-protocol, definterface, reify.
+  Reason: these produce JVM classes / protocol method tables that
+  cannot round-trip through λVis's per-var restore path — the var
+  name persists but the class does not, so the next process boot
+  resurrects a half-broken binding. The sandbox refuses these heads
+  at eval time. If you need ad-hoc polymorphism use plain maps +
+  multimethods (`defmulti` / `defmethod`).
+
 TURN PROTOCOL
   One or more ```clojure blocks per turn. No prose outside blocks.
   Each block evals; result/error/stdout/stderr attach in <journal>;

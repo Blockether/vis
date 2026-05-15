@@ -197,3 +197,64 @@
                {:type :vis/multi-form-block
                 :form-count n}))
       :else nil)))
+
+;; =============================================================================
+;; Banned def-head enforcement
+;; =============================================================================
+
+(def BANNED_DEF_HEADS
+  "Def-like heads the sandbox refuses pre-eval. Produce JVM classes /
+   protocol method tables / interop surfaces that cannot round-trip
+   through λVis's per-var restore path — the var name persists but the
+   class/interface does not, so the next process boot resurrects a
+   half-broken binding.
+
+   Both bare and `clojure.core/`-qualified forms are rejected; `reify`
+   anywhere in the form tree also fails since it constructs an
+   anonymous JVM instance that can't be reconstituted from source
+   without the surrounding lexical context."
+  '#{defrecord deftype defprotocol gen-class extend-type extend-protocol
+     definterface reify
+     clojure.core/defrecord clojure.core/deftype clojure.core/defprotocol
+     clojure.core/gen-class clojure.core/extend-type clojure.core/extend-protocol
+     clojure.core/definterface clojure.core/reify})
+
+(defn- find-banned-head
+  "Walk `form` (a parsed Clojure form) looking for any banned def head.
+   Returns the first banned symbol found, or nil. Recurses through
+   every sub-collection so a banned head buried inside `(do …)` /
+   `(let …)` / `(when …)` / a fn body / a vector literal is still
+   caught."
+  [form]
+  (let [found (atom nil)]
+    (doseq [node (tree-seq coll? seq form)
+            :while (nil? @found)]
+      (when (and (seq? node)
+              (symbol? (first node))
+              (contains? BANNED_DEF_HEADS (first node)))
+        (reset! found (first node))))
+    @found))
+
+(defn validate-no-banned-defs!
+  "Throws `:vis/banned-def-head` when `code` contains any of
+   `BANNED_DEF_HEADS` (anywhere in the form tree).
+
+   Parse failures are silent here — the SCI eval that follows will
+   surface a clean parse error with line/column. We only refuse when
+   the parser succeeds AND finds a banned head."
+  [code]
+  (try
+    (let [forms (edamame/parse-string-all (str code) edamame-opts)]
+      (when-let [banned (some find-banned-head forms)]
+        (throw (ex-info
+                 (str "Block uses `" banned "` which is banned in the λVis sandbox. "
+                   "Reason: it produces a JVM class / protocol method table that "
+                   "cannot round-trip through per-var restore. "
+                   "Use plain maps + multimethods (defmulti / defmethod) instead.")
+                 {:type :vis/banned-def-head
+                  :head banned}))))
+    (catch clojure.lang.ExceptionInfo ei
+      (if (= :vis/banned-def-head (:type (ex-data ei)))
+        (throw ei)
+        nil))
+    (catch Throwable _ nil)))

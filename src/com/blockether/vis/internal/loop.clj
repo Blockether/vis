@@ -487,6 +487,7 @@
     (let [start-time (System/currentTimeMillis)
           exec       (try
                        (sci-patches/validate-single-form-block! code)
+                       (sci-patches/validate-no-banned-defs! code)
                        (run-with-timing sci-ctx code sandbox-ns timeout-ms
                          start-time tool-event-fn environment)
                        (catch Throwable e
