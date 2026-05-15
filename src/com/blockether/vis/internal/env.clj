@@ -15,6 +15,7 @@
    [clojure+.core]
    [clojure+.walk]
    [com.blockether.vis.internal.format :as fmt]
+   [com.blockether.vis.internal.extension.sci-patches]
    [com.blockether.vis.internal.persistance :as persistance]
    [malli.provider :as mp]
    [sci.addons.future :as sci-future]
@@ -38,7 +39,10 @@
    traces back to forgetting this pair. Prefer `bind-and-bump!` below."
   [sci-ctx sym val]
   (let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
-    (sci/eval-string+ sci-ctx (str "(def " sym " nil)") {:ns ns-obj})
+    ;; vis-managed bindings still go through the SCI def special form,
+    ;; which the sci-patches monkey-patch enforces docstrings on. Engine
+    ;; injections satisfy that contract via a synthetic doc tag.
+    (sci/eval-string+ sci-ctx (str "(def " sym " \"vis-managed engine binding\" nil)") {:ns ns-obj})
     (sci/intern sci-ctx ns-obj sym val)))
 
 (defn bump-bindings!
@@ -481,7 +485,11 @@
     ;; symbols, but they are interned BEFORE `:initial-ns-keys` so the
     ;; baseline filter excludes them from `<bindings>` (they're noise to
     ;; the model's user-binding view).
-    (sci/eval-string+ sci-ctx "(def *1 nil) (def *2 nil) (def *3 nil) (def *e nil)"
+    (sci/eval-string+ sci-ctx
+      (str "(def *1 \"previous eval result\" nil) "
+        "(def *2 \"second-previous eval result\" nil) "
+        "(def *3 \"third-previous eval result\" nil) "
+        "(def *e \"most recent uncaught exception\" nil)")
       {:ns sandbox-ns})
     {:sci-ctx sci-ctx
      :sandbox-ns sandbox-ns
