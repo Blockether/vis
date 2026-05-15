@@ -2395,7 +2395,7 @@
   "Archive eligible live user symbols after a final successful answer.
    Archive means removing bindings from the live SCI sandbox only; DB
    rows remain the source of truth for automatic sandbox restore."
-  [{:keys [db-info conversation-id sci-ctx initial-ns-keys bindings-atom]}]
+  [{:keys [db-info conversation-id sci-ctx initial-ns-keys]}]
   (when (and db-info conversation-id sci-ctx)
     (try
       (let [var-registry (persistance/db-latest-var-registry db-info conversation-id)
@@ -2409,9 +2409,7 @@
                             :target HOT_SYMBOL_COMPACTION_TARGET}
                      :msg (str "Auto-archive: evicting " (count candidates)
                             " hot symbols after final answer")})
-          (archive-vars! sci-ctx candidates)
-          (when bindings-atom
-            (swap! bindings-atom update :current-revision inc))))
+          (archive-vars! sci-ctx candidates)))
       (catch Exception e
         (tel/log! {:level :warn :id ::auto-archive-failed
                    :data {:error (ex-message e)}
@@ -2584,8 +2582,6 @@
                                     :reasoning reasoning-tokens :cached cached-tokens
                                     :total total-tokens}
                            :cost cost}))
-        bindings-atom (or (:bindings-atom environment)
-                        (atom {:index nil :revision -1 :current-revision 0}))
         ;; `:on-chunk` is a per-reasoning-chunk streaming hook fired
         ;; from svar's stream callback. It fires dozens of times per
         ;; iteration, not at lifecycle boundaries. Lifecycle callbacks
@@ -3093,13 +3089,12 @@
                                        :final            nil
                                        :silent-form-idxs (:silent-form-idxs iteration-result)
                                        :done?            false}))
-                          (let [had-success? (some #(nil? (:error %)) blocks)
-                                _ (when had-success? (swap! bindings-atom update :current-revision inc))
-                                ;; Carry forward all observed iterations
+                          (let [;; Carry forward all observed iterations
                                 ;; as `[pos {:thinking :blocks}]` for the
-                                ;; next iteration's `<journal>`. The
-                                ;; renderer drops oldest lines by token
-                                ;; budget, not by iteration count.
+                                ;; next iteration's tape. The renderer
+                                ;; drops oldest entries by window, not
+                                ;; by token count.
+                                _ blocks
                                 next-recent (conj (vec (or journal-iters []))
                                               [(inc (long iteration))
                                                {:thinking thinking
@@ -3231,11 +3226,9 @@
           custom-bindings        (custom-bindings env)
           current-iteration-atom (:current-iteration-atom env)
           sci-ctx                (:sci-ctx env)
-          _                      (env/bump-bindings! env)
           _                      (doseq [[sym val] (or custom-bindings {})]
                                    (when val
                                      (env/sci-update-binding! sci-ctx sym val)))
-          _                      (env/bump-bindings! env)
           current-iteration-id-atom (:current-iteration-id-atom env)
           current-conversation-turn-id-atom (:current-conversation-turn-id-atom env)
           workspace              (select-keys opts [:workspace/root :workspace/id
@@ -3850,9 +3843,6 @@
     (anomaly/incorrect! "Missing router" {:type :vis/missing-router}))
   (let [depth-atom               (atom 0)
         db-info                  (persistance/db-create-connection! db)
-        bindings-atom           (atom {:index            nil
-                                       :revision         -1
-                                       :current-revision 0})
         state-atom               (atom {:custom-bindings {}
                                         :environment     nil
                                         :conversation-id nil})
@@ -3984,7 +3974,6 @@
              :channel                           (or channel :tui)
              :depth-atom                        depth-atom
              :db-info                           db-info
-             :bindings-atom                     bindings-atom
              :state-atom                        state-atom
              :sci-ctx                           sci-ctx
              :sandbox-ns                        sandbox-ns
@@ -4011,7 +4000,6 @@
     (when resolved-conversation-id
       (try
         (env/restore-sandbox! sci-ctx db-info conversation-id)
-        (env/bump-bindings! env)
         (catch Throwable t
           (tel/log! {:level :warn :id ::restore-sandbox-failed
                      :data {:error (ex-message t)
