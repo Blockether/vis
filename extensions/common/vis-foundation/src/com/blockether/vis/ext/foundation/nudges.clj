@@ -10,7 +10,7 @@
    (`blind-answer-guard-check` and `action-request-needs-evidence-check`)
    that used verb-regex heuristics to fire on investigation/action
    requests with no observed tool work. Both are now subsumed by the
-   harness-level structural gate inside `(turn-answer! ...)`
+   harness-level structural gate inside `(done ...)`
    (see `final-answer-structural-criteria-errors` in
    `com.blockether.vis.internal.loop`): if the latest iteration's
    <journal> carries no evidence, the answer is refused regardless of
@@ -131,7 +131,7 @@
         {:importance :high
          :text (str "Context pressure: ~" used " / " limit " input tokens (~"
                  pct "%) of this model's effective window. "
-                 "Converge now - finalise the answer via `(turn-answer! ...)`, "
+                 "Converge now - finalise the answer via `(done ...)`, "
                  "avoid dumping more file contents, diffs, or repeated diagnostics. "
                  "Models in this family degrade on long tails beyond ~50% of the window.")}))))
 

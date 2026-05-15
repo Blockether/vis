@@ -577,7 +577,7 @@
 ;;     CONVERSATION_PREVIOUS_ANSWER  previous turn's final answer string ("" on
 ;;                                   the very first turn). Despite being scoped
 ;;                                   to the conversation, it is rebound at every
-;;                                   iteration so a `(turn-answer! ...)` call inside
+;;                                   iteration so a `(done ...)` call inside
 ;;                                   iteration N is observable in iteration N+1.
 ;;
 ;; UPPERCASE marks them as constants. The set is a fixed registry;

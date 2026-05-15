@@ -69,7 +69,7 @@
     (let [lines (format-iteration-entry {:iteration 0
                                          :code [(str "(def x 1)\n"
                                                   "(set-conversation-title! \"Mixed forms\")\n"
-                                                  "(turn-answer! [:ir [:p \"Done\"]])")]
+                                                  "(done [:ir [:p \"Done\"]])")]
                                          :render-segments [[{:kind :code :source "(def x 1)"}
                                                             {:kind :title :value "Mixed forms"}
                                                             {:kind :answer-ref}]]
@@ -79,7 +79,9 @@
           body (str/join "\n" (map (comp strip-ansi body-of) lines))]
       (expect (str/includes? body "(def x 1)"))
       (expect (str/includes? body "conversation title: Mixed forms"))
-      (expect (not (str/includes? body "turn-answer!")))
+      ;; Render-segments path: the raw `(done …)` call form should not
+      ;; leak — the renderer surfaces the answer reference instead.
+      (expect (not (str/includes? body "(done [:ir")))
       (expect (not (str/includes? body "set-conversation-title!")))))
 
   (it "renders IR tool results without EDN dumping"
@@ -982,7 +984,7 @@
 ;; md-join inline-bold inside a bullet - the `Let / me / dig / deeper`
 ;; regression
 ;;
-;; Faithful reconstruction of the FIRST `(turn-answer! ...)` block in conversation
+;; Faithful reconstruction of the FIRST `(done ...)` block in conversation
 ;; eeaf9651-06c7-4dda-9e97-877fcef06337, turn 363de6c6-..., position 1.
 ;; The agent built a bullet's body via `md-join`, which inserts `\n\n`
 ;; between every part. With the naive bullet-coalesce that earlier

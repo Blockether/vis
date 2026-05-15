@@ -560,7 +560,7 @@
   "Per-block forensic dump: status header, optional comment, full code
    in a fenced ```clojure block, result line, fenced stdout/stderr,
    fenced error. `answer?` flips on the block the iteration's
-   `:answer-position` points at - the block that called `(turn-answer! ...)` -
+   `:answer-position` points at - the block that called `(done ...)` -
    so the reader spots the terminal block at a glance.
 
    Truncation budgets stay generous (4KB stdout / stderr, 800 chars
@@ -861,7 +861,7 @@
         out     (or (:output-tokens iter) 0)
         cost    (or (:cost-usd iter) 0.0)
         blocks  (:blocks iter)
-        ;; Index of the block that called `(turn-answer! ...)`. nil for
+        ;; Index of the block that called `(done ...)`. nil for
         ;; non-terminal iterations - the marker only fires on the
         ;; right block.
         ans-idx (:answer-position iter)]

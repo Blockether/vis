@@ -33,7 +33,7 @@
                 (status-line {:position 0
                               :code (str "(def x 1)\n"
                                       "(set-conversation-title! \"Mixed\")\n"
-                                      "(turn-answer! [:ir [:p \"Done\"]])")
+                                      "(done [:ir [:p \"Done\"]])")
                               :render-segments [{:kind :code :source "(def x 1)"}
                                                 {:kind :title :value "Mixed"}
                                                 {:kind :answer-ref}]}))))))

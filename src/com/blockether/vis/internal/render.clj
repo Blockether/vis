@@ -1116,10 +1116,10 @@
 ;; Per-form silent rendering inside a mixed block (P1.1).
 ;;
 ;; With per-block eval (Phase B), one Markdown code block can contain multiple
-;; top-level forms — including a `(turn-answer! …)` or a
+;; top-level forms — including a `(done …)` or a
 ;; `(set-conversation-title! …)` mixed with regular `(def …)` work. Without a
 ;; per-form split the channel either over-hides (whole block disappears when
-;; the answer call is anywhere inside) or over-shows (raw `(turn-answer! …)`
+;; the answer call is anywhere inside) or over-shows (raw `(done …)`
 ;; source appears above the rendered IR answer, redundant).
 ;;
 ;; `code-block-segments` is a pure helper that parses the block source via
@@ -1133,14 +1133,14 @@
 
 (defn- top-level-form-kind
   "Classify a parsed top-level form into a render segment kind:
-     :answer-ref  —  (turn-answer! …)
+     :answer-ref  —  (done …)
      :title       —  (set-conversation-title! …)
      :code        —  anything else (def, fn call, nested do/let/when, etc.)
    Match is namespace-agnostic by NAME; engine forms come unqualified."
   [form]
   (if (and (seq? form) (symbol? (first form)))
     (case (name (first form))
-      "turn-answer!"             :answer-ref
+      "done"             :answer-ref
       "set-conversation-title!"  :title
       :code)
     :code))
@@ -1194,7 +1194,7 @@
    regardless of nesting. Title flows through the sidebar via the SCI side
    effect; the final answer flows from the persisted answer IR. Showing the
    literal call in the trace is pure noise."
-  #{"set-conversation-title!" "turn-answer!"})
+  #{"set-conversation-title!" "done"})
 
 (defn- filtered-call?
   "True when `x` is `(sym …)` whose unqualified name is in
@@ -1270,10 +1270,10 @@
    Segment shapes:
      `{:kind :code        :source \"\u2026\"}`   visible code, with leading prose
      `{:kind :title       :value  \"X\"}`   `(set-conversation-title! \"X\")` form
-     `{:kind :answer-ref}`                  `(turn-answer! …)` form (hide; answer below)
+     `{:kind :answer-ref}`                  `(done …)` form (hide; answer below)
 
    Top-level forms drive classification; nested `(set-conversation-title! …)`
-   and `(turn-answer! …)` calls inside compound bodies (`do`/`let`/`when`/
+   and `(done …)` calls inside compound bodies (`do`/`let`/`when`/
    `if`/…) are PRUNED from the displayed source via `prune-filtered`:
    dropped from `do`-body sequencing positions, replaced with `nil` in every
    position-sensitive slot (so `(if cond X :else)` stays a 3-arg `if`, `let`
