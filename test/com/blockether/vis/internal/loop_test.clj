@@ -161,7 +161,7 @@
           stored-code (:code (first snap))]
       ;; The snapshot row has the canonical defn source as its :code
       ;; field — this is what `db-store-iteration!` would write into
-      ;; expression_state.expression.
+      ;; definition_state.expression.
       (expect (= 1 (count snap)))
       (expect (= "add" (:name (first snap))))
       (expect (re-find #"\(defn add" stored-code))
@@ -196,7 +196,7 @@
       (expect (= "(def base \"d\" 10)" (:code (by-name "base"))))
       (expect (re-find #"\(defn add-base" (:code (by-name "add-base"))))
       ;; Restore in dependency order (base first, then add-base — db-
-      ;; restore-blocks topo-sorts on expression_dependency; without
+      ;; restore-blocks topo-sorts on definition_dependency; without
       ;; deps it sorts by created_at, but `base` was sink-captured
       ;; first so it lands first).
       (let [ctx2 (sci/init {:namespaces {'user {}}})]

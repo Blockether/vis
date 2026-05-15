@@ -715,7 +715,7 @@
       (expect (= 1 (raw-count s :conversation_turn_iteration)))
       ;; No more kind='call' rows - the call log lives inline in the
       ;; iteration flat columns.
-      (expect (= 0 (raw-count s :expression_soul)))
+      (expect (= 0 (raw-count s :definition_soul)))
       (let [iteration (first (vis/db-list-conversation-turn-iterations s qid))
             blocks    [(select-keys iteration [:code :result :error :stdout :stderr :execution-time-ms])]]
         (expect (= "Computing" (:thinking iteration)))
@@ -917,14 +917,14 @@
 ;; =============================================================================
 
 (defdescribe var-test
-  (it "inserts expression_soul(var, stateful) + expression_state"
+  (it "inserts definition_soul(var, stateful) + definition_state"
     (let [s    (h/store)
           cid  (vis/db-store-conversation! s {:channel :tui})
           qid  (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
           iid  (vis/db-store-iteration! s {:conversation-turn-id qid :code "" :duration-ms 0
                                            :vars [{:name "x" :value 42 :code "(def x 42)"}]})
           vars (vis/db-list-iteration-vars s iid)]
-      (expect (= 1 (raw-count s :expression_soul)))
+      (expect (= 1 (raw-count s :definition_soul)))
       (expect (= 1 (count vars)))
       (expect (= "x" (:name (first vars))))
       (expect (= 42 (:value (first vars))))
@@ -936,10 +936,10 @@
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})]
       (vis/db-store-iteration! s {:conversation-turn-id qid :code "" :duration-ms 0
                                   :vars [{:name "x" :value 42 :code "(def x 42)"}]})
-      (expect (contains? (table-columns s "expression_state") "expression"))
-      (expect (not (contains? (table-columns s "expression_state") "expr")))
+      (expect (contains? (table-columns s "definition_state") "expression"))
+      (expect (not (contains? (table-columns s "definition_state") "expr")))
       (expect (= "(def x 42)" (:expression (first (raw-query s {:select [:expression]
-                                                                :from :expression_state})))))))
+                                                                :from :definition_state})))))))
 
   (it "reuses soul, increments version"
     (let [s   (h/store)
@@ -949,7 +949,7 @@
                                           :vars [{:name "x" :value 1}]})
           i2  (vis/db-store-iteration! s {:conversation-turn-id qid :code "" :duration-ms 0
                                           :vars [{:name "x" :value 99}]})]
-      (expect (= 1 (raw-count s :expression_soul)))
+      (expect (= 1 (raw-count s :definition_soul)))
       (expect (= 99 (:value (first (vis/db-list-iteration-vars s i2)))))
       (expect (= 1 (:version (first (vis/db-list-iteration-vars s i2)))))))
 
@@ -962,7 +962,7 @@
           q2  (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "t2" :status :done})
           i2  (vis/db-store-iteration! s {:conversation-turn-id q2 :code "" :duration-ms 0
                                           :vars [{:name "x" :value 100}]})]
-      (expect (= 1 (raw-count s :expression_soul)))
+      (expect (= 1 (raw-count s :definition_soul)))
       (expect (= 100 (:value (first (vis/db-list-iteration-vars s i2)))))))
 
   (it "fn var stores {:vis/ref :expr}"
@@ -1058,8 +1058,8 @@
       (expect (= 0 (raw-count s :conversation_turn_soul)))
       (expect (= 0 (raw-count s :conversation_turn_state)))
       (expect (= 0 (raw-count s :conversation_turn_iteration)))
-      (expect (= 0 (raw-count s :expression_soul)))
-      (expect (= 0 (raw-count s :expression_state))))))
+      (expect (= 0 (raw-count s :definition_soul)))
+      (expect (= 0 (raw-count s :definition_state))))))
 
 ;; =============================================================================
 ;; Turn history
@@ -1114,8 +1114,8 @@
             iteration (first (raw-query s {:select [:conversation_turn_state_id] :from :conversation_turn_iteration}))]
         (expect (= (:id qstate) (:conversation_turn_state_id iteration))))))
 
-  (it "expression_soul.conversation_state_id (var rows) points to conversation_state.id"
-    ;; Only var rows live in expression_soul now. Drive a `(def ...)`
+  (it "definition_soul.conversation_state_id (var rows) points to conversation_state.id"
+    ;; Only var rows live in definition_soul now. Drive a `(def ...)`
     ;; through the iteration so a var-soul row actually exists.
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
@@ -1124,21 +1124,21 @@
                                           :duration-ms 0
                                           :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [state (first (raw-query s {:select [:id] :from :conversation_state}))
-            esoul (first (raw-query s {:select [:conversation_state_id] :from :expression_soul}))]
+            esoul (first (raw-query s {:select [:conversation_state_id] :from :definition_soul}))]
         (expect (= (:id state) (:conversation_state_id esoul))))))
 
-  (it "expression_state.expression_soul_id (var rows) points to expression_soul.id"
+  (it "definition_state.definition_soul_id (var rows) points to definition_soul.id"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
           _   (vis/db-store-iteration! s {:conversation-turn-id qid :code ""
                                           :duration-ms 0
                                           :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
-      (let [esoul  (first (raw-query s {:select [:id] :from :expression_soul}))
-            estate (first (raw-query s {:select [:expression_soul_id] :from :expression_state}))]
-        (expect (= (:id esoul) (:expression_soul_id estate))))))
+      (let [esoul  (first (raw-query s {:select [:id] :from :definition_soul}))
+            estate (first (raw-query s {:select [:definition_soul_id] :from :definition_state}))]
+        (expect (= (:id esoul) (:definition_soul_id estate))))))
 
-  (it "expression_state.iteration_id (var rows) points to iteration.id"
+  (it "definition_state.iteration_id (var rows) points to iteration.id"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -1146,7 +1146,7 @@
                                           :duration-ms 0
                                           :vars [{:name "x" :value 1 :code "(def x 1)"}]})]
       (let [iteration (first (raw-query s {:select [:id] :from :conversation_turn_iteration}))
-            estate (first (raw-query s {:select [[:conversation_turn_iteration_id :iteration_id]] :from :expression_state}))]
+            estate (first (raw-query s {:select [[:conversation_turn_iteration_id :iteration_id]] :from :definition_state}))]
         (expect (= (:id iteration) (:iteration_id estate))))))
 
   (it "retry conversation_turn_state.forked_from_conversation_turn_state_id points to previous conversation_turn_state.id"
@@ -1171,7 +1171,7 @@
         (expect (nil? (:parent_state_id (first states))))
         (expect (= (:id (first states)) (:parent_state_id (second states)))))))
 
-  (it "expression_soul holds ONLY var rows; blocks live inline on iteration flat columns"
+  (it "definition_soul holds ONLY var rows; blocks live inline on iteration flat columns"
     (let [s   (h/store)
           cid (vis/db-store-conversation! s {:channel :tui})
           qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid :user-request "x" :status :running})
@@ -1179,8 +1179,8 @@
                                           :code "(+ 1 1)" :result 2
                                           :duration-ms 0
                                           :vars [{:name "x" :value 42 :code "(def x 42)"}]})]
-      (let [souls (raw-query s {:select [:name] :from :expression_soul})]
-        ;; Per-form calls do not land in expression_soul. Only the var
+      (let [souls (raw-query s {:select [:name] :from :definition_soul})]
+        ;; Per-form calls do not land in definition_soul. Only the var
         ;; soul lands there; the block log lives in the iteration flat columns
         ;; Nippy blob.
         (expect (= 1 (count souls)))
@@ -1216,8 +1216,8 @@
                                           :duration-ms 50
                                           :vars [{:name "analysis-state" :value "Final check: the explanation covers functor, applicative, monad" :code "(def analysis-state ...)"}
                                                  {:name "CONVERSATION_PREVIOUS_ANSWER" :value "A monad is a design pattern..." :code ";; SYSTEM var"}]})]
-      ;; Only 1 expression_soul for analysis-state (reused across iterations)
-      (expect (= 1 (raw-count s :expression_soul [:= :name "analysis-state"])))
+      ;; Only 1 definition_soul for analysis-state (reused across iterations)
+      (expect (= 1 (raw-count s :definition_soul [:= :name "analysis-state"])))
       ;; 3 versions of analysis-state
       (let [history (vis/db-var-history s cid 'analysis-state)]
         (expect (= 3 (count history)))
@@ -1378,7 +1378,7 @@
                                                      :code "(defn monthly-payment [principal] (/ (calc-interest principal) 12))"}]})
           ;; Now wire the dependencies
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; base-rate -> calc-interest
       (vis/db-store-dependency! s {:conversation-state-id state-id
@@ -1413,7 +1413,7 @@
                                                     {:name "fee-fn" :value (fn [x] x) :code "(defn fee-fn [amount] (+ 10 (* amount (:rate config))))"}
                                                     {:name "total-fn" :value (fn [x] x) :code "(defn total-fn [amount] (+ (tax-fn amount) (fee-fn amount)))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; config -> tax-fn, config -> fee-fn
       (vis/db-store-dependency! s {:conversation-state-id state-id
@@ -1456,7 +1456,7 @@
                                              :vars (mapv (fn [n] {:name n :value (fn [x] x)
                                                                   :code (str "(defn " n " [x] x)")}) var-names)})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; Chain: level-0 -> level-1 -> level-2 -> level-3 -> level-4
       (doseq [i (range 4)]
@@ -1489,7 +1489,7 @@
                                                   :code "(def result (summarize dataset))"}]})
           ;; Wire: dataset -> summarize (it reads dataset), dataset + summarize -> result
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       (vis/db-store-dependency! s {:conversation-state-id state-id
                                    :downstream-soul-id (soul-by "summarize")
@@ -1543,7 +1543,7 @@
                                              :vars [{:name "result" :value 15
                                                      :code "(def result (add-10 5))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; make-adder -> add-10 -> result
       (vis/db-store-dependency! s {:conversation-state-id state-id
@@ -1588,7 +1588,7 @@
                                              :vars [{:name "scaled-data" :value [3 6 9 12 15]
                                                      :code "(def scaled-data (mapv scale [1 2 3 4 5]))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; config -> make-scaler -> scale -> scaled-data
       (vis/db-store-dependency! s {:conversation-state-id state-id
@@ -1634,7 +1634,7 @@
                                              :vars [{:name "answer" :value 25
                                                      :code "(def answer (compute 5))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; base -> compute, compute -> answer, base -> answer (transitive)
       (vis/db-store-dependency! s {:conversation-state-id state-id
@@ -1673,7 +1673,7 @@
                                                      (mapv (fn [n] {:name n :value (fn [x] x)
                                                                     :code (str "(defn " n " [x] (+ x (:k shared-cfg)))")}) fn-names))})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; shared-cfg -> each fn
       (doseq [n fn-names]
@@ -1706,7 +1706,7 @@
                                              :vars [{:name "average" :value 20
                                                      :code "(def average (avg-fn raw-data))"}]})
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)]
       ;; raw-data -> avg-fn (reads it), raw-data -> average, avg-fn -> average
       (vis/db-store-dependency! s {:conversation-state-id state-id
@@ -1890,7 +1890,7 @@
                                                   :code "(def answer \"final amount\" (calc 1000))"}]})
           ;; Wire dependencies
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)
           _   (vis/db-store-dependency! s {:conversation-state-id state-id
                                            :downstream-soul-id (soul-by "calc")
@@ -1928,7 +1928,7 @@
                                                   :code "(def add-5 \"adder for 5\" (make-adder 5))"}]})
           ;; Wire: make-adder -> add-5
           state-id (first (map :id (raw-query s {:select [:id] :from :conversation_state})))
-          souls    (raw-query s {:select [:id :name] :from :expression_soul})
+          souls    (raw-query s {:select [:id :name] :from :definition_soul})
           soul-by  (into {} (map (fn [r] [(:name r) (:id r)])) souls)
           _   (vis/db-store-dependency! s {:conversation-state-id state-id
                                            :downstream-soul-id (soul-by "add-5")
@@ -2157,7 +2157,7 @@
 ;;   2. def-sink → vars-snapshot (per-var precise :code).
 ;;   3. dep-edges → raw upstream/downstream name pairs.
 ;;   4. db-store-iteration! filters edges against the soul-name set,
-;;      writes expression_soul + expression_state + expression_dependency
+;;      writes definition_soul + definition_state + definition_dependency
 ;;      rows inside one transaction.
 ;;   5. db-restore-blocks reads everything back, topo-sorts on the
 ;;      dependency graph.
@@ -2201,15 +2201,15 @@
           ctx1  (sci/init {:namespaces {'user {}}})]
       (run-iter! store tid ctx1
         "(def a \"alpha\" 10)\n(def b \"beta\" 2)\n(defn add-them \"sum a + b\" [] (+ a b))")
-      (let [state-before (raw-count store :expression_state)
-            soul-before  (raw-count store :expression_soul)
+      (let [state-before (raw-count store :definition_state)
+            soul-before  (raw-count store :definition_soul)
             ;; FRESH engine SCI context (real `create-sci-context`,
             ;; not raw `sci/init`, so the sandbox ns + helpers exist
             ;; and restore-sandbox! evals into the right place).
             ctx2         (env/create-sci-context nil)
             _results     (env/restore-sandbox! ctx2 store cid)]
-        (expect (= state-before (raw-count store :expression_state)))
-        (expect (= soul-before  (raw-count store :expression_soul)))))))
+        (expect (= state-before (raw-count store :definition_state)))
+        (expect (= soul-before  (raw-count store :definition_soul)))))))
 
 (defdescribe phase-4b-redefinition-semantics-test
   (it "redefining a + b in a later iteration leaves c at its old version"
@@ -2243,12 +2243,12 @@
         "(def a \"alpha base (revised)\" 100)\n(def b \"beta base (revised)\" 5)")
 
       ;; --- DB-level assertions: only a + b got new state versions. ---
-      (let [souls (raw-query store {:select [:id :name] :from :expression_soul})
+      (let [souls (raw-query store {:select [:id :name] :from :definition_soul})
             soul-by-name (into {} (map (juxt :name :id)) souls)
             ver-rows (raw-query store
                        {:select [[:es.name :name] :est.version]
-                        :from [[:expression_state :est]]
-                        :join [[:expression_soul :es] [:= :est.expression_soul_id :es.id]]})
+                        :from [[:definition_state :est]]
+                        :join [[:definition_soul :es] [:= :est.definition_soul_id :es.id]]})
             versions-by-name (reduce (fn [m {:keys [name version]}]
                                        (update m name (fnil conj #{}) version))
                                {} ver-rows)]

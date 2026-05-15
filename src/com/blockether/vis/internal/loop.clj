@@ -161,7 +161,7 @@
    parameter lists, and to macro symbols. The persistence layer
    filters every edge against the existing-soul-name set inside its
    write transaction, so only refs that actually correspond to a
-   tracked user var land in `expression_dependency`. Self-references
+   tracked user var land in `definition_dependency`. Self-references
    (a recursive `defn` body using its own name) are dropped here
    since they degenerate the topo sort on restore.
 
@@ -206,7 +206,7 @@
 
 (defn def-sink->vars-snapshot
   "Convert per-iteration SCI def-sink entries into the persistence
-   shape consumed by `expression_soul` / `expression_state` rows:
+   shape consumed by `definition_soul` / `definition_state` rows:
    `[{:name :value :code :time-ms?} ...]`.
 
    Replaces the legacy parse-source + walk-sandbox-locals path
@@ -407,7 +407,7 @@
         ;; collects every (def …) the SCI sandbox runs (Phase 2).
         ;; `*lru-atom*` stamps every successful symbol resolution with
         ;; the current turn position (Phase 3). The engine reads both
-        ;; after eval; live-vars rendering and expression_state
+        ;; after eval; live-vars rendering and definition_state
         ;; persistence consume them. Dependency edges (Phase 4b) come
         ;; from source parsing post-eval, not from this hook — SCI
         ;; analyzes references at compile time so the runtime resolve
@@ -1832,7 +1832,7 @@
                                     ;; Per-block def-sink: every (def ...) the
                                     ;; SCI sandbox evaluated in this block. The
                                     ;; iteration writer concats sinks across
-                                    ;; blocks and drives expression_state from
+                                    ;; blocks and drives definition_state from
                                     ;; the result. Pivot replaces the legacy
                                     ;; parse-source path.
                                     :def-sink (vec (:def-sink result))}
@@ -2240,7 +2240,7 @@
    `(set-conversation-title! \"...\")` -> `:conversation-title-atom` +
    DB; the foundation `title-nudge` carries the current value in its
    text body when a refresh-cadence hint fires. Removing the binding
-   drops one identical-per-iteration row from `expression_state`
+   drops one identical-per-iteration row from `definition_state`
    per conversation.
 
    Prior thinking text used to be bound to ITERATION_PREVIOUS_REASONING
@@ -2283,7 +2283,7 @@
    row-saving micro-opt that kept persisted rows stuck on iter 0
    for those names.
 
-   Each var is normalized to a non-nil string so `expression_state`
+   Each var is normalized to a non-nil string so `definition_state`
    never stores nil for a SYSTEM var - makes the version vec a clean
    log of values across iterations.
 
