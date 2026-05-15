@@ -194,7 +194,7 @@
       (let [code (str/trim (str (:code chunk)))]
         (and (not (str/blank? code))
           (not (or (str/starts-with? code "(set-conversation-title!")
-                 (str/starts-with? code "(turn-answer!"))))))))
+                 (str/starts-with? code "(done"))))))))
 
 (defn- structurally-silent-chunk?
   "True for host-bookkeeping forms that should never appear in user traces:
@@ -209,12 +209,12 @@
       (and (not (visible-code-segments? chunk))
         (let [code (str (:code chunk))]
           (or (str/includes? code "(set-conversation-title!")
-            (str/includes? code "(turn-answer!"))))
+            (str/includes? code "(done"))))
       (and (= :vis/silent (:result chunk))
         (not (seq (:render-segments chunk)))
         (let [code (str (:code chunk))]
           (or (str/includes? code "(set-conversation-title!")
-            (str/includes? code "(turn-answer!")))))))
+            (str/includes? code "(done")))))))
 
 (defn- write-form-start-slot
   "Per-block start chunks land at `:position` before eval completes.
@@ -257,7 +257,7 @@
 
 (defn- drop-slot
   "Drop index `idx` from `v`. Out-of-bounds idx returns `v` unchanged.
-   Used to ELIDE the `(turn-answer! ...)` form from the iteration's per-form
+   Used to ELIDE the `(done ...)` form from the iteration's per-form
    parallel vectors when an iteration produces a final answer - the
    channel renders the answer text below; showing the answer call
    itself in the code trace is redundant noise."
@@ -381,7 +381,7 @@
                  :activity nil
                  :final    (:final chunk)
                  :done?    (boolean (:done? chunk)))
-          ;; Elide `(turn-answer! ...)`: the answer text already renders below;
+          ;; Elide `(done ...)`: the answer text already renders below;
           ;; showing the answer call itself in the trace is redundant.
           ;; Structurally-silent bookkeeping forms (answer emission / title
           ;; updates) are hidden as chunks arrive. Other successful

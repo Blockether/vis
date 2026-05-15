@@ -632,7 +632,7 @@
 ;;   :turn.iteration/start — every iteration, BEFORE the model call. Returns
 ;;                           nil | {:hint :importance?}; hint flows into
 ;;                           <iteration_hints>.
-;;   :turn.answer/validate — when a `(turn-answer! ...)` form produced a candidate
+;;   :turn.answer/validate — when a `(done ...)` form produced a candidate
 ;;                           final answer. Return nil to accept or
 ;;                           {:reject true :message ... :hint ...} to reject.
 ;;

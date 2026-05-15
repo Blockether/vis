@@ -11,7 +11,7 @@
 The autoresearch bench bottomed out at `iter_score = 6` across multiple
 stability samples (commits `422762ac`, `0f38c067`). The structural
 floor was two iterations: probe + answer, enforced by the
-`(turn-answer! …)` gate. Pushing lower meant changing the gate and
+`(done …)` gate. Pushing lower meant changing the gate and
 the prompt scaffolding around it, not optimizing inside them.
 
 The pivot collapses the iteration model to its smallest coherent
@@ -35,7 +35,7 @@ softens.
 | 2 | `<journal>` deleted; `<bindings>` deleted. |
 | 3 | Tape window: prior iteration only (N-1); on error, render N-1 + N. Cross-turn: last iteration of the prior turn carries forward. |
 | 4 | Tape format: rich-comment `;; =>` for results, `;; ! stdout>` / `;; ! stderr>` / `;; ! ERROR` / `;; ! TIMEOUT` for side effects. |
-| 5 | `(turn-answer! [:ir …])` strict IR shape; accepted on no-throw, no other gate. |
+| 5 | `(done [:ir …])` strict IR shape; accepted on no-throw, no other gate. |
 | 6 | Iterations are the durable unit; turns are projections. Same `conversation_turn_*` tables, but the boundary is an annotation, not a container. |
 | 7 | Plain `(def NAME "doc" VAL)` and `(defn NAME "doc" [args] body)`. **Mandatory docstring**. Engine throws on miss. |
 | 8 | Per-iteration `*def-sink-atom*`; engine flushes once at iteration-end inside the same transaction as the iteration row. |
@@ -65,7 +65,7 @@ softens.
   TAPE : prior iteration renders as commented Clojure source.
          ;; =>      result of a form
          ;; ! stdout> / ! stderr> / ! ERROR / ! TIMEOUT
-  ANS  : (turn-answer! [:ir <blocks>]) terminates the turn iff it ran without
+  ANS  : (done [:ir <blocks>]) terminates the turn iff it ran without
          throwing. ANSWER_IR grammar unchanged.
 </system_prompt>
 
@@ -89,7 +89,7 @@ softens.
 ;; --- iteration 5 | turn=1 conv=ab12 state=cd34 | status=done ---
 (def big "README handle" (v/cat "README.md"))
 ;; => #vis/handle {:kind :v.cat :line-count 5 :sha "ab12"}
-(turn-answer! [:ir [:p "Done"]])
+(done [:ir [:p "Done"]])
 ;; => :vis/answered
 
 ;; --- iteration 1 | turn=2 conv=ab12 state=cd34 | status=current ---
@@ -124,7 +124,7 @@ turn start
             │   └─ stdout / stderr captured per-iteration (no per-form sinks).
             ├─ engine flushes *def-sink-atom* to expression_soul / state
             │  rows in the same transaction as the iteration row write.
-            ├─ if (turn-answer! …) form ran without throwing → turn ends.
+            ├─ if (done …) form ran without throwing → turn ends.
             └─ otherwise → next iteration; tape carries N-1 (and N on error).
 ```
 
@@ -191,14 +191,14 @@ namespace).
   to the channel only; `(v/grep-in h pattern)` returns a new
   hits-Handle.
 
-### turn-answer!
+### done
 
 - Strict IR: `[:ir & blocks]`. Same Hiccup grammar.
 - Accepted iff the form ran without throwing. No prior-evidence
   check, no clean-iteration check, no "tool calls in same iteration
   drop the answer" rule.
 - A single block can do
-  `(def big "doc" (v/cat …)) (turn-answer! [:ir [:p (str "Lines: " (:line-count @big))]])`
+  `(def big "doc" (v/cat …)) (done [:ir [:p (str "Lines: " (:line-count @big))]])`
   and finish in one iteration.
 
 ### Schema (V1, hard cut)
@@ -451,7 +451,7 @@ A turn that asks "summarize README.md" runs in **1 iteration**:
 ```clojure
 ;; model emits, atomically:
 (def big "README handle" (v/cat "README.md"))
-(turn-answer! [:ir [:p (str "README has " (:line-count @big) " lines")]])
+(done [:ir [:p (str "README has " (:line-count @big) " lines")]])
 ```
 
 The next turn's prompt shows: `<iteration_hints>` (if any), iteration

@@ -98,7 +98,7 @@
 (defdescribe hooks-registration-test
   (it "foundation ships only the two iteration-start soft nudges"
     ;; Evidence/blind-answer guards were removed; their job is now the
-    ;; harness's structural gate inside `(turn-answer! ...)`.
+    ;; harness's structural gate inside `(done ...)`.
     (let [ids (set (map :id nudges/hooks))]
       (expect (= #{:vis.foundation/conversation-title
                    :vis.foundation/context-pressure}
@@ -128,5 +128,5 @@
 
 ;; Removed: blind-answer-guard-test and action-request-needs-evidence-test.
 ;; Their behaviours are now enforced by the harness structural gate inside
-;; `(turn-answer! ...)` (see `final-answer-structural-criteria-errors` in
+;; `(done ...)` (see `final-answer-structural-criteria-errors` in
 ;; `com.blockether.vis.internal.loop`); coverage lives in the loop tests.

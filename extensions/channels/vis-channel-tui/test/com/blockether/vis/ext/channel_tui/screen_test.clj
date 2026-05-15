@@ -456,17 +456,17 @@
                    {:visible [{:top 0
                                :height 6
                                :projected {:role :assistant
-                                           :prewrapped-lines ["(turn-answer! (v/p \"hi\"))"
+                                           :prewrapped-lines ["(done (v/p \"hi\"))"
                                                               (str p/MARKER_ANSWER_SEP "")
                                                               (str p/MARKER_ANSWER_TXT "hi there")]}}]}
                    0 6 40)
           rows   ["  Vis                                   "
-                  "  (turn-answer! (v/p \"hi\"))          "
+                  "  (done (v/p \"hi\"))          "
                   "────────────────────────────────────────"
                   "  hi there                              "
                   "                    zai/glm / 1 iter    "
                   "                                        "]]
-      (expect (= "(turn-answer! (v/p \"hi\"))\nhi there"
+      (expect (= "(done (v/p \"hi\"))\nhi there"
                 (selection/selected-text
                   rows
                   {:anchor (selection/point 0 0)

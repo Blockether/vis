@@ -68,7 +68,7 @@
                   (fn [_db _iteration-id]
                     [{:code "(set-conversation-title! \"Greeting\")"
                       :result :vis/silent}
-                     {:code "(turn-answer! [:ir [:p \"Siema!\"]])"
+                     {:code "(done [:ir [:p \"Siema!\"]])"
                       :result :vis/answer}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)]
@@ -90,7 +90,7 @@
                   (fn [_db _iteration-id]
                     [{:code (str "(def x 1)\n"
                               "(set-conversation-title! \"Mixed\")\n"
-                              "(turn-answer! [:ir [:p \"Done\"]])")
+                              "(done [:ir [:p \"Done\"]])")
                       :render-segments [{:kind :code :source "(def x 1)"}
                                         {:kind :title :value "Mixed"}
                                         {:kind :answer-ref}]

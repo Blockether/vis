@@ -12,7 +12,7 @@
      `format-error`                  - prefix \"ERROR: \" idempotently
      `final-answer-code-error-message` - the \"Final-answer code error: ...\" prefix
                                         used by the iteration loop when an
-                                        `(turn-answer! ...)` form's own code throws."
+                                        `(done ...)` form's own code throws."
   (:require
    [clojure.string :as str]))
 
