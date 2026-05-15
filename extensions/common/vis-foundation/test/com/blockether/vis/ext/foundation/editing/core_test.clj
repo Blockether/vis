@@ -282,7 +282,7 @@
           out  (journal-render-cat h)]
       ;; New shape: handle's print-method emits `#vis/handle {...}` on
       ;; one line. The journal must not echo file content (that path is
-      ;; closed in the pivot — see PLAN.md Phase 7).
+      ;; closed.
       (expect (string/starts-with? out "#vis/handle "))
       (expect (string/includes? out ":kind :v.cat"))
       (expect (string/includes? out ":path \"src/demo.clj\""))

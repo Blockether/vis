@@ -9,13 +9,11 @@
    Previously this namespace also shipped two evidence-related hints
    (`blind-answer-guard-check` and `action-request-needs-evidence-check`)
    that used verb-regex heuristics to fire on investigation/action
-   requests with no observed tool work. Both are now subsumed by the
-   harness-level structural gate inside `(done ...)`
-   (see `final-answer-structural-criteria-errors` in
-   `com.blockether.vis.internal.loop`): if the latest iteration's
-   <journal> carries no evidence, the answer is refused regardless of
-   user-request shape. Removing the nudges keeps a single source of
-   truth and drops the regex heuristic surface."
+   requests with no observed tool work. A later cut retired the legacy
+   structural floor inside `(done …)` along with these heuristics:
+   single-form iterations either throw (and `(done …)` never runs) or
+   succeed (and the answer is observed in the same eval frame), so
+   the regex pre-filter no longer earned its complexity."
   (:require
    [clojure.string :as str]))
 

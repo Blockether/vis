@@ -33,14 +33,8 @@
    Writes through the SCI `def` special form (so the patched
    `eval-def` enforces the docstring contract — we satisfy it with a
    synthetic 'vis-managed engine binding' tag) and then interns the
-   actual value.
-
-   Caller plumbing note: the legacy `<bindings>` renderer was
-   cache-invalidated via `bump-bindings!` after every mutation. The
-   renderer + cache were retired in Phase 7 (the tape
-   `tape-system-vars` / `tape-live-vars` read the sandbox map
-   directly, no cache); the bump helpers are gone. Mutating vars now
-   only requires this one call."
+   actual value. `journal-system-vars` / `journal-live-vars` read the
+   sandbox map directly, so no separate invalidation step is needed."
   [sci-ctx sym val]
   (let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
     (sci/eval-string+ sci-ctx (str "(def " sym " \"vis-managed engine binding\" nil)") {:ns ns-obj})
@@ -49,14 +43,14 @@
 (defn bind-and-bump!
   "Set `sym` to `val` in the env's sandbox. Name preserved for source
    compatibility — the legacy 'bump' (cache invalidation) is gone
-   alongside the cached `<bindings>` renderer it served. Now a thin
+   alongside the cache it served. Now a thin
    wrapper over `sci-update-binding!`."
   [env sym val]
   (sci-update-binding! (:sci-ctx env) sym val))
 
 (defn bind-and-bump-with-doc!
   "Like `bind-and-bump!` but writes `doc` as the var's :doc metadata
-   so the tape live-vars renderer surfaces a meaningful name + doc
+   so the journal live-vars renderer surfaces a meaningful name + doc
    to the model (e.g. USER_REQUEST -> 'current turn user request')."
   [env sym doc val]
   (let [sci-ctx (:sci-ctx env)
@@ -69,7 +63,7 @@
 (defn push-eval-result!
   "REPL-style stack push for the sandbox `*1` `*2` `*3` recovery slots.
    Called by the iteration loop after each successful top-level form
-   eval. Bypasses `<bindings>` invalidation - these vars are filtered
+   eval. Bypasses legacy bindings cache invalidation - these vars are filtered
    out of the model-visible binding view by `:initial-ns-keys`."
   [env value]
   (let [sci-ctx (:sci-ctx env)
@@ -499,7 +493,7 @@
     ;; stack after each form's eval and resets all four to nil at turn
     ;; start. They live in the sandbox so model code reads them as plain
     ;; symbols, but they are interned BEFORE `:initial-ns-keys` so the
-    ;; baseline filter excludes them from `<bindings>` (they're noise to
+    ;; baseline filter excludes them from the live-vars line (they're noise to
     ;; the model's user-binding view).
     (sci/eval-string+ sci-ctx
       (str "(def *1 \"previous eval result\" nil) "
@@ -629,9 +623,9 @@
   (contains? SYSTEM_VAR_NAMES sym))
 
 ;; =============================================================================
-;; Phase 7 prep: tape discovery surface
+;; Phase 7 prep: journal discovery surface
 ;;
-;; The new pivot user-role message replaces <bindings> with two compact
+;; The engine user-role message uses two compact
 ;; commented-Clojure sections:
 ;;
 ;;   ;; system-vars:                     UPPERCASE engine-managed vars
@@ -643,18 +637,18 @@
 ;; The two helpers below introspect the SCI sandbox + the per-env LRU
 ;; map and return entries shaped `{:name :doc}` ready for the
 ;; `format-{system,live}-vars-block` renderers in prompt.clj. Phase 7
-;; main wires them through `build-iteration-context-tape`.
+;; main wires them through `build-iteration-context`.
 ;; =============================================================================
 
-(def ^:const TAPE_LIVE_VARS_CAP
-  "Max user-var entries surfaced in the live-vars discovery line. PLAN
-   pivot: 30. Older entries (least-recently-resolved) drop first."
+(def ^:const JOURNAL_LIVE_VARS_CAP
+  "Max user-var entries surfaced in the live-vars discovery line.
+   Older entries (least-recently-resolved) drop first."
   30)
 
-(def ^:const TAPE_LRU_TURN_WINDOW
+(def ^:const JOURNAL_LRU_TURN_WINDOW
   "Vars unused for >= this many turns are hidden from the live-vars
-   line (the binding stays alive in the sandbox; it just isn't
-   advertised). PLAN pivot: 10."
+   line. The binding stays alive in the sandbox; it just isn't
+   advertised."
   10)
 
 (def DEF_HEADS_FOR_RESTORE
@@ -735,7 +729,7 @@
       (doc-from-source (:code m))
       "")))
 
-(defn tape-system-vars
+(defn journal-system-vars
   "Vec of `{:name :doc}` entries for engine-managed UPPERCASE sandbox
    vars currently bound. Read by `format-system-vars-block`. Empty vec
    when no system vars are bound (test contexts)."
@@ -751,14 +745,14 @@
         (sort-by :name)
         vec))))
 
-(defn tape-live-vars
+(defn journal-live-vars
   "Vec of `{:name :doc}` entries for user-defined sandbox vars within
    the LRU window. `lru-map` is `{var-name-string -> last-used-turn-pos}`
    from the SCI resolve-symbol* monkey-patch. `current-turn-pos` is
    the engine's current turn position; entries whose
-   `(- current-turn-pos last-used)` exceeds `TAPE_LRU_TURN_WINDOW` are
+   `(- current-turn-pos last-used)` exceeds `JOURNAL_LRU_TURN_WINDOW` are
    hidden from the surface (the def stays bound). Capped at
-   `TAPE_LIVE_VARS_CAP`; oldest stamp drops first.
+   `JOURNAL_LIVE_VARS_CAP`; oldest stamp drops first.
 
    When `lru-map` is empty (engine just started or no resolutions yet),
    surface ALL user vars unconditionally — the LRU is informational, a
@@ -768,7 +762,7 @@
     (let [sandbox-map (get-in @(:env sci-ctx) [:namespaces 'sandbox])
           lru-map (or lru-map {})
           current-turn-pos (long (or current-turn-pos 1))
-          window TAPE_LRU_TURN_WINDOW
+          window JOURNAL_LRU_TURN_WINDOW
           fresh? (fn [sym]
                    (let [stamp (get lru-map (str sym))]
                      (or (nil? stamp)
@@ -786,7 +780,7 @@
                              :stamp (or (get lru-map (str sym)) 0)})))
           ranked (->> entries
                    (sort-by (juxt #(- (long (:stamp %))) :name))
-                   (take TAPE_LIVE_VARS_CAP)
+                   (take JOURNAL_LIVE_VARS_CAP)
                    (mapv #(dissoc % :stamp)))]
       (vec ranked))))
 

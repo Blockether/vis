@@ -379,7 +379,7 @@
 ;; Bounded value rendering
 ;;
 ;; UI-level helper: stringify an arbitrary Clojure value with size + nesting
-;; caps so TUI progress chunks, history-restore previews, and tape `;; => …`
+;; caps so TUI progress chunks, history-restore previews, and journal `;; => …`
 ;; lines never dump multi-megabyte payloads into a render buffer. Distinct
 ;; from `format-clojure` above (which formats *source code* via zprint);
 ;; this one renders *runtime values* via zprint for data shapes and
@@ -390,7 +390,7 @@
   "Default char cap on `safe-pr-str` output when no `:max-chars`
    override is passed. TUI progress chunks, history-restore previews,
    and external `vis.core/safe-pr-str` callers all use this. Tape
-   rendering passes its own `TAPE_RESULT_MAX_CHARS` and bypasses the
+   rendering passes its own `JOURNAL_RESULT_MAX_CHARS` and bypasses the
    default."
   1500)
 
@@ -412,7 +412,7 @@
 
 (defn safe-pr-str
   "Bounded Clojure data rendering for working-memory previews
-   (TUI progress, history-restore, tape `;; => …` lines). Caps output
+   (TUI progress, history-restore, journal `;; => …` lines). Caps output
    at `MAX_RESULT_DISPLAY_CHARS` chars by default; callers that want
    a tighter or looser bound pass `:max-chars`."
   ([v] (safe-pr-str v {}))
