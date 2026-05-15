@@ -250,7 +250,6 @@
 (def db-store-iteration!                    persistance/db-store-iteration!)
 (def db-list-conversation-turn-iterations            persistance/db-list-conversation-turn-iterations)
 (def db-list-iteration-vars              persistance/db-list-iteration-vars)
-(def db-list-iteration-blocks       persistance/db-list-iteration-blocks)
 
 ;; Full-text search
 (def db-search                          persistance/db-search)

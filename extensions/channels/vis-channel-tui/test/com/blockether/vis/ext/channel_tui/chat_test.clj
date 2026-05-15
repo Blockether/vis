@@ -63,13 +63,9 @@
                       :answer [:ir {} [:p {} [:span {} "Siema!"]]]}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id]
-                    [{:id :iter-1 :answer-position 1}])
-                  vis/db-list-iteration-blocks
-                  (fn [_db _iteration-id]
-                    [{:code "(set-conversation-title! \"Greeting\")"
-                      :result :vis/silent}
-                     {:code "(done [:ir [:p \"Siema!\"]])"
-                      :result :vis/answer}])]
+                    [{:id :iter-1
+                      :code "(set-conversation-title! \"Greeting\")"
+                      :result :vis/silent}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             trace   (-> history second :traces first)]
         (expect (= [] (:code trace)))
@@ -85,10 +81,8 @@
                       :answer [:ir {} [:p {} [:span {} "Done"]]]}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id]
-                    [{:id :iter-1 :answer-position 0}])
-                  vis/db-list-iteration-blocks
-                  (fn [_db _iteration-id]
-                    [{:code (str "(def x 1)\n"
+                    [{:id :iter-1
+                      :code (str "(def x 1)\n"
                               "(set-conversation-title! \"Mixed\")\n"
                               "(done [:ir [:p \"Done\"]])")
                       :render-segments [{:kind :code :source "(def x 1)"}
@@ -116,10 +110,8 @@
                       :answer [:ir {}]}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id]
-                    [{:id :iter-1}])
-                  vis/db-list-iteration-blocks
-                  (fn [_db _iteration-id]
-                    [{:code "(def prompt-lines (v/cat \"src/foo.clj\"))"
+                    [{:id :iter-1
+                      :code "(def prompt-lines (v/cat \"src/foo.clj\"))"
                       :result {:vis/ref :expr}
                       :channel [{:position 0
                                  :form "(v/cat \"src/foo.clj\")"
@@ -147,10 +139,8 @@
                       :answer [:ir {}]}])
                   vis/db-list-conversation-turn-iterations
                   (fn [_db _turn-id]
-                    [{:id :iter-1}])
-                  vis/db-list-iteration-blocks
-                  (fn [_db _iteration-id]
-                    [{:code "(def prompt-slice (subvec xs 0 2))"
+                    [{:id :iter-1
+                      :code "(def prompt-slice (subvec xs 0 2))"
                       :result {:vis/ref :expr}}])]
       (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
             rendered (-> history second :traces first :results first)]
@@ -185,10 +175,8 @@
                         :answer [:ir {}]}])
                     vis/db-list-conversation-turn-iterations
                     (fn [_db _turn-id]
-                      [{:id :iter-1}])
-                    vis/db-list-iteration-blocks
-                    (fn [_db _iteration-id]
-                      [{:code "(v/cat \"x.txt\")"
+                      [{:id :iter-1
+                        :code "(v/cat \"x.txt\")"
                         :result tool-out}])]
         (let [history ((var-get (resolve 'com.blockether.vis.ext.channel-tui.chat/rebuild-history)) "c1")
               trace   (-> history second :traces first)]

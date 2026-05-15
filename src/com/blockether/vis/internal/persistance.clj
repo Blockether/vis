@@ -296,7 +296,6 @@
 (defdelegate db-list-conversation-turn-states [db-info conversation-turn-id])
 (defdelegate db-list-conversation-turn-iterations [db-info conversation-turn-ref])
 (defdelegate db-list-iteration-vars [db-info iteration-ref])
-(defdelegate db-list-iteration-blocks [db-info iteration-ref])
 
 ;; --- Full-text search ---
 (defdelegate db-search [db-info query opts])
