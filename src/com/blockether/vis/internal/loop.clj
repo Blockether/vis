@@ -97,6 +97,52 @@
     (sequential? v) (doall (map realize-value v))
     :else v))
 
+(def ^:private DEF_HEADS_FOR_RESTORE
+  "Heads whose `(HEAD NAME ...)` shape can be recovered by edamame parse
+   for per-var source extraction. Restored vars carry the smallest form
+   that introduced them so re-eval reconstitutes ONE var without
+   re-running unrelated side effects from the same iteration.
+
+   Macro-expanded defs (e.g. `s/def`, `defrecord`) do not appear here
+   verbatim in the source; sink entries whose name does not match any
+   parsed head fall back to the whole iteration block."
+  '#{def defn defn- defmacro defonce defmulti})
+
+(defn- extract-def-sources
+  "Parse `code` and return `{var-name-string -> per-form-pr-str}` for
+   every `(def NAME ...)` / `(defn NAME ...)` / ... shape it contains.
+   Walks `(do ...)` containers transparently so
+   `(do (def a 1) (def b 2))` produces both entries. Forms whose head
+   is not in `DEF_HEADS_FOR_RESTORE` or whose name is not a symbol are
+   ignored. Parse errors yield {} so the caller falls back to the
+   whole-iteration source.
+
+   Edamame preserves metadata; pr-str re-emits a round-trippable
+   form. Per-var precise source is what `db-restore-blocks` re-evals
+   when the stored result was `{:vis/ref :expr}` (functions, lazy
+   seqs, runtime objects), so granularity here is the difference
+   between restoring ONE var and accidentally re-running every
+   side-effecting def in the same iteration block."
+  [code]
+  (try
+    (let [forms (edamame/parse-string-all (or code "")
+                  {:all true
+                   :readers (fn [_tag] (fn [val] (list 'do val)))})
+          flatten-do (fn flat [f]
+                       (if (and (seq? f) (= 'do (first f)))
+                         (mapcat flat (rest f))
+                         [f]))
+          flat-forms (mapcat flatten-do forms)]
+      (reduce (fn [acc form]
+                (if (and (seq? form)
+                      (symbol? (first form))
+                      (contains? DEF_HEADS_FOR_RESTORE (first form))
+                      (symbol? (second form)))
+                  (assoc acc (name (second form)) (pr-str form))
+                  acc))
+        {} flat-forms))
+    (catch Throwable _ {})))
+
 (defn def-sink->vars-snapshot
   "Convert per-iteration SCI def-sink entries into the persistence
    shape consumed by `expression_soul` / `expression_state` rows:
@@ -110,22 +156,33 @@
    macro-expansion (`defn` / `defmacro` / `s/def`), or syntactic
    shape.
 
-   `iteration-code` is the (single) block source for this iteration;
-   `iteration-time-ms` is total eval time (optional). Both ride along
-   on every var row produced by this iteration — they are
-   iteration-scoped facts, not per-def facts."
+   `:code` per var is the SMALLEST `(def NAME ...)` form edamame can
+   recover from `iteration-code`. Restore re-evals that exact form
+   (and only that form) when the stored value is a function / lazy
+   seq / runtime object — functions round-trip correctly without
+   accidentally re-running sibling defs in the same iteration.
+   Sinks whose name does not match any parsed form (macro-expanded
+   shapes the parser cannot see) fall back to the whole-iteration
+   source.
+
+   `iteration-time-ms` is total eval time for this iteration; rides
+   along on every var row (iteration-scoped, not per-def)."
   [def-sink iteration-code iteration-time-ms]
-  (->> def-sink
-    (keep (fn [{:keys [name var]}]
-            (when (and name var)
-              (let [raw      (try (deref var) (catch Throwable _ nil))
-                    realized (realize-value raw)]
-                (cond-> {:name  (str name)
-                         :value realized
-                         :code  iteration-code}
-                  iteration-time-ms
-                  (assoc :time-ms iteration-time-ms))))))
-    vec))
+  (let [src-by-name (extract-def-sources iteration-code)]
+    (->> def-sink
+      (keep (fn [{:keys [name var]}]
+              (when (and name var)
+                (let [raw          (try (deref var) (catch Throwable _ nil))
+                      realized     (realize-value raw)
+                      name-s       (str name)
+                      precise-code (or (get src-by-name name-s)
+                                     iteration-code)]
+                  (cond-> {:name  name-s
+                           :value realized
+                           :code  precise-code}
+                    iteration-time-ms
+                    (assoc :time-ms iteration-time-ms))))))
+      vec)))
 
 (defn- format-exception-short [^Throwable t]
   {:class (.getName (class t))
