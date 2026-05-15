@@ -974,3 +974,123 @@ ANSWER_IR
     (vec
       (keep stable-prompt-message
         [core-block turn-system-block]))))
+
+;; =============================================================================
+;; Phase 7 prep — REPL tape rendering primitives
+;;
+;; The pivot replaces <journal> + <bindings> + <current_user_message> +
+;; <current_turn_context> with a pure-Clojure tape rendering of the
+;; previous iteration's source + ;; => results. These primitives live
+;; alongside the legacy renderers above; Phase 7 main wires them into
+;; build-iteration-context. Until then they are dormant and tested in
+;; isolation.
+;; =============================================================================
+
+(def ^:const TAPE_RESULT_MAX_CHARS
+  "Per-result truncation cap when rendering `;; =>` lines on the tape."
+  1500)
+
+(defn tape-iteration-header
+  "One-line `;; --- iteration N | turn=K conv=… state=… | status=… ---`
+   header that prefixes each rendered iteration's code on the tape.
+   `status` is :done | :error | :current. Optional ids: nil values are
+   elided so test contexts can render with partial coordinates."
+  [{:keys [iteration-position turn-position conv-id state-id status]}]
+  (let [parts (cond-> []
+                iteration-position (conj (str "iteration " iteration-position))
+                turn-position      (conj (str "turn=" turn-position))
+                conv-id            (conj (str "conv=" conv-id))
+                state-id           (conj (str "state=" state-id))
+                status             (conj (str "status=" (name status))))]
+    (str ";; --- " (str/join " | " parts) " ---")))
+
+(defn tape-result-line
+  "Render `;; => <pr-str of result>` honoring `TAPE_RESULT_MAX_CHARS`.
+   Returns nil for `:vis/no-result` so a thrown form skips the result
+   line entirely (the error annotation carries the meaning)."
+  [result]
+  (when-not (= :vis/no-result result)
+    (let [s (safe-pr-str result {:max-chars TAPE_RESULT_MAX_CHARS})]
+      (str ";; => " s))))
+
+(defn tape-side-effect-line
+  "Render a side-effect annotation: `;; ! <kind>> <text>` for
+   `:stdout` / `:stderr` / `:error` / `:timeout`. Empty / blank text
+   returns nil so the renderer can drop it."
+  [kind text]
+  (when (and text (not (str/blank? (str text))))
+    (let [tag (case kind
+                :stdout  "stdout> "
+                :stderr  "stderr> "
+                :error   "ERROR "
+                :timeout "TIMEOUT ")]
+      (str ";; ! " tag (str/trim (str text))))))
+
+(defn format-tape-iteration
+  "Render one iteration as commented Clojure source for the tape.
+
+   Input shape:
+     {:iteration-position N
+      :turn-position      K          ; optional, for cross-turn rendering
+      :conv-id            \"…\"      ; optional, short id
+      :state-id           \"…\"      ; optional, short id
+      :status             :done|:error|:current
+      :code               \"(def …)\"
+      :result             <value>    ; or :vis/no-result on throw
+      :error              {:message…} ; structured map or nil
+      :stdout             \"…\"
+      :stderr             \"…\"
+      :timeout?           bool}
+
+   Output (newline-joined):
+     ;; --- iteration N | turn=K conv=… state=… | status=done ---
+     <code text>
+     ;; ! stdout> <captured>
+     ;; ! stderr> <captured>
+     ;; => <pr-str result>           ; omitted on error
+     ;; ! ERROR <message>            ; only on error
+     ;; ! TIMEOUT <message>          ; only on timeout
+
+   Side-effect lines render in stdout / stderr / => / ERROR / TIMEOUT
+   order. The :code body is preserved verbatim — the model's own `;;`
+   thinking comments inside the form survive untouched."
+  [{:keys [code result error stdout stderr timeout?] :as iter}]
+  (let [header     (tape-iteration-header iter)
+        body       (when (string? code) (str/trim-newline code))
+        result-ln  (when-not (or error timeout?)
+                     (tape-result-line result))
+        stdout-ln  (tape-side-effect-line :stdout stdout)
+        stderr-ln  (tape-side-effect-line :stderr stderr)
+        error-ln   (when error
+                     (tape-side-effect-line :error (or (:message error) (str error))))
+        timeout-ln (when timeout?
+                     (tape-side-effect-line :timeout
+                       (or (:message error) "iteration timed out")))]
+    (str/join "\n"
+      (keep identity [header body stdout-ln stderr-ln result-ln error-ln timeout-ln]))))
+
+(defn format-system-vars-block
+  "Render the `;; system-vars:` block for the live-vars discovery
+   surface. `entries` is a vec of `{:name :doc}` maps. UPPERCASE
+   convention; engine-managed (USER_REQUEST, etc.). Returns nil when
+   no entries — caller can omit the block entirely."
+  [entries]
+  (when (seq entries)
+    (str/join "\n"
+      (cons ";; system-vars:"
+        (map (fn [{:keys [name doc]}]
+               (str ";;   " name "  " (pr-str (or doc ""))))
+          entries)))))
+
+(defn format-live-vars-block
+  "Render the `;; live-vars (N/30):` block for the discovery surface.
+   `entries` is a vec of `{:name :doc}` maps. `cap` defaults to 30.
+   Returns nil for an empty vec."
+  ([entries] (format-live-vars-block entries 30))
+  ([entries cap]
+   (when (seq entries)
+     (str/join "\n"
+       (cons (str ";; live-vars (" (count entries) "/" cap "):")
+         (map (fn [{:keys [name doc]}]
+                (str ";;   " name "  " (pr-str (or doc ""))))
+           entries))))))
