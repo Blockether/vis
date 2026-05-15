@@ -2095,13 +2095,14 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented SYSTEM vars (post CONVERSATION_TITLE retirement)"
-    ;; `CONVERSATION_TITLE` was retired: the conversation title is
-    ;; sidebar / channel-chrome metadata, surfaced to the model only
-    ;; through the foundation `title-nudge`. See
-    ;; `inject-system-var-snapshots` and `env/SYSTEM_VAR_NAMES` for
-    ;; the rationale.
-    (expect (= '#{TURN_ID
+  (it "SYSTEM_VAR_NAMES contains exactly the documented SYSTEM vars (post-pivot)"
+    ;; `CONVERSATION_TITLE` was retired earlier (sidebar metadata).
+    ;; `USER_REQUEST` was added by the pivot — the user's turn request
+    ;; lives as a real (def …) injected at turn start so the model
+    ;; reads it like any other system var, not via a separate XML
+    ;; <current_user_message> block. See env/SYSTEM_VAR_NAMES.
+    (expect (= '#{USER_REQUEST
+                  TURN_ID
                   TURN_POSITION
                   TURN_CONVERSATION_STATE_ID
                   TURN_SYSTEM_PROMPT
