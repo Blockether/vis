@@ -7,7 +7,6 @@
    [clojure.string :as str]
    [com.blockether.anomaly.core :as anomaly]
    [com.blockether.svar.core :as svar]
-   [com.blockether.svar.internal.codes :as svar-codes]
    [com.blockether.svar.internal.llm :as svar-llm]
    [com.blockether.svar.internal.router :as svar-router]
    [com.blockether.svar.internal.util :as util]
@@ -146,13 +145,13 @@
    Why source-walk and not the SCI resolve hook: SCI analyzes /
    compiles forms before evaluating them, baking symbol-to-var
    resolution into the AST. The runtime `resolve-symbol*` patch never
-   fires for symbols inside an init body, so the only stable point at
+   fires for symbols in the channel-rendered tool-call rowan init body, so the only stable point at
    which we can recover dep relationships is the source itself.
 
    The output is intentionally permissive: it includes refs to core
    ops (`inc`, `*`, `+`), to locals introduced by `let` / `fn`
    parameter lists, and to macro symbols. The persistence layer
-   filters every edge against the existing-soul-name set inside its
+   filters every edge against the existing-soul-name set in the channel-rendered tool-call rowits
    write transaction, so only refs that actually correspond to a
    tracked user var land in `definition_dependency`. Self-references
    (a recursive `defn` body using its own name) are dropped here
@@ -377,7 +376,7 @@
     "Bare string literal in :code. Prose belongs in :answer (the loop auto-detects plain text), not in :code."
 
     (markdown-fence-block? expr)
-    "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms inside the code block."
+    "Raw Markdown fence leaked into :code (` ```... `). Remove the fence marker and keep only executable Clojure forms in the channel-rendered tool-call rowthe code block."
 
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
@@ -396,7 +395,7 @@
         journal-sink (atom [])
         channel-sink (atom [])
         sink-pos     (atom -1)
-        ;; Per-iteration sinks for the pivot patches. `*def-sink-atom*`
+        ;; Per-iteration sinks. `*def-sink-atom*`
         ;; collects every (def …) the SCI sandbox runs (Phase 2).
         ;; `*lru-atom*` stamps every successful symbol resolution with
         ;; the current turn position (Phase 3). The engine reads both
@@ -774,22 +773,6 @@
       (symbol? (first form))
       (= 'set-conversation-title! (first form)))))
 
-;; Pivot: `extension-call-form?` / `form-contains-extension-call?` /
-;; `call-symbol->op-keyword` lived here to feed the legacy structural
-;; floor ("no extension call in the same iteration as (done …)"). The
-;; floor was removed with the pivot — mixing tool calls and `(done …)`
-;; in one `(do …)` is the canonical post-pivot shape, so the three
-;; helpers had no live callers and went with it.
-
-;; Pivot: with one form per iteration, the legacy three-fn gate
-;; complex (`answer-with-extension-preflight-mismatch`,
-;; `block-result-error-summary`, `answer-with-extension-preflight-error-message`)
-;; is no longer needed. Tool calls and `(done …)` legitimately co-exist
-;; in a single form via handles — `(do (def h (v/cat …)) (done [:ir [:p …]]))`
-;; is the canonical one-iteration shape. If the form throws, `(done …)`
-;; never runs; if it succeeds, the answer is observed inside the same
-;; eval. No separate "observed tool evidence first" check applies.
-
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
         lines (str/split-lines (or code ""))]
@@ -826,10 +809,10 @@
   (turn-answer-call-form? (parsed-entry-form entry-or-form-or-source)))
 
 ;; `bare-symbol-entry?` removed with `plain-prose-code-error` — the
-;; per-block-eval pivot routes prose into SCI as a parse / unresolved-symbol
+;; per-block-eval cut routes prose into SCI as a parse / unresolved-symbol
 ;; error instead of detecting "every entry is a bare symbol" upfront.
 
-;; Removed during the per-block-eval pivot:
+;; Cut from this layer:
 ;;   - `plain-prose-code-error` + `prose->comment` — the splitter no longer
 ;;     produces multi-symbol entry vectors that a prose response could
 ;;     accidentally satisfy. With one block = one SCI eval, prose lands in
@@ -837,143 +820,7 @@
 ;;     self-corrects from the structured error.
 ;;   - `duplicate-fenced-blocks?` + `dedupe-fenced-block-code` +
 ;;     `executable-block-source`/-`sources` — dedup now happens inline
-;;     inside `code-entries-preflight` on the block vector directly.
-
-;; ---------------------------------------------------------------------------
-;; Vis-engine XML echo stripper (hallucinated <journal>/<bindings>/...).
-;;
-;; The model occasionally fabricates Vis-only XML envelopes in its OWN reply -
-;; most often <journal> sections - and closes them with a stray ``` instead of
-;; </journal>. That stray ``` then opens an untagged fenced block in the
-;; raw response, swallowing the real ```clojure opener that follows. The
-;; resulting blocks come out tagged :lang nil with literal ```clojure markers
-;; embedded in their source, which the fence-leak preflight then rejects -
-;; burning an entire iteration on a parser-recoverable error.
-;;
-;; Repair pass: at the line level, drop every <journal>/<bindings>
-;; /<current_turn_context>/<iteration_hint[s]> opener through its closer. Closer matches `</tag>` (proper),
-;; a bare ``` line (LLM fumble), or another opener (implicit close), or EOF.
-;; A ```lang line implicitly closes the envelope without itself being dropped
-;; so a real fence directly after a fabricated envelope still parses cleanly.
-;; ---------------------------------------------------------------------------
-
-(def ^:private vis-engine-xml-echo-tags
-  ;; Vis -> LLM ONLY. The model must never emit these. See
-  ;; `com.blockether.vis.internal.prompt` for the renderers that own them.
-  #{"journal" "bindings" "current_turn_context"
-    "iteration_hints" "iteration_hint"
-    ;; Backward-compatible echo cleanup for older transcripts / model habits.
-    "current_engine_start_nudges" "current_engine_start_nudge"
-    "system_vars" "system_var" "system_nudges" "system_nudge"})
-
-(defn- vis-engine-xml-open-tag
-  "Return the matched tag name (string) when `line` is a Vis-engine XML
-   opener at the start of the trimmed line, else nil. Accepts both
-   `<tag>` and `<tag attr=\"x\">` shapes."
-  [line]
-  (when (string? line)
-    (let [t (str/triml line)]
-      (some (fn [tag]
-              (when (or (str/starts-with? t (str "<" tag ">"))
-                      (str/starts-with? t (str "<" tag " ")))
-                tag))
-        vis-engine-xml-echo-tags))))
-
-(defn- vis-engine-xml-close-line?
-  [tag line]
-  (when (and tag (string? line))
-    (= (str "</" tag ">") (str/trim line))))
-
-(defn- bare-fence-line?
-  "True for a markdown fence line with NO language tag (just backticks).
-   These are the LLM's most common closer fumble inside a fabricated
-   <journal>: it ended the section with ``` instead of </journal>."
-  [line]
-  (when (string? line)
-    (boolean (re-matches #"^[ \t]*`{3,}[ \t]*$" line))))
-
-(defn- tagged-fence-opener-line?
-  "True for a markdown fence opener WITH a language tag (e.g. ```clojure).
-   When we hit one of these inside a fabricated envelope we treat the
-   envelope as implicitly closed and KEEP the line so the downstream
-   fence-block extractor still sees a valid opener."
-  [line]
-  (when (string? line)
-    (boolean (re-matches #"^[ \t]*`{3,}[A-Za-z0-9_+\-]+[ \t]*$" line))))
-
-(defn- contains-vis-engine-xml-echo?
-  [^String raw]
-  (and (string? raw)
-    (boolean (some #(or (str/includes? raw (str "<" % ">"))
-                      (str/includes? raw (str "<" % " ")))
-               vis-engine-xml-echo-tags))))
-
-(defn- strip-vis-engine-xml-echo
-  "Remove hallucinated <journal>...</journal> (and similar Vis-only XML
-   envelopes) from raw LLM text BEFORE fenced-block extraction. The model
-   must never emit these tags - they are read-only surfaces the engine
-   writes. When a model echoes them, the closer is often a stray ``` instead
-   of </tag>; that ``` then poisons fence-block parsing.
-
-   Returns `raw` unchanged when no opener appears."
-  [raw]
-  (if-not (contains-vis-engine-xml-echo? raw)
-    raw
-    (let [lines (str/split-lines raw)]
-      (loop [remaining (seq lines)
-             current-tag nil
-             out (transient [])]
-        (if-not remaining
-          (str/join "\n" (persistent! out))
-          (let [line (first remaining)
-                rst  (next remaining)]
-            (cond
-              ;; Outside any envelope.
-              (nil? current-tag)
-              (if-let [opener (vis-engine-xml-open-tag line)]
-                (recur rst opener out)
-                (recur rst nil (conj! out line)))
-
-              ;; Inside an envelope - matching </tag> closer (proper form).
-              (vis-engine-xml-close-line? current-tag line)
-              (recur rst nil out)
-
-              ;; Inside an envelope - LLM fumbled the closer with bare ```.
-              (bare-fence-line? line)
-              (recur rst nil out)
-
-              ;; Inside an envelope - real fence opener (```lang). Treat as
-              ;; implicit close and KEEP the line so the extractor sees it.
-              (tagged-fence-opener-line? line)
-              (recur rst nil (conj! out line))
-
-              ;; Inside an envelope - new envelope opener swaps current tag.
-              :else
-              (if-let [opener (vis-engine-xml-open-tag line)]
-                (recur rst opener out)
-                (recur rst current-tag out)))))))))
-
-(defn- normalize-ask-result-vis-engine-xml-echo
-  "When the LLM raw response contains hallucinated Vis-engine XML envelopes
-   (`<journal>`, `<bindings>`, ...), strip them and re-extract Markdown code
-   blocks. Replaces `:blocks` on the ask-result; leaves `:raw` ORIGINAL so
-   forensic logs / DB rows show what the model actually emitted.
-
-   Pass-through when no envelope appears or stripping yields nothing usable."
-  [ask-result]
-  (let [raw (or (:raw ask-result) "")]
-    (if-not (contains-vis-engine-xml-echo? raw)
-      ask-result
-      (let [cleaned (strip-vis-engine-xml-echo raw)]
-        (if (or (str/blank? cleaned) (= cleaned raw))
-          ask-result
-          (let [blocks   (svar-codes/extract-code-blocks cleaned)
-                selected (svar-codes/select-blocks blocks "clojure")]
-            (if (empty? selected)
-              ask-result
-              (assoc ask-result
-                :blocks selected
-                :vis/normalized-from-raw? true))))))))
+;;     in the channel-rendered tool-call row`code-entries-preflight` on the block vector directly.
 
 (defn- code-entries-preflight
   "Per-block-eval preflight. One svar Markdown code block becomes one
@@ -982,13 +829,13 @@
    — there is no top-level form splitting at this layer.
 
    Gates retained:
-     - `raw-markdown-fence-leak-error` per block. A nested ``` inside the
+     - `raw-markdown-fence-leak-error` per block. A nested ``` in the channel-rendered tool-call rowthe
        extracted source means svar's normalizer fell into a recursive shape;
        structured rejection beats a JVM crash.
      - Duplicate-block dedup. Some providers stutter and emit the same
        block twice; we keep the first copy and drop the rest.
 
-  Removed in the pivot: the answer-with-extension pre-eval gate. With
+  the answer-with-extension pre-eval gate. With
   one form per iteration + handle returns, `(do (def h (v/cat …))
   (done …))` IS the canonical answer shape; rejecting it here was a
   false positive that re-introduced multi-iteration probe overhead."
@@ -1039,7 +886,7 @@
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
-                                       "LLM returned no executable Clojure code block. Emit exactly one ```clojure block; put prose inside (done [:ir ...]).")
+                                       "LLM returned no executable Clojure code block. Emit exactly one ```clojure block; put prose in the channel-rendered tool-call row(done [:ir ...]).")
         multi-block-error            (when (> parsed-total-blocks 1)
                                        (str "Iteration contains " parsed-total-blocks
                                          " Clojure code blocks (separate ```clojure fences); emit exactly one fence per iteration. "
@@ -1111,13 +958,13 @@
    otherwise a single string surfaced as the rejected answer form's
    validation error.
 
-   Pivot note: this used to run a structural floor first (no sibling
+   This used to run a structural floor first (no sibling
    errors / no extension calls in this iter / prior-iteration
    evidence required). With one form per iteration:
      #1 own-form-error is enforced upstream by `answer-form-error`
         (if the (done …) form itself threw, the answer is dropped).
-     #2 mixing tool + (done …) inside one `(do …)` is the canonical
-        one-iteration shape post-pivot — handles return synchronously,
+     #2 mixing tool + (done …) in the channel-rendered tool-call rowone `(do …)` is the canonical
+        canonical one-iteration shape — handles return synchronously,
         the answer is composed in the same eval frame.
      #3 evidence-prior gating became a false-positive engine: probe-
         and-answer in a single iteration is the intended flow.
@@ -1192,7 +1039,7 @@
 (defn- eval-info
   "Generic canonical info for every top-level form that passes
    through the Vis eval pipeline. Tool calls can add nested info
-   inside their returned envelope; this records the outer regular form
+   in the channel-rendered tool-call rowtheir returned envelope; this records the outer regular form
    evaluation so plain calls and tool calls share a common block-level
    trace."
   [turn-prefix iteration form-idx form-count result rendering-kind]
@@ -1318,8 +1165,8 @@
    a9389e1d showed that replaying a long run of assistant messages can
    contaminate the next step, amplify token usage, and make GLM believe a
    previous answer is still active. If preserved thinking is useful, the
-   only state we trust is the last model step inside the same live user
-   turn. Older iterations remain visible through `<journal>`.
+   only state we trust is the last model step in the channel-rendered tool-call rowthe same live user
+   turn. Older iterations remain visible through the journal.
 
    The wire serializer for the active model translates the canonical
    message to its native shape; iteration-loop never branches on provider."
@@ -1377,7 +1224,7 @@
 
 (defn- actual-llm-provider
   "Provider that actually served an ask-result. svar may route/fallback
-   inside ask-code!, so prefer routed metadata over Vis' pre-call guess."
+   in the channel-rendered tool-call rowask-code!, so prefer routed metadata over Vis' pre-call guess."
   [resolved-model ask-result]
   (or (:routed/provider-id ask-result)
     (:provider resolved-model)))
@@ -1427,7 +1274,7 @@
 
    Cross-turn journal seeds explicitly carry
    `:preserved-thinking/replay? false`; those iterations remain visible in
-   `<journal>` as durable evidence, but their opaque provider-native thinking
+   persisted iterations as durable evidence, but their opaque provider-native thinking
    state is not replayed into a different user turn. Within a live turn,
    freshly-produced iterations opt in by setting the flag to true. Historical
    in-memory test fixtures that omit the flag are treated as replayable for
@@ -1587,12 +1434,7 @@
                          :provider-duration-ms provider-duration-ms
                          :raw-length (count (or (:raw ask-result-raw) ""))
                          :block-count (count (or (:blocks ask-result-raw) []))}))
-          ;; Repair pass: strip hallucinated <journal>/<bindings>/...
-          ;; envelopes from raw LLM text before downstream fence-block
-          ;; consumers see them. See `strip-vis-engine-xml-echo`.
-          normalize-start-ns (System/nanoTime)
-          ask-result (normalize-ask-result-vis-engine-xml-echo ask-result-raw)
-          normalize-duration-ms (elapsed-ms normalize-start-ns)
+          ask-result ask-result-raw
           model-reasoning (:reasoning ask-result)
           thinking model-reasoning
           _ (log-stage! :llm-response iteration
@@ -1601,10 +1443,8 @@
                :block-count   (count (or (:blocks ask-result) []))
                :duration-ms   (:duration-ms ask-result)
                :provider-duration-ms provider-duration-ms
-               :normalize-duration-ms normalize-duration-ms
                :tokens        (:tokens ask-result)
-               :thinking      thinking
-               :vis-engine-xml-echo-stripped? (boolean (:vis/normalized-from-raw? ask-result))})
+               :thinking      thinking})
           api-usage (ask-result->api-usage ask-result)
           ;; svar/ask-code! returns the per-block vector in `:blocks`
           ;; (single source of truth; the legacy `:result` concatenated
@@ -1629,7 +1469,6 @@
                          :code-length (count normalized-code)
                          :forms (count code-entries)}))
           engine-timing {:provider-call-ms provider-duration-ms
-                         :response-normalize-ms normalize-duration-ms
                          :response-preflight-ms preflight-duration-ms}
           direct-answer-entry (when (= 1 (count code-entries))
                                 (first code-entries))
@@ -1656,13 +1495,6 @@
           suppress-form-start? (or (some :vis/preflight-error code-entries)
                                  final-answer-preflight-error)
           total-blocks (count code-entries)
-          ;; Pivot: the legacy answer-after-error gate (engine-level
-          ;; `prior-error-atom` + `block-result-error-summary`) was
-          ;; deleted. One form per iteration means "prior form errored
-          ;; in this same iteration" is structurally impossible — the
-          ;; form either throws (and `(done …)` never runs) or
-          ;; succeeds (and the answer is observed inside the same
-          ;; eval frame).
           executed (mapv (fn [idx {:keys [expr parse-error render-segments]
                                    :vis/keys [preflight-error structurally-silent?]
                                    form-repaired? :repaired?
@@ -1683,7 +1515,7 @@
                                         :vis/structurally-silent? (boolean structurally-silent?)
                                         :started-at-ms   (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
-                           ;; `(done ...)` call inside this form
+                           ;; `(done ...)` call in the channel-rendered tool-call rowthis form
                            ;; captures the right index on the
                            ;; answer-atom payload.
                            (reset! current-form-idx-atom idx)
@@ -1826,7 +1658,7 @@
                                     ;; SCI sandbox evaluated in this block. The
                                     ;; iteration writer concats sinks across
                                     ;; blocks and drives definition_state from
-                                    ;; the result. Pivot replaces the legacy
+                                    ;; the result. Replaces the legacy
                                     ;; parse-source path.
                                     :def-sink (vec (:def-sink result))
                                     ;; Per-block resolve-symbol* LRU stamps:
@@ -2045,7 +1877,7 @@
       "Adjust your approach or emit :final with what you have.")))
 
 (def ^:private CHAT_ERROR_BODY_RENDER_CHARS
-  "Cap on raw upstream HTTP body chars surfaced inside the chat error
+  "Cap on raw upstream HTTP body chars surfaced in the channel-rendered tool-call rowthe chat error
    bubble. Long enough that Anthropic / OpenAI / z.ai full JSON error
    envelopes (`{\"type\":\"error\",\"error\":{...},\"request_id\":...}`)
    round-trip whole — their structured `error.message` is what the
@@ -2214,7 +2046,7 @@
 ;; Var snapshots used to live here as `extract-def-names` +
 ;; `restorable-var-snapshots`: post-eval parsers that walked the
 ;; iteration's block source for `(def NAME …)` shapes and then read
-;; the sandbox locals to materialize values. The pivot replaces that
+;; the sandbox locals to materialize values. The engine replaces that
 ;; path with the SCI eval-def monkey-patch — every def the sandbox
 ;; evaluates lands in `:def-sink`, and `def-sink->vars-snapshot` (above)
 ;; produces the persistence shape directly.
@@ -2235,7 +2067,7 @@
 
    `CONVERSATION_TITLE` was retired as a SYSTEM var. The conversation
    title is a sidebar / channel-chrome label; the model never needed
-   to read it from `<bindings>`. Setting flows through
+   to read it from the live-vars line. Setting flows through
    `(set-conversation-title! \"...\")` -> `:conversation-title-atom` +
    DB; the foundation `title-nudge` carries the current value in its
    text body when a refresh-cadence hint fires. Removing the binding
@@ -2499,7 +2331,7 @@
    {:keys [system-prompt
            conversation-turn-id
            ;; `max-context-tokens` was the legacy `build-iteration-context`
-           ;; token-budget knob. The tape assembler ignores it for now;
+           ;; token-budget knob. The journal assembler ignores it for now;
            ;; rename / drop pending Phase 8 caller-signature cleanup.
            #_:clj-kondo/ignore max-context-tokens
            hooks cancel-atom current-iteration-atom
@@ -2515,7 +2347,7 @@
         base-reasoning-level (or (normalize-reasoning-level reasoning-default) balanced-reasoning)
         ;; Activate extensions ONCE per turn. Threaded through both the
         ;; prompt message assembler (core, environment, extension messages) and
-        ;; the per-iteration ext nudge collector - activation-fn never re-fires inside the loop.
+        ;; the per-iteration ext nudge collector - activation-fn never re-fires in the channel-rendered tool-call rowthe loop.
         active-exts   (prompt/active-extensions environment)
         _             (sync-active-extension-symbols! environment active-exts)
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
@@ -2656,7 +2488,7 @@
     ;; TURN_ACTIVE_EXTENSIONS = frozen, fully-realized vec describing
     ;; every extension that activated for THIS turn. Built off the same
     ;; `active-exts` we hand to the prompt assembler / nudge collector,
-    ;; so the agent's <bindings> picture matches the actually-loaded
+    ;; so the agent's live-vars picture matches the actually-loaded
     ;; surface.
     (env/bind-and-bump! environment 'TURN_ACTIVE_EXTENSIONS
       (prompt/extensions-snapshot active-exts))
@@ -2669,7 +2501,7 @@
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
     ;; Phase 7: inject USER_REQUEST as a regular sandbox def so the
-    ;; model sees it in `(env/tape-system-vars …)` and can interpolate
+    ;; model sees it in `(env/journal-system-vars …)` and can interpolate
     ;; via the same surface as every other var.
     (env/bind-and-bump-with-doc! environment 'USER_REQUEST
       "current turn user request"
@@ -2693,7 +2525,7 @@
     ;; user turn. In conversation a9389e1d, Z.ai/GLM received prior-turn
     ;; assistant replay and opened the next request with "answer already
     ;; accepted", then burned >100k input tokens. Durable cross-turn memory
-    ;; must flow through <journal>/<bindings>, not hidden reasoning state.
+    ;; must flow through persisted iterations, not hidden reasoning state.
     (let [seeded-journal-iters
           (try
             (when-let [conv-id (:conversation-id environment)]
@@ -2728,7 +2560,7 @@
             (catch Throwable t
               (tel/log! {:level :warn :id ::cross-turn-journal-seed-failed
                          :data  {:error (ex-message t)}
-                         :msg   "Cross-turn journal seed failed; first iteration starts with an empty <journal>"})
+                         :msg   "Cross-turn carry seed failed; first iteration starts with an empty tape"})
               nil))]
       (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :iteration-loop})]
         (loop [loop-state (merge {:iteration 0 :messages initial-messages
@@ -2757,15 +2589,15 @@
                     pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
                     ;; Phase 7 swap: tape-based assembly. system-vars +
                     ;; live-vars come from sandbox introspection;
-                    ;; per-env LRU drives staleness; tape entries come
+                    ;; per-env LRU drives staleness; journal entries come
                     ;; from `journal-iters` via the same shape adapter.
-                    iteration-context (prompt/build-iteration-context-tape environment
+                    iteration-context (prompt/build-iteration-context environment
                                         {:blocks-by-iteration journal-iters
                                          :active-extensions   active-exts
                                          :iteration           iteration
                                          :current-status      :current
-                                         :system-vars         (env/tape-system-vars (:sci-ctx environment))
-                                         :live-vars           (env/tape-live-vars
+                                         :system-vars         (env/journal-system-vars (:sci-ctx environment))
+                                         :live-vars           (env/journal-live-vars
                                                                 (:sci-ctx environment)
                                                                 (:initial-ns-keys environment)
                                                                 (some-> (:def-resolve-lru-atom environment) deref)
@@ -2908,20 +2740,6 @@
                         final-answer (when final-result (:answer final-result))
                         _ (update-system-vars! environment
                             {:thinking thinking :final-result final-result :final-answer final-answer})
-                        ;; Pivot invariant: post-Phase-4 `blocks` is ALWAYS
-                        ;; a length-1 vec. The preflight rejects 0-fence
-                        ;; (empty-code-error) and N>1-fence (multi-block-
-                        ;; error) iterations BEFORE eval by synthesizing a
-                        ;; single error-bearing code-entry; the executed
-                        ;; mapv that follows always produces exactly one
-                        ;; output block. Bind the singleton up front so
-                        ;; the rest of the iteration-end aggregation reads
-                        ;; like the scalar reality — no more `mapcat` /
-                        ;; `reduce` / `(first blocks)` ceremony chasing a
-                        ;; one-element vec around. The `:blocks` field on
-                        ;; iteration-result + trace-entry stays as a vec
-                        ;; for consumer back-compat (transcript, tape
-                        ;; adapter, channel renderers).
                         block (first blocks)
                         iteration-block-code (or (some-> block :code str/trim not-empty) "")
                         iteration-time-ms (long (or (:execution-time-ms block) 0))
@@ -2950,9 +2768,9 @@
                         ;; Phase 7: merge per-iteration `:lru` stamps
                         ;; (collected by the patched resolve-symbol*)
                         ;; into the long-lived per-env LRU map. The
-                        ;; tape live-vars renderer reads this to age
+                        ;; journal live-vars renderer reads this to age
                         ;; user vars out of the discovery line after
-                        ;; `TAPE_LRU_TURN_WINDOW` quiet turns.
+                        ;; `JOURNAL_LRU_TURN_WINDOW` quiet turns.
                         _ (when-let [lru-atom (:def-resolve-lru-atom environment)]
                             (when-let [iteration-lru (not-empty (:lru block))]
                               (swap! lru-atom merge iteration-lru)))
@@ -3090,7 +2908,7 @@
                                        :done?            false}))
                           (let [;; Carry forward all observed iterations
                                 ;; as `[pos {:thinking :blocks}]` for the
-                                ;; next iteration's tape. The renderer
+                                ;; next iteration's journal. The renderer
                                 ;; drops oldest entries by window, not
                                 ;; by token count.
                                 _ blocks
@@ -3205,7 +3023,7 @@
           ;; Locate the LAST user message once. It is the only human text
           ;; sent into this turn. Prior dialog transcript is intentionally
           ;; NOT replayed to the model; durable context flows through
-          ;; <journal>, <bindings>, SYSTEM vars, and DB-backed tools.
+          ;; persisted iterations, defs, SYSTEM vars, and DB-backed tools.
           last-user-idx          (->> (map-indexed vector messages)
                                    reverse
                                    (some (fn [[i m]]
@@ -3685,7 +3503,7 @@
 
    Forwards `:doc` and `:arglists` from the symbol entry into the SCI var
    metadata so `(clojure.repl/doc v/cat)`, `(:doc (meta #'v/cat))`, and
-   `(:arglists (meta #'v/cat))` all work inside the sandbox. Without this,
+   `(:arglists (meta #'v/cat))` all work in the channel-rendered tool-call rowthe sandbox. Without this,
    docstrings stayed app-side only and the model could not introspect its
    own callable surface."
   [ext-ns sym val sym-entry]
@@ -3979,9 +3797,9 @@
              :initial-ns-keys                   initial-ns-keys
              ;; Long-lived per-env LRU map: `{var-name-string →
              ;; last-used-turn-pos}`. Merged from each iteration's
-             ;; `:lru` after eval. Read by `prompt/tape-live-vars` to
+             ;; `:lru` after eval. Read by `prompt/journal-live-vars` to
              ;; decide which user vars to surface in the live-vars
-             ;; discovery line. Pivot Phase 7 wire.
+             ;; discovery line.
              :def-resolve-lru-atom              (atom {})
              :router                            router
              :answer-atom                       answer-atom

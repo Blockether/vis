@@ -37,6 +37,7 @@
    [clojure.java.io :as io]
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
+   [com.blockether.vis.ext.foundation.editing.patch :as patch]
    [com.blockether.vis.internal.env.handle :as handle]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
@@ -577,6 +578,124 @@
       (spit file after))
     (mapv #(select-keys % [:path :before :after]) plans)))
 
+;; =============================================================================
+;; Codex `apply_patch` envelope mode
+;; =============================================================================
+;;
+;; `(v/patch "*** Begin Patch ... *** End Patch")` accepts the OpenAI Codex
+;; apply_patch grammar (Add/Update/Delete/Move) and applies all hunks
+;; atomically: every hunk is validated against the live filesystem before
+;; any write. This preserves Vis' all-or-nothing safety invariant; Codex
+;; itself applies hunks sequentially and may leave partial writes on
+;; failure.
+
+(defn- envelope-plan-add
+  [{:keys [path contents]}]
+  (let [file   (safe-path path)
+        rel    (rel-path file)
+        exists (.exists file)]
+    (when (.isDirectory file)
+      (throw (ex-info (str "v/patch add target is a directory: " rel)
+               {:type :ext.foundation.editing/patch-add-is-dir :path rel})))
+    {:op :add
+     :path rel
+     :file file
+     :before (when exists (slurp file))
+     :after contents
+     :existed? exists}))
+
+(defn- envelope-plan-delete
+  [{:keys [path]}]
+  (let [file (ensure-existing-file! (safe-path path))
+        rel  (rel-path file)
+        before (slurp file)]
+    {:op :delete
+     :path rel
+     :file file
+     :before before
+     :after nil}))
+
+(defn- envelope-plan-update
+  [{:keys [path move-to chunks]}]
+  (let [file (ensure-existing-file! (safe-path path))
+        rel  (rel-path file)
+        before (slurp file)
+        {:keys [new]} (patch/compute-update {:original before
+                                             :chunks chunks
+                                             :path rel})
+        dest-file (when move-to (safe-path move-to))
+        dest-rel  (when dest-file (rel-path dest-file))]
+    {:op (if move-to :update-move :update)
+     :path rel
+     :file file
+     :before before
+     :after new
+     :move-to dest-rel
+     :dest-file dest-file}))
+
+(defn- envelope-plan
+  "Plan every hunk against the live filesystem. Pure with respect to
+   writes — IO is read-only here, mutation happens in `envelope-commit!`."
+  [hunks]
+  (mapv (fn [hunk]
+          (case (:op hunk)
+            :add    (envelope-plan-add hunk)
+            :delete (envelope-plan-delete hunk)
+            :update (envelope-plan-update hunk)))
+    hunks))
+
+(defn- envelope-commit!
+  [plans]
+  (doseq [{:keys [op file after dest-file]} plans]
+    (case op
+      :add         (do (ensure-parent-dirs! file)
+                       (spit file after))
+      :delete      (fs/delete file)
+      :update      (spit file after)
+      :update-move (do (ensure-parent-dirs! dest-file)
+                       (spit dest-file after)
+                       (when-not (= (.getCanonicalPath file)
+                                   (.getCanonicalPath dest-file))
+                         (fs/delete file))))))
+
+(defn patch-envelope-safe
+  "Apply a Codex `apply_patch` envelope string. Validates every hunk
+   before any write; throws ex-info on any failure with all writes
+   skipped. Returns a vec of `{:op :path :before :after :move-to?}`."
+  [^String patch-text]
+  (let [{:keys [hunks]} (patch/parse-patch patch-text)
+        _ (when (empty? hunks)
+            (throw (ex-info "v/patch envelope contained no hunks"
+                     {:type :ext.foundation.editing/empty-patch})))
+        plans (envelope-plan hunks)]
+    (envelope-commit! plans)
+    (mapv (fn [{:keys [op path before after move-to]}]
+            (cond-> {:op op :path path :before before :after after}
+              move-to (assoc :move-to move-to)))
+      plans)))
+
+(defn patch-envelope-check
+  "Plan a Codex envelope without writing. Returns the same shape as
+   `patch-envelope-safe` plus `:valid?` and `:failures` for parity with
+   `v/patch-check`."
+  [^String patch-text]
+  (try
+    (let [{:keys [hunks]} (patch/parse-patch patch-text)
+          plans (envelope-plan hunks)]
+      {:valid? true
+       :mode :codex-apply-patch
+       :checks (mapv (fn [{:keys [op path move-to]}]
+                       (cond-> {:op op :path path}
+                         move-to (assoc :move-to move-to)))
+                 plans)
+       :failures []})
+    (catch clojure.lang.ExceptionInfo e
+      {:valid? false
+       :mode :codex-apply-patch
+       :checks []
+       :failures [{:message (ex-message e)
+                   :data (ex-data e)}]})))
+
 (defn- create-dirs-safe [path]
   (let [f (safe-path path)]
     (fs/create-dirs f)
@@ -697,35 +816,89 @@
              :expected '([spec-map])}))))
 
 (defn- patch-tool
-  "Canonical exact text patch. Takes one edit map or a vector of maps with required keys `:path`, `:search`, `:replace`. Every `:search` must match exactly once in the current file; all edits validate before any write. Returns changed path summaries."
+  "Edit files. Accepts two input shapes:
+
+   1. Codex `apply_patch` envelope (string):
+        (v/patch \"*** Begin Patch\\n*** Update File: src/foo.clj\\n@@\\n-old\\n+new\\n*** End Patch\\n\")
+      Supports Add/Update/Delete/Move with `@@` context headers and
+      ` `/`+`/`-` line prefixes. Fuzzy line match (exact -> rstrip ->
+      trim -> Unicode-normalize) mirrors Codex' matcher.
+
+   2. Exact-replace vec (canonical):
+        (v/patch [{:path :search :replace}])
+      Every `:search` must match exactly once in the current file.
+
+   Both modes validate the full plan against the live filesystem
+   before any write — a single failure aborts the entire batch and no
+   file is touched."
   [edits]
-  (let [plans (patch-safe edits)]
-    (tool-success
-      {:op :v/patch
-       :path (or (:path (first plans)) ".")
-       :kind :file
-       :result (mapv #(select-keys % [:path]) plans)
-       :info {:files (mapv (fn [{:keys [path before after]}]
-                             {:path path
-                              :changed? (not= before after)
-                              :before before
-                              :after after
-                              :lines-before (count (str/split-lines before))
-                              :lines-after (count (str/split-lines after))})
-                       plans)}})))
+  (cond
+    (patch/looks-like-patch? edits)
+    (let [plans (patch-envelope-safe edits)]
+      (tool-success
+        {:op :v/patch
+         :path (or (:path (first plans)) ".")
+         :kind :file
+         :result (mapv #(select-keys % [:path :op]) plans)
+         :info {:mode :codex-apply-patch
+                :files (mapv (fn [{:keys [op path before after move-to]}]
+                               (cond-> {:path path
+                                        :op op
+                                        :changed? (not= before after)
+                                        :before before
+                                        :after after
+                                        :lines-before (count (str/split-lines (or before "")))
+                                        :lines-after (count (str/split-lines (or after "")))}
+                                 move-to (assoc :move-to move-to)))
+                         plans)}}))
+
+    :else
+    (let [plans (patch-safe edits)]
+      (tool-success
+        {:op :v/patch
+         :path (or (:path (first plans)) ".")
+         :kind :file
+         :result (mapv #(select-keys % [:path]) plans)
+         :info {:mode :exact-replace
+                :files (mapv (fn [{:keys [path before after]}]
+                               {:path path
+                                :changed? (not= before after)
+                                :before before
+                                :after after
+                                :lines-before (count (str/split-lines before))
+                                :lines-after (count (str/split-lines after))})
+                         plans)}}))))
 
 (defn- patch-check-tool
-  "Preflight canonical exact text patches without writing. Returns match counts for each edit plus bounded search previews; use before v/patch when searches may be stale or multi-edit risk is high."
+  "Preflight a patch without writing. Accepts the same two input shapes
+   as v/patch (Codex envelope string OR exact-replace vec). For exact
+   mode returns match counts per edit; for envelope mode returns
+   per-hunk validity plus parse/path errors."
   [edits]
-  (let [out (patch-check edits)]
-    (tool-success
-      {:op :v/patch-check
-       :path (or (:path (first (:checks out))) ".")
-       :kind :file
-       :result out
-       :info {:valid? (:valid? out)
-              :edit-count (count (:checks out))
-              :failure-count (count (:failures out))}})))
+  (cond
+    (patch/looks-like-patch? edits)
+    (let [out (patch-envelope-check edits)]
+      (tool-success
+        {:op :v/patch-check
+         :path (or (:path (first (:checks out))) ".")
+         :kind :file
+         :result out
+         :info {:mode :codex-apply-patch
+                :valid? (:valid? out)
+                :edit-count (count (:checks out))
+                :failure-count (count (:failures out))}}))
+
+    :else
+    (let [out (patch-check edits)]
+      (tool-success
+        {:op :v/patch-check
+         :path (or (:path (first (:checks out))) ".")
+         :kind :file
+         :result out
+         :info {:mode :exact-replace
+                :valid? (:valid? out)
+                :edit-count (count (:checks out))
+                :failure-count (count (:failures out))}}))))
 
 (defn- create-dirs-tool
   "Ensure dir exists. Tool result."
@@ -1146,7 +1319,7 @@
     "`{:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]}` (OR) or "
     "`{:all [\"defn\" \"foo\"]}` (same-line AND); no regex/shorthand. "
     "v/cat reads one window: `(v/cat path offset n)`; page via `(:next-offset prev)` until `(:eof? prev)`. Bind windows, not whole files. "
-    "Edit text with `(v/patch [{:path :search :replace}])`; each :search must match exactly once or the whole batch fails. v/patch-check verifies uniqueness. "
+    "Edit text two ways: `(v/patch [{:path :search :replace}])` for exact-replace (each :search must match exactly once); OR `(v/patch \"*** Begin Patch\\n*** Update File: p\\n@@\\n-old\\n+new\\n*** End Patch\\n\")` for Codex apply_patch envelope (Add/Update/Delete/Move, fuzzy line match). Both modes validate the full plan before any write; one failure aborts the whole batch. v/patch-check accepts the same two shapes. "
     "v/patch returns the unified diff + post-image — that IS the evidence the write happened. Do NOT v/cat to verify; trust the patch result. "
     "Path ops: v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists, v/exists?. "
     "No shell: git/verify/CLI live outside the sandbox — stay in tools/REPL."))

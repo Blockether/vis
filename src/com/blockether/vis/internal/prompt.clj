@@ -8,11 +8,10 @@
    the extension message.
 
    Per-iteration user-role context is assembled by
-   `build-iteration-context-tape` (Phase 7 pivot): rich-comment
-   `;; system-vars` / `;; live-vars` lines plus a tape entry per
+   `build-iteration-context`: rich-comment
+   `;; system-vars` / `;; live-vars` lines plus a journal entry per
    recent iteration, wrapped by zero or more `<iteration_hint>` XML
-   blocks from active extensions. The legacy `<journal>` / `<bindings>`
-   / `<current_turn_context>` XML pipeline and its token-budgeting
+   blocks from active extensions. The legacy XML pipeline and its token-budgeting
    helpers were retired in the same pass."
   (:require
    [clojure.string :as str]
@@ -94,7 +93,7 @@
   "Full previous exchange context for follow-up turns.
 
    Vis deliberately does not replay the whole chat transcript; prior work
-   flows through <journal>/<bindings>. But one-turn follow-ups like `A`,
+   flows through persisted iterations. But one-turn follow-ups like `A`,
    `yes`, or `do it` need the complete immediately previous answer as their
    referent. Do not truncate this block: provider/context management owns the
    final context budget."
@@ -111,9 +110,9 @@
 
 (defn assemble-initial-messages
   "Initial provider messages for one turn. Deliberately excludes full prior
-   dialog transcript: Vis state flows through <current_turn_context>,
-   <journal>, <bindings>, and DB-backed tools. The current user message is tagged as
-   <current_user_message>.
+   dialog transcript: Vis state flows through persisted iterations,
+   defs, and DB-backed tools. The current user message is tagged as
+   `current_user_message`.
 
    One full previous-turn context block may be prepended so short follow-ups
    can inspect the prior exchange without replaying the whole conversation."
@@ -133,7 +132,7 @@
 
 (def ^:private CORE_SYSTEM_PROMPT
   ;; Each line is its OWN short string, joined at runtime. cljfmt
-  ;; only mangles embedded `\"` inside long multi-line docstrings;
+  ;; only mangles embedded `\"` in the channel-rendered tool-call rowlong multi-line docstrings;
   ;; short single-line strings round-trip cleanly through every
   ;; reformat pass. Keeps the prompt inline (one ns, no resource
   ;; load) while still letting code examples use real double
@@ -145,10 +144,10 @@
      "  Iteration: ONE ```clojure``` block. Many top-level forms inside;"
      "             value of the LAST form is the iteration result."
      "             No (do ...) wrap."
-     "  Tape:      prior iteration renders below as commented Clojure"
+     "  Journal:      prior iteration renders below as commented Clojure"
      "             source. Errors: ;; ! ERROR ... -- correct next iter."
      "  Vars:      every (def ...) persists across iterations and turns."
-     "             ;; system-vars and ;; live-vars lists are above the tape."
+     "             ;; system-vars and ;; live-vars lists are above the journal."
      "             Bind a probe once; reference by name; do not re-probe."
      "  Tools:     extensions register them (v/cat, v/rg, v/ls, v/patch, ...)."
      "             Tool calls return Handles. @h materializes; (view h :op ...)"
@@ -266,7 +265,7 @@
   "Collect `<extensions>` from every active extension that declares
    `:ext/prompt`. Each prompt is `(fn [env] -> string)` (normalized at
    registration). Non-blank results are wrapped as an extension element
-   with an id attribute, then joined inside one `<extensions>...</extensions>`
+   with an id attribute, then joined in the channel-rendered tool-call rowone `<extensions>...</extensions>`
    block."
   [environment active-extensions]
   (let [fragments (keep (fn [ext]
@@ -291,7 +290,7 @@
    capabilities change.
 
    Keep this as ONE provider system message. Extension prompts belong here,
-   not in every per-iteration `<current_turn_context>` trailer. When a future
+   not in every per-iteration trailer. When a future
    reload path recomputes active extensions mid-turn, it should replace this
    message in the rebuilt stateless provider message vector rather than append
    a second extension/context message."
@@ -321,7 +320,7 @@
                                never append a second extension context.
 
    Extension fragments are separate from the core system prompt and are not
-   repeated in per-iteration `<current_turn_context>` trailers.
+   repeated in per-iteration trailers.
 
    Required opts:
      `:active-extensions` - vec from `(active-extensions env)`. Drives
@@ -341,23 +340,20 @@
         [core-block turn-system-block]))))
 
 ;; =============================================================================
-;; Phase 7 prep — REPL tape rendering primitives
+;; REPL journal rendering primitives
 ;;
-;; The pivot replaces <journal> + <bindings> + <current_user_message> +
-;; <current_turn_context> with a pure-Clojure tape rendering of the
-;; previous iteration's source + ;; => results. These primitives live
-;; alongside the legacy renderers above; Phase 7 main wires them into
-;; build-iteration-context. Until then they are dormant and tested in
-;; isolation.
+;; A pure-Clojure journal replaces the legacy XML scaffolding: prior
+;; iteration source + `;; => results` rendered like a REPL transcript.
+;; Wired into the live engine path via `build-iteration-context`.
 ;; =============================================================================
 
-(def ^:const TAPE_RESULT_MAX_CHARS
-  "Per-result truncation cap when rendering `;; =>` lines on the tape."
+(def ^:const JOURNAL_RESULT_MAX_CHARS
+  "Per-result truncation cap when rendering `;; =>` lines on the journal."
   1500)
 
-(defn tape-iteration-header
+(defn journal-iteration-header
   "One-line `;; --- iteration N | turn=K conv=… state=… | status=… ---`
-   header that prefixes each rendered iteration's code on the tape.
+   header that prefixes each rendered iteration's code on the journal.
    `status` is :done | :error | :current. Optional ids: nil values are
    elided so test contexts can render with partial coordinates."
   [{:keys [iteration-position turn-position conv-id state-id status]}]
@@ -369,16 +365,16 @@
                 status             (conj (str "status=" (name status))))]
     (str ";; --- " (str/join " | " parts) " ---")))
 
-(defn tape-result-line
-  "Render `;; => <pr-str of result>` honoring `TAPE_RESULT_MAX_CHARS`.
+(defn journal-result-line
+  "Render `;; => <pr-str of result>` honoring `JOURNAL_RESULT_MAX_CHARS`.
    Returns nil for `:vis/no-result` so a thrown form skips the result
    line entirely (the error annotation carries the meaning)."
   [result]
   (when-not (= :vis/no-result result)
-    (let [s (fmt/safe-pr-str result {:max-chars TAPE_RESULT_MAX_CHARS})]
+    (let [s (fmt/safe-pr-str result {:max-chars JOURNAL_RESULT_MAX_CHARS})]
       (str ";; => " s))))
 
-(defn tape-side-effect-line
+(defn journal-side-effect-line
   "Render a side-effect annotation: `;; ! <kind>> <text>` for
    `:stdout` / `:stderr` / `:error` / `:timeout`. Empty / blank text
    returns nil so the renderer can drop it."
@@ -391,8 +387,8 @@
                 :timeout "TIMEOUT ")]
       (str ";; ! " tag (str/trim (str text))))))
 
-(defn format-tape-iteration
-  "Render one iteration as commented Clojure source for the tape.
+(defn format-journal-iteration
+  "Render one iteration as commented Clojure source for the journal.
 
    Input shape:
      {:iteration-position N
@@ -418,18 +414,18 @@
 
    Side-effect lines render in stdout / stderr / => / ERROR / TIMEOUT
    order. The :code body is preserved verbatim — the model's own `;;`
-   thinking comments inside the form survive untouched."
+   thinking comments in the channel-rendered tool-call rowthe form survive untouched."
   [{:keys [code result error stdout stderr timeout?] :as iter}]
-  (let [header     (tape-iteration-header iter)
+  (let [header     (journal-iteration-header iter)
         body       (when (string? code) (str/trim-newline code))
         result-ln  (when-not (or error timeout?)
-                     (tape-result-line result))
-        stdout-ln  (tape-side-effect-line :stdout stdout)
-        stderr-ln  (tape-side-effect-line :stderr stderr)
+                     (journal-result-line result))
+        stdout-ln  (journal-side-effect-line :stdout stdout)
+        stderr-ln  (journal-side-effect-line :stderr stderr)
         error-ln   (when error
-                     (tape-side-effect-line :error (or (:message error) (str error))))
+                     (journal-side-effect-line :error (or (:message error) (str error))))
         timeout-ln (when timeout?
-                     (tape-side-effect-line :timeout
+                     (journal-side-effect-line :timeout
                        (or (:message error) "iteration timed out")))]
     (str/join "\n"
       (keep identity [header body stdout-ln stderr-ln result-ln error-ln timeout-ln]))))
@@ -460,10 +456,10 @@
                 (str ";;   " name "  " (pr-str (or doc ""))))
            entries))))))
 
-(defn format-tape
+(defn format-journal
   "Render a sequence of iterations as the full N-1 (or N-1 + N) tape
    the model sees in the user-role message. `iters` is a vec of
-   per-iteration maps (see `format-tape-iteration` for the shape) in
+   per-iteration maps (see `format-journal-iteration` for the shape) in
    chronological order. Iterations render top-to-bottom separated by
    a blank line so the iteration-header lines visually anchor each
    block.
@@ -473,29 +469,29 @@
    recovery iteration."
   [iters]
   (when (seq iters)
-    (str/join "\n\n" (map format-tape-iteration iters))))
+    (str/join "\n\n" (map format-journal-iteration iters))))
 
-(defn format-user-role-tape-message
+(defn format-user-role-journal-message
   "Assemble the full user-role message body: optional system-vars
-   header + optional live-vars header + the rendered tape. Each
-   section is joined with a blank line so the tape header lines stay
+   header + optional live-vars header + the rendered journal. Each
+   section is joined with a blank line so the journal header lines stay
    visually distinct.
 
    Phase 7 main will wire this through `build-iteration-context` in
-   place of the legacy <journal>/<bindings>/<current_user_message>
+   place of the legacy XML
    blocks. Until then the engine still uses the old assembly path
    and this fn is exercised only by tests."
   [{:keys [system-vars live-vars iters]}]
   (let [sys-block  (format-system-vars-block system-vars)
         live-block (format-live-vars-block live-vars)
-        tape-block (format-tape iters)
+        tape-block (format-journal iters)
         parts      (keep identity [sys-block live-block tape-block])]
     (when (seq parts)
       (str/join "\n\n" parts))))
 
-(defn iteration->tape-iter
+(defn iteration->journal-iter
   "Adapt an engine iteration map (the multi-block shape from the legacy
-   loop) into the tape-iter shape `format-tape-iteration` expects.
+   loop) into the journal-iter shape `format-journal-iteration` expects.
 
    Engine input:
      {:position N
@@ -519,7 +515,7 @@
    the same adapter — the join over a 1-element blocks vec is still
    the same single block."
   ([iteration]
-   (iteration->tape-iter iteration {}))
+   (iteration->journal-iter iteration {}))
   ([iteration {:keys [iteration-position turn-position conv-id state-id status]}]
    (let [blocks (or (:blocks iteration) [])
          non-blank #(when (and (string? %) (not (str/blank? %))) %)
@@ -546,11 +542,11 @@
        conv-id       (assoc :conv-id conv-id)
        state-id      (assoc :state-id state-id)))))
 
-(defn build-iteration-context-tape
+(defn build-iteration-context
   "Phase 7 build-iteration-context replacement: assembles the
-   per-iteration user-role trailer in the new pivot shape — XML
+   per-iteration user-role trailer — XML
    `<iteration_hints>` (preserved per design) followed by pure
-   commented-Clojure sections (system-vars / live-vars / tape).
+   commented-Clojure sections (system-vars / live-vars / journal).
 
    Lives alongside the legacy `build-iteration-context`. Phase 7 main
    flips the engine call site in loop.clj from the legacy fn to this
@@ -563,10 +559,10 @@
    Optional opts:
      `:blocks-by-iteration` - carried iterations as
         `[iteration-position {:blocks …}]` pairs. Fed through
-        `iteration->tape-iter` to produce tape entries.
+        `iteration->journal-iter` to produce journal entries.
      `:iteration`            - current iteration position (1-based).
      `:current-status`       - status to stamp on the LATEST iteration
-        in the rendered tape (default :done; pass :current for the
+        in the rendered journal (default :done; pass :current for the
         in-flight iteration that has not yet executed).
      `:system-vars`          - vec of `{:name :doc}` for engine-managed
         UPPERCASE vars. Phase 7 main fills this from sandbox introspection.
@@ -578,25 +574,25 @@
                        current-status system-vars live-vars]
                 :as opts}]
   (when-not (contains? opts :active-extensions)
-    (throw (ex-info "build-iteration-context-tape requires :active-extensions"
+    (throw (ex-info "build-iteration-context requires :active-extensions"
              {:type :vis/missing-active-extensions})))
   (let [turn-position (long (or (some-> environment :current-turn-position-atom deref) 1))
         conv-id       (some-> environment :conversation-id str
                         (subs 0 (min 8 (count (str (:conversation-id environment))))))
         last-pos      (some-> blocks-by-iteration last first)
-        tape-iters    (mapv (fn [[pos iter-data]]
-                              (iteration->tape-iter
-                                iter-data
-                                (cond-> {:iteration-position pos
-                                         :turn-position turn-position
-                                         :conv-id conv-id}
-                                  (and last-pos (= pos last-pos))
-                                  (assoc :status (or current-status :done)))))
-                        (or blocks-by-iteration []))
-        body (format-user-role-tape-message
+        journal-iters    (mapv (fn [[pos iter-data]]
+                                 (iteration->journal-iter
+                                   iter-data
+                                   (cond-> {:iteration-position pos
+                                            :turn-position turn-position
+                                            :conv-id conv-id}
+                                     (and last-pos (= pos last-pos))
+                                     (assoc :status (or current-status :done)))))
+                           (or blocks-by-iteration []))
+        body (format-user-role-journal-message
                {:system-vars (or system-vars [])
                 :live-vars   (or live-vars [])
-                :iters       tape-iters})
+                :iters       journal-iters})
         ;; Reuse the legacy nudge-ctx + hint-collection path so existing
         ;; `:turn.iteration/start` hook contracts keep working unchanged.
         nudge-ctx {:environment environment

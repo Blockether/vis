@@ -890,7 +890,7 @@
         (expect (= (count raw) (:llm-raw-response-length iter)))
         (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
                   (:llm-raw-response-sha256 iter)))
-        ;; :llm-executable-code was removed during the per-block-eval pivot;
+        ;; :llm-executable-code was removed during the per-block-eval cut;
         ;; :llm-executable-blocks is the single source of truth.
         (expect (nil? (:llm-executable-code iter)))
         (expect (= [{:lang "clojure" :source "(+ 1 1)"}]
@@ -1937,12 +1937,6 @@
           {:keys [sci-ctx]} (env/create-sci-context nil)]
       (let [results (env/restore-sandbox! sci-ctx s cid)
             by-name (into {} (map (fn [r] [(:name r) r])) results)]
-        ;; Pivot: any parsed `(def …)` / `(defn …)` shape is safe to
-        ;; re-eval on restore because dependencies are topo-sorted
-        ;; first — so `make-adder` lands before `add-5`'s init
-        ;; evaluates. The legacy regex only accepted `defn` shapes;
-        ;; the edamame-backed `parsed-def-form?` correctly accepts
-        ;; plain `def` too.
         (expect (= :eval (:restored-via (by-name "make-adder"))))
         (expect (= :eval (:restored-via (by-name "add-5")))))
       ;; Both work in the restored sandbox: make-adder is the factory,
@@ -2091,9 +2085,9 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented SYSTEM vars (post-pivot)"
+  (it "SYSTEM_VAR_NAMES contains exactly the documented SYSTEM vars "
     ;; `CONVERSATION_TITLE` was retired earlier (sidebar metadata).
-    ;; `USER_REQUEST` was added by the pivot — the user's turn request
+    ;; `USER_REQUEST` is the engine-injected turn-start binding — the user's turn request
     ;; lives as a real (def …) injected at turn start so the model
     ;; reads it like any other system var, not via a separate XML
     ;; <current_user_message> block. See env/SYSTEM_VAR_NAMES.
