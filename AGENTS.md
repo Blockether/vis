@@ -62,19 +62,19 @@ vis channels tui
 
 ## Clojure edits
 
-Use `z/patch` for `.clj`, `.cljc`, `.cljs`, `.edn` edits.
+Use `v/patch` for all text edits, including `.clj`/`.cljc`/`.cljs`/`.edn`. The
+`z/` extension was retired; `v/patch` is the canonical patch surface.
 
 ```clojure
-(z/patch [{:path "src/foo.clj"
+(v/patch [{:path "src/foo.clj"
            :search "old-sym"
            :replace "new-sym"}])
 ```
 
 - Prefer one vector of edit maps.
-- `:search` is a Clojure/EDN locator or source snippet, not raw text.
-- Each search must match exactly once; all edits validate before write.
+- `:search` must match exactly once in the current file; all edits validate
+  before any write. Use `v/patch-check` to preflight match counts.
 - Multiple same-file edits are applied in order and written once.
-- Use `(z/locators path)` or `(z/symbols path)` when unsure.
 - Avoid `(declare ...)`; sort defs by dependency. If unavoidable, add nearby reason.
 - If delimiters break, run `clj-paren-repair <files>`; do not hand-balance.
 - Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
