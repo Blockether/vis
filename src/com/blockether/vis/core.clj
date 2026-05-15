@@ -147,12 +147,13 @@
 ;; `:channel/messages-renderer-fn` and call it through `tg/send-message!`
 ;; or the TUI screen-emit boundary. See `docs/specs/01-streaming-and-markdown.md`.
 ;; =============================================================================
-(def render        ir/render)
-(def ->ast         ir/->ast)
-(def text->ir      ir/text->ir)
-(def search-text   ir/search-text)
-(def extract-code  ir/extract-code)
-(def extract-text  ir/extract-text)
+(def render               ir/render)
+(def ->ast                ir/->ast)
+(def text->ir             ir/text->ir)
+(def search-text          ir/search-text)
+(def extract-code         ir/extract-code)
+(def extract-text         ir/extract-text)
+(def code-block-segments  ir/code-block-segments)
 
 ;; =============================================================================
 ;; Progress tracker

@@ -177,14 +177,23 @@
                         produced-answer? (and (canonical-ir? (:answer q)) (> (count (:answer q)) 2))
                         trace (into []
                                 (map (fn [it]
-                                       (let [all-exprs   [(cond-> {:position 0
-                                                                   :code (or (:code it) "")}
+                                       (let [;; `:render-segments` is a derived view of `:code`
+                                             ;; (top-level form classification). NOT stored in
+                                             ;; the DB — rederived on every render via the
+                                             ;; pure `code-block-segments` parser so display
+                                             ;; logic stays driven by the same classifier
+                                             ;; that gates the live channel, with zero
+                                             ;; serialization drift.
+                                             code (or (:code it) "")
+                                             segments (vis/code-block-segments code)
+                                             all-exprs   [(cond-> {:position 0
+                                                                   :code code}
                                                             (contains? it :result) (assoc :result (:result it))
                                                             (contains? it :error) (assoc :error (:error it))
                                                             (contains? it :stdout) (assoc :stdout (:stdout it))
                                                             (contains? it :stderr) (assoc :stderr (:stderr it))
                                                             (contains? it :channel) (assoc :channel (:channel it))
-                                                            (contains? it :render-segments) (assoc :render-segments (:render-segments it))
+                                                            (seq segments) (assoc :render-segments segments)
                                                             (contains? it :execution-time-ms)
                                                             (assoc :duration-ms (:execution-time-ms it)))]
                                              answer-here? (and produced-answer?
