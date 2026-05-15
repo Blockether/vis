@@ -256,6 +256,13 @@ CREATE TABLE conversation_turn_iteration (
   stdout                          TEXT,
   stderr                          TEXT,
   duration_ms                     INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+  -- Per-top-level-form structural classification produced by
+  -- `render/code-block-segments` (vec of `{:kind :code|:title|
+  -- :answer-ref ...}` maps). Channels read this on resume to elide
+  -- `(done ...)` + structurally-silent forms WITHOUT reparsing the
+  -- code string and re-deriving the classification. Nippy-frozen
+  -- vec; nil when an iteration produced no parseable code.
+  render_segments                 BLOB,
 
   created_at                      INTEGER NOT NULL,
   finished_at                     INTEGER,
