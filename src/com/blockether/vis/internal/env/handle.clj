@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.extension.handle
+(ns com.blockether.vis.internal.env.handle
   "Handle: protocol-driven, deref-able reference to bounded payload data.
 
    `PHandle` is the contract every handle kind implements:

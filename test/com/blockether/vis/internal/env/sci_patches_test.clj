@@ -1,6 +1,6 @@
-(ns com.blockether.vis.internal.extension.sci-patches-test
+(ns com.blockether.vis.internal.env.sci-patches-test
   (:require
-   [com.blockether.vis.internal.extension.sci-patches :as sp]
+   [com.blockether.vis.internal.env.sci-patches :as sp]
    [lazytest.core :refer [defdescribe expect it]]
    [sci.core :as sci]
    [sci.impl.evaluator]

@@ -15,7 +15,7 @@
    [clojure.set]
    [clojure.string :as string]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
-   [com.blockether.vis.internal.extension.handle :as handle]
+   [com.blockether.vis.internal.env.handle :as handle]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
