@@ -97,23 +97,16 @@
     (sequential? v) (doall (map realize-value v))
     :else v))
 
-(def ^:private DEF_HEADS_FOR_RESTORE
-  "Heads whose `(HEAD NAME ...)` shape can be recovered by edamame parse
-   for per-var source extraction. Restored vars carry the smallest form
-   that introduced them so re-eval reconstitutes ONE var without
-   re-running unrelated side effects from the same iteration.
-
-   Macro-expanded defs (e.g. `s/def`, `defrecord`) do not appear here
-   verbatim in the source; sink entries whose name does not match any
-   parsed head fall back to the whole iteration block."
-  '#{def defn defn- defmacro defonce defmulti})
+;; `DEF_HEADS_FOR_RESTORE` lives in `env.clj` (single source of truth
+;; shared by source extraction, dep-edge walking, and restore-time
+;; shape check via `env/parsed-def-form?`).
 
 (defn- extract-def-sources
   "Parse `code` and return `{var-name-string -> per-form-pr-str}` for
    every `(def NAME ...)` / `(defn NAME ...)` / ... shape it contains.
    Walks `(do ...)` containers transparently so
    `(do (def a 1) (def b 2))` produces both entries. Forms whose head
-   is not in `DEF_HEADS_FOR_RESTORE` or whose name is not a symbol are
+   is not in `env/DEF_HEADS_FOR_RESTORE` or whose name is not a symbol are
    ignored. Parse errors yield {} so the caller falls back to the
    whole-iteration source.
 
@@ -136,7 +129,7 @@
       (reduce (fn [acc form]
                 (if (and (seq? form)
                       (symbol? (first form))
-                      (contains? DEF_HEADS_FOR_RESTORE (first form))
+                      (contains? env/DEF_HEADS_FOR_RESTORE (first form))
                       (symbol? (second form)))
                   (assoc acc (name (second form)) (pr-str form))
                   acc))
@@ -146,7 +139,7 @@
 (defn dep-edges-from-source
   "Parse `iteration-code` and emit one raw dependency edge per
    (free-symbol-in-init → def-name) reference. Walks every form whose
-   head is in `DEF_HEADS_FOR_RESTORE`; for each such form, collects
+   head is in `env/DEF_HEADS_FOR_RESTORE`; for each such form, collects
    ALL symbol references in the init / fn-body subtree and emits
    `{:upstream <ref-name> :downstream <def-name>}` edges.
 
@@ -181,7 +174,7 @@
         (mapcat (fn [form]
                   (when (and (seq? form)
                           (symbol? (first form))
-                          (contains? DEF_HEADS_FOR_RESTORE (first form))
+                          (contains? env/DEF_HEADS_FOR_RESTORE (first form))
                           (symbol? (second form)))
                     (let [def-name (name (second form))
                           ;; init-and-body: everything after (HEAD NAME)
@@ -574,7 +567,7 @@
                           :timeout? false}))]
       exec)))
 
-;; Print-cap defaults for `prompt/safe-pr-str` - chosen so a wide flat
+;; Print-cap defaults for `fmt/safe-pr-str` - chosen so a wide flat
 ;; collection or a deep nested map still pr-strs without materializing
 ;; an unbounded JVM string before truncation. Override per call site
 ;; when a tighter or looser bound is required.

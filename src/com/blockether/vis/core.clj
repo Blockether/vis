@@ -377,10 +377,8 @@
 (def SYSTEM_VAR_NAMES   env/SYSTEM_VAR_NAMES)
 (def system-var-sym?    env/system-var-sym?)
 (def create-sci-context env/create-sci-context)
-(def build-bindings    env/build-bindings)
 (def restore-sandbox!   env/restore-sandbox!)
 (def sci-update-binding! env/sci-update-binding!)
-(def bump-bindings!    env/bump-bindings!)
 (def bind-and-bump!     env/bind-and-bump!)
 
 ;; =============================================================================
@@ -437,10 +435,12 @@
 (def assemble-stable-prompt-messages prompt/assemble-stable-prompt-messages)
 (def build-system-prompt              prompt/build-system-prompt)
 (def stable-prompt-text               prompt/stable-prompt-text)
-(def build-iteration-context          prompt/build-iteration-context)
+;; `vis.core/build-iteration-context` re-exported the legacy XML
+;; assembly. Phase 7 pivot replaced it with
+;; `prompt/build-iteration-context-tape`; the re-export is dropped
+;; rather than aliased so any straggler caller fails loud.
 
-(def safe-pr-str                      prompt/safe-pr-str)
-(def truncated-pr-str                 prompt/truncated-pr-str)
+(def safe-pr-str                      fmt/safe-pr-str)
 (def assemble-initial-messages        prompt/assemble-initial-messages)
 ;; =============================================================================
 ;; Channel event bus

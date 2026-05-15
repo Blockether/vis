@@ -14,11 +14,11 @@
    [clojure.walk]
    [clojure+.core]
    [clojure+.walk]
+   [edamame.core :as edamame]
    [com.blockether.vis.internal.format :as fmt]
    [com.blockether.vis.internal.env.handle :as handle]
    [com.blockether.vis.internal.env.sci-patches]
    [com.blockether.vis.internal.persistance :as persistance]
-   [malli.provider :as mp]
    [sci.addons.future :as sci-future]
    [sci.core :as sci]
    [taoensso.telemere :as tel]))
@@ -641,183 +641,6 @@
   [sym]
   (contains? SYSTEM_VAR_NAMES sym))
 
-(defn- var-status-keyword [{:keys [system? persisted?]}]
-  (cond
-    system? :system
-    persisted? :archived
-    :else :live))
-
-(defn- var-type-keyword [val persisted?]
-  (cond
-    persisted? :persisted
-    (nil? val) :nil
-    (fn? val) :fn
-    (map? val) :map
-    (vector? val) :vector
-    (set? val) :set
-    (list? val) :list
-    (sequential? val) :seq
-    (string? val) :string
-    (integer? val) :int
-    (float? val) :float
-    (boolean? val) :bool
-    (keyword? val) :keyword
-    (symbol? val) :symbol
-    :else (some-> val class .getSimpleName str/lower-case keyword)))
-
-;; ---------------------------------------------------------------------------
-;; Source-backed var rendering
-;;
-;; `<bindings>` is intentionally tiny: one Malli-derived `;; shape:` comment
-;; followed by the persisted `(def ...)` / `(defn ...)` source form. Runtime
-;; values stay in the sandbox; the prompt sees source + shape, not payload
-;; previews.
-;; ---------------------------------------------------------------------------
-
-(def ^:private DOCSTRING_FIRST_LINE_CHARS 100)
-(def ^:private BINDINGS_BODY_MAX_CHARS 600)
-(def ^:private BINDINGS_PRINT_LENGTH 32)
-(def ^:private BINDINGS_PRINT_LEVEL 6)
-(def ^:private MAX_BINDINGS_ENTRIES 100)
-
-(defn- bounded-pr-str
-  "Local mirror of `iteration.core/safe-pr-str` for the bindings render
-   path - reuses `*print-length*` + `*print-level*` to short-circuit
-   pr during printing, then clips the resulting string. Kept here so
-   the env-core namespace doesn't depend on iteration.core (would be
-   a cycle)."
-  [v]
-  (let [bounded (binding [*print-length* BINDINGS_PRINT_LENGTH
-                          *print-level*  BINDINGS_PRINT_LEVEL]
-                  (pr-str v))]
-    (if (> (count bounded) BINDINGS_BODY_MAX_CHARS)
-      (str (subs bounded 0 BINDINGS_BODY_MAX_CHARS)
-        " ...<+" (- (count bounded) BINDINGS_BODY_MAX_CHARS) " chars>")
-      bounded)))
-
-(defn- truncate-string [s n]
-  (if (and (string? s) (> (count s) n)) (subs s 0 n) s))
-
-(defn- stored-def-source?
-  [code]
-  (boolean
-    (when (string? code)
-      (re-find #"^\s*\((?:clojure.core/)?(?:defn-|defn|def)(?:\s|$)" code))))
-
-(defn- malli-shape
-  [v]
-  (try
-    (mp/provide [v])
-    (catch Throwable t
-      [:any {:error (or (ex-message t) (.getName (class t)))}])))
-
-(defn- scope-label
-  [status]
-  (name (or status :unknown)))
-
-(defn- binding-comment
-  [{:keys [status val]}]
-  (str ";; scope=" (scope-label status)
-    " shape=" (bounded-pr-str (malli-shape val))))
-
-(defn- fallback-source-form
-  [{:keys [symbol type val arglists doc]}]
-  (if (= type :fn)
-    (let [single? (and (sequential? arglists)
-                    (= 1 (count arglists))
-                    (vector? (first arglists)))
-          doc-line (when (and (string? doc) (not (str/blank? doc)))
-                     (truncate-string
-                       (-> (str doc) str/split-lines first str/trim)
-                       DOCSTRING_FIRST_LINE_CHARS))
-          sig (cond
-                single? (pr-str (first arglists))
-                (seq arglists) (str/join " " (map pr-str arglists))
-                :else "[& args]")]
-      (str "(defn " symbol " " sig
-        (when doc-line (str " \"" doc-line "\""))
-        " ...)"))
-    (str "(def " symbol " " (bounded-pr-str val) ")")))
-
-(defn- source-form
-  [{:keys [code] :as entry}]
-  (if (stored-def-source? code)
-    (str/trim code)
-    (fallback-source-form entry)))
-
-(defn- render-fn-form
-  [entry]
-  (str (binding-comment entry) "\n" (source-form entry)))
-
-(defn- render-data-form
-  [entry]
-  (str (binding-comment entry) "\n" (source-form entry)))
-
-(defn- render-var-form
-  [{:keys [type] :as entry}]
-  (if (= type :fn)
-    (render-fn-form entry)
-    (render-data-form entry)))
-
-(defn- safe-defn-source?
-  [expr]
-  (boolean
-    (when (string? expr)
-      (re-find #"^\s*\((?:clojure.core/)?defn(?:-|\s)" expr))))
-
-(defn build-bindings
-  "Build the `<bindings>` block from user-defined vars in the SCI sandbox.
-
-   Returns nil when no user vars exist; otherwise a multi-line string
-   with one entry per live user `(def ...)` / `(defn ...)`: one comment with
-   scope and Malli-derived shape followed by the persisted source form. SYSTEM vars
-   (every name in `SYSTEM_VAR_NAMES` - `TURN_*`, `ITERATION_*`,
-   `CONVERSATION_*`) and initial-ns bindings (tools, helpers) are excluded -
-   the model reads SYSTEM vars by name directly from the sandbox.
-
-   Sort order: most-recently-bound first."
-  ([sci-ctx initial-ns-keys]
-   (build-bindings sci-ctx initial-ns-keys nil nil nil nil))
-  ([sci-ctx initial-ns-keys sandbox]
-   (build-bindings sci-ctx initial-ns-keys sandbox nil nil nil))
-  ([sci-ctx initial-ns-keys sandbox db-info conversation-id]
-   (build-bindings sci-ctx initial-ns-keys sandbox db-info conversation-id nil))
-  ([sci-ctx initial-ns-keys sandbox db-info conversation-id _opts]
-   (let [sandbox-map (or sandbox (get-in @(:env sci-ctx) [:namespaces 'sandbox]))
-         var-registry (when (and db-info conversation-id)
-                        (persistance/db-latest-var-registry db-info conversation-id))
-         recency-of (fn [sym]
-                      (if-let [ts (some-> (get var-registry sym) :created-at)]
-                        (cond (inst? ts) (inst-ms ts)
-                          (integer? ts) (long ts)
-                          :else Long/MAX_VALUE)
-                        Long/MAX_VALUE))
-         live-info (into {}
-                     (for [[s v] sandbox-map
-                           :when (symbol? s)]
-                       [s {:val      (if (instance? clojure.lang.IDeref v) @v v)
-                           :arglists (:arglists (meta v))
-                           :doc      (:doc (meta v))
-                           :code     (get-in var-registry [s :code])}]))
-         keep? (fn [[sym _]]
-                 (and (not (contains? initial-ns-keys sym))
-                   (not (system-var-sym? sym))))
-         live-entries (->> live-info
-                        (filter keep?)
-                        (sort-by (fn [[sym _]]
-                                   [(- (long (recency-of sym))) (str sym)]))
-                        (mapv (fn [[sym {:keys [val arglists doc code]}]]
-                                {:symbol sym
-                                 :status (var-status-keyword {:system? false :persisted? false})
-                                 :type (var-type-keyword val false)
-                                 :val val
-                                 :arglists arglists
-                                 :doc doc
-                                 :code code})))
-         lines (mapv render-var-form (take MAX_BINDINGS_ENTRIES live-entries))]
-     (when (seq lines)
-       (str/join "\n" lines)))))
-
 ;; =============================================================================
 ;; Phase 7 prep: tape discovery surface
 ;;
@@ -846,6 +669,47 @@
    line (the binding stays alive in the sandbox; it just isn't
    advertised). PLAN pivot: 10."
   10)
+
+(def DEF_HEADS_FOR_RESTORE
+  "Canonical set of def-shaped heads the engine treats as safe to
+   re-evaluate on restore + extract per-var sources from. Single source
+   of truth: `loop/extract-def-sources`, `loop/dep-edges-from-source`,
+   and `restore-sandbox!` all read the SAME set so a stored
+   `:expression` that round-trips through the persistence path will
+   also round-trip on restore.
+
+   Class-producing heads (`defrecord` / `deftype` / `defprotocol` /
+   `gen-class` / `extend-type` / `extend-protocol` / `definterface` /
+   `reify`) are explicitly NOT here — they are refused at the sandbox
+   boundary by `validate-no-banned-defs!`, so they can never be
+   persisted in the first place."
+  '#{def defn defn- defmacro defonce defmulti
+     clojure.core/def clojure.core/defn clojure.core/defn-
+     clojure.core/defmacro clojure.core/defonce clojure.core/defmulti})
+
+(defn- parsed-def-form?
+  "True when `expr` (a string) parses as exactly one top-level form
+   whose head symbol is in `DEF_HEADS_FOR_RESTORE` and whose immediate
+   next element is a symbol (the var name). Replaces the legacy
+   regex-on-source heuristic with an actual edamame parse so prefix
+   metadata, whitespace, and comments cannot confuse the check.
+
+   Parse failures, empty strings, and non-string inputs all return
+   false. The caller falls back to :restored-via :unavailable, which
+   surfaces a clear refusal to the model instead of silently letting
+   an exotic form re-run on restore."
+  [expr]
+  (boolean
+    (when (string? expr)
+      (try
+        (let [forms (edamame/parse-string-all expr {:all true})]
+          (when (= 1 (count forms))
+            (let [form (first forms)]
+              (and (seq? form)
+                (symbol? (first form))
+                (contains? DEF_HEADS_FOR_RESTORE (first form))
+                (symbol? (second form))))))
+        (catch Throwable _ false)))))
 
 (defn- doc-of [v]
   (let [m (meta v)]
@@ -940,7 +804,7 @@
                     (or (nil? expr) (= expr ";; SYSTEM var"))
                     {:name name :restored-via :skip :success? true}
 
-                    (safe-defn-source? expr)
+                    (parsed-def-form? expr)
                     (do (sci/eval-string+ sci-ctx expr
                           {:ns (sci/find-ns sci-ctx 'sandbox)})
                       {:name name :restored-via :eval :success? true})
