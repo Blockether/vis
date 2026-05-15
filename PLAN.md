@@ -147,81 +147,81 @@ Phase 7 prep primitives (lines ~993-1280):
 
 ---
 
+## Current status (after `60bdcde5`)
+
+Shipped and verified (`./verify.sh` all 7 steps green, 957 tests):
+
+- Phase 5 hard schema cut landed for production code.
+  `conversation_turn_iteration` no longer has `code_blocks` or
+  `answer_form_idx`; it has flat `code` / `result` / `error` /
+  `stdout` / `stderr` / `duration_ms` columns.
+- Persistence writer is hard-cut: `db-store-iteration!` requires flat
+  `:code` and rejects legacy `:blocks` fixtures.
+- Public `db-list-iteration-blocks` facade removed. Remaining callers
+  consume flat iteration rows and, where needed, build a one-entry
+  display adapter locally.
+- LLM block-count policy is enforced before eval:
+  - 0 executable Clojure blocks → model-facing error iteration with
+    `llm_returned_empty_code = 1`.
+  - >1 executable Clojure blocks → model-facing error telling the model
+    to emit exactly one block and wrap multiple expressions in `(do ...)`.
+  - 1 executable Clojure block → eval path, then single-top-level-form
+    validation applies.
+- `run-sci-code` / `execute-code` now call
+  `sci-patches/validate-single-form-block!` at the model boundary.
+- TUI resume, foundation transcript, and foundation introspection read
+  flat iteration payloads.
+- Persistence and transcript fixtures were moved off legacy `:blocks`
+  where they hit storage. Prompt tape tests still intentionally use the
+  adapter shape because tape primitives accept legacy/in-memory
+  `{:blocks [...]}` until Phase 7 removes that adapter.
+
+Still not done:
+
+- Phase 4 is only partial: actual engine still builds internal
+  `:blocks` vectors after eval; def persistence still uses
+  `restorable-var-snapshots` instead of flushing `:def-sink` directly;
+  `extract-defining-name` still exists.
+- Dependency edges are not captured from runtime symbol resolution yet.
+- Phase 7 prompt swap not done: live path still calls legacy
+  `build-iteration-context`; `CORE_SYSTEM_PROMPT` still contains old
+  scaffolding.
+- USER_REQUEST injection as sandbox `(def USER_REQUEST "..." ...)` is
+  not wired.
+- Long-lived per-env LRU merge is not wired into prompt assembly.
+- Phase 8 docs / CHANGELOG / `vis db reset` helper remain.
+
 ## Remaining work
 
-Five chunks left. Phase 7 main is the smallest single edit; Phase 4 main
-is the largest. Order matters: 5 → 4 main → 7 main → 6 → 8 (each phase
-ships separately with the test suite green between).
+Order now: finish Phase 4 (def-sink + dependency flush + scalar engine
+shape) → Phase 7 prompt swap → Phase 6 remaining channel audit → Phase 8
+docs/reset helper.
 
-### Phase 5 — Schema collapse (HARD CUT)
+### Phase 5 — Schema collapse (HARD CUT) — DONE in `60bdcde5`
 
-**Files:**
-- `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`
-  (edit V1 in place per AGENTS.md — no migration ladder)
-- `extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj`
-  (writers + readers in lockstep)
-- `extensions/persistance/vis-persistance-sqlite/test/...` (test
-  fixtures and assertions)
+Done:
+- Edited V1 in place, no migration ladder.
+- Dropped `code_blocks BLOB` and `answer_form_idx INTEGER`.
+- Added flat payload columns: `code TEXT NOT NULL`, `result BLOB`,
+  `error BLOB`, `stdout TEXT`, `stderr TEXT`, `duration_ms INTEGER`.
+- Added FTS trigger coverage for `conversation_turn_iteration.code`.
+- Renamed stale empty-block tracking to `llm_returned_empty_code`.
+- `db-store-iteration!` now requires flat `:code` and writes flat
+  payload columns.
+- `db-list-conversation-turn-iterations` returns decoded flat payload
+  fields directly.
+- Removed public `db-list-iteration-blocks` facade.
+- Updated persistence, TUI resume, transcript, and introspection callers
+  that touched persisted iteration blocks.
+- `./verify.sh` green after update.
 
-**Schema changes (`conversation_turn_iteration`):**
+Still intentionally unchanged:
+- `expression_soul` / `expression_state` schema is unchanged.
+- `expression_dependency` schema is unchanged.
+- `db-restore-blocks` remains var-topology based and does not read
+  iteration code payloads.
 
-DROP:
-- `code_blocks BLOB` — was Nippy-encoded vec of per-block maps. With
-  one-block-per-iteration the vec collapses to a single block; promote
-  fields to columns.
-- `answer_form_idx INTEGER` — there is no longer a "form index" inside
-  a multi-form block.
-
-ADD:
-- `code TEXT NOT NULL` — the single block source verbatim.
-- `result BLOB` — Nippy-encoded final return value.
-- `error BLOB` — Nippy-encoded structured error map (`{:message :trace?
-  :hint? :block?}`).
-- `stdout TEXT`
-- `stderr TEXT`
-- `duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0)`
-
-Update FTS5 trigger so `conversation_turn_iteration.code` is indexed
-directly (today indexes only `expression_state.expression` and
-`conversation_turn_soul.user_request`).
-
-`expression_soul` / `expression_state` UNCHANGED. Multiple state
-versions per iteration are already allowed by the schema (UNIQUE on
-`(soul_id, version)` with monotonic `version`).
-
-**Backend code changes:**
-
-- `db-store-iteration!`: stop encoding `code_blocks`; populate the new
-  per-iteration columns from the engine's per-iteration data (Phase 4
-  main produces this shape).
-- `db-list-conversation-turn-iterations`: read the new columns; drop
-  the BLOB decode.
-- `db-restore-blocks` (used by sandbox restore in env.clj): adapter
-  reads the new shape and produces the entries the restore loop expects.
-
-**Test impact:** every persistence test fixture that constructs
-iteration data with `:blocks [{...}]` needs to construct it with the
-new flat shape. Roughly 20 sites in
-`extensions/persistance/vis-persistance-sqlite/test/.../core_test.clj`.
-Update in lockstep with the writers.
-
-**Hard cut-over:** existing local databases (`~/.vis/vis.mdb`) become
-unreadable on the next install. CHANGELOG + an explicit `vis db reset`
-CLI command (small one-time helper) advise users to delete and start
-fresh.
-
-**Acceptance:**
-- Fresh `~/.vis/vis.mdb` opens cleanly.
-- `db-store-iteration!` writes a single row per iteration with all six
-  new columns populated.
-- Round-trip: iteration written → `db-list-conversation-turn-iterations`
-  → engine reconstructs iteration data → `format-tape-iteration` renders
-  it (tape primitives already accept this shape).
-- Full suite green.
-
----
-
-### Phase 4 main — Iteration loop collapse (LARGEST)
+### Phase 4 main — Iteration loop collapse (PARTIAL)
 
 **Files:**
 - `src/com/blockether/vis/internal/loop.clj` (the big one)
@@ -230,7 +230,7 @@ fresh.
 
 **The cut:**
 
-1. **Reject multi-form blocks at the model boundary.** In
+1. **Reject multi-form blocks at the model boundary.** — DONE. In
    `run-sci-code` (line 232+), call
    `sci-patches/validate-single-form-block!` on `code` BEFORE
    `(sci/eval-string+ …)`. Throws `:vis/multi-form-block` on miss; the
@@ -243,7 +243,7 @@ fresh.
    unaffected.
 
 2. **Collapse `code-entries-preflight` + the multi-block iteration
-   `mapv`.** Currently each iteration parses N top-level forms and
+   `mapv`.** — PARTIAL. Currently each iteration parses N top-level forms and
    loops `execute-code` per form (line ~1730+). With one-form-per-block
    this becomes a single `execute-code` call. The wrapping
    `mapv → vec → map indexed result` collapses to a scalar. Drop the
@@ -251,14 +251,14 @@ fresh.
    `*channel-render-sink*` / position counter) — there's no
    between-form coordination to do.
 
-3. **Flush `*def-sink-atom*` to `expression_state` rows.** After
+3. **Flush `*def-sink-atom*` to `expression_state` rows.** — TODO. After
    eval returns, walk `(:def-sink execution-result)` and write one
    `expression_soul` row (or upsert the existing soul) + one
    `expression_state` row per def. This replaces the post-eval
    `extract-defining-name` parser path. Same transaction as the
    iteration row write.
 
-4. **Soften the `(done …)` gate.** Today's gate (`prior-error-atom`,
+4. **Soften the `(done …)` gate.** — TODO. Today's gate (`prior-error-atom`,
    `block-result-error-summary`, `answer-with-extension-preflight-*`)
    exists to catch "tool-call-fails-then-done-fakes-success" patterns
    from the multi-block flow. With one-form-per-block, these can
@@ -269,7 +269,7 @@ fresh.
    in `run-sci-code` (lines 290-316). Verify still correct after the
    collapse.
 
-6. **Delete `extract-defining-name`** (`loop.clj:332+`) and its
+6. **Delete `extract-defining-name`** — TODO. `loop.clj:332+` and its
    callers. The def-sink replaces it.
 
 **Test impact:** every test that constructs an iteration with
@@ -291,6 +291,64 @@ single-form already; the engine-side iteration tests in
 - Full suite green.
 
 ---
+
+
+### Phase 4b — Expression souls + dependencies (NEXT)
+
+**Goal:** vars become memory. Dependency edges become restore/order facts,
+not inferred prose.
+
+Done already:
+- SCI `eval-def` patch captures every sandbox def into `:def-sink`.
+- SCI `resolve-symbol*` patch records per-iteration symbol resolutions
+  into `:lru`.
+- `db-store-iteration!` can already write `:vars` into
+  `expression_soul` / `expression_state` and `db-restore-blocks` reads
+  latest var states in topological order.
+
+Still needed:
+
+1. **Persist defs from `:def-sink`, not source parsing.**
+   - Delete `restorable-var-snapshots` as primary path or reduce it to
+     compatibility-only test helper.
+   - For each sink entry, derive:
+     - `name` from sink `:name`
+     - `value` from derefing sink `:var`
+     - `code` from the current single block source
+     - `doc` from sink `:meta :doc`
+   - Write one expression_state row per def in the same DB transaction as
+     the iteration row.
+
+2. **Capture dependency edges during def init.**
+   - Add dynamic `*current-def-name*` / `*current-def-soul*` around
+     `eval-def` init evaluation or collect symbolic downstream name
+     first and resolve soul ids at flush time.
+   - Extend resolve patch so when a user var resolves while a def is
+     evaluating, it records `upstream-name -> downstream-name`.
+   - Filter out core symbols, extension aliases, and SYSTEM vars unless
+     explicitly whitelisted.
+   - Flush edges to `expression_dependency` after souls exist.
+
+3. **Keep LRU separate from dependency capture.**
+   - LRU is prompt-discovery recency.
+   - Dependencies are semantic var inputs.
+   - Same resolve hook can feed both sinks, but persistence should keep
+     separate data structures.
+
+4. **Regression tests.**
+   - `(do (def a "doc" 1) (def b "doc" (inc a)))` writes souls for
+     `a`, `b` and edge `a -> b`.
+   - Re-defining `a` creates new state version, not new soul.
+   - Restore order is `a` before `b`.
+   - Core symbols like `inc` do not become expression_soul deps.
+
+Acceptance:
+- `extract-defining-name` no longer exists.
+- Vars persisted from def-sink only.
+- `expression_dependency` has user-var edges for defs that read prior
+  user vars.
+- `db-restore-blocks` restores derived vars after upstream vars.
+- Full suite green.
 
 ### Phase 7 main — Prompt restructure (MODEL-FACING PAYOFF)
 
