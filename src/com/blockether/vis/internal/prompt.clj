@@ -801,10 +801,11 @@ DEF DISCIPLINE
   multimethods (`defmulti` / `defmethod`).
 
 TURN PROTOCOL
-  Exactly one ```clojure block per iteration; wrap multiple statements
-  in `(do …)`. No prose outside the block.
-  The block evals atomically: result attaches to <journal>; defs
-  persist across turns under the name you gave them.
+  Exactly one ```clojure block per iteration. Inside the block, write
+  as many top-level forms as you want — SCI evals them in sequence
+  and every (def …) lands in <bindings>. No `(do …)` ceremony
+  required. No prose outside the block.
+  Result of the LAST top-level form is the iteration's value.
   Errors are evidence — a thrown form ends the iteration; the next
   iteration sees the structured error and you correct.
 
@@ -817,17 +818,18 @@ LOOP DISCIPLINE
 EMIT_FINAL
   (done <IR>)
 
-  Accepted whenever the form runs to completion without throwing. Tool
-  calls and `(done …)` legitimately co-exist in the same `(do …)`
-  block — handles return synchronously, so probe + answer can land in
-  one iteration. Canonical 1-iteration shape (replace the single
-  quotes with real double-quote strings when you emit code):
+  Accepted whenever the block runs to completion without throwing.
+  Probe-and-answer can land in a single iteration; handles return
+  synchronously so the answer composes against fresh evidence.
+  Canonical 1-iteration shape (replace single quotes with real
+  double-quote strings when you emit code):
 
-    (do (def h 'README handle' (v/cat 'README.md'))
-        (done [:ir [:p (str 'lines: ' (:line-count (summary h)))]]))
+    (def h 'README handle' (v/cat 'README.md'))
+    (done [:ir [:p (str 'lines: ' (:line-count (summary h)))]])
 
-  If the form throws before `(done …)`, the answer is not composed
-  and the turn continues with the error in <journal>.
+  If any form in the block throws before `(done …)` runs, the
+  answer is not composed and the turn continues with the error in
+  <journal>.
 
 ANSWER_IR
   EDN hiccup: [:ir block*]

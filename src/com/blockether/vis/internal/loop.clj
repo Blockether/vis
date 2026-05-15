@@ -486,7 +486,7 @@
     ;; from SCI's error next iteration.
     (let [start-time (System/currentTimeMillis)
           exec       (try
-                       (sci-patches/validate-single-form-block! code)
+                       (sci-patches/validate-non-empty-block! code)
                        (sci-patches/validate-no-banned-defs! code)
                        (run-with-timing sci-ctx code sandbox-ns timeout-ms
                          start-time tool-event-fn environment)
@@ -985,7 +985,8 @@
                                        "LLM returned no executable Clojure code block. Emit exactly one ```clojure block; put prose inside (done [:ir ...]).")
         multi-block-error            (when (> parsed-total-blocks 1)
                                        (str "Iteration contains " parsed-total-blocks
-                                         " Clojure blocks; emit exactly one ```clojure block per iteration. Wrap multiple expressions in (do ...)."))
+                                         " Clojure code blocks (separate ```clojure fences); emit exactly one fence per iteration. "
+                                         "Inside that one fence, write as many top-level forms as you want — SCI evals them in sequence."))
         ;; Normalized concat of all surviving block sources — the
         ;; identity used for iteration-hash dedup in the journal.
         normalized-code              (->> raw-entries

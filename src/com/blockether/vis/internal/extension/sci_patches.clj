@@ -176,27 +176,31 @@
   [code]
   (count (edamame/parse-string-all (str code) edamame-opts)))
 
-(defn validate-single-form-block!
-  "Throws `:vis/multi-form-block` when `code` contains more than one
-   top-level form. The pivot's one-block-per-iteration contract requires
-   the model to emit exactly one form per ```clojure block — multi-form
-   intent must be wrapped in a single `(do …)`. Comment-only blocks
-   (zero forms) are also rejected as `:vis/empty-block` since they
-   produce no evidence the iteration can carry forward.
+(defn validate-non-empty-block!
+  "Throws `:vis/empty-block` when `code` parses to zero top-level forms
+   (comment-only / `#_`-discard-only blocks). Iterations that produce
+   no evidence cannot carry forward, so the engine rejects them at the
+   model boundary instead of round-tripping an empty `:code` through
+   persistence and the next iteration's tape.
 
-   Single-form blocks pass through silently."
+   Multi-form blocks are accepted: SCI's `eval-string+` parses and
+   evaluates each top-level form in sequence; the eval-def patch
+   captures every `(def …)` regardless of nesting; and the def-sink
+   → vars-snapshot path indexes per-form source by var name, so
+   functions round-trip whether the model writes
+     (do (def a …) (def b …))
+   or
+     (def a …)
+     (def b …)
+   The single-form constraint that lived here in earlier pivot drafts
+   was prescriptive ceremony, not a technical requirement.
+
+   Single and multi-form blocks pass through silently."
   [code]
-  (let [n (count-top-level-forms code)]
-    (cond
-      (zero? n)
-      (throw (ex-info "Block is empty (only comments / discards). Iteration produces no evidence."
-               {:type :vis/empty-block
-                :form-count 0}))
-      (> n 1)
-      (throw (ex-info (str "Block contains " n " top-level forms. The pivot contract is one form per block — wrap in `(do …)` if you need multiple statements.")
-               {:type :vis/multi-form-block
-                :form-count n}))
-      :else nil)))
+  (when (zero? (count-top-level-forms code))
+    (throw (ex-info "Block is empty (only comments / discards). Iteration produces no evidence."
+             {:type :vis/empty-block
+              :form-count 0}))))
 
 ;; =============================================================================
 ;; Banned def-head enforcement

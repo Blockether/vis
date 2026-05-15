@@ -103,21 +103,18 @@
         (sci/eval-string+ ctx "(def x \"x doc\" 1) x" {:ns (ns-obj ctx)}))
       (expect (= 0 (get @lru "x"))))))
 
-(defdescribe sci-patches-single-form-validation-test
+(defdescribe sci-patches-non-empty-block-validation-test
   (it "single top-level form passes through silently"
-    (expect (nil? (sp/validate-single-form-block! "(def x \"doc\" 42)")))
-    (expect (nil? (sp/validate-single-form-block! "42")))
-    (expect (nil? (sp/validate-single-form-block! "(do (def a \"a\" 1) (def b \"b\" 2))"))))
-  (it "multi-form block raises :vis/multi-form-block with form-count"
-    (try
-      (sp/validate-single-form-block! "(def a \"\" 1)\n(def b \"\" 2)")
-      (expect false)
-      (catch clojure.lang.ExceptionInfo e
-        (expect (= :vis/multi-form-block (:type (ex-data e))))
-        (expect (= 2 (:form-count (ex-data e)))))))
+    (expect (nil? (sp/validate-non-empty-block! "(def x \"doc\" 42)")))
+    (expect (nil? (sp/validate-non-empty-block! "42"))))
+  (it "multi-top-level forms pass through silently (no (do …) ceremony required)"
+    (expect (nil? (sp/validate-non-empty-block! "(def a \"\" 1)\n(def b \"\" 2)")))
+    (expect (nil? (sp/validate-non-empty-block! "(def a \"\" 1)\n(def b \"\" 2)\n(+ a b)"))))
+  (it "(do …) wrapping still works (model may emit it; not required)"
+    (expect (nil? (sp/validate-non-empty-block! "(do (def a \"a\" 1) (def b \"b\" 2))"))))
   (it "empty / comment-only block raises :vis/empty-block"
     (try
-      (sp/validate-single-form-block! ";; just a comment\n#_(discard form)")
+      (sp/validate-non-empty-block! ";; just a comment\n#_(discard form)")
       (expect false)
       (catch clojure.lang.ExceptionInfo e
         (expect (= :vis/empty-block (:type (ex-data e))))
