@@ -25,6 +25,7 @@
    `:vis.sci-patches/precondition-failed` instead of silently doing
    the wrong thing."
   (:require
+   [edamame.core :as edamame]
    [sci.core]
    [sci.impl.evaluator]
    [sci.impl.resolve]
@@ -155,3 +156,44 @@
     (alter-var-root #'sci.impl.resolve/resolve-symbol*
       (constantly patched-resolve-symbol*))
     :installed))
+
+;; =============================================================================
+;; Single-form block validation (pivot contract)
+;; =============================================================================
+
+(def ^:private edamame-opts
+  "Tag-tolerant edamame parse opts. Mirrors loop.clj's parser config so
+   the validation here counts forms exactly the same way the engine
+   does at execution time."
+  {:all true
+   :readers (fn [_tag] (fn [val] (list 'do val)))})
+
+(defn count-top-level-forms
+  "Parse `code` as Clojure source and return the number of top-level
+   forms it contains. Comments and `#_(...)` discards count as zero.
+   Returns 0 for empty / comment-only blocks. Raises edamame parse
+   errors verbatim — those are syntax issues, not multi-form issues."
+  [code]
+  (count (edamame/parse-string-all (str code) edamame-opts)))
+
+(defn validate-single-form-block!
+  "Throws `:vis/multi-form-block` when `code` contains more than one
+   top-level form. The pivot's one-block-per-iteration contract requires
+   the model to emit exactly one form per ```clojure block — multi-form
+   intent must be wrapped in a single `(do …)`. Comment-only blocks
+   (zero forms) are also rejected as `:vis/empty-block` since they
+   produce no evidence the iteration can carry forward.
+
+   Single-form blocks pass through silently."
+  [code]
+  (let [n (count-top-level-forms code)]
+    (cond
+      (zero? n)
+      (throw (ex-info "Block is empty (only comments / discards). Iteration produces no evidence."
+               {:type :vis/empty-block
+                :form-count 0}))
+      (> n 1)
+      (throw (ex-info (str "Block contains " n " top-level forms. The pivot contract is one form per block — wrap in `(do …)` if you need multiple statements.")
+               {:type :vis/multi-form-block
+                :form-count n}))
+      :else nil)))
