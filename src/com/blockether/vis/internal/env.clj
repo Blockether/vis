@@ -28,56 +28,43 @@
 ;; =============================================================================
 
 (defn sci-update-binding!
-  "Update a binding in an existing SCI context.
-   Ensures the symbol is a real SCI var before interning the value,
-   since bindings from sci/init :namespaces are not SCI vars.
+  "Update a binding in the SCI sandbox.
 
-   NOTE: This mutates the SCI sandbox only. If the caller wants the next
-   iteration's `<bindings>` context block to reflect the new binding, they
-   MUST also call `bump-bindings!` on the env - the bindings is cached and
-   only rebuilds when `:current-revision` advances. Every past cache-staleness
-   bug (4-iteration `(restore-vars ...)` spin, turn-3 stale request replay)
-   traces back to forgetting this pair. Prefer `bind-and-bump!` below."
+   Writes through the SCI `def` special form (so the patched
+   `eval-def` enforces the docstring contract — we satisfy it with a
+   synthetic 'vis-managed engine binding' tag) and then interns the
+   actual value.
+
+   Caller plumbing note: the legacy `<bindings>` renderer was
+   cache-invalidated via `bump-bindings!` after every mutation. The
+   renderer + cache were retired in Phase 7 (the tape
+   `tape-system-vars` / `tape-live-vars` read the sandbox map
+   directly, no cache); the bump helpers are gone. Mutating vars now
+   only requires this one call."
   [sci-ctx sym val]
   (let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
-    ;; vis-managed bindings still go through the SCI def special form,
-    ;; which the sci-patches monkey-patch enforces docstrings on. Engine
-    ;; injections satisfy that contract via a synthetic doc tag.
     (sci/eval-string+ sci-ctx (str "(def " sym " \"vis-managed engine binding\" nil)") {:ns ns-obj})
     (sci/intern sci-ctx ns-obj sym val)))
 
-(defn bump-bindings!
-  "Invalidate the env's cached `<bindings>` so the next `get-bindings` call
-   rebuilds it from the live SCI sandbox. No-op when the env has no
-   `:bindings-atom` (e.g. ad-hoc test contexts)."
-  [env]
-  (when-let [atom (:bindings-atom env)]
-    (swap! atom update :current-revision (fnil inc 0))))
-
 (defn bind-and-bump!
-  "Atomic \"rebind var in SCI + invalidate bindings cache\" - the only API
-   call sites should use when mutating runtime bindings that the LLM needs
-   to see on the NEXT iteration. Fixes every instance of the model looping
-   on `(restore-vars ...)` / `(def X ...)` because the bindings never caught up."
+  "Set `sym` to `val` in the env's sandbox. Name preserved for source
+   compatibility — the legacy 'bump' (cache invalidation) is gone
+   alongside the cached `<bindings>` renderer it served. Now a thin
+   wrapper over `sci-update-binding!`."
   [env sym val]
-  (sci-update-binding! (:sci-ctx env) sym val)
-  (bump-bindings! env))
+  (sci-update-binding! (:sci-ctx env) sym val))
 
 (defn bind-and-bump-with-doc!
-  "Like `bind-and-bump!` but writes `doc` as the var's :doc metadata.
-   Used for engine-injected SYSTEM vars that the tape live-vars
-   renderer surfaces by name + doc, so the model sees a meaningful
-   description (e.g. USER_REQUEST -> 'current turn user request')
-   instead of the synthetic 'vis-managed engine binding' placeholder
-   that `bind-and-bump!` writes."
+  "Like `bind-and-bump!` but writes `doc` as the var's :doc metadata
+   so the tape live-vars renderer surfaces a meaningful name + doc
+   to the model (e.g. USER_REQUEST -> 'current turn user request')."
   [env sym doc val]
   (let [sci-ctx (:sci-ctx env)
         ns-obj  (sci/find-ns sci-ctx 'sandbox)]
     (sci/eval-string+ sci-ctx
       (str "(def " sym " " (pr-str (or doc "vis-managed engine binding")) " nil)")
       {:ns ns-obj})
-    (sci/intern sci-ctx ns-obj sym val))
-  (bump-bindings! env))
+    (sci/intern sci-ctx ns-obj sym val)))
 
 (defn push-eval-result!
   "REPL-style stack push for the sandbox `*1` `*2` `*3` recovery slots.
@@ -711,15 +698,41 @@
                 (symbol? (second form))))))
         (catch Throwable _ false)))))
 
-(defn- doc-of [v]
+(defn- doc-from-source
+  "Parse a stored `(def NAME doc-string …)` source and return the
+   docstring at the canonical 2nd-arg position. Returns nil when the
+   parse fails, the form is not a recognized def head, or the 2nd arg
+   is not a string literal.
+
+   Replaces a legacy regex heuristic that grabbed the first quoted
+   string anywhere in the source, which mangled multi-line docstrings,
+   broke on escaped quotes inside the doc, and pulled the wrong string
+   from arg/body literals when no docstring existed."
+  [source]
+  (when (string? source)
+    (try
+      (let [forms (edamame/parse-string-all source {:all true})
+            form  (first forms)]
+        (when (and (= 1 (count forms))
+                (seq? form)
+                (symbol? (first form))
+                (contains? DEF_HEADS_FOR_RESTORE (first form))
+                (symbol? (second form))
+                (string? (nth form 2 nil)))
+          (nth form 2)))
+      (catch Throwable _ nil))))
+
+(defn- doc-of
+  "Resolve a var's model-facing docstring. Prefers `:doc` metadata
+   written by SCI eval-def (the patched eval-def installs it directly
+   from the `(def NAME \"doc\" …)` form). Falls back to an edamame
+   parse of stored `:code` source if the meta got lost (legacy
+   conversations / engine-injected vars whose meta path skipped
+   the patch)."
+  [v]
   (let [m (meta v)]
     (or (:doc m)
-      (when (and (string? (:code m))
-              (re-find #"\".+\"" (:code m)))
-        ;; Best-effort: pull a docstring out of stored source if the
-        ;; var meta lost it. Cheap regex; treats first quoted string
-        ;; literal as the doc.
-        (second (re-find #"\"([^\"]+)\"" (:code m))))
+      (doc-from-source (:code m))
       "")))
 
 (defn tape-system-vars

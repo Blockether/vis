@@ -13,7 +13,7 @@
 ;; this repo root.
 ;;
 ;; Daily use: `bin/vis <subcommand>` once `bin/` is on PATH.
-{:paths ["src"]
+{:paths ["src" "resources"]
 
  :deps
  {;; Classpath plug-ins. Drop the jar, drop the feature.
