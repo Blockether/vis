@@ -46,11 +46,48 @@
       (expect (= 2 (:line-count s)))
       (expect (vector? (:views s)))
       (expect (every? (set (:views s)) [:peek :lines :at]))))
-  (it "handle? recognises records implementing PHandle"
+  (it "handle? recognises records implementing PHandle and rejects non-handles"
     (let [h (fresh-cat "x" ["a"])]
       (expect (handle/handle? h))
       (expect (not (handle/handle? {:kind :v.cat})))
-      (expect (not (handle/handle? nil))))))
+      (expect (not (handle/handle? nil)))
+      (expect (not (handle/handle? 42)))
+      (expect (not (handle/handle? "string")))
+      (expect (not (handle/handle? [1 2 3]))))))
+
+(defdescribe handle-protocol-fallback-test
+  (it "kind on non-handles returns :not-a-handle"
+    (expect (= :not-a-handle (handle/kind nil)))
+    (expect (= :not-a-handle (handle/kind 42)))
+    (expect (= :not-a-handle (handle/kind "string")))
+    (expect (= :not-a-handle (handle/kind {:some :map}))))
+  (it "summary on non-handles returns a structured :not-a-handle map with a hint"
+    (let [s (handle/summary 42)]
+      (expect (= :not-a-handle (:kind s)))
+      (expect (= 42 (:value s)))
+      (expect (string? (:hint s)))
+      (expect (string/includes? (:hint s) "Handle"))))
+  (it "summary on nil reports the nil value clearly"
+    (let [s (handle/summary nil)]
+      (expect (= :not-a-handle (:kind s)))
+      (expect (nil? (:value s)))
+      (expect (string? (:hint s)))))
+  (it "view on non-handles returns :not-a-handle with the op and args echoed back"
+    (let [s0 (handle/view 42 :peek)
+          s1 (handle/view 42 :at 3)
+          s2 (handle/view 42 :lines 0 10)]
+      (expect (= :not-a-handle (:kind s0)))
+      (expect (= :peek (:op s0)))
+      (expect (= :not-a-handle (:kind s1)))
+      (expect (= :at (:op s1)))
+      (expect (= [3] (:args s1)))
+      (expect (= :not-a-handle (:kind s2)))
+      (expect (= :lines (:op s2)))
+      (expect (= [0 10] (:args s2)))))
+  (it "calls do not throw — fallback is structured data, not an exception"
+    (expect (map? (handle/view "a string" :peek)))
+    (expect (map? (handle/view nil :anything)))
+    (expect (map? (handle/view {} :whatever 1 2)))))
 
 ;; -----------------------------------------------------------------------------
 ;; Deref
