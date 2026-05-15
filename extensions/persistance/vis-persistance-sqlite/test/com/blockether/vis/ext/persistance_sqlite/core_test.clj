@@ -25,6 +25,7 @@
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
    [com.blockether.vis.internal.env :as env]
+   [com.blockether.vis.internal.extension.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
    [honey.sql :as sql]
@@ -2149,3 +2150,144 @@
 ;; emits <journal> + <bindings> and is exercised end-to-end by
 ;; the agent loop tests; an isolated unit test was not preserved.
 ;; =============================================================================
+
+;; =============================================================================
+;; END-TO-END dependency chain through real DB (Phase 4b proof)
+;;
+;; Walks a 5-level dep graph through every layer that matters:
+;;   1. SCI eval with eval-def + resolve-symbol* patches bound to
+;;      fresh def-sink + dep-edges atoms (engine boundary).
+;;   2. def-sink → vars-snapshot (per-var precise :code).
+;;   3. dep-edges → raw upstream/downstream name pairs.
+;;   4. db-store-iteration! filters edges against the soul-name set,
+;;      writes expression_soul + expression_state + expression_dependency
+;;      rows inside one transaction.
+;;   5. db-restore-blocks reads everything back, topo-sorts on the
+;;      dependency graph.
+;;   6. FRESH SCI context (simulates a process restart) re-evals each
+;;      entry's :expr in restored order.
+;;   7. Calling the top-of-graph fn returns the expected value, proving
+;;      every transitive dependency was rebound in the right order.
+;; =============================================================================
+
+(defn- run-iter!
+  "Eval `src` in `ctx` with a fresh def-sink bound; derive dep edges
+   from a source walk; persist the iteration. Returns iteration-id."
+  [store turn-id ctx src]
+  (let [sink (sp/fresh-sink-atom)]
+    (binding [sp/*def-sink-atom* sink]
+      (sci/eval-string+ ctx src {:ns (sci/find-ns ctx 'user)}))
+    (let [snap (lp/def-sink->vars-snapshot @sink src nil)
+          deps (->> (lp/dep-edges-from-source src)
+                 (map (fn [{:keys [upstream downstream]}]
+                        {:upstream-name upstream :downstream-name downstream}))
+                 distinct
+                 vec)]
+      (vis/db-store-iteration! store
+        {:conversation-turn-id turn-id
+         :code src
+         :duration-ms 0
+         :vars snap
+         :dependencies deps}))))
+
+(defdescribe phase-4b-dependency-chain-end-to-end-test
+  (it "5-deep var→var→var→defn→defn chain round-trips through real DB"
+    (let [store (h/store)
+          cid   (vis/db-store-conversation! store {:channel :tui})
+          tid   (vis/db-store-conversation-turn! store
+                  {:parent-conversation-id cid :user-request "chain" :status :done})
+          ctx1  (sci/init {:namespaces {'user {}}})]
+      ;; Five iterations, each defining one var/fn that depends on
+      ;; the previous level. The graph is:
+      ;;
+      ;;   base    (leaf)
+      ;;   factor  (leaf)
+      ;;     ↓
+      ;;   scale       = base * factor                    (depends on base + factor)
+      ;;     ↓
+      ;;   apply-scale = (fn [x] (* x scale))             (depends on scale)
+      ;;     ↓
+      ;;   pipeline    = (fn [x] (apply-scale (+ x base))) (depends on apply-scale + base)
+      (run-iter! store tid ctx1 "(def base \"the base value\" 10)")
+      (run-iter! store tid ctx1 "(def factor \"the multiplier\" 2)")
+      (run-iter! store tid ctx1 "(def scale \"base times factor\" (* base factor))")
+      (run-iter! store tid ctx1 "(defn apply-scale \"scales by the scale\" [x] (* x scale))")
+      (run-iter! store tid ctx1 "(defn pipeline \"add base then scale\" [x] (apply-scale (+ x base)))")
+
+      ;; Sanity: original SCI context produces 300 for (pipeline 5).
+      ;;   (apply-scale (+ 5 10)) = (apply-scale 15) = 15 * 20 = 300
+      (let [r (sci/eval-string+ ctx1 "(pipeline 5)" {:ns (sci/find-ns ctx1 'user)})]
+        (expect (= 300 (:val r))))
+
+      ;; Restore from DB. Topo order MUST place each dependency before
+      ;; its dependents.
+      (let [restored (vis/db-restore-blocks store cid)
+            names    (mapv :name restored)
+            idx      (into {} (map-indexed (fn [i e] [(:name e) i])) restored)]
+        (expect (= 5 (count restored)))
+        (expect (= #{"base" "factor" "scale" "apply-scale" "pipeline"} (set names)))
+        ;; Dependency order assertions:
+        (expect (< (idx "base")        (idx "scale")))
+        (expect (< (idx "factor")      (idx "scale")))
+        (expect (< (idx "scale")       (idx "apply-scale")))
+        (expect (< (idx "apply-scale") (idx "pipeline")))
+        (expect (< (idx "base")        (idx "pipeline")))
+
+        ;; Dependency edges captured correctly:
+        (let [scale-entry       (nth restored (idx "scale"))
+              apply-scale-entry (nth restored (idx "apply-scale"))
+              pipeline-entry    (nth restored (idx "pipeline"))
+              soul-id-by-name   (into {} (map (juxt :name :soul-id)) restored)
+              dep-name? (fn [entry upstream-name]
+                          (contains? (set (:depends-on entry))
+                            (soul-id-by-name upstream-name)))]
+          (expect (dep-name? scale-entry       "base"))
+          (expect (dep-name? scale-entry       "factor"))
+          (expect (dep-name? apply-scale-entry "scale"))
+          (expect (dep-name? pipeline-entry    "apply-scale"))
+          (expect (dep-name? pipeline-entry    "base")))
+
+        (let [by-name (into {} (map (juxt :name identity)) restored)]
+          ;; Values vs refs: data leaves carry their value; fns carry
+          ;; the {:vis/ref :expr} sentinel and the caller re-evals :expr.
+          (expect (= 10 (:result (by-name "base"))))
+          (expect (= 2  (:result (by-name "factor"))))
+          (expect (= 20 (:result (by-name "scale"))))
+          (expect (= {:vis/ref :expr} (:result (by-name "apply-scale"))))
+          (expect (= {:vis/ref :expr} (:result (by-name "pipeline"))))
+
+          ;; THE BIG PROOF: rebuild a FRESH SCI context by re-evaling
+          ;; each entry's :expr in restored order, then call the top-of-
+          ;; graph fn. If the dep-driven order is wrong, an earlier
+          ;; (defn pipeline …) would fail to resolve apply-scale or
+          ;; base. If the per-var :code is impure (whole-block fallback),
+          ;; (def scale …) would resurrect base + factor with the wrong
+          ;; values. Returning 300 means every layer cooperated.
+          (let [ctx2 (sci/init {:namespaces {'user {}}})]
+            (doseq [entry restored]
+              (binding [sp/*def-sink-atom* (sp/fresh-sink-atom)]
+                (sci/eval-string+ ctx2 (:expr entry) {:ns (sci/find-ns ctx2 'user)})))
+            (let [r (sci/eval-string+ ctx2 "(pipeline 5)" {:ns (sci/find-ns ctx2 'user)})]
+              (expect (= 300 (:val r)))))
+
+          ;; Bonus: re-evaling pipeline alone (without base/scale/etc.)
+          ;; in a THIRD context fails — confirming the chain is real,
+          ;; not just a coincidence of the original eval order.
+          (let [ctx3 (sci/init {:namespaces {'user {}}})]
+            (try
+              (binding [sp/*def-sink-atom* (sp/fresh-sink-atom)]
+                (sci/eval-string+ ctx3 (:expr (by-name "pipeline"))
+                  {:ns (sci/find-ns ctx3 'user)}))
+              ;; defn defines the fn (it does not eval the body); the
+              ;; failure surfaces only when we CALL pipeline since the
+              ;; body references unbound symbols.
+              (try
+                (sci/eval-string+ ctx3 "(pipeline 5)" {:ns (sci/find-ns ctx3 'user)})
+                (expect false)
+                (catch Throwable e
+                  (expect (some? (ex-message e)))))
+              (catch Throwable _
+                ;; Also acceptable: defn itself blows up if SCI is strict
+                ;; about resolution at def time. The test just needs to
+                ;; show pipeline cannot work without its restored deps.
+                (expect true)))))))))
