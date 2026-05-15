@@ -395,7 +395,6 @@
 (def set-provider!                lp/set-provider!)
 
 ;; SCI execution helpers.
-(def extract-defining-name        lp/extract-defining-name)
 (def answer-form-error              lp/answer-form-error)
 ;; Removed:
 ;;   `parinfer-rebalance` + `split-top-level-forms` — the per-block-eval

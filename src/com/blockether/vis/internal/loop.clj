@@ -97,6 +97,36 @@
     (sequential? v) (doall (map realize-value v))
     :else v))
 
+(defn def-sink->vars-snapshot
+  "Convert per-iteration SCI def-sink entries into the persistence
+   shape consumed by `expression_soul` / `expression_state` rows:
+   `[{:name :value :code :time-ms?} ...]`.
+
+   Replaces the legacy parse-source + walk-sandbox-locals path
+   (`extract-defining-name` / `extract-def-names` /
+   `restorable-var-snapshots`). Source-of-truth is the captured SCI
+   var (IDeref) plus its evaluated metadata — every def the model
+   evaluated lands here, regardless of nesting (`(do (def a …) …)`),
+   macro-expansion (`defn` / `defmacro` / `s/def`), or syntactic
+   shape.
+
+   `iteration-code` is the (single) block source for this iteration;
+   `iteration-time-ms` is total eval time (optional). Both ride along
+   on every var row produced by this iteration — they are
+   iteration-scoped facts, not per-def facts."
+  [def-sink iteration-code iteration-time-ms]
+  (->> def-sink
+    (keep (fn [{:keys [name var]}]
+            (when (and name var)
+              (let [raw      (try (deref var) (catch Throwable _ nil))
+                    realized (realize-value raw)]
+                (cond-> {:name  (str name)
+                         :value realized
+                         :code  iteration-code}
+                  iteration-time-ms
+                  (assoc :time-ms iteration-time-ms))))))
+    vec))
+
 (defn- format-exception-short [^Throwable t]
   {:class (.getName (class t))
    :message (or (ex-message t) (str t))})
@@ -371,41 +401,11 @@
       (:timeout? execution-result) (assoc :timeout? true)
       (not (:timeout? execution-result)) (assoc :timeout? false))))
 
-(def ^:private DEF_HEADS '#{def defn defn- defmacro})
-
-(defn extract-defining-name
-  "Return the symbol named by a `(def NAME ...)` / `(defn NAME ...)` /
-   `(defn- NAME ...)` / `(defmacro NAME ...)` form, or nil otherwise.
-   Tolerant: parse errors return nil rather than throwing."
-  [expression]
-  (try
-    (let [forms (edamame/parse-string-all expression edamame-opts)
-          form  (first forms)]
-      (when (and (= 1 (count forms))
-              (seq? form)
-              (contains? DEF_HEADS (first form))
-              (symbol? (second form)))
-        (second form)))
-    (catch Throwable _ nil)))
-
-(defn- attach-doc-meta!
-  "Attach `doc-string` as :doc metadata to the var named by `expression`'s
-   defining form, if any. No-op when `expression` is not a (def...) /
-   (defn...) shape, when doc-string is blank, or when the SCI eval throws.
-   Failures are logged at :debug; the caller's eval already succeeded
-   so a metadata-attach failure must NOT propagate."
-  [{:keys [sci-ctx sandbox-ns]} expression doc-string]
-  (when (and sci-ctx (string? doc-string) (not (str/blank? doc-string)))
-    (when-let [defining-name (extract-defining-name expression)]
-      (try
-        (let [sandbox (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)
-              attach-form (str "(when-let [v (resolve '" defining-name ")]"
-                            "  (alter-meta! v assoc :doc " (pr-str doc-string) "))")]
-          (sci/eval-string+ sci-ctx attach-form (when sandbox {:ns sandbox})))
-        (catch Throwable t
-          (tel/log! {:level :debug :id ::attach-doc-failed
-                     :data {:name (str defining-name)
-                            :error (ex-message t)}}))))))
+;; Mandatory-docstring contract is enforced in the SCI sandbox by
+;; `sci-patches/patched-eval-def`: `(def NAME "doc" VAL)` already
+;; binds `:doc` as var metadata at eval time. The legacy
+;; `extract-defining-name` + `attach-doc-meta!` post-eval source-parse
+;; path was redundant after Phase 2 and has been removed.
 
 (defn- execute-code
   "Run a single :code block through the SCI sandbox.
@@ -413,7 +413,6 @@
    Optional kwargs:
      :timeout-ms - hard-cap eval time, clamped at the
                    *eval-timeout-ms* bounds.
-     :doc        - docstring to attach to the var defined by this :expr.
 
    Every call performs a real SCI eval. There is no result cache:
    forms with side effects (e.g. host primitives `(done ...)` and
@@ -421,7 +420,7 @@
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
   [{:keys [sci-ctx sandbox-ns] :as environment} code
-   & {:keys [timeout-ms doc tool-event-fn]}]
+   & {:keys [timeout-ms tool-event-fn]}]
   (binding [*rlm-context* (merge *rlm-context* {:rlm-phase :execute-code})]
     ;; Per-block-eval contract: feed the block source to SCI verbatim.
     ;; SCI parses + evaluates as one chunk; parse / runtime errors surface
@@ -451,8 +450,6 @@
                           :execution-finished-at-ms (System/currentTimeMillis)
                           :execution-time-ms (- (System/currentTimeMillis) start-time)
                           :timeout? false}))]
-      (when (nil? (:error exec))
-        (attach-doc-meta! environment code doc))
       exec)))
 
 ;; Print-cap defaults for `prompt/safe-pr-str` - chosen so a wide flat
@@ -1889,7 +1886,14 @@
                                     :info (:info result)
                                     :role (:role result)
                                     :timeout? (:timeout? result)
-                                    :repaired? (:repaired? result)}
+                                    :repaired? (:repaired? result)
+                                    ;; Per-block def-sink: every (def ...) the
+                                    ;; SCI sandbox evaluated in this block. The
+                                    ;; iteration writer concats sinks across
+                                    ;; blocks and drives expression_state from
+                                    ;; the result. Pivot replaces the legacy
+                                    ;; parse-source path.
+                                    :def-sink (vec (:def-sink result))}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
                              ;; (done …) / (set-conversation-title! …)
@@ -2264,54 +2268,16 @@
    (resolve-effective-model router)))
 
 ;; -----------------------------------------------------------------------------
-;; Var snapshot + system var helpers (inlined from former shared)
+;; System var helpers
+;;
+;; Var snapshots used to live here as `extract-def-names` +
+;; `restorable-var-snapshots`: post-eval parsers that walked the
+;; iteration's block source for `(def NAME …)` shapes and then read
+;; the sandbox locals to materialize values. The pivot replaces that
+;; path with the SCI eval-def monkey-patch — every def the sandbox
+;; evaluates lands in `:def-sink`, and `def-sink->vars-snapshot` (above)
+;; produces the persistence shape directly.
 ;; -----------------------------------------------------------------------------
-
-(defn extract-def-names
-  "Extracts var names from code blocks via EDN parsing of def-like forms."
-  [blocks]
-  (->> blocks
-    (mapcat (fn [{:keys [code error]}]
-              (when-not error
-                (try
-                  (->> (edamame/parse-string-all (or code "") {:all true})
-                    (keep (fn [form]
-                            (when (seq? form)
-                              (let [[op name & _] form]
-                                (when (and (contains? '#{def defn defn- defonce defmulti defmacro} op)
-                                        (symbol? name))
-                                  name)))))
-                    distinct)
-                  (catch Exception _ [])))))
-    (map str)
-    vec))
-
-(defn restorable-var-snapshots
-  "Serializable snapshots of `(def ...)` vars introduced by this iteration."
-  [environment blocks]
-  (let [execution->defs (mapv (fn [{:keys [error] :as execution}]
-                                [execution (when-not error
-                                             (set (map symbol (extract-def-names [execution]))))])
-                          blocks)
-        defined (into #{} (mapcat second) execution->defs)
-        symbol->execution (reduce (fn [acc [{:keys [code execution-time-ms]} defs]]
-                                    (if (and code (seq defs))
-                                      (reduce #(assoc %1 %2 {:expr code :time-ms execution-time-ms}) acc defs)
-                                      acc))
-                            {}
-                            execution->defs)
-        locals (get-locals environment)]
-    (->> locals
-      (keep (fn [[symbol-name value]]
-              (when (contains? defined symbol-name)
-                (let [realized-value (realize-value value)
-                      execution-information (get symbol->execution symbol-name)]
-                  (cond-> {:name (str symbol-name)
-                           :value realized-value
-                           :code (:expr execution-information)}
-                    (:time-ms execution-information)
-                    (assoc :time-ms (:time-ms execution-information)))))))
-      vec)))
 
 (defn update-system-vars!
   "Rebind the per-iteration SYSTEM vars in the SCI sandbox after an
@@ -2995,7 +2961,25 @@
                         final-answer (when final-result (:answer final-result))
                         _ (update-system-vars! environment
                             {:thinking thinking :final-result final-result :final-answer final-answer})
-                        vars-snapshot (restorable-var-snapshots environment blocks)
+                        ;; Pivot: drive var persistence from the SCI def-sink,
+                        ;; not from post-eval source parsing. Every (def …)
+                        ;; the sandbox evaluated this iteration is captured
+                        ;; by the eval-def monkey-patch and lands on each
+                        ;; block's `:def-sink`. We concat across blocks (one
+                        ;; block per iteration post-Phase-4 main, but the
+                        ;; aggregator stays general) and produce one var
+                        ;; row per def.
+                        iteration-block-code (->> blocks
+                                               (map :code)
+                                               (remove str/blank?)
+                                               (str/join "\n\n"))
+                        iteration-time-ms (->> blocks
+                                            (keep :execution-time-ms)
+                                            (reduce + 0))
+                        vars-snapshot (def-sink->vars-snapshot
+                                        (vec (mapcat :def-sink blocks))
+                                        iteration-block-code
+                                        (when (pos? iteration-time-ms) iteration-time-ms))
                         previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
                         conversation-row (try
                                            (persistance/db-get-conversation
