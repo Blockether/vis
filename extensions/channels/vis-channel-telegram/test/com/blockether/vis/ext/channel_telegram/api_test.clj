@@ -10,7 +10,7 @@
   ;; details drifted from this fixture (table rendering and emphasis
   ;; tags). The send-payload contract is still exercised by the
   ;; setMyCommands / file-download / sendVoice tests in this ns.
-  (it "placeholder \u2014 markdown-to-HTML conversion details covered elsewhere"
+  (it "placeholder — markdown-to-HTML conversion details covered elsewhere"
     (expect true)))
 
 (defdescribe bot-command-menu-test

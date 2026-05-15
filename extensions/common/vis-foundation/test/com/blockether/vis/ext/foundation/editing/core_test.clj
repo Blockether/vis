@@ -282,7 +282,7 @@
           out  (journal-render-cat h)]
       ;; New shape: handle's print-method emits `#vis/handle {...}` on
       ;; one line. The journal must not echo file content (that path is
-      ;; closed in the pivot \u2014 see PLAN.md Phase 7).
+      ;; closed in the pivot — see PLAN.md Phase 7).
       (expect (string/starts-with? out "#vis/handle "))
       (expect (string/includes? out ":kind :v.cat"))
       (expect (string/includes? out ":path \"src/demo.clj\""))
@@ -325,7 +325,7 @@
           paragraph (nth out 2)
           text (apply str (filter string? (tree-seq sequential? seq paragraph)))]
       (expect (string/includes? text
-                "Read extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj \u2014 1 line(s) from line 1898 (next-offset 1928)."))))
+                "Read extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj — 1 line(s) from line 1898 (next-offset 1928)."))))
 
   (it "v/cat channel renderer respects :offset for mid-file windows"
     (let [channel-render-cat (private-fn "channel-render-cat")
