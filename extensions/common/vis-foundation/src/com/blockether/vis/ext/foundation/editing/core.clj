@@ -125,8 +125,7 @@
 ;; the abstraction boundary (color-role lived here too). Use the engine
 ;; functions directly.
 
-(doseq [[op tag] [[:v/view :op.tag/observation]
-                  [:v/cat :op.tag/observation]
+(doseq [[op tag] [[:v/cat :op.tag/observation]
                   [:v/ls :op.tag/observation]
                   [:v/rg :op.tag/observation]
                   [:v/patch-check :op.tag/observation]
@@ -625,12 +624,6 @@
 ;; Tool-result facades
 ;; =============================================================================
 
-(defn- view-tool
-  "Materialize a bounded view of a handle's payload via the handle's `PHandle/view` protocol implementation. The op is a kind-specific keyword: for `:v.cat` handles, supported ops are `:peek` (no args), `:at` (1-based line number), and `:lines` (start, end). Throws `:vis.handle/unsupported-view` for unknown ops on a kind. Examples: `(v/view h :peek)` returns the first 50 lines; `(v/view h :at 117)` returns the 117th line; `(v/view h :lines 0 50)` returns lines 0..49."
-  ([h op] (handle/view h op))
-  ([h op a] (handle/view h op a))
-  ([h op a b] (handle/view h op a b)))
-
 (defn- cat-tool
   "Read a window of a text file as a CatHandle. The handle prints as a one-line summary; call `@h` to materialize the line vec, or `(v/view h :peek)` / `(v/view h :lines a b)` / `(v/view h :at n)` for bounded views. Arities: `(v/cat path)` -> first 200 lines; `(v/cat path n)` -> first n lines; `(v/cat path offset n)` -> n lines starting at 1-based offset. Pagination metadata lives in the handle summary: `(:next-offset (handle/summary h))` / `(:eof? (handle/summary h))`. Each window is byte-capped at 64KB."
   ([path]
@@ -913,22 +906,6 @@
           :else       "."))
       (ir-code-block "text" (bounded-render-text body)))))
 
-(defn- journal-render-view
-  "v/view journal preview: pr-str of the materialized view value. The
-   payload is already bounded by the handle's view op (e.g. :peek =
-   first 50 lines), so no further truncation here."
-  [result]
-  (str (pr-str result)
-    "\n" (read-more-hint "<your binding>")))
-
-(defn- channel-render-view
-  "Channel preview: render the view as a code block. View results are
-   bounded vectors; pr-str captures them faithfully for human eyes."
-  [result]
-  (ir-root
-    (ir-p "View result:")
-    (ir-code-block "edn" (bounded-render-text (pr-str result)))))
-
 (defn- journal-render-ls
   "v/ls journal: one-line handle summary + read-more hint. Tree content
    reachable via (v/view h :tree) / @h."
@@ -1060,14 +1037,6 @@
 ;; lives in opts because it has nothing to do with the function's signature.
 ;; -----------------------------------------------------------------------------
 
-(def view-symbol
-  (vis/symbol #'view-tool
-    {:symbol 'view
-
-     :journal-render-fn journal-render-view
-     :channel-render-fn channel-render-view
-     :on-error-fn (tool-failure-on-error :v/view :handle nil)}))
-
 (def cat-symbol
   (vis/symbol #'cat-tool
     {:symbol 'cat
@@ -1158,8 +1127,7 @@
 
 (defn available-editing-symbols
   []
-  [view-symbol
-   cat-symbol
+  [cat-symbol
    ls-symbol
    rg-symbol
    patch-symbol
