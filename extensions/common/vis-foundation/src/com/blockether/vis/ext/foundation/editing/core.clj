@@ -657,33 +657,38 @@
                        :offset (:offset out)}}))))
 
 (defn- ls-tool
-  "Preview directory tree. Returns nested tree payload."
+  "Preview directory tree as an LsHandle. The handle's summary carries
+   path / type / entry-count / tree?; call `(v/view h :peek)` for
+   top-level entry names, `(v/view h :children)` for the immediate
+   children, or `(v/view h :tree)` (or `@h`) for the full tree."
   ([path]
    (ls-tool path nil))
   ([path opts]
-   (let [out (list-files path opts)]
+   (let [out (list-files path opts)
+         h   (handle/make-ls out)]
      (tool-success
        {:op :v/ls
         :path path
         :kind :dir
-        :result out
+        :result h
         :info {:depth (:depth opts)
                :hidden? (:hidden? opts)
                :respect-gitignore? (get opts :respect-gitignore? true)}
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
-  "Literal file-content search with one spec-map grammar. Use (v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]}) for OR, or (v/rg {:all [\"defn\" \"handler\"] :paths [\"src\"]}) when all literals must occur on the same line. Exactly one of :all/:any is required. Strings are literal substrings: | is a pipe character, not regex alternation. No positional/query+opts shorthand. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. Acquisition has a private hard cap; bind the result and slice for display. Returns {:hits [...] :truncated-by ...}. For pure path discovery without content matching, use a vacuous spec like (v/rg {:any [\"\"] :include [\"**/*.clj\"]}) or `v/ls`."
+  "Literal file-content search returning an RgHandle. Use `(v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]})` for OR, or `(v/rg {:all [\"defn\" \"handler\"] :paths [\"src\"]})` when all literals must occur on the same line. Exactly one of :all/:any is required. Strings are literal substrings: `|` is a pipe character, not regex alternation. No positional/query+opts shorthand. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. The handle's summary carries hit-count / truncated-by / first-hit (path:line) / spec; call `(v/view h :peek)` for the first 10 hits, `(v/view h :hit n)` for one hit, or `(v/view h :all)` (or `@h`) for the full vec. For pure path discovery without content matching, use a vacuous spec like `(v/rg {:any [\"\"] :include [\"**/*.clj\"]})` or `v/ls`."
   ([spec]
    (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
-         out (grep-files spec)]
+         out (grep-files spec)
+         h   (handle/make-rg out {:spec spec :paths paths})]
      (tool-success
        {:op :v/rg
         :path (if (= 1 (count paths))
                 (first paths)
                 ".")
         :kind :dir
-        :result out
+        :result h
         :info {:spec spec
                :query-op (:op coerced)
                :paths paths
@@ -925,38 +930,37 @@
     (ir-code-block "edn" (bounded-render-text (pr-str result)))))
 
 (defn- journal-render-ls
+  "v/ls journal: one-line handle summary + read-more hint. Tree content
+   reachable via (v/view h :tree) / @h."
   [result]
-  (str "v/ls " (:path result) " — "
-    (count (:children result)) " top-level entries\n"
-    (bounded-render-text (str/join "\n" (tree-lines result)))))
+  (str (pr-str result)
+    "\n" (read-more-hint "<your binding>")))
 
 (defn- channel-render-ls
+  "Channel preview: derefs the handle to render the tree for human readers."
   [result]
-  (ir-root
-    (ir-p "Directory tree of " (ir-code (:path result)) " — "
-      (count (:children result)) " top-level entries.")))
+  (let [tree (deref result)]
+    (ir-root
+      (ir-p "Directory tree of " (ir-code (:path tree)) " — "
+        (count (:children tree)) " top-level entries.")
+      (ir-code-block "text"
+        (bounded-render-text (str/join "\n" (tree-lines tree)))))))
 
 (defn- journal-render-rg
+  "v/rg journal: one-line handle summary + read-more hint. Hit vec
+   reachable via (v/view h :all) / (v/view h :hit n) / @h."
   [result]
-  (let [hits (or (:hits result) [])
-        n    (count hits)
-        shown (vec (take 20 hits))
-        body (->> shown
-               (map (fn [{:keys [path line text]}]
-                      (str path ":" line " " text)))
-               (str/join "\n"))]
-    (str "v/rg — " n " hit(s), truncated-by "
-      (name (or (:truncated-by result) :none)) "\n"
-      body
-      (when (> n (count shown))
-        (str "\n… (" (- n (count shown)) " more; bind hits and slice)")))))
+  (str (pr-str result)
+    "\n" (read-more-hint "<your binding>")))
 
 (defn- channel-render-rg
+  "Channel preview: derefs the handle to render the hit list."
   [result]
-  (let [hits (or (:hits result) [])]
+  (let [hits (deref result)
+        {:keys [truncated-by]} (handle/summary result)]
     (ir-root
       (ir-p "Searched — " (count hits) " hit(s), truncated-by "
-        (ir-code (name (or (:truncated-by result) :none))) ".")
+        (ir-code (name (or truncated-by :none))) ".")
       (when (seq hits)
         (ir-code-block "text"
           (bounded-render-text
