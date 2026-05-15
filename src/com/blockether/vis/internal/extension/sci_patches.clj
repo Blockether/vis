@@ -48,6 +48,19 @@
   []
   (atom []))
 
+;; NOTE: dependency-edge capture is NOT via this resolve patch. SCI
+;; analyzes/compiles forms before evaluating them, so by the time
+;; `original-eval-def` runs init, symbol-to-var resolution is already
+;; baked into the AST — the runtime resolve-symbol* hook does not fire
+;; for inline references inside an init expression.
+;;
+;; The engine instead parses the iteration source post-eval and emits
+;; one edge per (free-symbol-in-init → def-name) pair; see
+;; `loop/dep-edges-from-source`. The persistence layer filters those
+;; pairs against the existing-soul-name set inside the same
+;; transaction, so core ops, locals, and macro symbols drop out
+;; naturally.
+
 ;; =============================================================================
 ;; Patch: sci.impl.evaluator/eval-def
 ;; =============================================================================
