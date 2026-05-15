@@ -50,11 +50,23 @@
   "Default inter-chunk idle timeout for Vis `svar/ask-code!` calls."
   (* 5 60 1000))
 
+(def ASK_CODE_SEMANTIC_TIMEOUT_MS
+  "Default model/progress timeout for Vis `svar/ask-code!` streams.
+   Nil by default: upstream OpenAI/Z.ai/Anthropic streams generally do
+   not send provider-level heartbeats, so Vis relies on idle timeout.
+   Set per call with `:semantic-timeout-ms` when a proxy emits `: ping`
+   heartbeats and transport liveness is not enough."
+  nil)
+
 (defn- with-default-ask-code-idle-timeout
   [opts]
-  (if (contains? opts :idle-timeout-ms)
-    opts
-    (assoc opts :idle-timeout-ms ASK_CODE_IDLE_TIMEOUT_MS)))
+  (cond-> opts
+    (not (contains? opts :idle-timeout-ms))
+    (assoc :idle-timeout-ms ASK_CODE_IDLE_TIMEOUT_MS)
+
+    (and (some? ASK_CODE_SEMANTIC_TIMEOUT_MS)
+      (not (contains? opts :semantic-timeout-ms)))
+    (assoc :semantic-timeout-ms ASK_CODE_SEMANTIC_TIMEOUT_MS)))
 
 (defn clamp-eval-timeout-ms
   "Clamp a candidate eval timeout to [MIN_EVAL_TIMEOUT_MS, MAX_EVAL_TIMEOUT_MS]."

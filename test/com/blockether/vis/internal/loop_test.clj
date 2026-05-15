@@ -19,9 +19,16 @@
     (expect (= (* 5 60 1000) lp/ASK_CODE_IDLE_TIMEOUT_MS))
     (let [{:keys [router opts]} (captured-ask-code-opts {:lang "clojure" :messages []})]
       (expect (= ::router router))
-      (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))))
+      (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts)))
+      (expect (not (contains? opts :semantic-timeout-ms)))))
 
   (it "preserves explicit ask-code idle timeout overrides"
     (expect (= 42 (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms 42})))))
     (expect (contains? (:opts (captured-ask-code-opts {:idle-timeout-ms nil})) :idle-timeout-ms))
-    (expect (nil? (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms nil})))))))
+    (expect (nil? (:idle-timeout-ms (:opts (captured-ask-code-opts {:idle-timeout-ms nil}))))))
+
+  (it "keeps semantic timeout opt-in"
+    (expect (nil? lp/ASK_CODE_SEMANTIC_TIMEOUT_MS))
+    (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
+      (expect (= 180000 (:semantic-timeout-ms opts)))
+      (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))))
