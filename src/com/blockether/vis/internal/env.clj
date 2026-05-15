@@ -15,6 +15,7 @@
    [clojure+.core]
    [clojure+.walk]
    [com.blockether.vis.internal.format :as fmt]
+   [com.blockether.vis.internal.extension.handle :as handle]
    [com.blockether.vis.internal.extension.sci-patches]
    [com.blockether.vis.internal.persistance :as persistance]
    [malli.provider :as mp]
@@ -191,13 +192,25 @@
    'update-vals update-vals})
 
 (def EXTRA_BINDINGS
-  "Extra bindings beyond what SCI provides by default."
+  "Extra bindings beyond what SCI provides by default.
+
+   The `PHandle` protocol surface (`view`, `summary`, `kind`, `handle?`)
+   is intentionally injected here as bare sandbox primitives — every
+   extension that ships its own handle kind (foundation today; vis-sql
+   / vis-http tomorrow) gets dispatch on these names for free, without
+   re-registering its own per-extension symbols. Treat them like
+   `+` / `str` / `map`: always available, dispatched polymorphically
+   by `:kind`."
   (merge MODERN_CORE_BINDINGS
     {'abs abs, 'parse-long parse-long, 'parse-double parse-double,
      'parse-boolean parse-boolean, 'parse-uuid parse-uuid,
      'infinite? infinite?, 'NaN? NaN?,
      'url-encode (fn ^String url-encode [^String s] (java.net.URLEncoder/encode s "UTF-8")),
-     'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8"))}))
+     'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8"))
+     'view       handle/view
+     'summary    handle/summary
+     'kind       handle/kind
+     'handle?    handle/handle?}))
 
 (defn create-sci-context
   "Creates the SCI sandbox context with all available bindings.
