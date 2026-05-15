@@ -8,11 +8,10 @@
 
 ## Why this exists
 
-The autoresearch bench bottomed out at `iter_score = 6` across stability
-samples (commits `422762ac`, `0f38c067`). That floor is two iterations:
-probe + answer, enforced by the `(done …)` gate. Pushing lower means
-changing the gate and the prompt scaffolding around it, not optimizing
-inside them.
+The legacy iteration model has a structural floor: probe + answer,
+enforced by the `(done …)` gate. Pushing lower requires changing the
+gate and the prompt scaffolding around it — not optimizing inside
+them.
 
 The pivot collapses the iteration model:
 
@@ -593,7 +592,8 @@ header (`turn=2 conv=… state=… status=current`), system-vars
 `<current_user_message>`. No `<current_turn_context>`.
 
 Targets:
-- `iter_score` on autoresearch bench: **1** (down from 6).
+- Single-iteration probe-and-answer for typical "summarize / fetch +
+  describe" prompts.
 - Per-iteration prompt size: **<30 %** of pre-pivot baseline.
 - All phases shipped; `./verify.sh` green.
 - README's "inspired by RLM" line graduates to "RLM-conformant".
