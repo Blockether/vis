@@ -177,7 +177,16 @@
                         produced-answer? (and (canonical-ir? (:answer q)) (> (count (:answer q)) 2))
                         trace (into []
                                 (map (fn [it]
-                                       (let [all-exprs   (vec (vis/db-list-iteration-blocks d (:id it)))
+                                       (let [all-exprs   [(cond-> {:position 0
+                                                                   :code (or (:code it) "")}
+                                                            (contains? it :result) (assoc :result (:result it))
+                                                            (contains? it :error) (assoc :error (:error it))
+                                                            (contains? it :stdout) (assoc :stdout (:stdout it))
+                                                            (contains? it :stderr) (assoc :stderr (:stderr it))
+                                                            (contains? it :channel) (assoc :channel (:channel it))
+                                                            (contains? it :render-segments) (assoc :render-segments (:render-segments it))
+                                                            (contains? it :execution-time-ms)
+                                                            (assoc :duration-ms (:execution-time-ms it)))]
                                              answer-here? (and produced-answer?
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))
@@ -221,7 +230,10 @@
                                                                                (not (neg? idx))
                                                                                (< idx (count all-exprs)))
                                                                          (get all-exprs idx))]
-                                                             (when (and block (not (visible-code-segments? block)))
+                                                             (when (and block
+                                                                     (not (visible-code-segments? block))
+                                                                     (or (= :vis/answer (:result block))
+                                                                       (str/includes? (str (:code block)) "(done")))
                                                                idx)))
                                              elide-idxs  (cond-> preflight-idxs
                                                            (some? answer-idx) (conj answer-idx))

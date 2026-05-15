@@ -54,16 +54,10 @@
     ;; message envelope. The persistance layer derives :llm_system_prompt
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
     (vis/db-store-iteration! s {:conversation-turn-id q1
-                                :blocks [{:code              "(+ 1 1)"
-                                          :comment           ";; double-check arithmetic"
-                                          :result            2
-                                          :stdout            "hello from clojure"
-                                          :execution-time-ms 5}
-                                         {:code              "(done \"42\")"
-                                          :result            :vis/answer
-                                          :execution-time-ms 2}]
+                                :code          "(+ 1 1)"
+                                :result        2
+                                :stdout        "hello from clojure"
                                 :answer        "42"
-                                :answer-position 1
                                 :thinking      "Reasoning about arithmetic"
                                 :vars          [{:name "x" :value 42 :code "(def x 42)"}]
                                 :duration-ms 12
@@ -98,14 +92,10 @@
                                                  :user-request "Second turn that fails"
                                                  :status :running})]
       (vis/db-store-iteration! s {:conversation-turn-id q2
-                                  :blocks [{:code              "Let"
-                                            :error             "ExceptionInfo: Unable to resolve symbol: Let"
-                                            :stderr            "warning: prose-in-code"
-                                            :execution-time-ms 1}
-                                           {:code              "(+ 1 1)"
-                                            :result            2
-                                            :execution-time-ms 3}]
-                                  :duration-ms 9
+                                  :code "Let"
+                                  :error {:message "ExceptionInfo: Unable to resolve symbol: Let"}
+                                  :stderr "warning: prose-in-code"
+                                  :duration-ms 1
                                   :llm-provider :blockether
                                   :llm-model    "gpt-4o"
                                   :tokens   {:input 80 :output 10 :reasoning 0 :cached 20}
@@ -198,24 +188,19 @@
           (expect (= 1 (:failure-count (second turns)))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "embeds every iteration on its turn, with full :blocks"
+  (it "embeds every iteration on its turn, with one flat :blocks adapter entry"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid    (seed! s)
               turn-2 (second (:turns (transcript/transcript s cid)))
               iter   (first  (:iterations turn-2))
               blocks (:blocks iter)]
-          ;; Two blocks: the failing prose-in-code one + the clean
-          ;; (+ 1 1) one.
-          (expect (= 2 (count blocks)))
-          (expect (= "Let"     (:code  (first  blocks))))
-          (expect (= "(+ 1 1)" (:code  (second blocks))))
+          ;; One block per persisted iteration after hard cut.
+          (expect (= 1 (count blocks)))
+          (expect (= "Let" (:code (first blocks))))
           ;; Failed block surfaces error + stderr verbatim.
-          (expect (str/includes? (:error  (first blocks)) "Unable to resolve symbol: Let"))
-          (expect (= "warning: prose-in-code" (:stderr (first blocks))))
-          ;; Clean block surfaces result + no error key.
-          (expect (= 2 (:result (second blocks))))
-          (expect (nil? (:error (second blocks)))))
+          (expect (str/includes? (str (:error (first blocks))) "Unable to resolve symbol: Let"))
+          (expect (= "warning: prose-in-code" (:stderr (first blocks)))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "surfaces provider / model on each turn"
@@ -227,7 +212,7 @@
           (expect (= "gpt-4o"     (:model turn))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "carries thinking + answer-form-idx + vars + final answer on every iteration / turn"
+  (it "carries thinking + vars + final answer on every iteration / turn"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid   (seed! s)
@@ -236,8 +221,6 @@
               iter  (first (:iterations turn))]
           ;; Reasoning trace surfaces verbatim on the iteration.
           (expect (= "Reasoning about arithmetic" (:thinking iter)))
-          ;; The terminal block index points at the `(done ...)` form.
-          (expect (= 1 (:answer-position iter)))
           ;; Per-iteration vars carry the (def ...) we persisted.
           (let [vars (:vars iter)]
             (expect (= 1 (count vars)))
@@ -266,23 +249,23 @@
                     (:llm-executable-blocks iter))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "surfaces :returned-empty-blocks? as a typed boolean"
+  (it "surfaces :returned-empty-code? as a typed boolean"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid (vis/db-store-conversation! s {:channel :tui :title "empty" :model "x"})
               q   (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                       :user-request "empty turn"
                                                       :status :running})
-              _   (vis/db-store-iteration! s {:conversation-turn-id q :blocks []
+              _   (vis/db-store-iteration! s {:conversation-turn-id q :code ""
+                                              :llm-returned-empty-code? true
                                               :duration-ms 1
                                               :tokens {:input 10 :output 0}
                                               :cost-usd 0.0001})
               _   (vis/db-update-conversation-turn! s q {:status :done})
               iter (-> (transcript/transcript s cid)
                      :turns first :iterations first)]
-          ;; Empty-blocks? defaults to true (bit was 1) when the iter
-          ;; row recorded zero blocks.
-          (expect (true? (:returned-empty-blocks? iter))))
+          ;; Empty-code? is true when the model returned zero executable blocks.
+          (expect (true? (:returned-empty-code? iter))))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "normalizes dialog, code blocks, and def-wrapped tool calls into transcript-level timelines"
@@ -295,12 +278,10 @@
               code "(def out (v/tool \"echo hi\"))"
               value (tool-result "echo hi" "hi\n")]
           (vis/db-store-iteration! s {:conversation-turn-id turn
-                                      :blocks [{:code code
-                                                :result {:vis/ref :expr}
-                                                :execution-time-ms 6}]
+                                      :code code
+                                      :result {:vis/ref :expr}
                                       :vars [{:name "out" :value value :code code}]
                                       :answer "done"
-                                      :answer-position nil
                                       :duration-ms 10})
           (vis/db-update-conversation-turn! s turn {:status :done :answer "done"})
           (let [data      (transcript/transcript s cid)
@@ -331,9 +312,8 @@
               code  "(def out (v/tool \"echo hi\"))"
               value (tool-result "echo hi" "hi\n")]
           (vis/db-store-iteration! s {:conversation-turn-id turn
-                                      :blocks [{:code code
-                                                :result value
-                                                :execution-time-ms 6}]
+                                      :code code
+                                      :result value
                                       :vars [{:name "out" :value value :code code}]
                                       :answer "done"
                                       :duration-ms 10})
@@ -436,7 +416,7 @@
           (expect (not (str/includes? out "##### Block 0"))))
         (finally (vis/db-dispose-connection! s)))))
 
-  (it "renders persisted render-segments instead of raw mixed-block structural forms"
+  (it "renders flat mixed-block code when render segments are not persisted"
     (let [s (vis/db-create-connection! :memory)]
       (try
         (let [cid (vis/db-store-conversation! s {:channel :tui :title "Mixed"})
@@ -444,26 +424,16 @@
                                                       :user-request "mixed"
                                                       :status :running})]
           (vis/db-store-iteration! s {:conversation-turn-id qid
-                                      :blocks [{:code (str "(def x 1)\n"
-                                                        "(set-conversation-title! \"Mixed\")\n"
-                                                        "(done [:ir [:p \"Done\"]])")
-                                                :render-segments [{:kind :code :source "(def x 1)"}
-                                                                  {:kind :title :value "Mixed"}
-                                                                  {:kind :answer-ref}]
-                                                :result :vis/answer
-                                                :execution-time-ms 1}]
-                                      :answer "Done"
-                                      :answer-position 0})
+                                      :code (str "(def x 1)\n"
+                                              "(set-conversation-title! \"Mixed\")\n"
+                                              "(done [:ir [:p \"Done\"]])")
+                                      :result :vis/answer
+                                      :answer "Done"})
           (vis/db-update-conversation-turn! s qid {:status :done :answer "Done"})
           (let [out (transcript/transcript-md s cid)]
-            (expect (str/includes? out "```clojure\n(def x 1)\n```"))
-            (expect (str/includes? out "_conversation title:_ `Mixed`"))
-            ;; Render-segments path: the raw `(done …)` call form must
-            ;; not appear in the rendered transcript (it's elided in
-            ;; favor of the answer reference).
-            (expect (not (str/includes? out "(done [:ir")))
-            (expect (not (str/includes? out "set-conversation-title!")))
-            (expect (not (str/includes? out "Result: `:vis/answer`")))))
+            (expect (str/includes? out "(def x 1)"))
+            (expect (str/includes? out "set-conversation-title!"))
+            (expect (str/includes? out "(done [:ir"))))
         (finally (vis/db-dispose-connection! s)))))
 
   ;; Removed: "renders header + per-turn block + per-iteration block

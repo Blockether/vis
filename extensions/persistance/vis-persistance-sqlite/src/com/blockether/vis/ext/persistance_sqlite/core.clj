@@ -1002,57 +1002,38 @@
 ;; Iteration - conversation_turn_iteration table
 ;; =============================================================================
 
-(defn- normalize-role
-  "Per PLAN §1.3: 4-value block role enum.
-   Reads `:role` from the block; defaults to `:tool` when missing or
-   when the value is not one of the 4 canonical roles. Errors are
-   derived from `:success?` on the envelope, NOT a separate role.
-   No `:vis/*` legacy mapping — dev DBs are blown away per
-   AGENTS.md S3 inline-V1 rule."
-  [exec]
-  (let [v (:role exec)]
-    (case v
-      (:answer :tool :nudge :thinking) v
-      :tool)))
+(defn- blank-text? [s]
+  (or (nil? s) (and (string? s) (str/blank? s))))
 
-(defn- prepare-blocks-blob
-  "Encode the per-iteration code-block log as one Nippy-frozen vec.
-   Each block carries :position (0-based ordinal in the iteration)."
-  [_turn-id-s _iteration-position blocks]
-  (let [blank? (fn [s] (or (nil? s) (and (string? s) (str/blank? s))))]
-    (->> (or blocks [])
-      (map-indexed
-        (fn [pos exec]
-          (cond-> {:position pos
-                   :code (:code exec)
-                   :role (normalize-role exec)}
-            (some? (:comment exec))            (assoc :comment (:comment exec))
-            (some? (:result exec))             (assoc :result (freeze-safe (:result exec)))
-            (seq (:journal exec))              (assoc :journal (freeze-safe (:journal exec)))
-            (seq (:channel exec))              (assoc :channel (freeze-safe (:channel exec)))
-            (seq (:render-segments exec))      (assoc :render-segments (freeze-safe (:render-segments exec)))
-            (:vis/structurally-silent? exec)   (assoc :vis/structurally-silent? true)
-            (:vis/silent exec)                 (assoc :vis/silent true)
-;; Per PLAN §2.1 + §7.3.5: :error is the structured :error map
-            ;; (Nippy serialises maps natively). Was previously stringified via
-            ;; (str ...) which produced unreadable Clojure-map literal text.
-            (some? (:error exec))              (assoc :error (freeze-safe (:error exec)))
-            (not (blank? (:stdout exec)))      (assoc :stdout (:stdout exec))
-            (not (blank? (:stderr exec)))      (assoc :stderr (:stderr exec))
-            (some? (:execution-time-ms exec))  (assoc :duration-ms (:execution-time-ms exec))
-            (:timeout? exec)                   (assoc :timeout? true)
-            (:repaired? exec)                  (assoc :repaired? true))))
-      vec)))
+(defn- require-iteration-code!
+  [opts]
+  (when-not (contains? opts :code)
+    (throw (ex-info "db-store-iteration! requires flat :code"
+             {:type :vis.persistence/iteration-code-required
+              :keys (keys opts)})))
+  (:code opts))
+
+(defn- prepare-iteration-columns
+  "Prepare the hard-cut single-form conversation_turn_iteration payload.
+   Result and error stay Nippy BLOBs; side effects stay TEXT."
+  [{:keys [result error stdout stderr duration-ms] :as opts}]
+  (let [code (require-iteration-code! opts)]
+    (cond-> {:code (str code)}
+      (contains? opts :result)     (assoc :result (->blob (freeze-safe result)))
+      (some? error)                (assoc :error (->blob (freeze-safe error)))
+      (not (blank-text? stdout))   (assoc :stdout stdout)
+      (not (blank-text? stderr))   (assoc :stderr stderr)
+      (some? duration-ms)          (assoc :duration_ms (long duration-ms)))))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
   "Store one iteration row + per-`(def ...)` expression_soul/expression_state
-   rows. The iteration's full code-block log is written inline as a
-   Nippy blob in `iteration.code_blocks` (no per-call rows; see V1 schema
-   migration banner). Returns the iteration UUID."
-  [db-info {:keys [conversation-turn-id blocks thinking answer answer-position duration-ms vars error metadata
+   rows. The iteration's single code payload is written inline to flat
+   conversation_turn_iteration columns. Returns the iteration UUID."
+  [db-info {:keys [conversation-turn-id thinking answer duration-ms vars error metadata
                    llm-messages llm-provider llm-model llm-raw-response
-                   llm-executable-blocks llm-assistant-message tokens cost-usd]}]
+                   llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
+            :as opts}]
   (when (ds db-info)
     (sqlite-write-tx! db-info
       (fn [tx-info]
@@ -1089,36 +1070,32 @@
                                 :where  [:= :conversation_turn_state_id conversation-turn-state-id-s]}))
                           1)
               raw-response-s (some-> llm-raw-response str)]
-          ;; 1. Iteration row - includes the full block log inline as
-          ;;    `iteration.code_blocks BLOB` (Nippy-encoded vec). Per-form
-          ;;    observations live here; expression_soul/expression_state
-          ;;    are only for named vars.
-          (let [blocks-vec (prepare-blocks-blob conversation-turn-soul-id-s position blocks)]
+          ;; 1. Iteration row - includes the single-form code payload inline.
+          ;;    Hard cut: callers pass flat :code/:result/:error/:stdout/:stderr.
+          (let [iteration-cols (prepare-iteration-columns opts)]
             (execute! tx-info
               {:insert-into :conversation_turn_iteration
-               :values [(cond-> {:id                   iteration-id-s
-                                 :conversation_turn_state_id       conversation-turn-state-id-s
-                                 :position             position
-                                 :status               (normalize-status (cond answer :done error :error :else :done))
-                                 :llm_system_prompt    (when (seq llm-messages)
-                                                         (:content (first (filter #(= "system" (:role %)) llm-messages))))
-                                 :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
-                                 :llm_provider         (when llm-provider (name (->kw llm-provider)))
-                                 :llm_model            llm-model
-                                 :llm_thinking         (str/trim (or thinking ""))
-                                 :llm_full_duration_ms (or duration-ms 0)
-                                 :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
-                                 :llm_returned_empty_code_blocks (if (empty? blocks) 1 0)
-                                 :metadata             (when metadata (->json metadata))
-                                 :code_blocks          (->blob blocks-vec)
-                                 :llm_executable_code_blocks (when (some? llm-executable-blocks)
-                                                               (->json (vec llm-executable-blocks)))
-                                 :llm_assistant_message (when (some? llm-assistant-message)
-                                                          (->json llm-assistant-message))
-                                 :created_at           now
-                                 :finished_at          now}
-                          (some? answer-position)
-                          (assoc :answer_form_idx answer-position)
+               :values [(cond-> (merge {:id                   iteration-id-s
+                                        :conversation_turn_state_id conversation-turn-state-id-s
+                                        :position             position
+                                        :status               (normalize-status (cond answer :done error :error (:error iteration-cols) :error :else :done))
+                                        :llm_system_prompt    (when (seq llm-messages)
+                                                                (:content (first (filter #(= "system" (:role %)) llm-messages))))
+                                        :llm_user_prompt      (when (seq llm-messages) (->json llm-messages))
+                                        :llm_provider         (when llm-provider (name (->kw llm-provider)))
+                                        :llm_model            llm-model
+                                        :llm_thinking         (str/trim (or thinking ""))
+                                        :llm_full_duration_ms (or duration-ms 0)
+                                        :llm_error            (when error (->json (if (map? error) error {:message (str error)})))
+                                        :llm_returned_empty_code (if llm-returned-empty-code? 1 0)
+                                        :metadata             (when metadata (->json metadata))
+                                        :llm_executable_code_blocks (when (some? llm-executable-blocks)
+                                                                      (->json (vec llm-executable-blocks)))
+                                        :llm_assistant_message (when (some? llm-assistant-message)
+                                                                 (->json llm-assistant-message))
+                                        :created_at           now
+                                        :finished_at          now}
+                                  iteration-cols)
                           raw-response-s
                           (assoc :llm_raw_response         raw-response-s
                             :llm_raw_response_preview (raw-response-preview raw-response-s)
@@ -1134,18 +1111,11 @@
                           (some? (:reasoning tokens)) (assoc :llm_reasoning_tokens (long (:reasoning tokens)))
                           (some? (:cached tokens))    (assoc :llm_cached_tokens    (long (:cached tokens)))
                           (some? cost-usd)            (assoc :llm_cost_usd         (double cost-usd)))]})
-            ;; Index thinking + per-block comment plain-text projections
-            ;; for FTS5 search. Both are markdown strings; `vis/search-text`
-            ;; lifts them via `text->ir` then concatenates.
+            ;; Index thinking manually; code itself is indexed by schema triggers.
             (let [thinking-s (str/trim (or thinking ""))]
               (when-not (= "" thinking-s)
                 (reindex-search! tx-info "conversation_turn_iteration"
-                  iteration-id-s "thinking_text" thinking-s)))
-            (let [comments (->> blocks-vec (keep :comment) (remove str/blank?))]
-              (when (seq comments)
-                (reindex-search! tx-info "conversation_turn_iteration"
-                  iteration-id-s "comments_text"
-                  (clojure.string/join "\n\n" comments)))))
+                  iteration-id-s "thinking_text" thinking-s))))
           ;; 3. Vars -> expression_soul (kind=var, stateful) + expression_state (versioned)
           (when conversation-state-id
             (doseq [{:keys [name value code time-ms metadata]} (or vars [])]
@@ -1269,52 +1239,59 @@
     []))
 
 (defn- row->iteration [row]
-  (cond-> {:id          (->uuid (:id row))
-           :type        :iteration
-           :position    (:position row)
-           :status      (->kw-back (:status row))
-           :created-at  (->date (:created_at row))}
-    (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
-    (some? (:llm_error row))            (assoc :error (:llm_error row))
-    (some? (:llm_full_duration_ms row)) (assoc :duration-ms (:llm_full_duration_ms row))
-    (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
-    (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
-    (some? (:llm_model row))            (assoc :model (:llm_model row))
-    ;; Forensic fields - the full transcript surface needs these on
-    ;; the data shape even when callers don't render them by default.
-    (some? (:llm_system_prompt row))    (assoc :llm-system-prompt (:llm_system_prompt row))
-    (some? (:llm_user_prompt row))      (assoc :llm-user-prompt   (<-json (:llm_user_prompt row)))
-    (some? (:llm_raw_response row))
-    (assoc :llm-raw-response (:llm_raw_response row))
-    (some? (:llm_raw_response_preview row))
-    (assoc :llm-raw-response-preview (:llm_raw_response_preview row))
-    (some? (:llm_raw_response_length row))
-    (assoc :llm-raw-response-length (:llm_raw_response_length row))
-    (some? (:llm_raw_response_sha256 row))
-    (assoc :llm-raw-response-sha256 (:llm_raw_response_sha256 row))
-    (some? (:llm_executable_code_blocks row))
-    (assoc :llm-executable-blocks (<-json (:llm_executable_code_blocks row)))
-    ;; Canonical assistant message svar emitted on this iteration; rehydrated
-    ;; on resume so preserved-thinking replay survives a vis restart.
-    (some? (:llm_assistant_message row))
-    (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
-    (some? (:answer_form_idx row))      (assoc :answer-position   (:answer_form_idx row))
-    (some? (:llm_returned_empty_code_blocks row))
-    (assoc :returned-empty-blocks? (= 1 (long (:llm_returned_empty_code_blocks row))))
-    ;; Token / cost columns - ALWAYS present on the read side, with
-    ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
-    ;; is NULL. Callers can assume `(:input-tokens it)` is a long
-    ;; and `(:cost-usd it)` is a double without `or`-padding at
-    ;; every use site. The schema CHECK still rejects negative
-    ;; values; absent = zero by convention.
-    true (assoc :input-tokens     (long   (or (:llm_input_tokens row) 0)))
-    true (assoc :output-tokens    (long   (or (:llm_output_tokens row) 0)))
-    true (assoc :reasoning-tokens (long   (or (:llm_reasoning_tokens row) 0)))
-    true (assoc :cached-tokens    (long   (or (:llm_cached_tokens row) 0)))
-    true (assoc :cost-usd         (double (or (:llm_cost_usd row) 0.0)))
-    ;; Iteration metadata (JSON) carries the per-iteration metrics:
-    ;; :var-history-recall-count plus per-iteration extension info.
-    (some? (:metadata row))             (assoc :metadata (<-json (:metadata row)))))
+  (let [iter-error (or (<-blob (:error row))
+                     (when (some? (:llm_error row))
+                       (or (<-json (:llm_error row)) (:llm_error row))))]
+    (cond-> {:id          (->uuid (:id row))
+             :type        :iteration
+             :position    (:position row)
+             :status      (->kw-back (:status row))
+             :created-at  (->date (:created_at row))}
+      (some? (:code row))                (assoc :code (:code row))
+      (some? (:result row))              (assoc :result (<-blob (:result row)))
+      (some? iter-error)                 (assoc :error iter-error)
+      (not (str/blank? (or (:stdout row) ""))) (assoc :stdout (:stdout row))
+      (not (str/blank? (or (:stderr row) ""))) (assoc :stderr (:stderr row))
+      (some? (:duration_ms row))         (assoc :execution-time-ms (:duration_ms row))
+      (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
+      (some? (:llm_full_duration_ms row)) (assoc :duration-ms (:llm_full_duration_ms row))
+      (some? (:finished_at row))          (assoc :finished-at (->date (:finished_at row)))
+      (some? (:llm_provider row))         (assoc :provider (->kw-back (:llm_provider row)))
+      (some? (:llm_model row))            (assoc :model (:llm_model row))
+      ;; Forensic fields - the full transcript surface needs these on
+      ;; the data shape even when callers don't render them by default.
+      (some? (:llm_system_prompt row))    (assoc :llm-system-prompt (:llm_system_prompt row))
+      (some? (:llm_user_prompt row))      (assoc :llm-user-prompt   (<-json (:llm_user_prompt row)))
+      (some? (:llm_raw_response row))
+      (assoc :llm-raw-response (:llm_raw_response row))
+      (some? (:llm_raw_response_preview row))
+      (assoc :llm-raw-response-preview (:llm_raw_response_preview row))
+      (some? (:llm_raw_response_length row))
+      (assoc :llm-raw-response-length (:llm_raw_response_length row))
+      (some? (:llm_raw_response_sha256 row))
+      (assoc :llm-raw-response-sha256 (:llm_raw_response_sha256 row))
+      (some? (:llm_executable_code_blocks row))
+      (assoc :llm-executable-blocks (<-json (:llm_executable_code_blocks row)))
+      ;; Canonical assistant message svar emitted on this iteration; rehydrated
+      ;; on resume so preserved-thinking replay survives a vis restart.
+      (some? (:llm_assistant_message row))
+      (assoc :llm-assistant-message (<-json (:llm_assistant_message row)))
+      (some? (:llm_returned_empty_code row))
+      (assoc :returned-empty-code? (= 1 (long (:llm_returned_empty_code row))))
+      ;; Token / cost columns - ALWAYS present on the read side, with
+      ;; sane numeric defaults (0 tokens, $0.00 cost) when the column
+      ;; is NULL. Callers can assume `(:input-tokens it)` is a long
+      ;; and `(:cost-usd it)` is a double without `or`-padding at
+      ;; every use site. The schema CHECK still rejects negative
+      ;; values; absent = zero by convention.
+      true (assoc :input-tokens     (long   (or (:llm_input_tokens row) 0)))
+      true (assoc :output-tokens    (long   (or (:llm_output_tokens row) 0)))
+      true (assoc :reasoning-tokens (long   (or (:llm_reasoning_tokens row) 0)))
+      true (assoc :cached-tokens    (long   (or (:llm_cached_tokens row) 0)))
+      true (assoc :cost-usd         (double (or (:llm_cost_usd row) 0.0)))
+      ;; Iteration metadata (JSON) carries the per-iteration metrics:
+      ;; :var-history-recall-count plus per-iteration extension info.
+      (some? (:metadata row))             (assoc :metadata (<-json (:metadata row))))))
 
 (defn db-list-conversation-turn-iterations [db-info conversation-turn-id]
   (if (and (ds db-info) conversation-turn-id)
@@ -1344,32 +1321,6 @@
                     [:= :est.conversation_turn_iteration_id iteration-id-s]
                     [:= :es.kind "var"]]
            :order-by [[:est.created_at :asc]]})))
-    []))
-
-(defn db-list-iteration-blocks
-  "Return code blocks for an iteration, ordered by 0-based `:position`.
-   Each entry carries :position + :code (and optionally :comment :result
-   :error :stdout :stderr :duration-ms :timeout? :repaired?).
-
-   Source: the Nippy-encoded `iteration.code_blocks` BLOB. Per-form calls are
-   read directly from that blob; expression_soul/expression_state are
-   reserved for named vars.
-
-   Backward-compat: old blobs persisted before the :idx→:position rename
-   are normalized at read time so a single canonical key is exposed."
-  [db-info iteration-id]
-  (if (and (ds db-info) iteration-id)
-    (let [iteration-id-s (->ref iteration-id)
-          row            (query-one! db-info
-                           {:select [:code_blocks]
-                            :from   :conversation_turn_iteration
-                            :where  [:= :id iteration-id-s]})
-          decoded        (<-blob (:code_blocks row))
-          normalize      (fn [b]
-                           (cond-> b
-                             (and (contains? b :idx) (not (contains? b :position)))
-                             (-> (assoc :position (:idx b)) (dissoc :idx))))]
-      (mapv normalize (or decoded [])))
     []))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
