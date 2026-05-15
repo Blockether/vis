@@ -178,14 +178,34 @@ Shipped and verified (`./verify.sh` all 7 steps green, 957 tests):
 
 Still not done:
 
-- Phase 4 is only partial: actual engine still builds internal
-  `:blocks` vectors after eval; def persistence still uses
-  `restorable-var-snapshots` instead of flushing `:def-sink` directly;
-  `extract-defining-name` still exists.
-- Dependency edges are not captured from runtime symbol resolution yet.
+- Phase 4 main is now substantially DONE (see commits `1223b159`,
+  `2d108d71`, `44c7c44d`, `2e323c02`):
+  - Def persistence drives off the SCI `:def-sink` (no source-parse
+    walk); per-var precise source extraction; legacy
+    `extract-defining-name` / `extract-def-names` /
+    `restorable-var-snapshots` / `attach-doc-meta!` deleted.
+  - Class-producing def heads (`defrecord` / `deftype` /
+    `defprotocol` / `gen-class` / `extend-type` / `extend-protocol`
+    / `definterface` / `reify`) banned at both prompt and sandbox
+    layers (`validate-no-banned-defs!`).
+  - `(done …)` gate softened to 'did the form throw?'. The legacy
+    structural floor (`final-answer-structural-criteria-errors`,
+    `prior-error-atom`, `answer-with-extension-preflight-*`,
+    `block-result-error-summary`) is gone; `final-answer-gate-error`
+    now only dispatches `:turn.answer/validate` extension hooks.
+  - `CORE_SYSTEM_PROMPT` partially updated: TURN PROTOCOL / LOOP
+    DISCIPLINE / EMIT_FINAL reflect the one-form-per-iteration
+    contract. `<journal>` / `<bindings>` language survives until
+    Phase 7 main rewrites the whole prompt.
+  - Still pending in Phase 4 main: engine still builds an internal
+    `:blocks` vector after eval. With one block per iteration the
+    vector is trivially length-1; the mapv → scalar collapse is a
+    follow-up cleanup, not a correctness gate.
+- Phase 4b (dependency edges from `resolve-symbol*`) not started.
 - Phase 7 prompt swap not done: live path still calls legacy
   `build-iteration-context`; `CORE_SYSTEM_PROMPT` still contains old
-  scaffolding.
+  scaffolding around `<journal>` / `<bindings>` mention in unrelated
+  sections.
 - USER_REQUEST injection as sandbox `(def USER_REQUEST "..." ...)` is
   not wired.
 - Long-lived per-env LRU merge is not wired into prompt assembly.
@@ -193,9 +213,10 @@ Still not done:
 
 ## Remaining work
 
-Order now: finish Phase 4 (def-sink + dependency flush + scalar engine
-shape) → Phase 7 prompt swap → Phase 6 remaining channel audit → Phase 8
-docs/reset helper.
+Order now: Phase 4b (dependency edges) → Phase 7 prompt swap → Phase 6
+remaining channel audit → Phase 8 docs/reset helper. Phase 4 main
+scalar collapse is opportunistic and can ship alongside Phase 7 since
+both touch the same `run-iteration` body.
 
 ### Phase 5 — Schema collapse (HARD CUT) — DONE in `60bdcde5`
 
