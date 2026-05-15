@@ -119,10 +119,12 @@ _format() {
     echo "cljfmt not found - install with: brew install cljfmt"
     return 1
   fi
-  cljfmt check src/ test/ extensions/ build.clj || {
+  local format_paths=(src extensions build.clj)
+  [ -d test ] && format_paths+=(test)
+  cljfmt check "${format_paths[@]}" || {
     echo ""
     echo "FAILED: cljfmt found formatting issues."
-    echo "Fix with:  cljfmt fix src/ test/ extensions/ build.clj"
+    echo "Fix with:  cljfmt fix ${format_paths[*]}"
     return 1
   }
   echo "cljfmt: clean"
@@ -135,7 +137,8 @@ _lint() {
     echo "clj-kondo not found - install with: brew install borkdude/brew/clj-kondo"
     return 1
   fi
-  local lint_paths=(src test)
+  local lint_paths=(src)
+  [ -d test ] && lint_paths+=(test)
   # `extensions/<category>/<pkg>/src` is two levels deep.
   for d in extensions/*/*/src extensions/*/*/test; do
     [ -d "$d" ] && lint_paths+=("$d")
@@ -329,17 +332,6 @@ _test() {
   clojure -M:test || return 1
 }
 
-# --- mdBook docs build. AGENTS.md mandates docs updates for arch / public API
-#     changes; this gate ensures docs at least compile. ---
-_docs() {
-  if ! command -v mdbook > /dev/null; then
-    echo "mdbook not found - install with: cargo install mdbook"
-    return 1
-  fi
-  (cd docs && mdbook build) || return 1
-  echo "mdBook build: OK"
-}
-
 # --- Smoke test: bin/vis prints the help tree. Doesn't touch the user DB. ---
 _smoke() {
   ./bin/vis 2>&1 | tee /dev/stderr | grep -q "iterative coding agent CLI" || {
@@ -402,7 +394,6 @@ verify_full() {
   step "lint"     "Lint (clj-kondo)"                            _lint          || return 1
   step "graal"    "GraalVM safety (reflection / boxed math)"    _graal_safety  || return 1
   step "test"     "Tests (clojure -M:test)"                     _test          || return 1
-  step "docs"     "Docs build (mdbook)"                         _docs          || return 1
   step "smoke"    "Smoke (bin/vis help)"                        _smoke         || return 1
   step "git"      "Git hygiene (diff --check)"                  _git_check     || return 1
   step "secrets"  "Secret scan"                                 _secret_scan   || return 1

@@ -919,7 +919,7 @@
 (defn- var-source
   "Best-effort source form for a host Var. Stored on extension symbol entries
    so SCI's patched `clojure.repl/source-fn` can show source for aliased
-   extension vars whose SCI namespace (`v/`, `z/`, ...) is synthetic."
+   extension vars whose SCI namespace (`v/`, ...) is synthetic."
   [v]
   (let [m  (meta v)
         ns (:ns m)
@@ -1390,7 +1390,7 @@
 (defn- ensure-tool-result-op
   "Observed extension tools must carry canonical op metadata. Tool functions may
    set `:op` explicitly via `extension/success`; otherwise the wrapper derives
-   it deterministically from the active alias and symbol (`v/cat`, `z/patch`,
+   it deterministically from the active alias and symbol (`v/cat`, `v/patch`,
    ...). Either path must resolve to a registered op tag, so missing extension
    tags fail closed instead of silently becoming observations."
   [ext sym-entry result]

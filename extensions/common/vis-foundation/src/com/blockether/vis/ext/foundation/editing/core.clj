@@ -30,10 +30,6 @@
         (v/extension path)
         (v/relativize from to)
 
-   Clojure/EDN zipper patching (`z/patch`, same map shape as
-   `v/patch`) lives in the `vis-language-clojure` extension under
-   `extensions/languages/clojure/`.
-
    Hard guard: every path must stay inside the conversation's working
    directory (`fs/cwd`); `..` traversal is rejected before any I/O."
   (:require
@@ -1191,7 +1187,7 @@
     "`{:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]}` (OR) or "
     "`{:all [\"defn\" \"foo\"]}` (same-line AND); no regex/shorthand. "
     "v/cat reads one window: `(v/cat path offset n)`; page via `(:next-offset prev)` until `(:eof? prev)`. Bind windows, not whole files. "
-    "Edit non-Clojure text with `(v/patch [{:path :search :replace}])`; each :search must match exactly once or the whole batch fails. v/patch-check verifies uniqueness. For .clj/.cljs/.cljc/.edn use the `z/` extension (structural) when active. "
+    "Edit text with `(v/patch [{:path :search :replace}])`; each :search must match exactly once or the whole batch fails. v/patch-check verifies uniqueness. "
     "v/patch returns the unified diff + post-image — that IS the evidence the write happened. Do NOT v/cat to verify; trust the patch result. "
     "Path ops: v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists, v/exists?. "
     "No shell: git/verify/CLI live outside the sandbox — stay in tools/REPL."))

@@ -226,7 +226,7 @@
   ;;
   ;; (b) is load-bearing. Pre-fix a single typo in any
   ;; extension source file silently disabled its alias namespace
-  ;; (`v/`, `z/`, `clj/`, …). The user saw nothing; the LLM saw
+  ;; (`v/`, …). The user saw nothing; the LLM saw
   ;; "Unable to resolve symbol" forever (conversation
   ;; d8aff512-d60d-42b6-a009-041f1bec3891 burned 200+ blocks on this).
   ;; Surfacing the failure here puts the actual root cause — "foundation.core
