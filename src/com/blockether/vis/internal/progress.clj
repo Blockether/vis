@@ -73,7 +73,7 @@
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.prompt :as prompt]))
+   [com.blockether.vis.internal.format :as fmt]))
 
 (defn- empty-iteration-entry [iteration]
   {:iteration iteration
@@ -166,7 +166,7 @@
         (extension/channel-render-tool-result (:result chunk))
 
         :else
-        (prompt/safe-pr-str (:result chunk))))))
+        (fmt/safe-pr-str (:result chunk))))))
 
 (defn- normalize-thinking-text [thinking]
   (some-> thinking str str/trim))

@@ -1937,15 +1937,19 @@
           {:keys [sci-ctx]} (env/create-sci-context nil)]
       (let [results (env/restore-sandbox! sci-ctx s cid)
             by-name (into {} (map (fn [r] [(:name r) r])) results)]
+        ;; Pivot: any parsed `(def …)` / `(defn …)` shape is safe to
+        ;; re-eval on restore because dependencies are topo-sorted
+        ;; first — so `make-adder` lands before `add-5`'s init
+        ;; evaluates. The legacy regex only accepted `defn` shapes;
+        ;; the edamame-backed `parsed-def-form?` correctly accepts
+        ;; plain `def` too.
         (expect (= :eval (:restored-via (by-name "make-adder"))))
-        (expect (= :unavailable (:restored-via (by-name "add-5"))))
-        (expect (= :unsafe-restore (:reason (by-name "add-5")))))
-      ;; make-adder works (safe defn source restored via eval)
+        (expect (= :eval (:restored-via (by-name "add-5")))))
+      ;; Both work in the restored sandbox: make-adder is the factory,
+      ;; add-5 is the fresh closure produced by re-eval against the
+      ;; restored make-adder.
       (expect (= 15 (:val (sci/eval-string+ sci-ctx "((make-adder 10) 5)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))
-      ;; add-5 was an effectful/closure-producing def result; recreate intentionally.
-      (expect (try (sci/eval-string+ sci-ctx "(add-5 7)" {:ns (sci/find-ns sci-ctx 'sandbox)})
-                false
-                (catch Exception _ true)))))
+      (expect (= 12 (:val (sci/eval-string+ sci-ctx "(add-5 7)" {:ns (sci/find-ns sci-ctx 'sandbox)}))))))
 
   (it "system + user vars round-trip on restore: TURN_USER_REQUEST, user-thinking-state, CONVERSATION_PREVIOUS_ANSWER"
     (let [s   (h/store)
@@ -2186,6 +2190,72 @@
          :duration-ms 0
          :vars snap
          :dependencies deps}))))
+
+(defdescribe parsed-def-form-shape-test
+  (it "accepts every head in DEF_HEADS_FOR_RESTORE (bare + clojure.core/-qualified)"
+    ;; Direct env-level check: every shape we promise to round-trip
+    ;; must pass the restore-time gate. Edamame parse + head lookup,
+    ;; not regex-on-source.
+    (let [parsed-def-form? @(resolve 'com.blockether.vis.internal.env/parsed-def-form?)]
+      (doseq [src ["(def x \"doc\" 1)"
+                   "(defn f \"doc\" [x] x)"
+                   "(defn- pf \"doc\" [x] x)"
+                   "(defonce o \"doc\" (atom 0))"
+                   "(defmulti m \"doc\" :kind)"
+                   "(defmacro mc \"doc\" [x] `(inc ~x))"
+                   "(clojure.core/def cx \"doc\" 1)"
+                   "(clojure.core/defn cf \"doc\" [x] x)"
+                   "(clojure.core/defn- cpf \"doc\" [x] x)"
+                   "(clojure.core/defonce co \"doc\" (atom 0))"
+                   "(clojure.core/defmulti cm \"doc\" :kind)"
+                   "(clojure.core/defmacro cmc \"doc\" [x] `(inc ~x))"]]
+        (expect (parsed-def-form? src)))))
+
+  (it "rejects non-def shapes, banned heads, parse failures, and non-strings"
+    (let [parsed-def-form? @(resolve 'com.blockether.vis.internal.env/parsed-def-form?)]
+      (doseq [src [""
+                   "   "
+                   "42"
+                   "(+ 1 2)"
+                   "(let [x 1] x)"
+                   "(defrecord Foo [a])"
+                   "(deftype Bar [a])"
+                   "(defprotocol P (m [_]))"
+                   "(reify Object)"
+                   "(s/def ::kw int?)"           ; namespaced fn-style, not in our set
+                   "(def x \"doc\" 1)\n(def y \"doc\" 2)" ; multi-form
+                   "(unbalanced ["]]            ; parse error
+        (expect (not (parsed-def-form? src))))
+      (expect (not (parsed-def-form? nil)))
+      (expect (not (parsed-def-form? 42)))))
+
+  (it "clojure.core/-qualified def round-trips through restore-sandbox!"
+    ;; The end-to-end proof: a persisted `(clojure.core/defn …)`
+    ;; entry must rebuild a working fn in the restored sandbox,
+    ;; identical behavior to the bare `(defn …)` shape.
+    (let [s   (h/store)
+          cid (vis/db-store-conversation! s {:channel :tui})
+          qid (vis/db-store-conversation-turn! s {:parent-conversation-id cid
+                                                  :user-request "qualified"
+                                                  :status :done})]
+      (vis/db-store-iteration! s
+        {:conversation-turn-id qid :code "" :duration-ms 0
+         :vars [{:name "qadd" :value (fn [a b] (+ a b))
+                 :code "(clojure.core/defn qadd \"qualified add\" [a b] (+ a b))"}
+                {:name "qbase" :value 7
+                 :code "(clojure.core/def qbase \"qualified base\" 7)"}]})
+      (let [{:keys [sci-ctx]} (env/create-sci-context nil)
+            results (env/restore-sandbox! sci-ctx s cid)
+            by-name (into {} (map (fn [r] [(:name r) r])) results)]
+        ;; Fn freezes as `{:vis/ref :expr}` -> `:eval` path re-runs the
+        ;; `(clojure.core/defn …)` source. Integer freezes verbatim ->
+        ;; `:data` path binds the value directly; no source re-eval
+        ;; needed (and so `(clojure.core/def …)` could not regress
+        ;; behavior even if we wanted it to).
+        (expect (= :eval (:restored-via (by-name "qadd"))))
+        (expect (= :data (:restored-via (by-name "qbase"))))
+        (expect (= 9 (:val (sci/eval-string+ sci-ctx "(qadd qbase 2)"
+                             {:ns (sci/find-ns sci-ctx 'sandbox)}))))))))
 
 (defdescribe phase-4b-restore-is-silent-no-autobump-test
   (it "restore-sandbox! rebuilds vars WITHOUT writing new state versions"

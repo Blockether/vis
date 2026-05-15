@@ -7,8 +7,8 @@
    state. These helpers reconnect that durable value to history renderers so
    every channel can show what the user saw, instead of a runtime-ref
    placeholder."
-  (:require [com.blockether.vis.internal.persistance :as persistance]
-            [com.blockether.vis.internal.prompt :as prompt]))
+  (:require [com.blockether.vis.internal.format :as fmt]
+            [com.blockether.vis.internal.persistance :as persistance]))
 
 (defn runtime-ref?
   "True when `v` is the persistence sentinel for a runtime-only value."
@@ -41,4 +41,4 @@
   [restored-values code]
   (when-let [name (def-symbol-name code)]
     (when (contains? restored-values name)
-      (prompt/safe-pr-str (get restored-values name)))))
+      (fmt/safe-pr-str (get restored-values name)))))
