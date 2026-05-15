@@ -147,76 +147,120 @@ Phase 7 prep primitives (lines ~993-1280):
 
 ---
 
-## Current status (after `60bdcde5`)
+## Current status
 
-Shipped and verified (`./verify.sh` all 7 steps green, 957 tests):
+`./verify.sh` all 7 steps green; 1095 persistance tests + 980 main
+tests pass.
 
-- Phase 5 hard schema cut landed for production code.
-  `conversation_turn_iteration` no longer has `code_blocks` or
-  `answer_form_idx`; it has flat `code` / `result` / `error` /
-  `stdout` / `stderr` / `duration_ms` columns.
-- Persistence writer is hard-cut: `db-store-iteration!` requires flat
-  `:code` and rejects legacy `:blocks` fixtures.
-- Public `db-list-iteration-blocks` facade removed. Remaining callers
-  consume flat iteration rows and, where needed, build a one-entry
-  display adapter locally.
-- LLM block-count policy is enforced before eval:
-  - 0 executable Clojure blocks → model-facing error iteration with
-    `llm_returned_empty_code = 1`.
-  - >1 executable Clojure blocks → model-facing error telling the model
-    to emit exactly one block and wrap multiple expressions in `(do ...)`.
-  - 1 executable Clojure block → eval path, then single-top-level-form
-    validation applies.
-- `run-sci-code` / `execute-code` now call
-  `sci-patches/validate-single-form-block!` at the model boundary.
-- TUI resume, foundation transcript, and foundation introspection read
-  flat iteration payloads.
-- Persistence and transcript fixtures were moved off legacy `:blocks`
-  where they hit storage. Prompt tape tests still intentionally use the
-  adapter shape because tape primitives accept legacy/in-memory
-  `{:blocks [...]}` until Phase 7 removes that adapter.
+### Done before this session
 
-Still not done:
+- **Phase 5 — schema collapse** (`60bdcde5`). `conversation_turn_iteration`
+  flat columns (`code`, `result`, `error`, `stdout`, `stderr`,
+  `duration_ms`); `db-store-iteration!` requires flat `:code`;
+  `db-list-iteration-blocks` facade removed; FTS trigger added.
+- **Phase 4a — SCI patches** (`ec475053`, `79bd2e78`, `09dd7a51`).
+  Monkey-patched `eval-def` (mandatory docstring + per-iteration sink)
+  and `resolve-symbol*` (per-iteration LRU stamps). Both guarded by
+  `defonce` + precondition check.
 
-- Phase 4 main is now substantially DONE (see commits `1223b159`,
-  `2d108d71`, `44c7c44d`, `2e323c02`):
-  - Def persistence drives off the SCI `:def-sink` (no source-parse
-    walk); per-var precise source extraction; legacy
-    `extract-defining-name` / `extract-def-names` /
-    `restorable-var-snapshots` / `attach-doc-meta!` deleted.
-  - Class-producing def heads (`defrecord` / `deftype` /
-    `defprotocol` / `gen-class` / `extend-type` / `extend-protocol`
-    / `definterface` / `reify`) banned at both prompt and sandbox
-    layers (`validate-no-banned-defs!`).
-  - `(done …)` gate softened to 'did the form throw?'. The legacy
-    structural floor (`final-answer-structural-criteria-errors`,
-    `prior-error-atom`, `answer-with-extension-preflight-*`,
-    `block-result-error-summary`) is gone; `final-answer-gate-error`
-    now only dispatches `:turn.answer/validate` extension hooks.
-  - `CORE_SYSTEM_PROMPT` partially updated: TURN PROTOCOL / LOOP
-    DISCIPLINE / EMIT_FINAL reflect the one-form-per-iteration
-    contract. `<journal>` / `<bindings>` language survives until
-    Phase 7 main rewrites the whole prompt.
-  - Still pending in Phase 4 main: engine still builds an internal
-    `:blocks` vector after eval. With one block per iteration the
-    vector is trivially length-1; the mapv → scalar collapse is a
-    follow-up cleanup, not a correctness gate.
-- Phase 4b (dependency edges from `resolve-symbol*`) not started.
-- Phase 7 prompt swap not done: live path still calls legacy
-  `build-iteration-context`; `CORE_SYSTEM_PROMPT` still contains old
-  scaffolding around `<journal>` / `<bindings>` mention in unrelated
-  sections.
-- USER_REQUEST injection as sandbox `(def USER_REQUEST "..." ...)` is
-  not wired.
-- Long-lived per-env LRU merge is not wired into prompt assembly.
-- Phase 8 docs / CHANGELOG / `vis db reset` helper remain.
+### Done this session
+
+- **Phase 4 main — var persistence + gate softening**
+  (`1223b159`, `2d108d71`, `44c7c44d`, `2e323c02`, `3da966cf`, `3bf47617`):
+  - Def persistence drives off `:def-sink`. `extract-defining-name` /
+    `extract-def-names` / `restorable-var-snapshots` / `attach-doc-meta!`
+    deleted.
+  - Per-var precise source extraction (`extract-def-sources`): each
+    soul stores the smallest `(def NAME …)` form, NOT the whole
+    iteration block — restore re-evals one var without re-running
+    sibling side effects.
+  - Class-producing def heads (`defrecord` / `deftype` / `defprotocol`
+    / `gen-class` / `extend-type` / `extend-protocol` / `definterface`
+    / `reify`) banned at both prompt and sandbox layers
+    (`validate-no-banned-defs!`).
+  - `(done …)` gate softened to 'did the form throw?'. Removed:
+    `final-answer-structural-criteria-errors`, `prior-error-atom`,
+    `answer-with-extension-preflight-*`, `block-result-error-summary`,
+    `extension-call-form?`, `form-contains-extension-call?`,
+    `call-symbol->op-keyword`. `final-answer-gate-error` retained
+    only for `:turn.answer/validate` extension hook dispatch.
+  - Dropped `(do …)` ceremony at the model boundary: multi-top-level
+    blocks evaluate natively. `validate-single-form-block!` retired in
+    favor of `validate-non-empty-block!` (just rejects 0-form blocks).
+  - END-TO-END proof: `defn-round-trip-end-to-end-test` covers eval →
+    sink → snapshot → FRESH-SCI re-eval → call restored fn.
+
+- **Phase 4b — dependency edges** (`8bc0d831`, `02d65d43`):
+  - The original sketch tried to capture deps via the SCI
+    `resolve-symbol*` runtime hook with `*current-def-name*` bound
+    around each def-init eval. **It did not work**: SCI analyzes /
+    compiles forms before evaluating them, baking symbol resolution
+    into the AST at compile time. The runtime hook never fires for
+    init-body references. Probe confirmed zero edges captured.
+  - Replaced with `loop/dep-edges-from-source`: parses the iteration
+    block with edamame, flattens `(do …)` containers, finds each
+    def-shaped form, collects every symbol referenced in its init /
+    body subtree, and emits one raw `{:upstream :downstream}` pair
+    per reference. Self-references dropped.
+  - `db-store-iteration!` accepts `:dependencies` and filters edges
+    against the existing-soul-name set inside the same transaction
+    — core ops (`inc`, `+`), locals, macro symbols all drop out
+    automatically.
+  - END-TO-END proofs through real SQLite + fresh SCI:
+    - `phase-4b-dependency-chain-end-to-end-test`: 5-deep chain
+      (`base` / `factor` → `scale` → `apply-scale` → `pipeline`)
+      round-trips correctly; `(pipeline 5)` = 300 in restored ctx.
+    - `phase-4b-redefinition-semantics-test`: redefining `a` + `b`
+      bumps THEIR versions only; `c` and `use-c` stay at v0 in the
+      DB but their restored re-eval picks up the new `a` + `b`,
+      so `c` recomputes to 105 and `(use-c)` to 1050 in the
+      restored ctx.
+    - `phase-4b-restore-is-silent-no-autobump-test`:
+      `env/restore-sandbox!` writes zero new state rows when
+      rebuilding SCI from DB — the engine binds `*def-sink-atom*`
+      only around real iterations, so restoration is silent.
+
+- **Schema cleanup + rename** (`8979fc42`, `7cb19918`):
+  - Dropped dead columns: `expression_soul.kind` (always `'var'`),
+    `expression_soul.state_mode` (always `'stateful'`),
+    `expression_soul.metadata`, `expression_state.error` /
+    `_.stdout` / `_.stderr` / `_.duration_ms` / `_.success` /
+    `_.metadata`, `expression_dependency.metadata`. Triggers and
+    CHECK constraints over the dropped columns removed.
+  - Renamed tables: `expression_soul` → `definition_soul`,
+    `expression_state` → `definition_state`, `expression_dependency`
+    → `definition_dependency`. FK columns and indexes renamed to
+    match. Consumer-facing `db-restore-blocks` output keys
+    (`:soul-id`, `:name`, `:version`, `:expr`, `:result`,
+    `:depends-on`, `:depended-by`) unchanged — stable contract.
+  - Column `definition_state.expression` kept (table = definitions;
+    column = the source expression of THIS definition).
+
+### Still not done
+
+- **Phase 6 — channel renderer audit** (TUI / Telegram / transcript).
+  No invasive changes shipped yet — channels already read flat
+  iteration columns since Phase 5, but a Phase-7 snapshot pass is
+  pending so visual regressions get caught.
+- **Phase 7 — prompt swap**. Live path still calls legacy
+  `build-iteration-context`. `CORE_SYSTEM_PROMPT` got partial updates
+  (TURN PROTOCOL / LOOP DISCIPLINE / EMIT_FINAL / DEF DISCIPLINE) but
+  `<journal>` / `<bindings>` XML scaffolding survives in the prompt
+  body and the assembled user-role messages. Tape primitives shipped
+  in Phase 7 prep but NOT wired.
+- **USER_REQUEST as sandbox def** not wired. Engine still passes
+  user request through the prompt scaffolding instead of injecting
+  `(def USER_REQUEST …)` at turn start.
+- **Long-lived per-env LRU merge** not wired into prompt assembly.
+- **Engine internal `:blocks` vector** still gets built post-eval
+  (length-1 always). Opportunistic mapv → scalar collapse follows
+  Phase 7 since both touch the same `run-iteration` body.
+- **Phase 8 — docs / CHANGELOG / `vis db reset` helper** remain.
 
 ## Remaining work
 
-Order now: Phase 4b (dependency edges) → Phase 7 prompt swap → Phase 6
-remaining channel audit → Phase 8 docs/reset helper. Phase 4 main
-scalar collapse is opportunistic and can ship alongside Phase 7 since
-both touch the same `run-iteration` body.
+Order now: **Phase 7 prompt swap** → Phase 6 channel audit → Phase 8
+docs/reset helper.
 
 ### Phase 5 — Schema collapse (HARD CUT) — DONE in `60bdcde5`
 
