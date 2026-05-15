@@ -649,14 +649,14 @@
   (doseq [{:keys [op file after dest-file]} plans]
     (case op
       :add         (do (ensure-parent-dirs! file)
-                       (spit file after))
+                     (spit file after))
       :delete      (fs/delete file)
       :update      (spit file after)
       :update-move (do (ensure-parent-dirs! dest-file)
-                       (spit dest-file after)
-                       (when-not (= (.getCanonicalPath file)
-                                   (.getCanonicalPath dest-file))
-                         (fs/delete file))))))
+                     (spit dest-file after)
+                     (when-not (= (.getCanonicalPath file)
+                                 (.getCanonicalPath dest-file))
+                       (fs/delete file))))))
 
 (defn patch-envelope-safe
   "Apply a Codex `apply_patch` envelope string. Validates every hunk

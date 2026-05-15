@@ -25,17 +25,17 @@
   (it "surfaces UPPERCASE engine-managed vars with their docstrings"
     (let [{:keys [sci-ctx]} (fresh)]
       ;; create-sci-context already injects *1/*2/*3/*e under sandbox;
-      ;; we add a USER_REQUEST-style system var via sci-update-binding! +
-      ;; the sci-patches docstring contract.
+      ;; we add a TURN_ID-style system var via the SCI def special form
+      ;; (the sci-patches docstring contract makes the doc required).
       (sci/eval-string+ sci-ctx
-        "(def USER_REQUEST \"current turn user request\" \"please summarize README\")"
+        "(def TURN_ID \"current turn id\" \"00000000-0000-0000-0000-000000000000\")"
         {:ns (ns-obj sci-ctx)})
       (let [entries (env/journal-system-vars sci-ctx)
             by-name (into {} (map (juxt :name identity)) entries)]
         (expect (vector? entries))
-        (expect (some? (get by-name "USER_REQUEST")))
-        (expect (= "current turn user request"
-                  (:doc (get by-name "USER_REQUEST")))))))
+        (expect (some? (get by-name "TURN_ID")))
+        (expect (= "current turn id"
+                  (:doc (get by-name "TURN_ID")))))))
   (it "returns an empty vec when no system vars are bound (test contexts)"
     ;; A bare SCI context (not via create-sci-context) has no system
     ;; vars; journal-system-vars returns [] not nil so the renderer can
@@ -62,11 +62,11 @@
   (it "excludes system-vars from the live-vars surface"
     (let [{:keys [sci-ctx initial-ns-keys]} (fresh)]
       (sci/eval-string+ sci-ctx
-        "(def USER_REQUEST \"current request\" \"x\") (def my-var \"docstring\" 1)"
+        "(def TURN_ID \"current turn id\" \"abc\") (def my-var \"docstring\" 1)"
         {:ns (ns-obj sci-ctx)})
       (let [names (set (map :name (env/journal-live-vars sci-ctx initial-ns-keys {} 1)))]
         (expect (contains? names "my-var"))
-        (expect (not (contains? names "USER_REQUEST"))))))
+        (expect (not (contains? names "TURN_ID"))))))
   (it "drops vars whose LRU stamp is older than JOURNAL_LRU_TURN_WINDOW"
     (let [{:keys [sci-ctx initial-ns-keys]} (fresh)]
       (sci/eval-string+ sci-ctx

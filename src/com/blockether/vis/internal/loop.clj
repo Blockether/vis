@@ -2053,36 +2053,19 @@
 ;; -----------------------------------------------------------------------------
 
 (defn update-system-vars!
-  "Rebind the per-iteration SYSTEM vars in the SCI sandbox after an
-   iteration commits. See `SYSTEM_VAR_NAMES` for the full SYSTEM-var
-   registry.
+  "Per-iteration SYSTEM-var rebind hook. Currently a no-op: every
+   SYSTEM var either gets bound at turn start (TURN_*) or per
+   iteration via `update-iteration-id!` (TURN_ITERATION_*). The
+   former `CONVERSATION_PREVIOUS_ANSWER` rebind was dropped because
+   the prior answer is already in the message stream (preserved
+   thinking + previous-turn-context block); duplicating it as a
+   sandbox var produced a chunky row per iteration that nothing
+   read.
 
-   Touches:
-     CONVERSATION_PREVIOUS_ANSWER - latest finalized turn answer; only
-                                     bumps when this iteration produced
-                                     a `final-result` (= terminal answer
-                                     for this turn). For all earlier
-                                     iterations of the same turn it
-                                     keeps the previous turn's value.
-
-   `CONVERSATION_TITLE` was retired as a SYSTEM var. The conversation
-   title is a sidebar / channel-chrome label; the model never needed
-   to read it from the live-vars line. Setting flows through
-   `(set-conversation-title! \"...\")` -> `:conversation-title-atom` +
-   DB; the foundation `title-nudge` carries the current value in its
-   text body when a refresh-cadence hint fires. Removing the binding
-   drops one identical-per-iteration row from `definition_state`
-   per conversation.
-
-   Prior thinking text used to be bound to ITERATION_PREVIOUS_REASONING
-   here. That var was retired once preserved-thinking replay started
-   shipping the canonical assistant message back to the provider; the
-   model now sees its prior reasoning natively in the messages array,
-   and any forensic / inspection use case can read the iteration's
-   `:thinking` column straight from the DB."
-  [environment {:keys [final-result final-answer]}]
-  (when final-result
-    (env/bind-and-bump! environment 'CONVERSATION_PREVIOUS_ANSWER final-answer)))
+   Kept as a hook for future per-iteration SYSTEM-var growth. No
+   call-site cleanup needed when this is a no-op."
+  [_environment _opts]
+  nil)
 
 (defn update-iteration-id!
   "Rebind `TURN_ITERATION_ID` and `TURN_ITERATION_POSITION` in the
@@ -2100,49 +2083,33 @@
      (env/bind-and-bump! environment 'TURN_ITERATION_POSITION (long iteration-position)))))
 
 (defn inject-system-var-snapshots
-  "Append a SYSTEM-var snapshot to `vars-snapshot` for EVERY name in
-   `SYSTEM_VAR_NAMES` on EVERY iteration. The inspect transcript and
-   persisted var rows then have ONE row per iteration for each X,
-   even when the value is unchanged or blank.
+  "Append a SYSTEM-var snapshot row to `vars-snapshot` for every
+   currently-registered SYSTEM var on every iteration so the inspect
+   transcript and `definition_state` carry a per-iteration log of
+   values. Each var is normalized to a non-nil scalar so the persisted
+   row never stores nil.
 
-   Yes, turn-frozen vars (TURN_ID, TURN_POSITION,
-   TURN_CONVERSATION_STATE_ID, TURN_SYSTEM_PROMPT,
-   TURN_ACTIVE_EXTENSIONS, CONVERSATION_STATE_ID) repeat verbatim across
-   iterations of the same turn - that is the intentional contract:
-   \"every iteration carries a snapshot of every SYSTEM var\". The
-   dedup-on-unchanged optimization the previous version did was a
-   row-saving micro-opt that kept persisted rows stuck on iter 0
-   for those names.
-
-   Each var is normalized to a non-nil string so `definition_state`
-   never stores nil for a SYSTEM var - makes the version vec a clean
-   log of values across iterations.
-
-   `CONVERSATION_TITLE` is intentionally absent: the conversation
-   title is sidebar / channel chrome, not data the model uses for its
-   work. Stamping it every iteration produced N identical rows for a
-   value that changes ~once per conversation. Latest title lives on
-   `conversation_state.title` (DB) + `:conversation-title-atom`
-   (runtime); the foundation `title-nudge` carries the current value
-   when refresh-cadence fires."
-  [vars-snapshot {:keys [final-answer
-                         turn-id turn-position
+   Dropped from the registry (no longer stamped): USER_REQUEST,
+   TURN_SYSTEM_PROMPT, CONVERSATION_PREVIOUS_ANSWER. The user request
+   already lives as the user message, the system prompt as the system
+   message, and the previous answer flows through preserved-thinking +
+   previous-turn-context replay. Mirroring them as sandbox vars (and
+   stamping one row per iteration each) produced thousands of
+   identical-per-turn rows that nothing read."
+  [vars-snapshot {:keys [turn-id turn-position
                          iteration-id iteration-position
                          conversation-state-id
-                         system-prompt
                          extensions-snapshot]}]
   (let [stamp (fn [vs nm v]
                 (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
     (-> vars-snapshot
-      (stamp "TURN_ID"                      (or turn-id ""))
-      (stamp "TURN_POSITION"                (or turn-position 0))
-      (stamp "TURN_CONVERSATION_STATE_ID"   (or conversation-state-id ""))
-      (stamp "TURN_SYSTEM_PROMPT"           (or system-prompt ""))
-      (stamp "TURN_ACTIVE_EXTENSIONS"       (or extensions-snapshot []))
-      (stamp "TURN_ITERATION_ID"            (or iteration-id ""))
-      (stamp "TURN_ITERATION_POSITION"      (or iteration-position 0))
-      (stamp "CONVERSATION_STATE_ID"        (or conversation-state-id ""))
-      (stamp "CONVERSATION_PREVIOUS_ANSWER" (or final-answer "")))))
+      (stamp "TURN_ID"                    (or turn-id ""))
+      (stamp "TURN_POSITION"              (or turn-position 0))
+      (stamp "TURN_CONVERSATION_STATE_ID" (or conversation-state-id ""))
+      (stamp "TURN_ACTIVE_EXTENSIONS"     (or extensions-snapshot []))
+      (stamp "TURN_ITERATION_ID"          (or iteration-id ""))
+      (stamp "TURN_ITERATION_POSITION"    (or iteration-position 0))
+      (stamp "CONVERSATION_STATE_ID"      (or conversation-state-id "")))))
 
 ;; =============================================================================
 ;; System Prompt
@@ -2353,7 +2320,6 @@
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts})
-        stable-prompt-content (prompt/stable-prompt-text stable-prompt-messages)
         initial-user-content user-request
         previous-turn-ctx (previous-turn-context environment conversation-turn-id)
         initial-messages (prompt/assemble-initial-messages
@@ -2481,10 +2447,6 @@
                                   (:db-info environment) (:conversation-id environment))]
       (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID conversation-state-id)
       (env/bind-and-bump! environment 'CONVERSATION_STATE_ID conversation-state-id))
-    ;; The stable prompt prefix that drives THIS turn, joined only for
-    ;; debug/SYSTEM-var visibility. Provider send path keeps the original
-    ;; separate messages for cache boundaries.
-    (env/bind-and-bump! environment 'TURN_SYSTEM_PROMPT stable-prompt-content)
     ;; TURN_ACTIVE_EXTENSIONS = frozen, fully-realized vec describing
     ;; every extension that activated for THIS turn. Built off the same
     ;; `active-exts` we hand to the prompt assembler / nudge collector,
@@ -2500,12 +2462,6 @@
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
-    ;; Phase 7: inject USER_REQUEST as a regular sandbox def so the
-    ;; model sees it in `(env/journal-system-vars …)` and can interpolate
-    ;; via the same surface as every other var.
-    (env/bind-and-bump-with-doc! environment 'USER_REQUEST
-      "current turn user request"
-      (or user-request ""))
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.
@@ -2775,18 +2731,6 @@
                             (when-let [iteration-lru (not-empty (:lru block))]
                               (swap! lru-atom merge iteration-lru)))
                         previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
-                        conversation-row (try
-                                           (persistance/db-get-conversation
-                                             (:db-info environment)
-                                             (:conversation-id environment))
-                                           (catch Throwable _ nil))
-                        conversation-metadata (when conversation-row
-                                                (cond-> {:title       (:title conversation-row)
-                                                         :channel     (:channel conversation-row)
-                                                         :external-id (:external-id conversation-row)
-                                                         :created-at  (:created-at conversation-row)}
-                                                  (:turn-count conversation-row)
-                                                  (assoc :turn-count (:turn-count conversation-row))))
                         turn-position (try
                                         (some->> (persistance/db-list-conversation-turns
                                                    (:db-info environment) (:conversation-id environment))
@@ -2795,27 +2739,14 @@
                                           long)
                                         (catch Throwable _ 0))
                         vars-snapshot (inject-system-var-snapshots vars-snapshot
-                                        {:thinking           thinking
-                                         :final-answer       final-answer
-                                         :turn-id                        conversation-turn-id
-                                         :turn-position      (or turn-position 0)
-                                         :iteration-id       previous-iteration-id
-                                         :iteration-position (long (or iteration 0))
+                                        {:turn-id              conversation-turn-id
+                                         :turn-position        (or turn-position 0)
+                                         :iteration-id         previous-iteration-id
+                                         :iteration-position   (long (or iteration 0))
                                          :conversation-state-id (persistance/db-latest-conversation-state-id
                                                                   (:db-info environment)
                                                                   (:conversation-id environment))
-                                         :system-prompt      stable-prompt-content
-                                         ;; Same frozen snapshots bound in SCI.
-                                         ;; Re-stamped every iteration so inspect
-                                         ;; transcript data returns one row per
-                                         ;; iter, not just iter 0.
-                                         :extensions-snapshot        (prompt/extensions-snapshot active-exts)
-                                         ;; Frozen-at-this-iter map of conversation
-                                         ;; facts (channel, external-id, turn-count,
-                                         ;; created-at). Saves the model an iter
-                                         ;; round-trip when it just needs one of
-                                         ;; those fields.
-                                         :conversation-metadata conversation-metadata})
+                                         :extensions-snapshot  (prompt/extensions-snapshot active-exts)})
                         store-block (or block {:code "" :error {:message "empty iteration"}})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
                                        (let [tc (iteration-token-cost (:api-usage iteration-result))]
