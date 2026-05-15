@@ -9,16 +9,9 @@
 --          │    └─ conversation_turn_state (one run/retry of the turn)
 --          │         └─ conversation_turn_iteration (one LLM round-trip)
 --          │              │
---          │              └─ code_blocks BLOB
---          │                   Nippy-encoded vec of per-code-block maps.
---          │                   Block shape is `{:idx :code :comment :role
---          │                   :result :error :stdout :stderr :duration-ms
---          │                   :timeout? :repaired?}`. When the top-level
---          │                   form is a Vis tool call, `:result` is the flat
---          │                   tool envelope `{:symbol :tag :result
---          │                   :success? :error :stdout :stderr
---          │                   :metadata}`. Raw SCI forms store their plain
---          │                   value in `:result`.
+--          │              └─ code/result/error/stdout/stderr/duration_ms columns
+--          │                   Single-form iteration payload, directly readable
+--          │                   without a Nippy vec wrapper.
 --          │
 --          └─ expression_soul (branch-local var identities, kind='var')
 --               ├─ expression_state (var versions; each row points at the
@@ -39,9 +32,10 @@
 --   user request
 --     -> conversation_turn_soul + conversation_turn_state
 --     -> conversation_turn_iteration(s)
---          each conversation_turn_iteration writes its full code-block log inline into
---          .code_blocks plus one expression_soul + expression_state
---          row per named var `(def ...)` / `(defn ...)` it executed
+--          each conversation_turn_iteration writes its single code block inline into
+--          code/result/error/stdout/stderr/duration_ms plus one
+--          expression_soul + expression_state row per named var
+--          `(def ...)` / `(defn ...)` it executed
 --     -> conversation_turn_state done/error
 --     -> next turn (or branch/fork to new conversation_state)
 --
@@ -204,8 +198,8 @@ CREATE TABLE conversation_turn_iteration (
                                   ),       -- total duration across all traced attempts
   llm_thinking                    TEXT,
   llm_error                       TEXT,
-  llm_returned_empty_code_blocks  INTEGER NOT NULL DEFAULT 0
-                                  CHECK (llm_returned_empty_code_blocks IN (0, 1)),
+  llm_returned_empty_code         INTEGER NOT NULL DEFAULT 0
+                                  CHECK (llm_returned_empty_code IN (0, 1)),
 
   -- Raw-response diagnostics for provider / extraction forensics.
   -- Full raw text is persisted so investigations can query the DB
@@ -254,42 +248,14 @@ CREATE TABLE conversation_turn_iteration (
 
   metadata                        TEXT,    -- JSON-encoded per-conversation_turn_iteration context (active extensions, etc.)
 
-  -- Per-conversation_turn_iteration code-block log as ONE Nippy-encoded vec of
-  -- block maps:
-  --   [{:idx N
-  --     :code              "(some-code)"
-  --     :comment           ";; leading comment" | absent
-  --     :result            <Nippy-frozen form value> | absent
-  --                        Tool calls store the full flat op envelope here,
-  --                        and the tool payload then lives under
-  --                        `[:result :result]` after thaw/read.
-  --                        Raw SCI forms store their plain result value here.
-  --     :error             structured error map | absent
-  --     :stdout            non-blank | absent
-  --     :stderr            non-blank | absent
-  --     :duration-ms       N
-  --     :timeout?          true | absent
-  --     :repaired?         true | absent}
-  --    ...]
-  --
-  -- \"Block\" matches the LLM-facing prompt vocabulary (each
-  -- top-level form inside a fenced ```clojure ... ``` block). The
-  -- per-call `expression_soul` rows are gone: every reader iterates
-  -- per-conversation_turn_iteration anyway, so per-call rows added cost without index
-  -- value. Var rows stay
-  -- first-class (expression_soul kind='var') because var-history is
-  -- the keystone of the data model - versioned, branched,
-  -- dependency-graphed.
-  code_blocks                     BLOB,
-
-  -- Index of the form that called `(done ...)` when the conversation_turn_iteration
-  -- produced a final answer. Channels render the answer text below;
-  -- this slot lets readers ELIDE that form from the displayed call
-  -- log without re-walking the source. NULL for non-terminal
-  -- iterations.
-  answer_form_idx                 INTEGER
-                                  CHECK (answer_form_idx IS NULL
-                                         OR answer_form_idx >= 0),
+  -- Single-form iteration payload. `result` and `error` are Nippy-encoded
+  -- Clojure values; text side effects stay queryable as TEXT.
+  code                            TEXT NOT NULL,
+  result                          BLOB,
+  error                           BLOB,
+  stdout                          TEXT,
+  stderr                          TEXT,
+  duration_ms                     INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
 
   created_at                      INTEGER NOT NULL,
   finished_at                     INTEGER,
@@ -346,9 +312,9 @@ END;
 --              kind enum stays open so a future RLM extension can
 --              pin literals without another schema migration.
 --
--- Per-call rows were removed. Per-call data now lives in the
--- Nippy-encoded `conversation_turn_iteration.code_blocks` BLOB; nothing else queried call rows
--- by id, so the indirection added cost without value.
+-- Per-call rows were removed. Single-form call data now lives directly
+-- on conversation_turn_iteration; nothing else queried call rows by id,
+-- so the indirection added cost without value.
 --
 -- state_mode:
 --   stateless | stateful
@@ -530,9 +496,8 @@ END;
 -- extension_id is filled by runtime extension helpers from the registered
 -- extension identity. Extension callers should not supply or spoof it.
 --
--- conversation_turn_iteration_block_id is a logical block id for future first-class block rows. Current block payloads still live in conversation_turn_iteration.code_blocks BLOB, so
--- conversation_turn_iteration_block_id is intentionally not a foreign key yet. Use
--- conversation_turn_iteration_block_index with conversation_turn_iteration_id for current block-scoped state.
+-- conversation_turn_iteration_block_id is reserved for future first-class block rows.
+-- Current iterations are single-form rows, so block_index is normally 0 when present.
 -- =============================================================================
 CREATE TABLE extension_aggregate (
   id                          TEXT PRIMARY KEY NOT NULL,
@@ -713,7 +678,7 @@ CREATE INDEX idx_log_expression_state
   WHERE expression_state_id IS NOT NULL;
 
 -- =============================================================================
--- FTS5 - full-text search over user requests + expression state expression snapshots.
+-- FTS5 - full-text search over user requests + iteration code + expression state expression snapshots.
 -- =============================================================================
 CREATE VIRTUAL TABLE search USING fts5(
   owner_table  UNINDEXED,
@@ -742,6 +707,25 @@ CREATE TRIGGER trg_conversation_turn_soul_ad AFTER DELETE ON conversation_turn_s
 END;
 
 -- Expression state indexing
+
+-- Iteration code indexing
+CREATE TRIGGER trg_conversation_turn_iteration_ai AFTER INSERT ON conversation_turn_iteration BEGIN
+  INSERT INTO search(owner_table, owner_id, field, text)
+    SELECT 'conversation_turn_iteration', new.id, 'code', new.code
+    WHERE new.code IS NOT NULL AND new.code <> '';
+END;
+
+CREATE TRIGGER trg_conversation_turn_iteration_au AFTER UPDATE ON conversation_turn_iteration BEGIN
+  DELETE FROM search WHERE owner_table='conversation_turn_iteration' AND owner_id=old.id AND field='code';
+  INSERT INTO search(owner_table, owner_id, field, text)
+    SELECT 'conversation_turn_iteration', new.id, 'code', new.code
+    WHERE new.code IS NOT NULL AND new.code <> '';
+END;
+
+CREATE TRIGGER trg_conversation_turn_iteration_ad AFTER DELETE ON conversation_turn_iteration BEGIN
+  DELETE FROM search WHERE owner_table='conversation_turn_iteration' AND owner_id=old.id AND field='code';
+END;
+
 CREATE TRIGGER trg_expression_state_ai AFTER INSERT ON expression_state BEGIN
   INSERT INTO search(owner_table, owner_id, field, text)
     SELECT 'expression_state', new.id, 'expression', new.expression

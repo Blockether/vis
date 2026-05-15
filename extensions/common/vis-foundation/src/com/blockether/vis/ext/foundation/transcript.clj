@@ -110,8 +110,15 @@
    Both reads degrade silently to `[]` so the renderer never
    throws on a partial DB."
   [db-info iter]
-  (let [blocks (try (vec (vis/db-list-iteration-blocks db-info (:id iter)))
-                 (catch Throwable _ []))
+  (let [block (cond-> {:position 0
+                       :code (or (:code iter) "")}
+                (contains? iter :result) (assoc :result (:result iter))
+                (contains? iter :error) (assoc :error (:error iter))
+                (contains? iter :stdout) (assoc :stdout (:stdout iter))
+                (contains? iter :stderr) (assoc :stderr (:stderr iter))
+                (contains? iter :execution-time-ms)
+                (assoc :duration-ms (:execution-time-ms iter)))
+        blocks [block]
         vars   (try (vec (vis/db-list-iteration-vars db-info (:id iter)))
                  (catch Throwable _ []))]
     (-> iter

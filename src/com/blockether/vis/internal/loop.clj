@@ -417,8 +417,28 @@
     ;; pre-parse check, no answer-string restitch — the model self-corrects
     ;; from SCI's error next iteration.
     (let [start-time (System/currentTimeMillis)
-          exec       (run-with-timing sci-ctx code sandbox-ns timeout-ms
-                       start-time tool-event-fn environment)]
+          exec       (try
+                       (sci-patches/validate-single-form-block! code)
+                       (run-with-timing sci-ctx code sandbox-ns timeout-ms
+                         start-time tool-event-fn environment)
+                       (catch Throwable e
+                         (env/push-eval-error! environment e)
+                         {:result nil
+                          :stdout ""
+                          :stderr ""
+                          :journal []
+                          :channel []
+                          :def-sink []
+                          :lru {}
+                          :error (try (extension/ex->op-error e {:block-source code})
+                                   (catch Throwable _
+                                     {:message (or (ex-message e)
+                                                 (.getName (class e)))
+                                      :type (-> e ex-data :type)}))
+                          :execution-started-at-ms start-time
+                          :execution-finished-at-ms (System/currentTimeMillis)
+                          :execution-time-ms (- (System/currentTimeMillis) start-time)
+                          :timeout? false}))]
       (when (nil? (:error exec))
         (attach-doc-meta! environment code doc))
       exec)))
@@ -953,6 +973,11 @@
                                        unique-blocks)
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
+        empty-code-error             (when (zero? parsed-total-blocks)
+                                       "LLM returned no executable Clojure code block. Emit exactly one ```clojure block; put prose inside (done [:ir ...]).")
+        multi-block-error            (when (> parsed-total-blocks 1)
+                                       (str "Iteration contains " parsed-total-blocks
+                                         " Clojure blocks; emit exactly one ```clojure block per iteration. Wrap multiple expressions in (do ...)."))
         ;; Normalized concat of all surviving block sources — the
         ;; identity used for iteration-hash dedup in the journal.
         normalized-code              (->> raw-entries
@@ -974,6 +999,14 @@
                                          (answer-with-extension-preflight-error-message
                                            answer-with-extension-mismatch))]
     {:code-entries                  (cond
+                                      empty-code-error
+                                      [{:expr ""
+                                        :vis/preflight-error empty-code-error}]
+
+                                      multi-block-error
+                                      [{:expr normalized-code
+                                        :vis/preflight-error multi-block-error}]
+
                                       answer-with-extension-error
                                       ;; Don't reject the whole iteration — drop
                                       ;; ONLY the turn-answer forms and let the
@@ -992,6 +1025,7 @@
                                       :else
                                       raw-entries)
      :answer-with-extension-preflight-error answer-with-extension-error
+     :empty-code-preflight-error    empty-code-error
      :raw-fence-preflight-error     raw-fence-error
      :duplicate-blocks-normalized?  duplicate-blocks-normalized?
      :normalized-code               normalized-code
@@ -1958,6 +1992,7 @@
              :llm-fallback-trace (:routed/fallback-trace ask-result)
              :llm-raw-response (:raw ask-result)
              :llm-executable-blocks (:blocks ask-result)
+             :llm-returned-empty-code? (empty? blocks)
              :assistant-message (:assistant-message ask-result)}
             (let [final-answer* (append-runtime-appendices environment final-answer value)]
               {:thinking thinking
@@ -1984,6 +2019,7 @@
                :llm-fallback-trace (:routed/fallback-trace ask-result)
                :llm-raw-response (:raw ask-result)
                :llm-executable-blocks (:blocks ask-result)
+               :llm-returned-empty-code? (empty? blocks)
                :assistant-message (:assistant-message ask-result)})))
           ;; Normal path
         {:thinking thinking
@@ -2002,6 +2038,7 @@
          :llm-fallback-trace (:routed/fallback-trace ask-result)
          :llm-raw-response (:raw ask-result)
          :llm-executable-blocks (:blocks ask-result)
+         :llm-returned-empty-code? (empty? blocks)
          :assistant-message (:assistant-message ask-result)}))))
 
 ;; =============================================================================
@@ -2747,8 +2784,14 @@
                 (mapv (fn [it]
                         [(or (:position it) 1)
                          {:thinking (:thinking it)
-                          :blocks   (try (persistance/db-list-iteration-blocks d (:id it))
-                                      (catch Throwable _ []))
+                          :blocks   [(cond-> {:position 0
+                                              :code (or (:code it) "")}
+                                       (contains? it :result) (assoc :result (:result it))
+                                       (contains? it :error) (assoc :error (:error it))
+                                       (contains? it :stdout) (assoc :stdout (:stdout it))
+                                       (contains? it :stderr) (assoc :stderr (:stderr it))
+                                       (contains? it :execution-time-ms)
+                                       (assoc :execution-time-ms (:execution-time-ms it)))]
                           :llm-provider (:provider it)
                           :llm-model    (some-> (:model it) str)
                           ;; Persisted assistant messages are intentionally NOT
@@ -2889,7 +2932,7 @@
                                             (:reasoning (:data iteration-error-data)))
                           err-iteration-id (persistance/db-store-iteration! (:db-info environment)
                                              (let [tc (iteration-token-cost (:api-usage iteration-result))]
-                                               (cond-> {:conversation-turn-id conversation-turn-id :vars [] :blocks nil
+                                               (cond-> {:conversation-turn-id conversation-turn-id :vars [] :code ""
                                                         :thinking empty-reasoning :duration-ms 0 :error iteration-error-data
                                                         :llm-messages effective-messages
                                                         :llm-provider (:provider resolved-model)
@@ -2983,18 +3026,25 @@
                                          ;; round-trip when it just needs one of
                                          ;; those fields.
                                          :conversation-metadata conversation-metadata})
+                        store-block (or (first blocks) {:code "" :error {:message "empty iteration"}})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
                                        (let [tc (iteration-token-cost (:api-usage iteration-result))]
-                                         (cond-> {:conversation-turn-id conversation-turn-id :blocks blocks :vars vars-snapshot
+                                         (cond-> {:conversation-turn-id conversation-turn-id
+                                                  :code (:code store-block)
+                                                  :result (:result store-block)
+                                                  :error (:error store-block)
+                                                  :stdout (:stdout store-block)
+                                                  :stderr (:stderr store-block)
+                                                  :duration-ms (or (:execution-time-ms store-block) (:duration-ms iteration-result) 0)
+                                                  :vars vars-snapshot
                                                   :thinking thinking
                                                   :answer (when final-result (answer-str (:answer final-result)))
-                                                  :answer-position (when final-result (:answer-position final-result))
-                                                  :duration-ms (or (:duration-ms iteration-result) 0)
                                                   :llm-messages (:llm-messages iteration-result)
                                                   :llm-provider (or (:llm-provider iteration-result) (:provider resolved-model))
                                                   :llm-model (:llm-model iteration-result)
                                                   :llm-raw-response (:llm-raw-response iteration-result)
                                                   :llm-executable-blocks (:llm-executable-blocks iteration-result)
+                                                  :llm-returned-empty-code? (:llm-returned-empty-code? iteration-result)
                                                   :llm-assistant-message (:assistant-message iteration-result)
                                                   :metadata (cond-> (iteration-metadata iteration
                                                                       (llm-routing-metadata pre-resolved-model iteration-result))

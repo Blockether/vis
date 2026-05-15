@@ -102,23 +102,16 @@
 (defn- attempts-from-iterations
   "Walk `iterations` (in DB order) and collect every executed
    expression. Used by the current-turn snapshot and by attempt search."
-  [db-info iterations]
-  (vec
-    (mapcat (fn [iteration]
-              (let [iteration-id (:id iteration)
-                    position     (:position iteration)]
-                (try
-                  (mapv (fn [row]
-                          {:iteration-id iteration-id
-                           :iteration    position
-                           :code         (:code row)
-                           :result       (:result row)
-                           :error        (:error row)
-                           :stdout       (:stdout row)
-                           :duration-ms  (:duration-ms row)})
-                    (vis/db-list-iteration-blocks db-info iteration-id))
-                  (catch Throwable _ []))))
-      iterations)))
+  [_db-info iterations]
+  (mapv (fn [iteration]
+          {:iteration-id (:id iteration)
+           :iteration    (:position iteration)
+           :code         (:code iteration)
+           :result       (:result iteration)
+           :error        (:error iteration)
+           :stdout       (:stdout iteration)
+           :duration-ms  (:execution-time-ms iteration)})
+    iterations))
 
 (defn- format-provider-model
   "Render `\"provider/model\"` when both are known, otherwise just the
@@ -284,22 +277,18 @@
 
     "Read :message, :code, and :iteration; fix the smallest failing form before issuing new searches."))
 
-(defn- expression-failures-for-iteration [db-info iteration]
-  (try
-    (->> (vis/db-list-iteration-blocks db-info (:id iteration))
-      (keep (fn [row]
-              (when-let [error (:error row)]
-                (let [classification (classify-expression-failure (:code row) error)]
-                  {:source        :code
-                   :iteration-id  (:id iteration)
-                   :iteration     (:position iteration)
-                   :tool          (tool-name-from-code (:code row))
-                   :classification classification
-                   :code          (:code row)
-                   :message       (error-text error)
-                   :advice        (advice-for-classification classification)}))))
-      vec)
-    (catch Throwable _ [])))
+(defn- expression-failures-for-iteration [_db-info iteration]
+  (if-let [error (:error iteration)]
+    (let [classification (classify-expression-failure (:code iteration) error)]
+      [{:source        :code
+        :iteration-id  (:id iteration)
+        :iteration     (:position iteration)
+        :tool          (tool-name-from-code (:code iteration))
+        :classification classification
+        :code          (:code iteration)
+        :message       (error-text error)
+        :advice        (advice-for-classification classification)}])
+    []))
 
 (defn- failures-from-iterations [db-info iterations]
   (vec
