@@ -6,6 +6,32 @@
 > of recursive sub-model invocation, it makes the parent context
 > structurally constant via an N-1 tape window plus mandatory-doc vars.
 
+## Status
+
+| Phase | What | State |
+|---|---|---|
+| 0 | Stale `z/` scrub (model-facing strings + comments) | ✅ shipped |
+| 1a | `PHandle` protocol + `CatHandle` defrecord + tests | ✅ shipped |
+| 1b | Handle relocated to extension API; `v/cat` returns CatHandle; `v/view` symbol | ✅ shipped |
+| 1c | `RgHandle` + `LsHandle`; `v/rg`/`v/ls` conversion; pprint conflict fix | ✅ shipped |
+| 2 | SCI `eval-def` patch + `*def-sink-atom*` + mandatory docstring enforcement | ✅ shipped |
+| — | Rename: `turn-answer!` → `done` (96 sites) | ✅ shipped |
+| 3 | SCI `resolve-symbol*` patch + per-iteration LRU stamping | ✅ shipped |
+| 4a | Wire per-iteration def-sink + lru bindings around SCI eval | ✅ shipped (dormant — engine collects but doesn't yet flush) |
+| 4 prep | `validate-single-form-block!` utility + tests | ✅ shipped (dormant — not yet wired) |
+| 4 main | Restructure `code-entries-preflight`; drop multi-block iteration map; flush def-sink to `expression_state`; soften `(done …)` gate | ⏳ pending — largest remaining surgery |
+| 5 | Schema collapse (V1 in place; drop `code_blocks` BLOB, add `code`/`result`/`error`/`stdout`/`stderr`/`duration_ms` columns) | ⏳ pending |
+| 6 | Channel renderer update (consume new schema columns) | ⏳ pending |
+| 7 | Prompt restructure: delete `<journal>` / `<bindings>` / `<current_user_message>` / `<current_turn_context>`; add live-vars / system-vars / tape; shrink `CORE_SYSTEM_PROMPT` to ~35 lines | ⏳ pending — model-facing payoff |
+| 8 | Cleanup: README "RLM-conformant" line, drop unreachable code paths | ⏳ partial (AGENTS.md `z/patch` section updated) |
+
+The shipped infrastructure (handles, view ops, def-sink, LRU, single-form
+validator, mandatory docstring) is **dormant** in the sense that the
+engine collects and validates but doesn't yet feed downstream consumers
+(expression_state writes, live-vars rendering). Phase 4 main wires the
+sinks; Phase 7 wires the prompt. Until then the model sees the
+pre-pivot prompt shape and behaves as before.
+
 ## Why this exists
 
 The autoresearch bench bottomed out at `iter_score = 6` across multiple
