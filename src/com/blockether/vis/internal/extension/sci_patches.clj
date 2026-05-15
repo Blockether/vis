@@ -27,6 +27,7 @@
   (:require
    [sci.core]
    [sci.impl.evaluator]
+   [sci.impl.resolve]
    [sci.impl.types :as sci-types]))
 
 ;; =============================================================================
@@ -96,4 +97,61 @@
   ;; load-time side effect as unused.
   (do
     (alter-var-root #'sci.impl.evaluator/eval-def (constantly patched-eval-def))
+    :installed))
+
+;; =============================================================================
+;; Patch: sci.impl.resolve/resolve-symbol* — runtime-resolution LRU
+;; =============================================================================
+
+(def ^:dynamic *lru-atom*
+  "Per-iteration atom (or nil). When bound, the patched
+   `resolve-symbol*` stamps `(name sym) -> *current-turn-position*`
+   on every successful sandbox-symbol resolution. The live-vars
+   renderer reads this map to decide which user vars to surface in
+   the discovery line and which have aged past the 10-turn LRU window.
+
+   Per-iteration atoms (vs per-conversation) are intentional: each
+   iteration sees a clean snapshot of \"vars referenced THIS iteration\";
+   the engine merges into the long-lived per-env LRU after eval. That
+   isolation keeps a runaway iteration's symbol noise from polluting
+   every prior iteration's stamps."
+  nil)
+
+(def ^:dynamic *current-turn-position*
+  "Per-iteration current turn position (1-based int). Stamped onto the
+   `*lru-atom*` for every resolved symbol. Engine binds this from the
+   iteration loop so the LRU map carries semantic turn coordinates,
+   not wall-clock time."
+  nil)
+
+(defn fresh-lru-atom
+  "Allocate a fresh empty atom suitable for binding to `*lru-atom*`.
+   Engine uses this at iteration start; merges `@lru` into the per-env
+   long-lived LRU after eval."
+  []
+  (atom {}))
+
+(defonce resolve-precondition-checked!
+  ;; Same shape check as the eval-def precondition.
+  (let [v (resolve 'sci.impl.resolve/resolve-symbol*)]
+    (when-not (and (var? v) (fn? @v))
+      (throw (ex-info "sci.impl.resolve/resolve-symbol* missing or wrong shape"
+               {:type :vis.sci-patches/precondition-failed
+                :resolved v})))
+    :ok))
+
+(defonce ^:private original-resolve-symbol*
+  (var-get #'sci.impl.resolve/resolve-symbol*))
+
+(defn- patched-resolve-symbol*
+  [ctx sym call? m]
+  (let [result (original-resolve-symbol* ctx sym call? m)]
+    (when (and result *lru-atom*)
+      (swap! *lru-atom* assoc (name sym) (or *current-turn-position* 0)))
+    result))
+
+(defonce resolve-install-once!
+  (do
+    (alter-var-root #'sci.impl.resolve/resolve-symbol*
+      (constantly patched-resolve-symbol*))
     :installed))

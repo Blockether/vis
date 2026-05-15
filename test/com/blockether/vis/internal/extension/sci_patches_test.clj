@@ -3,7 +3,8 @@
    [com.blockether.vis.internal.extension.sci-patches :as sp]
    [lazytest.core :refer [defdescribe expect it]]
    [sci.core :as sci]
-   [sci.impl.evaluator]))
+   [sci.impl.evaluator]
+   [sci.impl.resolve]))
 
 (defn- fresh-ctx []
   (sci/init {:namespaces {'user {}}}))
@@ -71,4 +72,33 @@
     (expect (var? #'sci.impl.evaluator/eval-def))
     ;; Patched wrap returns a function; original-eval-def is captured
     ;; behind the defonce, so re-loading this ns doesn't compound.
-    (expect (fn? @#'sci.impl.evaluator/eval-def))))
+    (expect (fn? @#'sci.impl.evaluator/eval-def)))
+  (it "resolve-symbol* patch installs"
+    (expect (var? #'sci.impl.resolve/resolve-symbol*))
+    (expect (fn? @#'sci.impl.resolve/resolve-symbol*))))
+
+(defdescribe sci-patches-lru-test
+  (it "*lru-atom* is nil by default; resolve patch is silent"
+    (expect (nil? sp/*lru-atom*)))
+  (it "binding *lru-atom* records every successful sandbox-var resolution"
+    (let [ctx (fresh-ctx)
+          lru (sp/fresh-lru-atom)]
+      (binding [sp/*lru-atom* lru
+                sp/*current-turn-position* 7]
+        ;; Define some vars first (each def itself triggers resolves)
+        (sci/eval-string+ ctx
+          "(def alpha \"first\" 1) (def beta \"second\" 2)"
+          {:ns (ns-obj ctx)})
+        ;; Reference them in another eval so resolve fires fresh
+        (sci/eval-string+ ctx "(+ alpha beta)" {:ns (ns-obj ctx)}))
+      (let [snap @lru]
+        (expect (= 7 (get snap "alpha")))
+        (expect (= 7 (get snap "beta")))
+        ;; Core ops also stamped (renderer filters at draw time)
+        (expect (some? (get snap "+"))))))
+  (it "*current-turn-position* defaults to 0 when unbound"
+    (let [ctx (fresh-ctx)
+          lru (sp/fresh-lru-atom)]
+      (binding [sp/*lru-atom* lru]
+        (sci/eval-string+ ctx "(def x \"x doc\" 1) x" {:ns (ns-obj ctx)}))
+      (expect (= 0 (get @lru "x"))))))
