@@ -1183,8 +1183,7 @@
           "--json"           (recur more (assoc opts :json? true) prompt-parts)
           "--edn"            (recur more (assoc opts :edn? true) prompt-parts)
           "--code"           (recur more (assoc opts :code? true) prompt-parts)
-          ("--plain" "--raw")
-          (recur more (assoc opts :plain? true) prompt-parts)
+          "--raw"            (recur more (assoc opts :raw? true) prompt-parts)
           ("--full-trace-stream" "--trace")
           (recur more (assoc opts :full-trace-stream? true) prompt-parts)
           ("--full-trace-edn-stream" "--trace-stream")
@@ -1211,7 +1210,7 @@
   (stdout! "                    no fences, no language tags. Pipes cleanly")
   (stdout! "                    into editors / interpreters. Errors when")
   (stdout! "                    the answer contains no [:code] blocks.")
-  (stdout! "  --plain, --raw    Render the answer as plain text (no markdown")
+  (stdout! "  --raw             Render the answer as raw text (no markdown")
   (stdout! "                    bold/italics/heading bars). This is also the")
   (stdout! "                    auto-default when stdout is not a TTY (piped")
   (stdout! "                    or redirected), so `vis run ... > out.txt`")
@@ -1243,23 +1242,23 @@
    ourselves so anything that isn't a flag falls into the prompt."
   [_parsed residual]
   (config/init-cli!)
-  (let [{:keys [prompt json? edn? code? plain? full-trace-stream?
+  (let [{:keys [prompt json? edn? code? raw? full-trace-stream?
                 full-trace-edn-stream? full-trace-json-stream?
                 help? agent-name db] :as opts}
         (parse-run-args residual)]
     (when (or help? (str/blank? prompt))
       (print-run-usage!)
       (System/exit 0))
-    ;; Auto-promote to plain when stdout is NOT a TTY (piped/redirected).
+    ;; Auto-promote to raw when stdout is NOT a TTY (piped/redirected).
     ;; Otherwise `vis run ... > out.txt` leaves bold/italic ANSI markers in
     ;; the file. Structured output flags (--json/--edn/--code) win, and an
-    ;; explicit --plain stays plain. The trace-stream flags own their own
+    ;; explicit --raw stays raw. The trace-stream flags own their own
     ;; output path and are unaffected.
     (let [structured-output? (or json? edn? code?
                                full-trace-stream?
                                full-trace-edn-stream?
                                full-trace-json-stream?)
-          effective-plain?   (or plain?
+          effective-raw?     (or raw?
                                (and (not structured-output?)
                                  (not (trace-terminal?))))
           agent-def (agent {:name (or agent-name "cli")})
@@ -1272,7 +1271,7 @@
 
                            full-trace-stream?
                            (make-pretty-trace-printer))
-          run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code? :plain?
+          run-opts  (cond-> (dissoc opts :prompt :json? :edn? :code? :raw?
                               :full-trace-stream? :full-trace-edn-stream?
                               :full-trace-json-stream? :compact? :agent-name :db)
                       trace-on-chunk (assoc :on-chunk trace-on-chunk)
@@ -1342,8 +1341,8 @@
 
         :else
         (do (stdout! (render/render (:answer result)
-                       (if effective-plain? :plain :markdown)))
-          (when (and (:duration-ms result) (not effective-plain?))
+                       (if effective-raw? :plain :markdown)))
+          (when (and (:duration-ms result) (not effective-raw?))
             (stdout! (str "\n[" (fmt/format-meta-line result) "]")))))
       (shutdown-agents))))
 

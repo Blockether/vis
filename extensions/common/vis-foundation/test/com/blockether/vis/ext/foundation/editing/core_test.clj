@@ -98,8 +98,8 @@
 
   (it "documents v/rg's exact single spec-map grammar, not the old shorthand"
     (expect (string/includes? editing/editing-prompt
-              "(v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]})"))
-    (expect (string/includes? editing/editing-prompt "no regex/query+opts shorthand"))
+              "{:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]}"))
+    (expect (string/includes? editing/editing-prompt "no regex/shorthand"))
     (expect (not (string/includes? editing/editing-prompt "(v/rg :include/:exclude"))))
 
   (it "registers journal + channel renderers on every fn-symbol"
@@ -135,19 +135,19 @@
     (let [patch-symbol (some #(when (= 'patch (:ext.symbol/symbol %)) %)
                          editing/editing-symbols)]
       (expect (string/includes? editing/editing-prompt
-                "`v/cat` reads the whole file"))
+                "v/cat reads one window"))
       (expect (string/includes? editing/editing-prompt
-                "[:result :lines]"))
+                "(:next-offset prev)"))
       (expect (string/includes? editing/editing-prompt
-                "Edit text with canonical (v/patch"))
+                "Edit non-Clojure text with `(v/patch"))
       (expect (string/includes? editing/editing-prompt
-                "every :search must match exactly once"))
+                "each :search must match exactly once"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "Canonical exact text patch"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "all edits validate before any write"))
       (expect (string/includes? editing/editing-prompt
-                "Read back after writes only when exact persisted bytes matter"))
+                "Do NOT v/cat to verify"))
       (expect (not (string/includes? editing/editing-prompt "read-all-lines")))
       (expect (not (string/includes? editing/editing-prompt "write-lines")))
       (expect (not (string/includes? editing/editing-prompt "update-file"))))))

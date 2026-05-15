@@ -235,7 +235,7 @@
   "Return the first sink-entry in `journal` whose `:success?` is false,
    or nil. Used to lift a buried tool failure into the block header so
    the next-iteration prompt cannot miss it (regression: convo
-   `73f3d325` turn 5, where a `(z/patch ...)` returned
+   `73f3d325` turn 5, where a `(v/patch ...)` returned
    `:success? false` but the parent block header rendered as a tidy
    `RESULT / N chars hidden` summary while the failure detail lived
    five keys deep, and the model claimed `Now fixed` in the same
