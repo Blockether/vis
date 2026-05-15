@@ -1180,3 +1180,92 @@ ANSWER_IR
        turn-position (assoc :turn-position turn-position)
        conv-id       (assoc :conv-id conv-id)
        state-id      (assoc :state-id state-id)))))
+
+(defn build-iteration-context-tape
+  "Phase 7 build-iteration-context replacement: assembles the
+   per-iteration user-role trailer in the new pivot shape — XML
+   `<iteration_hints>` (preserved per design) followed by pure
+   commented-Clojure sections (system-vars / live-vars / tape).
+
+   Lives alongside the legacy `build-iteration-context`. Phase 7 main
+   flips the engine call site in loop.clj from the legacy fn to this
+   one. Until then the engine still uses the legacy assembly.
+
+   Required opts:
+     `:active-extensions` - vec from `(active-extensions env)`. Drives
+        `:turn.iteration/start` hook collection for `<iteration_hints>`.
+
+   Optional opts:
+     `:blocks-by-iteration` - carried iterations as
+        `[iteration-position {:blocks …}]` pairs. Fed through
+        `iteration->tape-iter` to produce tape entries.
+     `:iteration`            - current iteration position (1-based).
+     `:current-status`       - status to stamp on the LATEST iteration
+        in the rendered tape (default :done; pass :current for the
+        in-flight iteration that has not yet executed).
+     `:system-vars`          - vec of `{:name :doc}` for engine-managed
+        UPPERCASE vars. Phase 7 main fills this from sandbox introspection.
+     `:live-vars`            - vec of `{:name :doc}` for user vars
+        within the LRU window. Phase 7 main fills from per-env LRU map.
+     `:model` / `:context-limit` - unused for now; reserved so the
+        signature matches `build-iteration-context` for a clean swap."
+  [environment {:keys [blocks-by-iteration active-extensions iteration
+                       current-status system-vars live-vars]
+                :as opts}]
+  (when-not (contains? opts :active-extensions)
+    (throw (ex-info "build-iteration-context-tape requires :active-extensions"
+             {:type :vis/missing-active-extensions})))
+  (let [turn-position (long (or (some-> environment :current-turn-position-atom deref) 1))
+        conv-id       (some-> environment :conversation-id str
+                        (subs 0 (min 8 (count (str (:conversation-id environment))))))
+        last-pos      (some-> blocks-by-iteration last first)
+        tape-iters    (mapv (fn [[pos iter-data]]
+                              (iteration->tape-iter
+                                iter-data
+                                (cond-> {:iteration-position pos
+                                         :turn-position turn-position
+                                         :conv-id conv-id}
+                                  (and last-pos (= pos last-pos))
+                                  (assoc :status (or current-status :done)))))
+                        (or blocks-by-iteration []))
+        body (format-user-role-tape-message
+               {:system-vars (or system-vars [])
+                :live-vars   (or live-vars [])
+                :iters       tape-iters})
+        ;; Reuse the legacy nudge-ctx + hint-collection path so existing
+        ;; `:turn.iteration/start` hook contracts keep working unchanged.
+        nudge-ctx {:environment environment
+                   :iteration (if (some? iteration) (inc (long iteration)) 1)
+                   :turn-position turn-position
+                   :previous-blocks (some-> blocks-by-iteration last second :blocks)
+                   :model nil
+                   :context-limit nil
+                   :input-tokens 0
+                   :title-refresh? false
+                   :conversation-title (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
+                   :user-request nil}
+        all-hints (into []
+                    (mapcat
+                      (fn [ext]
+                        (for [{:keys [id phase fn]} (or (:ext/hooks ext) [])
+                              :when (= :turn.iteration/start phase)
+                              :let [hit (try (call-extension-callback ext fn
+                                               (assoc nudge-ctx :phase phase))
+                                          (catch Throwable t
+                                            (tel/log! {:level :warn
+                                                       :id ::hook-threw
+                                                       :data {:ext (:ext/namespace ext)
+                                                              :hook id
+                                                              :phase phase
+                                                              :error (ex-message t)}})
+                                            nil))]
+                              :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]
+                          (normalize-system-nudge
+                            (or (:importance hit) :normal)
+                            (:hint hit)))))
+                    (or active-extensions []))
+        hints-block (iteration-hints-block all-hints)
+        parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
+                [hints-block body])]
+    (when (seq parts)
+      (str/join "\n\n" parts))))

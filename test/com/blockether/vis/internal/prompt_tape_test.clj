@@ -238,3 +238,48 @@
       (expect (string/includes? out "conv=ab12"))
       (expect (string/includes? out "(def x \"doc\" 42)"))
       (expect (string/includes? out ";; => 42")))))
+
+(defn- empty-env []
+  ;; Minimal environment satisfying the fields build-iteration-context-tape touches.
+  {:current-turn-position-atom (atom 1)
+   :conversation-title-atom    (atom nil)
+   :conversation-id            "abcdef0123-…"})
+
+(defdescribe build-iteration-context-tape-test
+  (it "throws :vis/missing-active-extensions when :active-extensions is absent"
+    (try
+      (prompt/build-iteration-context-tape (empty-env) {})
+      (expect false)
+      (catch clojure.lang.ExceptionInfo e
+        (expect (= :vis/missing-active-extensions (:type (ex-data e)))))))
+  (it "renders the tape body when given iterations and no active extensions"
+    (let [out (prompt/build-iteration-context-tape
+                (empty-env)
+                {:active-extensions  []
+                 :blocks-by-iteration [[1 {:blocks [{:code "(def x \"doc\" 42)" :result 42}]}]]
+                 :iteration           1
+                 :system-vars         [{:name "USER_REQUEST" :doc "current turn user request"}]
+                 :live-vars           [{:name "x" :doc "doc"}]})]
+      (expect (string? out))
+      (expect (string/includes? out ";; system-vars:"))
+      (expect (string/includes? out "USER_REQUEST"))
+      (expect (string/includes? out ";; live-vars (1/30):"))
+      (expect (string/includes? out "iteration 1"))
+      (expect (string/includes? out "(def x \"doc\" 42)"))
+      (expect (string/includes? out ";; => 42"))))
+  (it "stamps the LATEST iteration with :current-status when supplied"
+    (let [out (prompt/build-iteration-context-tape
+                (empty-env)
+                {:active-extensions   []
+                 :blocks-by-iteration [[1 {:blocks [{:code "(def a \"a\" 1)" :result 1}]}]
+                                       [2 {:blocks [{:code "(def b \"b\" 2)" :result 2}]}]]
+                 :current-status :current})]
+      (expect (string/includes? out "iteration 1"))
+      (expect (string/includes? out "iteration 2"))
+      ;; status=current applies to iter 2 (the latest); iter 1 stays :done
+      (expect (string/includes? out "iteration 2 | turn=1 | conv=abcdef01 | status=current"))
+      (expect (string/includes? out "status=done"))))
+  (it "returns nil when there are no iterations and no hints"
+    (expect (nil? (prompt/build-iteration-context-tape
+                    (empty-env)
+                    {:active-extensions []})))))
