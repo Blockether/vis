@@ -2187,6 +2187,30 @@
          :vars snap
          :dependencies deps}))))
 
+(defdescribe phase-4b-restore-is-silent-no-autobump-test
+  (it "restore-sandbox! rebuilds vars WITHOUT writing new state versions"
+    ;; The contract: the patched eval-def writes to `*def-sink-atom*`
+    ;; only when the engine BINDS it around an iteration. The restore
+    ;; path leaves the sink unbound, so re-evaluating every (def …) to
+    ;; rebuild SCI bindings DOES NOT create phantom v(N+1) rows. The
+    ;; row counts before and after `restore-sandbox!` are identical.
+    (let [store (h/store)
+          cid   (vis/db-store-conversation! store {:channel :tui})
+          tid   (vis/db-store-conversation-turn! store
+                  {:parent-conversation-id cid :user-request "x" :status :done})
+          ctx1  (sci/init {:namespaces {'user {}}})]
+      (run-iter! store tid ctx1
+        "(def a \"alpha\" 10)\n(def b \"beta\" 2)\n(defn add-them \"sum a + b\" [] (+ a b))")
+      (let [state-before (raw-count store :expression_state)
+            soul-before  (raw-count store :expression_soul)
+            ;; FRESH engine SCI context (real `create-sci-context`,
+            ;; not raw `sci/init`, so the sandbox ns + helpers exist
+            ;; and restore-sandbox! evals into the right place).
+            ctx2         (env/create-sci-context nil)
+            _results     (env/restore-sandbox! ctx2 store cid)]
+        (expect (= state-before (raw-count store :expression_state)))
+        (expect (= soul-before  (raw-count store :expression_soul)))))))
+
 (defdescribe phase-4b-redefinition-semantics-test
   (it "redefining a + b in a later iteration leaves c at its old version"
     ;; Walks the user's scenario:
