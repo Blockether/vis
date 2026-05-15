@@ -607,7 +607,8 @@
    Vocabulary note: `ACTIVE` means an extension activation-fn returned
    truthy and its symbols got intern'd into the SCI sandbox (the model can
    call `v/cat` directly because the var is loaded)."
-  '#{TURN_ID
+  '#{USER_REQUEST
+     TURN_ID
      TURN_POSITION
      TURN_CONVERSATION_STATE_ID
      TURN_SYSTEM_PROMPT
@@ -800,6 +801,101 @@
          lines (mapv render-var-form (take MAX_BINDINGS_ENTRIES live-entries))]
      (when (seq lines)
        (str/join "\n" lines)))))
+
+;; =============================================================================
+;; Phase 7 prep: tape discovery surface
+;;
+;; The new pivot user-role message replaces <bindings> with two compact
+;; commented-Clojure sections:
+;;
+;;   ;; system-vars:                     UPPERCASE engine-managed vars
+;;   ;;   USER_REQUEST  "current turn user request"
+;;
+;;   ;; live-vars (N/cap):               user defs within the LRU window
+;;   ;;   big-handle    "README handle"
+;;
+;; The two helpers below introspect the SCI sandbox + the per-env LRU
+;; map and return entries shaped `{:name :doc}` ready for the
+;; `format-{system,live}-vars-block` renderers in prompt.clj. Phase 7
+;; main wires them through `build-iteration-context-tape`.
+;; =============================================================================
+
+(def ^:const TAPE_LIVE_VARS_CAP
+  "Max user-var entries surfaced in the live-vars discovery line. PLAN
+   pivot: 30. Older entries (least-recently-resolved) drop first."
+  30)
+
+(def ^:const TAPE_LRU_TURN_WINDOW
+  "Vars unused for >= this many turns are hidden from the live-vars
+   line (the binding stays alive in the sandbox; it just isn't
+   advertised). PLAN pivot: 10."
+  10)
+
+(defn- doc-of [v]
+  (let [m (meta v)]
+    (or (:doc m)
+      (when (and (string? (:code m))
+              (re-find #"\".+\"" (:code m)))
+        ;; Best-effort: pull a docstring out of stored source if the
+        ;; var meta lost it. Cheap regex; treats first quoted string
+        ;; literal as the doc.
+        (second (re-find #"\"([^\"]+)\"" (:code m))))
+      "")))
+
+(defn tape-system-vars
+  "Vec of `{:name :doc}` entries for engine-managed UPPERCASE sandbox
+   vars currently bound. Read by `format-system-vars-block`. Empty vec
+   when no system vars are bound (test contexts)."
+  [sci-ctx]
+  (when sci-ctx
+    (let [sandbox-map (get-in @(:env sci-ctx) [:namespaces 'sandbox])]
+      (->> sandbox-map
+        (filter (fn [[s _]]
+                  (and (symbol? s) (system-var-sym? s))))
+        (mapv (fn [[s v]]
+                {:name (str s)
+                 :doc  (doc-of v)}))
+        (sort-by :name)
+        vec))))
+
+(defn tape-live-vars
+  "Vec of `{:name :doc}` entries for user-defined sandbox vars within
+   the LRU window. `lru-map` is `{var-name-string -> last-used-turn-pos}`
+   from the SCI resolve-symbol* monkey-patch. `current-turn-pos` is
+   the engine's current turn position; entries whose
+   `(- current-turn-pos last-used)` exceeds `TAPE_LRU_TURN_WINDOW` are
+   hidden from the surface (the def stays bound). Capped at
+   `TAPE_LIVE_VARS_CAP`; oldest stamp drops first.
+
+   When `lru-map` is empty (engine just started or no resolutions yet),
+   surface ALL user vars unconditionally — the LRU is informational, a
+   missing stamp doesn't mean stale."
+  [sci-ctx initial-ns-keys lru-map current-turn-pos]
+  (when sci-ctx
+    (let [sandbox-map (get-in @(:env sci-ctx) [:namespaces 'sandbox])
+          lru-map (or lru-map {})
+          current-turn-pos (long (or current-turn-pos 1))
+          window TAPE_LRU_TURN_WINDOW
+          fresh? (fn [sym]
+                   (let [stamp (get lru-map (str sym))]
+                     (or (nil? stamp)
+                       (<= (- current-turn-pos (long stamp)) window))))
+          user? (fn [[sym _]]
+                  (and (symbol? sym)
+                    (not (contains? initial-ns-keys sym))
+                    (not (system-var-sym? sym))))
+          entries (->> sandbox-map
+                    (filter user?)
+                    (filter (fn [[sym _]] (fresh? sym)))
+                    (mapv (fn [[sym v]]
+                            {:name (str sym)
+                             :doc  (doc-of v)
+                             :stamp (or (get lru-map (str sym)) 0)})))
+          ranked (->> entries
+                   (sort-by (juxt #(- (long (:stamp %))) :name))
+                   (take TAPE_LIVE_VARS_CAP)
+                   (mapv #(dissoc % :stamp)))]
+      (vec ranked))))
 
 ;; =============================================================================
 ;; Sandbox restore - rebuild SCI bindings from DB
