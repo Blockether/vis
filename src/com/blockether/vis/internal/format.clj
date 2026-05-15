@@ -217,10 +217,18 @@
    '↑<input> (cached <cached-input>) ↓<output>'.
 
    Up arrow = tokens fed INTO the model (prompt); down arrow = tokens
-   the model produced. Cached is cached input tokens, displayed next to
-   input because provider APIs report cache hits inside prompt usage.
-   `:cached` is the provider field; `:cached-input` / `:input-cached`
-   are accepted aliases so usage maps can name the direction explicitly.
+   the model produced. Cached is cached input tokens, displayed next
+   to input because provider APIs report cache hits inside prompt
+   usage. `:cached` is the provider field; `:cached-input` /
+   `:input-cached` are accepted aliases so usage maps can name the
+   direction explicitly.
+
+   Cache visibility: the `(cached N)` segment ALWAYS renders when
+   `:input` is known — zero / missing cache info renders as
+   `(cached 0)` so a cache miss is explicit on every meta line, not
+   hidden behind a falsy field. Cache hits are otherwise invisible
+   and users keep paying full prompt-token price without realising
+   it.
 
    Returns nil when no known field carries a number."
   [{:keys [input output] :as tokens}]
@@ -229,17 +237,12 @@
                     (let [v (get tokens k)]
                       (when (number? v) v)))
               ks))]
-    (let [cached-input (first-number [:cached-input :input-cached :cached])
-          cached-input (when (and (number? cached-input) (pos? cached-input))
-                         cached-input)
+    (let [cached-input (or (first-number [:cached-input :input-cached :cached]) 0)
           input-part (cond
-                       (and (number? input) cached-input)
+                       (number? input)
                        (str "↑" input " (cached " cached-input ")")
 
-                       (number? input)
-                       (str "↑" input)
-
-                       cached-input
+                       (pos? cached-input)
                        (str "↑0 (cached " cached-input ")"))
           parts (cond-> []
                   input-part       (conj input-part)

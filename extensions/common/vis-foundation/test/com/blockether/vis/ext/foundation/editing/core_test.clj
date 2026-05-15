@@ -140,13 +140,15 @@
       (expect (string/includes? editing/editing-prompt
                 "(:next-offset prev)"))
       (expect (string/includes? editing/editing-prompt
-                "Edit text with `(v/patch"))
+                "(v/patch [{:path :search :replace}])"))
       (expect (string/includes? editing/editing-prompt
                 "each :search must match exactly once"))
+      (expect (string/includes? editing/editing-prompt
+                "Codex apply_patch envelope"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
-                "Canonical exact text patch"))
+                "Codex `apply_patch` envelope"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
-                "all edits validate before any write"))
+                "validate the full plan against the live filesystem\n   before any write"))
       (expect (string/includes? editing/editing-prompt
                 "Do NOT v/cat to verify"))
       (expect (not (string/includes? editing/editing-prompt "read-all-lines")))

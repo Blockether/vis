@@ -21,6 +21,7 @@
 
 (def ^:private begin-marker     "*** Begin Patch")
 (def ^:private end-marker       "*** End Patch")
+(def ^:private env-id-marker    "*** Environment ID: ")
 (def ^:private add-marker       "*** Add File: ")
 (def ^:private delete-marker    "*** Delete File: ")
 (def ^:private update-marker    "*** Update File: ")
@@ -31,11 +32,17 @@
 
 (defn looks-like-patch?
   "Does `s` look like a Codex patch envelope? Cheap lookahead used to
-   dispatch v/patch between exact-replace and patch-envelope modes."
+   dispatch v/patch between exact-replace and patch-envelope modes.
+   Recognizes the heredoc-wrapped form (`<<'EOF'` ... `EOF`) as well
+   so that LLM-produced commands like `apply_patch <<'EOF' ... EOF`
+   still dispatch into envelope mode."
   [s]
-  (and (string? s)
-    (let [t (str/triml s)]
-      (str/starts-with? t begin-marker))))
+  (boolean
+    (and (string? s)
+      (let [t (str/triml s)]
+        (or (str/starts-with? t begin-marker)
+          (some #(str/starts-with? t %)
+            ["<<EOF\n" "<<'EOF'\n" "<<\"EOF\"\n"]))))))
 
 ;; =============================================================================
 ;; Parser
@@ -66,29 +73,76 @@
             :message msg
             :line-number line-number})))
 
+(defn- strip-heredoc-wrapper
+  "If `lines` is wrapped in `<<EOF` / `<<'EOF'` / `<<\"EOF\"` ... `EOF`
+   markers (Codex' lenient heredoc form), strip them. Mirrors
+   `check_patch_boundaries_lenient` in codex-rs/apply-patch/src/parser.rs."
+  [lines]
+  (if (< (count lines) 4)
+    lines
+    (let [first-line (str/trim (first lines))
+          last-line  (str/trim (peek lines))]
+      (if (and (contains? #{"<<EOF" "<<'EOF'" "<<\"EOF\""} first-line)
+            (str/ends-with? last-line "EOF"))
+        (subvec lines 1 (dec (count lines)))
+        lines))))
+
 (defn- check-boundaries
-  "Strip *** Begin Patch / *** End Patch and return the inner lines.
-   Mirrors `check_patch_boundaries_lenient` in Codex."
+  "Strip optional heredoc wrapper, then *** Begin Patch / *** End Patch
+   markers; return the inner lines. Mirrors
+   `check_patch_boundaries_lenient` in Codex."
   [^String patch]
   (let [trimmed (str/trim patch)
-        lines   (vec (str/split-lines trimmed))]
+        raw     (vec (str/split-lines trimmed))
+        lines   (strip-heredoc-wrapper raw)]
     (when (empty? lines)
       (bad-patch! "patch text is empty"))
-    (when-not (= (str/triml (first lines)) begin-marker)
-      (bad-patch! (str "expected first line to be '" begin-marker "'")))
-    (when-not (= (str/triml (peek lines)) end-marker)
-      (bad-patch! (str "expected last line to be '" end-marker "'")))
+    (when-not (= (str/trim (first lines)) begin-marker)
+      (bad-patch! "The first line of the patch must be '*** Begin Patch'"))
+    (when-not (= (str/trim (peek lines)) end-marker)
+      (bad-patch! "The last line of the patch must be '*** End Patch'"))
     (subvec lines 1 (dec (count lines)))))
 
 (defn- strip-prefix [^String s ^String prefix]
   (when (and s (str/starts-with? s prefix))
     (subs s (count prefix))))
 
+(defn- skip-environment-id
+  "Codex' optional preamble: `*** Environment ID: <id>` line right after
+   `*** Begin Patch`. Returns inner lines with the preamble removed (or
+   unchanged if absent). Empty environment-id values are rejected to
+   match `parse_environment_id_preamble`."
+  [lines]
+  (if-let [first-line (first lines)]
+    (if-let [body (strip-prefix (str/triml first-line) env-id-marker)]
+      (let [env-id (str/trim body)]
+        (when (str/blank? env-id)
+          (bad-patch! "apply_patch environment_id cannot be empty"))
+        (subvec lines 1))
+      lines)
+    lines))
+
 (defn- starts-marker?
-  "Does `line` start any top-level marker? Used to terminate update hunks."
+  "Does `line` start any top-level marker? Used to terminate update
+   hunks. Tolerates leading whitespace, matching Codex' `line.trim()`
+   pre-check in `parse_one_hunk`."
   [^String line]
   (and (string? line)
-    (str/starts-with? line "***")))
+    (str/starts-with? (str/triml line) "***")))
+
+(defn- ctx-marker-line?
+  "Is `line` a `@@` or `@@ <header>` context marker? Tolerates leading
+   whitespace. Does NOT trim the contents; callers slice from the raw
+   line so content lines (which legitimately start with space) are
+   never mistaken for markers."
+  [^String line]
+  (let [t (str/triml line)]
+    (or (= t empty-ctx-marker)
+      (str/starts-with? t ctx-marker))))
+
+(defn- eof-marker-line?
+  [^String line]
+  (= (str/trim line) eof-marker))
 
 (defn- parse-add
   [path lines start]
@@ -102,11 +156,13 @@
           (recur (inc i) (conj! buf (subs line 1)))
 
           :else
-          [{:op :add
-            :path path
-            :contents (str (str/join "\n" (persistent! buf))
-                        (when (pos? (count (persistent! buf))) "\n"))}
-           i])))))
+          (let [body (persistent! buf)]
+            [{:op :add
+              :path path
+              :contents (if (pos? (count body))
+                          (str (str/join "\n" body) "\n")
+                          "")}
+             i]))))))
 
 (defn- parse-chunk
   "Parse one update chunk starting at `start` (line index inside `lines`).
@@ -128,20 +184,20 @@
             :end-of-file? eof?}
            i]
 
-          (= line eof-marker)
-          (if (and (= 0 (count (persistent! old-lines)))
-                (= 0 (count (persistent! new-lines))))
-            (bad-hunk! "update hunk must contain at least one change line before *** End of File"
-              (+ patch-line-number i))
-            [{:change-context change-context
-              :old-lines (persistent! old-lines)
-              :new-lines (persistent! new-lines)
-              :end-of-file? true}
-             (inc i)])
+          (eof-marker-line? line)
+          (let [olds (persistent! old-lines)
+                news (persistent! new-lines)]
+            (if (and (zero? (count olds)) (zero? (count news)))
+              (bad-hunk! "update hunk must contain at least one change line before *** End of File"
+                (+ patch-line-number i))
+              [{:change-context change-context
+                :old-lines olds
+                :new-lines news
+                :end-of-file? true}
+               (inc i)]))
 
           ;; new @@ context starts a new chunk for the caller
-          (or (= line empty-ctx-marker)
-            (str/starts-with? line ctx-marker))
+          (ctx-marker-line? line)
           [{:change-context change-context
             :old-lines (persistent! old-lines)
             :new-lines (persistent! new-lines)
@@ -175,13 +231,15 @@
 (defn- parse-update
   [path lines start patch-line-number]
   (let [n (count lines)
-        ;; optional move-to
-        first-line (when (< start n) (nth lines start))
-        move-to    (when first-line (strip-prefix first-line move-marker))
+        ;; optional move-to (tolerant of leading whitespace)
+        first-raw (when (< start n) (nth lines start))
+        move-to   (when first-raw
+                    (strip-prefix (str/triml first-raw) move-marker))
         body-start (if move-to (inc start) start)]
     (loop [i      body-start
            chunks (transient [])]
-      (let [line (when (< i n) (nth lines i))]
+      (let [line (when (< i n) (nth lines i))
+            trimmed (some-> line str/triml)]
         (cond
           (or (nil? line) (starts-marker? line))
           [{:op :update
@@ -190,12 +248,12 @@
             :chunks (persistent! chunks)}
            i]
 
-          (= line empty-ctx-marker)
+          (= trimmed empty-ctx-marker)
           (let [[chunk j] (parse-chunk lines (inc i) nil patch-line-number)]
             (recur j (conj! chunks chunk)))
 
-          (str/starts-with? line ctx-marker)
-          (let [ctx (subs line (count ctx-marker))
+          (str/starts-with? trimmed ctx-marker)
+          (let [ctx (subs trimmed (count ctx-marker))
                 [chunk j] (parse-chunk lines (inc i) ctx patch-line-number)]
             (recur j (conj! chunks chunk)))
 
@@ -205,7 +263,8 @@
             (recur j (conj! chunks chunk))))))))
 
 (defn parse-patch
-  "Parse a Codex `apply_patch` envelope string into `{:hunks [...]}`.
+  "Parse a Codex `apply_patch` envelope string into
+   `{:hunks [...] :environment-id ID-or-nil}`.
 
    Each hunk is one of:
      {:op :add    :path P :contents S}
@@ -214,15 +273,26 @@
    where Chunk = {:change-context CTX :old-lines [...] :new-lines [...]
                   :end-of-file? bool}.
 
+   Tolerates: leading/trailing whitespace on every marker line, optional
+   `*** Environment ID: <id>` preamble, and the heredoc-wrapped form
+   (`<<'EOF'` ... `EOF`) used by gpt-4.1 / `local_shell`.
+
    Throws ex-info on malformed input."
   [^String patch]
-  (let [inner (check-boundaries patch)
+  (let [boundary-stripped (check-boundaries patch)
+        env-id (some-> (first boundary-stripped)
+                 str/triml
+                 (strip-prefix env-id-marker)
+                 str/trim)
+        inner (skip-environment-id boundary-stripped)
         n     (count inner)]
     (loop [i      0
            hunks  (transient [])]
       (if (>= i n)
-        {:hunks (persistent! hunks)}
-        (let [line (nth inner i)]
+        {:hunks (persistent! hunks)
+         :environment-id (when-not (str/blank? env-id) env-id)}
+        (let [raw-line (nth inner i)
+              line     (str/triml raw-line)]
           (cond
             (str/blank? line)
             (recur (inc i) hunks)
@@ -358,9 +428,7 @@
    Returns {:original :new :replacements}, where :replacements records
    the per-chunk plan for diagnostics."
   [{:keys [original chunks path]}]
-  (let [original-lines (split-lines-preserving-empty original)
-        original-ends-newline? (or (str/blank? original)
-                                 (str/ends-with? original "\n"))]
+  (let [original-lines (split-lines-preserving-empty original)]
     (loop [chunks chunks
            line-index 0
            replacements (transient [])]
@@ -408,11 +476,13 @@
               (recur (next chunks)
                 (+ (long hit) (count pat))
                 (conj! replacements [hit (count pat) new-seg])))))
-        ;; done
+        ;; done -- match Codex' behaviour: always end with a single
+        ;; trailing newline regardless of `original`'s final-newline
+        ;; status. (Codex pushes an empty trailing line then joins on
+        ;; "\n", so the output invariably ends with newline.)
         (let [reps (persistent! replacements)
               new-lines (apply-replacements original-lines reps)
-              new-content (str (str/join "\n" new-lines)
-                            (when (or (seq new-lines) original-ends-newline?) "\n"))]
+              new-content (str (str/join "\n" new-lines) "\n")]
           {:original original
            :new new-content
            :replacements reps})))))

@@ -604,16 +604,19 @@
    Vocabulary note: `ACTIVE` means an extension activation-fn returned
    truthy and its symbols got intern'd into the SCI sandbox (the model can
    call `v/cat` directly because the var is loaded)."
-  '#{USER_REQUEST
-     TURN_ID
+  ;; Dropped (redundant with what the prompt + message stream
+  ;; already carry, value never read in active code paths):
+  ;;   USER_REQUEST                  -- already the user message
+  ;;   TURN_SYSTEM_PROMPT            -- already the system prompt
+  ;;   CONVERSATION_PREVIOUS_ANSWER  -- already in preserved-thinking
+  ;;                                    + previous-turn-context block
+  '#{TURN_ID
      TURN_POSITION
      TURN_CONVERSATION_STATE_ID
-     TURN_SYSTEM_PROMPT
      TURN_ACTIVE_EXTENSIONS
      TURN_ITERATION_ID
      TURN_ITERATION_POSITION
-     CONVERSATION_STATE_ID
-     CONVERSATION_PREVIOUS_ANSWER})
+     CONVERSATION_STATE_ID})
 
 (defn system-var-sym?
   "True when `sym` is one of the registered SYSTEM-var names. The fixed
