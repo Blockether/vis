@@ -22,7 +22,8 @@
 | 4 main | Restructure `code-entries-preflight`; drop multi-block iteration map; flush def-sink to `expression_state`; soften `(done …)` gate | ⏳ pending — largest remaining surgery |
 | 5 | Schema collapse (V1 in place; drop `code_blocks` BLOB, add `code`/`result`/`error`/`stdout`/`stderr`/`duration_ms` columns) | ⏳ pending |
 | 6 | Channel renderer update (consume new schema columns) | ⏳ pending |
-| 7 | Prompt restructure: delete `<journal>` / `<bindings>` / `<current_user_message>` / `<current_turn_context>`; add live-vars / system-vars / tape; shrink `CORE_SYSTEM_PROMPT` to ~35 lines | ⏳ pending — model-facing payoff |
+| 7 prep | Tape rendering primitives in prompt.clj (tape-iteration-header, format-tape-iteration, system/live-vars blocks) | ✅ shipped (dormant — not yet wired) |
+| 7 main | Prompt restructure: delete `<journal>` / `<bindings>` / `<current_user_message>` / `<current_turn_context>`; wire tape primitives into build-iteration-context; shrink `CORE_SYSTEM_PROMPT` to ~35 lines | ⏳ pending — model-facing payoff |
 | 8 | Cleanup: README "RLM-conformant" line, drop unreachable code paths | ⏳ partial (AGENTS.md `z/patch` section updated) |
 
 The shipped infrastructure (handles, view ops, def-sink, LRU, single-form

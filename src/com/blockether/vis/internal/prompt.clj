@@ -1094,3 +1094,36 @@ ANSWER_IR
          (map (fn [{:keys [name doc]}]
                 (str ";;   " name "  " (pr-str (or doc ""))))
            entries))))))
+
+(defn format-tape
+  "Render a sequence of iterations as the full N-1 (or N-1 + N) tape
+   the model sees in the user-role message. `iters` is a vec of
+   per-iteration maps (see `format-tape-iteration` for the shape) in
+   chronological order. Iterations render top-to-bottom separated by
+   a blank line so the iteration-header lines visually anchor each
+   block.
+
+   Tape-window policy lives in the caller; this fn renders whatever
+   it's given. Pass `[N-1]` on a clean run, `[N-1 N]` on an error
+   recovery iteration."
+  [iters]
+  (when (seq iters)
+    (str/join "\n\n" (map format-tape-iteration iters))))
+
+(defn format-user-role-tape-message
+  "Assemble the full user-role message body: optional system-vars
+   header + optional live-vars header + the rendered tape. Each
+   section is joined with a blank line so the tape header lines stay
+   visually distinct.
+
+   Phase 7 main will wire this through `build-iteration-context` in
+   place of the legacy <journal>/<bindings>/<current_user_message>
+   blocks. Until then the engine still uses the old assembly path
+   and this fn is exercised only by tests."
+  [{:keys [system-vars live-vars iters]}]
+  (let [sys-block  (format-system-vars-block system-vars)
+        live-block (format-live-vars-block live-vars)
+        tape-block (format-tape iters)
+        parts      (keep identity [sys-block live-block tape-block])]
+    (when (seq parts)
+      (str/join "\n\n" parts))))
