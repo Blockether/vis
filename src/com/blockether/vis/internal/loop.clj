@@ -16,7 +16,7 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.extension.sci-patches :as sci-patches]
+   [com.blockether.vis.internal.env.sci-patches :as sci-patches]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
@@ -1835,7 +1835,13 @@
                                     ;; blocks and drives definition_state from
                                     ;; the result. Pivot replaces the legacy
                                     ;; parse-source path.
-                                    :def-sink (vec (:def-sink result))}
+                                    :def-sink (vec (:def-sink result))
+                                    ;; Per-block resolve-symbol* LRU stamps:
+                                    ;; symbol-name -> current-turn-pos for every
+                                    ;; symbol the SCI hook saw resolve during
+                                    ;; this block's eval. Iteration writer
+                                    ;; merges into the long-lived per-env LRU.
+                                    :lru (or (:lru result) {})}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
                              ;; (done …) / (set-conversation-title! …)
@@ -2501,7 +2507,10 @@
   [environment user-request
    {:keys [system-prompt
            conversation-turn-id
-           max-context-tokens
+           ;; `max-context-tokens` was the legacy `build-iteration-context`
+           ;; token-budget knob. The tape assembler ignores it for now;
+           ;; rename / drop pending Phase 8 caller-signature cleanup.
+           #_:clj-kondo/ignore max-context-tokens
            hooks cancel-atom current-iteration-atom
            reasoning-default routing extra-body turn-features allow-copilot-claude-deep?
            workspace]}]
@@ -2670,6 +2679,12 @@
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
+    ;; Phase 7: inject USER_REQUEST as a regular sandbox def so the
+    ;; model sees it in `(env/tape-system-vars …)` and can interpolate
+    ;; via the same surface as every other var.
+    (env/bind-and-bump-with-doc! environment 'USER_REQUEST
+      "current turn user request"
+      (or user-request ""))
     ;; REPL-style recovery slots (`*1` `*2` `*3` `*e`) are per-turn. A
     ;; follow-up turn opens with all four nil so leftover values from
     ;; the previous turn never bleed into the new OODA loop.
@@ -2751,20 +2766,21 @@
                                                               :reasoning reasoning-level
                                                               :requested-reasoning raw-reasoning-level})
                     pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
-                    iteration-context (prompt/build-iteration-context environment
+                    ;; Phase 7 swap: tape-based assembly. system-vars +
+                    ;; live-vars come from sandbox introspection;
+                    ;; per-env LRU drives staleness; tape entries come
+                    ;; from `journal-iters` via the same shape adapter.
+                    iteration-context (prompt/build-iteration-context-tape environment
                                         {:blocks-by-iteration journal-iters
                                          :active-extensions   active-exts
                                          :iteration           iteration
-                                         :model               (some-> pre-resolved-model :name str)
-                                         :context-limit       max-context-tokens
-                                         :current-user-content user-request
-                                         :stable-prompt-content stable-prompt-content
-                                           ;; One low-importance turn-boundary check keeps
-                                           ;; titles live across topic shifts. The old
-                                           ;; iteration-only cadence never fired for a
-                                           ;; string of short turns, which reproduced in
-                                           ;; conversation 9a55ca1a.
-                                         :title-refresh?      (zero? (long iteration))})
+                                         :current-status      :current
+                                         :system-vars         (env/tape-system-vars (:sci-ctx environment))
+                                         :live-vars           (env/tape-live-vars
+                                                                (:sci-ctx environment)
+                                                                (:initial-ns-keys environment)
+                                                                (some-> (:def-resolve-lru-atom environment) deref)
+                                                                (some-> (:current-turn-position-atom environment) deref))})
                       ;; Single canonical preserved-thinking replay path —
                       ;; svar's per-provider wire serializer turns the
                       ;; canonical assistant messages into native
@@ -2940,6 +2956,18 @@
                                                 :downstream-name downstream}))
                                         distinct
                                         vec)
+                        ;; Phase 7: merge per-iteration `:lru` stamps
+                        ;; (collected by the patched resolve-symbol*)
+                        ;; into the long-lived per-env LRU map. The
+                        ;; tape live-vars renderer reads this to age
+                        ;; user vars out of the discovery line after
+                        ;; `TAPE_LRU_TURN_WINDOW` quiet turns.
+                        _ (when-let [lru-atom (:def-resolve-lru-atom environment)]
+                            (let [iteration-lru (reduce (fn [m b]
+                                                          (merge m (or (:lru b) {})))
+                                                  {} blocks)]
+                              (when (seq iteration-lru)
+                                (swap! lru-atom merge iteration-lru))))
                         previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
                         conversation-row (try
                                            (persistance/db-get-conversation
@@ -3968,6 +3996,12 @@
              :sci-ctx                           sci-ctx
              :sandbox-ns                        sandbox-ns
              :initial-ns-keys                   initial-ns-keys
+             ;; Long-lived per-env LRU map: `{var-name-string →
+             ;; last-used-turn-pos}`. Merged from each iteration's
+             ;; `:lru` after eval. Read by `prompt/tape-live-vars` to
+             ;; decide which user vars to surface in the live-vars
+             ;; discovery line. Pivot Phase 7 wire.
+             :def-resolve-lru-atom              (atom {})
              :router                            router
              :answer-atom                       answer-atom
              :current-form-idx-atom             current-form-idx-atom

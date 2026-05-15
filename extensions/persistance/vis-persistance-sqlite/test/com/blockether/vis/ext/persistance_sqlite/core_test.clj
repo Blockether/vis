@@ -25,7 +25,7 @@
    [com.blockether.vis.ext.persistance-sqlite.registrar]
    [com.blockether.vis.ext.persistance-sqlite.test-helpers :as h :refer [raw-count raw-query]]
    [com.blockether.vis.internal.env :as env]
-   [com.blockether.vis.internal.extension.sci-patches :as sp]
+   [com.blockether.vis.internal.env.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
    [com.blockether.vis.internal.persistance :as persistance]
    [honey.sql :as sql]

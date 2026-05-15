@@ -1,10 +1,10 @@
-(ns com.blockether.vis.internal.extension.handle-test
+(ns com.blockether.vis.internal.env.handle-test
   (:require
    [clojure.string :as string]
-   [com.blockether.vis.internal.extension.handle :as handle]
+   [com.blockether.vis.internal.env.handle :as handle]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
-   (com.blockether.vis.internal.extension.handle CatHandle)))
+   (com.blockether.vis.internal.env.handle CatHandle)))
 
 (defn- fresh-cat
   "Build a CatHandle from `lines`, isolating the store fixture per test."

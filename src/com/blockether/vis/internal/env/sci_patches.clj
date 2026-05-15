@@ -1,4 +1,4 @@
-(ns com.blockether.vis.internal.extension.sci-patches
+(ns com.blockether.vis.internal.env.sci-patches
   "Monkey-patches over SCI's `:no-doc` impl namespaces.
 
    SCI 0.12.51 ships no public hook for `def` evaluation. The pivot

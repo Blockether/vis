@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.loop-test
   (:require
    [com.blockether.svar.core :as svar]
-   [com.blockether.vis.internal.extension.sci-patches :as sp]
+   [com.blockether.vis.internal.env.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
    [lazytest.core :refer [defdescribe it expect]]
    [sci.core :as sci]))
