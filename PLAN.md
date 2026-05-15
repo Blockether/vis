@@ -43,7 +43,7 @@ softens.
 | 10 | Second monkey-patch on the SCI symbol-resolver hot path for runtime-resolution LRU bookkeeping. |
 | 11 | 30-binding cap on the live-vars discovery surface; 10-turn LRU eviction based on runtime resolution. |
 | 12 | Live-vars renderer: names + docstrings, single block above the tape. |
-| 13 | Handles: `defrecord Handle [kind store-key meta]` in vis-foundation, implements `clojure.lang.IDeref`. `print-method` renders a one-line summary. |
+| 13 | Handles: per-kind `defrecord` (CatHandle, RgHandle, LsHandle, …) implementing the `PHandle` protocol in `com.blockether.vis.internal.extension.handle`. Each implements `clojure.lang.IDeref` and ships a `print-method` that renders a one-line `#vis/handle` summary. The protocol lives in the engine extension API so any extension (vis-foundation today; vis-sql / vis-http tomorrow) can ship its own handle kinds. |
 | 14 | `v/cat`, `v/rg`, `v/ls` return `Handle` instances. Slice tools `v/lines`, `v/at`, `v/peek`, `v/grep-in` materialize bounded windows. |
 | 15 | `USER_REQUEST` is a regular `(def USER_REQUEST "current turn user request" "<text>")` injected at turn start. Lives in the system-vars section. |
 | 16 | Schema: collapse `code_blocks` BLOB; promote `code` / `result` / `error` / `stdout` / `stderr` / `duration_ms` columns directly on `conversation_turn_iteration`. |
