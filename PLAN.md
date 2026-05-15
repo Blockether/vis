@@ -1,477 +1,578 @@
-# PLAN — Pivot: one block per iteration; vars are the memory
+# PLAN — Pivot handoff: one block per iteration; vars are the memory
 
-> Supersedes the prior RLM-phases plan (handles + slice tools + `v/ask`
-> recursion primitive). Git history preserves that version. The pivot
-> reaches the same RLM-conformance goal by a different route: instead
-> of recursive sub-model invocation, it makes the parent context
-> structurally constant via an N-1 tape window plus mandatory-doc vars.
-
-## Status
-
-| Phase | What | State |
-|---|---|---|
-| 0 | Stale `z/` scrub (model-facing strings + comments) | ✅ shipped |
-| 1a | `PHandle` protocol + `CatHandle` defrecord + tests | ✅ shipped |
-| 1b | Handle relocated to extension API; `v/cat` returns CatHandle; `v/view` symbol | ✅ shipped |
-| 1c | `RgHandle` + `LsHandle`; `v/rg`/`v/ls` conversion; pprint conflict fix | ✅ shipped |
-| 2 | SCI `eval-def` patch + `*def-sink-atom*` + mandatory docstring enforcement | ✅ shipped |
-| — | Rename: `turn-answer!` → `done` (96 sites) | ✅ shipped |
-| 3 | SCI `resolve-symbol*` patch + per-iteration LRU stamping | ✅ shipped |
-| 4a | Wire per-iteration def-sink + lru bindings around SCI eval | ✅ shipped (dormant — engine collects but doesn't yet flush) |
-| 4 prep | `validate-single-form-block!` utility + tests | ✅ shipped (dormant — not yet wired) |
-| 4 main | Restructure `code-entries-preflight`; drop multi-block iteration map; flush def-sink to `expression_state`; soften `(done …)` gate | ⏳ pending — largest remaining surgery |
-| 5 | Schema collapse (V1 in place; drop `code_blocks` BLOB, add `code`/`result`/`error`/`stdout`/`stderr`/`duration_ms` columns) | ⏳ pending |
-| 6 | Channel renderer update (consume new schema columns) | ⏳ pending |
-| 7 prep | Tape rendering primitives in prompt.clj (tape-iteration-header, format-tape-iteration, system/live-vars blocks, format-tape, format-user-role-tape-message) | ✅ shipped (dormant — not yet wired) |
-| 7 main | Prompt restructure: delete `<journal>` / `<bindings>` / `<current_user_message>` / `<current_turn_context>`; wire format-user-role-tape-message into build-iteration-context; shrink `CORE_SYSTEM_PROMPT` to ~35 lines | ⏳ pending — model-facing payoff |
-| — | view/summary/kind promoted to bare engine primitives (env.clj EXTRA_BINDINGS); foundation v/view registration dropped | ✅ shipped |
-| — | view/summary/kind fall back gracefully on non-handles (PHandle extended to nil + Object); handle? tightened to reject the fallback | ✅ shipped |
-| 8 | Cleanup: README "RLM-conformant" line, drop unreachable code paths | ⏳ partial (AGENTS.md `z/patch` section updated) |
-
-The shipped infrastructure (handles, view ops, def-sink, LRU, single-form
-validator, mandatory docstring) is **dormant** in the sense that the
-engine collects and validates but doesn't yet feed downstream consumers
-(expression_state writes, live-vars rendering). Phase 4 main wires the
-sinks; Phase 7 wires the prompt. Until then the model sees the
-pre-pivot prompt shape and behaves as before.
+> **Status:** Infrastructure shipped (20 commits since `1110436a`). Wiring + the
+> destructive cuts remain. This document is a handoff — every remaining
+> step is concrete (file path + symbol + acceptance criterion). When the
+> remaining phases land, the agent surface flips to the new RLM-conformant
+> shape; until then the engine still drives the legacy prompt.
 
 ## Why this exists
 
-The autoresearch bench bottomed out at `iter_score = 6` across multiple
-stability samples (commits `422762ac`, `0f38c067`). The structural
-floor was two iterations: probe + answer, enforced by the
-`(done …)` gate. Pushing lower meant changing the gate and
-the prompt scaffolding around it, not optimizing inside them.
+The autoresearch bench bottomed out at `iter_score = 6` across stability
+samples (commits `422762ac`, `0f38c067`). That floor is two iterations:
+probe + answer, enforced by the `(done …)` gate. Pushing lower means
+changing the gate and the prompt scaffolding around it, not optimizing
+inside them.
 
-The pivot collapses the iteration model to its smallest coherent
-shape:
+The pivot collapses the iteration model:
 
 - **One ```clojure block per iteration**, evaluated atomically.
-- **No `<journal>` block. No `<bindings>` block.**
+- **No `<journal>`. No `<bindings>`. No `<current_user_message>`.** The
+  user's request is a real `(def USER_REQUEST "doc" "<text>")` injected
+  at turn start; the model interpolates it like any other var.
 - **Cross-iteration state lives only as named vars** in the SCI sandbox.
-- **The model reads its own REPL tape** as commented Clojure source.
+- **The model reads its own REPL tape** as commented Clojure source above.
 - **Defs are mandatory-docstring**, persistence-instrumented, LRU-pruned.
 
-The pivot is intentionally a HARD CUT-OVER. No migration of existing
-conversations. The schema collapses, the prompt slots delete, the gate
-softens.
+Hard cut-over: no migration of existing conversations. `~/.vis/vis.mdb`
+becomes unreadable on the next install — users delete it and start
+fresh.
 
 ## Decisions (settled)
 
 | # | Decision |
 |---|---|
 | 1 | One ```clojure block per iteration; engine rejects multi-form blocks at parse time. |
-| 2 | `<journal>` deleted; `<bindings>` deleted. |
+| 2 | `<journal>` deleted; `<bindings>` deleted; `<current_user_message>` / `<current_turn_context>` deleted. |
 | 3 | Tape window: prior iteration only (N-1); on error, render N-1 + N. Cross-turn: last iteration of the prior turn carries forward. |
 | 4 | Tape format: rich-comment `;; =>` for results, `;; ! stdout>` / `;; ! stderr>` / `;; ! ERROR` / `;; ! TIMEOUT` for side effects. |
-| 5 | `(done [:ir …])` strict IR shape; accepted on no-throw, no other gate. |
+| 5 | `(done [:ir …])` strict IR shape; accepted on no-throw, no other gate. Renamed from `(turn-answer! …)`. |
 | 6 | Iterations are the durable unit; turns are projections. Same `conversation_turn_*` tables, but the boundary is an annotation, not a container. |
-| 7 | Plain `(def NAME "doc" VAL)` and `(defn NAME "doc" [args] body)`. **Mandatory docstring**. Engine throws on miss. |
+| 7 | Plain `(def NAME "doc" VAL)` and `(defn NAME "doc" [args] body)`. **Mandatory docstring**. Engine throws `:vis/missing-docstring` on miss. |
 | 8 | Per-iteration `*def-sink-atom*`; engine flushes once at iteration-end inside the same transaction as the iteration row. |
 | 9 | Capture mechanism: monkey-patch `sci.impl.evaluator/eval-def` from vis bootstrap (`alter-var-root` wrap). Catches every def — including macro-expanded `defn` / `defmacro` / `s/def`. |
-| 10 | Second monkey-patch on the SCI symbol-resolver hot path for runtime-resolution LRU bookkeeping. |
+| 10 | Second monkey-patch on `sci.impl.resolve/resolve-symbol*` for runtime-resolution LRU bookkeeping. |
 | 11 | 30-binding cap on the live-vars discovery surface; 10-turn LRU eviction based on runtime resolution. |
 | 12 | Live-vars renderer: names + docstrings, single block above the tape. |
-| 13 | Handles: per-kind `defrecord` (CatHandle, RgHandle, LsHandle, …) implementing the `PHandle` protocol in `com.blockether.vis.internal.extension.handle`. Each implements `clojure.lang.IDeref` and ships a `print-method` that renders a one-line `#vis/handle` summary. The protocol lives in the engine extension API so any extension (vis-foundation today; vis-sql / vis-http tomorrow) can ship its own handle kinds. |
-| 14 | `v/cat`, `v/rg`, `v/ls` return `Handle` instances. Slice tools `v/lines`, `v/at`, `v/peek`, `v/grep-in` materialize bounded windows. |
-| 15 | `USER_REQUEST` is a regular `(def USER_REQUEST "current turn user request" "<text>")` injected at turn start. Lives in the system-vars section. |
-| 16 | Schema: collapse `code_blocks` BLOB; promote `code` / `result` / `error` / `stdout` / `stderr` / `duration_ms` columns directly on `conversation_turn_iteration`. |
-| 17 | Keep `expression_soul` / `expression_state`. Multiple state versions per iteration allowed (each def writes its own version). |
-| 18 | `<iteration_hints>` XML block survives — extension nudges are advisory, not state, and the existing `:turn.iteration/start` hook contract stays intact. |
-| 19 | Telemetry per iteration: `;; --- iteration N \| turn=K conv=… state=… \| status=done\|error\|current ---` header before each rendered iteration's code in the tape. Cross-turn boundary implicit in the IDs. |
+| 13 | Handles: per-kind `defrecord` (CatHandle, RgHandle, LsHandle, …) implementing the `PHandle` protocol in `com.blockether.vis.internal.extension.handle`. Each implements `clojure.lang.IDeref` and ships a per-record `print-method` rendering one-line `#vis/handle` summary. |
+| 14 | `view` / `summary` / `kind` / `handle?` are bare engine sandbox primitives in `EXTRA_BINDINGS` — every extension that ships a handle kind gets dispatch on these names automatically. Non-handles return structured `:not-a-handle` data, never throw. |
+| 15 | `v/cat`, `v/rg`, `v/ls` return Handle records (CatHandle/RgHandle/LsHandle); content reachable via `@h` or `(view h :op …)`. |
+| 16 | `USER_REQUEST` is a regular `(def USER_REQUEST "current turn user request" "<text>")` injected at turn start. In `SYSTEM_VAR_NAMES`. |
+| 17 | Schema: collapse `code_blocks` BLOB; promote `code` / `result` / `error` / `stdout` / `stderr` / `duration_ms` columns directly on `conversation_turn_iteration`. |
+| 18 | Keep `expression_soul` / `expression_state`. Multiple state versions per iteration allowed (each def writes its own version). |
+| 19 | `<iteration_hints>` XML block survives — extension nudges are advisory, not state, and the existing `:turn.iteration/start` hook contract stays intact. |
+| 20 | Telemetry per iteration: `;; --- iteration N \| turn=K conv=… state=… \| status=done\|error\|current ---` header before each rendered iteration's code in the tape. Cross-turn boundary implicit in the IDs. |
 
-## What the model sees, end-to-end
+## Shipped infrastructure (dormant until Phase 4 main + Phase 7 main wire it)
 
-**SYSTEM (cached prefix, changes only on extension reload):**
+All of the following exist in the repo today with passing tests but DO
+NOT yet flow through the live engine path. Test suite: 957 cases green;
+`./verify.sh --quick` clean.
 
-```
-<system_prompt>
-  λVis — Clojure SCI harness, one block per iteration.
-  ENV  : aliases (str, edn, set, walk, pp, s, json); banned (slurp, spit, eval).
-  DEF  : (def NAME "docstring" VAL) — docstring required. defn/defmacro idiomatic.
-  HND  : foundation tools return Handle records (IDeref). @h or (deref h) to
-         materialize; slice tools (v/lines v/peek v/at v/grep-in) for bounded windows.
-  TAPE : prior iteration renders as commented Clojure source.
-         ;; =>      result of a form
-         ;; ! stdout> / ! stderr> / ! ERROR / ! TIMEOUT
-  ANS  : (done [:ir <blocks>]) terminates the turn iff it ran without
-         throwing. ANSWER_IR grammar unchanged.
-</system_prompt>
+### `com.blockether.vis.internal.extension.handle`
 
-<turn_system_context>
-  <extensions>
-    <extension id="v">
-      v/cat v/rg v/ls v/lines v/at v/peek v/grep-in v/patch v/patch-check
-      v/source v/doc v/conversation-state ...
-    </extension>
-  </extensions>
-</turn_system_context>
-```
+- `PHandle` protocol: `(kind h)`, `(summary h)`, `(view h op [a [b]])`.
+- `CatHandle` / `RgHandle` / `LsHandle` defrecords. Each implements
+  `IDeref` (`@h` or `(deref h)` materializes payload from the
+  process-wide LRU store) and ships per-record `print-method` registering
+  the one-line `#vis/handle <summary>` form.
+- `make-cat` / `make-rg` / `make-ls` constructors stash payload in the
+  store and return the handle.
+- `handle?` predicate: cheap class check; rejects the Object fallback.
+- Object + nil fallback impls of `PHandle` so `(view 42 :peek)` returns
+  `{:kind :not-a-handle :value 42 :op :peek :hint "…"}` instead of
+  throwing.
+- `MAX_STORE_BYTES = 16 MB`; LRU on insert.
+- pprint dispatch fix: `prefer-method clojure.pprint/simple-dispatch
+  IPersistentMap IDeref` (handles are both; pprint chokes without the
+  preference).
 
-**USER (per iteration):**
+### `com.blockether.vis.internal.extension.sci-patches`
 
-```
-<iteration_hints>
-  <iteration_hint importance="high">context window 88% — converge soon</iteration_hint>
-</iteration_hints>
+- `*def-sink-atom*` (dynamic var, default nil): per-iteration
+  collector. When bound, every (def …) the SCI sandbox runs lands as
+  `{:ns :name :init :meta :var}`.
+- `*lru-atom*` + `*current-turn-position*`: per-iteration LRU stamps;
+  `(name sym) -> turn-pos` for every successful sandbox-symbol resolve.
+- `validate-single-form-block!` utility — throws `:vis/multi-form-block`
+  or `:vis/empty-block`; not yet wired into the engine.
+- `count-top-level-forms` parser helper.
+- `fresh-sink-atom` / `fresh-lru-atom` ctors for the engine to bind at
+  iteration start.
+- Two `alter-var-root` monkey-patches with `defonce`-guarded originals
+  and startup precondition checks. Patches `sci.impl.evaluator/eval-def`
+  + `sci.impl.resolve/resolve-symbol*`.
 
-;; --- iteration 5 | turn=1 conv=ab12 state=cd34 | status=done ---
-(def big "README handle" (v/cat "README.md"))
-;; => #vis/handle {:kind :v.cat :line-count 5 :sha "ab12"}
-(done [:ir [:p "Done"]])
-;; => :vis/answered
+### `com.blockether.vis.internal.env`
 
-;; --- iteration 1 | turn=2 conv=ab12 state=cd34 | status=current ---
-;; system-vars:
-;;   USER_REQUEST  "current turn user request"
-;; live-vars (1/30):
-;;   big           "README handle"
-```
+- `EXTRA_BINDINGS` (line ~193): `view` / `summary` / `kind` / `handle?`
+  injected as bare sandbox primitives.
+- `SYSTEM_VAR_NAMES` (line ~589): includes `USER_REQUEST`.
+- `tape-system-vars` (line ~844): walks sandbox, returns
+  `[{:name :doc} …]` for UPPERCASE engine-managed vars.
+- `tape-live-vars` (line ~860): walks sandbox + LRU map, returns
+  `[{:name :doc} …]` filtered by `TAPE_LRU_TURN_WINDOW = 10`, capped at
+  `TAPE_LIVE_VARS_CAP = 30`. Vars without LRU stamps are kept (missing ≠
+  stale).
+- All pre-existing `(def …)` SCI eval calls now ship docstrings to
+  satisfy the patch contract (env-injected `*1 *2 *3 *e`,
+  `sci-update-binding!`).
 
-The user-role message has one XML block (`<iteration_hints>`) plus
-pure commented Clojure. No `<current_user_message>`, no
-`<current_turn_context>`, no `<journal>`, no `<bindings>`. USER_REQUEST
-is a real `def` — the model interpolates it like any other var.
+### `com.blockether.vis.internal.prompt`
 
-## Architecture
+Phase 7 prep primitives (lines ~993-1280):
 
-### The new iteration loop
+- `tape-iteration-header`, `tape-result-line`, `tape-side-effect-line`
+- `format-tape-iteration` (single iteration → tape entry)
+- `format-system-vars-block`, `format-live-vars-block`
+- `format-tape` (multi-iteration window — N-1 or N-1 + N)
+- `format-user-role-tape-message` (full body: hints + system-vars +
+  live-vars + tape)
+- `iteration->tape-iter` (engine multi-block iteration shape → tape-iter)
+- `build-iteration-context-tape` — drop-in replacement for
+  `build-iteration-context`. Same opts contract; different output shape.
 
-```
-turn start
-  └─ engine binds USER_REQUEST  (def, persisted via monkey-patch)
-       └─ iteration N
-            ├─ provider sees: SYSTEM + USER (hints, telemetry, vars, tape)
-            ├─ model emits one ```clojure block (one top-level form, or
-            │  one top-level (do …)).
-            ├─ engine SCI-evals atomically.
-            │   ├─ each (def …) invokes the monkey-patched eval-def:
-            │   │   - throws if no docstring;
-            │   │   - pushes {:ns :name :init :form :var} to *def-sink-atom*.
-            │   ├─ each symbol resolution stamps last-used-turn on the
-            │   │  per-env LRU map (second monkey-patch).
-            │   └─ stdout / stderr captured per-iteration (no per-form sinks).
-            ├─ engine flushes *def-sink-atom* to expression_soul / state
-            │  rows in the same transaction as the iteration row write.
-            ├─ if (done …) form ran without throwing → turn ends.
-            └─ otherwise → next iteration; tape carries N-1 (and N on error).
-```
+### `com.blockether.vis.internal.loop`
 
-### Defs persistence
+- Per-iteration `*def-sink-atom*` + `*lru-atom*` + `*current-turn-position*`
+  bound around `(sci/eval-string+ …)` in `run-sci-code` (line 232+).
+  Snapshots flow out via `:def-sink` and `:lru` on the
+  execution-result map. Engine collects them but doesn't yet read.
 
-Hook signature (added by `alter-var-root` from vis bootstrap):
+### Foundation (`vis-foundation`)
 
-```clojure
-(let [orig (var-get #'sci.impl.evaluator/eval-def)]
-  (alter-var-root #'sci.impl.evaluator/eval-def
-    (fn [_]
-      (fn [ctx bindings var-name init m]
-        (when-not (:doc m)
-          (throw (ex-info "def requires a docstring"
-                          {:type :vis/missing-docstring :var var-name})))
-        (let [v (orig ctx bindings var-name init m)]
-          (when-let [sink @vis-def-sink-atom]
-            (sink {:ns (str (:ns m)) :name var-name :init init
-                   :meta m :var v}))
-          v)))))
-```
+- `v/cat` / `v/rg` / `v/ls` return `Handle` records as their tool
+  envelope `:result` (lines 626/666/650 of editing/core.clj).
+- Old `v/view` symbol registration removed (view is engine-level now).
+- `journal-render-cat` / `journal-render-rg` / `journal-render-ls`
+  collapsed to one-line handle pr-str + read-more hint (forward-compat
+  with Phase 7).
+- `channel-render-*` deref the handle for human display.
 
-- Catches every `def` — `defn`, `defmacro`, `s/def`, runtime-induced.
-- Per-iteration sink atom (default empty vec); engine binds it before
-  eval and reads it after.
-- Failure mode: model omits docstring → SCI throw → tape shows
-  `;; ! ERROR def requires docstring`. Self-corrects in next iteration.
+### Other shipped pieces
 
-### LRU bookkeeping
+- `(turn-answer! …)` → `(done …)` rename across 96 sites.
+- `--plain` CLI flag removed; `--raw` is the only raw-text flag.
+- Stale `z/` scrub across model-facing strings, internal comments, and
+  AGENTS.md.
 
-Hook on the SCI symbol-resolver hot path stamps every user-var
-resolution with the current turn position. Live-vars renderer reads
-the LRU map; vars unused for ≥10 turns are hidden from the surface
-(the var stays alive in the sandbox; nothing is evicted from the
-namespace).
+---
 
-- 30-cap: when more than 30 user vars are within the 10-turn window,
-  drop oldest first.
-- system-vars (UPPERCASE convention, matches existing
-  `SYSTEM_VAR_NAMES` set in `env.clj:578`) don't count toward the
-  30-cap; they render in their own section above live-vars.
+## Remaining work
 
-### Handles
+Five chunks left. Phase 7 main is the smallest single edit; Phase 4 main
+is the largest. Order matters: 5 → 4 main → 7 main → 6 → 8 (each phase
+ships separately with the test suite green between).
 
-```clojure
-(defrecord Handle [kind store-key meta]
-  clojure.lang.IDeref
-  (deref [_]
-    (or (get @*handle-store* store-key)
-        (throw (ex-info "Handle expired" {:kind kind})))))
+### Phase 5 — Schema collapse (HARD CUT)
 
-(defmethod print-method Handle [h ^java.io.Writer w]
-  (.write w (str "#vis/handle "
-                 (pr-str (assoc (:meta h) :kind (:kind h)))))) ; one line
-```
+**Files:**
+- `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`
+  (edit V1 in place per AGENTS.md — no migration ladder)
+- `extensions/persistance/vis-persistance-sqlite/src/com/blockether/vis/ext/persistance_sqlite/core.clj`
+  (writers + readers in lockstep)
+- `extensions/persistance/vis-persistance-sqlite/test/...` (test
+  fixtures and assertions)
 
-- `Handle` lives in `extensions/common/vis-foundation/src/.../handle.clj`.
-- Per-environment `*handle-store*` atom keyed by `store-key`. Bounded
-  by `MAX_HANDLE_STORE_BYTES` (start at 16 MB, LRU on insert).
-- `(v/cat "X.md")` returns a Handle whose `:meta` is `{:path "X.md"
-  :line-count 5000 :sha "ab12…" :first-line "…" :last-line "…"}`.
-- Slice tools: `(v/lines h from to)` is `(subvec @h from to)` with a
-  64 KB byte cap; `(v/at h n)`; `(v/peek h)` renders the first window
-  to the channel only; `(v/grep-in h pattern)` returns a new
-  hits-Handle.
+**Schema changes (`conversation_turn_iteration`):**
 
-### done
+DROP:
+- `code_blocks BLOB` — was Nippy-encoded vec of per-block maps. With
+  one-block-per-iteration the vec collapses to a single block; promote
+  fields to columns.
+- `answer_form_idx INTEGER` — there is no longer a "form index" inside
+  a multi-form block.
 
-- Strict IR: `[:ir & blocks]`. Same Hiccup grammar.
-- Accepted iff the form ran without throwing. No prior-evidence
-  check, no clean-iteration check, no "tool calls in same iteration
-  drop the answer" rule.
-- A single block can do
-  `(def big "doc" (v/cat …)) (done [:ir [:p (str "Lines: " (:line-count @big))]])`
-  and finish in one iteration.
+ADD:
+- `code TEXT NOT NULL` — the single block source verbatim.
+- `result BLOB` — Nippy-encoded final return value.
+- `error BLOB` — Nippy-encoded structured error map (`{:message :trace?
+  :hint? :block?}`).
+- `stdout TEXT`
+- `stderr TEXT`
+- `duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0)`
 
-### Schema (V1, hard cut)
+Update FTS5 trigger so `conversation_turn_iteration.code` is indexed
+directly (today indexes only `expression_state.expression` and
+`conversation_turn_soul.user_request`).
 
-Edit `extensions/persistance/vis-persistance-sqlite/resources/db/sqlite/migration/V1__schema.sql`
-in place per AGENTS.md. Existing local databases must be deleted by
-the user — see Risks §R4.
+`expression_soul` / `expression_state` UNCHANGED. Multiple state
+versions per iteration are already allowed by the schema (UNIQUE on
+`(soul_id, version)` with monotonic `version`).
 
-`conversation_turn_iteration` changes:
+**Backend code changes:**
 
-- DROP `code_blocks BLOB`.
-- DROP `answer_form_idx`.
-- ADD `code TEXT NOT NULL` — the single block source verbatim.
-- ADD `result BLOB` — Nippy-encoded final return value.
-- ADD `error BLOB` — Nippy-encoded structured error map.
-- ADD `stdout TEXT`.
-- ADD `stderr TEXT`.
-- ADD `duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0)`.
+- `db-store-iteration!`: stop encoding `code_blocks`; populate the new
+  per-iteration columns from the engine's per-iteration data (Phase 4
+  main produces this shape).
+- `db-list-conversation-turn-iterations`: read the new columns; drop
+  the BLOB decode.
+- `db-restore-blocks` (used by sandbox restore in env.clj): adapter
+  reads the new shape and produces the entries the restore loop expects.
 
-`expression_soul` / `expression_state` unchanged. Multiple state
-versions per iteration are already allowed by the schema (UNIQUE
-on `(soul_id, version)` with monotonic `version`).
+**Test impact:** every persistence test fixture that constructs
+iteration data with `:blocks [{...}]` needs to construct it with the
+new flat shape. Roughly 20 sites in
+`extensions/persistance/vis-persistance-sqlite/test/.../core_test.clj`.
+Update in lockstep with the writers.
 
-FTS5 trigger on `conversation_turn_iteration.code` indexes the new
-`code` column directly (today indexes only `expression_state.expression`
-and `conversation_turn_soul.user_request`).
+**Hard cut-over:** existing local databases (`~/.vis/vis.mdb`) become
+unreadable on the next install. CHANGELOG + an explicit `vis db reset`
+CLI command (small one-time helper) advise users to delete and start
+fresh.
 
-## Phases
+**Acceptance:**
+- Fresh `~/.vis/vis.mdb` opens cleanly.
+- `db-store-iteration!` writes a single row per iteration with all six
+  new columns populated.
+- Round-trip: iteration written → `db-list-conversation-turn-iterations`
+  → engine reconstructs iteration data → `format-tape-iteration` renders
+  it (tape primitives already accept this shape).
+- Full suite green.
 
-Each phase ships independently and is keep-able on its own. Full
-suite green between phases.
+---
 
-### Phase 0 — stale `z/` scrub
+### Phase 4 main — Iteration loop collapse (LARGEST)
 
-The earliest cleanup, decoupled from the rest. Five sites in
-foundation reference a long-removed `z/` extension:
+**Files:**
+- `src/com/blockether/vis/internal/loop.clj` (the big one)
+- Tests across `test/`, `extensions/.../test/` that exercise the
+  multi-block iteration shape.
 
-- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/editing/core.clj:33, 1194, 1197`
-- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/introspection.clj:808, 816`
+**The cut:**
 
-Plus internal docs (`prompt.clj:238`, `extension.clj:922,1393`) — no
-behavior change, just stale comment cleanup.
+1. **Reject multi-form blocks at the model boundary.** In
+   `run-sci-code` (line 232+), call
+   `sci-patches/validate-single-form-block!` on `code` BEFORE
+   `(sci/eval-string+ …)`. Throws `:vis/multi-form-block` on miss; the
+   engine catches this and surfaces the error to the model in the next
+   iteration's tape (`;; ! ERROR Block contains N top-level forms …`).
 
-### Phase 1 — Handle defrecord + slice tools
+   Engine-internal SCI evals (env.clj `sci-update-binding!`,
+   loop.clj `attach-doc-meta!`, `require-extension-alias!`) call
+   `sci/eval-string+` directly and bypass `run-sci-code`, so they're
+   unaffected.
 
-Foundation gets the `Handle` type and slice tools. `v/cat` switches
-to returning a `Handle`; `:lines` reachable via `(deref h)` /
-`(v/lines h from to)`. Existing tests update to assert handle shape.
+2. **Collapse `code-entries-preflight` + the multi-block iteration
+   `mapv`.** Currently each iteration parses N top-level forms and
+   loops `execute-code` per form (line ~1730+). With one-form-per-block
+   this becomes a single `execute-code` call. The wrapping
+   `mapv → vec → map indexed result` collapses to a scalar. Drop the
+   per-form `*sink-position*` machinery (`*journal-render-sink*` /
+   `*channel-render-sink*` / position counter) — there's no
+   between-form coordination to do.
 
-Files:
-- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/handle.clj` (new)
-- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/editing/core.clj`
-  (cat-tool, ls-tool, rg-tool return handles; new slice tools)
-- `src/com/blockether/vis/internal/env.clj` (wire `:handle-store` into
-  `create-sci-context`)
+3. **Flush `*def-sink-atom*` to `expression_state` rows.** After
+   eval returns, walk `(:def-sink execution-result)` and write one
+   `expression_soul` row (or upsert the existing soul) + one
+   `expression_state` row per def. This replaces the post-eval
+   `extract-defining-name` parser path. Same transaction as the
+   iteration row write.
 
-Tests:
-- `handle_test.clj` — defrecord, deref, print-method one-liner, store
-  LRU eviction.
-- `editing/core_test.clj` — `(v/cat …)` returns Handle; `@h` returns
-  full lines vec; `(v/lines h 0 10)` slice; `(v/peek h)` renders to
-  channel only.
+4. **Soften the `(done …)` gate.** Today's gate (`prior-error-atom`,
+   `block-result-error-summary`, `answer-with-extension-preflight-*`)
+   exists to catch "tool-call-fails-then-done-fakes-success" patterns
+   from the multi-block flow. With one-form-per-block, these can
+   collapse to: "did the form throw?" If yes, the turn continues; if
+   no, the turn ends. Delete the gate machinery.
 
-### Phase 2 — SCI eval-def monkey-patch + def-sink + docstring enforcement
+5. **Push `*e` on throw; do NOT advance `*1/*2/*3` on failure.** Already
+   in `run-sci-code` (lines 290-316). Verify still correct after the
+   collapse.
 
-Bootstrap installs the patch at JVM start. Per-iteration sink atom
-collected, flushed at iteration-end.
+6. **Delete `extract-defining-name`** (`loop.clj:332+`) and its
+   callers. The def-sink replaces it.
 
-Files:
-- `src/com/blockether/vis/internal/sci_patches.clj` (new) — single
-  source of monkey-patches with startup precondition checks.
-- `src/com/blockether/vis/internal/env.clj` — bind `*def-sink-atom*`
-  per env; expose flush helper.
-- `src/com/blockether/vis/internal/loop.clj` — call flush after eval,
-  inside the iteration row write transaction.
+**Test impact:** every test that constructs an iteration with
+multi-form `:code` needs to either (a) wrap in `(do …)` to satisfy the
+single-form contract, or (b) split into multiple iterations. Most
+fixtures in `extensions/persistance/.../core_test.clj` are
+single-form already; the engine-side iteration tests in
+`test/com/blockether/vis/internal/loop_test.clj` need scrutiny.
 
-Tests:
-- `sci_patches_test.clj` — hook fires on raw `def`, `defn`,
-  `defmacro`, `s/def`. Docstring miss throws structured error.
-  Patch precondition asserts SCI ns + var + arity.
+**Acceptance:**
+- Model emits `(def x "doc" 42) (def y "doc" 43)` → engine throws
+  `:vis/multi-form-block` → next iteration's tape shows the error.
+- Model emits `(do (def x "doc" 42) (done [:ir [:p "ok"]]))` → both
+  defs run, def-sink captures `x` + writes `expression_state` row,
+  `(done …)` ends the turn.
+- Model emits `(/ 1 0)` → tape shows `;; ! ERROR Divide by zero`,
+  iteration continues.
+- `extract-defining-name` no longer exists.
+- Full suite green.
 
-### Phase 3 — SCI symbol-resolver monkey-patch + LRU map
+---
 
-Per-env LRU map of `var-name → last-used-turn-position`. Resolver
-hook stamps on every read.
+### Phase 7 main — Prompt restructure (MODEL-FACING PAYOFF)
 
-Files:
-- `src/com/blockether/vis/internal/sci_patches.clj`
-- `src/com/blockether/vis/internal/env.clj` — wire LRU map into env.
+**Files:**
+- `src/com/blockether/vis/internal/loop.clj` (call-site swap)
+- `src/com/blockether/vis/internal/prompt.clj` (CORE_SYSTEM_PROMPT
+  rewrite + delete legacy `build-iteration-context`)
+- Tests (anything asserting on `<journal>` / `<bindings>` /
+  `<current_user_message>` / `<current_turn_context>` substrings)
 
-Tests:
-- LRU stamping correctness. 10-turn eviction policy. 30-cap drop
-  policy. system-vars exempt.
+**The swap:**
 
-### Phase 4 — Iteration loop collapse
+1. **`loop.clj:2791`** — replace
+   `(prompt/build-iteration-context env opts)` with
+   `(prompt/build-iteration-context-tape env opts)`. Pass:
 
-`loop.clj`:
-- Reject blocks containing more than one top-level form (or accept
-  a single top-level `(do …)` as one block).
-- Replace per-form journaling with single-form atomic eval.
-- Push `*e` on throw; do NOT advance `*1/*2/*3` on failure.
-- Drop `extract-defining-name` parser, `journal-render-tool-result`
-  per-tool dispatch, and the multi-block sink machinery
-  (`*sink-position*`, `*journal-render-sink*`, `*channel-render-sink*`).
+   ```clojure
+   {:active-extensions   active-exts
+    :blocks-by-iteration journal-iters
+    :iteration           iteration
+    :current-status      :current
+    :system-vars         (env/tape-system-vars (:sci-ctx env))
+    :live-vars           (env/tape-live-vars (:sci-ctx env)
+                                             (:initial-ns-keys env)
+                                             @per-env-lru
+                                             current-turn-pos)}
+   ```
 
-### Phase 5 — Schema collapse (V1, hard cut)
+2. **Inject USER_REQUEST as a (def …) at turn start.** In whichever
+   loop.clj fn handles "turn boundary" (search for
+   `current-user-request-atom` at ~3830+). Before the first iteration
+   eval, run:
 
-Edit V1 in place. Update backend writers/readers in
-`extensions/persistance/vis-persistance-sqlite/src/.../core.clj`.
-CHANGELOG documents the hard cut-over and the
-`vis db reset` CLI surface (Phase 6).
+   ```clojure
+   (sci/eval-string+ sci-ctx
+     (str "(def USER_REQUEST \"current turn user request\" "
+          (pr-str user-request) ")")
+     {:ns sandbox-ns})
+   ```
+
+   The patched eval-def captures it into the def-sink (Phase 4 main
+   wires this through to expression_state), and the next iteration's
+   `tape-system-vars` surfaces it.
+
+3. **Wire the per-env LRU.** Add a long-lived per-env atom (alongside
+   `:bindings-atom`) holding the merged LRU map. After each iteration:
+
+   ```clojure
+   (swap! per-env-lru merge (:lru execution-result))
+   ```
+
+   `tape-live-vars` reads this map.
+
+4. **Rewrite `CORE_SYSTEM_PROMPT`** (`prompt.clj:762-817`). Drop the
+   `<journal>` / `<bindings>` / `EMIT_FINAL` (multi-step) / `LOOP
+   DISCIPLINE` sections. Add the new contract:
+
+   ```
+   λVis — Clojure SCI harness, one block per iteration.
+
+   ENV  : aliases (str, edn, set, walk, pp, s, json); banned (slurp, spit, eval).
+   DEF  : (def NAME "docstring" VAL) — docstring required. defn / defmacro likewise.
+          Vars persist across iterations; sandbox is durable per conversation.
+   HND  : foundation tools return Handle records (IDeref). @h or (deref h)
+          to materialize; (view h :op …) for bounded windows. (handle? v) tests;
+          (kind h) / (summary h) inspect any value (non-handles return
+          :not-a-handle structured data, not exceptions).
+   TAPE : the prior iteration renders as commented Clojure source above.
+          ;; --- iteration N | turn=K conv=… state=… | status=done|error|current ---
+          <code>
+          ;; => result of last form
+          ;; ! stdout> / ! stderr> / ! ERROR / ! TIMEOUT
+          The CURRENT iteration's status is :current — write your block in
+          that section.
+   ANS  : (done [:ir <blocks>]) terminates the turn iff the form ran without
+          throwing. The IR grammar is unchanged.
+   ```
+
+   Plus the existing ANSWER_IR grammar block. Target: ~30 lines (down
+   from ~75).
+
+5. **Delete legacy `build-iteration-context`** and its unique helpers
+   (`format-journal-block`, `format-journal-iteration-block`,
+   `trim-journal-lines`, `read-bindings-str`, `bindings-token-budget`,
+   `trim-bindings-str`, `split-bindings-entries`,
+   `current-turn-context-block`). All only called by the legacy fn.
+   Drop the tunables that go with them: `JOURNAL_CONTEXT_FRACTION`,
+   `BINDINGS_CONTEXT_FRACTION`, `MAX_JOURNAL_TOKENS`,
+   `MAX_BINDINGS_TOKENS`.
+
+**Test impact:** any test asserting on `<journal>` / `<bindings>`
+substrings in assembled prompts breaks. Update to assert on the new
+`;; system-vars:` / `;; live-vars (N/30):` / `;; --- iteration N …`
+shapes (the prompt-tape-test file already exercises this; no new
+test infrastructure needed).
+
+**Acceptance:**
+- Model running a 1-iteration probe: prompt contains `<iteration_hints>`
+  (if any) + `;; system-vars:` (USER_REQUEST + any TURN_*) + `;;
+  live-vars (0/30):` (empty until model defs something) + tape entry
+  for the current iteration with `status=current`.
+- 2-iteration run: turn 2 iter 1 shows turn 1 iter 5 (last) as the
+  prior-iteration tape entry, with `turn=1`. New iteration header
+  follows with `turn=2 status=current`.
+- Error iteration: tape shows N-1 (status=done) + N (status=error
+  with `;; ! ERROR …`).
+- `CORE_SYSTEM_PROMPT` text mentions neither `<journal>` nor
+  `<bindings>`.
+
+---
 
 ### Phase 6 — Channel renderer update
 
-TUI / Telegram / web consume new schema columns directly. Remove any
-journal-derived rendering paths.
+**Files:**
+- `extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/...`
+- `extensions/channels/vis-channel-telegram/src/com/blockether/vis/ext/channel_telegram/...`
+- `extensions/common/vis-foundation/src/com/blockether/vis/ext/foundation/transcript.clj`
+  (the `vis transcript` CLI surface)
 
-### Phase 7 — Prompt restructure + CORE_SYSTEM_PROMPT shrink
+**The change:**
 
-`src/com/blockether/vis/internal/prompt.clj`:
-- Delete `format-journal-block`, `format-journal-iteration-block`,
-  `trim-journal-lines`, `read-bindings-str`, `bindings-token-budget`,
-  `trim-bindings-str`, `split-bindings-entries`.
-- Add `format-tape`, `live-vars-render`, `system-vars-render`,
-  `iteration-header`.
-- Rewrite per-iteration trailer assembly: `<iteration_hints>` →
-  iteration header → system-vars → live-vars → tape.
-- Rewrite `CORE_SYSTEM_PROMPT` to ~35 lines covering the new contract.
+Channels read iteration data from the new schema columns directly
+(Phase 5 produced the new shape). Drop any legacy code that decodes
+`code_blocks` BLOB or assumes multi-block-per-iteration shape. The
+channel renderer for a single iteration now consumes:
 
-### Phase 8 — Cleanup & documentation
+- `code` (single string)
+- `result` (Nippy-decoded value; render via existing render pipeline)
+- `error` (Nippy-decoded; render via channel error formatter — already
+  factored)
+- `stdout` / `stderr` (text, render as collapsed blocks)
+- per-iteration metadata (duration, status, etc.)
 
-- Delete unreachable code paths uncovered by Phases 4-7.
-- Update `AGENTS.md` if any rules change (likely: drop "use `z/patch`"
-  reference; clarify one-block contract).
-- Update `README.md` "inspired by RLM" line to "RLM-conformant via
-  constant N-1 tape window and handle-typed reads."
+**Acceptance:**
+- TUI conversation list view renders correctly against fresh DB.
+- TUI conversation detail view renders an iteration's code + result.
+- Telegram channel posts iteration summaries with no missing-key
+  errors.
+- `vis transcript --conversation <id>` produces a well-formed Markdown
+  transcript.
+- Snapshot tests prevent visual regression: capture sample transcript
+  output before Phase 6, assert post-Phase-6 output matches.
 
-## Cross-cutting
+---
+
+### Phase 8 — Cleanup & docs
+
+**Files:**
+- `README.md` (the "inspired by RLM" line)
+- `CHANGELOG.md` (document the hard cut-over + new contract)
+- `AGENTS.md` (update if Phase 4/5/7 main change any rule)
+- Various unreachable code paths uncovered by 4-7
+
+**The change:**
+
+- README: graduate "inspired by Recursive Language Models" to
+  "RLM-conformant: external state in the SCI sandbox; constant N-1
+  tape window; recursion-replacement via mandatory-doc vars."
+- CHANGELOG: document the hard schema cut, the `(done …)` rename, the
+  bare `view`/`summary`/`kind` primitives, the dropped `<journal>` /
+  `<bindings>` blocks, and the `vis db reset` migration helper.
+- Delete unreachable code paths (the legacy iteration mapper helpers,
+  the journal sink machinery referenced from removed renderers, etc.).
+- Audit `AGENTS.md` for any stale references to multi-block / journal /
+  bindings.
+
+---
+
+## Cross-cutting concerns (read before touching engine code)
 
 ### SCI monkey-patch fragility
 
-Two patches, both on `:no-doc` impl namespaces:
+Two patches live in
+`src/com/blockether/vis/internal/extension/sci_patches.clj`. Both are
+on `:no-doc` impl namespaces:
 
-1. **`sci.impl.evaluator/eval-def`** — signature stable from
-   `org.babashka/sci 0.8.41` → `0.12.51` (5 cached releases). Bootstrap
-   precondition asserts ns + var present + arity == 5; aborts startup
-   with a helpful message if SCI internals shifted.
-2. **SCI symbol-resolver hot-path fn** — narrower change; needs a
-   probe at Phase 3 start to identify the exact entry point. Same
-   precondition pattern.
+1. `sci.impl.evaluator/eval-def` — signature
+   `[ctx bindings var-name init m]` stable from sci 0.8.41 → 0.12.51
+   (5 cached releases). The patch evaluates `m` via
+   `sci-types/eval` BEFORE checking `:doc` (SCI passes `m` as an
+   unevaluated Node — same dance the original does on its first line).
+2. `sci.impl.resolve/resolve-symbol*` — wraps the lookup; stamps
+   `*lru-atom*` on success. The patch over-includes (every successful
+   resolve, including core ops); filtering is the renderer's job.
 
-If SCI ever ships a real `:hook` config, drop both patches and adopt
-the official surface.
+Both patches are guarded by `defonce` for both the captured original
+and the install action so namespace reload never wraps the wrap.
+Startup precondition checks fail loud (`:vis.sci-patches/precondition-failed`)
+if a SCI bump renames or moves either fn.
 
-### Open at implementation time
+If SCI ships official `:hook` config in a future release, drop both
+patches and adopt the official surface.
 
-- **Cancellation/timeout**: today's `cancellation/worker-future`
-  wraps the block in a 120 s default timeout. With one-block-per-iter,
-  timeout = whole iteration aborted. Defs that completed before the
-  timeout-point are already in the sink atom; the engine flushes
-  whatever was accumulated, then renders `;; ! TIMEOUT after Nms` in
-  the tape. Confirm sink semantics in Phase 2 test suite.
-- **Tool prune list**: the foundation `v/` surface is large. Audit
-  per-symbol in Phase 6 — drop anything that exists only to render
-  in the deleted journal block. Likely keepers: `v/cat`, `v/rg`,
-  `v/ls`, `v/lines`, `v/at`, `v/peek`, `v/grep-in`, `v/patch`,
-  `v/patch-check`, `v/source`, `v/doc`, `v/conversation-state`,
-  `v/conversation-report`.
-- **Handles for `v/rg` hits**: hit-count, first-hit summary in `:meta`;
-  `(v/hit h idx)` returns one expanded hit. Confirm shape in Phase 1.
-- **Cross-turn boundary marker**: implicit via iteration header IDs
-  today. If channel UIs need an explicit marker, render
-  `;; --- TURN BOUNDARY ---` between iterations whose `turn` field
-  differs.
+### Engine-injected SCI defs need docstrings too
 
-## Verification
+The mandatory-docstring contract applies in production code, not just
+model code. Engine-side SCI eval calls that emit `(def …)` must ship
+docstrings:
+- `env.clj/sci-update-binding!` (line ~41) — vis-managed engine binding
+- `env.clj/create-sci-context` `*1`/`*2`/`*3`/`*e` bootstrap (line ~487)
+- `loop.clj` USER_REQUEST injection (NEW, Phase 7 main)
 
-Each phase ships with its own tests; `./verify.sh` stays green
-between phases.
+### `view` / `summary` / `kind` non-handle fallback
 
-End-to-end acceptance after Phase 7:
+`(view 42 :peek)` returns
+`{:kind :not-a-handle :value 42 :op :peek :hint "View / summary / kind operate on Handle records. …"}`
+instead of throwing. Same for `(summary nil)` and `(kind {:some :map})`.
+The model gets a structured correction signal pointing at `handle?` /
+`v/cat` / `v/rg` / `v/ls` instead of a stack trace. Don't change this
+without thinking about the model UX implication.
 
-```bash
-clojure -M:test                                    # full suite, 0 failures
-./verify.sh                                        # smoke
-bin/vis run --raw "Summarize README.md"            # 1 iteration, 1 block
-bin/vis run --trace "Find every TODO in src/"      # tape window N-1
-```
+### LRU "missing stamp" semantics
 
-A new test file `test/com/blockether/vis/pivot_property_test.clj`
-asserts after Phase 7:
+`tape-live-vars` keeps vars whose name has no LRU stamp. The LRU is
+*informational* — when the engine just started or the model never
+referenced a var by name, the stamp is missing but the var is still
+fresh. Only vars with an explicit stale stamp
+(`current-turn-pos - last-used > 10`) are hidden.
 
-- A turn that asks "summarize README.md" finishes in **1 iteration**.
-- The model's prompt for that iteration contains **no
-  `<journal>` block, no `<bindings>` block, no
-  `<current_user_message>`**.
-- USER_REQUEST is reachable as a sandbox var inside the model's
-  block.
-- A `(def x 42)` (no docstring) raises `:vis/missing-docstring`; the
-  next iteration's tape contains `;; ! ERROR def requires docstring`.
-- Cross-turn: turn 2 iteration 1 sees the rendered tape of turn 1's
-  last iteration; nothing earlier.
-- A var defined in turn 1 and referenced in turn 11 (same conversation)
-  has fallen off the live-vars surface but is still resolvable from
-  the sandbox; resolving it brings it back into live-vars.
+### pprint dispatch ambiguity
 
-## Risks
+Handle records implement BOTH `IPersistentMap` (defrecord) AND
+`IDeref`. Without the `prefer-method` registered in handle.clj,
+`clojure.pprint/simple-dispatch` throws "Multiple methods … match
+dispatch value". Keep the preference; deleting it will surface
+mysteriously in test failure pretty-printing.
 
-- **R1 — SCI monkey-patch breaks on next SCI bump.** Mitigation:
-  startup precondition aborts with a descriptive error; pinned SCI
-  version in `deps.edn` until a new release is validated.
-- **R2 — Mandatory docstring trips models that omit them.**
-  Mitigation: explicit error in tape; first-iteration-of-turn nudge;
-  CORE_SYSTEM_PROMPT example shows the form.
-- **R3 — N-1 tape window confuses models trained on full transcripts.**
-  Mitigation: live-vars + system-vars headers compensate for state
-  visibility; runtime-resolution LRU keeps important vars warm
-  automatically. autoresearch bench measures real impact before Phase
-  7 ships.
-- **R4 — Hard cut-over breaks open conversations.** Mitigation:
-  CHANGELOG documents the schema break; ship a `vis db reset` CLI
-  command in Phase 5 that clears `~/.vis` cleanly with confirmation.
-- **R5 — Channel rendering regressions.** Mitigation: snapshot tests
-  of rendered iteration output before / after schema collapse in
-  Phase 6.
-- **R6 — Multi-monkey-patch surface area.** Two patches doubles the
-  fragility. Mitigation: both live in `sci_patches.clj`; one place to
-  audit, one place to disable.
+### Handle store is process-wide
+
+The `defonce` LRU store in handle.clj is a single atom shared across
+every conversation in the JVM. Bounded by `MAX_STORE_BYTES = 16 MB`
+with eviction-on-insert. If conversation isolation becomes important
+(e.g. multi-user web channel), wire a per-env handle store via a
+different key scheme — but DON'T do this until there's a real need.
+
+---
+
+## Risks (and what to watch for)
+
+- **R1 — SCI monkey-patch silently breaks on next SCI bump.** The
+  precondition catches signature renames at startup but not subtle
+  semantic changes. Run `clojure -M:test --namespace
+  com.blockether.vis.internal.extension.sci-patches-test` after every
+  SCI dependency bump.
+- **R2 — Mandatory docstring tripping engine-internal eval paths.** Any
+  new engine code that emits `(def …)` via SCI without a docstring
+  fails immediately. Search for `sci/eval-string+` calls that include
+  `def` in the source string.
+- **R3 — N-1 tape window losing important state.** If a long-lived var
+  ages out of the live-vars surface (>10 turns idle) and the model
+  forgets it exists, it'll re-shadow with a new def. The pivot intent
+  IS this — vars-as-memory means the model curates what it
+  references. But on legacy traces it'll look wrong.
+- **R4 — Hard schema cut breaks open conversations.** Document loud in
+  CHANGELOG. The `vis db reset` CLI helper needs explicit user
+  confirmation.
+- **R5 — Channel rendering visual regressions.** Snapshot tests before
+  Phase 6 ship. Compare side-by-side.
+- **R6 — `iteration->tape-iter` adapter divergence.** Today the adapter
+  joins multi-block iterations (legacy data); post-Phase 4 main, every
+  iteration is single-block. Both shapes pass the same adapter; tests
+  cover both.
+
+---
 
 ## Out of scope
 
-- **`v/ask` recursion primitive** (prior PLAN Phase 4). The pivot
-  achieves constant parent context structurally (N-1 tape + handle
-  returns); `v/ask` is no longer load-bearing as the RLM keystone.
+- **`v/ask` recursion primitive** (the prior PLAN's Phase 4
+  keystone). The pivot achieves constant parent context structurally
+  via N-1 tape + handle returns; `v/ask` is no longer load-bearing.
   May ship later as a power feature.
-- **Persisting handles across turns.** Handles remain
-  per-environment / per-conversation. Multi-turn handle persistence
-  is a separate, larger discussion.
-- **Multi-block iterations.** The pivot is one block per iteration.
-  If a future need arises (parallel probes, etc.), introduce a new
+- **Persisting handles across turns.** Process-wide store today;
+  per-conversation isolation is a future-only concern.
+- **Multi-block iterations.** The pivot is one block per iteration. If
+  a future need arises (parallel probes, etc.), introduce a new
   primitive — do NOT revert the loop shape.
 - **Backward compatibility with legacy conversations.** Hard cut-over.
-- **Forking SCI.** Monkey-patch is the chosen mechanism; reversibility
+- **Forking SCI.** Monkey-patch is the chosen mechanism. Reversibility
   beats purity.
+
+---
 
 ## Done state
 
@@ -479,23 +580,24 @@ A turn that asks "summarize README.md" runs in **1 iteration**:
 
 ```clojure
 ;; model emits, atomically:
-(def big "README handle" (v/cat "README.md"))
-(done [:ir [:p (str "README has " (:line-count @big) " lines")]])
+(do
+  (def big "README handle" (v/cat "README.md"))
+  (done [:ir [:p (str "README has " (:line-count (summary big)) " lines")]]))
 ```
 
 The next turn's prompt shows: `<iteration_hints>` (if any), iteration
-header, system-vars (`USER_REQUEST`), live-vars (`big`), prior
-iteration's tape. No XML noise beyond `<iteration_hints>`. No
-`<journal>`. No `<bindings>`. No `<current_user_message>`.
+header (`turn=2 conv=… state=… status=current`), system-vars
+(`USER_REQUEST` and any TURN_* set by extensions), live-vars (`big
+"README handle"`), prior iteration's tape. No XML noise beyond
+`<iteration_hints>`. No `<journal>`. No `<bindings>`. No
+`<current_user_message>`. No `<current_turn_context>`.
 
 Targets:
-
 - `iter_score` on autoresearch bench: **1** (down from 6).
 - Per-iteration prompt size: **<30 %** of pre-pivot baseline.
-- All phases shipped. `./verify.sh` green. CHANGELOG documents the
-  hard cut-over.
-- README's "inspired by RLM" line graduates to "RLM-conformant via
-  constant N-1 tape window and handle-typed reads."
+- All phases shipped; `./verify.sh` green.
+- README's "inspired by RLM" line graduates to "RLM-conformant".
 
-When that turn runs end-to-end with the new contract enforced,
-ship the README change.
+When the canonical 1-iteration trace runs end-to-end with the new
+contract enforced and the prompt prints as designed, ship the README
+update and close the pivot.
