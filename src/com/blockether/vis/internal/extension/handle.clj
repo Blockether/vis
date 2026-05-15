@@ -189,6 +189,96 @@
        :last-line    last-line})))
 
 ;; =============================================================================
+;; RgHandle — literal-search hits
+;; =============================================================================
+
+(def ^:private rg-views
+  "View ops supported by RgHandle. :peek surfaces the first window of
+   hits; :hit fetches a single 1-based hit; :all returns the whole vec."
+  #{:peek :hit :all})
+
+(def ^:const ^:private RG_PEEK_HITS 10)
+
+(defrecord RgHandle [store-key info]
+  clojure.lang.IDeref
+  (deref [_] (lookup-payload store-key :v.rg))
+  PHandle
+  (kind [_] :v.rg)
+  (summary [_] (assoc info :kind :v.rg :views (vec rg-views)))
+  (view [h op]
+    (case op
+      :peek (let [hits @h]
+              (subvec hits 0 (min RG_PEEK_HITS (count hits))))
+      :all  @h
+      (unsupported-view! :v.rg op 0)))
+  (view [h op a]
+    (case op
+      :hit (nth @h (dec a) nil)
+      (unsupported-view! :v.rg op 1)))
+  (view [_ op _ _] (unsupported-view! :v.rg op 2)))
+
+(defn make-rg
+  "Construct an RgHandle from a `grep-files`-style result map. Stashes
+   `:hits` into the store; the handle's `:info` carries hit-count,
+   truncated-by, the first hit's `path:line` summary, plus the original
+   spec for traceability."
+  [{:keys [hits truncated-by]} {:keys [spec paths]}]
+  (let [hits      (vec hits)
+        hit-count (count hits)
+        first-hit (when (pos? hit-count)
+                    (let [{:keys [path line]} (nth hits 0)]
+                      (str path ":" line)))
+        store-key (intern-payload hits)]
+    (->RgHandle store-key
+      {:hit-count    hit-count
+       :truncated-by truncated-by
+       :first-hit    first-hit
+       :paths        paths
+       :spec         spec})))
+
+;; =============================================================================
+;; LsHandle — directory tree
+;; =============================================================================
+
+(def ^:private ls-views
+  "View ops supported by LsHandle. :peek lists top-level entry names;
+   :children returns the immediate children entries; :tree returns the
+   full tree."
+  #{:peek :children :tree})
+
+(def ^:const ^:private LS_PEEK_ENTRIES 20)
+
+(defrecord LsHandle [store-key info]
+  clojure.lang.IDeref
+  (deref [_] (lookup-payload store-key :v.ls))
+  PHandle
+  (kind [_] :v.ls)
+  (summary [_] (assoc info :kind :v.ls :views (vec ls-views)))
+  (view [h op]
+    (case op
+      :peek     (let [tree @h
+                      kids (vec (or (:children tree) []))]
+                  (mapv :name (subvec kids 0 (min LS_PEEK_ENTRIES (count kids)))))
+      :children (let [tree @h] (vec (or (:children tree) [])))
+      :tree     @h
+      (unsupported-view! :v.ls op 0)))
+  (view [_ op _] (unsupported-view! :v.ls op 1))
+  (view [_ op _ _] (unsupported-view! :v.ls op 2)))
+
+(defn make-ls
+  "Construct an LsHandle from a `list-files` tree node. Stashes the
+   tree (root + children) into the store; the handle's `:info` carries
+   the path, top-level entry count, and tree? flag."
+  [tree]
+  (let [{:keys [path type children]} tree
+        store-key (intern-payload tree)]
+    (->LsHandle store-key
+      {:path        path
+       :type        type
+       :entry-count (count (or children []))
+       :tree?       (boolean (seq children))})))
+
+;; =============================================================================
 ;; print-method (single-line summary)
 ;; =============================================================================
 
@@ -207,6 +297,26 @@
 
 (defmethod print-method CatHandle [h ^java.io.Writer w] (print-handle h w))
 (defmethod print-dup    CatHandle [h ^java.io.Writer w] (print-handle h w))
+(defmethod print-method RgHandle  [h ^java.io.Writer w] (print-handle h w))
+(defmethod print-dup    RgHandle  [h ^java.io.Writer w] (print-handle h w))
+(defmethod print-method LsHandle  [h ^java.io.Writer w] (print-handle h w))
+(defmethod print-dup    LsHandle  [h ^java.io.Writer w] (print-handle h w))
+
+;; -----------------------------------------------------------------------------
+;; pprint dispatch
+;;
+;; Handle records implement BOTH IPersistentMap (defrecord default) AND
+;; IDeref. clojure.pprint/simple-dispatch has methods on both interfaces;
+;; without an explicit preference, pprint throws "Multiple methods ...
+;; match dispatch value". Prefer the IPersistentMap branch (which falls
+;; through to print-method, picking up our custom one-line render).
+;; -----------------------------------------------------------------------------
+
+(require 'clojure.pprint)
+(prefer-method
+  @(resolve 'clojure.pprint/simple-dispatch)
+  clojure.lang.IPersistentMap
+  clojure.lang.IDeref)
 
 ;; =============================================================================
 ;; Diagnostics

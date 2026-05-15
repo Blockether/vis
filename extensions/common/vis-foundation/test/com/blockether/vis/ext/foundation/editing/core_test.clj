@@ -408,8 +408,11 @@
                 :paths [(temp-dir-path "rgsame")]
                 :include ["*.clj"]}
           grep (private-fn "grep-files")
-          rg (private-fn "rg-tool")]
-      (expect (= (grep spec) (:result (rg spec))))))
+          rg (private-fn "rg-tool")
+          ;; rg-tool now returns an RgHandle as :result; deref to compare
+          ;; against the raw grep payload (vec of hits).
+          rg-handle (:result (rg spec))]
+      (expect (= (:hits (grep spec)) (deref rg-handle)))))
 
   (it "rejects shorthand and unknown keys instead of silently changing grammar"
     (let [grep (private-fn "grep-files")
@@ -525,12 +528,15 @@
       (expect (string/includes? rendered "target/editing-test/out.txt"))))
   (it "search-hits renderer formats partial-projection hits without raw EDN fallback"
     (let [render-hits (private-fn "channel-render-rg")
-          rendered (render-hits
-                     {:hits [{:line 462
-                              :text "  (inc (reduce max 0 ...))"}
-                             {:line 472
-                              :text "(defn- workspace-tabs-or-base"}]
-                      :truncated-by :end-of-results})
+          _ (handle/clear-store!)
+          rg-handle (handle/make-rg
+                      {:hits [{:line 462
+                               :text "  (inc (reduce max 0 ...))"}
+                              {:line 472
+                               :text "(defn- workspace-tabs-or-base"}]
+                       :truncated-by :end-of-results}
+                      {:spec nil :paths nil})
+          rendered (render-hits rg-handle)
           text-leaves (filter string? (tree-seq sequential? seq rendered))
           joined (string/join "\n" text-leaves)]
       ;; Channel renderer must return canonical IR, not raw text/EDN.
@@ -544,13 +550,18 @@
       (expect (string/includes? joined "workspace-tabs-or-base"))))
   (it "search-hits renderer keeps full path:line prefix when path present"
     (let [render-hits (private-fn "channel-render-rg")
-          rendered (render-hits
-                     {:hits [{:path "src/foo.clj"
-                              :line 10
-                              :text "(def x 1)"}]
-                      :truncated-by :end-of-results})]
-      (expect (string/includes? rendered "src/foo.clj:10"))
-      (expect (string/includes? rendered "(def x 1)")))))
+          _ (handle/clear-store!)
+          rg-handle (handle/make-rg
+                      {:hits [{:path "src/foo.clj"
+                               :line 10
+                               :text "(def x 1)"}]
+                       :truncated-by :end-of-results}
+                      {:spec nil :paths ["src/foo.clj"]})
+          rendered (render-hits rg-handle)
+          text-leaves (filter string? (tree-seq sequential? seq rendered))
+          joined (string/join " " text-leaves)]
+      (expect (string/includes? joined "src/foo.clj:10"))
+      (expect (string/includes? joined "(def x 1)")))))
 
 (defdescribe tool-envelope-test
   (it "tool wrappers return the required contract keys (PLAN §2.1 envelope)"
