@@ -108,9 +108,45 @@
      unknown ops."))
 
 (defn handle?
-  "True for any value implementing the PHandle protocol."
+  "True only for values backed by a Handle defrecord (concrete kind
+   implementing PHandle WITHOUT relying on the Object fallback below).
+   Cheap class check — avoids `satisfies?` matching the Object impl
+   which extends to literally everything."
   [v]
-  (satisfies? PHandle v))
+  (and (instance? clojure.lang.IRecord v)
+    (satisfies? PHandle v)
+    (not= :not-a-handle (kind v))))
+
+;; -----------------------------------------------------------------------------
+;; Fallback: PHandle on every value
+;;
+;; Calling (view 42 :peek) used to throw IllegalArgumentException because
+;; nothing implemented PHandle for Long. Per the engine-primitive contract
+;; (`view` / `summary` / `kind` are always available in the sandbox),
+;; non-handle values get a structured `:not-a-handle` answer instead of
+;; a stack trace. Cheap correction signal — the model sees the shape it
+;; got and the hint that points back at v/cat / v/rg / v/ls / handle?.
+;; -----------------------------------------------------------------------------
+
+(def ^:private NOT_A_HANDLE_HINT
+  "View / summary / kind operate on Handle records. Use (handle? v) to test, or call v/cat / v/rg / v/ls to get one.")
+
+(extend-protocol PHandle
+  nil
+  (kind [_] :not-a-handle)
+  (summary [_] {:kind :not-a-handle :value nil :hint NOT_A_HANDLE_HINT})
+  (view
+    ([_ op] {:kind :not-a-handle :op op :hint NOT_A_HANDLE_HINT})
+    ([_ op a] {:kind :not-a-handle :op op :args [a] :hint NOT_A_HANDLE_HINT})
+    ([_ op a b] {:kind :not-a-handle :op op :args [a b] :hint NOT_A_HANDLE_HINT}))
+
+  Object
+  (kind [_] :not-a-handle)
+  (summary [v] {:kind :not-a-handle :value v :hint NOT_A_HANDLE_HINT})
+  (view
+    ([v op] {:kind :not-a-handle :value v :op op :hint NOT_A_HANDLE_HINT})
+    ([v op a] {:kind :not-a-handle :value v :op op :args [a] :hint NOT_A_HANDLE_HINT})
+    ([v op a b] {:kind :not-a-handle :value v :op op :args [a b] :hint NOT_A_HANDLE_HINT})))
 
 ;; =============================================================================
 ;; CatHandle — file content reads
