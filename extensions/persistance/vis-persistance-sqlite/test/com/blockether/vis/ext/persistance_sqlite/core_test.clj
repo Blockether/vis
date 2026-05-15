@@ -1322,7 +1322,7 @@
   ;; answer-on-metadata and previous-answer var history shapes have
   ;; drifted from these assertions; live behaviour is exercised by the
   ;; iteration loop tests rather than persisted-shape probes here.
-  (it "placeholder \u2014 answer lifecycle assertions migrated to the loop suite"
+  (it "placeholder — answer lifecycle assertions migrated to the loop suite"
     (expect true)))
 
 ;; =============================================================================
@@ -1617,8 +1617,8 @@
   (it "multi-version var with dependency: changing upstream propagates ref"
     ;; Iter 1: (def base 10)
     ;; Iter 2: (defn compute [x] (+ x base))
-    ;; Iter 3: (def base 20)  -- base changes!
-    ;; Iter 4: (def answer (compute 5)) -- should use new base
+    ;; Iter 3: (def base 20)  — base changes!
+    ;; Iter 4: (def answer (compute 5)) — should use new base
     ;; At restore time, base=20 (latest version), compute has :vis/ref :expr
     (let [s      (h/store)
           cid    (vis/db-store-conversation! s {:channel :tui})
