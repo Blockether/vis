@@ -70,6 +70,22 @@
       (expect (not (re-find #"\bb\b" (:code (by-name "a")))))
       (expect (not (re-find #"\ba\b" (:code (by-name "b")))))))
 
+  (it "multi-top-level (no (do …) wrap): each var still carries its own precise source"
+    ;; The block has three top-level forms; only the two defs should
+    ;; produce snapshot rows, and each row's :code must be the
+    ;; matching def form, not the whole block.
+    (let [code "(def a \"doc\" 1)\n(def b \"doc\" 2)\n(+ a b)"
+          snap (lp/def-sink->vars-snapshot
+                 [{:name 'a :var (mock-var 1)}
+                  {:name 'b :var (mock-var 2)}]
+                 code
+                 nil)
+          by-name (into {} (map (juxt :name identity)) snap)]
+      (expect (= "(def a \"doc\" 1)" (:code (by-name "a"))))
+      (expect (= "(def b \"doc\" 2)" (:code (by-name "b"))))
+      (expect (not (re-find #"\bb\b" (:code (by-name "a")))))
+      (expect (not (re-find #"\ba\b" (:code (by-name "b")))))))
+
   (it "defn round-trips: precise (defn NAME doc args body) lands as :code"
     (let [code "(do (def base \"doc\" 10)\n     (defn add \"adds base\" [x] (+ x base)))"
           snap (lp/def-sink->vars-snapshot
