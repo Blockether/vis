@@ -143,6 +143,67 @@
         {} flat-forms))
     (catch Throwable _ {})))
 
+(defn dep-edges-from-source
+  "Parse `iteration-code` and emit one raw dependency edge per
+   (free-symbol-in-init → def-name) reference. Walks every form whose
+   head is in `DEF_HEADS_FOR_RESTORE`; for each such form, collects
+   ALL symbol references in the init / fn-body subtree and emits
+   `{:upstream <ref-name> :downstream <def-name>}` edges.
+
+   Why source-walk and not the SCI resolve hook: SCI analyzes /
+   compiles forms before evaluating them, baking symbol-to-var
+   resolution into the AST. The runtime `resolve-symbol*` patch never
+   fires for symbols inside an init body, so the only stable point at
+   which we can recover dep relationships is the source itself.
+
+   The output is intentionally permissive: it includes refs to core
+   ops (`inc`, `*`, `+`), to locals introduced by `let` / `fn`
+   parameter lists, and to macro symbols. The persistence layer
+   filters every edge against the existing-soul-name set inside its
+   write transaction, so only refs that actually correspond to a
+   tracked user var land in `expression_dependency`. Self-references
+   (a recursive `defn` body using its own name) are dropped here
+   since they degenerate the topo sort on restore.
+
+   Parse errors yield [] — the iteration's eval already succeeded;
+   downstream dep tracking is best-effort, not load-bearing."
+  [iteration-code]
+  (try
+    (let [forms (edamame/parse-string-all (or iteration-code "")
+                  {:all true
+                   :readers (fn [_tag] (fn [val] (list 'do val)))})
+          flatten-do (fn flat [f]
+                       (if (and (seq? f) (= 'do (first f)))
+                         (mapcat flat (rest f))
+                         [f]))
+          flat-forms (mapcat flatten-do forms)]
+      (->> flat-forms
+        (mapcat (fn [form]
+                  (when (and (seq? form)
+                          (symbol? (first form))
+                          (contains? DEF_HEADS_FOR_RESTORE (first form))
+                          (symbol? (second form)))
+                    (let [def-name (name (second form))
+                          ;; init-and-body: everything after (HEAD NAME)
+                          ;; — includes optional docstring + arg vector
+                          ;; for defn, plain value for def. We do NOT
+                          ;; need to be precise about which subform is
+                          ;; init; the persistence-side filter against
+                          ;; the soul-name set discards everything
+                          ;; that is not a tracked var.
+                          init-and-body (drop 2 form)
+                          refs (->> (tree-seq coll? seq init-and-body)
+                                 (filter symbol?)
+                                 (map name)
+                                 set)]
+                      (->> refs
+                        (remove #(= % def-name))
+                        (map (fn [r]
+                               {:upstream r :downstream def-name})))))))
+        distinct
+        vec))
+    (catch Throwable _ [])))
+
 (defn def-sink->vars-snapshot
   "Convert per-iteration SCI def-sink entries into the persistence
    shape consumed by `expression_soul` / `expression_state` rows:
@@ -343,11 +404,14 @@
         channel-sink (atom [])
         sink-pos     (atom -1)
         ;; Per-iteration sinks for the pivot patches. `*def-sink-atom*`
-        ;; collects every (def …) the SCI sandbox runs (Phase 2). `*lru-atom*`
-        ;; stamps every successful symbol resolution with the current turn
-        ;; position (Phase 3). The engine reads both after eval; live-vars
-        ;; rendering and expression_state persistence consume them in
-        ;; later phases.
+        ;; collects every (def …) the SCI sandbox runs (Phase 2).
+        ;; `*lru-atom*` stamps every successful symbol resolution with
+        ;; the current turn position (Phase 3). The engine reads both
+        ;; after eval; live-vars rendering and expression_state
+        ;; persistence consume them. Dependency edges (Phase 4b) come
+        ;; from source parsing post-eval, not from this hook — SCI
+        ;; analyzes references at compile time so the runtime resolve
+        ;; hook never sees init-body symbols.
         def-sink     (sci-patches/fresh-sink-atom)
         lru          (sci-patches/fresh-lru-atom)
         turn-position (when env
@@ -2858,6 +2922,24 @@
                                         (vec (mapcat :def-sink blocks))
                                         iteration-block-code
                                         (when (pos? iteration-time-ms) iteration-time-ms))
+                        ;; Phase 4b: dependency edges from a post-eval
+                        ;; source walk of the iteration block. SCI's
+                        ;; analyzer bakes symbol resolution into the
+                        ;; AST at compile time so a runtime resolve
+                        ;; hook would not see init-body references;
+                        ;; we recover the graph from source instead.
+                        ;; The persistance layer filters every edge
+                        ;; against the existing-soul-name set inside
+                        ;; one transaction, so core ops, locals, and
+                        ;; cross-iteration upstreams (this iter's defn
+                        ;; depends on a prior iter's var) all sort
+                        ;; themselves out there.
+                        deps-snapshot (->> (dep-edges-from-source iteration-block-code)
+                                        (map (fn [{:keys [upstream downstream]}]
+                                               {:upstream-name upstream
+                                                :downstream-name downstream}))
+                                        distinct
+                                        vec)
                         previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
                         conversation-row (try
                                            (persistance/db-get-conversation
@@ -2911,6 +2993,7 @@
                                                   :stderr (:stderr store-block)
                                                   :duration-ms (or (:execution-time-ms store-block) (:duration-ms iteration-result) 0)
                                                   :vars vars-snapshot
+                                                  :dependencies deps-snapshot
                                                   :thinking thinking
                                                   :answer (when final-result (answer-str (:answer final-result)))
                                                   :llm-messages (:llm-messages iteration-result)

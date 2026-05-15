@@ -1028,9 +1028,24 @@
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
 (defn db-store-iteration!
   "Store one iteration row + per-`(def ...)` expression_soul/expression_state
-   rows. The iteration's single code payload is written inline to flat
-   conversation_turn_iteration columns. Returns the iteration UUID."
-  [db-info {:keys [conversation-turn-id thinking answer duration-ms vars error metadata
+   rows + optional expression_dependency edges. All writes go through
+   one SQLite transaction.
+
+   Args:
+     :vars         - [{:name :value :code :time-ms?}] per def the
+                     sandbox evaluated this iteration. Becomes one
+                     soul (find-or-create) + one new state version.
+     :dependencies - [{:upstream-name :downstream-name}] raw edges
+                     from the SCI resolve-hook. Filtered inside this
+                     transaction: only kept when BOTH names resolve
+                     to a soul in this `conversation_state` (either
+                     just-created from `:vars` or pre-existing from a
+                     prior iteration). Core ops like `inc` / `+` get
+                     dropped here. Duplicate edges are deduped before
+                     insert. Optional; omit for no-deps iterations.
+
+   Returns the iteration UUID."
+  [db-info {:keys [conversation-turn-id thinking answer duration-ms vars dependencies error metadata
                    llm-messages llm-provider llm-model llm-raw-response
                    llm-executable-blocks llm-assistant-message llm-returned-empty-code? tokens cost-usd]
             :as opts}]
@@ -1157,6 +1172,48 @@
                                                              time-ms  (assoc :time-ms time-ms)
                                                              metadata (assoc :metadata metadata)))
                                :created_at         now}]})))))
+          ;; 4. Dependencies -> expression_dependency. Filter to edges
+          ;; whose BOTH endpoints resolve to a soul in this
+          ;; conversation_state (either pre-existing from a prior
+          ;; iteration or just-written from this iteration's :vars).
+          ;; Core ops like `inc` / `+` get dropped at this step. The
+          ;; resolution happens inside the same tx so we do not race
+          ;; against concurrent writers.
+          (when (and conversation-state-id (seq dependencies))
+            (let [soul-rows (query! tx-info
+                              {:select [:id :name]
+                               :from   :expression_soul
+                               :where  [:and
+                                        [:= :conversation_state_id conversation-state-id]
+                                        [:= :kind "var"]]})
+                  by-name   (into {} (map (juxt :name :id)) soul-rows)
+                  ;; Pre-existing edges (so we do not double-insert
+                  ;; the same edge each iteration when a defn keeps
+                  ;; referencing the same upstream).
+                  existing  (set (map (juxt :downstream_expression_soul_id
+                                        :upstream_expression_soul_id)
+                                   (query! tx-info
+                                     {:select [:downstream_expression_soul_id
+                                               :upstream_expression_soul_id]
+                                      :from   :expression_dependency
+                                      :where  [:= :conversation_state_id conversation-state-id]})))]
+              (doseq [{:keys [upstream-name downstream-name]}
+                      (->> dependencies
+                        (filter (fn [{:keys [upstream-name downstream-name]}]
+                                  (and (contains? by-name upstream-name)
+                                    (contains? by-name downstream-name)
+                                    (not= upstream-name downstream-name))))
+                        distinct)]
+                (let [d-id (by-name downstream-name)
+                      u-id (by-name upstream-name)]
+                  (when-not (contains? existing [d-id u-id])
+                    (execute! tx-info
+                      {:insert-into :expression_dependency
+                       :values [{:id                            (new-id)
+                                 :conversation_state_id         conversation-state-id
+                                 :downstream_expression_soul_id d-id
+                                 :upstream_expression_soul_id   u-id
+                                 :created_at                    now}]}))))))
           iteration-id)))))
 
 ;; =============================================================================
