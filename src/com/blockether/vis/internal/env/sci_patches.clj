@@ -1,7 +1,7 @@
 (ns com.blockether.vis.internal.env.sci-patches
   "Monkey-patches over SCI's `:no-doc` impl namespaces.
 
-   SCI 0.12.51 ships no public hook for `def` evaluation. The pivot
+   SCI 0.12.51 ships no public hook for `def` evaluation. The engine
    contract needs both:
      1. Capture every def/defn/defmacro into a per-iteration sink so the
         engine can flush definition_state rows in one transaction at
@@ -47,19 +47,6 @@
    Engine uses this at iteration start; reads `@sink` after eval."
   []
   (atom []))
-
-;; NOTE: dependency-edge capture is NOT via this resolve patch. SCI
-;; analyzes/compiles forms before evaluating them, so by the time
-;; `original-eval-def` runs init, symbol-to-var resolution is already
-;; baked into the AST — the runtime resolve-symbol* hook does not fire
-;; for inline references inside an init expression.
-;;
-;; The engine instead parses the iteration source post-eval and emits
-;; one edge per (free-symbol-in-init → def-name) pair; see
-;; `loop/dep-edges-from-source`. The persistence layer filters those
-;; pairs against the existing-soul-name set inside the same
-;; transaction, so core ops, locals, and macro symbols drop out
-;; naturally.
 
 ;; =============================================================================
 ;; Patch: sci.impl.evaluator/eval-def
@@ -171,7 +158,7 @@
     :installed))
 
 ;; =============================================================================
-;; Single-form block validation (pivot contract)
+;; Single-form block validation
 ;; =============================================================================
 
 (def ^:private edamame-opts
@@ -194,7 +181,7 @@
    (comment-only / `#_`-discard-only blocks). Iterations that produce
    no evidence cannot carry forward, so the engine rejects them at the
    model boundary instead of round-tripping an empty `:code` through
-   persistence and the next iteration's tape.
+   persistence and the next iteration's journal.
 
    Multi-form blocks are accepted: SCI's `eval-string+` parses and
    evaluates each top-level form in sequence; the eval-def patch
@@ -205,7 +192,7 @@
    or
      (def a …)
      (def b …)
-   The single-form constraint that lived here in earlier pivot drafts
+   The single-form constraint that lived here in earlier drafts
    was prescriptive ceremony, not a technical requirement.
 
    Single and multi-form blocks pass through silently."

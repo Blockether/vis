@@ -135,7 +135,7 @@
         (or (nil? success?) (some? error))))))
 
 ;; ---------------------------------------------------------------------------
-;; Sink-entry shape (one entry per tool-symbol call inside a top-level form)
+;; Sink-entry shape (one entry per tool-symbol call in the channel-rendered tool-call rowa top-level form)
 ;; ---------------------------------------------------------------------------
 
 (s/def :ext.sink/position  (s/and integer? (complement neg?)))
@@ -539,7 +539,7 @@
 
 ;; Raw callable helpers compose as normal Clojure values. They bypass the
 ;; observed-tool envelope/journal/channel wrapper and return their function's
-;; value directly inside SCI.
+;; value directly in the channel-rendered tool-call rowSCI.
 (s/def :ext.symbol/raw? boolean?)
 
 ;; Entry decorator: (fn [env f args] -> map). Wraps :fn on the way in.
@@ -551,12 +551,12 @@
 ;; Error decorator: (fn [err env f args] -> map). Called when :fn throws.
 (s/def :ext.symbol/on-error-fn fn?)
 
-;; Renderer for this symbol's result inside <journal>. Receives ONLY the
+;; Renderer for this symbol's result in the channel-rendered tool-call row. Receives only the
 ;; unwrapped `:result` value (engine extracts before calling). Returns a
 ;; plaintext string. MANDATORY on every fn-symbol; no engine default.
 (s/def :ext.symbol/journal-render-fn fn?)
 
-;; Renderer for this symbol's result inside a runtime channel (TUI,
+;; Renderer for this symbol's result in the channel-rendered tool-call rowa runtime channel (TUI,
 ;; telegram, ...). Receives `(:result tool-result)` only. Returns
 ;; markdown - UNIFORM across every channel; channel adapters apply
 ;; their own flavor tweaks (escaping, line-wrap) at consume time.
@@ -641,7 +641,7 @@
 ;;
 ;; Every hook declares :id, :doc, :phase, :fn — the contract is explicit
 ;; and the failure surface reviewable. One extension can ship many
-;; independent hooks as a flat vector. Exceptions thrown inside :fn are
+;; independent hooks as a flat vector. Exceptions thrown in the channel-rendered tool-call row:fn are
 ;; caught + logged via Telemere; a misbehaving hook never blocks the
 ;; loop or starves siblings.
 ;;
@@ -1025,7 +1025,8 @@
    Observed tools (default) must pass:
      :journal-render-fn   - (fn [result] string). Renders the unwrapped
                             internal envelope `:result` into model-facing
-                            <journal>. Plaintext, terse, ≤~1500 chars.
+                            the tool-call channel row. Plaintext, terse,
+                            ~1500 chars.
      :channel-render-fn   - (fn [result] IR). Renders the unwrapped result as
                             canonical IR. UNIFORM across every channel.
 
@@ -1253,7 +1254,7 @@
    when the key is present. Throws with spec explain-data on violation."
   [ext]
   (when (contains? ext :ext/environment-prompt-fn)
-    (throw (ex-info ":ext/environment-prompt-fn was removed; put model-facing environment text inside :ext/prompt"
+    (throw (ex-info ":ext/environment-prompt-fn was removed; put model-facing environment text in the channel-rendered tool-call row:ext/prompt"
              {:type :extension/retired-environment-prompt-fn
               :namespace (:ext/namespace ext)})))
   (let [ext (cond-> ext
@@ -2105,7 +2106,7 @@
 (defn- format-error-fields
   "Pull the `:message` (and an inferred `:type` from the trace's first
    line) out of an `:error` map for the engine's default error
-   formatters. Defensive: never throws inside a renderer.
+   formatters. Defensive: never throws in the channel-rendered tool-call rowa renderer.
 
    Per PLAN §2.1 the new structured error has `:message :trace :hint
    :block`. The `:type` historical field is no longer carried; the
@@ -2174,7 +2175,7 @@
   v)
 
 (defn journal-render-tool-result
-  "Render a tool-result for the model-facing `<journal>` block.
+  "Render a tool-result for the tool-call channel render.
 
    Dispatch:
      - On (:success? false): call the symbol's `:journal-render-error-fn`

@@ -436,8 +436,8 @@
 (def build-system-prompt              prompt/build-system-prompt)
 (def stable-prompt-text               prompt/stable-prompt-text)
 ;; `vis.core/build-iteration-context` re-exported the legacy XML
-;; assembly. Phase 7 pivot replaced it with
-;; `prompt/build-iteration-context-tape`; the re-export is dropped
+;; assembly. Replaced with
+;; `prompt/build-iteration-context`; the re-export is dropped
 ;; rather than aliased so any straggler caller fails loud.
 
 (def safe-pr-str                      fmt/safe-pr-str)

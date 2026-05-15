@@ -242,7 +242,7 @@
           (expect (= 22 (:llm-raw-response-length iter)))
           (expect (= "66668222ec30f95b93cbd218b2406162d0bdb0e0d02b95db890a9d08d60592ed"
                     (:llm-raw-response-sha256 iter)))
-          ;; :llm-executable-code removed during the per-block-eval pivot;
+          ;; :llm-executable-code removed during the per-block-eval cut;
           ;; :llm-executable-blocks is the single source of truth.
           (expect (nil? (:llm-executable-code iter)))
           (expect (= [{:lang "clojure" :source "(+ 1 1)"}]
