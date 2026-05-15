@@ -15,8 +15,8 @@
    [clojure+.core]
    [clojure+.walk]
    [com.blockether.vis.internal.format :as fmt]
-   [com.blockether.vis.internal.extension.handle :as handle]
-   [com.blockether.vis.internal.extension.sci-patches]
+   [com.blockether.vis.internal.env.handle :as handle]
+   [com.blockether.vis.internal.env.sci-patches]
    [com.blockether.vis.internal.persistance :as persistance]
    [malli.provider :as mp]
    [sci.addons.future :as sci-future]
@@ -61,6 +61,22 @@
    on `(restore-vars ...)` / `(def X ...)` because the bindings never caught up."
   [env sym val]
   (sci-update-binding! (:sci-ctx env) sym val)
+  (bump-bindings! env))
+
+(defn bind-and-bump-with-doc!
+  "Like `bind-and-bump!` but writes `doc` as the var's :doc metadata.
+   Used for engine-injected SYSTEM vars that the tape live-vars
+   renderer surfaces by name + doc, so the model sees a meaningful
+   description (e.g. USER_REQUEST -> 'current turn user request')
+   instead of the synthetic 'vis-managed engine binding' placeholder
+   that `bind-and-bump!` writes."
+  [env sym doc val]
+  (let [sci-ctx (:sci-ctx env)
+        ns-obj  (sci/find-ns sci-ctx 'sandbox)]
+    (sci/eval-string+ sci-ctx
+      (str "(def " sym " " (pr-str (or doc "vis-managed engine binding")) " nil)")
+      {:ns ns-obj})
+    (sci/intern sci-ctx ns-obj sym val))
   (bump-bindings! env))
 
 (defn push-eval-result!
