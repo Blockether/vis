@@ -1,10 +1,10 @@
-(ns com.blockether.vis.ext.foundation.handle-test
+(ns com.blockether.vis.internal.extension.handle-test
   (:require
    [clojure.string :as string]
-   [com.blockether.vis.ext.foundation.handle :as handle]
+   [com.blockether.vis.internal.extension.handle :as handle]
    [lazytest.core :refer [defdescribe expect it]])
   (:import
-   (com.blockether.vis.ext.foundation.handle CatHandle)))
+   (com.blockether.vis.internal.extension.handle CatHandle)))
 
 (defn- fresh-cat
   "Build a CatHandle from `lines`, isolating the store fixture per test."
@@ -17,20 +17,21 @@
 ;; -----------------------------------------------------------------------------
 
 (defdescribe handle-make-cat-test
-  (it "make-cat returns a CatHandle with summary fields populated"
-    (let [h (fresh-cat "x" ["alpha" "beta" "gamma"])]
+  (it "make-cat returns a CatHandle with info map populated"
+    (let [h (fresh-cat "x" ["alpha" "beta" "gamma"])
+          i (:info h)]
       (expect (instance? CatHandle h))
-      (expect (= "x" (:path h)))
-      (expect (= 3 (:line-count h)))
-      (expect (= "alpha" (:first-line h)))
-      (expect (= "gamma" (:last-line h)))
-      (expect (string? (:sha h)))
-      (expect (= 8 (count (:sha h))))
+      (expect (= "x" (:path i)))
+      (expect (= 3 (:line-count i)))
+      (expect (= "alpha" (:first-line i)))
+      (expect (= "gamma" (:last-line i)))
+      (expect (string? (:sha i)))
+      (expect (= 8 (count (:sha i))))
       (expect (string/starts-with? (:store-key h) "h_"))))
   (it "make-cat with empty lines stores an empty payload and nil sha"
     (let [h (fresh-cat "empty" [])]
-      (expect (= 0 (:line-count h)))
-      (expect (nil? (:sha h)))
+      (expect (= 0 (:line-count (:info h))))
+      (expect (nil? (:sha (:info h))))
       (expect (= [] @h)))))
 
 (defdescribe handle-protocol-test
