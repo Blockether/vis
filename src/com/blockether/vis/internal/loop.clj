@@ -16,6 +16,7 @@
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
+   [com.blockether.vis.internal.extension.sci-patches :as sci-patches]
    [com.blockether.vis.internal.render :as render]
    [com.blockether.vis.internal.persistance :as persistance]
    [com.blockether.vis.internal.prompt :as prompt]
@@ -242,6 +243,16 @@
         journal-sink (atom [])
         channel-sink (atom [])
         sink-pos     (atom -1)
+        ;; Per-iteration sinks for the pivot patches. `*def-sink-atom*`
+        ;; collects every (def …) the SCI sandbox runs (Phase 2). `*lru-atom*`
+        ;; stamps every successful symbol resolution with the current turn
+        ;; position (Phase 3). The engine reads both after eval; live-vars
+        ;; rendering and expression_state persistence consume them in
+        ;; later phases.
+        def-sink     (sci-patches/fresh-sink-atom)
+        lru          (sci-patches/fresh-lru-atom)
+        turn-position (when env
+                        (some-> (:current-turn-position-atom env) deref))
         ;; Live tool-event callback only - no longer accumulated into a vec.
         ;; Storage role retired (was dead persistence). The TUI/progress UI
         ;; consumes via `tool-event-fn` synchronously during eval.
@@ -257,7 +268,10 @@
                           (let [result (binding [extension/*tool-event-sink* record-tool-event
                                                  extension/*journal-render-sink* journal-sink
                                                  extension/*channel-render-sink* channel-sink
-                                                 extension/*sink-position*       sink-pos]
+                                                 extension/*sink-position*       sink-pos
+                                                 sci-patches/*def-sink-atom*     def-sink
+                                                 sci-patches/*lru-atom*          lru
+                                                 sci-patches/*current-turn-position* turn-position]
                                          (sci/binding [sci/out stdout-writer
                                                        sci/err err-pw]
                                            (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
@@ -266,6 +280,8 @@
                             {:result result :stdout (str stdout-writer) :stderr (str stderr-writer)
                              :journal     @journal-sink
                              :channel     @channel-sink
+                             :def-sink    @def-sink
+                             :lru         @lru
                              :error nil})
                           (catch Throwable e
                             (reset! thrown e)
@@ -279,6 +295,8 @@
                             {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
                              :journal @journal-sink
                              :channel @channel-sink
+                             :def-sink @def-sink
+                             :lru     @lru
                              :error   (try (extension/ex->op-error e {:block-source code})
                                         (catch Throwable _
                                           {:message (or (ex-message e)
@@ -291,6 +309,8 @@
                              {:result nil :stdout "" :stderr ""
                               :journal @journal-sink
                               :channel @channel-sink
+                              :def-sink @def-sink
+                              :lru     @lru
                               :error   (try (extension/ex->op-error e {:block-source code})
                                          (catch Throwable _
                                            {:message (or (ex-message e)
@@ -319,6 +339,8 @@
         {:result nil :stdout "" :stderr ""
          :journal @journal-sink
          :channel @channel-sink
+         :def-sink @def-sink
+         :lru     @lru
          :error   {:message (str "Timeout (" (/ timeout-ms 1000) "s)")}
          :timeout? true})
       execution-result)))
