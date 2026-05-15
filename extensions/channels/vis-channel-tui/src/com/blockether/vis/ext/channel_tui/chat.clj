@@ -177,14 +177,23 @@
                         produced-answer? (and (canonical-ir? (:answer q)) (> (count (:answer q)) 2))
                         trace (into []
                                 (map (fn [it]
-                                       (let [all-exprs   [(cond-> {:position 0
+                                       (let [;; `render-segments` is an in-memory field on live iterations;
+                                             ;; the persisted iteration row only carries flat `:code`. On
+                                             ;; resume, parse the source the same way the live path does so
+                                             ;; the channel can elide `(done ...)` + structurally-silent
+                                             ;; forms instead of treating the whole block as one opaque
+                                             ;; string (the legacy fallback dropped the entire iteration
+                                             ;; on any `(done` substring).
+                                             segments (or (:render-segments it)
+                                                        (vis/code-block-segments (or (:code it) "")))
+                                             all-exprs   [(cond-> {:position 0
                                                                    :code (or (:code it) "")}
                                                             (contains? it :result) (assoc :result (:result it))
                                                             (contains? it :error) (assoc :error (:error it))
                                                             (contains? it :stdout) (assoc :stdout (:stdout it))
                                                             (contains? it :stderr) (assoc :stderr (:stderr it))
                                                             (contains? it :channel) (assoc :channel (:channel it))
-                                                            (contains? it :render-segments) (assoc :render-segments (:render-segments it))
+                                                            (seq segments) (assoc :render-segments segments)
                                                             (contains? it :execution-time-ms)
                                                             (assoc :duration-ms (:execution-time-ms it)))]
                                              answer-here? (and produced-answer?
