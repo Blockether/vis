@@ -382,7 +382,7 @@
      :doc        - docstring to attach to the var defined by this :expr.
 
    Every call performs a real SCI eval. There is no result cache:
-   forms with side effects (e.g. host primitives `(turn-answer! ...)` and
+   forms with side effects (e.g. host primitives `(done ...)` and
    `(set-conversation-title! ...)`) MUST run their bodies on every
    invocation, and forms without side effects re-run cheaply enough
    that caching them is not worth the correctness footgun."
@@ -526,13 +526,13 @@
 ;; ---------------------------------------------------------------------------
 ;; Answer-scoping helper (Option C)
 ;;
-;; The iteration loop discards a `(turn-answer! ...)` call iff the form
+;; The iteration loop discards a `(done ...)` call iff the form
 ;; that ITSELF invoked it errored. Sibling errors (a typo in some
 ;; OTHER form, a bad v/edit elsewhere) do NOT gate termination -
 ;; the model's request to finalize is honored as long as the answer-
 ;; bearing form ran cleanly. Pre-Option C the loop discarded on ANY
 ;; sibling error, which is how a turn could rack up 148 retries with
-;; the model repeatedly emitting `(turn-answer! ...)` next to a single
+;; the model repeatedly emitting `(done ...)` next to a single
 ;; broken `(def ...)`.
 ;;
 ;; Returns the error from the form at `form-idx` in `block-results`
@@ -593,7 +593,7 @@
   [form]
   (and (seq? form)
     (symbol? (first form))
-    (= "turn-answer!" (name (first form)))
+    (= "done" (name (first form)))
     (nil? (namespace (first form)))))
 
 (defn- form-contains-turn-answer-call?
@@ -624,7 +624,7 @@
   "True when `form` is a call whose head is a registered extension op.
    The final-answer rule is intentionally strict: ANY observed extension
    tool call (observation or mutation) makes the
-   current iteration an evidence-gathering iteration, so `(turn-answer! ...)`
+   current iteration an evidence-gathering iteration, so `(done ...)`
    must wait for the next clean iteration after the journal is rendered."
   [form]
   (and (seq? form)
@@ -638,11 +638,11 @@
 
 (defn- answer-with-extension-preflight-mismatch
   "When an iteration contains BOTH a top-level form that holds an
-   `(turn-answer! ...)` call AND a top-level form that holds any registered
+   `(done ...)` call AND a top-level form that holds any registered
    extension tool call (anywhere in its tree), return a map describing the
    violation so the engine can reject the iteration before evaluation.
 
-   The two forms may be the same form (e.g. `(do (v/cat ...) (turn-answer!
+   The two forms may be the same form (e.g. `(do (v/cat ...) (done
    ...))`) or different forms. Either way the model has no chance to observe
    the tool's final journal entry before the answer is composed."
   [code-entries]
@@ -677,13 +677,13 @@
 
 (defn- answer-with-extension-preflight-error-message
   [{:keys [answer-idx extension-idx]}]
-  (str "(turn-answer! ...) at form " (inc (or answer-idx 0))
+  (str "(done ...) at form " (inc (or answer-idx 0))
     " was DROPPED because this iteration also contains an extension tool "
     "call (form " (inc (or extension-idx 0))
     ") — the SCI loop must observe tool evidence before composing an answer. "
     "The extension call(s) in this iteration DID run; their results are in "
     "<journal> below. Do NOT re-emit them. Next iteration: emit "
-    "(turn-answer! ...) ALONE with no extension calls."))
+    "(done ...) ALONE with no extension calls."))
 
 (defn- raw-markdown-fence-leak-error [code]
   (let [fence (apply str (repeat 3 "`"))
@@ -881,7 +881,7 @@
        extracted source means svar's normalizer fell into a recursive shape;
        structured rejection beats a JVM crash.
      - `answer-with-extension-preflight-mismatch` across blocks. An iteration
-       containing both `(turn-answer! …)` and any extension tool call is
+       containing both `(done …)` and any extension tool call is
        structurally unobservable; gather evidence first, answer next.
      - Duplicate-block dedup. Some providers stutter and emit the same
        block twice; we keep the first copy and drop the rest."
@@ -911,7 +911,7 @@
         ;;                       `render/code-block-segments`)
         ;;   :vis/structurally-silent?
         ;;                     — true iff the block contains ONLY structural
-        ;;                       forms (`(turn-answer! ...)` / `(set-
+        ;;                       forms (`(done ...)` / `(set-
         ;;                       conversation-title! ...)`); channels that
         ;;                       don't read segments can drop the whole entry.
         raw-entries                  (mapv (fn [b]
@@ -1011,7 +1011,7 @@
     (some-> (:extensions environment) deref seq)))
 
 (defn- final-answer-structural-criteria-errors
-  "Built-in structural gate for `(turn-answer! ...)`. Returns a vector
+  "Built-in structural gate for `(done ...)`. Returns a vector
    of human-readable reason strings; empty when all criteria pass.
 
    Distinct from `final-answer-gate-error`'s extension hook dispatch:
@@ -1021,7 +1021,7 @@
    `answer-form-error`):
 
      #1 No error in any non-answer block of the latest iteration.
-        Sibling errors in the same iteration as `turn-answer!` mean
+        Sibling errors in the same iteration as `done` mean
         the model has not yet observed a clean state to derive from.
 
      #2 No extension tool call in the latest iteration.
@@ -1052,10 +1052,10 @@
         ;; A prior iteration only counts as "evidence" if at least one
         ;; of its non-error blocks actually ran. Empty/preflight-only
         ;; iterations do NOT establish evidence — otherwise the model
-        ;; can game the gate: emit `(v/patch …)+(turn-answer! …)` once
+        ;; can game the gate: emit `(v/patch …)+(done …)` once
         ;; (preflight rejects the whole iteration; nothing executes,
         ;; nothing is patched), then on the next turn emit a clean
-        ;; `(turn-answer! …)` and have it accepted because some prior
+        ;; `(done …)` and have it accepted because some prior
         ;; iteration "exists". The patch never happened.
         evidence-prior? (boolean
                           (some (fn [[_ {ibs :blocks}]]
@@ -1069,7 +1069,7 @@
       (seq errored-idxs)
       (conj (str "latest iteration had errors in form(s) "
               (str/join ", " (map (comp str inc) errored-idxs))
-              " — resolve before turn-answer!"))
+              " — resolve before done"))
 
       (seq extension-idxs)
       (conj (str "latest iteration contains extension tool call(s) in form(s) "
@@ -1077,7 +1077,7 @@
               " — gather evidence first; answer in a later clean iteration with no extension calls"))
 
       (and (not evidence-this?) (not evidence-prior?))
-      (conj "<journal> contains no evidence for this turn yet — probe before turn-answer!"))))
+      (conj "<journal> contains no evidence for this turn yet — probe before done"))))
 
 (defn final-answer-gate-error
   "Run final-answer validation, structural floor first then extension hooks.
@@ -1104,7 +1104,7 @@
                        :code-entries (:code-entries extra-ctx)
                        :previous-iterations (:previous-iterations extra-ctx)})]
      (if (seq structural)
-       (str "turn-answer! refused. Failing criteria:\n  - "
+       (str "done refused. Failing criteria:\n  - "
          (str/join "\n  - " structural))
        (let [ctx (merge {:environment environment
                          :phase :turn.answer/validate
@@ -1453,7 +1453,7 @@
                                            {:type :vis/invalid-reasoning-level
                                             :got reasoning-level}))))
           ;; Reset the per-environment answer-atom before this iteration.
-          ;; The SCI sandbox's `(turn-answer! "...")` fn `reset!`s it during
+          ;; The SCI sandbox's `(done "...")` fn `reset!`s it during
           ;; code evaluation; we read it back after all forms run.
           answer-atom (or (:answer-atom environment)
                         (throw (ex-info "environment missing :answer-atom"
@@ -1629,9 +1629,9 @@
           total-blocks (count code-entries)
           ;; Engine-level answer-after-error gate (ANALYSIS.md §4.2):
           ;; an atom that flips true the moment a non-answer form errors.
-          ;; Any subsequent form containing an `(turn-answer! ...)` call is
+          ;; Any subsequent form containing an `(done ...)` call is
           ;; rejected before SCI re-evals it, so a model that emits
-          ;; `(z/patch ...)`-fails-then-(turn-answer! "shipped") gets a
+          ;; `(z/patch ...)`-fails-then-(done "shipped") gets a
           ;; structured preflight error in place of the answer instead
           ;; of a fabricated success-claim.
           prior-error-atom (atom nil)
@@ -1655,7 +1655,7 @@
                                         :vis/structurally-silent? (boolean structurally-silent?)
                                         :started-at-ms   (System/currentTimeMillis)}))
                            ;; Stamp form-idx BEFORE eval so any
-                           ;; `(turn-answer! ...)` call inside this form
+                           ;; `(done ...)` call inside this form
                            ;; captures the right index on the
                            ;; answer-atom payload.
                            (reset! current-form-idx-atom idx)
@@ -1675,7 +1675,7 @@
                                                :op :edamame/parse}
                                               ;; Answer-after-error gate: any prior form
                                               ;; in this iteration errored, and this form
-                                              ;; carries an `(turn-answer! ...)` call. Reject
+                                              ;; carries an `(done ...)` call. Reject
                                               ;; before eval so the answer can't claim
                                               ;; success on top of an unobserved failure.
                                               (and @prior-error-atom
@@ -1684,10 +1684,10 @@
                                                :error  (op-error
                                                          (str "Answer-after-error gate: form "
                                                            (inc idx) " of " total-blocks
-                                                           " contains an `(turn-answer! ...)` call, but "
+                                                           " contains an `(done ...)` call, but "
                                                            "a prior form in this iteration errored: "
                                                            (truncate (str @prior-error-atom) 280)
-                                                           ". Recovery: drop the (turn-answer! ...) so the host loops; "
+                                                           ". Recovery: drop the (done ...) so the host loops; "
                                                            "the next iteration's <journal> carries the error "
                                                            "and you can observe + repair before answering.")
                                                          {:code expr :phase :vis/guard})
@@ -1783,7 +1783,7 @@
                                           ;;   - SCI runtime `:vis/silent` sentinel (legacy host primitives)
                                           ;;   - block-level structurally-silent? (block contains only
                                           ;;     answer / title forms; no useful code segments)
-                                          ;; Mixed blocks (`(def x 1)` alongside `(turn-answer! …)`)
+                                          ;; Mixed blocks (`(def x 1)` alongside `(done …)`)
                                           ;; are NOT silent; the channel reads :render-segments and
                                           ;; hides only the structural sub-forms.
                                           :silent?     (boolean (or (:vis/silent result*)
@@ -1824,7 +1824,7 @@
                                     :repaired? (:repaired? result)}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
-                             ;; (turn-answer! …) / (set-conversation-title! …)
+                             ;; (done …) / (set-conversation-title! …)
                              ;; forms while keeping the prelude visible.
                              ;; Legacy channels that only read :code fall
                              ;; back to the full block source.
@@ -1841,11 +1841,11 @@
                                                idx)))
                              blocks)]
       (if-let [{value :value form-idx :position} @answer-atom]
-          ;; FINAL path: model called `(turn-answer! "...")` during this
+          ;; FINAL path: model called `(done "...")` during this
           ;; iteration. Atom payload is `{:value :form-idx}`. The
           ;; form-scoped error gate fires if the answer-bearing form's
           ;; own evaluation errored anyway
-          ;;      (e.g. `(do (v/edit ...throws...) (turn-answer! "x"))` -
+          ;;      (e.g. `(do (v/edit ...throws...) (done "x"))` -
           ;;      the form had inner work that crashed), the answer
           ;; answer is discarded with the form's own error. Sibling
           ;; forms before the answer-form may error freely; that
@@ -1874,7 +1874,7 @@
                                  gate-error
                                  gate-error)
               ;; Surface the validation error on the answer-bearing
-              ;; form's row so the model sees \"my (turn-answer! ...) was
+              ;; form's row so the model sees \"my (done ...) was
               ;; rejected because...\" right next to its own code.
               blocks*     (cond-> blocks
                             (and validation-error form-idx
@@ -1943,11 +1943,11 @@
                :final-result {:final?           true
                               :answer           final-answer*
                               ;; Index of the form that called
-                            ;; `(turn-answer! ...)`. Channels use this to
+                            ;; `(done ...)`. Channels use this to
                             ;; ELIDE the answer-bearing form from the
                             ;; per-iteration code trace (the channel
                             ;; renders the answer text below; showing
-                            ;; `(turn-answer! "...")` above it is
+                            ;; `(done "...")` above it is
                               ;; redundant prose-as-code).
                               :answer-position  form-idx}
                :api-usage api-usage
@@ -3000,7 +3000,7 @@
                         ;; whatever's already on screen.
                         ;;
                         ;; `:answer-position` tells the channel which
-                        ;; per-block slot was the `(turn-answer! ...)` call;
+                        ;; per-block slot was the `(done ...)` call;
                         ;; the progress tracker elides that slot so
                         ;; the renderer doesn't paint the answer
                         ;; call's code above the answer text.
@@ -3095,7 +3095,7 @@
              ;; ALWAYS the plain-text rendering, never a stringified
              ;; IR vector. Some terminal paths (e.g. error/cancel
              ;; fallbacks) feed `:answer` in as the raw value passed
-             ;; to `(turn-answer! ...)`; without this coercion the TUI
+             ;; to `(done ...)`; without this coercion the TUI
              ;; resume path showed literal `[:ir [:p "..."]]` to
              ;; the user (convo b7ba1d93 regression).
              :answer          (when-let [a (:answer result)] (answer-str a))
@@ -3808,7 +3808,7 @@
                                         :conversation-id nil})
         environment-atom         (atom nil)
         environment-id           (str (util/uuid))
-        ;; Iteration-final-answer signal. The SCI sandbox's `(turn-answer!
+        ;; Iteration-final-answer signal. The SCI sandbox's `(done
         ;; "...")` fn `reset!`s this atom with `{:value :form-idx}`;
         ;; the iteration loop reads it back after evaluating each
         ;; iteration's forms and discards iff the form at `:form-idx`
@@ -3853,13 +3853,13 @@
                                               :title         title
                                               :system-prompt system-prompt}
                                        root-provider (assoc :provider root-provider))))
-        ;; SCI binding for `(turn-answer! "...")` - the canonical turn-
+        ;; SCI binding for `(done "...")` - the canonical turn-
         ;; termination call. Closes over `answer-atom` AND
         ;; `current-form-idx-atom` so the iteration loop can scope
         ;; the discard check to the form that actually called this.
         ;; Returns the marker keyword so the per-form result row makes
         ;; request visible.
-        answer-fn                (fn turn-answer! [s]
+        answer-fn                (fn done [s]
                                    ;; Canonicalize the answer value to
                                    ;; `[:ir & nodes]` AT THE ENTRY
                                    ;; POINT. From here on, every
@@ -3924,7 +3924,7 @@
         ;; `(v/conversation-state)` -> :current-turn :user-request (and through
         ;; :transcript :turns for cross-turn history), so a separate
         ;; sandbox primitive would just duplicate the surface.
-        env-bindings             {'turn-answer!            answer-fn
+        env-bindings             {'done            answer-fn
                                   'set-conversation-title! conversation-title-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}
         (env/create-sci-context (merge env-bindings

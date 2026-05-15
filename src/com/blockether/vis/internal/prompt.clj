@@ -764,7 +764,7 @@
 
 ARCHITECTURE
   Turn       : one user<->vis exchange. Iterate internally until
-               `(turn-answer! <IR>)` is accepted (see EMIT_FINAL).
+               `(done <IR>)` is accepted (see EMIT_FINAL).
   Iteration  : one reply with one or more ```clojure``` blocks.
                λVis evals each, records evidence, asks again.
   Block      : one ```clojure fenced form. Unit of eval and
@@ -795,16 +795,16 @@ LOOP DISCIPLINE
   same iteration as a real probe (e.g. `(do <meta> <probe>)`).
 
 EMIT_FINAL
-  (turn-answer! <IR>)
+  (done <IR>)
 
   Accepted only in a clean iteration: no errors, no extension tool
   calls in this iteration, no reload, and <journal> already shows a
   prior-iteration non-error non-answer block (or another non-error
   block in this same iteration). The default flow is two-step:
   iteration N gathers evidence with tool calls; iteration N+1 emits
-  `(turn-answer! …)` alone. If you bundle a tool call with
-  `(turn-answer! …)` in one iteration, the tool RUNS but the answer
-  is dropped — re-emit `(turn-answer! …)` alone next round and do
+  `(done …)` alone. If you bundle a tool call with
+  `(done …)` in one iteration, the tool RUNS but the answer
+  is dropped — re-emit `(done …)` alone next round and do
   NOT re-emit the tool call.
 
 ANSWER_IR

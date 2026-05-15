@@ -168,7 +168,7 @@
                         ;; vectors so resumed conversations render the
                         ;; same way live ones do - just the answer
                         ;; text below the iteration trace, never the
-                        ;; `(turn-answer! "...")` call as code above it.
+                        ;; `(done "...")` call as code above it.
                         turn-iterations (vis/db-list-conversation-turn-iterations d (:id q))
                         last-iteration-id (some-> (last turn-iterations) :id)
                         llm-routing (some-> (last turn-iterations) :metadata :llm)
@@ -182,7 +182,7 @@
                                                             (= (:id it) last-iteration-id)
                                                             (seq all-exprs))
                                              ;; Elide:
-                                             ;; 1. the `(turn-answer! "...")` form on the answer iteration
+                                             ;; 1. the `(done "...")` form on the answer iteration
                                              ;;    (rule b': always last form)
                                              ;; 2. any block tagged `:vis/preflight?` — those are
                                              ;;    synthetic gate rejections, model-facing only,
@@ -204,12 +204,12 @@
                                                    (and (not (visible-code-segments? b))
                                                      (let [code (str (:code b))]
                                                        (or (str/includes? code "(set-conversation-title!")
-                                                         (str/includes? code "(turn-answer!"))))
+                                                         (str/includes? code "(done"))))
                                                    (and (= :vis/silent (:result b))
                                                      (not (seq (:render-segments b)))
                                                      (let [code (str (:code b))]
                                                        (or (str/includes? code "(set-conversation-title!")
-                                                         (str/includes? code "(turn-answer!")))))))
+                                                         (str/includes? code "(done")))))))
                                              preflight-idxs (into #{}
                                                               (keep-indexed
                                                                 (fn [i b] (when (:vis/preflight? b) i)))

@@ -119,7 +119,7 @@
 ;;   `extension/op-tag`          - canonical op-keyword -> :op.tag/... value.
 ;;   `extension/op-presentation` - `:info` metadata `{:tag ...}` embedded in tool envelopes.
 ;; The iteration loop's final-answer gate rejects any registered extension op
-;; in the same iteration as `(turn-answer! ...)`; op tags remain mandatory for
+;; in the same iteration as `(done ...)`; op tags remain mandatory for
 ;; audit/permission policy.
 ;; Editing used to keep its own copies; they were thin shims and crossed
 ;; the abstraction boundary (color-role lived here too). Use the engine

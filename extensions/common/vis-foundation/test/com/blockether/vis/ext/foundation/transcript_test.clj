@@ -49,7 +49,7 @@
         q1  (vis/db-store-conversation-turn! s {:parent-conversation-id cid
                                                 :user-request "First turn"
                                                 :status :running})]
-    ;; Turn 1: terminal iteration with a `(def ...)` var, an `(turn-answer! ...)`
+    ;; Turn 1: terminal iteration with a `(def ...)` var, an `(done ...)`
     ;; block (idx 1), thinking trace, system prompt, and a full LLM
     ;; message envelope. The persistance layer derives :llm_system_prompt
     ;; + :llm_user_prompt from the :llm-messages we pass in here.
@@ -59,7 +59,7 @@
                                           :result            2
                                           :stdout            "hello from clojure"
                                           :execution-time-ms 5}
-                                         {:code              "(turn-answer! \"42\")"
+                                         {:code              "(done \"42\")"
                                           :result            :vis/answer
                                           :execution-time-ms 2}]
                                 :answer        "42"
@@ -236,7 +236,7 @@
               iter  (first (:iterations turn))]
           ;; Reasoning trace surfaces verbatim on the iteration.
           (expect (= "Reasoning about arithmetic" (:thinking iter)))
-          ;; The terminal block index points at the `(turn-answer! ...)` form.
+          ;; The terminal block index points at the `(done ...)` form.
           (expect (= 1 (:answer-position iter)))
           ;; Per-iteration vars carry the (def ...) we persisted.
           (let [vars (:vars iter)]
@@ -446,7 +446,7 @@
           (vis/db-store-iteration! s {:conversation-turn-id qid
                                       :blocks [{:code (str "(def x 1)\n"
                                                         "(set-conversation-title! \"Mixed\")\n"
-                                                        "(turn-answer! [:ir [:p \"Done\"]])")
+                                                        "(done [:ir [:p \"Done\"]])")
                                                 :render-segments [{:kind :code :source "(def x 1)"}
                                                                   {:kind :title :value "Mixed"}
                                                                   {:kind :answer-ref}]
@@ -458,7 +458,10 @@
           (let [out (transcript/transcript-md s cid)]
             (expect (str/includes? out "```clojure\n(def x 1)\n```"))
             (expect (str/includes? out "_conversation title:_ `Mixed`"))
-            (expect (not (str/includes? out "turn-answer!")))
+            ;; Render-segments path: the raw `(done …)` call form must
+            ;; not appear in the rendered transcript (it's elided in
+            ;; favor of the answer reference).
+            (expect (not (str/includes? out "(done [:ir")))
             (expect (not (str/includes? out "set-conversation-title!")))
             (expect (not (str/includes? out "Result: `:vis/answer`")))))
         (finally (vis/db-dispose-connection! s)))))
@@ -507,7 +510,7 @@
           ;; label with one bullet per var.
             (expect (str/includes? out "_vars defined this iteration:_"))
             (expect (str/includes? out "`x`"))
-          ;; The `(turn-answer! ...)` block is flagged with `[answer]` on
+          ;; The `(done ...)` block is flagged with `[answer]` on
           ;; the status line so the reader spots the terminal form.
             (expect (str/includes? out "[answer]"))
           ;; The final answer text renders under a `#### Final answer`
