@@ -2234,7 +2234,6 @@
         conversation-base {:id           (:conversation-id environment)
                            :title        (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
                            :turn-id      conversation-turn-id
-                           :iteration-id nil
                            :user-request user-request}
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
@@ -2443,9 +2442,13 @@
                                       {:environment environment
                                        :conversation
                                        (assoc conversation-base
-                                         :iteration-id (some-> (:current-iteration-id-atom environment) deref))})
+                                         :iteration {:id (some-> (:current-iteration-id-atom environment) deref)
+                                                     :position (inc (long iteration))})})
                     _ (env/bind-and-bump! environment 'ctx current-ctx-map)
-                    iteration-context (str ";; ctx =\n" (pr-str current-ctx-map))
+                    iteration-context (vctx/render-iteration-trailer
+                                        {:environment   environment
+                                         :journal-iters journal-iters
+                                         :ctx           current-ctx-map})
                       ;; Single canonical preserved-thinking replay path —
                       ;; svar's per-provider wire serializer turns the
                       ;; canonical assistant messages into native
