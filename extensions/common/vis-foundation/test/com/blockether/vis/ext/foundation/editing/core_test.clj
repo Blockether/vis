@@ -15,7 +15,6 @@
    [clojure.set]
    [clojure.string :as string]
    [com.blockether.vis.ext.foundation.editing.core :as editing]
-   [com.blockether.vis.internal.env.handle :as handle]
    [com.blockether.vis.internal.extension :as extension]
    [lazytest.core :refer [defdescribe expect it throws?]]))
 
@@ -100,7 +99,7 @@
   (it "documents v/rg's exact single spec-map grammar, not the old shorthand"
     (expect (string/includes? editing/editing-prompt
               "{:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]}"))
-    (expect (string/includes? editing/editing-prompt "no regex/shorthand"))
+    (expect (string/includes? editing/editing-prompt "Literal substrings only (no regex)"))
     (expect (not (string/includes? editing/editing-prompt "(v/rg :include/:exclude"))))
 
   (it "registers journal + channel renderers on every fn-symbol"
@@ -132,25 +131,28 @@
     (expect (= :extension/unregistered-op (:type (ex-data thrown))))))
 
 (defdescribe editing-prompt-read-policy-test
-  (it "teaches full-read vars, canonical patching, and no duplicate rereads by default"
+  (it "teaches windowed reads, canonical patching, and no duplicate rereads by default"
     (let [patch-symbol (some #(when (= 'patch (:ext.symbol/symbol %)) %)
                          editing/editing-symbols)]
-      (expect (string/includes? editing/editing-prompt
-                "v/cat reads one window"))
-      (expect (string/includes? editing/editing-prompt
-                "(:next-offset prev)"))
+      ;; Post-handle removal the prompt is RLM-shaped: plain-map results,
+      ;; refine-don't-re-read tactics, explicit pagination via :next-offset.
+      (expect (string/includes? editing/editing-prompt "PLAIN CLOJURE MAP"))
+      (expect (string/includes? editing/editing-prompt "(:next-offset prev)"))
       (expect (string/includes? editing/editing-prompt
                 "(v/patch [{:path :search :replace}])"))
       (expect (string/includes? editing/editing-prompt
                 "each :search must match exactly once"))
-      (expect (string/includes? editing/editing-prompt
-                "Codex apply_patch envelope"))
+      (expect (string/includes? editing/editing-prompt "Codex envelope"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "Codex `apply_patch` envelope"))
       (expect (string/includes? (:ext.symbol/doc patch-symbol)
                 "validate the full plan against the live filesystem\n   before any write"))
       (expect (string/includes? editing/editing-prompt
                 "Do NOT v/cat to verify"))
+      (expect (string/includes? editing/editing-prompt "RLM TACTICS"))
+      (expect (string/includes? editing/editing-prompt "EXPLORE WIDE FIRST"))
+      (expect (string/includes? editing/editing-prompt "COMBINE"))
+      (expect (string/includes? editing/editing-prompt "EXPLORE DEEPER"))
       (expect (not (string/includes? editing/editing-prompt "read-all-lines")))
       (expect (not (string/includes? editing/editing-prompt "write-lines")))
       (expect (not (string/includes? editing/editing-prompt "update-file"))))))
@@ -160,12 +162,15 @@
     (let [list-files (private-fn "list-files")
           ls-tool    (private-fn "ls-tool")
           out        (list-files ".")
-          summary    (handle/summary (:result (ls-tool ".")))]
+          result     (:result (ls-tool "."))]
       (expect (= "." (:path out)))
       (expect (= (str (.toAbsolutePath (fs/path (fs/cwd))))
                 (:absolute-path out)))
-      (expect (= (:absolute-path out) (:absolute-path summary)))
-      (expect (= :dir (:type out))))))
+      ;; Tool result is the plain tree map plus `:vis.op` / `:entry-count`.
+      (expect (= :v/ls (:vis.op result)))
+      (expect (= (:absolute-path out) (:absolute-path result)))
+      (expect (= :dir (:type out)))
+      (expect (= (count (:children out)) (:entry-count result))))))
 
 (defdescribe vis-cat-structured-shape-test
   (it "returns the paginated shape (small file, single window, eof)"
@@ -274,56 +279,46 @@
         (expect (throws? clojure.lang.ExceptionInfo
                   #(apply read-file path bad)))))))
 
-(defn- cat-handle
-  "Construct a CatHandle directly for renderer-contract tests, mirroring
-   what `cat-tool` does internally."
+(defn- cat-result
+  "Construct the plain-map shape `cat-tool` produces, for renderer-contract
+   tests. Mirrors what the tool returns post handle-removal: no protocol,
+   no store, just the data."
   [path offset lines next-offset eof? truncated-by]
-  (handle/clear-store!)
-  (handle/make-cat
-    {:path path
-     :lines lines
-     :offset offset
-     :next-offset next-offset
-     :eof? eof?
-     :truncated-by truncated-by}))
+  {:vis.op :v/cat
+   :path path
+   :offset offset
+   :line-count (count lines)
+   :next-offset next-offset
+   :eof? eof?
+   :truncated-by truncated-by
+   :lines (vec lines)})
 
 (defdescribe new-renderer-contract-test
-  (it "v/cat journal renderer collapses to a one-line handle summary plus the read-more hint"
+  (it "v/cat journal renderer emits header + peek block keyed on plain-map keys"
     (let [journal-render-cat (private-fn "journal-render-cat")
-          h    (cat-handle "src/demo.clj" 1
+          r    (cat-result "src/demo.clj" 1
                  ["alpha" "beta" "gamma" "delta" "epsilon" "zeta"]
                  nil true :eof)
-          out  (journal-render-cat h)]
-      ;; New shape: handle's print-method emits `#vis/handle {...}` on
-      ;; one line. The journal must not echo file content (that path is
-      ;; closed.
-      (expect (string/starts-with? out "#vis/handle "))
-      (expect (string/includes? out ":op :v/cat"))
-      (expect (string/includes? out ":path \"src/demo.clj\""))
-      (expect (string/includes? out ":line-count 6"))
-      (expect (string/includes? out "<your binding>"))
-      ;; The handle's :first-line / :last-line summary intentionally
-      ;; previews bookends, so a 6-line file's "alpha" / "zeta" can
-      ;; appear in the summary. The leak guarantee is only about
-      ;; numbered-line content blocks (`1: alpha` etc.), which the new
-      ;; renderer no longer emits.
-      (expect (not (string/includes? out "1: alpha")))))
+          out  (journal-render-cat r)]
+      (expect (string/starts-with? out "v/cat \"src/demo.clj\""))
+      (expect (string/includes? out "6 line(s) from line 1"))
+      (expect (string/includes? out "(eof)"))
+      ;; Peek bakes the absolute line numbers into the journal.
+      (expect (string/includes? out "1: alpha"))
+      (expect (string/includes? out "6: zeta"))))
 
-  (it "v/cat handle summary surfaces pagination metadata"
-    (let [h    (cat-handle "big.log" 1 ["a" "b" "c" "d"] 5 false :limit)
-          summ (handle/summary h)]
-      ;; Pagination state moves from the journal header into the
-      ;; handle's summary; the model reads :next-offset / :eof? off the
-      ;; summary to decide whether to page.
-      (expect (= 5 (:next-offset summ)))
-      (expect (false? (:eof? summ)))
-      (expect (= :limit (:truncated-by summ))))))
+  (it "v/cat journal renderer reports paging hints when window is partial"
+    (let [journal-render-cat (private-fn "journal-render-cat")
+          r    (cat-result "big.log" 1 ["a" "b" "c" "d"] 5 false :limit)
+          out  (journal-render-cat r)]
+      (expect (string/includes? out "(next-offset 5)"))
+      (expect (not (string/includes? out "(eof)"))))))
 
 (defdescribe channel-renderer-contract-test
   (it "v/cat channel renderer returns canonical [:ir ...] with a :code block, line-numbered from :offset"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          h   (cat-handle "src/demo.clj" 1 ["only-line"] nil true :eof)
-          out (channel-render-cat h)]
+          r   (cat-result "src/demo.clj" 1 ["only-line"] nil true :eof)
+          out (channel-render-cat r)]
       (expect (vector? out))
       (expect (= :ir (first out)))
       (let [code-blocks (filter #(and (vector? %) (= :code (first %))) (tree-seq sequential? seq out))
@@ -333,9 +328,9 @@
 
   (it "v/cat channel renderer separates inline text/code tokens with spaces"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          h   (cat-handle "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
+          r   (cat-result "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
                 1898 ["x"] 1928 false :limit)
-          out (channel-render-cat h)
+          out (channel-render-cat r)
           paragraph (nth out 2)
           text (apply str (filter string? (tree-seq sequential? seq paragraph)))]
       (expect (string/includes? text
@@ -343,8 +338,8 @@
 
   (it "v/cat channel renderer respects :offset for mid-file windows"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          h   (cat-handle "f.txt" 100 ["hundred" "hundred-one"] 102 false :limit)
-          out (channel-render-cat h)
+          r   (cat-result "f.txt" 100 ["hundred" "hundred-one"] 102 false :limit)
+          out (channel-render-cat r)
           body (last (first (filter #(and (vector? %) (= :code (first %)))
                               (tree-seq sequential? seq out))))]
       (expect (= :ir (first out)))
@@ -423,10 +418,11 @@
                 :include ["*.clj"]}
           grep (private-fn "grep-files")
           rg (private-fn "rg-tool")
-          ;; rg-tool now returns an RgHandle as :result; deref to compare
-          ;; against the raw grep payload (vec of hits).
-          rg-handle (:result (rg spec))]
-      (expect (= (:hits (grep spec)) (deref rg-handle)))))
+          ;; rg-tool now returns a plain map as :result; :hits IS the
+          ;; grep payload — no protocol indirection.
+          rg-result (:result (rg spec))]
+      (expect (= :v/rg (:vis.op rg-result)))
+      (expect (= (:hits (grep spec)) (:hits rg-result)))))
 
   (it "rejects shorthand and unknown keys instead of silently changing grammar"
     (let [grep (private-fn "grep-files")
@@ -542,18 +538,16 @@
       (expect (string/includes? rendered "target/editing-test/out.txt"))))
   (it "search-hits renderer formats partial-projection hits without raw EDN fallback"
     (let [render-hits (private-fn "channel-render-rg")
-          _ (handle/clear-store!)
-          rg-handle (handle/make-rg
-                      {:hits [{:line 462
-                               :text "  (inc (reduce max 0 ...))"}
-                              {:line 472
-                               :text "(defn- workspace-tabs-or-base"}]
-                       :truncated-by :end-of-results}
-                      {:spec nil :paths nil})
-          rendered (render-hits rg-handle)
+          rg-result {:vis.op :v/rg
+                     :hit-count 2
+                     :truncated-by :end-of-results
+                     :hits [{:line 462
+                             :text "  (inc (reduce max 0 ...))"}
+                            {:line 472
+                             :text "(defn- workspace-tabs-or-base"}]}
+          rendered (render-hits rg-result)
           text-leaves (filter string? (tree-seq sequential? seq rendered))
           joined (string/join "\n" text-leaves)]
-      ;; Channel renderer must return canonical IR, not raw text/EDN.
       (expect (vector? rendered))
       (expect (= :ir (first rendered)))
       (expect (not (string/includes? joined "{:line 462")))
@@ -564,14 +558,13 @@
       (expect (string/includes? joined "workspace-tabs-or-base"))))
   (it "search-hits renderer keeps full path:line prefix when path present"
     (let [render-hits (private-fn "channel-render-rg")
-          _ (handle/clear-store!)
-          rg-handle (handle/make-rg
-                      {:hits [{:path "src/foo.clj"
-                               :line 10
-                               :text "(def x 1)"}]
-                       :truncated-by :end-of-results}
-                      {:spec nil :paths ["src/foo.clj"]})
-          rendered (render-hits rg-handle)
+          rg-result {:vis.op :v/rg
+                     :hit-count 1
+                     :truncated-by :end-of-results
+                     :hits [{:path "src/foo.clj"
+                             :line 10
+                             :text "(def x 1)"}]}
+          rendered (render-hits rg-result)
           text-leaves (filter string? (tree-seq sequential? seq rendered))
           joined (string/join " " text-leaves)]
       (expect (string/includes? joined "src/foo.clj:10"))
@@ -587,12 +580,13 @@
       ;; (e.g. :presentation, :stdout when set) may also appear.
       (expect (= required (clojure.set/intersection required (set (keys out)))))
       (expect (true? (:success? out)))
-      ;; v/cat now returns a CatHandle as :result. Lines are reachable
-      ;; via deref; the envelope shape (:success? :result ...) is unchanged.
-      (let [h (:result out)]
-        (expect (= ["alpha" "beta"] (deref h)))
-        (expect (= "alpha" (-> h :info :first-line)))
-        (expect (= "beta" (-> h :info :last-line))))
+      ;; v/cat now returns a plain map as :result. :lines is the vec
+      ;; directly; no deref, no handle.
+      (let [r (:result out)]
+        (expect (= :v/cat (:vis.op r)))
+        (expect (= ["alpha" "beta"] (:lines r)))
+        (expect (= 2 (:line-count r)))
+        (expect (= 1 (:offset r))))
       (expect (not (contains? out :markdown)))
       (expect (nil? (:error out)))))
 

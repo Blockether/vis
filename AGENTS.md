@@ -79,6 +79,25 @@ Use `v/patch` for all text edits, including `.clj`/`.cljc`/`.cljs`/`.edn`. The
 - If delimiters break, run `clj-paren-repair <files>`; do not hand-balance.
 - Use only `clj-nrepl-eval` for REPL eval and `clj-paren-repair` for delimiter repair.
 
+## Prompt system separation
+
+- `CORE_SYSTEM_PROMPT` in `src/com/blockether/vis/internal/prompt.clj` is the
+  ENGINE contract only: loop, def discipline, answer shape, banned heads,
+  IR primitives. It MUST NOT name any extension symbol (`v/cat`, `v/rg`,
+  `v/patch`, `v/ls`, `v/conversation-state`, …) and MUST NOT explain any
+  extension-owned concept (handles, RLM tactics, tool strategies, mutation
+  invalidation, …).
+- Extension-facing prompt copy lives behind `:ext/prompt` on each
+  extension. Foundation's `:ext/prompt` (extensions/common/vis-foundation)
+  owns the `v/` tool docs and RLM tactics block.
+- Engine code may reference extensions by alias only when wiring
+  (`active-extensions`, `extensions-snapshot`) — never to inline
+  extension prose into the core prompt.
+- Tool results are PLAIN CLOJURE DATA. No protocol handles, no opaque
+  records, no sandbox-private accessors. Each tool returns a map; the
+  model destructures with `:keys`. Bounded preview is the
+  `:journal-render-fn` / `:channel-render-fn` job, not the value shape.
+
 ## Verification
 
 - Docs-only changes, including this file, do not require `verify.sh`.
