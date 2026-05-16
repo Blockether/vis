@@ -21,6 +21,19 @@
     (str/replace #"\n{2,}" "\n")
     str/trim))
 
+(defdescribe format-tokens-test
+  (it "omits zero cached input tokens"
+    (expect (= "↑100 ↓20"
+              (fmt/format-tokens {:input 100 :output 20 :cached 0})))
+    (expect (= "↑100 ↓20"
+              (fmt/format-tokens {:input 100 :output 20}))))
+
+  (it "shows positive cached input tokens"
+    (expect (= "↑100 (cached 70) ↓20"
+              (fmt/format-tokens {:input 100 :output 20 :cached 70})))
+    (expect (= "↑0 (cached 70) ↓20"
+              (fmt/format-tokens {:output 20 :cached-input 70})))))
+
 (defdescribe strip-def-docstrings-test
   (it "strips the docstring from a plain (def …) form"
     (expect (= "(def x 42)"

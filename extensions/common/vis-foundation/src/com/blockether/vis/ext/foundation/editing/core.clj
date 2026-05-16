@@ -91,8 +91,9 @@
 
 (defn- rel-path [^File f]
   (let [cwd (.toAbsolutePath (fs/path (workspace/cwd)))
-        p   (.toAbsolutePath (.toPath f))]
-    (str (.relativize cwd p))))
+        p   (.toAbsolutePath (.toPath f))
+        rel (str (.relativize cwd p))]
+    (if (str/blank? rel) "." rel)))
 
 (defn- ensure-parent-dirs! [^File f]
   (when-let [parent (.getParentFile f)]
@@ -279,6 +280,7 @@
 (defn- file->entry [^File f]
   {:name (.getName f)
    :path (rel-path f)
+   :absolute-path (.getAbsolutePath f)
    :type (if (.isDirectory f) :dir :file)
    :size (if (.isDirectory f) nil (.length f))
    :hidden? (.isHidden f)})
@@ -1053,7 +1055,7 @@
 (defn- journal-render-cat
   "v/cat journal preview: one-line handle summary plus the standard
    read-more hint. The handle's `print-method` already emits the
-   summary form; the model sees `#vis/handle {:kind :v.cat :path X
+   summary form; the model sees `#vis/handle {:op :v/cat :path X
    :line-count N ...}` and reaches content via deref or `(v/view h …)`.
 
    This renderer collapses to a single line in advance of Phase 7's

@@ -1122,7 +1122,7 @@
 ;; the answer call is anywhere inside) or over-shows (raw `(done …)`
 ;; source appears above the rendered IR answer, redundant).
 ;;
-;; `code-block-segments` is a pure helper that parses the block source via
+;; `parse-block-display` is a pure helper that parses the block source via
 ;; edamame and splits it into ordered structural segments. Channels read the
 ;; segments at display time and render each :kind appropriately.
 ;; ============================================================================
@@ -1261,7 +1261,7 @@
 
     :else form))
 
-(defn code-block-segments
+(defn parse-block-display
   "Parse `block-source` into ordered render segments — each top-level form
    classified as `{:kind :code|:title|:answer-ref ...}`. Consecutive `:code`
    forms collapse into a single `:code` segment so a prelude of `(def …)`
@@ -1375,5 +1375,5 @@
   [block-source]
   (let [src (str (or block-source ""))]
     (and (not (str/blank? src))
-      (let [segs (code-block-segments src)]
+      (let [segs (parse-block-display src)]
         (not-any? #(= :code (:kind %)) segs)))))

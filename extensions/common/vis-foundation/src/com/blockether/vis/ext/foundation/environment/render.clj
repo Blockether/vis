@@ -97,6 +97,13 @@
     (.startsWith cwd (str git-root "/")) (subs cwd (inc (count git-root)))
     :else                           nil))
 
+(defn- repo-name
+  [git]
+  (when-let [root (some-> git :root str string/trim not-empty)]
+    (let [trimmed (string/replace root #"/+$" "")
+          parts   (remove string/blank? (string/split trimmed #"/"))]
+      (last parts))))
+
 (defn- attr-str
   [v]
   (-> (str v)
@@ -125,6 +132,7 @@
                            " (" (or os-arch "?") ")"
                            " | shell: " (or shell "unknown")
                            " | locale: " (or locale "?"))
+        git-repo-name    (repo-name git)
         git-branch-line  (when git
                            (cond
                              (:detached?     git) (str "detached @ " (:detached-sha git))
@@ -154,6 +162,7 @@
                        (str "  jvm: " jvm)]
 
                 git               (conj (str "  git.root: " (:root git)))
+                git-repo-name     (conj (str "  git.repo: " git-repo-name))
                 git-branch-line   (conj (str "  git.branch: " git-branch-line))
                 git-status-line*  (conj (str "  git.status: " git-status-line*))
                 git-summary       (conj (str "  git.summary: " git-summary))

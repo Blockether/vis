@@ -191,13 +191,13 @@
 (def EXTRA_BINDINGS
   "Extra bindings beyond what SCI provides by default.
 
-   The `PHandle` protocol surface (`view`, `summary`, `kind`, `handle?`)
+   The `PHandle` protocol surface (`view`, `summary`, `op`, `handle?`)
    is intentionally injected here as bare sandbox primitives — every
-   extension that ships its own handle kind (foundation today; vis-sql
+   extension that ships its own handle op (foundation today; vis-sql
    / vis-http tomorrow) gets dispatch on these names for free, without
    re-registering its own per-extension symbols. Treat them like
    `+` / `str` / `map`: always available, dispatched polymorphically
-   by `:kind`."
+   by `:op`."
   (merge MODERN_CORE_BINDINGS
     {'abs abs, 'parse-long parse-long, 'parse-double parse-double,
      'parse-boolean parse-boolean, 'parse-uuid parse-uuid,
@@ -206,7 +206,7 @@
      'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8"))
      'view       handle/view
      'summary    handle/summary
-     'kind       handle/kind
+     'op         handle/op
      'handle?    handle/handle?}))
 
 (defn create-sci-context

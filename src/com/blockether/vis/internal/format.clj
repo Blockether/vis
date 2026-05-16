@@ -202,6 +202,7 @@
 ;; source of truth for the canonical surface form:
 ;;
 ;;   tokens   ->  "↑11461 (cached 4096) ↓35" (input, cached input, output)
+;;              or "↑11461 ↓35" when cached input is zero / unknown
 ;;   cost     ->  "~$0.006954"             (six decimal places, US locale)
 ;;   iters    ->  "1 iter" / "3 iters"    (unit auto-pluralized)
 ;;   line     ->  "<iters> / <tokens> / ~$<cost> / <duration>"
@@ -214,7 +215,8 @@
 
 (defn format-tokens
   "Render token counts in the canonical compact form:
-   '↑<input> (cached <cached-input>) ↓<output>'.
+   '↑<input> (cached <cached-input>) ↓<output>' when cached input is positive,
+   otherwise '↑<input> ↓<output>'.
 
    Up arrow = tokens fed INTO the model (prompt); down arrow = tokens
    the model produced. Cached is cached input tokens, displayed next
@@ -223,12 +225,9 @@
    `:input-cached` are accepted aliases so usage maps can name the
    direction explicitly.
 
-   Cache visibility: the `(cached N)` segment ALWAYS renders when
-   `:input` is known — zero / missing cache info renders as
-   `(cached 0)` so a cache miss is explicit on every meta line, not
-   hidden behind a falsy field. Cache hits are otherwise invisible
-   and users keep paying full prompt-token price without realising
-   it.
+   Cache visibility: the `(cached N)` segment renders only when N is
+   positive. Zero / missing cache info stays hidden so meta lines do
+   not show noisy `(cached 0)` decorations.
 
    Returns nil when no known field carries a number."
   [{:keys [input output] :as tokens}]
@@ -238,9 +237,11 @@
                       (when (number? v) v)))
               ks))]
     (let [cached-input (or (first-number [:cached-input :input-cached :cached]) 0)
+          cached-part  (when (pos? cached-input)
+                         (str " (cached " cached-input ")"))
           input-part (cond
                        (number? input)
-                       (str "↑" input " (cached " cached-input ")")
+                       (str "↑" input cached-part)
 
                        (pos? cached-input)
                        (str "↑0 (cached " cached-input ")"))

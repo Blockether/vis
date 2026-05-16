@@ -180,12 +180,12 @@
                                        (let [;; `:render-segments` is a derived view of `:code`
                                              ;; (top-level form classification). NOT stored in
                                              ;; the DB — rederived on every render via the
-                                             ;; pure `code-block-segments` parser so display
+                                             ;; pure `parse-block-display` parser so display
                                              ;; logic stays driven by the same classifier
                                              ;; that gates the live channel, with zero
                                              ;; serialization drift.
                                              code (or (:code it) "")
-                                             segments (vis/code-block-segments code)
+                                             segments (vis/parse-block-display code)
                                              all-exprs   [(cond-> {:position 0
                                                                    :code code}
                                                             (contains? it :result) (assoc :result (:result it))

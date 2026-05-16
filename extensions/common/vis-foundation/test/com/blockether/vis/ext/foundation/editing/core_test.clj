@@ -155,6 +155,18 @@
       (expect (not (string/includes? editing/editing-prompt "write-lines")))
       (expect (not (string/includes? editing/editing-prompt "update-file"))))))
 
+(defdescribe vis-ls-structured-shape-test
+  (it "represents the workspace root as dot plus absolute path"
+    (let [list-files (private-fn "list-files")
+          ls-tool    (private-fn "ls-tool")
+          out        (list-files ".")
+          summary    (handle/summary (:result (ls-tool ".")))]
+      (expect (= "." (:path out)))
+      (expect (= (str (.toAbsolutePath (fs/path (fs/cwd))))
+                (:absolute-path out)))
+      (expect (= (:absolute-path out) (:absolute-path summary)))
+      (expect (= :dir (:type out))))))
+
 (defdescribe vis-cat-structured-shape-test
   (it "returns the paginated shape (small file, single window, eof)"
     (let [path (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
@@ -286,7 +298,7 @@
       ;; one line. The journal must not echo file content (that path is
       ;; closed.
       (expect (string/starts-with? out "#vis/handle "))
-      (expect (string/includes? out ":kind :v.cat"))
+      (expect (string/includes? out ":op :v/cat"))
       (expect (string/includes? out ":path \"src/demo.clj\""))
       (expect (string/includes? out ":line-count 6"))
       (expect (string/includes? out "<your binding>"))
