@@ -887,18 +887,21 @@
         raw-fence-error              (some :vis/preflight-error raw-entries)
         parsed-total-blocks          (count raw-entries)
         empty-code-error             (when (zero? parsed-total-blocks)
-                                       "LLM returned no executable Clojure code block. Emit exactly one ```clojure block; put prose in the channel-rendered tool-call row(done [:ir ...]).")
-        multi-block-error            (when (> parsed-total-blocks 1)
-                                       (str "Iteration contains " parsed-total-blocks
-                                         " Clojure code blocks (separate ```clojure fences); emit exactly one fence per iteration. "
-                                         "Inside that one fence, write as many top-level forms as you want — SCI evals them in sequence."))
-        ;; Normalized concat of all surviving block sources — the
+                                       "LLM returned no executable Clojure code block. Emit a ```clojure``` block; put prose in (done [:ir ...]).")
+        ;; Normalized concat of all surviving block sources — also the
         ;; identity used for iteration-hash dedup in the journal.
         normalized-code              (->> raw-entries
                                        (remove :vis/preflight-error)
                                        (map (comp str/trim :expr))
                                        (remove str/blank?)
-                                       (str/join "\n"))
+                                       (str/join "\n\n"))
+        ;; Multi-fence tolerance: many providers emit several ```clojure```
+        ;; fences per iteration despite the prompt asking for one. Rather
+        ;; than reject (which burned an iteration), the engine concatenates
+        ;; all valid fences into a single eval source. SCI parses + evals
+        ;; the joined forms in sequence; the journal carries the unified
+        ;; entry.
+        multi-fence-merged?          (> parsed-total-blocks 1)
         code-hash                    (when-not (str/blank? normalized-code)
                                        (sha256-hex normalized-code))]
     {:code-entries                  (cond
@@ -906,15 +909,18 @@
                                       [{:expr ""
                                         :vis/preflight-error empty-code-error}]
 
-                                      multi-block-error
+                                      multi-fence-merged?
                                       [{:expr normalized-code
-                                        :vis/preflight-error multi-block-error}]
+                                        :block-lang "clojure"
+                                        :render-segments (render/parse-block-display normalized-code)
+                                        :multi-fence-merged? true}]
 
                                       :else
                                       raw-entries)
      :empty-code-preflight-error    empty-code-error
      :raw-fence-preflight-error     raw-fence-error
      :duplicate-blocks-normalized?  duplicate-blocks-normalized?
+     :multi-fence-merged?           multi-fence-merged?
      :normalized-code               normalized-code
      :code-hash                     code-hash
      :original-total-blocks         parsed-total-blocks}))
