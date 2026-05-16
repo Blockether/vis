@@ -12,6 +12,7 @@
    [com.blockether.svar.internal.util :as util]
    [com.blockether.vis.internal.config :as config]
    [com.blockether.vis.internal.cancellation :as cancellation]
+   [com.blockether.vis.internal.ctx :as vctx]
    [com.blockether.vis.internal.env :as env]
    [com.blockether.vis.internal.error :as error]
    [com.blockether.vis.internal.extension :as extension]
@@ -2052,69 +2053,6 @@
 ;; produces the persistence shape directly.
 ;; -----------------------------------------------------------------------------
 
-(defn update-system-vars!
-  "Per-iteration SYSTEM-var rebind hook. Currently a no-op: every
-   SYSTEM var either gets bound at turn start (TURN_*) or per
-   iteration via `update-iteration-id!` (TURN_ITERATION_*). The
-   former `CONVERSATION_PREVIOUS_ANSWER` rebind was dropped because
-   the prior answer is already in the message stream (preserved
-   thinking + previous-turn-context block); duplicating it as a
-   sandbox var produced a chunky row per iteration that nothing
-   read.
-
-   Kept as a hook for future per-iteration SYSTEM-var growth. No
-   call-site cleanup needed when this is a no-op."
-  [_environment _opts]
-  nil)
-
-(defn update-iteration-id!
-  "Rebind `TURN_ITERATION_ID` and `TURN_ITERATION_POSITION` in the
-   SCI sandbox to the freshly-persisted iteration row's UUID + 1-based
-   position. Mirrors `:current-iteration-id-atom`. No-op for both when
-   `iteration-id` is nil. `iteration-position` is optional; nil leaves
-   the position bound at its previous value (callers that don't know
-   it can pass nil)."
-  ([environment iteration-id]
-   (update-iteration-id! environment iteration-id nil))
-  ([environment iteration-id iteration-position]
-   (when iteration-id
-     (env/bind-and-bump! environment 'TURN_ITERATION_ID iteration-id))
-   (when iteration-position
-     (env/bind-and-bump! environment 'TURN_ITERATION_POSITION (long iteration-position)))))
-
-(defn inject-system-var-snapshots
-  "Append a SYSTEM-var snapshot row to `vars-snapshot` for every
-   currently-registered SYSTEM var on every iteration so the inspect
-   transcript and `definition_state` carry a per-iteration log of
-   values. Each var is normalized to a non-nil scalar so the persisted
-   row never stores nil.
-
-   Dropped from the registry (no longer stamped): USER_REQUEST,
-   TURN_SYSTEM_PROMPT, CONVERSATION_PREVIOUS_ANSWER. The user request
-   already lives as the user message, the system prompt as the system
-   message, and the previous answer flows through preserved-thinking +
-   previous-turn-context replay. Mirroring them as sandbox vars (and
-   stamping one row per iteration each) produced thousands of
-   identical-per-turn rows that nothing read."
-  [vars-snapshot {:keys [turn-id turn-position
-                         iteration-id iteration-position
-                         conversation-state-id
-                         extensions-snapshot]}]
-  (let [stamp (fn [vs nm v]
-                (conj vs {:name nm :value v :code ";; SYSTEM var"}))]
-    (-> vars-snapshot
-      (stamp "TURN_ID"                    (or turn-id ""))
-      (stamp "TURN_POSITION"              (or turn-position 0))
-      (stamp "TURN_CONVERSATION_STATE_ID" (or conversation-state-id ""))
-      (stamp "TURN_ACTIVE_EXTENSIONS"     (or extensions-snapshot []))
-      (stamp "TURN_ITERATION_ID"          (or iteration-id ""))
-      (stamp "TURN_ITERATION_POSITION"    (or iteration-position 0))
-      (stamp "CONVERSATION_STATE_ID"      (or conversation-state-id "")))))
-
-;; =============================================================================
-;; System Prompt
-;; =============================================================================
-
 ;; =============================================================================
 ;; Auto-Archive
 ;; =============================================================================
@@ -2267,30 +2205,6 @@
       (select-keys acc cost-map-keys)
       (select-keys extra-cost cost-map-keys))))
 
-(defn- previous-turn-context
-  "Latest completed prior turn answer for short follow-up disambiguation.
-
-   Full chat replay stays out of provider messages. This bounded map is
-   passed to prompt/assemble-initial-messages so `A`, `yes`, and `do it` can
-   resolve against the immediately previous final answer instead of only the
-   token-budgeted journal."
-  [{:keys [db-info conversation-id]} current-turn-id]
-  (try
-    (when (and db-info conversation-id)
-      (some->> (persistance/db-list-conversation-turns db-info conversation-id)
-        (remove #(= (str (:id %)) (str current-turn-id)))
-        (filter #(and (#{:complete :done :success} (or (:prior-outcome %) (:status %)))
-                   (not (str/blank? (str (:answer %))))))
-        (sort-by (fn [turn]
-                   [(long (or (:position turn) 0))
-                    (str (or (:created-at turn) ""))]))
-        last
-        (#(select-keys % [:id :position :user-request :answer]))))
-    (catch Throwable t
-      (tel/log! {:level :warn :id ::previous-turn-context-failed
-                 :data {:error (ex-message t)}})
-      nil)))
-
 (defn iteration-loop
   "The core iteration loop. Runs assemble -> ask LLM -> execute -> persist
    until the model emits `:answer` or the user cancels."
@@ -2317,15 +2231,18 @@
         ;; the per-iteration ext nudge collector - activation-fn never re-fires in the channel-rendered tool-call rowthe loop.
         active-exts   (prompt/active-extensions environment)
         _             (sync-active-extension-symbols! environment active-exts)
+        conversation-base {:id           (:conversation-id environment)
+                           :title        (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
+                           :turn-id      conversation-turn-id
+                           :iteration-id nil
+                           :user-request user-request}
         stable-prompt-messages (prompt/assemble-stable-prompt-messages environment
                                  {:system-prompt     system-prompt
                                   :active-extensions active-exts})
-        initial-user-content user-request
-        previous-turn-ctx (previous-turn-context environment conversation-turn-id)
         initial-messages (prompt/assemble-initial-messages
                            {:stable-prompt-messages stable-prompt-messages
-                            :initial-user-content   initial-user-content
-                            :previous-turn-context  previous-turn-ctx})
+                            :initial-user-content   user-request
+                            :previous-turn-context  nil})
         usage-atom (atom {:input-tokens 0 :output-tokens 0 :reasoning-tokens 0 :cached-tokens 0
                           :cache-creation-tokens 0})
         accumulate-usage! (fn [api-usage]
@@ -2420,45 +2337,10 @@
     ;; -----------------------------------------------------------------
     ;; Turn-start SYSTEM-var bindings.
     ;;
-    ;; Every `TURN_*` here is bound exactly once per turn and never
-    ;; mutated again until the next turn opens - the model gets a
-    ;; stable view for the entire iteration loop. `ITERATION_*` resets
-    ;; here and rebinds per iteration. `CONVERSATION_*` is touched at
-    ;; iteration boundaries via `update-system-vars!`. The retired
-    ;; `CONVERSATION_TITLE` binding is gone — the title now lives
-    ;; only on `:conversation-title-atom` + the DB, surfaced to the
-    ;; model through the foundation `title-nudge` when blank or stale.
-    ;; -----------------------------------------------------------------
-    ;; TURN_USER_REQUEST retired. The current human turn text and richer
-    ;; per-iteration / cross-turn history both flow through
-    ;; `(v/conversation-state)` -> :current-turn :user-request / :transcript :turns.
-    (env/bind-and-bump! environment 'TURN_ID conversation-turn-id)
-    (let [turn-position (try
-                          (some->> (persistance/db-list-conversation-turns
-                                     (:db-info environment) (:conversation-id environment))
-                            (some #(when (= (str (:id %)) (str conversation-turn-id))
-                                     (:position %)))
-                            long)
-                          (catch Throwable _ 0))]
-      (env/bind-and-bump! environment 'TURN_POSITION (or turn-position 0))
-      (when-let [a (:current-turn-position-atom environment)]
-        (reset! a (or turn-position 0))))
-    (let [conversation-state-id (persistance/db-latest-conversation-state-id
-                                  (:db-info environment) (:conversation-id environment))]
-      (env/bind-and-bump! environment 'TURN_CONVERSATION_STATE_ID conversation-state-id)
-      (env/bind-and-bump! environment 'CONVERSATION_STATE_ID conversation-state-id))
-    ;; TURN_ACTIVE_EXTENSIONS = frozen, fully-realized vec describing
-    ;; every extension that activated for THIS turn. Built off the same
-    ;; `active-exts` we hand to the prompt assembler / nudge collector,
-    ;; so the agent's live-vars picture matches the actually-loaded
-    ;; surface.
-    (env/bind-and-bump! environment 'TURN_ACTIVE_EXTENSIONS
-      (prompt/extensions-snapshot active-exts))
-    ;; Reset TURN_ITERATION_ID + TURN_ITERATION_POSITION at turn start;
-    ;; rebound by
-    ;; `update-iteration-id!` after each iteration row commits.
-    (env/bind-and-bump! environment 'TURN_ITERATION_ID nil)
-    (env/bind-and-bump! environment 'TURN_ITERATION_POSITION 0)
+    ;; `ctx` is the single model-visible engine context value; rebuilt fresh
+    ;; per iteration.
+    (env/bind-and-bump! environment 'ctx
+      (vctx/build {:environment environment :conversation conversation-base}))
     (when-let [a (:current-iteration-id-atom environment)] (reset! a nil))
     (when-let [a (:current-conversation-turn-id-atom environment)] (reset! a conversation-turn-id))
     (when-let [a (:current-user-request-atom environment)] (reset! a user-request))
@@ -2557,21 +2439,13 @@
                                                               :reasoning reasoning-level
                                                               :requested-reasoning raw-reasoning-level})
                     pre-resolved-model (resolve-effective-model (:router environment) (or routing {}))
-                    ;; Phase 7 swap: tape-based assembly. system-vars +
-                    ;; live-vars come from sandbox introspection;
-                    ;; per-env LRU drives staleness; journal entries come
-                    ;; from `journal-iters` via the same shape adapter.
-                    iteration-context (prompt/build-iteration-context environment
-                                        {:blocks-by-iteration journal-iters
-                                         :active-extensions   active-exts
-                                         :iteration           iteration
-                                         :current-status      :current
-                                         :system-vars         (env/journal-system-vars (:sci-ctx environment))
-                                         :live-vars           (env/journal-live-vars
-                                                                (:sci-ctx environment)
-                                                                (:initial-ns-keys environment)
-                                                                (some-> (:def-resolve-lru-atom environment) deref)
-                                                                (some-> (:current-turn-position-atom environment) deref))})
+                    current-ctx-map (vctx/build
+                                      {:environment environment
+                                       :conversation
+                                       (assoc conversation-base
+                                         :iteration-id (some-> (:current-iteration-id-atom environment) deref))})
+                    _ (env/bind-and-bump! environment 'ctx current-ctx-map)
+                    iteration-context (str ";; ctx =\n" (pr-str current-ctx-map))
                       ;; Single canonical preserved-thinking replay path —
                       ;; svar's per-provider wire serializer turns the
                       ;; canonical assistant messages into native
@@ -2674,7 +2548,6 @@
                                                  tc (assoc :tokens (:tokens tc)
                                                       :cost-usd (:cost-usd tc)))))]
                       (when-let [a (:current-iteration-id-atom environment)] (reset! a err-iteration-id))
-                      (update-iteration-id! environment err-iteration-id (long (or iteration 0)))
                       ;; Live error chunk - `:phase :iteration-error`
                       ;; signals the iteration aborted before any
                       ;; forms could run. No per-form chunks fired
@@ -2707,9 +2580,6 @@
 
                   (let [_ (accumulate-usage! (:api-usage iteration-result))
                         {:keys [thinking blocks final-result]} iteration-result
-                        final-answer (when final-result (:answer final-result))
-                        _ (update-system-vars! environment
-                            {:thinking thinking :final-result final-result :final-answer final-answer})
                         block (first blocks)
                         iteration-block-code (or (some-> block :code str/trim not-empty) "")
                         iteration-time-ms (long (or (:execution-time-ms block) 0))
@@ -2744,23 +2614,6 @@
                         _ (when-let [lru-atom (:def-resolve-lru-atom environment)]
                             (when-let [iteration-lru (not-empty (:lru block))]
                               (swap! lru-atom merge iteration-lru)))
-                        previous-iteration-id (some-> (:current-iteration-id-atom environment) deref)
-                        turn-position (try
-                                        (some->> (persistance/db-list-conversation-turns
-                                                   (:db-info environment) (:conversation-id environment))
-                                          (some #(when (= (str (:id %)) (str conversation-turn-id))
-                                                   (:position %)))
-                                          long)
-                                        (catch Throwable _ 0))
-                        vars-snapshot (inject-system-var-snapshots vars-snapshot
-                                        {:turn-id              conversation-turn-id
-                                         :turn-position        (or turn-position 0)
-                                         :iteration-id         previous-iteration-id
-                                         :iteration-position   (long (or iteration 0))
-                                         :conversation-state-id (persistance/db-latest-conversation-state-id
-                                                                  (:db-info environment)
-                                                                  (:conversation-id environment))
-                                         :extensions-snapshot  (prompt/extensions-snapshot active-exts)})
                         store-block (or block {:code "" :error {:message "empty iteration"}})
                         iteration-id (persistance/db-store-iteration! (:db-info environment)
                                        (let [tc (iteration-token-cost (:api-usage iteration-result))]
@@ -2789,7 +2642,6 @@
                                            tc (assoc :tokens (:tokens tc)
                                                 :cost-usd (:cost-usd tc)))))
                         _ (when-let [a (:current-iteration-id-atom environment)] (reset! a iteration-id))
-                        _ (update-iteration-id! environment iteration-id (long (or iteration 0)))
                         trace-entry {:iteration iteration :thinking thinking
                                      :blocks blocks :final? (boolean final-result)}]
                     (cond
@@ -2950,10 +2802,9 @@
           ;; one growing blob. That corrupted three things at once:
           ;;   1. the persisted user request stored the entire transcript
           ;;      for every turn - the sidebar showed "Siema\nSiema!\n...".
-          ;;   2. (The retired `TURN_USER_REQUEST` SYSTEM var, bound from
-          ;;      this same string, grew with each turn instead of
-          ;;      reflecting the current ask. Surface now flows through
-          ;;      `(v/conversation-state)` -> :current-turn :user-request.)
+          ;;   2. Any model-facing context derived from that blob grew with
+          ;;      each turn instead of reflecting the current ask. Surface now
+          ;;      flows through ctx.
           ;;   3. The synthetic `{:requirement ...}` frame the LLM sees
           ;;      restated the whole conversation as the "requirement".
           ;;
@@ -3721,11 +3572,7 @@
                                        db-info conversation-id
                                        conversation-title-atom s)
                                      :vis/silent))
-        ;; The retired `TURN_USER_REQUEST` SYSTEM var has no replacement
-        ;; binding by design - the same data already flows through
-        ;; `(v/conversation-state)` -> :current-turn :user-request (and through
-        ;; :transcript :turns for cross-turn history), so a separate
-        ;; sandbox primitive would just duplicate the surface.
+        ;; The current human turn text and engine context flow through ctx.
         env-bindings             {'done            answer-fn
                                   'set-conversation-title! conversation-title-fn}
         {:keys [sci-ctx sandbox-ns initial-ns-keys]}

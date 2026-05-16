@@ -2,11 +2,10 @@
   "Monkey-patches over SCI's `:no-doc` impl namespaces.
 
    SCI 0.12.51 ships no public hook for `def` evaluation. The engine
-   contract needs both:
-     1. Capture every def/defn/defmacro into a per-iteration sink so the
-        engine can flush definition_state rows in one transaction at
-        iteration-end (no post-eval source parsing).
-     2. Enforce mandatory docstring on every `def` the SCI sandbox runs.
+   contract needs to capture every def/defn/defmacro into a per-iteration
+   sink so the engine can flush definition_state rows in one transaction at
+   iteration-end (no post-eval source parsing). Docstrings are optional;
+   context is explicit in `ctx`, not hidden in var docs.
 
    We `alter-var-root` `sci.impl.evaluator/eval-def` once at namespace
    load. The wrap is global (alter-var-root affects the whole JVM); the
@@ -75,22 +74,18 @@
   [ctx bindings var-name init m]
   ;; SCI passes `m` (the metadata map) as an unevaluated Node — see
   ;; sci.impl.evaluator/eval-def, which calls (types/eval m ctx bindings)
-  ;; on its first line. We have to materialize it here BEFORE we can
-  ;; read `:doc` for the docstring check.
-  (let [m-val (sci-types/eval m ctx bindings)]
-    (when-not (:doc m-val)
-      (throw (ex-info (str "def requires a docstring: (def " var-name " \"doc\" …)")
-               {:type :vis/missing-docstring
-                :name var-name})))
-    (let [v (original-eval-def ctx bindings var-name init m)]
-      (when-let [sink *def-sink-atom*]
-        (swap! sink conj
-          {:ns   (some-> (:ns m-val) sci-types/getName str)
-           :name var-name
-           :init init
-           :meta m-val
-           :var  v}))
-      v)))
+  ;; on its first line. Materialize it for the def sink; do not require
+  ;; docstrings.
+  (let [m-val (sci-types/eval m ctx bindings)
+        v     (original-eval-def ctx bindings var-name init m)]
+    (when-let [sink *def-sink-atom*]
+      (swap! sink conj
+        {:ns   (some-> (:ns m-val) sci-types/getName str)
+         :name var-name
+         :init init
+         :meta m-val
+         :var  v}))
+    v))
 
 (defonce install-once!
   ;; Side-effect bootstrap: alter-var-root replaces SCI's eval-def with
