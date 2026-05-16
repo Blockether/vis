@@ -39,6 +39,7 @@
           out (render/render {:host base-host :git git
                               :languages nil :monorepo nil})]
       (expect (string/includes? out "cwd: /tmp/x (= git root)"))
+      (expect (string/includes? out "git.repo: x"))
       (expect (string/includes? out "git.branch: main"))
       (expect (string/includes? out "git.status: clean"))
       (expect (string/includes? out "git.summary: stale: unknown | changes: no | dirty: no | stash: no (0)"))

@@ -3,6 +3,7 @@
    [com.blockether.svar.core :as svar]
    [com.blockether.vis.internal.env.sci-patches :as sp]
    [com.blockether.vis.internal.loop :as lp]
+   [com.blockether.vis.internal.persistance :as persistance]
    [lazytest.core :refer [defdescribe it expect]]
    [sci.core :as sci]))
 
@@ -34,6 +35,25 @@
     (let [opts (:opts (captured-ask-code-opts {:semantic-timeout-ms 180000}))]
       (expect (= 180000 (:semantic-timeout-ms opts)))
       (expect (= lp/ASK_CODE_IDLE_TIMEOUT_MS (:idle-timeout-ms opts))))))
+
+(defdescribe previous-turn-context-test
+  (it "uses the latest completed/done persisted prior turn"
+    (let [previous-turn-context @#'lp/previous-turn-context]
+      (with-redefs [persistance/db-list-conversation-turns
+                    (fn [_db _conversation-id]
+                      [{:id :old :position 1 :status :done
+                        :user-request "where are we"
+                        :answer "repo vis"}
+                       {:id :current :position 2 :status :running
+                        :user-request "yeah"
+                        :answer ""}])]
+        (expect (= {:id :old
+                    :position 1
+                    :user-request "where are we"
+                    :answer "repo vis"}
+                  (previous-turn-context {:db-info ::db
+                                          :conversation-id ::conversation}
+                    :current)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; def-sink -> vars-snapshot (per-var precise source extraction)

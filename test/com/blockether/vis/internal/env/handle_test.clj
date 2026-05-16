@@ -35,13 +35,13 @@
       (expect (= [] @h)))))
 
 (defdescribe handle-protocol-test
-  (it "kind returns the kind tag"
+  (it "op returns the tool op tag"
     (let [h (fresh-cat "x" ["a"])]
-      (expect (= :v.cat (handle/kind h)))))
-  (it "summary contains :kind, :path, :line-count, :views"
+      (expect (= :v/cat (handle/op h)))))
+  (it "summary contains :op, :path, :line-count, :views"
     (let [h (fresh-cat "x" ["a" "b"])
           s (handle/summary h)]
-      (expect (= :v.cat (:kind s)))
+      (expect (= :v/cat (:op s)))
       (expect (= "x" (:path s)))
       (expect (= 2 (:line-count s)))
       (expect (vector? (:views s)))
@@ -49,40 +49,40 @@
   (it "handle? recognises records implementing PHandle and rejects non-handles"
     (let [h (fresh-cat "x" ["a"])]
       (expect (handle/handle? h))
-      (expect (not (handle/handle? {:kind :v.cat})))
+      (expect (not (handle/handle? {:op :v/cat})))
       (expect (not (handle/handle? nil)))
       (expect (not (handle/handle? 42)))
       (expect (not (handle/handle? "string")))
       (expect (not (handle/handle? [1 2 3]))))))
 
 (defdescribe handle-protocol-fallback-test
-  (it "kind on non-handles returns :not-a-handle"
-    (expect (= :not-a-handle (handle/kind nil)))
-    (expect (= :not-a-handle (handle/kind 42)))
-    (expect (= :not-a-handle (handle/kind "string")))
-    (expect (= :not-a-handle (handle/kind {:some :map}))))
+  (it "op on non-handles returns :not-a-handle"
+    (expect (= :not-a-handle (handle/op nil)))
+    (expect (= :not-a-handle (handle/op 42)))
+    (expect (= :not-a-handle (handle/op "string")))
+    (expect (= :not-a-handle (handle/op {:some :map}))))
   (it "summary on non-handles returns a structured :not-a-handle map with a hint"
     (let [s (handle/summary 42)]
-      (expect (= :not-a-handle (:kind s)))
+      (expect (= :not-a-handle (:op s)))
       (expect (= 42 (:value s)))
       (expect (string? (:hint s)))
       (expect (string/includes? (:hint s) "Handle"))))
   (it "summary on nil reports the nil value clearly"
     (let [s (handle/summary nil)]
-      (expect (= :not-a-handle (:kind s)))
+      (expect (= :not-a-handle (:op s)))
       (expect (nil? (:value s)))
       (expect (string? (:hint s)))))
   (it "view on non-handles returns :not-a-handle with the op and args echoed back"
     (let [s0 (handle/view 42 :peek)
           s1 (handle/view 42 :at 3)
           s2 (handle/view 42 :lines 0 10)]
-      (expect (= :not-a-handle (:kind s0)))
-      (expect (= :peek (:op s0)))
-      (expect (= :not-a-handle (:kind s1)))
-      (expect (= :at (:op s1)))
+      (expect (= :not-a-handle (:op s0)))
+      (expect (= :peek (:view-op s0)))
+      (expect (= :not-a-handle (:op s1)))
+      (expect (= :at (:view-op s1)))
       (expect (= [3] (:args s1)))
-      (expect (= :not-a-handle (:kind s2)))
-      (expect (= :lines (:op s2)))
+      (expect (= :not-a-handle (:op s2)))
+      (expect (= :lines (:view-op s2)))
       (expect (= [0 10] (:args s2)))))
   (it "calls do not throw — fallback is structured data, not an exception"
     (expect (map? (handle/view "a string" :peek)))
@@ -145,7 +145,7 @@
     (let [h (fresh-cat "x" ["alpha"])
           s (pr-str h)]
       (expect (string/starts-with? s "#vis/handle "))
-      (expect (string/includes? s ":kind :v.cat"))
+      (expect (string/includes? s ":op :v/cat"))
       (expect (string/includes? s ":line-count 1"))
       (expect (string/includes? s ":path \"x\""))
       (expect (string/includes? s ":views"))

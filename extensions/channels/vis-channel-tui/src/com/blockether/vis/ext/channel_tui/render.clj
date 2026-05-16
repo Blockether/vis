@@ -2285,7 +2285,8 @@
                   (p/put-str! g bx (+ btop i) "│")))
               (recur (inc i))))))
 
-      ;; Below-content footer row: optional right-aligned meta.
+      ;; Below-content footer row: optional right-aligned meta, with
+      ;; one breathing row between answer body and footer.
       ;; Resource links are exposed through the header badge, so they
       ;; no longer consume one extra chrome row per link under the
       ;; answer body.
@@ -2295,25 +2296,28 @@
       ;;   row 0                    : label + resources badge + timestamp
       ;;   row 1 ... N                : wrapped content (with marker-zone fills)
       ;;   row 1+N                  : bottom pad (user only)
-      ;;   row 1+N+P                : meta right, when present
+      ;;   row 1+N+P                : blank footer margin, when meta present
+      ;;   row 2+N+P                : meta right, when present
       ;;   final row                : single blank gap before the next message
       (p/clear-styles! g)
       (let [footer?    (some? meta-str)
-            footer-row (+ btop bubble-h bottom-pad)]
+            footer-gap (if footer? 1 0)
+            footer-row (+ btop bubble-h bottom-pad footer-gap)]
         (when footer?
           (p/set-colors! g t/dialog-hint t/terminal-bg)
           (p/put-str! g (+ bx (max 0 (- bubble-w (count meta-str)))) footer-row meta-str))
         ;; Return: rows consumed
         ;;   = label(1) + top-pad(user only) + content(N)
         ;;     + bottom-pad(user only)
+        ;;     + footer-gap(meta only)(0|1)
         ;;     + footer(meta)(0|1)
         ;;     + gap(1)
-        (+ top-sep-h 1 top-pad bubble-h bottom-pad (if footer? 1 0) 1)))))
+        (+ top-sep-h 1 top-pad bubble-h bottom-pad footer-gap (if footer? 1 0) 1)))))
 
 (defn bubble-height*
   "Uncached calculation: rows a chat message will consume without drawing.
    label(1) + optional top-pad(1, user only) + wrapped-lines
-   + optional bottom-pad(1, user only) + optional meta footer(0|1)
+   + optional bottom-pad(1, user only) + optional meta top margin/footer(0|2)
    + gap(1).
    Mirrors `draw-chat-bubble!`'s wrap width (`bubble-w - 2*h-pad`) so
    layout math stays consistent across the height calc and the draw."
@@ -2336,8 +2340,9 @@
         cancelled? (= :cancelled status)
         meta-str   (when (and (not= role :user) (not cancelled?))
                      (assistant-meta-line message))
-        footer?    (some? meta-str)]
-    (+ top-sep-h 1 top-pad (count lines) bottom-pad (if footer? 1 0) 1)))
+        footer?    (some? meta-str)
+        footer-gap (if footer? 1 0)]
+    (+ top-sep-h 1 top-pad (count lines) bottom-pad footer-gap (if footer? 1 0) 1)))
 
 (defn bubble-height
   "Memoized `bubble-height*`. Keyed by projected line identity when

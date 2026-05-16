@@ -153,7 +153,7 @@
 (def search-text          ir/search-text)
 (def extract-code         ir/extract-code)
 (def extract-text         ir/extract-text)
-(def code-block-segments  ir/code-block-segments)
+(def parse-block-display  ir/parse-block-display)
 
 ;; =============================================================================
 ;; Progress tracker
