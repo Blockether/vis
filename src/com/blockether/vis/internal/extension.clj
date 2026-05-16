@@ -849,7 +849,7 @@
     #(s/valid? :ext.ns-alias/alias (:alias %))))
 
 ;; Canonical source markers attached to registered extensions via the
-;; sidecar atom. Also surfaced in TURN_ACTIVE_EXTENSIONS / v/extensions
+;; sidecar atom. Also surfaced in ctx :extensions / extension summaries
 ;; and stamped onto tool-result info.
 (s/def ::alias symbol?)
 (s/def ::namespace symbol?)
@@ -1001,36 +1001,21 @@
 
 (defn- build-symbol-entry
   "Shared core that turns `{:symbol :fn :doc :arglists :source}` plus opts into
-   a validated `::fn-symbol-entry`. Used by both the var-based public API
-   and the test-friendly direct-args form below."
+   a validated `::fn-symbol-entry`. Rendering is engine-owned: symbol-level
+   journal/channel render callbacks are ignored. Used by both the var-based
+   public API and the test-friendly direct-args form below."
   [{sym :symbol :keys [fn doc arglists source]} opts]
-  (let [raw? (true? (:raw? opts))
-        journal-render-fn (:journal-render-fn opts)
-        channel-render-fn (:channel-render-fn opts)]
-    (when (and (not raw?) (not (clojure.core/fn? journal-render-fn)))
-      (anomaly/incorrect!
-        (str "Symbol '" sym "' is missing :journal-render-fn. Observed tool symbols must "
-          "declare a journal renderer (fn [result] -> string), or set :raw? true for plain helpers.")
-        {:type :extension/missing-journal-render-fn :symbol sym}))
-    (when (and (not raw?) (not (clojure.core/fn? channel-render-fn)))
-      (anomaly/incorrect!
-        (str "Symbol '" sym "' is missing :channel-render-fn. Observed tool symbols must "
-          "declare a channel renderer (fn [result] -> string), or set :raw? true for plain helpers.")
-        {:type :extension/missing-channel-render-fn :symbol sym}))
+  (let [raw? (true? (:raw? opts))]
     (validate-symbol-entry!
-      (cond-> #:ext.symbol{:symbol      sym
+      (cond-> #:ext.symbol{:symbol   sym
                            :fn       fn
                            :doc      doc
                            :arglists arglists}
-        raw?                       (assoc :ext.symbol/raw? true)
-        source                     (assoc :ext.symbol/source source)
-        journal-render-fn          (assoc :ext.symbol/journal-render-fn journal-render-fn)
-        channel-render-fn          (assoc :ext.symbol/channel-render-fn channel-render-fn)
-        (:journal-render-error-fn opts) (assoc :ext.symbol/journal-render-error-fn (:journal-render-error-fn opts))
-        (:channel-render-error-fn opts) (assoc :ext.symbol/channel-render-error-fn (:channel-render-error-fn opts))
-        (:before-fn opts)               (assoc :ext.symbol/before-fn (:before-fn opts))
-        (:after-fn opts)                (assoc :ext.symbol/after-fn (:after-fn opts))
-        (:on-error-fn opts)             (assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
+        raw?           (assoc :ext.symbol/raw? true)
+        source         (assoc :ext.symbol/source source)
+        (:before-fn opts)   (assoc :ext.symbol/before-fn (:before-fn opts))
+        (:after-fn opts)    (assoc :ext.symbol/after-fn (:after-fn opts))
+        (:on-error-fn opts) (assoc :ext.symbol/on-error-fn (:on-error-fn opts))))))
 
 (defn symbol
   "Build a function symbol entry FROM A CLOJURE VAR.
@@ -1044,25 +1029,17 @@
    `:arglists` (read from var metadata - i.e. the underlying defn's
    docstring + arglists). Pass it as `#'my-tool`.
 
-   Observed tools (default) must pass:
-     :journal-render-fn   - (fn [result] string). Renders the unwrapped
-                            internal envelope `:result` into model-facing
-                            the tool-call channel row. Plaintext, terse,
-                            ~1500 chars.
-     :channel-render-fn   - (fn [result] IR). Renders the unwrapped result as
-                            canonical IR. UNIFORM across every channel.
+   Observed tools return canonical internal envelope maps. Rendering is
+   engine-owned and data-generic; extension-supplied journal/channel render
+   callbacks are ignored.
 
    Raw helpers pass `:raw? true` and return plain values directly, with no
    envelope enforcement, journal/channel sink, or tool metadata.
 
    Optional opts:
-     :symbol                       - override the SCI sandbox name (default: var name).
+     :symbol                    - override the SCI sandbox name (default: var name).
      :doc / :doc-fn / :arglists - metadata fallback for third-party vars.
      :raw?                      - true for plain composable helpers.
-     :journal-render-error-fn   - (fn [error] string). Override journal
-                                  failure render.
-     :channel-render-error-fn   - (fn [tool-result] IR). Override channel
-                                  failure render. Uniform across channels.
      :before-fn :after-fn :on-error-fn
 
    Observed tool functions return canonical internal envelope maps. The
@@ -1089,9 +1066,7 @@
        {:type :extension/symbol-not-a-var :given v})))
   ([sym-name f opts]
    ;; Test-only direct-construction arity. `:doc` and `:arglists` come from
-   ;; opts (no var to read meta from). The two render keys default to
-   ;; no-op stubs so tests stay terse; the var-form (production) keeps
-   ;; its strict requirement above.
+   ;; opts (no var to read meta from). Rendering is engine-owned.
    (when-not (clojure.core/fn? f)
      (anomaly/incorrect!
        (str "3-arg symbol expects a function as the second arg; got " (pr-str (type f)))
@@ -1108,11 +1083,7 @@
          {:type :extension/missing-arglists :symbol sym-name}))
      (build-symbol-entry
        {:symbol sym-name :fn f :doc doc :arglists (vec arglists)}
-       (if (:raw? opts)
-         opts
-         (merge {:journal-render-fn (constantly "")
-                 :channel-render-fn (constantly [:ir {}])}
-           opts))))))
+       opts))))
 
 (defn helper
   "Build a raw callable helper entry FROM A CLOJURE VAR.
@@ -1451,35 +1422,17 @@
                     sym-name)]
     (pr-str (cons head (vec args)))))
 
-(defn- safely-render-journal
-  "Call a journal render fn for sink recording. Journal renderers receive
-   the unwrapped `:result` payload and must return non-blank strings. Any
-   renderer failure becomes a `<...>` placeholder string so sink writes survive
-   misbehaving renderers."
-  [render-fn sym-name label value]
-  (try
-    (let [s (render-fn value)]
-      (cond
-        (and (string? s) (not (str/blank? s))) s
-        (string? s)                            (str "<" label " returned blank string>")
-        :else                                  (str "<" label " returned non-string: "
-                                                 (pr-str (type s)) ">")))
-    (catch Throwable t
-      (str "<" label " for " sym-name " threw: " (ex-message t) ">"))))
+(defn- render-journal-value
+  "Engine-owned journal rendering for sink recording. Tool results are data;
+   this is the single journal projection."
+  [_sym-name value]
+  (render-pr-str-journal value))
 
-(defn- safely-render-channel
-  "Call a channel render fn for sink recording. Channel renderers must return
-   answer IR; renderer failures become literal IR placeholders."
-  [render-fn sym-name label value]
-  (try
-    (let [v (render-fn value)]
-      (if (channel-render-ir? v)
-        (normalize-channel-render-value v)
-        (literal-channel-ir
-          (str "<" label " returned non-IR: " (pr-str (type v)) ">"))))
-    (catch Throwable t
-      (literal-channel-ir
-        (str "<" label " for " sym-name " threw: " (ex-message t) ">")))))
+(defn- render-channel-value
+  "Engine-owned channel rendering for sink recording. Tool results are data;
+   this is the single channel projection."
+  [_sym-name value]
+  (render-pr-str-channel value))
 
 (defn- write-sink-entries!
   "After a tool symbol's `invoke-symbol-wrapper` produces a final
@@ -1501,10 +1454,8 @@
           base     {:position position :form form-str}]
       (if (:success? result)
         (let [unwrapped (:result result)
-              j-text   (safely-render-journal (:ext.symbol/journal-render-fn sym-entry)
-                         sym-name ":journal-render-fn" unwrapped)
-              c-text   (safely-render-channel (:ext.symbol/channel-render-fn sym-entry)
-                         sym-name ":channel-render-fn" unwrapped)]
+              j-text   (render-journal-value sym-name unwrapped)
+              c-text   (render-channel-value sym-name unwrapped)]
           (record-journal-entry! (assoc base :success? true :result j-text :error nil))
           (record-channel-entry! (assoc base :success? true :result c-text :error nil)))
         (let [err (:error result)]
@@ -2026,8 +1977,7 @@
       :license? :registry-id? :source-paths :source-mtime-max
       :source-hash-sha256}
 
-   This is the single info shape used by TURN_ACTIVE_EXTENSIONS,
-   `v/extensions`, and tool-result enrichment."
+   This is the single info shape used by ctx :extensions and tool-result enrichment."
   [ext]
   (let [ext-ns     (:ext/namespace ext)
         alias      (get-in ext [:ext/alias :alias])
@@ -2112,7 +2062,7 @@
     (filter #(= channel-id (:channel-id %)))
     vec))
 
-(defn- tool-result-symbol-entry
+(defn tool-result-symbol-entry
   [tool-result]
   ;; Per PLAN §2.1, `:tool` and `:extension` blobs live under
   ;; `:metadata` on the new flat envelope (they were inside
@@ -2184,7 +2134,7 @@
               (when (seq message) [:span {} (str ": " message)])]]
         (when context-ir (drop 2 context-ir))))))
 
-(defn- assert-string!
+(defn assert-string!
   [v label sym-entry]
   (when-not (string? v)
     (throw (ex-info (str label " for symbol '"
@@ -2197,72 +2147,22 @@
   v)
 
 (defn journal-render-tool-result
-  "Render a tool-result for the tool-call channel render.
-
-   Dispatch:
-     - On (:success? false): call the symbol's `:journal-render-error-fn`
-       if present, otherwise `default-journal-error-text`.
-     - On success: unwrap `(:result tool-result)` and call the symbol's
-       MANDATORY `:journal-render-fn` with that single arg.
-
-   Renderers must return strings; non-string returns throw."
+  "Render a tool-result for journal/tool-call rows. Rendering is engine-owned:
+   success renders data with `render-pr-str-journal`; failure renders the
+   canonical engine error line."
   [tool-result]
-  (let [sym-entry (tool-result-symbol-entry tool-result)]
-    (if-not (:success? tool-result)
-      (let [error-fn (or (:ext.symbol/journal-render-error-fn sym-entry)
-                       default-journal-error-text)
-            rendered (error-fn tool-result)]
-        (if (string? rendered) rendered (pr-str rendered)))
-      (let [render-fn (some-> sym-entry :ext.symbol/journal-render-fn)]
-        (when-not render-fn
-          (throw (AssertionError.
-                   (str "No :journal-render-fn for tool result with op "
-                     (pr-str (:symbol tool-result))))))
-        (assert-string! (render-fn (:result tool-result))
-          ":journal-render-fn" sym-entry)))))
+  (if-not (:success? tool-result)
+    (default-journal-error-text tool-result)
+    (render-pr-str-journal (:result tool-result))))
 
 (defn channel-render-tool-result
-  "Render a tool-result for runtime channels (TUI, telegram, ...). All
-   channels render the SAME canonical IR value. Channel-specific quirks are the
-   channel adapter's responsibility, not the symbol renderer's.
-
-   Dispatch:
-     - On (:success? false): call the symbol's `:channel-render-error-fn`
-       if present, otherwise `default-channel-error-ir`.
-     - On success: unwrap `(:result tool-result)` and call the symbol's
-       MANDATORY `:channel-render-fn` with the unwrapped result.
-
-   Renderers must return IR; other returns throw."
+  "Render a tool-result for runtime channels (TUI, telegram, ...). Rendering is
+   engine-owned: success renders data as literal IR; failure renders the
+   canonical engine error IR."
   [tool-result]
-  (let [sym-entry (tool-result-symbol-entry tool-result)]
-    (if-not (:success? tool-result)
-      (let [error-fn (or (:ext.symbol/channel-render-error-fn sym-entry)
-                       default-channel-error-ir)
-            rendered (error-fn tool-result)]
-        (when-not (channel-render-value? rendered)
-          (throw (ex-info (str ":channel-render-error-fn for symbol '"
-                            (:ext.symbol/symbol sym-entry)
-                            "' must return IR, got " (pr-str (type rendered)))
-                   {:type :extension/render-non-ir
-                    :symbol (:ext.symbol/symbol sym-entry)
-                    :label ":channel-render-error-fn"
-                    :value rendered})))
-        (normalize-channel-render-value rendered))
-      (let [render-fn (some-> sym-entry :ext.symbol/channel-render-fn)]
-        (when-not render-fn
-          (throw (AssertionError.
-                   (str "No :channel-render-fn for tool result with op "
-                     (pr-str (:symbol tool-result))))))
-        (let [rendered (render-fn (:result tool-result))]
-          (when-not (channel-render-value? rendered)
-            (throw (ex-info (str ":channel-render-fn for symbol '"
-                              (:ext.symbol/symbol sym-entry)
-                              "' must return IR, got " (pr-str (type rendered)))
-                     {:type :extension/render-non-ir
-                      :symbol (:ext.symbol/symbol sym-entry)
-                      :label ":channel-render-fn"
-                      :value rendered})))
-          (normalize-channel-render-value rendered))))))
+  (if-not (:success? tool-result)
+    (default-channel-error-ir tool-result)
+    (render-pr-str-channel (:result tool-result))))
 
 (defn- topo-sort-extensions
   "Topologically sort extensions by :ext/requires.

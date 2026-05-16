@@ -2085,41 +2085,32 @@
 ;; =============================================================================
 
 (defdescribe system-var-registry-test
-  (it "SYSTEM_VAR_NAMES contains exactly the documented SYSTEM vars"
-    ;; Dropped: USER_REQUEST (user message), TURN_SYSTEM_PROMPT
-    ;; (system message), CONVERSATION_PREVIOUS_ANSWER
-    ;; (preserved-thinking + previous-turn-context block).
-    ;; CONVERSATION_TITLE was dropped earlier (sidebar metadata).
-    (expect (= '#{TURN_ID
-                  TURN_POSITION
-                  TURN_CONVERSATION_STATE_ID
-                  TURN_ACTIVE_EXTENSIONS
-                  TURN_ITERATION_ID
-                  TURN_ITERATION_POSITION
-                  CONVERSATION_STATE_ID}
+  (it "SYSTEM_VAR_NAMES contains only engine-owned ctx"
+    (expect (= '#{ctx}
               @(requiring-resolve 'com.blockether.vis.core/SYSTEM_VAR_NAMES))))
 
   (it "system-var-sym? is true for registered names, false otherwise"
     (let [system-var-sym? (requiring-resolve
                             'com.blockether.vis.core/system-var-sym?)]
+      (expect (true?  (system-var-sym? 'ctx)))
       (expect (false? (system-var-sym? 'TURN_USER_REQUEST)))
       (expect (false? (system-var-sym? 'USER_REQUEST)))
       (expect (false? (system-var-sym? 'TURN_SYSTEM_PROMPT)))
       (expect (false? (system-var-sym? 'CONVERSATION_PREVIOUS_ANSWER)))
-      (expect (true?  (system-var-sym? 'TURN_ID)))
-      (expect (true?  (system-var-sym? 'TURN_POSITION)))
+      (expect (false? (system-var-sym? 'TURN_ID)))
+      (expect (false? (system-var-sym? 'TURN_POSITION)))
       (expect (false? (system-var-sym? 'TURN_CONVERSATION_TURN_ID)))
       (expect (false? (system-var-sym? 'TURN_CONVERSATION_SOUL_ID)))
-      (expect (true?  (system-var-sym? 'TURN_CONVERSATION_STATE_ID)))
-      (expect (true?  (system-var-sym? 'TURN_ACTIVE_EXTENSIONS)))
+      (expect (false? (system-var-sym? 'TURN_CONVERSATION_STATE_ID)))
+      (expect (false? (system-var-sym? 'TURN_ACTIVE_EXTENSIONS)))
       (expect (false? (system-var-sym? 'TURN_ACCESSIBLE_SKILLS)))
-      (expect (true?  (system-var-sym? 'TURN_ITERATION_ID)))
-      (expect (true?  (system-var-sym? 'TURN_ITERATION_POSITION)))
+      (expect (false? (system-var-sym? 'TURN_ITERATION_ID)))
+      (expect (false? (system-var-sym? 'TURN_ITERATION_POSITION)))
       (expect (false? (system-var-sym? 'ITERATION_ID)))
       (expect (false? (system-var-sym? 'ITERATION_PREVIOUS_REASONING)))
       (expect (false? (system-var-sym? 'CONVERSATION_ID)))
       (expect (false? (system-var-sym? 'CONVERSATION_SOUL_ID)))
-      (expect (true?  (system-var-sym? 'CONVERSATION_STATE_ID)))
+      (expect (false? (system-var-sym? 'CONVERSATION_STATE_ID)))
       ;; Retired — title is sidebar metadata, prev-answer already in
       ;; preserved-thinking / previous-turn-context replay.
       (expect (false? (system-var-sym? 'CONVERSATION_TITLE)))

@@ -2,21 +2,11 @@
   "Prompt assembly.
 
    Provider messages are explicit blocks in send order: core system rules,
-   extension fragments, then the current user message. Extension prompts
-   stay OUT of `CORE_SYSTEM_PROMPT`; active extensions own their
-   model-facing blocks (including foundation's `<environment>`) inside
-   the extension message.
-
-   Per-iteration user-role context is assembled by
-   `build-iteration-context`: rich-comment
-   `;; system-vars` / `;; live-vars` lines plus a journal entry per
-   recent iteration, wrapped by zero or more `<iteration_hint>` XML
-   blocks from active extensions. The legacy XML pipeline and its token-budgeting
-   helpers were retired in the same pass."
+   extension fragments, current user message. Per-iteration user-role context
+   is the engine `ctx` snapshot rendered as Clojure data by the loop."
   (:require
    [clojure.string :as str]
    [com.blockether.vis.internal.extension :as extension]
-   [com.blockether.vis.internal.format :as fmt]
    [taoensso.telemere :as tel]))
 
 ;; =============================================================================
@@ -32,52 +22,12 @@
 (defn- prompt-block
   [tag body]
   (when (and (string? body) (not (str/blank? body)))
-    (str "<" tag ">\n"
+    (str ";; -- " (-> (str tag)
+                    (str/replace "_" "-")
+                    str/upper-case)
+      " --\n"
       body
-      (when-not (str/ends-with? body "\n") "\n")
-      "</" tag ">")))
-
-(defn- attr-str
-  [v]
-  (-> (str v)
-    (str/replace "&" "&amp;")
-    (str/replace "\"" "&quot;")
-    (str/replace "<" "&lt;")
-    (str/replace ">" "&gt;")))
-
-(defn- attr-name
-  [v]
-  (attr-str (if (keyword? v) (name v) v)))
-
-(defn- normalize-system-nudge
-  [default-importance nudge]
-  (let [entry (cond
-                (string? nudge)
-                {:importance default-importance
-                 :text       nudge}
-
-                (map? nudge)
-                {:importance (or (:importance nudge) default-importance)
-                 :text       (:text nudge)}
-
-                :else nil)
-        text  (some-> (:text entry) str str/trim)]
-    (when (and text (not (str/blank? text)))
-      {:importance (attr-name (or (:importance entry) default-importance))
-       :text       text})))
-
-(defn- format-iteration-hint
-  [{:keys [importance text]}]
-  (str "<iteration_hint importance=\"" importance "\">\n"
-    (attr-str text)
-    "\n</iteration_hint>"))
-
-(defn- iteration-hints-block
-  [hints]
-  (when-let [hints (seq (keep identity hints))]
-    (str "<iteration_hints>\n"
-      (str/join "\n" (map format-iteration-hint hints))
-      "\n</iteration_hints>")))
+      (when-not (str/ends-with? body "\n") "\n"))))
 
 (defn- call-extension-callback
   [ext f & args]
@@ -131,100 +81,20 @@
 ;; =============================================================================
 
 (def ^:private CORE_SYSTEM_PROMPT
-  ;; Each line is its OWN short string, joined at runtime. cljfmt
-  ;; only mangles embedded `\"` in the channel-rendered tool-call rowlong multi-line docstrings;
-  ;; short single-line strings round-trip cleanly through every
-  ;; reformat pass. Keeps the prompt inline (one ns, no resource
-  ;; load) while still letting code examples use real double
-  ;; quotes.
   (str/join "\n"
-    ["Vis — a Clojure SCI eval loop. You reply with code only, no chat prose."
-     "This system prompt covers the ENGINE contract. Tool surfaces (what is"
-     "available, argument shapes, result keys) come from extension prompts"
-     "below this one. Never assume a specific tool symbol exists; read the"
-     "extension prompts to discover the toolset."
-     ""
-     "LOOP"
-     "  Iteration: ONE ```clojure``` block per turn. Many top-level forms"
-     "             allowed; value of the LAST form is the iteration RESULT."
-     "             No `(do ...)` wrap."
-     "  Journal:   prior iterations render below as commented Clojure source."
-     "             Stdout / stderr / errors annotate via `;; ! stdout> / ;; !"
-     "             stderr> / ;; ! ERROR ...` lines. Successful forms render"
-     "             as `;; => <value>` (bounded). Tool calls register a sink"
-     "             entry rendered by their extension. Inspect the journal as"
-     "             your working memory; do not retell it to yourself."
-     "  Vars:      every (def ...) persists across iterations and turns. The"
-     "             `;; system-vars` and `;; live-vars` lists above the"
-     "             journal show what is currently bound. Reference vars by"
-     "             name; do not re-bind the same fact."
-     "  Tools:     extension prompts describe symbols that have side effects"
-     "             or read the world. Tool results are PLAIN CLOJURE DATA"
-     "             (maps you destructure). Engine renders a bounded peek into"
-     "             the journal; the full payload lives in the var you bind."
-     "             Slice with standard Clojure (get-in, filter, take, subvec,"
-     "             tree-seq) — no special API."
-     ""
-     "WORKFLOW (RLM/ReAct — the iteration loop is a REPL session, not a"
-     "one-shot answer; each iteration follows EXPLORE → OBSERVE → REFINE →"
-     "ACT → OBSERVE → ANSWER)"
-     "  EXPLORE   Cast a wide probe. Bind every observation to a def with a"
-     "            docstring. Multiple probes in one iteration is encouraged."
-     "            Do NOT commit to a fix on iteration 1 of a non-trivial task."
-     "  OBSERVE   Read the journal that just landed. The peek tells you the"
-     "            SHAPE of each result; the bound var holds the truth. If"
-     "            something is wrong (empty, shape mismatch, error), inspect"
-     "            on the NEXT iteration before acting."
-     "  REFINE    Each NEW def is a derived fact built FROM prior defs using"
-     "            plain Clojure (filter / map / group-by / sort-by / select-"
-     "            keys). No tool call is needed to look INTO a prior result —"
-     "            it is already in the sandbox."
-     "  ACT       When the picture is clear, emit a mutation or the final"
-     "            answer. Mutations go through extension tools. Verify by"
-     "            reading the tool's RETURN value (the diff or post-image);"
-     "            do NOT re-read the file you just wrote."
-     "  OBSERVE   The mutation's return is itself an observation — confirm"
-     "            it succeeded; re-bind any read of the changed path."
-     "  ANSWER    `(done IR)` terminates the turn when (and only when) the"
-     "            answer is fully supported by the defs you have built up."
-     ""
-     "  Anti-patterns"
-     "    ✕ Reading whole files / dumping whole trees upfront."
-     "    ✕ Re-typing a value you can re-access via its def. The peek is"
-     "      truncated — never copy strings from it; reach the def instead."
-     "    ✕ Calling the same tool with identical args twice in a turn."
-     "    ✕ Submitting a guess. Inspect on a separate iteration first."
-     "    ✕ Making the iteration's LAST form a `(:field var)` re-projection"
-     "      whose only purpose is to see the data again. The journal already"
-     "      showed it. The last form is your NEXT MOVE (probe, refine, act,"
-     "      or answer)."
-     ""
-     "ENV"
-     "  Aliases: walk str set pp edn s"
-     "  Banned : slurp, spit, clojure.java.io — all I/O flows through tools."
-     ""
-     "DEF DISCIPLINE"
-     "  Docstring REQUIRED as second arg, real \"double-quote\" strings:"
-     "    (def NAME \"doc\" VAL)"
-     "    (defn NAME \"doc\" [args] body)"
-     "  Allowed heads: def, defn, defn-, defonce, defmulti, defmacro."
-     "  Banned  heads: defrecord, deftype, defprotocol, gen-class,"
-     "                 extend-type, extend-protocol, definterface, reify."
-     "  Use multimethods for polymorphism. Functions / lazy seqs / runtime"
-     "  objects persist as `{:vis/ref :expr}` and rebuild via re-eval."
-     ""
-     "ANSWER"
-     "  `(done IR)` terminates the turn iff the block runs without throwing."
-     "  Smallest possible answer is also fine — a question with no work to do:"
-     ""
-     "    (done [:ir [:p \"Hello.\"]])"
-     ""
-     "  Concrete tool-driven workflow examples live in the extension prompts."
-     ""
-     "  IR = EDN hiccup `[:ir & blocks]`. Blocks: :p :h :code :ul :ol :li"
-     "  :quote :table :tr :th :td. Inline: :span :br :strong :em :c :a"
-     "  :img :kbd :mark :sup :sub. :h {:level 1-6}; :ol {:start N};"
-     "  :code {:lang \"...\"}; :a {:href \"...\"}; :img {:src \"...\" :alt \"...\"}."]))
+    ["Vis is a persistent Clojure SCI REPL. Reply with code only."
+     "Emit exactly one ```clojure``` block per iteration; no prose outside code."
+     "Read `ctx` first. Current user request is `(:user/request ctx)`."
+     "Use `def` for working memory. Docstrings are optional."
+     "No separate memory API. Manage state through ctx, defs, and plain Clojure data."
+     "Tool results are plain Clojure data. Bind them, inspect with Clojure, never copy from previews."
+     "Do not call the same tool with identical args twice in one turn."
+     "All IO and mutations go through extension tools; slurp/spit/java.io are banned."
+     "RLM loop: explore, observe, refine, act, observe, answer. Do not guess."
+     "Finish only with `(done [:ir ...])` when answer is supported by observed data."
+     "Allowed def heads: def, defn, defn-, defonce, defmulti, defmacro."
+     "Banned heads: defrecord, deftype, defprotocol, gen-class, extend-type, extend-protocol, definterface, reify."
+     "IR is EDN hiccup `[:ir & blocks]`. Blocks: :p :h :code :ul :ol :li :quote :table :tr :th :td. Inline: :span :br :strong :em :c :a :img :kbd :mark :sup :sub."]))
 
 (defn build-system-prompt
   "Core system prompt: CORE_SYSTEM_PROMPT plus optional caller addendum."
@@ -252,8 +122,8 @@
         exts))))
 
 (defn extensions-snapshot
-  "Build the value of the `TURN_ACTIVE_EXTENSIONS` SYSTEM var from a precomputed
-   active-extensions vec.
+  "Build the active extension summary placed under `(:extensions ctx)` from a
+   precomputed active-extensions vec.
 
    Returns a vec of compact, fully-realized data maps - NO functions,
    NO atoms, NO opaque runtime objects. The model walks this with
@@ -302,10 +172,9 @@
 
 (defn- extension-prompt-fragment
   [ext body]
-  (str "<extension id=\"" (attr-str (extension-prompt-id ext)) "\">\n"
+  (str ";; -- EXTENSION " (extension-prompt-id ext) " --\n"
     body
-    (when-not (str/ends-with? body "\n") "\n")
-    "</extension>"))
+    (when-not (str/ends-with? body "\n") "\n")))
 
 (defn- extensions-prompt-block
   "Collect `<extensions>` from every active extension that declares
@@ -385,294 +254,3 @@
       (keep stable-prompt-message
         [core-block turn-system-block]))))
 
-;; =============================================================================
-;; REPL journal rendering primitives
-;;
-;; A pure-Clojure journal replaces the legacy XML scaffolding: prior
-;; iteration source + `;; => results` rendered like a REPL transcript.
-;; Wired into the live engine path via `build-iteration-context`.
-;; =============================================================================
-
-(def ^:const JOURNAL_RESULT_MAX_CHARS
-  "Per-result truncation cap when rendering `;; =>` lines on the journal."
-  1500)
-
-(defn journal-iteration-header
-  "One-line `;; --- iteration N | turn=K conv=… state=… | status=… ---`
-   header that prefixes each rendered iteration's code on the journal.
-   `status` is :done | :error | :current. Optional ids: nil values are
-   elided so test contexts can render with partial coordinates."
-  [{:keys [iteration-position turn-position conv-id state-id status]}]
-  (let [parts (cond-> []
-                iteration-position (conj (str "iteration " iteration-position))
-                turn-position      (conj (str "turn=" turn-position))
-                conv-id            (conj (str "conv=" conv-id))
-                state-id           (conj (str "state=" state-id))
-                status             (conj (str "status=" (name status))))]
-    (str ";; --- " (str/join " | " parts) " ---")))
-
-(defn journal-result-line
-  "Render `;; => <pr-str of result>` honoring `JOURNAL_RESULT_MAX_CHARS`.
-   Returns nil for `:vis/no-result` so a thrown form skips the result
-   line entirely (the error annotation carries the meaning)."
-  [result]
-  (when-not (= :vis/no-result result)
-    (let [s (fmt/safe-pr-str result {:max-chars JOURNAL_RESULT_MAX_CHARS})]
-      (str ";; => " s))))
-
-(defn journal-side-effect-line
-  "Render a side-effect annotation: `;; ! <kind>> <text>` for
-   `:stdout` / `:stderr` / `:error` / `:timeout`. Empty / blank text
-   returns nil so the renderer can drop it."
-  [kind text]
-  (when (and text (not (str/blank? (str text))))
-    (let [tag (case kind
-                :stdout  "stdout> "
-                :stderr  "stderr> "
-                :error   "ERROR "
-                :timeout "TIMEOUT ")]
-      (str ";; ! " tag (str/trim (str text))))))
-
-(defn format-journal-iteration
-  "Render one iteration as commented Clojure source for the journal.
-
-   Input shape:
-     {:iteration-position N
-      :turn-position      K          ; optional, for cross-turn rendering
-      :conv-id            \"…\"      ; optional, short id
-      :state-id           \"…\"      ; optional, short id
-      :status             :done|:error|:current
-      :code               \"(def …)\"
-      :result             <value>    ; or :vis/no-result on throw
-      :error              {:message…} ; structured map or nil
-      :stdout             \"…\"
-      :stderr             \"…\"
-      :timeout?           bool}
-
-   Output (newline-joined):
-     ;; --- iteration N | turn=K conv=… state=… | status=done ---
-     <code text>
-     ;; ! stdout> <captured>
-     ;; ! stderr> <captured>
-     ;; => <pr-str result>           ; omitted on error
-     ;; ! ERROR <message>            ; only on error
-     ;; ! TIMEOUT <message>          ; only on timeout
-
-   Side-effect lines render in stdout / stderr / => / ERROR / TIMEOUT
-   order. The :code body is preserved verbatim — the model's own `;;`
-   thinking comments in the channel-rendered tool-call rowthe form survive untouched."
-  [{:keys [code result error stdout stderr timeout?] :as iter}]
-  (let [header     (journal-iteration-header iter)
-        body       (when (string? code) (str/trim-newline code))
-        result-ln  (when-not (or error timeout?)
-                     (journal-result-line result))
-        stdout-ln  (journal-side-effect-line :stdout stdout)
-        stderr-ln  (journal-side-effect-line :stderr stderr)
-        error-ln   (when error
-                     (journal-side-effect-line :error (or (:message error) (str error))))
-        timeout-ln (when timeout?
-                     (journal-side-effect-line :timeout
-                       (or (:message error) "iteration timed out")))]
-    (str/join "\n"
-      (keep identity [header body stdout-ln stderr-ln result-ln error-ln timeout-ln]))))
-
-(defn format-system-vars-block
-  "Render the `;; system-vars:` block for the live-vars discovery
-   surface. `entries` is a vec of `{:name :doc}` maps. UPPERCASE
-   convention; engine-managed (USER_REQUEST, etc.). Returns nil when
-   no entries — caller can omit the block entirely."
-  [entries]
-  (when (seq entries)
-    (str/join "\n"
-      (cons ";; system-vars:"
-        (map (fn [{:keys [name doc]}]
-               (str ";;   " name "  " (pr-str (or doc ""))))
-          entries)))))
-
-(defn format-live-vars-block
-  "Render the `;; live-vars (N/30):` block for the discovery surface.
-   `entries` is a vec of `{:name :doc}` maps. `cap` defaults to 30.
-   Returns nil for an empty vec."
-  ([entries] (format-live-vars-block entries 30))
-  ([entries cap]
-   (when (seq entries)
-     (str/join "\n"
-       (cons (str ";; live-vars (" (count entries) "/" cap "):")
-         (map (fn [{:keys [name doc]}]
-                (str ";;   " name "  " (pr-str (or doc ""))))
-           entries))))))
-
-(defn format-journal
-  "Render a sequence of iterations as the full N-1 (or N-1 + N) tape
-   the model sees in the user-role message. `iters` is a vec of
-   per-iteration maps (see `format-journal-iteration` for the shape) in
-   chronological order. Iterations render top-to-bottom separated by
-   a blank line so the iteration-header lines visually anchor each
-   block.
-
-   Tape-window policy lives in the caller; this fn renders whatever
-   it's given. Pass `[N-1]` on a clean run, `[N-1 N]` on an error
-   recovery iteration."
-  [iters]
-  (when (seq iters)
-    (str/join "\n\n" (map format-journal-iteration iters))))
-
-(defn format-user-role-journal-message
-  "Assemble the full user-role message body: optional system-vars
-   header + optional live-vars header + the rendered journal. Each
-   section is joined with a blank line so the journal header lines stay
-   visually distinct.
-
-   Phase 7 main will wire this through `build-iteration-context` in
-   place of the legacy XML
-   blocks. Until then the engine still uses the old assembly path
-   and this fn is exercised only by tests."
-  [{:keys [system-vars live-vars iters]}]
-  (let [sys-block  (format-system-vars-block system-vars)
-        live-block (format-live-vars-block live-vars)
-        tape-block (format-journal iters)
-        parts      (keep identity [sys-block live-block tape-block])]
-    (when (seq parts)
-      (str/join "\n\n" parts))))
-
-(defn iteration->journal-iter
-  "Adapt an engine iteration map (the multi-block shape from the legacy
-   loop) into the journal-iter shape `format-journal-iteration` expects.
-
-   Engine input:
-     {:position N
-      :blocks   [{:code :result :error :stdout :stderr
-                  :execution-time-ms :timeout?} …]
-      :answer   \"…\"          ; optional}
-
-   Optional `coords` map carries per-iteration telemetry that does not
-   live on the iteration row itself: turn-position, conv-id, state-id,
-   status. Engine-side caller fills these from env / state.
-
-   Joins block fields conservatively: code by `\\n`; stdout/stderr
-   joined with `\\n` after dropping blanks; result is the LAST
-   successful block's value (model's intended return); error is the
-   FIRST error encountered (root cause); timeout? true if any block
-   timed out. Status defaults to :error if any block errored, :done
-   otherwise — caller can override via `coords`.
-
-   Phase 7 main wires this in `build-iteration-context`. Single-form
-   iterations (post-Phase-4) round-trip identity-preserved through
-   the same adapter — the join over a 1-element blocks vec is still
-   the same single block."
-  ([iteration]
-   (iteration->journal-iter iteration {}))
-  ([iteration {:keys [iteration-position turn-position conv-id state-id status]}]
-   (let [blocks (or (:blocks iteration) [])
-         non-blank #(when (and (string? %) (not (str/blank? %))) %)
-         joined-code (->> blocks (keep :code) (str/join "\n"))
-         joined-stdout (->> blocks (keep :stdout) (keep non-blank) (str/join "\n"))
-         joined-stderr (->> blocks (keep :stderr) (keep non-blank) (str/join "\n"))
-         first-error  (some :error blocks)
-         last-success (->> blocks (remove :error) last)
-         last-result  (when last-success (:result last-success))
-         any-timeout? (boolean (some :timeout? blocks))
-         derived-status (cond
-                          first-error  :error
-                          any-timeout? :error
-                          :else        :done)]
-     (cond-> {:iteration-position (or iteration-position (:position iteration))
-              :status             (or status derived-status)
-              :code               joined-code
-              :result             (if first-error :vis/no-result last-result)
-              :error              first-error
-              :stdout             joined-stdout
-              :stderr             joined-stderr
-              :timeout?           any-timeout?}
-       turn-position (assoc :turn-position turn-position)
-       conv-id       (assoc :conv-id conv-id)
-       state-id      (assoc :state-id state-id)))))
-
-(defn build-iteration-context
-  "Phase 7 build-iteration-context replacement: assembles the
-   per-iteration user-role trailer — XML
-   `<iteration_hints>` (preserved per design) followed by pure
-   commented-Clojure sections (system-vars / live-vars / journal).
-
-   Lives alongside the legacy `build-iteration-context`. Phase 7 main
-   flips the engine call site in loop.clj from the legacy fn to this
-   one. Until then the engine still uses the legacy assembly.
-
-   Required opts:
-     `:active-extensions` - vec from `(active-extensions env)`. Drives
-        `:turn.iteration/start` hook collection for `<iteration_hints>`.
-
-   Optional opts:
-     `:blocks-by-iteration` - carried iterations as
-        `[iteration-position {:blocks …}]` pairs. Fed through
-        `iteration->journal-iter` to produce journal entries.
-     `:iteration`            - current iteration position (1-based).
-     `:current-status`       - status to stamp on the LATEST iteration
-        in the rendered journal (default :done; pass :current for the
-        in-flight iteration that has not yet executed).
-     `:system-vars`          - vec of `{:name :doc}` for engine-managed
-        UPPERCASE vars. Phase 7 main fills this from sandbox introspection.
-     `:live-vars`            - vec of `{:name :doc}` for user vars
-        within the LRU window. Phase 7 main fills from per-env LRU map.
-     `:model` / `:context-limit` - unused for now; reserved so the
-        signature matches `build-iteration-context` for a clean swap."
-  [environment {:keys [blocks-by-iteration active-extensions iteration
-                       current-status system-vars live-vars]
-                :as opts}]
-  (when-not (contains? opts :active-extensions)
-    (throw (ex-info "build-iteration-context requires :active-extensions"
-             {:type :vis/missing-active-extensions})))
-  (let [turn-position (long (or (some-> environment :current-turn-position-atom deref) 1))
-        conv-id       (some-> environment :conversation-id str
-                        (subs 0 (min 8 (count (str (:conversation-id environment))))))
-        last-pos      (some-> blocks-by-iteration last first)
-        journal-iters    (mapv (fn [[pos iter-data]]
-                                 (iteration->journal-iter
-                                   iter-data
-                                   (cond-> {:iteration-position pos
-                                            :turn-position turn-position
-                                            :conv-id conv-id}
-                                     (and last-pos (= pos last-pos))
-                                     (assoc :status (or current-status :done)))))
-                           (or blocks-by-iteration []))
-        body (format-user-role-journal-message
-               {:system-vars (or system-vars [])
-                :live-vars   (or live-vars [])
-                :iters       journal-iters})
-        ;; Reuse the legacy nudge-ctx + hint-collection path so existing
-        ;; `:turn.iteration/start` hook contracts keep working unchanged.
-        nudge-ctx {:environment environment
-                   :iteration (if (some? iteration) (inc (long iteration)) 1)
-                   :turn-position turn-position
-                   :previous-blocks (some-> blocks-by-iteration last second :blocks)
-                   :model nil
-                   :context-limit nil
-                   :input-tokens 0
-                   :title-refresh? false
-                   :conversation-title (some-> (:conversation-title-atom environment) deref str str/trim not-empty)
-                   :user-request nil}
-        all-hints (into []
-                    (mapcat
-                      (fn [ext]
-                        (for [{:keys [id phase fn]} (or (:ext/hooks ext) [])
-                              :when (= :turn.iteration/start phase)
-                              :let [hit (try (call-extension-callback ext fn
-                                               (assoc nudge-ctx :phase phase))
-                                          (catch Throwable t
-                                            (tel/log! {:level :warn
-                                                       :id ::hook-threw
-                                                       :data {:ext (:ext/namespace ext)
-                                                              :hook id
-                                                              :phase phase
-                                                              :error (ex-message t)}})
-                                            nil))]
-                              :when (and (map? hit) (string? (:hint hit)) (not (str/blank? (:hint hit))))]
-                          (normalize-system-nudge
-                            (or (:importance hit) :normal)
-                            (:hint hit)))))
-                    (or active-extensions []))
-        hints-block (iteration-hints-block all-hints)
-        parts (keep (fn [p] (when (and (string? p) (not (str/blank? p))) p))
-                [hints-block body])]
-    (when (seq parts)
-      (str/join "\n\n" parts))))

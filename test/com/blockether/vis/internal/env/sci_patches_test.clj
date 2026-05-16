@@ -12,32 +12,25 @@
 (defn- ns-obj [ctx]
   (sci/find-ns ctx 'user))
 
-(defdescribe sci-patches-docstring-enforcement-test
+(defdescribe sci-patches-docstring-contract-test
   (it "(def NAME \"doc\" VAL) succeeds and binds the var"
     (let [ctx (fresh-ctx)
           r   (sci/eval-string+ ctx "(def x \"the answer\" 42) x" {:ns (ns-obj ctx)})]
       (expect (= 42 (:val r)))))
-  (it "(def NAME VAL) without a docstring throws :vis/missing-docstring"
-    (let [ctx (fresh-ctx)]
-      (try
-        (sci/eval-string+ ctx "(def x 42)" {:ns (ns-obj ctx)})
-        (expect false)
-        (catch clojure.lang.ExceptionInfo e
-          (expect (= :vis/missing-docstring (:type (ex-data e))))
-          (expect (= 'x (:name (ex-data e))))))))
+  (it "(def NAME VAL) without a docstring succeeds"
+    (let [ctx (fresh-ctx)
+          r   (sci/eval-string+ ctx "(def x 42) x" {:ns (ns-obj ctx)})]
+      (expect (= 42 (:val r)))))
   (it "(defn NAME \"doc\" [args] body) succeeds (defn macro-expands to def with :doc meta)"
     (let [ctx (fresh-ctx)
           r   (sci/eval-string+ ctx
                 "(defn double-it \"double the input\" [x] (* 2 x)) (double-it 21)"
                 {:ns (ns-obj ctx)})]
       (expect (= 42 (:val r)))))
-  (it "(defn NAME [args] body) without a docstring throws :vis/missing-docstring"
-    (let [ctx (fresh-ctx)]
-      (try
-        (sci/eval-string+ ctx "(defn no-doc [x] x)" {:ns (ns-obj ctx)})
-        (expect false)
-        (catch clojure.lang.ExceptionInfo e
-          (expect (= :vis/missing-docstring (:type (ex-data e)))))))))
+  (it "(defn NAME [args] body) without a docstring succeeds"
+    (let [ctx (fresh-ctx)
+          r   (sci/eval-string+ ctx "(defn no-doc [x] x) (no-doc 7)" {:ns (ns-obj ctx)})]
+      (expect (= 7 (:val r))))))
 
 (defdescribe sci-patches-def-sink-test
   (it "*def-sink-atom* is nil by default; patch is silent"
