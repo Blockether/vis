@@ -396,21 +396,14 @@
                         (and (or (empty? include-matchers)
                                (match-globs? include-matchers f))
                           (not (match-globs? exclude-matchers f))))
-        path-roots (mapv (fn [p]
-                           (let [f (safe-path p)]
-                             {:requested p
-                              :file f
-                              :exists? (.exists f)}))
-                     paths)
-        missing-paths (->> path-roots (remove :exists?) (mapv :requested))
-        existing-paths (->> path-roots (filter :exists?) (mapv :file))
-        _ (when (and (seq missing-paths) (empty? existing-paths))
-            (throw (ex-info (str "No usable paths for v/rg; all missing: "
-                              (pr-str missing-paths))
-                     {:type :ext.foundation.editing/path-not-found
-                      :missing-paths missing-paths})))
-        roots (->> existing-paths
-                (mapv (fn [^File f] (.getCanonicalFile f)))
+        roots (->> paths
+                (mapv (fn [p]
+                        (let [f (safe-path p)]
+                          (when-not (.exists f)
+                            (throw (ex-info (str "Path not found: " (.getPath f))
+                                     {:type :ext.foundation.editing/path-not-found
+                                      :path p})))
+                          (.getCanonicalFile f))))
                 (sort-by (fn [^File f]
                            [(count (iterator-seq (.iterator (.toPath f))))
                             (.getPath f)]))
