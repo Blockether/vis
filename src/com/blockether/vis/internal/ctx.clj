@@ -5,7 +5,8 @@
    Three keys, every nil/blank field stripped:
 
      :conversation {:id :title :turn-id :iteration-id :user-request}
-     :tree         vector of cwd-relative paths (depth 8, ignores hidden/build dirs)
+     :tree         vector of cwd-relative file paths (depth 8, gitignore-aware,
+                   directories excluded so paths read cleanly)
      :defs         {sym {:doc <string?> :shape <malli|fn-shape>}}
 
    `:defs` is an ordered map; newest sym first. History (prior turns,
@@ -36,7 +37,7 @@
     ".verification" ".nrepl-port" ".pi"})
 
 (def ^:private TREE_MAX_DEPTH 8)
-(def ^:private TREE_MAX_ENTRIES 1000)
+(def ^:private TREE_MAX_ENTRIES 2000)
 
 (defn- ignored-dir-name? [^File f]
   (let [n (.getName f)]
@@ -66,6 +67,9 @@
       (catch Throwable _ false))))
 
 (defn- walk-tree
+  "Walk the workspace returning a vec of cwd-relative FILE paths.
+   Directories are traversed but not included in the result (model can
+   infer dir layout from file path prefixes)."
   [^File root]
   (let [out      (volatile! [])
         root-abs (.getCanonicalPath root)
@@ -83,7 +87,6 @@
                       (.isDirectory child)
                       (when-not (or (ignored-dir-name? child)
                                   (gitignored? gi-node child root))
-                        (vswap! out conj (str (rel-of child) "/"))
                         (step child (inc depth)))
 
                       (.isFile child)
