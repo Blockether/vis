@@ -16,7 +16,6 @@
    [clojure+.walk]
    [edamame.core :as edamame]
    [com.blockether.vis.internal.format :as fmt]
-   [com.blockether.vis.internal.env.handle :as handle]
    [com.blockether.vis.internal.env.sci-patches]
    [com.blockether.vis.internal.persistance :as persistance]
    [sci.addons.future :as sci-future]
@@ -189,25 +188,16 @@
    'update-vals update-vals})
 
 (def EXTRA_BINDINGS
-  "Extra bindings beyond what SCI provides by default.
-
-   The `PHandle` protocol surface (`view`, `summary`, `op`, `handle?`)
-   is intentionally injected here as bare sandbox primitives — every
-   extension that ships its own handle op (foundation today; vis-sql
-   / vis-http tomorrow) gets dispatch on these names for free, without
-   re-registering its own per-extension symbols. Treat them like
-   `+` / `str` / `map`: always available, dispatched polymorphically
-   by `:op`."
+  "Extra bindings beyond what SCI provides by default. Handle protocol
+   primitives (`view` / `summary` / `op` / `handle?`) were retired:
+   tools now return plain Clojure maps, so destructuring + standard
+   sequence ops are the only API the model needs."
   (merge MODERN_CORE_BINDINGS
     {'abs abs, 'parse-long parse-long, 'parse-double parse-double,
      'parse-boolean parse-boolean, 'parse-uuid parse-uuid,
      'infinite? infinite?, 'NaN? NaN?,
      'url-encode (fn ^String url-encode [^String s] (java.net.URLEncoder/encode s "UTF-8")),
-     'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8"))
-     'view       handle/view
-     'summary    handle/summary
-     'op         handle/op
-     'handle?    handle/handle?}))
+     'url-decode (fn ^String url-decode [^String s] (java.net.URLDecoder/decode s "UTF-8"))}))
 
 (defn create-sci-context
   "Creates the SCI sandbox context with all available bindings.

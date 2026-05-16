@@ -34,14 +34,22 @@
       (let [prompt ((:ext/prompt foundation/vis-extension) {})]
         (expect (str/includes? prompt "<environment>"))
         (expect (str/includes? prompt "`v/` env strategy"))
-        (expect (str/includes? prompt "Locate with v/rg + v/ls"))
+        ;; Post-handle removal the editing prompt is RLM-shaped. Concepts
+        ;; carry over (v/rg + v/ls for discovery, v/cat for windows); the
+        ;; phrasing is now organised under READ / EDIT / RLM TACTICS.
+        (expect (str/includes? prompt "v/rg"))
+        (expect (str/includes? prompt "v/ls"))
+        (expect (str/includes? prompt "RLM TACTICS"))
         (expect (not (str/includes? prompt "clojure.repl/doc")))
         (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
         (expect (not (str/includes? prompt "Do not render Markdown as IR")))
         ;; AGENTS.md is stubbed out — the `<project-guidance>` block must
         ;; be omitted entirely (not present-but-empty).
         (expect (not (str/includes? prompt "<project-guidance")))
-        (expect (< (count prompt) 3000)))))
+        ;; RLM prompt teaches deep exploration / combine / refine across
+        ;; iterations with worked-example code; cap is more permissive
+        ;; than the old one-liner. 8KB soft ceiling guards against drift.
+        (expect (< (count prompt) 8000)))))
 
   (it "contributes environment info through its extension prompt"
     (let [prompt ((:ext/prompt foundation/vis-extension) {})]
