@@ -215,6 +215,28 @@
    the SAME `:position` index in both `:journal` and `:channel` vecs."
   nil)
 
+(def ^:dynamic *turn-observation-cache*
+  "Turn-scoped atom (or nil) of `{form-string {:iteration N :position P}}`.
+   The iteration loop binds this once per turn so the sink writer can
+   collapse repeated observation tool calls into a one-line reference
+   instead of replaying the full peek. Mutation tool calls invalidate the
+   cache (the writer resets it to `{}` after recording the mutation).
+
+   Cache key is the literal call form string — includes the alias / symbol
+   head and the EVALUATED arg vector (`sink-form-string`). Different args
+   miss; identical args within the same turn hit.
+
+   Cache is in-memory only; it is NOT persisted to SQLite. It exists
+   purely as an engine-side render dedup signal so the model and the UI
+   stop seeing the same data three times."
+  nil)
+
+(def ^:dynamic *current-iteration-position*
+  "1-based current iteration position, bound by the iteration loop so the
+   sink writer can stamp `:cached-from :iteration` references on cache
+   hits without reaching back into environment atoms."
+  nil)
+
 (defn- next-sink-position!
   "Atomically claim the next position in the per-form counter. Returns the
    incremented integer (post-increment so the first call returns 0)."

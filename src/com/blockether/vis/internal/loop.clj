@@ -2487,10 +2487,24 @@
             (when-let [conv-id (:conversation-id environment)]
               (let [d (:db-info environment)
                     queries (persistance/db-list-conversation-turns d conv-id)
+                    current-turn-id-str (str conversation-turn-id)
+                    ;; Drop CURRENT turn rows (defensive: they should not
+                    ;; exist yet at seed time, but a restart/recover path
+                    ;; could leave partial rows) and PRIOR-turn iterations
+                    ;; whose status is NOT :done. Erroring / running /
+                    ;; interrupted iterations are exploration noise that
+                    ;; poisoned follow-up turns in conv 2ccde943: 7 handle
+                    ;; mistakes from turn 1 were replayed verbatim into
+                    ;; turn 3's journal, teaching the model that probing
+                    ;; is unreliable. Carry only the iterations that landed
+                    ;; a clean result; defs from earlier exploration
+                    ;; survive independently via the def restore path.
                     iters (->> queries
+                            (remove #(= (str (:id %)) current-turn-id-str))
                             (mapcat (fn [q]
                                       (try (persistance/db-list-conversation-turn-iterations d (:id q))
                                         (catch Throwable _ []))))
+                            (filter #(= :done (:status %)))
                             (sort-by :created-at)
                             vec)]
                 (mapv (fn [it]

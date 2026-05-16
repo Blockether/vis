@@ -255,7 +255,8 @@
       (expect (some? env-result))))
 
   (it "v/patch envelope mode appears in editing prompt"
-    (expect (str/includes? editing/editing-prompt "Codex apply_patch envelope"))))
+    ;; RLM prompt mentions the envelope under EDIT / \"Codex envelope\".
+    (expect (str/includes? editing/editing-prompt "Codex envelope"))))
 
 (defdescribe codex-parity-edge-cases-test
   (it "strips Codex heredoc wrapper (<<'EOF' ... EOF) before parsing"

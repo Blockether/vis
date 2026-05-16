@@ -38,7 +38,6 @@
    [clojure.string :as str]
    [com.blockether.vis.core :as vis]
    [com.blockether.vis.ext.foundation.editing.patch :as patch]
-   [com.blockether.vis.internal.env.handle :as handle]
    [com.blockether.vis.internal.extension :as extension]
    [com.blockether.vis.internal.workspace :as workspace])
   (:import
@@ -746,19 +745,31 @@
 ;; =============================================================================
 
 (defn- cat-tool
-  "Read a window of a text file as a CatHandle. The handle prints as a one-line summary; call `@h` to materialize the line vec, or `(v/view h :peek)` / `(v/view h :lines a b)` / `(v/view h :at n)` for bounded views. Arities: `(v/cat path)` -> first 200 lines; `(v/cat path n)` -> first n lines; `(v/cat path offset n)` -> n lines starting at 1-based offset. Pagination metadata lives in the handle summary: `(:next-offset (handle/summary h))` / `(:eof? (handle/summary h))`. Each window is byte-capped at 64KB."
+  "Read a window of a text file. Returns a plain Clojure map:
+     {:vis.op :v/cat :path P :offset O :line-count N :next-offset O' :eof? B :truncated-by K :lines [str ...]}
+   Arities:
+     (v/cat path)            — first 200 lines from line 1.
+     (v/cat path n)          — first n lines from line 1.
+     (v/cat path offset n)   — n lines starting at ABSOLUTE 1-based `offset`.
+   Pagination: when `:eof?` is false, `:next-offset` is the offset of the
+   next unread line; pass it to a follow-up `(v/cat path next-offset n)`
+   call. `:truncated-by` ∈ #{:limit :eof :bytes}. Each window is byte-capped
+   at 64KB (one Nippy result blob per call — :truncated-by :bytes when the
+   cap fires)."
   ([path]
    (cat-tool path 1 default-cat-limit))
   ([path n]
    (cat-tool path 1 n))
   ([path offset n]
-   (let [out (read-file path offset n)
-         h   (handle/make-cat out)]
+   (let [out (read-file path offset n)]
      (tool-success
        {:op :v/cat
         :path path
         :kind :file
-        :result h
+        :result (-> out
+                  (assoc :vis.op :v/cat)
+                  (assoc :line-count (:returned out))
+                  (dissoc :returned :limit))
         :info {:lines-returned (:returned out)
                :offset (:offset out)
                :limit (:limit out)
@@ -771,44 +782,73 @@
                        :offset (:offset out)}}))))
 
 (defn- ls-tool
-  "Preview directory tree as an LsHandle. The handle's summary carries
-   path / type / entry-count / tree?; call `(v/view h :peek)` for
-   top-level entry names, `(v/view h :children)` for the immediate
-   children, or `(v/view h :tree)` (or `@h`) for the full tree."
+  "List a directory as a plain Clojure map tree:
+     {:vis.op :v/ls :path P :absolute-path AP :type :dir|:file
+      :entry-count N :children [{:name :path :type :size :children} ...]}
+   `:children` is a recursive vector bounded by `:depth` (default 5).
+   `(v/ls path)` reads with defaults; `(v/ls path opts)` accepts
+   `{:depth N :hidden? B :respect-gitignore? B}`. Children are fully
+   materialised; slice via `(map :name (:children r))` or
+   `(filter #(= :dir (:type %)) (:children r))`. No handles; the whole
+   tree is a plain map."
   ([path]
    (ls-tool path nil))
   ([path opts]
-   (let [out (list-files path opts)
-         h   (handle/make-ls out)]
+   (let [tree (list-files path opts)
+         entry-count (count (or (:children tree) []))
+         result (-> tree
+                  (assoc :vis.op :v/ls)
+                  (assoc :entry-count entry-count))]
      (tool-success
        {:op :v/ls
         :path path
         :kind :dir
-        :result h
+        :result result
         :info {:depth (:depth opts)
                :hidden? (:hidden? opts)
-               :respect-gitignore? (get opts :respect-gitignore? true)}
+               :respect-gitignore? (get opts :respect-gitignore? true)
+               :entry-count entry-count}
         :presentation {:kind :tree}}))))
 
 (defn- rg-tool
-  "Literal file-content search returning an RgHandle. Use `(v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]})` for OR, or `(v/rg {:all [\"defn\" \"handler\"] :paths [\"src\"]})` when all literals must occur on the same line. Exactly one of :all/:any is required. Strings are literal substrings: `|` is a pipe character, not regex alternation. No positional/query+opts shorthand. :paths defaults to [\".\"]. All collection fields are vectors. Optional filters: :include and :exclude glob vectors, plus :hidden? and :respect-gitignore?. Unknown keys throw. The handle's summary carries hit-count / truncated-by / first-hit (path:line) / spec; call `(v/view h :peek)` for the first 10 hits, `(v/view h :hit n)` for one hit, or `(v/view h :all)` (or `@h`) for the full vec. For pure path discovery without content matching, use a vacuous spec like `(v/rg {:any [\"\"] :include [\"**/*.clj\"]})` or `v/ls`."
+  "Literal file-content search. Returns a plain Clojure map:
+     {:vis.op :v/rg :hit-count N :truncated-by K :first-hit \"path:line\"
+      :spec SPEC :paths [...] :hits [{:path :line :text} ...]}
+   Use `(v/rg {:any [\"foo\" \"bar\"] :paths [\"src\"] :include [\"**/*.clj\"]})`
+   for OR, or `(v/rg {:all [\"defn\" \"handler\"] :paths [\"src\"]})` for
+   same-line AND. Exactly one of :all/:any. Strings are literal substrings
+   (`|` is a pipe character, not regex alternation). No positional shorthand.
+   :paths defaults to [\".\"]. All collection fields are vectors. Optional
+   filters: :include / :exclude glob vectors, :hidden?, :respect-gitignore?.
+   Unknown keys throw. For pure path discovery without content matching,
+   use a vacuous spec like `(v/rg {:any [\"\"] :include [\"**/*.clj\"]})` or `v/ls`."
   ([spec]
    (let [{:keys [paths include exclude] :as coerced} (coerce-rg-spec spec)
          out (grep-files spec)
-         h   (handle/make-rg out {:spec spec :paths paths})]
+         hits (vec (:hits out))
+         hit-count (count hits)
+         first-hit (when (pos? hit-count)
+                     (let [{:keys [path line]} (nth hits 0)]
+                       (str path ":" line)))]
      (tool-success
        {:op :v/rg
         :path (if (= 1 (count paths))
                 (first paths)
                 ".")
         :kind :dir
-        :result h
+        :result {:vis.op       :v/rg
+                 :hit-count    hit-count
+                 :truncated-by (:truncated-by out)
+                 :first-hit    first-hit
+                 :spec         spec
+                 :paths        paths
+                 :hits         hits}
         :info {:spec spec
                :query-op (:op coerced)
                :paths paths
                :include include
                :exclude exclude
-               :hit-count (count (:hits out))
+               :hit-count hit-count
                :truncated-by (:truncated-by out)}
         :presentation {:kind :search-hits
                        :row-keys [:path :line :text]}})))
@@ -1034,12 +1074,6 @@
     (map-indexed (fn [idx line] (str (+ start-line idx) ": " line)))
     (str/join "\n")))
 
-(defn- read-more-hint
-  "Tail line on every bounded read renderer. Tells the model exactly how to
-   reach the values that didn't fit."
-  [bound-name]
-  (str "… (bound to `" bound-name "`; slice raw payload fields with subvec/get-in to see more)"))
-
 ;; ---------------------------------------------------------------------------
 ;; Per-symbol renderers
 ;;
@@ -1052,26 +1086,41 @@
 ;; `default-{journal,channel}-error-text`.
 ;; ---------------------------------------------------------------------------
 
-(defn- journal-render-cat
-  "v/cat journal preview: one-line handle summary plus the standard
-   read-more hint. The handle's `print-method` already emits the
-   summary form; the model sees `#vis/handle {:op :v/cat :path X
-   :line-count N ...}` and reaches content via deref or `(v/view h …)`.
+(def ^:private cat-journal-peek-lines 10)
+(def ^:private ls-journal-peek-entries 20)
+(def ^:private rg-journal-peek-hits 10)
 
-   This renderer collapses to a single line in advance of Phase 7's
-   tape-rendering takeover."
-  [result]
-  (str (pr-str result)
-    "\n" (read-more-hint "<your binding>")))
+(defn- journal-render-cat
+  "v/cat journal preview: header line + bounded line-numbered peek + a
+   tail hint that points the model back at the binding for full data.
+
+   Input is the plain map returned by the tool (`:path :offset :line-count
+   :next-offset :eof? :truncated-by :lines`). No handles, no deref."
+  [{:keys [path offset line-count next-offset eof? truncated-by lines]}]
+  (let [start-line (or offset 1)
+        peek       (vec (take cat-journal-peek-lines (or lines [])))
+        rendered   (numbered-line-block start-line peek)
+        more       (- (long (or line-count 0)) (count peek))
+        header     (str "v/cat " (pr-str path)
+                     " — " (or line-count 0) " line(s) from line " start-line
+                     (cond
+                       eof?        " (eof)"
+                       next-offset (str " (next-offset " next-offset ")")
+                       :else       ""))
+        more-line  (when (pos? more)
+                     (str "… +" more
+                       " more line(s); the result is a plain map — "
+                       "slice with `(subvec (:lines <binding>) a b)`."))
+        bytes-line (when (= :bytes truncated-by)
+                     "(window hit the 64KB byte cap; advance via (:next-offset <binding>))")]
+    (str/join "\n"
+      (keep identity [header rendered more-line bytes-line]))))
 
 (defn- channel-render-cat
-  "Channel preview: derefs the handle to render the actual content for
-   human readers. The handle's summary supplies path / offset /
-   pagination metadata."
-  [result]
-  (let [{:keys [path offset next-offset eof? line-count]} (handle/summary result)
-        lines (deref result)
-        body  (numbered-line-block (or offset 1) (vec lines))]
+  "Channel preview: numbered-line-block + header. Reads the plain map
+   directly; no handle/deref."
+  [{:keys [path offset next-offset eof? line-count lines]}]
+  (let [body (numbered-line-block (or offset 1) (vec lines))]
     (ir-root
       (ir-p "Read " (ir-code path) " — " (or line-count (count lines))
         " line(s) from line " (or offset 1)
@@ -1082,43 +1131,64 @@
       (ir-code-block "text" (bounded-render-text body)))))
 
 (defn- journal-render-ls
-  "v/ls journal: one-line handle summary + read-more hint. Tree content
-   reachable via (v/view h :tree) / @h."
-  [result]
-  (str (pr-str result)
-    "\n" (read-more-hint "<your binding>")))
+  "v/ls journal: header line + first N top-level entry names + tail hint.
+   Input is the plain tree map from the tool."
+  [{:keys [path entry-count children]}]
+  (let [show       (take ls-journal-peek-entries (or children []))
+        more       (- (long (or entry-count 0)) (count show))
+        header     (str "v/ls " (pr-str path)
+                     " — " (or entry-count 0) " top-level entry(ies)")
+        body       (str/join "\n"
+                     (map #(str "  - " (:name %)
+                             (when-let [t (:type %)] (str " (" (name t) ")")))
+                       show))
+        more-line  (when (pos? more)
+                     (str "… +" more
+                       " more; full tree is `(:children <binding>)` / recurse "
+                       "with `(tree-seq map? :children <binding>)`."))]
+    (str/join "\n"
+      (keep identity [header body more-line]))))
 
 (defn- channel-render-ls
-  "Channel preview: derefs the handle to render the tree for human readers."
-  [result]
-  (let [tree (deref result)]
-    (ir-root
-      (ir-p "Directory tree of " (ir-code (:path tree)) " — "
-        (count (:children tree)) " top-level entries.")
-      (ir-code-block "text"
-        (bounded-render-text (str/join "\n" (tree-lines tree)))))))
+  "Channel preview: pretty tree from the plain map."
+  [tree]
+  (ir-root
+    (ir-p "Directory tree of " (ir-code (:path tree)) " — "
+      (or (:entry-count tree) (count (:children tree))) " top-level entries.")
+    (ir-code-block "text"
+      (bounded-render-text (str/join "\n" (tree-lines tree))))))
 
 (defn- journal-render-rg
-  "v/rg journal: one-line handle summary + read-more hint. Hit vec
-   reachable via (v/view h :all) / (v/view h :hit n) / @h."
-  [result]
-  (str (pr-str result)
-    "\n" (read-more-hint "<your binding>")))
+  "v/rg journal: header line + first N hits as `path:line  text` + tail
+   hint. Input is the plain map from the tool."
+  [{:keys [hit-count truncated-by hits]}]
+  (let [show       (take rg-journal-peek-hits (or hits []))
+        more       (- (long (or hit-count 0)) (count show))
+        header     (str "v/rg — " (or hit-count 0) " hit(s), truncated-by "
+                     (or (some-> truncated-by name) "none"))
+        body       (str/join "\n"
+                     (map (fn [{:keys [path line text]}]
+                            (str "  " path ":" line "  " text))
+                       show))
+        more-line  (when (pos? more)
+                     (str "… +" more
+                       " more; full vec is `(:hits <binding>)` — "
+                       "narrow with `filter` / `take` / `frequencies`."))]
+    (str/join "\n"
+      (keep identity [header body more-line]))))
 
 (defn- channel-render-rg
-  "Channel preview: derefs the handle to render the hit list."
-  [result]
-  (let [hits (deref result)
-        {:keys [truncated-by]} (handle/summary result)]
-    (ir-root
-      (ir-p "Searched — " (count hits) " hit(s), truncated-by "
-        (ir-code (name (or truncated-by :none))) ".")
-      (when (seq hits)
-        (ir-code-block "text"
-          (bounded-render-text
-            (str/join "\n"
-              (map (fn [{:keys [path line text]}]
-                     (str path ":" line " " text)) hits))))))))
+  "Channel preview: full hit list from the plain map."
+  [{:keys [hits truncated-by]}]
+  (ir-root
+    (ir-p "Searched — " (count hits) " hit(s), truncated-by "
+      (ir-code (name (or truncated-by :none))) ".")
+    (when (seq hits)
+      (ir-code-block "text"
+        (bounded-render-text
+          (str/join "\n"
+            (map (fn [{:keys [path line text]}]
+                   (str path ":" line " " text)) hits)))))))
 
 (defn- journal-render-patch
   [_result]
@@ -1316,15 +1386,102 @@
 
 (defn available-editing-prompt
   []
-  (str
-    "`v/` editing. Locate with v/rg + v/ls. v/rg takes one literal spec map: "
-    "`{:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]}` (OR) or "
-    "`{:all [\"defn\" \"foo\"]}` (same-line AND); no regex/shorthand. "
-    "v/cat reads one window: `(v/cat path offset n)`; page via `(:next-offset prev)` until `(:eof? prev)`. Bind windows, not whole files. "
-    "Edit text two ways: `(v/patch [{:path :search :replace}])` for exact-replace (each :search must match exactly once); OR `(v/patch \"*** Begin Patch\\n*** Update File: p\\n@@\\n-old\\n+new\\n*** End Patch\\n\")` for Codex apply_patch envelope (Add/Update/Delete/Move, fuzzy line match). Both modes validate the full plan before any write; one failure aborts the whole batch. v/patch-check accepts the same two shapes. "
-    "v/patch returns the unified diff + post-image — that IS the evidence the write happened. Do NOT v/cat to verify; trust the patch result. "
-    "Path ops: v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists, v/exists?. "
-    "No shell: git/verify/CLI live outside the sandbox — stay in tools/REPL."))
+  (str/join "\n"
+    ["`v/` editing tools — RLM-shaped. Every tool returns a PLAIN CLOJURE MAP;"
+     "destructure with :keys. The journal shows a bounded peek (header +"
+     "first lines/hits/entries); the full data lives in the bound def."
+     ""
+     "READ"
+     "  (v/cat path)            — 200 lines from line 1."
+     "  (v/cat path n)          — n lines from line 1."
+     "  (v/cat path offset n)   — n lines starting at ABSOLUTE 1-based offset."
+     "  result: {:vis.op :v/cat :path :offset :line-count :next-offset :eof?"
+     "           :truncated-by :lines}. Page with `(:next-offset prev)` until"
+     "  `(:eof? prev)`. :truncated-by ∈ {:limit :eof :bytes}; :bytes means the"
+     "  64KB window cap fired — advance via :next-offset."
+     ""
+     "  (v/ls path)             — directory tree. opts: {:depth :hidden? :respect-gitignore?}."
+     "  result: {:vis.op :v/ls :path :type :entry-count :children [...]} where"
+     "  each child is {:name :path :type :size :children}. Walk with"
+     "  `(tree-seq map? :children r)`; filter with `(filter #(= :dir (:type %)) ...)`."
+     ""
+     "  (v/rg {:any [\"a\" \"b\"] :paths [\"src\"] :include [\"**/*.clj\"]})"
+     "  (v/rg {:all [\"defn\" \"foo\"] :paths [\"src\"]})"
+     "  Exactly one of :all/:any required. Literal substrings only (no regex);"
+     "  `|` is a pipe character. All collection fields are vectors. Unknown keys"
+     "  throw. result: {:vis.op :v/rg :hit-count :truncated-by :first-hit :spec"
+     "  :paths :hits [{:path :line :text}]}."
+     ""
+     "EDIT"
+     "  (v/patch [{:path :search :replace}])  — exact-replace; each :search must match exactly once."
+     "  (v/patch \"*** Begin Patch\\n... *** End Patch\\n\")  — Codex envelope (Add/Update/Delete/Move)."
+     "  Both modes validate the full plan before any write; one failure aborts the batch."
+     "  v/patch returns diff + post-image — that IS the write evidence. Do NOT v/cat to verify."
+     "  v/patch-check accepts the same two shapes (no writes)."
+     ""
+     "PATH OPS"
+     "  v/create-dirs, v/copy, v/move, v/delete, v/delete-if-exists, v/exists?."
+     ""
+     "RLM TACTICS— the iteration loop is a REPL session, NOT a one-shot answer."
+     "  Build understanding by ACCUMULATING facts in defs across iterations."
+     "  Each iteration adds to the journal AND to `;; live-vars`. Context grows;"
+     "  use it. Don't re-probe what you already bound."
+     ""
+     "  1. EXPLORE WIDE FIRST. Don't commit to a fix on iteration 1. Cast a wide"
+     "     net of probes and bind every result to a def with a docstring. The"
+     "     docstring is how you remember WHY you bound it."
+     ""
+     "       (def tree   \"top-level src layout\"   (v/ls \"src\"))"
+     "       (def hits   \"all `foo` uses\"          (v/rg {:any [\"foo\"] :paths [\"src\"]}))"
+     "       (def state  \"conv state for context\"  (v/conversation-state))"
+     ""
+     "  2. COMBINE. Each NEW def is a derived fact built FROM prior defs. The"
+     "     model has read access to every def from every prior iteration of the"
+     "     turn — use that. No tool call is needed to look at `(:hits hits)`;"
+     "     it's already in the sandbox."
+     ""
+     "       (def clj-hits  \"only .clj files\""
+     "         (filter #(re-find #\"\\.clj$\" (:path %)) (:hits hits)))"
+     "       (def by-file   \"group by file\""
+     "         (group-by :path clj-hits))"
+     ""
+     "  3. EXPLORE DEEPER using the previous symbol. Now you have a narrowed set;"
+     "     pick one and read more around it. This is where context grows fastest:"
+     "     each new def references prior ones."
+     ""
+     "       (def primary    \"file with most hits\""
+     "         (first (sort-by #(- (count (val %))) by-file)))"
+     "       (def src        \"primary file content\""
+     "         (v/cat (key primary)))"
+     "       (def context    \"defn around first hit\""
+     "         (let [hit (first (val primary))]"
+     "           (subvec (:lines src)"
+     "             (max 0 (- (:line hit) 5))"
+     "             (min (:line-count src) (+ (:line hit) 30)))))"
+     ""
+     "  4. ANSWER when you have enough. The final form is `(done IR)`. By now"
+     "     `;; live-vars` shows you the whole investigation — plan, narrowed"
+     "     hits, primary file, context window. The model's working memory IS"
+     "     these defs."
+     ""
+     "       (v/patch [{:path (key primary) :search \"old-thing\" :replace \"new-thing\"}])"
+     "       (done [:ir [:p \"Patched \" [:c {} (key primary)] \" — \" (count clj-hits) \" hits reviewed.\"]])"
+     ""
+     "  RULES OF THE GAME"
+     "    • The journal shows you peeks; defs hold the truth. To inspect more, do"
+     "      plain Clojure on the def: (take 5 (:hits hits)), (filter pred coll),"
+     "      (subvec (:lines src) a b), (group-by :type (:children tree))."
+     "    • The iteration's LAST FORM is the iteration RESULT — it should be your"
+     "      NEXT STRATEGIC MOVE (another tool call, a derived def, a patch, or"
+     "      `(done ...)`). It should NOT be a `(:lines binding)` re-projection"
+     "      whose only purpose is to look at the same data again. The journal"
+     "      already showed it."
+     "    • Don't re-bind a name you already have. `(def hits ...)` once. Use"
+     "      `hits` from then on. A second `(def hits ...)` with different args"
+     "      is fine; a second one with IDENTICAL args is wasted iteration cost."
+     "    • After a mutation (v/patch, v/move, …) any prior read of the same"
+     "      path is STALE. Re-bind from a fresh tool call before referencing."
+     "    • No shell: git / verify / CLI live outside the sandbox."]))
 
 (def editing-symbols
   "Default editing symbol set for docs/tests."
