@@ -102,12 +102,13 @@
     (expect (string/includes? editing/editing-prompt "Literal substrings only (no regex)"))
     (expect (not (string/includes? editing/editing-prompt "(v/rg :include/:exclude"))))
 
-  (it "registers journal + channel renderers on every fn-symbol"
+  (it "registers data-only observed fn-symbols"
     (doseq [sym-name '[cat ls rg patch patch-check create-dirs copy move delete delete-if-exists exists?]]
       (let [entry (some #(when (= sym-name (:ext.symbol/symbol %)) %)
                     editing/editing-symbols)]
-        (expect (ifn? (:ext.symbol/journal-render-fn entry)))
-        (expect (ifn? (:ext.symbol/channel-render-fn entry)))))))
+        (expect (some? entry))
+        (expect (nil? (:ext.symbol/journal-render-fn entry)))
+        (expect (nil? (:ext.symbol/channel-render-fn entry)))))))
 
 (it "defers op classification to the engine contract (no editing-local copy)"
   ;; The classification table + presentation map live in

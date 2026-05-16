@@ -85,8 +85,8 @@
   (it "renders foundation environment info separately from prompt extras"
     (let [info (env-core/environment-info {})]
       (expect (string? info))
-      (expect (str/includes? info "<environment>"))
-      (expect (str/includes? info "git.summary"))))
+      (expect (str/includes? info ";; ctx.runtime ="))
+      (expect (str/includes? info ":git"))))
 
   (it "uses active workspace root instead of JVM cwd for v/git snapshots"
     (let [root   (make-tmp-dir)

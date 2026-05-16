@@ -32,8 +32,8 @@
    Writes through the SCI `def` special form (so the patched
    `eval-def` enforces the docstring contract — we satisfy it with a
    synthetic 'vis-managed engine binding' tag) and then interns the
-   actual value. `journal-system-vars` / `journal-live-vars` read the
-   sandbox map directly, so no separate invalidation step is needed."
+   actual value. The engine `ctx` snapshot reads the sandbox map directly, so no
+   separate invalidation step is needed."
   [sci-ctx sym val]
   (let [ns-obj (sci/find-ns sci-ctx 'sandbox)]
     (sci/eval-string+ sci-ctx (str "(def " sym " \"vis-managed engine binding\" nil)") {:ns ns-obj})
@@ -495,154 +495,21 @@
      :sandbox-ns sandbox-ns
      :initial-ns-keys (set (keys (:val (sci/eval-string+ sci-ctx "(ns-publics 'sandbox)" {:ns sandbox-ns}))))}))
 
-;; SYSTEM vars are read-only bindings the loop maintains for the
-;; agent. Three lifetime tiers, each tagged by its prefix:
-;;
-;;   TURN_*         frozen at turn start, immutable for the whole turn
-;;     TURN_ID                     UUID of THIS in-flight turn soul.
-;;     TURN_POSITION               1-based int position of THIS turn within
-;;                                 its conversation_state. Per-conversation
-;;                                 monotonic; matches conversation_turn_soul.position.
-;;                                 Public-facing turn identifier (channels render
-;;                                 "turn 7"; UUIDs stay programmatic-only).
-;;                                 (Retired: TURN_USER_REQUEST. The exact human-
-;;                                 authored turn text is now read lazily through
-;;                                 the sandbox `(turn-request)` primitive - a
-;;                                 closure over `:current-user-request-atom` -
-;;                                 so the value is not pumped into per-iteration
-;;                                 persisted var rows. For richer history use
-;;                                 `(v/conversation-state)` -> `:current-turn`/`:transcript`.)
-;;     TURN_CONVERSATION_STATE_ID  UUID of the latest conversation_state row at
-;;                                 turn start. Stable for the whole turn even if a
-;;                                 sibling write changes title; only an
-;;                                 explicit fork bumps the state id.
-;;     TURN_SYSTEM_PROMPT          full assembled system prompt that drove THIS
-;;                                 turn (core prompt + every active-extension
-;;                                 prompt block). Useful for the model to
-;;                                 verify what rules it is operating under
-;;                                 without round-tripping through an extension.
-;;     TURN_ACTIVE_EXTENSIONS      vec of compact maps describing every extension
-;;                                 that passed activation for THIS turn.
-;;                                 Iteration-loop binds it once and never mutates
-;;                                 again within the turn so the model can rely on
-;;                                 a stable view (`(filter ...) TURN_ACTIVE_EXTENSIONS`)
-;;                                 without round-tripping through
-;;                                 `(v/extensions)`. Shape per element:
-;;                                   {:alias              'vis
-;;                                    :namespace          'com.blockether.vis.ext.foundation.introspection
-;;                                    :doc                "..."
-;;                                    :kind               "..."            ;; when present
-;;                                    :version            "..."            ;; when present
-;;                                    :author             "..."            ;; when present
-;;                                    :owner              "..."            ;; when present
-;;                                    :license            "..."            ;; when present
-;;                                    :registry-id        'v               ;; when present
-;;                                    :source-paths       ["..."]
-;;                                    :source-mtime-max   1714403520000
-;;                                    :source-hash-sha256 "abc..."|nil
-;;                                    :symbols            [sym1 sym2 ...]}
-;;
-;;   ITERATION_*    rebound at every iteration boundary
-;;     TURN_ITERATION_POSITION       1-based int position of THIS iteration
-;;                                   within its turn. Per-turn monotonic;
-;;                                   matches iteration.position. Bumped every
-;;                                   iteration alongside TURN_ITERATION_ID.
-;;     TURN_ITERATION_ID             UUID of the most recently persisted iteration
-;;                                   row (nil before the first iteration commits;
-;;                                   iteration N's :code sees iteration N-1's id
-;;                                   because the row for N is written AFTER eval).
-;;                                   Prior thinking text used to live under
-;;                                   `ITERATION_PREVIOUS_REASONING`; that
-;;                                   var was retired once preserved-thinking
-;;                                   replay started shipping the canonical
-;;                                   assistant message back to the provider.
-;;                                   The DB still has every iteration's
-;;                                   `:thinking` column for forensics.
-;;
-;;   CONVERSATION_* conversation-state, mutates freely within the turn
-;;     CONVERSATION_STATE_ID         UUID of the current conversation_state branch.
-;;                                   Mutates on fork; tools that need branch-aware
-;;                                   identity read this. (CONVERSATION_ID and the
-;;                                   raw *_SOUL_ID variants were retired — they
-;;                                   were aliases / immutable-identity duplicates
-;;                                   with no consumers.)
-;;     (CONVERSATION_TITLE was retired as a SYSTEM var. Setting still
-;;     flows through `(set-conversation-title! "...")`, but the title
-;;     is no longer a sandbox binding the model reads — it is sidebar /
-;;     channel-chrome metadata, surfaced to the model only through the
-;;     foundation `title-nudge` when blank or stale. Removed because
-;;     stamping it every iteration produced N identical rows in
-;;     `definition_state` for a value that changes ~once per
-;;     conversation, and the model never used the read path.)
-;;     CONVERSATION_PREVIOUS_ANSWER  previous turn's final answer string ("" on
-;;                                   the very first turn). Despite being scoped
-;;                                   to the conversation, it is rebound at every
-;;                                   iteration so a `(done ...)` call inside
-;;                                   iteration N is observable in iteration N+1.
-;;
-;; UPPERCASE marks them as constants. The set is a fixed registry;
-;; adding to it is a deliberate API change. See AGENTS.md -> "SYSTEM
-;; vars are UPPERCASE and explicitly defined".
+;; Engine-owned sandbox names. `ctx` is the only model-visible engine context
+;; value; it is rebound by the loop and hidden from live user defs.
 (def SYSTEM_VAR_NAMES
-  "Fixed set of SYSTEM-var symbols. Used everywhere a 'is-this-a-system-
-   var?' check is needed: bindings sort+status, archive guard, etc.
-
-   See the comment block above this def for full per-name documentation
-   and the prefix-based lifetime convention
-   (`TURN_*`, `ITERATION_*`, `CONVERSATION_*`).
-
-   Vocabulary note: `ACTIVE` means an extension activation-fn returned
-   truthy and its symbols got intern'd into the SCI sandbox (the model can
-   call `v/cat` directly because the var is loaded)."
-  ;; Dropped (redundant with what the prompt + message stream
-  ;; already carry, value never read in active code paths):
-  ;;   USER_REQUEST                  -- already the user message
-  ;;   TURN_SYSTEM_PROMPT            -- already the system prompt
-  ;;   CONVERSATION_PREVIOUS_ANSWER  -- already in preserved-thinking
-  ;;                                    + previous-turn-context block
-  '#{TURN_ID
-     TURN_POSITION
-     TURN_CONVERSATION_STATE_ID
-     TURN_ACTIVE_EXTENSIONS
-     TURN_ITERATION_ID
-     TURN_ITERATION_POSITION
-     CONVERSATION_STATE_ID})
+  "Engine-owned symbols hidden from user live-var listings. `ctx` is the
+   single context value."
+  '#{ctx})
 
 (defn system-var-sym?
-  "True when `sym` is one of the registered SYSTEM-var names. The fixed
-   set `SYSTEM_VAR_NAMES` is checked by membership, not pattern, so a
-   user-defined uppercase var doesn't get misclassified as system."
+  "True when `sym` is engine-owned and hidden from user live-var listings."
   [sym]
   (contains? SYSTEM_VAR_NAMES sym))
 
 ;; =============================================================================
-;; Phase 7 prep: journal discovery surface
-;;
-;; The engine user-role message uses two compact
-;; commented-Clojure sections:
-;;
-;;   ;; system-vars:                     UPPERCASE engine-managed vars
-;;   ;;   USER_REQUEST  "current turn user request"
-;;
-;;   ;; live-vars (N/cap):               user defs within the LRU window
-;;   ;;   big-handle    "README handle"
-;;
-;; The two helpers below introspect the SCI sandbox + the per-env LRU
-;; map and return entries shaped `{:name :doc}` ready for the
-;; `format-{system,live}-vars-block` renderers in prompt.clj. Phase 7
-;; main wires them through `build-iteration-context`.
+;; Restore helpers
 ;; =============================================================================
-
-(def ^:const JOURNAL_LIVE_VARS_CAP
-  "Max user-var entries surfaced in the live-vars discovery line.
-   Older entries (least-recently-resolved) drop first."
-  30)
-
-(def ^:const JOURNAL_LRU_TURN_WINDOW
-  "Vars unused for >= this many turns are hidden from the live-vars
-   line. The binding stays alive in the sandbox; it just isn't
-   advertised."
-  10)
 
 (def DEF_HEADS_FOR_RESTORE
   "Canonical set of def-shaped heads the engine treats as safe to
@@ -684,98 +551,6 @@
                 (contains? DEF_HEADS_FOR_RESTORE (first form))
                 (symbol? (second form))))))
         (catch Throwable _ false)))))
-
-(defn- doc-from-source
-  "Parse a stored `(def NAME doc-string …)` source and return the
-   docstring at the canonical 2nd-arg position. Returns nil when the
-   parse fails, the form is not a recognized def head, or the 2nd arg
-   is not a string literal.
-
-   Replaces a legacy regex heuristic that grabbed the first quoted
-   string anywhere in the source, which mangled multi-line docstrings,
-   broke on escaped quotes inside the doc, and pulled the wrong string
-   from arg/body literals when no docstring existed."
-  [source]
-  (when (string? source)
-    (try
-      (let [forms (edamame/parse-string-all source {:all true})
-            form  (first forms)]
-        (when (and (= 1 (count forms))
-                (seq? form)
-                (symbol? (first form))
-                (contains? DEF_HEADS_FOR_RESTORE (first form))
-                (symbol? (second form))
-                (string? (nth form 2 nil)))
-          (nth form 2)))
-      (catch Throwable _ nil))))
-
-(defn- doc-of
-  "Resolve a var's model-facing docstring. Prefers `:doc` metadata
-   written by SCI eval-def (the patched eval-def installs it directly
-   from the `(def NAME \"doc\" …)` form). Falls back to an edamame
-   parse of stored `:code` source if the meta got lost (legacy
-   conversations / engine-injected vars whose meta path skipped
-   the patch)."
-  [v]
-  (let [m (meta v)]
-    (or (:doc m)
-      (doc-from-source (:code m))
-      "")))
-
-(defn journal-system-vars
-  "Vec of `{:name :doc}` entries for engine-managed UPPERCASE sandbox
-   vars currently bound. Read by `format-system-vars-block`. Empty vec
-   when no system vars are bound (test contexts)."
-  [sci-ctx]
-  (when sci-ctx
-    (let [sandbox-map (get-in @(:env sci-ctx) [:namespaces 'sandbox])]
-      (->> sandbox-map
-        (filter (fn [[s _]]
-                  (and (symbol? s) (system-var-sym? s))))
-        (mapv (fn [[s v]]
-                {:name (str s)
-                 :doc  (doc-of v)}))
-        (sort-by :name)
-        vec))))
-
-(defn journal-live-vars
-  "Vec of `{:name :doc}` entries for user-defined sandbox vars within
-   the LRU window. `lru-map` is `{var-name-string -> last-used-turn-pos}`
-   from the SCI resolve-symbol* monkey-patch. `current-turn-pos` is
-   the engine's current turn position; entries whose
-   `(- current-turn-pos last-used)` exceeds `JOURNAL_LRU_TURN_WINDOW` are
-   hidden from the surface (the def stays bound). Capped at
-   `JOURNAL_LIVE_VARS_CAP`; oldest stamp drops first.
-
-   When `lru-map` is empty (engine just started or no resolutions yet),
-   surface ALL user vars unconditionally — the LRU is informational, a
-   missing stamp doesn't mean stale."
-  [sci-ctx initial-ns-keys lru-map current-turn-pos]
-  (when sci-ctx
-    (let [sandbox-map (get-in @(:env sci-ctx) [:namespaces 'sandbox])
-          lru-map (or lru-map {})
-          current-turn-pos (long (or current-turn-pos 1))
-          window JOURNAL_LRU_TURN_WINDOW
-          fresh? (fn [sym]
-                   (let [stamp (get lru-map (str sym))]
-                     (or (nil? stamp)
-                       (<= (- current-turn-pos (long stamp)) window))))
-          user? (fn [[sym _]]
-                  (and (symbol? sym)
-                    (not (contains? initial-ns-keys sym))
-                    (not (system-var-sym? sym))))
-          entries (->> sandbox-map
-                    (filter user?)
-                    (filter (fn [[sym _]] (fresh? sym)))
-                    (mapv (fn [[sym v]]
-                            {:name (str sym)
-                             :doc  (doc-of v)
-                             :stamp (or (get lru-map (str sym)) 0)})))
-          ranked (->> entries
-                   (sort-by (juxt #(- (long (:stamp %))) :name))
-                   (take JOURNAL_LIVE_VARS_CAP)
-                   (mapv #(dissoc % :stamp)))]
-      (vec ranked))))
 
 ;; =============================================================================
 ;; Sandbox restore - rebuild SCI bindings from DB

@@ -32,7 +32,7 @@
     ;; source so the assertion measures only what foundation owns.
     (with-redefs [agents/instructions (fn [] {:found? false})]
       (let [prompt ((:ext/prompt foundation/vis-extension) {})]
-        (expect (str/includes? prompt "<environment>"))
+        (expect (str/includes? prompt ";; ctx.runtime ="))
         (expect (str/includes? prompt "`v/` env strategy"))
         ;; Post-handle removal the editing prompt is RLM-shaped. Concepts
         ;; carry over (v/rg + v/ls for discovery, v/cat for windows); the
@@ -43,9 +43,8 @@
         (expect (not (str/includes? prompt "clojure.repl/doc")))
         (expect (not (str/includes? prompt "Do not emit Markdown/text strings")))
         (expect (not (str/includes? prompt "Do not render Markdown as IR")))
-        ;; AGENTS.md is stubbed out — the `<project-guidance>` block must
-        ;; be omitted entirely (not present-but-empty).
-        (expect (not (str/includes? prompt "<project-guidance")))
+        ;; AGENTS.md is stubbed out — project guidance must be omitted entirely.
+        (expect (not (str/includes? prompt "ctx.project-guidance")))
         ;; RLM prompt teaches deep exploration / combine / refine across
         ;; iterations with worked-example code; cap is more permissive
         ;; than the old one-liner. 8KB soft ceiling guards against drift.
@@ -53,8 +52,8 @@
 
   (it "contributes environment info through its extension prompt"
     (let [prompt ((:ext/prompt foundation/vis-extension) {})]
-      (expect (str/includes? prompt "<environment>"))
-      (expect (str/includes? prompt "git.summary"))))
+      (expect (str/includes? prompt ";; ctx.runtime ="))
+      (expect (str/includes? prompt ":git"))))
 
   ;; Removed: "does not leave a standalone md extension registered".
   ;; The extension registry shape changed; presence of 'v vs absence
