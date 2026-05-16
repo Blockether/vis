@@ -18,6 +18,7 @@
    `System/identityHashCode` of the value."
   (:require
    [clojure.string :as str]
+   [edamame.core :as edamame]
    [malli.provider :as mp]))
 
 (def ^:private hidden-syms
@@ -67,7 +68,7 @@
   (try (mp/provide [value])
     (catch Throwable _ nil)))
 
-(defn- value-shape
+(defn value-shape
   [cache-key sym value]
   (let [id     (System/identityHashCode value)
         cached (get-in @shape-cache-atom [cache-key sym])]
@@ -154,3 +155,93 @@
     (let [env-id (System/identityHashCode (:env sci-ctx))]
       (swap! shape-cache-atom dissoc env-id)
       (swap! order-counter-atom dissoc env-id))))
+
+;; =============================================================================
+;; REPL-style iteration outcome rendering
+;;
+;; Each prior iteration of the current turn is rendered as a REPL transcript
+;; (code lines, per-form `;; => shape`, `;; ! stdout> ...`, `;; ! ERROR ...`).
+;; The whole block forms one user-message trailer the model sees between its
+;; own assistant replays, plus the fresh `ctx` snapshot at the end.
+;; =============================================================================
+
+(defn- parse-forms
+  [code]
+  (when (string? code)
+    (try (vec (edamame/parse-string-all code {:all true}))
+      (catch Throwable _ []))))
+
+(defn- form->source
+  [form]
+  (try (pr-str form) (catch Throwable _ "")))
+
+(defn- side-effect-lines
+  [{:keys [stdout stderr]}]
+  (cond-> []
+    (non-blank? stdout)
+    (into (mapv #(str ";; ! stdout> " %) (str/split-lines stdout)))
+    (non-blank? stderr)
+    (into (mapv #(str ";; ! stderr> " %) (str/split-lines stderr)))))
+
+(defn- error-lines
+  [err]
+  (when err
+    (let [{:keys [message trace data]} (error-shape err)]
+      (cond-> []
+        (non-blank? message) (conj (str ";; ! ERROR " message))
+        (non-blank? trace)
+        (into (mapv #(str ";;   " %) (str/split-lines trace)))
+        (some? data)
+        (conj (str ";; ! data " (pr-str data)))))))
+
+(defn- form-result-line
+  [shape]
+  (when (some? shape)
+    (str ";; => shape " (pr-str shape))))
+
+(defn- iteration->repl-text
+  "Render one prior iteration as a REPL transcript block."
+  [cache-key {:keys [position blocks]}]
+  (let [block        (first blocks)
+        code         (or (:code block) "")
+        forms        (parse-forms code)
+        result       (when (and (not (:error block))
+                             (not= :vis/no-result (:result block)))
+                       (:result block))
+        last-shape   (when result
+                       (value-shape cache-key (str "__iter" position "__") result))
+        form-blocks  (if (seq forms)
+                       ;; Only the last form's value is known; intermediate
+                       ;; form values would require per-form eval capture.
+                       (let [head (butlast forms)
+                             tail (last forms)]
+                         (concat
+                           (map (fn [f] [(form->source f) nil]) head)
+                           [[(form->source tail) last-shape]]))
+                       [[code last-shape]])
+        lines        (concat
+                       [(str ";; iter " position)]
+                       (mapcat (fn [[src shape]]
+                                 (cond-> [src]
+                                   shape (conj (form-result-line shape))))
+                         form-blocks)
+                       (side-effect-lines block)
+                       (error-lines (:error block)))]
+    (str/join "\n" lines)))
+
+(defn render-iteration-trailer
+  "Build the REPL-style user-message body for a model call.
+
+   `:journal-iters` — vec of `[position {:blocks [...]}]` ordered ascending.
+   `:ctx`           — the engine ctx snapshot map for the upcoming iteration.
+
+   Returns the full trailer string: prior iterations as REPL transcripts,
+   followed by `;; ctx = <edn>` for the fresh state. When no prior iterations
+   exist, only the ctx block is emitted."
+  [{:keys [environment journal-iters ctx]}]
+  (let [cache-key (System/identityHashCode (:env (:sci-ctx environment)))
+        prior     (mapv (fn [[pos data]] (iteration->repl-text cache-key
+                                           {:position pos :blocks (:blocks data)}))
+                    (or journal-iters []))
+        ctx-block (str ";; ctx =\n" (pr-str ctx))]
+    (str/join "\n\n" (conj prior ctx-block))))
