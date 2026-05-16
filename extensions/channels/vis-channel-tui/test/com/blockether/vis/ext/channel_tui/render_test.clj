@@ -232,7 +232,7 @@
                                 :model "gpt-5.3-codex"}
                    :llm-fallback? true)]
       (render/invalidate-cache!)
-      (expect (= (inc (render/bubble-height base 120))
+      (expect (= (+ 2 (render/bubble-height base 120))
                 (render/bubble-height routed 120))))))
 
 (defn- visually-blank?
@@ -1519,9 +1519,60 @@
                       :text "hello"
                       :tokens {:input 100 :output 20 :cached 70}}
                      4 2 60 {:viewport-h 40})]
-      (expect (= 4 height))
+      (expect (= 5 height))
       (expect (some #(str/includes? (:text %) "↑100 (cached 70) ↓20")
                 @puts))))
+
+  (it "omits zero cached token usage in the assistant bubble footer"
+    (let [puts    (atom [])
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers [] this)
+                     (enableModifiers [_] this)
+                     (disableModifiers [_] this)
+                     (getActiveModifiers []
+                       (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString [_col row text]
+                       (swap! puts conj {:row row :text text})
+                       this)
+                     (fillRectangle [_ _ _] this)
+                     (setCharacter [_ _ _] this))
+          height   (render/draw-chat-bubble! graphics
+                     {:role :assistant
+                      :text "hello"
+                      :tokens {:input 100 :output 20 :cached 0}}
+                     4 2 60 {:viewport-h 40})]
+      (expect (= 5 height))
+      (expect (some #(str/includes? (:text %) "↑100 ↓20")
+                @puts))
+      (expect (not-any? #(str/includes? (:text %) "cached 0")
+                @puts))))
+
+  (it "leaves one blank row between assistant answer and bubble footer"
+    (let [puts    (atom [])
+          graphics (proxy [com.googlecode.lanterna.graphics.TextGraphics] []
+                     (clearModifiers [] this)
+                     (enableModifiers [_] this)
+                     (disableModifiers [_] this)
+                     (getActiveModifiers []
+                       (java.util.EnumSet/noneOf com.googlecode.lanterna.SGR))
+                     (setForegroundColor [_] this)
+                     (setBackgroundColor [_] this)
+                     (putString [_col row text]
+                       (swap! puts conj {:row row :text text})
+                       this)
+                     (fillRectangle [_ _ _] this)
+                     (setCharacter [_ _ _] this))
+          height   (render/draw-chat-bubble! graphics
+                     {:role :assistant
+                      :text "hello"
+                      :tokens {:input 100 :output 20}}
+                     4 2 60 {:viewport-h 40})
+          answer-row (:row (first (filter #(= "hello" (:text %)) @puts)))
+          footer-row (:row (first (filter #(str/includes? (:text %) "↑100 ↓20") @puts)))]
+      (expect (= 5 height))
+      (expect (= 2 (- footer-row answer-row)))))
 
   (it "renders hidden silent form count next to iteration count in the footer"
     (let [puts    (atom [])
@@ -1545,7 +1596,7 @@
                       :traces [{:silents [true false]}
                                {:silents [true]}]}
                      4 2 60 {:viewport-h 40})]
-      (expect (= 4 height))
+      (expect (= 5 height))
       (expect (some #(str/includes? (:text %) "3 iters (2 silent)")
                 @puts))))
 

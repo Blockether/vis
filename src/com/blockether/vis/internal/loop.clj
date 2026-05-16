@@ -862,7 +862,7 @@
         ;;   :block-lang       — svar's detected lang ("clojure" / nil)
         ;;   :render-segments  — per-form structural split for channel
         ;;                       rendering (P1.1; see
-        ;;                       `render/code-block-segments`)
+        ;;                       `render/parse-block-display`)
         ;;   :vis/structurally-silent?
         ;;                     — true iff the block contains ONLY structural
         ;;                       forms (`(done ...)` / `(set-
@@ -874,7 +874,7 @@
                                                  {:expr "(vis/preflight-error :raw-markdown-fence-leak)"
                                                   :vis/preflight-error err
                                                   :block-lang (:lang b)}
-                                                 (let [segments        (render/code-block-segments src)
+                                                 (let [segments        (render/parse-block-display src)
                                                        structurally-silent?
                                                        (and (seq segments)
                                                          (not-any? #(= :code (:kind %)) segments))]
@@ -2279,7 +2279,7 @@
     (when (and db-info conversation-id)
       (some->> (persistance/db-list-conversation-turns db-info conversation-id)
         (remove #(= (str (:id %)) (str current-turn-id)))
-        (filter #(and (= :complete (:prior-outcome %))
+        (filter #(and (#{:complete :done :success} (or (:prior-outcome %) (:status %)))
                    (not (str/blank? (str (:answer %))))))
         (sort-by (fn [turn]
                    [(long (or (:position turn) 0))

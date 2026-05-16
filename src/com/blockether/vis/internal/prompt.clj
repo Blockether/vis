@@ -152,7 +152,7 @@
      "  Tools:     extensions register them (v/cat, v/rg, v/ls, v/patch, ...)."
      "             Tool calls return Handles. @h materializes; (view h :op ...)"
      "             gives a bounded window; (summary h) is a fact map;"
-     "             (kind h), (handle? v) work on any value."
+     "             (op h), (handle? v) work on any value."
      ""
      "ENV"
      "  Aliases: walk str set pp edn s"

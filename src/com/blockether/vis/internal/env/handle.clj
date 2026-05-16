@@ -1,14 +1,14 @@
 (ns com.blockether.vis.internal.env.handle
   "Handle: protocol-driven, deref-able reference to bounded payload data.
 
-   `PHandle` is the contract every handle kind implements:
-     - (kind h)              → kind tag (`:v.cat`, `:v.rg`, `:v.ls`, ...)
+   `PHandle` is the contract every handle implements:
+     - (op h)                → tool op tag (`:v/cat`, `:v/rg`, `:v/ls`, ...)
      - (summary h)           → map of one-line metadata for prompt-side
-                               rendering; includes `:kind` and `:views`
+                               rendering; includes `:op` and `:views`
      - (view h op [a [b]])   → materialize a bounded view of the payload;
-                               op is a kind-specific keyword
+                               op is a handle-specific view keyword
 
-   Each handle kind is its own defrecord (`CatHandle` here; `RgHandle`
+   Each handle type is its own defrecord (`CatHandle` here; `RgHandle`
    and `LsHandle` follow when those tools convert). All handle records
    implement `IDeref` so `@h` returns the full payload from the
    process-wide store, and all of them ship a single-line `print-method`.
@@ -64,12 +64,12 @@
 (defn- lookup-payload
   "Resolve a store-key to its payload. Throws :vis.handle/evicted when
    the entry has been pushed out under LRU pressure."
-  [store-key kind]
+  [store-key handle-op]
   (if-let [entry (get-in @store [:entries store-key])]
     (:payload entry)
     (throw (ex-info "Handle payload evicted from store"
              {:type :vis.handle/evicted
-              :kind kind
+              :op handle-op
               :store-key store-key}))))
 
 (defn- intern-payload
@@ -91,62 +91,62 @@
 ;; =============================================================================
 
 (defprotocol PHandle
-  "Polymorphic handle interface. Each kind implements its own view
+  "Polymorphic handle interface. Each handle implements its own view
    operations; the prompt renderer reads `summary` to draw the one-line
    #vis/handle form."
-  (kind [h]
-    "Kind tag, e.g. :v.cat / :v.rg / :v.ls.")
+  (op [h]
+    "Tool op tag, e.g. :v/cat / :v/rg / :v/ls.")
   (summary [h]
     "Map of one-line metadata for prompt-side rendering. Always
-     contains :kind and :views; other keys are kind-specific.")
+     contains :op and :views; other keys are op-specific.")
   (view
     [h op]
     [h op a]
     [h op a b]
     "Materialize a bounded view of the handle's payload. Op is a
-     kind-specific keyword. Throws :vis.handle/unsupported-view on
+     handle-specific view keyword. Throws :vis.handle/unsupported-view on
      unknown ops."))
 
 (defn handle?
-  "True only for values backed by a Handle defrecord (concrete kind
+  "True only for values backed by a Handle defrecord (concrete op
    implementing PHandle WITHOUT relying on the Object fallback below).
    Cheap class check — avoids `satisfies?` matching the Object impl
    which extends to literally everything."
   [v]
   (and (instance? clojure.lang.IRecord v)
     (satisfies? PHandle v)
-    (not= :not-a-handle (kind v))))
+    (not= :not-a-handle (op v))))
 
 ;; -----------------------------------------------------------------------------
 ;; Fallback: PHandle on every value
 ;;
 ;; Calling (view 42 :peek) used to throw IllegalArgumentException because
 ;; nothing implemented PHandle for Long. Per the engine-primitive contract
-;; (`view` / `summary` / `kind` are always available in the sandbox),
+;; (`view` / `summary` / `op` are always available in the sandbox),
 ;; non-handle values get a structured `:not-a-handle` answer instead of
 ;; a stack trace. Cheap correction signal — the model sees the shape it
 ;; got and the hint that points back at v/cat / v/rg / v/ls / handle?.
 ;; -----------------------------------------------------------------------------
 
 (def ^:private NOT_A_HANDLE_HINT
-  "View / summary / kind operate on Handle records. Use (handle? v) to test, or call v/cat / v/rg / v/ls to get one.")
+  "View / summary / op operate on Handle records. Use (handle? v) to test, or call v/cat / v/rg / v/ls to get one.")
 
 (extend-protocol PHandle
   nil
-  (kind [_] :not-a-handle)
-  (summary [_] {:kind :not-a-handle :value nil :hint NOT_A_HANDLE_HINT})
+  (op [_] :not-a-handle)
+  (summary [_] {:op :not-a-handle :value nil :hint NOT_A_HANDLE_HINT})
   (view
-    ([_ op] {:kind :not-a-handle :op op :hint NOT_A_HANDLE_HINT})
-    ([_ op a] {:kind :not-a-handle :op op :args [a] :hint NOT_A_HANDLE_HINT})
-    ([_ op a b] {:kind :not-a-handle :op op :args [a b] :hint NOT_A_HANDLE_HINT}))
+    ([_ view-op] {:op :not-a-handle :view-op view-op :hint NOT_A_HANDLE_HINT})
+    ([_ view-op a] {:op :not-a-handle :view-op view-op :args [a] :hint NOT_A_HANDLE_HINT})
+    ([_ view-op a b] {:op :not-a-handle :view-op view-op :args [a b] :hint NOT_A_HANDLE_HINT}))
 
   Object
-  (kind [_] :not-a-handle)
-  (summary [v] {:kind :not-a-handle :value v :hint NOT_A_HANDLE_HINT})
+  (op [_] :not-a-handle)
+  (summary [v] {:op :not-a-handle :value v :hint NOT_A_HANDLE_HINT})
   (view
-    ([v op] {:kind :not-a-handle :value v :op op :hint NOT_A_HANDLE_HINT})
-    ([v op a] {:kind :not-a-handle :value v :op op :args [a] :hint NOT_A_HANDLE_HINT})
-    ([v op a b] {:kind :not-a-handle :value v :op op :args [a b] :hint NOT_A_HANDLE_HINT})))
+    ([v view-op] {:op :not-a-handle :value v :view-op view-op :hint NOT_A_HANDLE_HINT})
+    ([v view-op a] {:op :not-a-handle :value v :view-op view-op :args [a] :hint NOT_A_HANDLE_HINT})
+    ([v view-op a b] {:op :not-a-handle :value v :view-op view-op :args [a b] :hint NOT_A_HANDLE_HINT})))
 
 ;; =============================================================================
 ;; CatHandle — file content reads
@@ -160,36 +160,36 @@
 (def ^:const ^:private CAT_PEEK_LINES 50)
 
 (defn- unsupported-view!
-  [kind op arity]
-  (throw (ex-info (str "Unsupported view op for " kind " handle")
+  [handle-op view-op arity]
+  (throw (ex-info (str "Unsupported view op for " handle-op " handle")
            {:type :vis.handle/unsupported-view
-            :kind kind
-            :op op
+            :op handle-op
+            :view-op view-op
             :arity arity})))
 
 (defrecord CatHandle [store-key info]
   clojure.lang.IDeref
-  (deref [_] (lookup-payload store-key :v.cat))
+  (deref [_] (lookup-payload store-key :v/cat))
   PHandle
-  (kind [_] :v.cat)
-  (summary [_] (assoc info :kind :v.cat :views (vec cat-views)))
-  (view [h op]
-    (case op
+  (op [_] :v/cat)
+  (summary [_] (assoc info :op :v/cat :views (vec cat-views)))
+  (view [h view-op]
+    (case view-op
       :peek (let [lines @h]
               (subvec lines 0 (min CAT_PEEK_LINES (count lines))))
-      (unsupported-view! :v.cat op 0)))
-  (view [h op a]
-    (case op
+      (unsupported-view! :v/cat view-op 0)))
+  (view [h view-op a]
+    (case view-op
       :at (nth @h (dec a) nil)
-      (unsupported-view! :v.cat op 1)))
-  (view [h op a b]
-    (case op
+      (unsupported-view! :v/cat view-op 1)))
+  (view [h view-op a b]
+    (case view-op
       :lines (let [lines @h
                    n     (count lines)
                    start (max 0 (min n a))
                    end   (max start (min n b))]
                (subvec lines start end))
-      (unsupported-view! :v.cat op 2))))
+      (unsupported-view! :v/cat view-op 2))))
 
 (defn- sha8
   "Short SHA-256 prefix over the joined line content. Cheap fingerprint
@@ -237,21 +237,21 @@
 
 (defrecord RgHandle [store-key info]
   clojure.lang.IDeref
-  (deref [_] (lookup-payload store-key :v.rg))
+  (deref [_] (lookup-payload store-key :v/rg))
   PHandle
-  (kind [_] :v.rg)
-  (summary [_] (assoc info :kind :v.rg :views (vec rg-views)))
-  (view [h op]
-    (case op
+  (op [_] :v/rg)
+  (summary [_] (assoc info :op :v/rg :views (vec rg-views)))
+  (view [h view-op]
+    (case view-op
       :peek (let [hits @h]
               (subvec hits 0 (min RG_PEEK_HITS (count hits))))
       :all  @h
-      (unsupported-view! :v.rg op 0)))
-  (view [h op a]
-    (case op
+      (unsupported-view! :v/rg view-op 0)))
+  (view [h view-op a]
+    (case view-op
       :hit (nth @h (dec a) nil)
-      (unsupported-view! :v.rg op 1)))
-  (view [_ op _ _] (unsupported-view! :v.rg op 2)))
+      (unsupported-view! :v/rg view-op 1)))
+  (view [_ view-op _ _] (unsupported-view! :v/rg view-op 2)))
 
 (defn make-rg
   "Construct an RgHandle from a `grep-files`-style result map. Stashes
@@ -286,33 +286,34 @@
 
 (defrecord LsHandle [store-key info]
   clojure.lang.IDeref
-  (deref [_] (lookup-payload store-key :v.ls))
+  (deref [_] (lookup-payload store-key :v/ls))
   PHandle
-  (kind [_] :v.ls)
-  (summary [_] (assoc info :kind :v.ls :views (vec ls-views)))
-  (view [h op]
-    (case op
+  (op [_] :v/ls)
+  (summary [_] (assoc info :op :v/ls :views (vec ls-views)))
+  (view [h view-op]
+    (case view-op
       :peek     (let [tree @h
                       kids (vec (or (:children tree) []))]
                   (mapv :name (subvec kids 0 (min LS_PEEK_ENTRIES (count kids)))))
       :children (let [tree @h] (vec (or (:children tree) [])))
       :tree     @h
-      (unsupported-view! :v.ls op 0)))
-  (view [_ op _] (unsupported-view! :v.ls op 1))
-  (view [_ op _ _] (unsupported-view! :v.ls op 2)))
+      (unsupported-view! :v/ls view-op 0)))
+  (view [_ view-op _] (unsupported-view! :v/ls view-op 1))
+  (view [_ view-op _ _] (unsupported-view! :v/ls view-op 2)))
 
 (defn make-ls
   "Construct an LsHandle from a `list-files` tree node. Stashes the
    tree (root + children) into the store; the handle's `:info` carries
-   the path, top-level entry count, and tree? flag."
+   the relative path, absolute path, top-level entry count, and tree? flag."
   [tree]
-  (let [{:keys [path type children]} tree
+  (let [{:keys [path absolute-path type children]} tree
         store-key (intern-payload tree)]
     (->LsHandle store-key
-      {:path        path
-       :type        type
-       :entry-count (count (or children []))
-       :tree?       (boolean (seq children))})))
+      {:path          path
+       :absolute-path absolute-path
+       :type          type
+       :entry-count   (count (or children []))
+       :tree?         (boolean (seq children))})))
 
 ;; =============================================================================
 ;; print-method (single-line summary)
