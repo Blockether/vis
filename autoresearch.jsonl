@@ -1,0 +1,2 @@
+{"type":"config","name":"vis-ctx-prompt-4clojure","metricName":"pass_pct","metricUnit":"%","bestDirection":"lower"}
+{"type":"config","name":"vis-ctx-prompt-4clojure","metricName":"pass_pct","metricUnit":"%","bestDirection":"higher"}
