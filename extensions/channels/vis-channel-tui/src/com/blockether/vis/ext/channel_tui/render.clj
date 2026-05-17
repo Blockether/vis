@@ -2661,18 +2661,6 @@
       (when (seq entries)
         entries))))
 
-(defn- indent-output-entry
-  [entry]
-  (update entry :line
-    (fn [line]
-      (if (and (string? line) (pos? (count line)))
-        (str (subs line 0 1) tool-output-indent (subs line 1))
-        line))))
-
-(defn- indent-output-entries
-  [entries]
-  (mapv indent-output-entry entries))
-
 (defn- tag-copy-block-body
   "Stamp every body row of an expanded disclosure with copy metadata so a
    single click on the body lines copies the WHOLE disclosure body, not
@@ -3149,7 +3137,6 @@
                 result-detail   (when result-details (get result-details idx))
                 tool-badge    (tool-detail-badge result-detail)
                 r-marker      (if is-error? err-result-marker result-marker)
-                output-fill-w (max 1 (- fill-w tool-output-indent-cols))
                 result-lines  (when (and result-text (not (str/blank? (str result-text))))
                                 (let [color-role     (when (map? result-detail) (meta->color-role result-detail))
                                       detail-entries (maybe-collapse-raw-text-block

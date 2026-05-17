@@ -441,13 +441,13 @@
 
 (def ^:private assistant-code-text-inset-markers
   #{p/MARKER_CODE p/MARKER_CODE_OK p/MARKER_CODE_ERR p/MARKER_CODE_STATUS
-    p/MARKER_RESULT p/MARKER_ERR_RESULT p/MARKER_STDOUT p/MARKER_STDERR
-    p/MARKER_STDOUT_SEP p/MARKER_MD_CODE p/MARKER_TH_MD_CODE})
+    p/MARKER_RESULT p/MARKER_ERR_RESULT
+    p/MARKER_MD_CODE p/MARKER_TH_MD_CODE})
 
 (def ^:private selection-output-indent "  ")
 
 (def ^:private selection-output-indent-markers
-  #{p/MARKER_STDOUT p/MARKER_STDERR p/MARKER_STDOUT_SEP})
+  #{})
 
 (defn- assistant-code-text-row?
   [line]
@@ -478,8 +478,6 @@
   #{p/MARKER_ITERATION_HDR
     p/MARKER_DURATION
     p/MARKER_CODE_STATUS
-    p/MARKER_STDOUT_SEP
-    p/MARKER_STDOUT_PAD
     p/MARKER_SEP
     p/MARKER_ANSWER_SEP
     p/MARKER_ANSWER_HDR
