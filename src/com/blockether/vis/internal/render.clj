@@ -1201,7 +1201,7 @@
    regardless of nesting. Title flows through the sidebar via the SCI side
    effect; the final answer flows from the persisted answer IR. Showing the
    literal call in the trace is pure noise."
-  #{"set-conversation-title!" "done"})
+  #{"set-conversation-title!" "satisfy-hint!" "done"})
 
 (defn- filtered-call?
   "True when `x` is `(sym …)` whose unqualified name is in
@@ -1332,6 +1332,10 @@
                                      ;; + whitespace) instead of re-printing.
                                      (= pruned form)
                                      [{:kind :code :source (str/trim slice)}]
+
+                                     ;; Entire form was a filtered host call.
+                                     (= ::vanished pruned)
+                                     []
 
                                      ;; Wrapper held ONLY filtered calls.
                                      ;; After pruning we're left with `(do)`

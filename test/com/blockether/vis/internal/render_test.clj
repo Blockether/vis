@@ -21,3 +21,13 @@
               (render/->ast [:ir [:h 0 "Low"]])))
     (expect (= [:ir {} [:h {:level 6} [:span {} "High"]]]
               (render/->ast [:ir [:h 9 "High"]])))))
+
+(defdescribe host-bookkeeping-render-test
+  (it "drops satisfy-hint! from mixed display segments"
+    (expect (= [{:kind :code :source "(def x 1)"}]
+              (render/parse-block-display
+                "(do (satisfy-hint! :vis.foundation/conversation-title) (def x 1))"))))
+
+  (it "treats standalone satisfy-hint! as structurally silent"
+    (expect (true? (render/block-structurally-silent?
+                     "(satisfy-hint! :vis.foundation/conversation-title)")))))

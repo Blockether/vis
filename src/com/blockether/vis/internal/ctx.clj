@@ -2,10 +2,12 @@
   "Engine-owned `ctx` snapshot bound under sandbox name `ctx` before every
    model call.
 
-   Three keys, every nil/blank field stripped:
+   Five keys, every nil/blank field stripped:
 
      :conversation {:id :title :turn-id :user-request}
      :iteration    {:id :position}
+     :hints        [{:id :importance :text :satisfy-with}]
+     :extensions   [{:namespace :alias :doc :kind :registry-id :symbols}]
      :defs         {sym {:doc <string?> :shape <malli|fn-shape>}}
 
    `:iteration` lives at the top level so `(:iteration ctx)` works directly
@@ -26,7 +28,7 @@
    [malli.provider :as mp]))
 
 (def ^:private hidden-syms
-  '#{ctx done set-conversation-title!})
+  '#{ctx done set-conversation-title! satisfy-hint!})
 
 (defonce ^:private shape-cache-atom
   ;; { env-id {sym {:identity int :shape <schema> :order long}} }
@@ -146,11 +148,15 @@
   "Build the engine ctx snapshot.
 
    `:conversation` — pre-pruned map `{:id :title :turn-id :user-request}`.
-   `:iteration`    — pre-pruned map `{:id :position}`."
-  [{:keys [environment conversation iteration]}]
+   `:iteration`    — pre-pruned map `{:id :position}`.
+   `:hints`        — model-facing host hints for the upcoming iteration.
+   `:extensions`   — compact active extension summary from prompt/extensions-snapshot."
+  [{:keys [environment conversation iteration hints extensions]}]
   (prune
     {:conversation (prune (or conversation {}))
      :iteration    (prune (or iteration {}))
+     :hints        (vec (or hints []))
+     :extensions   (vec (or extensions []))
      :defs         (or (build-defs (:sci-ctx environment)
                          (:initial-ns-keys environment))
                      {})}))
@@ -291,11 +297,12 @@
   "Build the REPL-style user-message body for a model call.
 
    `:trailer-iters` — vec of `[position {:blocks [...]}]` ordered ascending.
-   `:ctx`            — the engine ctx snapshot map for the upcoming iteration.
+   `:ctx`          — the engine ctx snapshot map for the upcoming iteration,
+                    including any `:hints` for that iteration.
 
    Returns the full trailer string: prior iterations as REPL transcripts,
-   followed by `;; ctx = <edn>` for the fresh state. When no prior iterations
-   exist, only the ctx block is emitted."
+   followed by `;; ctx = <edn>` for the fresh state. Hint data lives inside
+   `(:hints ctx)`; there is no XML hint side-channel."
   [{:keys [environment trailer-iters ctx]}]
   (let [cache-key (System/identityHashCode (:env (:sci-ctx environment)))
         prior     (mapv (fn [[pos data]] (iteration->repl-text cache-key
