@@ -13,7 +13,7 @@
 ;; Iteration context assembly
 ;; =============================================================================
 
-;; `safe-pr-str` + `MAX_RESULT_DISPLAY_CHARS` moved to `format.clj`
+;; Bounded plain-value rendering moved to `format.clj`.
 ;; (the right home for a bounded value-render helper — same neighborhood
 ;; as `safe-zprint-str` it delegates to). All consumers (tape, TUI
 ;; progress, history restore, chat extension) require it via the
@@ -81,32 +81,39 @@
 ;; =============================================================================
 
 (def ^:private CORE_SYSTEM_PROMPT
-  (str/join "\n"
-    ["Vis is a persistent Clojure SCI REPL. Reply with code only."
-     "Emit exactly one ```clojure``` block per iteration; no prose outside code."
-     "Read `ctx` first. Engine context keys:"
-     "  (:conversation ctx)  -> {:id :title :turn-id :user-request}"
-     "  (:iteration ctx)     -> {:id :position}"
-     "  (:defs ctx)          -> array-map (newest first): {sym {:doc <str?> :shape <malli>}}"
-     "Current user request: `(get-in ctx [:conversation :user-request])`."
-     "`ctx` is a snapshot built BEFORE this iteration runs; new defs land in :defs starting NEXT iteration."
-     "Use `def` for working memory. Docstrings are optional."
-     "No separate memory API. Manage state through ctx, defs, and plain Clojure data."
-     "Tool results are plain Clojure data. Bind them, inspect with Clojure, never copy from previews."
-     "Do not call the same tool with identical args twice in one turn."
-     "All IO and mutations go through extension tools; slurp/spit/java.io are banned."
-     "RLM loop: explore, observe, refine, act, observe, answer. Do not guess."
-     "Finish only with `(done [:ir ...])` when answer is supported by observed data."
-     "Allowed def heads: def, defn, defn-, defonce, defmulti, defmacro."
-     "Banned heads: defrecord, deftype, defprotocol, gen-class, extend-type, extend-protocol, definterface, reify."
-     "IR is EDN hiccup `[:ir & blocks]`. Blocks: :p :h {:level <1-10>} :code :ul :ol :li :quote :table :tr :th :td. Inline: :span :br :strong :em :c :a :img :kbd :mark :sup :sub."]))
+  (extension/normalize-prompt-text
+    "
+    Vis is a persistent Clojure SCI REPL. You operate in the context of a single conversation.
+    Conversation:
+     N TURNS - each turn has one user message and one (done [:ir ...]) assistant answer.
+       K ITERATIONS - to construct the answer YOU must conclude your reasoning in the REPL.
+    Emit exactly one ```clojure``` block per iteration; no prose outside code.
+    Read `ctx` first. Engine context keys:
+      (:conversation ctx)  -> {:id :title :turn-id :user-request}
+      (:iteration ctx)     -> {:id :position}
+      (:defs ctx)          -> array-map (newest first): {sym {:doc <str?> :shape <malli>}}
+    Current user request: `(get-in ctx [:conversation :user-request])`.
+    `ctx` is a snapshot built BEFORE this iteration runs; new defs land in :defs starting NEXT iteration.
+    Use `def` for working memory. Docstrings are optional.
+    No separate memory API. Manage state through ctx, defs, and plain Clojure data.
+    Tool results are plain Clojure data. Bind them, inspect with Clojure, never copy from previews.
+    Do not call the same tool with identical args twice in one turn.
+    All IO and mutations go through extension tools; slurp/spit/java.io are banned.
+    RLM loop: explore, observe, refine, act, observe, answer. Do not guess.
+    Finish only with `(done [:ir ...])` when answer is supported by observed data.
+    Allowed def heads: def, defn, defn-, defonce, defmulti, defmacro.
+    Banned heads: defrecord, deftype, defprotocol, gen-class, extend-type, extend-protocol, definterface, reify.
+    IR is EDN hiccup `[:ir & blocks]`. Blocks: :p :h {:level <1-10>} :code :ul :ol :li :quote :table :tr :th :td. Inline: :span :br :strong :em :c :a :img :kbd :mark :sup :sub.
+    "))
 
 (defn build-system-prompt
   "Core system prompt: CORE_SYSTEM_PROMPT plus optional caller addendum."
   [{:keys [system-prompt]}]
-  (str CORE_SYSTEM_PROMPT
-    (when (and (string? system-prompt) (not (str/blank? system-prompt)))
-      (str "\n\n" system-prompt))))
+  (let [addendum (when (string? system-prompt)
+                   (extension/normalize-prompt-text system-prompt))]
+    (str CORE_SYSTEM_PROMPT
+      (when (and (string? addendum) (not (str/blank? addendum)))
+        (str "\n\n" addendum)))))
 
 (defn active-extensions
   "Returns the seq of registered extensions whose `:ext/activation-fn` returns
@@ -177,16 +184,17 @@
 
 (defn- extension-prompt-fragment
   [ext body]
-  (str ";; -- EXTENSION " (extension-prompt-id ext) " --\n"
-    body
-    (when-not (str/ends-with? body "\n") "\n")))
+  (let [body (extension/normalize-prompt-text body)]
+    (when (and (string? body) (not (str/blank? body)))
+      (str ";; -- EXTENSION " (extension-prompt-id ext) " --\n"
+        body
+        (when-not (str/ends-with? body "\n") "\n")))))
 
 (defn- extensions-prompt-block
   "Collect `<extensions>` from every active extension that declares
    `:ext/prompt`. Each prompt is `(fn [env] -> string)` (normalized at
-   registration). Non-blank results are wrapped as an extension element
-   with an id attribute, then joined in the channel-rendered tool-call rowone `<extensions>...</extensions>`
-   block."
+   registration). Non-blank results are normalized, wrapped as labeled
+   extension fragments, then joined into one `<extensions>` block."
   [environment active-extensions]
   (let [fragments (keep (fn [ext]
                           (when-let [f (:ext/prompt ext)]
@@ -227,7 +235,8 @@
   "Join stable prompt message contents for token budgeting and debug bindings only.
    Provider sends the original message vector; this is not a send path."
   [messages]
-  (str/join "\n\n" (keep :content messages)))
+  (extension/normalize-prompt-text
+    (str/join "\n\n" (keep :content messages))))
 
 (defn assemble-stable-prompt-messages
   "Assemble provider-prefix messages.

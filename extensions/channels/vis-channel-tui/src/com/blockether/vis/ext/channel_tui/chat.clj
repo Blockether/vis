@@ -8,6 +8,7 @@
   (:require [clojure.string :as str]
             [com.blockether.vis.core :as vis]
             [com.blockether.vis.internal.extension :as extension]
+            [com.blockether.vis.internal.format :as fmt]
             [com.blockether.vis.internal.history-restore :as history-restore]
             [taoensso.telemere :as t])
   (:import [java.io PrintWriter StringWriter]))
@@ -305,7 +306,7 @@
                                                                      "<runtime value; re-evaluate expression to restore>"
                                                                      (extension/tool-result? result)
                                                                      (extension/channel-render-tool-result result)
-                                                                     :else (vis/safe-pr-str result))))
+                                                                     :else (fmt/bounded-value-str result))))
                                                            exprs)
                                              result-details (mapv (fn [expr]
                                                                     (tool-result-detail (:result expr)))

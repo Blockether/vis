@@ -52,11 +52,11 @@
       (expect (= '[com.blockether.vis.ext.exa.core] (get-in manifest ['exa :nses])))
       (expect (not (contains? (get manifest 'exa) :docs)))))
 
-  (it "exposes Exa data-only symbols and a compact prompt"
+  (it "exposes Exa symbols with compact tool-specific renderers and prompt"
     (expect (= '[web-search code-context]
               (mapv :ext.symbol/symbol exa/exa-symbols)))
-    (expect (not-any? :ext.symbol/journal-render-fn exa/exa-symbols))
-    (expect (not-any? :ext.symbol/channel-render-fn exa/exa-symbols))
+    (expect (every? (comp fn? :ext.symbol/journal-render-fn) exa/exa-symbols))
+    (expect (every? (comp fn? :ext.symbol/channel-render-fn) exa/exa-symbols))
     (expect (str/includes? exa/exa-prompt "EXA_API_KEY"))
     (expect (str/includes? exa/exa-prompt ":max-bytes"))
     (expect (not (str/includes? exa/exa-prompt (str ":" (apply str [\p \i]) "-max"))))
