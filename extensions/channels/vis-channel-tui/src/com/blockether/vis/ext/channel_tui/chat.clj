@@ -282,7 +282,7 @@
                                                                  (let [restored (when (history-restore/runtime-ref? result)
                                                                                   (history-restore/restored-def-result restored-values code))]
                                                                    (cond
-                                                                     error (extension/default-channel-error-ir {:success? false :error error})
+                                                                     error (extension/default-error-ir {:success? false :error error})
                                                                      (seq channel)
                                                                      ;; Per-form sink entries: walk each, surface
                                                                      ;; pre-rendered IR on success, format the
@@ -293,11 +293,11 @@
                                                                      ;; `(def x (v/cat ...))` cannot persist the live var value,
                                                                      ;; but its tool-rendered channel text is durable and should
                                                                      ;; be shown when resuming history.
-                                                                     (extension/combine-channel-render-values
+                                                                     (extension/combine-render-values
                                                                        (map (fn [{:keys [success? result error]}]
                                                                               (if success?
                                                                                 result
-                                                                                (extension/default-channel-error-ir
+                                                                                (extension/default-error-ir
                                                                                   {:success? false :result nil :info {} :error error})))
                                                                          (sort-by :position channel)))
                                                                      restored restored
@@ -305,7 +305,7 @@
                                                                      (history-restore/runtime-ref? result)
                                                                      "<runtime value; re-evaluate expression to restore>"
                                                                      (extension/tool-result? result)
-                                                                     (extension/channel-render-tool-result result)
+                                                                     (extension/render-tool-result result)
                                                                      :else (fmt/bounded-value-str result))))
                                                            exprs)
                                              result-details (mapv (fn [expr]

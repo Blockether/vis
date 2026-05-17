@@ -81,6 +81,9 @@
 (def ^:private selected-transcript-text
   (deref #'screen/selected-transcript-text))
 
+(def ^:private release-selection-focus
+  (deref #'screen/release-selection-focus))
+
 (def ^:private copyable-bubble-text
   (deref #'screen/copyable-bubble-text))
 
@@ -486,6 +489,24 @@
                    :focus  (selection/point 39 4)}]
       (expect (= "line zero\nline one\nline two\nline three"
                 (selected-transcript-text [message] layout 40 {} {} sel)))))
+
+  (it "uses release viewport for drag-copy focus after scrolling beyond the first screen"
+    (expect (= (selection/point 7 42)
+              (release-selection-focus
+                (selection/point 3 10)
+                (selection/point 7 18)
+                false
+                (selection/point 7 6)
+                {:viewport-top 2 :eff-scroll 38}))))
+
+  (it "keeps pre-expanded double-click line focus on release"
+    (expect (= (selection/point 20 10)
+              (release-selection-focus
+                (selection/point 3 10)
+                (selection/point 20 10)
+                true
+                (selection/point 7 6)
+                {:viewport-top 2 :eff-scroll 38}))))
 
   (it "marks input text rows as selectable without input padding"
     (expect (= [{:row 11 :col 2 :width 16}

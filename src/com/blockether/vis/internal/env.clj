@@ -49,7 +49,7 @@
 
 (defn bind-and-bump-with-doc!
   "Like `bind-and-bump!` but writes `doc` as the var's :doc metadata
-   so the journal live-vars renderer surfaces a meaningful name + doc
+   so the trailer's live-vars view surfaces a meaningful name + doc
    to the model (e.g. USER_REQUEST -> 'current turn user request')."
   [env sym doc val]
   (let [sci-ctx (:sci-ctx env)

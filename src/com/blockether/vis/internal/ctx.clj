@@ -269,16 +269,16 @@
 (defn render-iteration-trailer
   "Build the REPL-style user-message body for a model call.
 
-   `:journal-iters` — vec of `[position {:blocks [...]}]` ordered ascending.
-   `:ctx`           — the engine ctx snapshot map for the upcoming iteration.
+   `:trailer-iters` — vec of `[position {:blocks [...]}]` ordered ascending.
+   `:ctx`            — the engine ctx snapshot map for the upcoming iteration.
 
    Returns the full trailer string: prior iterations as REPL transcripts,
    followed by `;; ctx = <edn>` for the fresh state. When no prior iterations
    exist, only the ctx block is emitted."
-  [{:keys [environment journal-iters ctx]}]
+  [{:keys [environment trailer-iters ctx]}]
   (let [cache-key (System/identityHashCode (:env (:sci-ctx environment)))
         prior     (mapv (fn [[pos data]] (iteration->repl-text cache-key
                                            {:position pos :blocks (:blocks data)}))
-                    (or journal-iters []))
+                    (or trailer-iters []))
         ctx-block (str ";; ctx =\n" (pr-str ctx))]
     (str/join "\n\n" (conj prior ctx-block))))

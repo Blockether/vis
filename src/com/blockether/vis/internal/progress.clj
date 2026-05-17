@@ -141,29 +141,29 @@
 
    When `:channel` is empty (plain-value form: `(+ 1 2)`, a `def` whose
    value isn't a tool-result, etc.) the form-level `:result` IS what
-   the model wrote: render via `channel-render-tool-result` when the
+   the model wrote: render via `render-tool-result` when the
    value is an `:envelope`, otherwise bounded plain-value text."
   [chunk]
   (if (:error chunk)
-    (extension/default-channel-error-ir {:success? false :error (:error chunk)})
+    (extension/default-error-ir {:success? false :error (:error chunk)})
     (let [channel-entries (seq (:channel chunk))]
       (cond
         channel-entries
         ;; Sort by :position so racy futures (which can land in
         ;; completion order rather than source order) render in canonical
         ;; source order.
-        (extension/combine-channel-render-values
+        (extension/combine-render-values
           (map (fn [{:keys [success? result error]}]
                  (if success?
                    result
                    ;; Per PLAN §2.1: build the envelope shape the
                    ;; default error formatter expects.
-                   (extension/default-channel-error-ir
+                   (extension/default-error-ir
                      {:success? false :error error})))
             (sort-by :position channel-entries)))
 
         (extension/tool-result? (:result chunk))
-        (extension/channel-render-tool-result (:result chunk))
+        (extension/render-tool-result (:result chunk))
 
         :else
         (fmt/bounded-value-str (:result chunk))))))
