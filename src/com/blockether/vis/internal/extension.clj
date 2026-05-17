@@ -89,8 +89,6 @@
 (s/def ::tag        keyword?)        ; #{:op.tag/observation :op.tag/mutation}
 (s/def ::result     any?)            ; the actual SCI eval value; shape varies per tool
 (s/def ::success?   boolean?)
-(s/def ::stdout     (s/nilable string?))
-(s/def ::stderr     (s/nilable string?))
 (s/def ::metadata   (s/map-of keyword? any?))   ; free-form aux: :duration-ms, :paths, :hit-count, :tool, :source, :extension, etc.
 
 ;; ---- structured op/error sub-specs ----
@@ -121,7 +119,7 @@
 (s/def ::envelope
   (s/and
     (s/keys :opt-un [::symbol ::tag ::result ::success? ::error
-                     ::stdout ::stderr ::metadata])
+                     ::metadata])
     ;; Distinguishing-marker requirement: a real envelope MUST carry
     ;; the canonical boolean `:success?` field. Without this gate,
     ;; plain maps (e.g. user data, results from non-envelope code)
@@ -357,19 +355,15 @@
      :metadata free-form aux map: :tool, :extension, :source,
                :paths, :hit-count, :command, :started-at-ms,
                :finished-at-ms, :duration-ms, etc.
-     :stdout   captured stdout string (optional)
-     :stderr   captured stderr string (optional)
 
    Produces a flat `:envelope` map."
-  [{:keys [result op metadata stdout stderr]} success? error]
+  [{:keys [result op metadata]} success? error]
   (cond-> {:result   result
            :success? success?
            :error    error
            :metadata (normalize-metadata metadata)}
     op             (assoc :symbol op
                      :tag    (op-tag op))
-    (some? stdout) (assoc :stdout stdout)
-    (some? stderr) (assoc :stderr stderr)
     :always        assert-tool-result!))
 
 (defn success

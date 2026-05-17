@@ -97,7 +97,7 @@
   "True for invisible first-column markers consumed by `draw-chat-bubble!`.
    These markers select a row background/style. When wrapping a long marked
    row, every continuation must keep the same marker; otherwise only the first
-   visual row paints the code/result/stdout/thinking background and the rest
+   visual row paints the code/result/thinking background and the rest
    falls through as plain assistant text."
   [^Character ch]
   (boolean
@@ -947,8 +947,6 @@
 (def ^:private thinking-marker  p/MARKER_THINKING)
 (def ^:private code-marker      p/MARKER_CODE)
 (def ^:private result-marker    p/MARKER_RESULT)
-(def ^:private stdout-marker    p/MARKER_STDOUT)
-(def ^:private stderr-marker    p/MARKER_STDERR)
 (def ^:private sep-marker       p/MARKER_SEP)
 (def ^:private code-ok-marker   p/MARKER_CODE_OK)
 (def ^:private code-err-marker  p/MARKER_CODE_ERR)
@@ -956,8 +954,6 @@
 (def ^:private code-status-marker p/MARKER_CODE_STATUS)
 (def ^:private duration-marker  p/MARKER_DURATION)
 (def ^:private iteration-hdr-marker  p/MARKER_ITERATION_HDR)
-(def ^:private stdout-sep-marker p/MARKER_STDOUT_SEP)
-(def ^:private stdout-pad-marker p/MARKER_STDOUT_PAD)
 (def ^:private answer-sep-marker p/MARKER_ANSWER_SEP)
 (def ^:private code-pad-marker   p/MARKER_CODE_PAD)
 (def ^:private code-ok-pad-marker p/MARKER_CODE_OK_PAD)
@@ -981,14 +977,14 @@
 (def ^:private md-summary-marker    p/MARKER_MD_SUMMARY)
 
 (def ^:private tool-output-indent
-  "Visible left margin for result/stdout/stderr rows under a tool call."
+  "Visible left margin for result rows under a tool call."
   "  ")
 
 (def ^:private tool-output-indent-cols
   (p/display-width tool-output-indent))
 
 (def ^:private output-indentable-markers
-  #{stdout-marker stderr-marker stdout-sep-marker stdout-pad-marker code-err-pad-marker})
+  #{code-err-pad-marker})
 
 (def ^:private th-md-h1-marker         p/MARKER_TH_MD_H1)
 (def ^:private th-md-h2-marker         p/MARKER_TH_MD_H2)
@@ -1005,7 +1001,7 @@
 
 (def ^:private code-text-inset-markers
   #{code-marker code-ok-marker code-err-marker code-status-marker
-    result-marker err-result-marker stdout-marker stderr-marker stdout-sep-marker
+    result-marker err-result-marker
     md-code-marker th-md-code-marker})
 
 (defn- ansi-code->fg [code current-fg base-fg]
@@ -1523,7 +1519,7 @@
    (`user-bubble-bg`) to visually separate user input from the rest of
    the conversation. Assistant content rows render on terminal bg -
    the only fills come from inline marker zones (code blocks,
-   answer-bg, stdout, etc.).
+   answer-bg, etc.).
 
    Returns the number of screen rows consumed (including spacing).
 
@@ -1554,7 +1550,7 @@
         bubble-w  max-w
         ;; Symmetric inner padding (2 cols each side) inside the
         ;; message column. Applies to plain text AND to every
-        ;; styled-marker zone (code blocks, stdout, answer, iteration
+        ;; styled-marker zone (code blocks, answer, iteration
         ;; headers) so right-aligned labels like "ITERATION 1" /
         ;; "FINAL ANSWER" sit nicely inset from the right edge
         ;; instead of mashed against it.
@@ -1659,7 +1655,7 @@
           btop       (+ start-row top-sep-h 1 top-pad)]
       ;; No bubble-wide background fill. Plain user / assistant text
       ;; renders directly on terminal bg - the only fills come from
-      ;; structured-trace marker zones (code blocks, stdout, answer
+      ;; structured-trace marker zones (code blocks, answer
       ;; section). Roles are visually distinguished by the colored
       ;; label and the blank row beneath it (no horizontal divider).
       ;; Bulk fill the content rows for the cases that want a
@@ -1667,7 +1663,7 @@
       ;; messages (warm light-yellow zone). Assistant plain text and
       ;; cancelled status keep terminal bg - their per-line marker
       ;; switch handles any zone-specific fills (code blocks,
-      ;; answer-bg, stdout, etc.) on its own.
+      ;; answer-bg, etc.) on its own.
       ;;
       ;; Warnings: fill ONLY the content rows so the amber alarm
       ;; reads as the message itself, no extra chrome.
@@ -1755,7 +1751,7 @@
                 ;;   text  at `x = bx + h-pad`, runs `content-w` cols  - keeps
                 ;;         body padded inside the column.
                 ;;   fills at `fbx = bx`,        run  `bubble-w`  cols - every
-                ;;         marker zone (code, answer, stdout, iteration
+                ;;         marker zone (code, answer, iteration
                 ;;         header, thinking, table...) paints the FULL message
                 ;;         column so the colored band reaches both edges of
                 ;;         the messages area instead of leaving a 2-col
@@ -1881,31 +1877,6 @@
                     (do (p/set-colors! g t/code-error-result-fg t/code-block-bg)
                       (p/fill-rect! g fbx y iw 1)
                       (paint-ansi-line! g x y (subs line 1) t/code-error-result-fg t/code-block-bg))
-
-              ;; ── Stdout text - distinct stdout bg, italic ──
-                    (str/starts-with? line stdout-marker)
-                    (do (p/set-colors! g t/stdout-fg t/stdout-bg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (p/styled g [p/ITALIC]
-                        (p/put-str! g x y (subs line 1))))
-
-              ;; ── Stderr text - light red, italic ──
-                    (str/starts-with? line stderr-marker)
-                    (do (p/set-colors! g t/code-error-result-fg t/code-err-bg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (p/styled g [p/ITALIC]
-                        (p/put-str! g x y (subs line 1))))
-
-              ;; ── Stdout separator (dashes) ──
-                    (str/starts-with? line stdout-sep-marker)
-                    (do (p/set-colors! g t/stdout-sep-fg t/stdout-bg)
-                      (p/fill-rect! g fbx y iw 1)
-                      (p/put-str! g x y (subs line 1)))
-
-              ;; ── Stdout padding ──
-                    (str/starts-with? line stdout-pad-marker)
-                    (do (p/set-bg! g t/stdout-bg)
-                      (p/fill-rect! g fbx y iw 1))
 
               ;; ── Code block padding (running / neutral) ──
                     (str/starts-with? line code-pad-marker)
@@ -2449,7 +2420,7 @@
                   (update e k drop-indexes hidden-idxs))
           entry
           [:code :comments :render-segments :results :result-kinds :result-details
-           :stdouts :stderrs :durations :successes :started-at-ms :silents])))))
+           :durations :successes :started-at-ms :silents])))))
 
 (defn- iteration-fingerprint
   "Content-derived fingerprint of an iteration entry. Captures every
@@ -2459,7 +2430,7 @@
    `:iterations` vec is rebuilt by `(vec (vals @timeline))` on every
    progress chunk."
   [{:keys [thinking code comments render-segments results result-kinds result-details
-           stdouts stderrs durations successes started-at-ms silents
+           durations successes started-at-ms silents
            provider-fallbacks error repeat-count]}]
   [(text-fingerprint thinking)
    (mapv text-fingerprint code)
@@ -2467,14 +2438,9 @@
    render-segments
    (mapv text-fingerprint results)
    result-kinds
-   ;; result-details are small op-metadata maps; the few that carry
-   ;; raw stdout/stderr only do so for shell results where stdout/
-   ;; stderr are already separately fingerprinted via the parallel
-   ;; vectors below, so the redundancy is small and the maps are
-   ;; cheap to compare.
+   ;; result-details are small op-metadata maps with subprocess
+   ;; payloads inline. Compared structurally - cheap.
    result-details
-   (mapv text-fingerprint stdouts)
-   (mapv text-fingerprint stderrs)
    durations
    successes
    started-at-ms
@@ -2623,7 +2589,7 @@
                      (str " " (name op))))))))
 
 (defn- self-describing-tool-result?
-  "Whether the op's body output speaks for itself (shell stdout,
+  "Whether the op's body output speaks for itself (shell output,
    search hits, file listings) so the channel SHOULD skip the
    redundant badge row. Declared by the extension via
    `extension/register-op!` `:self-describing?`."
@@ -2681,7 +2647,7 @@
 (defn- ir-body-entries
   "Render canonical channel IR into painter entries. This path is IR-only:
    render-fn output must already be `[:ir ...]`; strings belong to
-   raw value/stdout fallback paths, not tool/channel rendering.
+   raw value fallback paths, not tool/channel rendering.
 
    Channel IR renders in place. Do not stringify it and do not prepend
    generic result/body markers: plain IR paragraphs should inherit the
@@ -2726,7 +2692,7 @@
 (defn- marker-prefix?
   "True when the first char of `line` is a paint-zone marker the
    renderer prepends (zero-width / format codepoints from
-   `primitives` like `MARKER_STDOUT`, `MARKER_RESULT`, ...). Plain
+   `primitives` like `MARKER_RESULT`, ...). Plain
    answer-markdown lines never start with one, so the test lets us
    strip markers without nibbling the first letter of regular prose."
   ^Boolean [^String line]
@@ -2855,7 +2821,7 @@
     (str/join "\n")))
 
 (defn- maybe-collapse-raw-text-block
-  "Render a result/stdout-like block without wrapping huge collapsed
+  "Render a result block without wrapping huge collapsed
    bodies first. `wrap-text` is intentionally display-width-aware and
    expensive on long single-line data dumps; when the detail row is
    collapsed by default, the first frame only needs the summary hint."
@@ -3000,7 +2966,7 @@
       segments)))
 
 (defn- format-iteration-entry-entries
-  [{:keys [thinking code comments render-segments results result-kinds result-details stdouts stderrs durations successes started-at-ms provider-fallbacks error repeat-count]}
+  [{:keys [thinking code comments render-segments results result-kinds result-details durations successes started-at-ms provider-fallbacks error repeat-count]}
    code-width iteration-number
    & [{:keys [show-header? conversation-id detail-expansions conversation-turn-id now-ms live-preview?]
        :or   {show-header? false live-preview? false}}]]
@@ -3222,76 +3188,8 @@
                                      c-lines
                                      (when status-line [status-line])
                                      [(line-entry (str c-pad ""))]))
-                stdout-str    (or (when-let [s (when stdouts (get stdouts idx))]
-                                    (when-not (str/blank? (str s)) s))
-                                (when-let [s (:stdout result-detail)]
-                                  (when-not (str/blank? (str s)) s)))
-                stderr-str    (or (when-let [s (when stderrs (get stderrs idx))]
-                                    (when-not (str/blank? (str s)) s))
-                                (when-let [s (:stderr result-detail)]
-                                  (when-not (str/blank? (str s)) s)))
-                stdout-block  (when (and stdout-str (not (str/blank? (str stdout-str))))
-                                (let [text-lines      (wrap-text (str/trim (str stdout-str)) output-fill-w)
-                                      plain-entries   (mapv #(line-entry (str stdout-marker %)) text-lines)
-                                      collapsed-entries
-                                      (maybe-collapse-block
-                                        {:conversation-id      conversation-id
-                                         :detail-expansions   detail-expansions
-                                         :conversation-turn-id conversation-turn-id
-                                         :iteration-number    iteration-number
-                                         :block-number        block-number
-                                         :kind                :stdout
-                                         :summary             "STDOUT"
-                                         :summary-marker      md-summary-marker
-                                         :body-marker         stdout-marker
-                                         :lines               text-lines
-                                         :max-w               output-fill-w})]
-                                  (if (not= collapsed-entries plain-entries)
-                                    (indent-output-entries collapsed-entries)
-                                    (let [slabel     (label-text "stdout")
-                                          slabel-pad (max 0 (- output-fill-w (count slabel) 1))
-                                          slabel-ln  (line-entry (str stdout-marker
-                                                                   (repeat-str \space slabel-pad)
-                                                                   slabel " "))]
-                                      (indent-output-entries
-                                        (vec (concat
-                                               (when show-header? [slabel-ln])
-                                               [(line-entry (str stdout-pad-marker ""))]
-                                               plain-entries
-                                               [(line-entry (str stdout-pad-marker ""))])))))))
-                stderr-block  (when (and stderr-str (not (str/blank? (str stderr-str))))
-                                (let [text-lines        (wrap-text (str/trim (str stderr-str)) output-fill-w)
-                                      plain-entries     (mapv #(line-entry (str stderr-marker %)) text-lines)
-                                      collapsed-entries (maybe-collapse-block
-                                                          {:conversation-id      conversation-id
-                                                           :detail-expansions   detail-expansions
-                                                           :conversation-turn-id conversation-turn-id
-                                                           :iteration-number    iteration-number
-                                                           :block-number        block-number
-                                                           :kind                :stderr
-                                                           :summary             "STDERR"
-                                                           :summary-marker      md-summary-marker
-                                                           :body-marker         stderr-marker
-                                                           :lines               text-lines
-                                                           :max-w               output-fill-w
-                                                           :color-role          :tool-color/delete})]
-                                  (if (not= collapsed-entries plain-entries)
-                                    (indent-output-entries collapsed-entries)
-                                    (let [slabel     (label-text "stderr")
-                                          slabel-pad (max 0 (- output-fill-w (count slabel) 1))
-                                          slabel-ln  (line-entry (str stderr-marker
-                                                                   (repeat-str \space slabel-pad)
-                                                                   slabel " "))]
-                                      (indent-output-entries
-                                        (vec (concat
-                                               (when show-header? [slabel-ln])
-                                               [(line-entry (str code-err-pad-marker ""))]
-                                               plain-entries
-                                               [(line-entry (str code-err-pad-marker ""))])))))))
-                result-margin nil
-                margin        (when (or (seq stdout-block) (seq stderr-block)) [(line-entry (str iteration-pad-marker ""))])
-                stderr-margin (when (and (seq stdout-block) (seq stderr-block)) [(line-entry (str iteration-pad-marker ""))])]
-            (vec (concat code-block result-margin result-lines margin stdout-block stderr-margin stderr-block))))
+                result-margin nil]
+            (vec (concat code-block result-margin result-lines))))
         grouped
         (when (seq code)
           (let [code+result-lines
@@ -3406,10 +3304,7 @@
                                (let [it (nth iterations i)
                                      n-code (long (count (or (:code it) [])))
                                      thinking-rows (quot (count (or (:thinking it) "")) 80)
-                                     stdout-rows (long (reduce + 0
-                                                         (map (fn [s] (quot (count (or s "")) 80))
-                                                           (or (:stdouts it) []))))
-                                     rows (+ 6 (* 12 n-code) thinking-rows stdout-rows)]
+                                     rows (+ 6 (* 12 n-code) thinking-rows)]
                                  (recur (dec i) (+ acc rows) (inc kept)))))))
         live-limit     (long (cond
                                (nil? dynamic-limit) static-limit

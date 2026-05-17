@@ -258,7 +258,7 @@
   (let [ans       [:ir {} [:p {} "hello"]]
         settings  {:show-thinking true :show-iterations true}
         iter      {:code      ["(+ 1 1)"] :comments [nil]
-                   :results   ["2"] :stdouts [""] :stderrs [""]
+                   :results   ["2"]
                    :durations [1] :successes [true]}
         index-of  (fn [p needle]
                     (first (keep-indexed
@@ -360,8 +360,6 @@
                      {:code      [(str "(+ " n " 1)")]
                       :comments  []
                       :results   [(str (inc n))]
-                      :stdouts   []
-                      :stderrs   []
                       :durations [1]
                       :successes [true]})
           body     (strip-ansi
@@ -414,7 +412,6 @@
                         {:iterations [{:code      ["(+ 1 2)"]
                                        :comments  [nil]
                                        :results   [huge-result]
-                                       :stdouts   [""]
                                        :durations [1]
                                        :successes [true]}]}
                         96
@@ -433,8 +430,6 @@
                      {:code      [(str "(+ " n " 1)")]
                       :comments  []
                       :results   [(str (inc n))]
-                      :stdouts   []
-                      :stderrs   []
                       :durations [1]
                       :successes [true]})
           payload   (render/progress->lines-data
@@ -460,8 +455,6 @@
                      {:code      [(str "(+ " n " 1)")]
                       :comments  []
                       :results   [(str (inc n))]
-                      :stdouts   []
-                      :stderrs   []
                       :durations [1]
                       :successes [true]})
           payload   (render/progress->lines-data
@@ -485,8 +478,6 @@
                                   :results [":vis/silent" "3"]
                                   :result-kinds [:value :value]
                                   :result-details [nil nil]
-                                  :stdouts ["" ""]
-                                  :stderrs ["" ""]
                                   :durations [1 1]
                                   :successes [true true]
                                   :silents [true false]}]}
@@ -520,14 +511,6 @@
     ;; reformat path. Bump the threshold here ONLY if you have a
     ;; corresponding bench measurement showing the new floor; never bump
     ;; just to make a flake go away.
-    ;; Note on stdout content: we deliberately use a string with NO
-    ;; leading/trailing whitespace. `format-iteration-entry-entries`
-    ;; runs `(str/trim x)` on stdout before passing to `wrap-text`,
-    ;; and `str/trim` returns a new String instance when it actually
-    ;; trims - which busts `wrap-text`'s `identityHashCode`-keyed
-    ;; cache. That's a separate latent issue (see autoresearch.ideas
-    ;; "replace identityHashCode in wrap-text with content fp"); this
-    ;; test focuses on the per-iteration-cache regression.
     (let [mk-iter (fn [i]
                     {:thinking (apply str (repeat (+ 200 (* 100 i)) \.))
                      :code [(str "(do (println :iter " i ") (mapv inc (range 100)))")]
@@ -535,8 +518,6 @@
                      :results ["[1 2 3 ...]"]
                      :result-kinds [:value]
                      :result-details [nil]
-                     :stdouts [(apply str (repeat 1500 "output"))]
-                     :stderrs [""]
                      :durations [50]
                      :successes [true]})
           base       (mapv mk-iter (range 14))
@@ -577,8 +558,6 @@
                   :results ["3"]
                   :result-kinds [:value]
                   :result-details [nil]
-                  :stdouts [""]
-                  :stderrs [""]
                   :durations [10]
                   :successes [true]}
           iters1 (vec (repeat 5 iter))
@@ -614,8 +593,6 @@
                      :code      ["(+ 1 1)"]
                      :comments  []
                      :results   ["2"]
-                     :stdouts   []
-                     :stderrs   []
                      :durations [1]
                      :successes [true]
                      :error     nil}
@@ -1116,7 +1093,6 @@
                   :results [body]
                   :result-kinds [:preview]
                   :result-details [{:raw "{:secret \"raw-only\"}"}]
-                  :stdouts [""]
                   :durations [1]
                   :successes [true]}]
           payload (render/format-answer-with-thinking-data
@@ -1135,7 +1111,6 @@
           trace [{:code ["{:b 2 :a [1 2 3]}"]
                   :results [raw]
                   :result-kinds [:value]
-                  :stdouts [""]
                   :durations [1]
                   :successes [true]}]
           payload (render/format-answer-with-thinking-data
@@ -1156,7 +1131,6 @@
                   :result-details [{:op :v/patch
                                     :tag :op.tag/mutation
                                     :color-role :tool-color/edit}]
-                  :stdouts [""]
                   :durations [1]
                   :successes [true]}]
           payload (render/format-answer-with-thinking-data
@@ -1175,7 +1149,6 @@
                         :result-details [{:op :v/patch
                                           :tag :op.tag/mutation
                                           :color-role :tool-color/edit}]
-                        :stdouts [""]
                         :durations [1]
                         :successes [true]}]
           payload     (render/format-answer-with-thinking-data
@@ -1197,7 +1170,6 @@
                                       :color-role :tool-color/search
                                       :spec {:any ["alpha" "beta"] :paths ["src"]}
                                       :paths ["src"]}]
-                    :stdouts [""]
                     :durations [1]
                     :successes [true]}]
           payload (render/format-answer-with-thinking-data
@@ -1214,7 +1186,6 @@
           trace       [{:code      ["(+ 1 2)"]
                         :comments  [nil]
                         :results   [huge-result]
-                        :stdouts   [""]
                         :durations [1]
                         :successes [true]}]
           turn-id     "123e4567-e89b-12d3-a456-426614174000"
@@ -1248,7 +1219,6 @@
           trace    [{:thinking  thinking
                      :code      []
                      :results   []
-                     :stdouts   []
                      :durations []
                      :successes []}]
           opts     {:conversation-id "conversation"
@@ -1277,7 +1247,6 @@
           trace       [{:code      ["(+ 1 2)"]
                         :comments  [nil]
                         :results   [huge-result]
-                        :stdouts   [""]
                         :durations [1]
                         :successes [true]}]
           payload     (render/format-answer-with-thinking-data
@@ -1344,7 +1313,6 @@
                     :result-kinds [:tool]
                     :result-details [{:op :v/patch :tag :op.tag/mutation
                                       :color-role :tool-color/edit}]
-                    :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1365,7 +1333,6 @@
                     :result-kinds [:tool]
                     :result-details [{:op :v/patch :tag :op.tag/mutation
                                       :color-role :tool-color/edit}]
-                    :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1396,7 +1363,6 @@
                     :result-kinds [:tool]
                     :result-details [{:op :v/cat :tag :op.tag/observation
                                       :color-role :tool-color/read}]
-                    :stdouts [""] :durations [1] :successes [true]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {["conversation" "iteration:t123e4567:i1:b1:result"] true}}
@@ -1421,7 +1387,6 @@
       (let [trace [{:code ["(boom)"]
                     :results ["- pretend-bullet"]
                     :result-kinds [:tool]
-                    :stdouts [""] :durations [1] :successes [false]}]
             opts {:conversation-id "conversation"
                   :conversation-turn-id "123e4567-e89b-12d3-a456-426614174000"
                   :detail-expansions {}}

@@ -1074,7 +1074,7 @@
    {:key :show-iterations
     :type :toggle
     :label "Show full execution trace"
-    :description "Blocks, eval results, stdout, errors - the whole iteration history"}
+    :description "Blocks, eval results, errors - the whole iteration history"}
    {:key :show-silent
     :type :toggle
     :label "Show silent system calls"

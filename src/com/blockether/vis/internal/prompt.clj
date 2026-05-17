@@ -99,6 +99,8 @@
     Tool results are plain Clojure data. Bind them, inspect with Clojure, never copy from previews.
     Do not call the same tool with identical args twice in one turn.
     All IO and mutations go through extension tools; slurp/spit/java.io are banned.
+    Return data. No I/O side effects. There is no stdout channel.
+    Banned heads (throw on call): println, print, prn, pr, printf, pprint, tap>, flush, newline.
     RLM loop: explore, observe, refine, act, observe, answer. Do not guess.
     Finish only with `(done [:ir ...])` when answer is supported by observed data.
     Allowed def heads: def, defn, defn-, defonce, defmulti, defmacro.

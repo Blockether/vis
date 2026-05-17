@@ -195,8 +195,6 @@
                                                                    :code code}
                                                             (contains? it :result) (assoc :result (:result it))
                                                             (contains? it :error) (assoc :error (:error it))
-                                                            (contains? it :stdout) (assoc :stdout (:stdout it))
-                                                            (contains? it :stderr) (assoc :stderr (:stderr it))
                                                             (contains? it :channel) (assoc :channel (:channel it))
                                                             (seq segments) (assoc :render-segments segments)
                                                             (contains? it :execution-time-ms)
@@ -269,15 +267,10 @@
                                              tool-result-detail
                                              (fn [result]
                                                (when (extension/tool-result? result)
-                                                 (let [metadata (:metadata result)
-                                                       payload  (:result result)]
-                                                   (cond-> (merge (select-keys result [:symbol :tag])
-                                                             (select-keys metadata [:spec :paths :hit-count :truncated-by
-                                                                                    :command :cwd :target]))
-                                                     (:stdout payload)
-                                                     (assoc :stdout (:stdout payload))
-                                                     (:stderr payload)
-                                                     (assoc :stderr (:stderr payload))))))
+                                                 (let [metadata (:metadata result)]
+                                                   (merge (select-keys result [:symbol :tag])
+                                                     (select-keys metadata [:spec :paths :hit-count :truncated-by
+                                                                            :command :cwd :target])))))
                                              result-strs (mapv (fn [{:keys [result error channel code]}]
                                                                  (let [restored (when (history-restore/runtime-ref? result)
                                                                                   (history-restore/restored-def-result restored-values code))]
@@ -311,8 +304,6 @@
                                              result-details (mapv (fn [expr]
                                                                     (tool-result-detail (:result expr)))
                                                               exprs)
-                                             stdout-strs (mapv #(or (:stdout %) "") exprs)
-                                             stderr-strs (mapv #(or (:stderr %) "") exprs)
                                              durations   (mapv #(or (:duration-ms %) 0) exprs)
                                              silents     (mapv (fn [expr]
                                                                  (and (nil? (:error expr))
@@ -329,8 +320,6 @@
                                           :results   result-strs
                                           :result-kinds (mapv result-kind exprs)
                                           :result-details result-details
-                                          :stdouts   stdout-strs
-                                          :stderrs   stderr-strs
                                           :durations durations
                                           :successes (mapv #(nil? (:error %)) exprs)
                                           :silents   silents})))
