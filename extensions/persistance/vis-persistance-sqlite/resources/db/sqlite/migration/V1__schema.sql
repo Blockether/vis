@@ -9,7 +9,7 @@
 --          │    └─ conversation_turn_state (one run/retry of the turn)
 --          │         └─ conversation_turn_iteration (one LLM round-trip)
 --          │              │
---          │              └─ code/result/error/stdout/stderr/duration_ms columns
+--          │              └─ code/result/error/duration_ms columns
 --          │                   Single-form iteration payload, directly readable
 --          │                   without a Nippy vec wrapper.
 --          │
@@ -33,7 +33,7 @@
 --     -> conversation_turn_soul + conversation_turn_state
 --     -> conversation_turn_iteration(s)
 --          each conversation_turn_iteration writes its single code block inline into
---          code/result/error/stdout/stderr/duration_ms plus one
+--          code/result/error/duration_ms plus one
 --          definition_soul + definition_state row per named var
 --          `(def ...)` / `(defn ...)` it executed
 --     -> conversation_turn_state done/error
@@ -249,12 +249,10 @@ CREATE TABLE conversation_turn_iteration (
   metadata                        TEXT,    -- JSON-encoded per-conversation_turn_iteration context (active extensions, etc.)
 
   -- Single-form iteration payload. `result` and `error` are Nippy-encoded
-  -- Clojure values; text side effects stay queryable as TEXT.
+  -- Clojure values.
   code                            TEXT NOT NULL,
   result                          BLOB,
   error                           BLOB,
-  stdout                          TEXT,
-  stderr                          TEXT,
   duration_ms                     INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
 
   created_at                      INTEGER NOT NULL,

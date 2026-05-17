@@ -6,8 +6,8 @@
    (system prompt, message envelope, reasoning trace, top-level
    provider error, per-iteration vars, answer-form pointer,
    returned-empty-blocks flag) and the per-block forensic detail
-   (code, comment, result, error, stdout, stderr, duration, timeout?,
-   repaired?). Pure data. The agent can pattern-match on it; the CLI
+   (code, comment, result, error, duration, timeout?, repaired?).
+   Pure data. The agent can pattern-match on it; the CLI
    renders Markdown on top; a future TUI screen, JSON exporter, or
    analytics extension consumes the same shape.
 
@@ -57,8 +57,7 @@
             [{:name :code :value :version}]
             :blocks
             [{:position :code :comment :result :error
-              :stdout :stderr :duration-ms
-              :timeout? :repaired?}]}]}]}
+              :duration-ms :timeout? :repaired?}]}]}]}
 
    The Markdown renderer renders thinking, iteration-level errors,
    vars, the per-block forensic dump, final answer text, plus a compact
@@ -114,8 +113,6 @@
                        :code (or (:code iter) "")}
                 (contains? iter :result) (assoc :result (:result iter))
                 (contains? iter :error) (assoc :error (:error iter))
-                (contains? iter :stdout) (assoc :stdout (:stdout iter))
-                (contains? iter :stderr) (assoc :stderr (:stderr iter))
                 (contains? iter :execution-time-ms)
                 (assoc :duration-ms (:execution-time-ms iter)))
         blocks [block]
@@ -394,9 +391,7 @@
              :duration-ms    (or (:duration-ms block) 0)
              :code           (:code block)}
       (contains? block :result) (assoc :result-summary (result-summary (:result block)))
-      error                     (assoc :error error)
-      (:stdout block)           (assoc :stdout-preview (preview-string (:stdout block) 4096))
-      (:stderr block)           (assoc :stderr-preview (preview-string (:stderr block) 4096)))))
+      error                     (assoc :error error))))
 
 (defn- transcript-timeline
   [turns calls]
@@ -565,15 +560,14 @@
 
 (defn- render-block-section
   "Per-block forensic dump: status header, optional comment, full code
-   in a fenced ```clojure block, result line, fenced stdout/stderr,
-   fenced error. `answer?` flips on the block the iteration's
-   `:answer-position` points at - the block that called `(done ...)` -
-   so the reader spots the terminal block at a glance.
+   in a fenced ```clojure block, result line, fenced error. `answer?`
+   flips on the block the iteration's `:answer-position` points at -
+   the block that called `(done ...)` - so the reader spots the
+   terminal block at a glance.
 
-   Truncation budgets stay generous (4KB stdout / stderr, 800 chars
-   on the display string of result) so the report is forensic, not a
-   one-pager."
-  [idx answer? {:keys [code comment render-segments result error stdout stderr] :as block}]
+   Result truncation cap is 800 chars on the display string so the
+   report is forensic, not a one-pager."
+  [idx answer? {:keys [code comment render-segments result error] :as block}]
   (let [marker      (if error "✗" "✓")
         flags       (cond-> []
                       answer?            (conj "answer")
@@ -588,10 +582,6 @@
       (render-block-code-segments code render-segments)
       (when has-result?
         (str "\nResult: `" (truncate (display-result result) 800) "`\n"))
-      (when (not (str/blank? stdout))
-        (str "\n_stdout:_\n" (render-fenced "text" (truncate stdout 4096))))
-      (when (not (str/blank? stderr))
-        (str "\n_stderr:_\n" (render-fenced "text" (truncate stderr 4096))))
       (when error
         (str "\n_error:_\n" (render-fenced "text" error)))
       "\n")))

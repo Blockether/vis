@@ -36,10 +36,10 @@
 
 (defn- seed!
   "Two-turn fixture exercising the full transcript surface: one
-   clean turn with comment / result / stdout / a `(def ...)` var /
+   clean turn with comment / result / a `(def ...)` var /
    thinking trace / answer-form-idx, and one failing turn with a
-   prose-in-code error block + a clean follow-up block + stderr
-   capture. Returns the conversation id."
+   prose-in-code error block + a clean follow-up block.
+   Returns the conversation id."
   [s]
   (let [cid (vis/db-store-conversation! s {:channel :tui
                                            :title "Transcript fixture"
@@ -56,7 +56,6 @@
     (vis/db-store-iteration! s {:conversation-turn-id q1
                                 :code          "(+ 1 1)"
                                 :result        2
-                                :stdout        "hello from clojure"
                                 :answer        "42"
                                 :thinking      "Reasoning about arithmetic"
                                 :vars          [{:name "x" :value 42 :code "(def x 42)"}]
@@ -94,7 +93,6 @@
       (vis/db-store-iteration! s {:conversation-turn-id q2
                                   :code "Let"
                                   :error {:message "ExceptionInfo: Unable to resolve symbol: Let"}
-                                  :stderr "warning: prose-in-code"
                                   :duration-ms 1
                                   :llm-provider :blockether
                                   :llm-model    "gpt-4o"
@@ -198,9 +196,8 @@
           ;; One block per persisted iteration after hard cut.
           (expect (= 1 (count blocks)))
           (expect (= "Let" (:code (first blocks))))
-          ;; Failed block surfaces error + stderr verbatim.
-          (expect (str/includes? (str (:error (first blocks))) "Unable to resolve symbol: Let"))
-          (expect (= "warning: prose-in-code" (:stderr (first blocks)))))
+          ;; Failed block surfaces error verbatim.
+          (expect (str/includes? (str (:error (first blocks))) "Unable to resolve symbol: Let")))
         (finally (vis/db-dispose-connection! s)))))
 
   (it "surfaces provider / model on each turn"
@@ -461,9 +458,6 @@
             (expect (str/includes? out ";; double-check arithmetic"))
           ;; Result line for the clean block.
             (expect (str/includes? out "Result: `2`"))
-          ;; stdout / stderr captured under fenced text blocks.
-            (expect (str/includes? out "hello from clojure"))
-            (expect (str/includes? out "warning: prose-in-code"))
           ;; Failed blocks render the FULL error inside an `_error:_`
           ;; fence, not a truncated table cell.
             (expect (str/includes? out "_error:_"))

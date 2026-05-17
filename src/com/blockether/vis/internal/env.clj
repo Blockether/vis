@@ -150,23 +150,17 @@
                     "and consistent with the prompt.")
            {:type :tool/banned :tool 'slurp})))
 
-(defn- sandbox-println
-  "Sandbox replacement for clojure.core/println.
-
-   SCI rebinds `sci.core/out` (NOT Clojure's `*out*`) per-iteration via
-   `sci/binding`. SCI's built-in println handles this by rebinding `*out*`
-   from `@sci.core/out` inside the fn body - we do the same so stdout
-   capture keeps working with our override in place."
-  [& args]
-  (binding [*out* @sci/out]
-    (apply println args)))
-
-(defn- sandbox-print
-  "Sandbox replacement for clojure.core/print.
-   Rebinds `*out*` from SCI's out for stdout capture."
-  [& args]
-  (binding [*out* @sci/out]
-    (apply print args)))
+(defn- banned-io
+  "Sandbox replacement for I/O side-effect fns (println, print, prn, pr,
+   printf, pprint, tap>, flush, newline). The model returns DATA. There
+   is no stdout channel. Calling any of these throws a descriptive
+   ex-info so the next iteration corrects itself instead of silently
+   discarding values."
+  [& _args]
+  (throw (ex-info (str "I/O side-effect fns are banned in the sandbox. "
+                    "Return data instead - the transcript renders results, "
+                    "there is no stdout channel.")
+           {:type :tool/banned})))
 
 ;; =============================================================================
 ;; SCI namespace / binding helpers (moved from shared.clj - sandbox-only)
@@ -205,10 +199,19 @@
    Params:
    `custom-bindings` - Map of symbol->value for custom bindings (can be nil)"
   [custom-bindings]
-  (let [base-bindings {;; prn is intentionally NOT overridden: it's for data
-                       ;; round-trip and must stay verbatim pr-str.
-                       'println sandbox-println
-                       'print sandbox-print
+  (let [base-bindings {;; I/O side-effect fns are banned: the model returns DATA;
+                       ;; the transcript renders results; there is no stdout
+                       ;; channel. Calling any of these throws a descriptive
+                       ;; ex-info so the next iteration corrects itself.
+                       'println banned-io
+                       'print   banned-io
+                       'prn     banned-io
+                       'pr      banned-io
+                       'printf  banned-io
+                       'pprint  banned-io
+                       'tap>    banned-io
+                       'flush   banned-io
+                       'newline banned-io
                        ;; LLM footgun shadows: auto-promote string->Pattern so
                        ;; (re-find "HITL" s), (re-seq "\\d+" s), etc. stop
                        ;; throwing ClassCastException late inside lazy seqs.
@@ -294,10 +297,6 @@
                                                                      'pprint-str fmt/safe-pprint-str}
 
                                                     'charred.api (ns->sci-map 'charred.api)}
-                                       :readers {'p (fn [form]
-                                                      (list 'do
-                                                        (list 'println (str "#p " (pr-str form) " =>") (list 'pr-str form))
-                                                        form))}
                                        :ns-aliases {'str 'clojure.string
                                                     'edn 'fast-edn.core
                                                     'zp 'zprint.core
@@ -452,24 +451,15 @@
                                                ;; (real Clojure reach for namespace discovery); the tool
                                                ;; docs deliberately leave them unadvertised so the LLM's
                                                ;; canonical playbook stays narrow.
-                                       ;; `*out*` / `*err*` are NOT denied so model
-                                       ;; code can reach for them directly:
-                                       ;;   `(binding [*out* writer] ...)`,
-                                       ;;   `(.write *out* s)`,
-                                       ;;   `(.write *err* s)`.
-                                       ;; SCI's `sci/binding [sci/out writer
-                                       ;; sci/err writer]` (set per-iteration
-                                       ;; in `run-sci-code`) auto-rebinds the
-                                       ;; sandbox's `*out*` / `*err*` to those
-                                       ;; writers, so model writes land in the
-                                       ;; same captured stream the iteration
-                                       ;; loop reads back as `:stdout` / `:stderr`.
+                                       ;; `*out*` / `*err*` are denied: the sandbox
+                                       ;; has no I/O channel. Model returns data;
+                                       ;; transcript renders results.
                                        :deny '[ns eval load-string load-file
                                                read-string
                                                spit
                                                intern
                                                sh
-                                               *in* *command-line-args*]}))]
+                                               *in* *out* *err* *command-line-args*]}))]
     ;; SCI preloads a few convenience namespaces. Keep model-facing
     ;; introspection and file access on sanctioned `v/` tools instead.
     (swap! (:env sci-ctx)
