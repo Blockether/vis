@@ -15,7 +15,7 @@
 set -euo pipefail
 
 here="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_root="$(cd -P "$here/../../../.." && pwd)"
+repo_root="$(cd -P "$here/../../.." && pwd)"
 
 SUBSET="${SWEBENCH_SUBSET:-inner}"
 ITER_TAG="${ITER_TAG:-$(date +%Y%m%d-%H%M%S)}"

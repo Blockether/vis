@@ -413,6 +413,17 @@
     (comment-only-block? expr)
     "Code block contains only comments / discards (`;;` or `#_`) and no executable form. Add an expression to evaluate, or drop the block entirely."))
 
+(defn- parse-top-level-forms
+  "Parse `code` into a vec of {:source <pr-str> :form <edamame-form>} entries
+   for per-form eval + capture. Returns nil on parse failure so the caller
+   can fall back to whole-block eval and let SCI surface the parse error."
+  [code]
+  (try
+    (let [forms (edamame/parse-string-all code {:all true})]
+      (when (seq forms)
+        (mapv (fn [f] {:source (pr-str f) :form f}) forms)))
+    (catch Throwable _ nil)))
+
 (defn- run-sci-code [sci-ctx code & {:keys [sandbox-ns tool-event-fn env]}]
   (let [stdout-writer (java.io.StringWriter.)
         stderr-writer (java.io.StringWriter.)
@@ -449,41 +460,80 @@
                                   event* (cond-> event
                                            (not= n 1) (assoc :id (str (name (or op :tool)) "-" n)))]
                               (when tool-event-fn (tool-event-fn event*))))
+        parsed-forms (parse-top-level-forms code)
+        eval-one-form
+        (fn [form source]
+          (let [pre-out (.length (.getBuffer stdout-writer))
+                pre-err (.length (.getBuffer stderr-writer))]
+            (try
+              (let [v (sci/eval-form sci-ctx form)
+                    out (.substring (.getBuffer stdout-writer) pre-out)
+                    err (.substring (.getBuffer stderr-writer) pre-err)]
+                (cond-> {:source source :result v}
+                  (pos? (.length out)) (assoc :stdout (.toString out))
+                  (pos? (.length err)) (assoc :stderr (.toString err))))
+              (catch Throwable e
+                (let [out (.substring (.getBuffer stdout-writer) pre-out)
+                      err (.substring (.getBuffer stderr-writer) pre-err)
+                      err-map (try (extension/ex->op-error e {:block-source source})
+                                (catch Throwable _
+                                  {:message (or (ex-message e)
+                                              (.getName (class e)))}))]
+                  (reset! thrown e)
+                  (cond-> {:source source :error err-map}
+                    (pos? (.length out)) (assoc :stdout (.toString out))
+                    (pos? (.length err)) (assoc :stderr (.toString err))))))))
+        eval-per-form
+        (fn []
+          ;; Walk parsed forms in order, capture per-form outcome; stop at
+          ;; first error. Returns {:result :forms :error}.
+          (loop [todo parsed-forms
+                 acc  []
+                 last-result nil]
+            (if (empty? todo)
+              {:result last-result :forms acc :error nil}
+              (let [{:keys [source form]} (first todo)
+                    entry (eval-one-form form source)]
+                (if-let [err (:error entry)]
+                  {:result nil :forms (conj acc entry) :error err}
+                  (recur (rest todo) (conj acc entry) (:result entry)))))))
         exec-future (cancellation/worker-future "vis-sci-eval"
                       (fn []
                         (try
-                          (let [result (binding [extension/*tool-event-sink* record-tool-event
-                                                 extension/*journal-render-sink* journal-sink
-                                                 extension/*channel-render-sink* channel-sink
-                                                 extension/*sink-position*       sink-pos
-                                                 sci-patches/*def-sink-atom*     def-sink
-                                                 sci-patches/*lru-atom*          lru
-                                                 sci-patches/*current-turn-position* turn-position]
-                                         (sci/binding [sci/out stdout-writer
-                                                       sci/err err-pw]
-                                           (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
-                                             (:val (sci/eval-string+ sci-ctx code
-                                                     (when ns {:ns ns}))))))]
-                            {:result result :stdout (str stdout-writer) :stderr (str stderr-writer)
-                             :journal     @journal-sink
-                             :channel     @channel-sink
-                             :def-sink    @def-sink
-                             :lru         @lru
-                             :error nil})
+                          (let [outcome
+                                (binding [extension/*tool-event-sink* record-tool-event
+                                          extension/*journal-render-sink* journal-sink
+                                          extension/*channel-render-sink* channel-sink
+                                          extension/*sink-position*       sink-pos
+                                          sci-patches/*def-sink-atom*     def-sink
+                                          sci-patches/*lru-atom*          lru
+                                          sci-patches/*current-turn-position* turn-position]
+                                  (sci/binding [sci/out stdout-writer
+                                                sci/err err-pw]
+                                    (let [ns (or (sci/find-ns sci-ctx 'sandbox) sandbox-ns)]
+                                      (if (seq parsed-forms)
+                                        (sci/with-bindings
+                                          {sci/ns ns}
+                                          (eval-per-form))
+                                        (let [v (:val (sci/eval-string+ sci-ctx code (when ns {:ns ns})))]
+                                          {:result v :forms [] :error nil})))))]
+                            (assoc outcome
+                              :stdout  (str stdout-writer)
+                              :stderr  (str stderr-writer)
+                              :journal @journal-sink
+                              :channel @channel-sink
+                              :def-sink @def-sink
+                              :lru     @lru))
                           (catch Throwable e
                             (reset! thrown e)
-                            ;; Per PLAN §2.1 + §2.6 + §7.3.5: :error is
-                            ;; the STRUCTURED :error map
-                            ;; ({:message :trace :hint? :block?}) — no
-                            ;; legacy string fallback. SCI parses the
-                            ;; whole `code` at once so its :line/:column
-                            ;; in ex-data are already block-global; no
-                            ;; form-row translation needed at this site.
+                            ;; Whole-block parse path failure (parse-forms returned nil OR
+                            ;; eval-string+ threw outside per-form path).
                             {:result nil :stdout (str stdout-writer) :stderr (str stderr-writer)
                              :journal @journal-sink
                              :channel @channel-sink
                              :def-sink @def-sink
                              :lru     @lru
+                             :forms   []
                              :error   (try (extension/ex->op-error e {:block-source code})
                                         (catch Throwable _
                                           {:message (or (ex-message e)
@@ -1709,7 +1759,16 @@
                                     ;; symbol the SCI hook saw resolve during
                                     ;; this block's eval. Iteration writer
                                     ;; merges into the long-lived per-env LRU.
-                                    :lru (or (:lru result) {})}
+                                    :lru (or (:lru result) {})
+                                    ;; Per-form outcomes: one entry per parsed
+                                    ;; top-level form with
+                                    ;; {:source :result :stdout :stderr :error}.
+                                    ;; The REPL trailer renders these in order so
+                                    ;; the model sees every form's value, not
+                                    ;; just the last one. Empty when the parser
+                                    ;; rejected the source (fell back to whole-
+                                    ;; block eval).
+                                    :forms (vec (:forms result))}
                              ;; Per-form render breakdown for channel display.
                              ;; Channels that read :render-segments hide
                              ;; (done …) / (set-conversation-title! …)
