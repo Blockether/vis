@@ -150,10 +150,8 @@
                 "validate the full plan against the live filesystem\n   before any write"))
       (expect (string/includes? editing/editing-prompt
                 "Do NOT v/cat to verify"))
-      (expect (string/includes? editing/editing-prompt "RLM TACTICS"))
-      (expect (string/includes? editing/editing-prompt "EXPLORE WIDE FIRST"))
-      (expect (string/includes? editing/editing-prompt "COMBINE"))
-      (expect (string/includes? editing/editing-prompt "EXPLORE DEEPER"))
+      (expect (string/includes? editing/editing-prompt "RULES"))
+      (expect (string/includes? editing/editing-prompt "Execute side effects"))
       (expect (not (string/includes? editing/editing-prompt "read-all-lines")))
       (expect (not (string/includes? editing/editing-prompt "write-lines")))
       (expect (not (string/includes? editing/editing-prompt "update-file"))))))
