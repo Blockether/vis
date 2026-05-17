@@ -3,7 +3,6 @@
             [com.blockether.vis.ext.voice.core :as core]
             [com.blockether.vis.ext.voice.input :as voice]
             [com.blockether.vis.ext.voice.recorder :as recorder]
-            [com.blockether.vis.ext.voice.rewrite :as rewrite]
             [com.blockether.vis.ext.voice.asr :as asr]
             [lazytest.core :refer [defdescribe it expect]]))
 
@@ -19,7 +18,7 @@
         (expect (= [false] (mapv :palette? commands)))
         (expect (every? ifn? (map :run-fn commands))))))
 
-  (it "appends rewritten transcript without replacing existing input"
+  (it "appends Parakeet transcript without rewriting or replacing existing input"
     (let [events (atom [])
           app-db (atom {:active-workspace-id :first})]
       (reset! voice/state {:recorder nil :ticker nil :transcribing? false :workspace-id nil})
@@ -27,10 +26,7 @@
                     recorder/stop! (fn [_] :audio-file)
                     asr/transcribe-file! (fn [audio-file]
                                            (expect (= :audio-file audio-file))
-                                           "raw transcript")
-                    rewrite/rewrite-transcript! (fn [raw]
-                                                  (expect (= "raw transcript" raw))
-                                                  "Rewrite")
+                                           "Parakeet translation")
                     vis/publish-channel-event! (fn [channel event]
                                                  (expect (= :tui channel))
                                                  (swap! events conj event))]
@@ -44,13 +40,13 @@
             (Thread/sleep 20)
             (recur (dec n))))
         (expect (some #(= {:op :input/append
-                           :text "Rewrite"
+                           :text "Parakeet translation"
                            :source :voice/input
                            :workspace-id :first}
                          %)
                   @events))
         (expect (not-any? #(= :input/replace (:op %)) @events))
-        (expect (some #(= "● Rewrite..." (:text %)) @events))
+        (expect (not-any? #(= "● Rewrite..." (:text %)) @events))
         (expect (some #(= {:op :status/clear :id :voice/input} %) @events))
         (expect (not-any? #(= "○ Voice ready" (:text %)) @events))
         (expect (not-any? #(= "● Rewriting..." (:text %)) @events)))))
@@ -103,9 +99,6 @@
                                            (expect (= "too-short.wav" audio-file))
                                            (throw (ex-info "Voice recording too short - try again"
                                                     {:type :voice-asr/audio-too-short})))
-                    rewrite/rewrite-transcript! (fn [_]
-                                                  (expect false)
-                                                  "")
                     vis/publish-channel-event! (fn [channel event]
                                                  (expect (= :tui channel))
                                                  (swap! events conj event))]

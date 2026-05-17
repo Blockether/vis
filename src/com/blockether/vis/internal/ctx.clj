@@ -22,6 +22,7 @@
    `System/identityHashCode` of the value."
   (:require
    [clojure.string :as str]
+   [com.blockether.vis.internal.format :as fmt]
    [malli.provider :as mp]))
 
 (def ^:private hidden-syms
@@ -205,35 +206,68 @@
    model needs to read its own observations."
   20000)
 
+(def ^:private TRAILER_ZPRINT_OPTS
+  ;; Width 120 is the trailer wrap point. The trailer never lands in a
+  ;; terminal — it goes into a user message read by the model — so width
+  ;; only trades "more breaks" against "denser lines". 120 fits typical
+  ;; long file paths (e.g. extensions/.../foundation/editing/core.clj) on
+  ;; one line and keeps nested maps/vecs readable. Same EDN escape
+  ;; semantics as pr-str.
+  {:width 120})
+
 (defn- bounded-pr-str
+  "Render `v` for the REPL trailer.
+
+   zprint is used so nested maps/vecs land readable; escape semantics match
+   pr-str (single edn escape, `\\n` inside strings). Falls back to pr-str
+   when zprint throws (rare; cyclic structures or eval-time-only objects).
+   Caps at `TRAILER_VALUE_MAX_CHARS`; the marker tells the model to re-deref
+   the binding when it needs the full value."
   [v]
-  (let [s (try (pr-str v) (catch Throwable _ ""))
+  (let [s (try (fmt/safe-zprint-str v TRAILER_ZPRINT_OPTS)
+            (catch Throwable _
+              (try (pr-str v) (catch Throwable _ ""))))
+        ;; zprint appends a trailing newline on top-level values; strip so the
+        ;; `;; => ` prefix line concatenation does not break across the boundary.
+        s (cond-> s (str/ends-with? s "\n") (subs 0 (dec (count s))))
         n (count s)]
     (if (<= n TRAILER_VALUE_MAX_CHARS)
       s
       (str (subs s 0 TRAILER_VALUE_MAX_CHARS)
         "…<+" (- n TRAILER_VALUE_MAX_CHARS) " chars—re-deref the binding for the full value>"))))
 
+(defn- prefix-continuation-lines
+  "Prefix the first line of `s` with `head`, every subsequent line with
+   `cont`. Keeps multi-line zprint output inside the `;;` comment column so
+   the REPL trailer stays a valid commented transcript."
+  [head cont s]
+  (let [lines (str/split-lines (str s))]
+    (str/join "\n"
+      (cons (str head (first lines))
+        (map #(str cont %) (rest lines))))))
+
 (defn- form-result-lines
-  "Render `;; => <pr-str of value>` plus a `;; => shape <malli>` line so the
-   model sees both the data it just produced and a structural view of it."
-  [value shape]
+  "Render `;; => <value>` (zprint-pretty, multi-line aware).
+
+   No `;; => shape` line: the actual value sits right below, so a shape
+   inferred from that same value duplicates information the model already
+   has. Shapes still live on `:defs` in ctx, where the value is intentionally
+   not shown (sandbox-state directory)."
+  [value]
   (cond-> []
-    (some? shape) (conj (str ";; => shape " (pr-str shape)))
-    (some? value) (conj (str ";; => " (bounded-pr-str value)))))
+    (some? value) (conj (prefix-continuation-lines ";; => " ";;    "
+                          (bounded-pr-str value)))))
 
 (defn- per-form-block-lines
   "Render lines for a single per-form entry (:source :result :stdout :stderr
-   :error). Each form gets its own value preview, shape, stdout, stderr, and
-   error so the model never loses sight of what each form produced."
-  [cache-key position idx {:keys [source result stdout stderr error]}]
-  (let [shape (when (and (some? result) (nil? error))
-                (value-shape cache-key (str "__iter" position "__form" idx) result))]
-    (concat
-      [source]
-      (form-result-lines (when (nil? error) result) shape)
-      (side-effect-lines {:stdout stdout :stderr stderr})
-      (error-lines error))))
+   :error). Each form gets its own value, stdout, stderr, and error so the
+   model never loses sight of what each form produced."
+  [_cache-key _position _idx {:keys [source result stdout stderr error]}]
+  (concat
+    [source]
+    (form-result-lines (when (nil? error) result))
+    (side-effect-lines {:stdout stdout :stderr stderr})
+    (error-lines error)))
 
 (defn- iteration->repl-text
   "Render one prior iteration as a REPL transcript block. When the engine
@@ -255,13 +289,10 @@
                    (let [code   (or (:code block) "")
                          result (when (and (not (:error block))
                                         (not= :vis/no-result (:result block)))
-                                  (:result block))
-                         shape  (when result
-                                  (value-shape cache-key
-                                    (str "__iter" position "__") result))]
+                                  (:result block))]
                      (concat
                        [code]
-                       (form-result-lines result shape)
+                       (form-result-lines result)
                        (side-effect-lines block)
                        (error-lines (:error block)))))]
     (str/join "\n" (concat header body))))

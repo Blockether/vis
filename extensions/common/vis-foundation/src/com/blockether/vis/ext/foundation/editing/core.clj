@@ -5,9 +5,11 @@
 
    1. Structured helpers for read / tree / search:
 
-        (v/cat path)            ; -> {:path :offset :returned :limit :next-offset :eof? :truncated-by :lines}
+        (v/cat path)            ; -> {:path :lines [[N text]…] :next-offset N? :truncated? B}
         (v/cat path n)          ; first n lines from line 1
         (v/cat path offset n)   ; n lines starting at line `offset` (1-based)
+        (v/cat path :tail)      ; last 400 lines (tail)
+        (v/cat path :tail n)    ; last n lines
         (v/ls path)             ; -> nested {:name :path :type :size :children} tree
         (v/ls path opts)        ; opts is {:depth :hidden? :respect-gitignore?}
         (v/rg spec)            ; -> {:hits :truncated-by}; spec = {:any [literal] :paths [src]}
@@ -59,7 +61,7 @@
 ;;                             each call writes one Nippy blob to
 ;;                             `definition_state.result`, bounded by this.
 ;;                             Not user-tunable; it is the storage contract.
-(def ^:private default-cat-limit 200)
+(def ^:private default-cat-limit 400)
 (def ^:private max-cat-window-bytes 65536)
 
 ;; =============================================================================
@@ -216,9 +218,13 @@
      (read-file path n)            ; first n lines from line 1
      (read-file path offset n)     ; n lines starting at line `offset` (1-based)
 
-   Returns {:path :offset :returned :limit :next-offset :eof? :truncated-by :lines}.
-   :truncated-by ∈ #{:limit :bytes :eof}.
-   Each call's :lines payload is bounded by `max-cat-window-bytes`; that
+   Returns {:path :lines [[N text]...] :next-offset N? :truncated? B}.
+   `:lines` is a vec of `[line-number, text]` tuples — line number first so
+   the model destructures `[ln t]` without offset arithmetic.
+   `:next-offset` is nil at EOF, integer otherwise.
+   `:truncated?` is true when the byte cap (64KB) chopped the window short;
+   model paginates with `:next-offset` regardless.
+   Each call's `:lines` payload is bounded by `max-cat-window-bytes`; that
    is also the persistence-blob ceiling (one Nippy row per call).
    Streaming: never slurps the whole file. Lines outside the window are
    discarded after a single `.readLine` pass."
@@ -241,19 +247,15 @@
               stop       nil]
          (cond
            stop
-           (let [lines    (persistent! acc)
-                 returned (count lines)
-                 eof?     (= stop :eof)
-                 next-off (when-not eof?
-                            (+ (long offset) returned))]
-             {:path         (rel-path f)
-              :offset       (long offset)
-              :returned     returned
-              :limit        limit
-              :next-offset  next-off
-              :eof?         eof?
-              :truncated-by stop
-              :lines        lines})
+           (let [lines       (persistent! acc)
+                 returned    (count lines)
+                 eof?        (= stop :eof)
+                 next-offset (when-not eof?
+                               (+ (long offset) returned))]
+             {:path        (rel-path f)
+              :lines       lines
+              :next-offset next-offset
+              :truncated?  (= stop :bytes)})
 
            (>= read-count limit)
            (recur acc bytes-used read-count :limit)
@@ -264,13 +266,68 @@
                (recur acc bytes-used read-count :eof)
                (let [^String s line
                      line-bytes (+ 1 (alength (.getBytes s "UTF-8")))
-                     new-bytes  (+ bytes-used line-bytes)]
+                     new-bytes  (+ bytes-used line-bytes)
+                     line-no    (+ (long offset) read-count)]
                  (if (and (pos? read-count) (> new-bytes byte-cap))
                    (recur acc bytes-used read-count :bytes)
-                   (recur (conj! acc s)
+                   (recur (conj! acc [line-no s])
                      new-bytes
                      (inc read-count)
                      nil)))))))))))
+
+(defn- tail-file
+  "Read the last n lines of a text file. Streams once via a fixed-size
+   ring buffer (`java.util.ArrayDeque`), so memory stays bounded even for
+   gigantic logs. After the scan, walks the kept window from the END to
+   the start to honour `max-cat-window-bytes` — tail = most recent, so the
+   byte cap fires by dropping older lines, not newer ones.
+
+   Returns the same shape as `read-file`:
+     {:path :lines [[N text]…] :next-offset nil :truncated? B}
+   `:next-offset` is always nil — tail is a terminal request. `:truncated?`
+   is true only when the byte cap dropped lines that would otherwise have
+   fit inside the requested n; trimming older lines beyond n is the
+   requested behaviour, not a truncation event."
+  [path n]
+  (when-not (pos-int? n)
+    (throw (ex-info "tail n must be a positive integer"
+             {:type :ext.foundation.editing/invalid-cat-args :limit n})))
+  (let [n        (long n)
+        f        (ensure-existing-file! (safe-path path))
+        byte-cap (long max-cat-window-bytes)
+        buf      (java.util.ArrayDeque.)]
+    (with-open [^java.io.BufferedReader rdr (io/reader f)]
+      (loop [total 0]
+        (let [line (.readLine rdr)]
+          (if (nil? line)
+            (let [kept     (vec (.toArray buf))
+                  kept-cnt (count kept)
+                  start    (inc (- (long total) kept-cnt))
+                  ;; Walk kept from the END backwards, accumulating until
+                  ;; byte cap. Anything we drop off the front bumps
+                  ;; truncated?.
+                  [final-lines bytes-truncated?]
+                  (loop [i          (dec kept-cnt)
+                         bytes-used 0
+                         acc        ()]
+                    (if (neg? i)
+                      [(vec acc) false]
+                      (let [^String s (nth kept i)
+                            lb        (+ 1 (alength (.getBytes s "UTF-8")))
+                            nb        (+ bytes-used lb)]
+                        (if (and (seq acc) (> nb byte-cap))
+                          [(vec acc) true]
+                          (recur (dec i) nb (cons s acc))))))
+                  start-line   (+ (long start) (- kept-cnt (count final-lines)))
+                  numbered     (mapv vector (iterate inc start-line) final-lines)]
+              {:path        (rel-path f)
+               :lines       numbered
+               :next-offset nil
+               :truncated?  bytes-truncated?})
+            (do
+              (when (>= (.size buf) n) (.removeFirst buf))
+              (.addLast buf line)
+              (recur (inc total)))))))))
 
 ;; =============================================================================
 ;; ls
@@ -746,40 +803,42 @@
 
 (defn- cat-tool
   "Read a window of a text file. Returns a plain Clojure map:
-     {:vis.op :v/cat :path P :offset O :line-count N :next-offset O' :eof? B :truncated-by K :lines [str ...]}
+     {:vis.op :v/cat :path P :lines [[<line> <text>]…] :next-offset N? :truncated? B}
    Arities:
-     (v/cat path)            — first 200 lines from line 1.
-     (v/cat path n)          — first n lines from line 1.
-     (v/cat path offset n)   — n lines starting at ABSOLUTE 1-based `offset`.
-   Pagination: when `:eof?` is false, `:next-offset` is the offset of the
-   next unread line; pass it to a follow-up `(v/cat path next-offset n)`
-   call. `:truncated-by` ∈ #{:limit :eof :bytes}. Each window is byte-capped
-   at 64KB (one Nippy result blob per call — :truncated-by :bytes when the
-   cap fires)."
+     (v/cat path)               — first 400 lines from line 1.
+     (v/cat path n)             — first n lines from line 1.
+     (v/cat path offset n)      — n lines starting at ABSOLUTE 1-based offset.
+     (v/cat path :tail)         — LAST 400 lines (tail).
+     (v/cat path :tail n)       — last n lines.
+   Result shape:
+     {:path P :lines [[<line-number> <text>] …] :next-offset N? :truncated? B}
+   `:lines` carries `[ln text]` tuples — destructure with `[n t]`; no
+   offset arithmetic. Filter content with `(filter (fn [[_ t]] …) :lines)`.
+   `:next-offset` is nil at EOF or for tail; integer otherwise — pass to a
+   follow-up call to paginate. `:truncated?` is true when the 64KB byte
+   cap chopped the window; paginate via `:next-offset` regardless."
   ([path]
    (cat-tool path 1 default-cat-limit))
-  ([path n]
-   (cat-tool path 1 n))
-  ([path offset n]
-   (let [out (read-file path offset n)]
+  ([path arg]
+   (if (= arg :tail)
+     (cat-tool path :tail default-cat-limit)
+     (cat-tool path 1 arg)))
+  ([path arg-or-offset n]
+   (let [tail? (= arg-or-offset :tail)
+         out   (if tail?
+                 (tail-file path n)
+                 (read-file path arg-or-offset n))]
      (tool-success
        {:op :v/cat
         :path path
         :kind :file
-        :result (-> out
-                  (assoc :vis.op :v/cat)
-                  (assoc :line-count (:returned out))
-                  (dissoc :returned :limit))
-        :info {:lines-returned (:returned out)
-               :offset (:offset out)
-               :limit (:limit out)
-               :next-offset (:next-offset out)
-               :eof? (:eof? out)
-               :truncated-by (:truncated-by out)}
+        :result (assoc out :vis.op :v/cat)
+        :info (cond-> {:next-offset (:next-offset out)
+                       :truncated?  (:truncated? out)}
+                tail? (assoc :tail? true))
         :presentation {:kind :source
                        :path (:path out)
-                       :line-key :lines
-                       :offset (:offset out)}}))))
+                       :line-key :lines}}))))
 
 (defn- ls-tool
   "List a directory as a plain Clojure map tree:
@@ -857,6 +916,78 @@
             {:type :ext.foundation.editing/invalid-rg-arity
              :expected '([spec-map])}))))
 
+(defn- diff-line-ops
+  "LCS-based line ops between two line vectors. Returns a seq of
+   `[:eq|:add|:del line]`. O(m*n) DP — fine for typical edits; the
+   caller is expected to gate by size."
+  [a b]
+  (let [a (vec a) b (vec b)
+        m (count a) n (count b)
+        dp (make-array Long/TYPE (inc m) (inc n))]
+    (dotimes [i m]
+      (dotimes [j n]
+        (aset dp (inc i) (inc j)
+          (long (if (= (a i) (b j))
+                  (inc (aget dp i j))
+                  (max (aget dp i (inc j))
+                    (aget dp (inc i) j)))))))
+    (loop [i m j n ops ()]
+      (cond
+        (and (pos? i) (pos? j) (= (a (dec i)) (b (dec j))))
+        (recur (dec i) (dec j) (cons [:eq (a (dec i))] ops))
+        (and (pos? j)
+          (or (zero? i) (>= (aget dp i (dec j)) (aget dp (dec i) j))))
+        (recur i (dec j) (cons [:add (b (dec j))] ops))
+        (pos? i)
+        (recur (dec i) j (cons [:del (a (dec i))] ops))
+        :else ops))))
+
+(def ^:private patch-diff-max-lines 4000)
+
+(defn- unified-diff-text
+  "Compact unified-ish diff for two file blobs. Returns nil when both
+   sides are equal. For oversized inputs returns a summary line so the
+   channel preview stays bounded."
+  [before after]
+  (cond
+    (= before after) nil
+    (nil? before) (str "+++ (new file, "
+                    (count (str/split-lines (or after ""))) " lines)")
+    (nil? after)  (str "--- (deleted, "
+                    (count (str/split-lines (or before ""))) " lines)")
+    :else
+    (let [a (str/split-lines before)
+          b (str/split-lines after)]
+      (if (or (> (count a) patch-diff-max-lines)
+            (> (count b) patch-diff-max-lines))
+        (str "(diff too large to render inline: "
+          (count a) " -> " (count b) " lines)")
+        (str/join "\n"
+          (map (fn [[kind line]]
+                 (case kind
+                   :eq  (str "  " line)
+                   :add (str "+ " line)
+                   :del (str "- " line)))
+            (diff-line-ops a b)))))))
+
+(defn- patch-result-file-summary
+  "Build a per-file summary map that lives on `:result` of `v/patch`.
+   Keeps the model trailer compact (no raw before/after) while carrying
+   enough info — path, op, line deltas, capped unified diff — for the
+   channel renderer to paint a useful preview."
+  [{:keys [op path before after move-to]}]
+  (let [lines-before (if before (count (str/split-lines before)) 0)
+        lines-after  (if after  (count (str/split-lines after))  0)
+        diff-text    (unified-diff-text before after)]
+    (cond-> {:path         path
+             :op           (or op :update)
+             :changed?     (not= before after)
+             :lines-before lines-before
+             :lines-after  lines-after
+             :delta-lines  (- lines-after lines-before)}
+      move-to   (assoc :move-to move-to)
+      diff-text (assoc :diff diff-text))))
+
 (defn- patch-tool
   "Edit files. Accepts two input shapes:
 
@@ -876,40 +1007,28 @@
   [edits]
   (cond
     (patch/looks-like-patch? edits)
-    (let [plans (patch-envelope-safe edits)]
+    (let [plans     (patch-envelope-safe edits)
+          summaries (mapv patch-result-file-summary plans)]
       (tool-success
         {:op :v/patch
          :path (or (:path (first plans)) ".")
          :kind :file
-         :result (mapv #(select-keys % [:path :op]) plans)
-         :info {:mode :codex-apply-patch
-                :files (mapv (fn [{:keys [op path before after move-to]}]
-                               (cond-> {:path path
-                                        :op op
-                                        :changed? (not= before after)
-                                        :before before
-                                        :after after
-                                        :lines-before (count (str/split-lines (or before "")))
-                                        :lines-after (count (str/split-lines (or after "")))}
-                                 move-to (assoc :move-to move-to)))
-                         plans)}}))
+         :result summaries
+         :info  {:mode          :codex-apply-patch
+                 :file-count    (count summaries)
+                 :changed-count (count (filter :changed? summaries))}}))
 
     :else
-    (let [plans (patch-safe edits)]
+    (let [plans     (patch-safe edits)
+          summaries (mapv patch-result-file-summary plans)]
       (tool-success
         {:op :v/patch
          :path (or (:path (first plans)) ".")
          :kind :file
-         :result (mapv #(select-keys % [:path]) plans)
-         :info {:mode :exact-replace
-                :files (mapv (fn [{:keys [path before after]}]
-                               {:path path
-                                :changed? (not= before after)
-                                :before before
-                                :after after
-                                :lines-before (count (str/split-lines before))
-                                :lines-after (count (str/split-lines after))})
-                         plans)}}))))
+         :result summaries
+         :info  {:mode          :exact-replace
+                 :file-count    (count summaries)
+                 :changed-count (count (filter :changed? summaries))}}))))
 
 (defn- patch-check-tool
   "Preflight a patch without writing. Accepts the same two input shapes
@@ -1031,9 +1150,6 @@
     (map ir-inline (filter some? parts))))
 (defn- ir-root [& blocks]
   (into [:ir {}] (filter some? blocks)))
-(defn- ir-ul [items]
-  (into [:ul {}]
-    (map (fn [item] [:li {} (ir-p item)]) (filter some? items))))
 
 (defn- render-edn-block
   [value]
@@ -1062,11 +1178,10 @@
      [(str (apply str (repeat depth "  ")) "- " (pr-str entry))])))
 
 (defn- numbered-line-block
-  "Format a sub-vector of source lines with absolute 1-based line numbers.
-   `start-line` is the 1-based line number of `(first lines)`."
-  [start-line lines]
-  (->> lines
-    (map-indexed (fn [idx line] (str (+ start-line idx) ": " line)))
+  "Format a vec of `[line-number, text]` tuples as `<ln>: <text>` lines."
+  [tuples]
+  (->> tuples
+    (map (fn [[ln s]] (str ln ": " s)))
     (str/join "\n")))
 
 ;; ---------------------------------------------------------------------------
@@ -1084,15 +1199,20 @@
 (defn- channel-render-cat
   "Channel preview: numbered-line-block + header. Reads the plain map
    directly; no handle/deref."
-  [{:keys [path offset next-offset eof? line-count lines]}]
-  (let [body (numbered-line-block (or offset 1) (vec lines))]
+  [{:keys [path next-offset truncated? lines]}]
+  (let [lines      (vec lines)
+        line-count (count lines)
+        first-ln   (ffirst lines)
+        body       (numbered-line-block lines)]
     (ir-root
-      (ir-p "Read " (ir-code path) " — " (or line-count (count lines))
-        " line(s) from line " (or offset 1)
+      (ir-p "Read " (ir-code path) " — " line-count
+        " line(s)" (when first-ln (str " from line " first-ln))
         (cond
-          eof?        " (eof)."
-          next-offset (str " (next-offset " next-offset ").")
-          :else       "."))
+          next-offset (str " (next-offset " next-offset ""
+                        (when truncated? ", byte-cap hit")
+                        ").")
+          truncated?  " (byte-cap hit)."
+          :else       " (eof)."))
       (ir-code-block "text" (bounded-render-text body)))))
 
 (defn- channel-render-ls
@@ -1118,15 +1238,30 @@
                    (str path ":" line " " text)) hits)))))))
 
 (defn- channel-render-patch
+  "Channel preview: one header line + per-file stats and (capped) unified
+   diff. All the diff data lives on `:result` itself (see
+   `patch-result-file-summary`) so this renderer is a pure projection."
   [result]
-  ;; `result` here is the [{:path ...}] vec, but the rich diff data lives on
-  ;; the tool-result `:info` map which the contract does not expose to
-  ;; renderers. Show the per-file paths; full diff is recoverable via
-  ;; (get-in tool-result [:info :files]) when the model binds the result.
-  (let [files (if (sequential? result) result [result])]
-    (ir-root
-      (ir-p "Patched " (count files) " file(s).")
-      (ir-ul (map (fn [{:keys [path]}] (ir-code path)) files)))))
+  (let [files   (if (sequential? result) result [result])
+        changed (count (filter :changed? files))]
+    (apply ir-root
+      (ir-p "Patched " (count files) " file(s)"
+        (when (pos? changed) (str ", " changed " changed")) ".")
+      (mapcat
+        (fn [{:keys [path op lines-before lines-after delta-lines diff move-to changed?]}]
+          (let [delta-str (cond
+                            (pos? delta-lines) (str " +" delta-lines)
+                            (neg? delta-lines) (str " " delta-lines)
+                            :else              "")
+                header    (str (name (or op :update))
+                            " " path
+                            (when move-to (str " -> " move-to))
+                            " [" (or lines-before 0) " -> " (or lines-after 0)
+                            " lines" delta-str "]"
+                            (when (false? changed?) " (no-op)"))]
+            (cond-> [(ir-p (ir-code header))]
+              diff (conj (ir-code-block "diff" (bounded-render-text diff))))))
+        files))))
 
 (defn- channel-render-patch-check
   [result]
@@ -1261,13 +1396,15 @@
      "first lines/hits/entries); the full data lives in the bound def."
      ""
      "READ"
-     "  (v/cat path)            — 200 lines from line 1."
+     "  (v/cat path)            — 400 lines from line 1."
      "  (v/cat path n)          — n lines from line 1."
      "  (v/cat path offset n)   — n lines starting at ABSOLUTE 1-based offset."
-     "  result: {:vis.op :v/cat :path :offset :line-count :next-offset :eof?"
-     "           :truncated-by :lines}. Page with `(:next-offset prev)` until"
-     "  `(:eof? prev)`. :truncated-by ∈ {:limit :eof :bytes}; :bytes means the"
-     "  64KB window cap fired — advance via :next-offset."
+     "  (v/cat path :tail)      — last 400 lines (tail; explicit, no auto-magic)."
+     "  (v/cat path :tail n)    — last n lines."
+     "  result: {:vis.op :v/cat :path :lines :next-offset :truncated?}. :lines is a"
+     "  vec of `[<line-number> <text>]` tuples — destructure with `[n t]`, no offset"
+     "  math. Page with `(:next-offset prev)` until it is nil (EOF or tail)."
+     "  :truncated? is true when the 64KB window cap fired; paginate via :next-offset."
      ""
      "  (v/ls path)             — directory tree. opts: {:depth :hidden? :respect-gitignore?}."
      "  result: {:vis.op :v/ls :path :type :entry-count :children [...]} where"

@@ -170,51 +170,46 @@
       (expect (= :dir (:type out)))
       (expect (= (count (:children out)) (:entry-count result))))))
 
+(defn- numbered-tuples
+  "[[start str0] [start+1 str1] …] helper for assembling expected
+   `:lines` payloads in shape tests."
+  [start xs]
+  (mapv vector (iterate inc start) xs))
+
 (defdescribe vis-cat-structured-shape-test
-  (it "returns the paginated shape (small file, single window, eof)"
+  (it "returns the minimal paginated shape (small file, single window, eof)"
     (let [path (write-temp! "small.txt" "alpha\nbeta\ngamma\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      (expect (= #{:path :offset :returned :limit :next-offset :eof? :truncated-by :lines}
-                (set (keys out))))
+      (expect (= #{:path :lines :next-offset :truncated?} (set (keys out))))
       (expect (string? (:path out)))
-      (expect (= 1 (:offset out)))
-      (expect (= 3 (:returned out)))
-      (expect (= 200 (:limit out)))
       (expect (nil? (:next-offset out)))
-      (expect (true? (:eof? out)))
-      (expect (= :eof (:truncated-by out)))
-      (expect (= ["alpha" "beta" "gamma"] (:lines out)))))
+      (expect (false? (:truncated? out)))
+      (expect (= (numbered-tuples 1 ["alpha" "beta" "gamma"]) (:lines out)))))
 
-  (it ":lines carries raw strings - no leading line-number prefix"
+  (it ":lines tuples carry raw strings - no embedded line-number prefix in the text"
     (let [path (write-temp! "raw.txt" "   indented\nplain\n")
           read-file (private-fn "read-file")
           out  (read-file path)]
-      (expect (= ["   indented" "plain"] (:lines out)))))
+      (expect (= [[1 "   indented"] [2 "plain"]] (:lines out)))))
 
-  (it "(v/cat path n) reads first n lines and reports :limit truncation"
+  (it "(v/cat path n) reads first n lines and sets :next-offset when more remain"
     (let [body (string/join "\n" (map #(str "line-" %) (range 1 11)))
           path (write-temp! "ten.txt" (str body "\n"))
           read-file (private-fn "read-file")
           out  (read-file path 4)]
-      (expect (= 1 (:offset out)))
-      (expect (= 4 (:returned out)))
-      (expect (= 4 (:limit out)))
       (expect (= 5 (:next-offset out)))
-      (expect (false? (:eof? out)))
-      (expect (= :limit (:truncated-by out)))
-      (expect (= ["line-1" "line-2" "line-3" "line-4"] (:lines out)))))
+      (expect (false? (:truncated? out)))
+      (expect (= (numbered-tuples 1 ["line-1" "line-2" "line-3" "line-4"]) (:lines out)))))
 
   (it "(v/cat path offset n) reads a mid-file window and advances :next-offset"
     (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
           path (write-temp! "twenty.txt" (str body "\n"))
           read-file (private-fn "read-file")
           out  (read-file path 7 3)]
-      (expect (= 7 (:offset out)))
-      (expect (= 3 (:returned out)))
       (expect (= 10 (:next-offset out)))
-      (expect (= ["L7" "L8" "L9"] (:lines out)))
-      (expect (= :limit (:truncated-by out)))))
+      (expect (= (numbered-tuples 7 ["L7" "L8" "L9"]) (:lines out)))
+      (expect (false? (:truncated? out)))))
 
   (it "paging via :next-offset reaches eof cleanly"
     (let [body (string/join "\n" (map #(str "line-" %) (range 1 11)))
@@ -223,78 +218,117 @@
           page-1 (read-file path 1 4)
           page-2 (read-file path (:next-offset page-1) 4)
           page-3 (read-file path (:next-offset page-2) 4)]
-      (expect (= ["line-1" "line-2" "line-3" "line-4"] (:lines page-1)))
-      (expect (= ["line-5" "line-6" "line-7" "line-8"] (:lines page-2)))
-      (expect (= ["line-9" "line-10"] (:lines page-3)))
-      (expect (true? (:eof? page-3)))
-      (expect (nil? (:next-offset page-3)))
-      (expect (= :eof (:truncated-by page-3)))))
+      (expect (= (numbered-tuples 1 ["line-1" "line-2" "line-3" "line-4"]) (:lines page-1)))
+      (expect (= (numbered-tuples 5 ["line-5" "line-6" "line-7" "line-8"]) (:lines page-2)))
+      (expect (= (numbered-tuples 9 ["line-9" "line-10"]) (:lines page-3)))
+      (expect (nil? (:next-offset page-3)))))
 
-  (it "offset past EOF returns an empty window, eof?, no next-offset"
+  (it "offset past EOF returns an empty window and no :next-offset"
     (let [path (write-temp! "two.txt" "a\nb\n")
           read-file (private-fn "read-file")
           out  (read-file path 99 10)]
-      (expect (= 0 (:returned out)))
       (expect (= [] (:lines out)))
-      (expect (true? (:eof? out)))
       (expect (nil? (:next-offset out)))
-      (expect (= :eof (:truncated-by out)))))
+      (expect (false? (:truncated? out)))))
 
-  (it ":truncated-by :bytes when a window would exceed max-cat-window-bytes"
+  (it ":truncated? true when a window would exceed max-cat-window-bytes"
     ;; Each line is ~70KB; the byte cap is 64KB. First line is always
     ;; included (guarantees one-line forward progress), second line
-    ;; would push past the cap -> stop with :bytes.
+    ;; would push past the cap -> stop with :truncated? true and a
+    ;; :next-offset for the caller to paginate.
     (let [huge (apply str (repeat 70000 "x"))
           path (write-temp! "huge.txt" (str huge "\n" huge "\n" huge "\n"))
           read-file (private-fn "read-file")
           out  (read-file path 1 10)]
-      (expect (= :bytes (:truncated-by out)))
-      (expect (= 1 (:returned out)))
-      (expect (false? (:eof? out)))
+      (expect (true? (:truncated? out)))
+      (expect (= 1 (count (:lines out))))
       (expect (= 2 (:next-offset out)))))
 
   (it "persistence-blob contract: :lines bytes are bounded by max-cat-window-bytes"
     ;; This is the storage claim: a single v/cat call cannot persist
     ;; more than max-cat-window-bytes of line bytes regardless of file size.
-    (let [line (apply str (repeat 200 "x"))    ; 200 bytes
-          body (string/join "\n" (repeat 5000 line))  ; ~1MB total
+    (let [line (apply str (repeat 200 "x"))
+          body (string/join "\n" (repeat 5000 line))
           path (write-temp! "persist.txt" (str body "\n"))
           read-file (private-fn "read-file")
           out  (read-file path 1 100000)
-          line-bytes (reduce + 0 (map #(inc (count (.getBytes ^String % "UTF-8")))
+          line-bytes (reduce + 0 (map (fn [[_ ^String s]]
+                                        (inc (count (.getBytes s "UTF-8"))))
                                    (:lines out)))]
       (expect (<= line-bytes 65536))))
 
   (it "rejects bad positional args (non-positive ints, non-int types)"
     (let [path (write-temp! "validate.txt" "x\n")
           read-file (private-fn "read-file")]
-      (doseq [bad [[0 10]    ; offset 0 (must be >= 1)
-                   [-1 10]   ; negative offset
-                   [1 0]     ; zero limit
-                   [1 -5]    ; negative limit
-                   ["a" 10]  ; non-int offset
-                   [1 :hi]]] ; non-int limit
+      (doseq [bad [[0 10]
+                   [-1 10]
+                   [1 0]
+                   [1 -5]
+                   ["a" 10]
+                   [1 :hi]]]
         (expect (throws? clojure.lang.ExceptionInfo
                   #(apply read-file path bad)))))))
 
+(defdescribe vis-cat-tail-shape-test
+  (it "(v/cat path :tail n) reads the last n lines and reports correct line numbers"
+    (let [body (string/join "\n" (map #(str "line-" %) (range 1 21)))
+          path (write-temp! "tail.txt" (str body "\n"))
+          tail-file (private-fn "tail-file")
+          out  (tail-file path 5)]
+      (expect (nil? (:next-offset out)))
+      (expect (false? (:truncated? out)))
+      (expect (= (numbered-tuples 16 ["line-16" "line-17" "line-18" "line-19" "line-20"])
+                (:lines out)))))
+
+  (it "tail of a file shorter than n returns the whole file"
+    (let [path (write-temp! "short.txt" "alpha\nbeta\n")
+          tail-file (private-fn "tail-file")
+          out  (tail-file path 50)]
+      (expect (= [[1 "alpha"] [2 "beta"]] (:lines out)))
+      (expect (nil? (:next-offset out)))))
+
+  (it ":truncated? true when byte cap drops older lines from the tail window"
+    (let [huge (apply str (repeat 70000 "x"))
+          path (write-temp! "htail.txt" (str huge "\n" huge "\n" huge "\n"))
+          tail-file (private-fn "tail-file")
+          out  (tail-file path 10)]
+      (expect (true? (:truncated? out)))
+      (expect (= 1 (count (:lines out))))
+      ;; Most-recent line wins; file has 3 huge lines -> line 3.
+      (expect (= 3 (ffirst (:lines out)))))))
+
+(defdescribe vis-cat-tool-arities-test
+  (it "(v/cat path :tail) defaults to default-cat-limit lines from the end"
+    (let [body (string/join "\n" (map #(str "L" %) (range 1 601)))
+          path (write-temp! "big-tail.txt" (str body "\n"))
+          cat-tool (private-fn "cat-tool")
+          out (-> (cat-tool path :tail) :result)]
+      (expect (= 400 (count (:lines out))))
+      (expect (= 201 (ffirst (:lines out))))
+      (expect (= 600 (first (peek (:lines out)))))
+      (expect (nil? (:next-offset out)))))
+
+  (it "(v/cat path :tail n) honours an explicit count"
+    (let [body (string/join "\n" (map #(str "L" %) (range 1 21)))
+          path (write-temp! "explicit-tail.txt" (str body "\n"))
+          cat-tool (private-fn "cat-tool")
+          out (-> (cat-tool path :tail 3) :result)]
+      (expect (= (numbered-tuples 18 ["L18" "L19" "L20"]) (:lines out))))))
+
 (defn- cat-result
   "Construct the plain-map shape `cat-tool` produces, for renderer-contract
-   tests. Mirrors what the tool returns post handle-removal: no protocol,
-   no store, just the data."
-  [path offset lines next-offset eof? truncated-by]
+   tests. Tuples for `:lines`, no `:offset` / `:eof?` / `:truncated-by`."
+  [path lines next-offset truncated?]
   {:vis.op :v/cat
    :path path
-   :offset offset
-   :line-count (count lines)
+   :lines (vec lines)
    :next-offset next-offset
-   :eof? eof?
-   :truncated-by truncated-by
-   :lines (vec lines)})
+   :truncated? truncated?})
 
 (defdescribe channel-renderer-contract-test
-  (it "v/cat channel renderer returns canonical [:ir ...] with a :code block, line-numbered from :offset"
+  (it "v/cat channel renderer returns canonical [:ir ...] with a :code block, line-numbered from the first tuple"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          r   (cat-result "src/demo.clj" 1 ["only-line"] nil true :eof)
+          r   (cat-result "src/demo.clj" [[1 "only-line"]] nil false)
           out (channel-render-cat r)]
       (expect (vector? out))
       (expect (= :ir (first out)))
@@ -306,16 +340,16 @@
   (it "v/cat channel renderer separates inline text/code tokens with spaces"
     (let [channel-render-cat (private-fn "channel-render-cat")
           r   (cat-result "extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj"
-                1898 ["x"] 1928 false :limit)
+                [[1898 "x"]] 1928 false)
           out (channel-render-cat r)
           paragraph (nth out 2)
           text (apply str (filter string? (tree-seq sequential? seq paragraph)))]
       (expect (string/includes? text
                 "Read extensions/channels/vis-channel-tui/src/com/blockether/vis/ext/channel_tui/render.clj — 1 line(s) from line 1898 (next-offset 1928)."))))
 
-  (it "v/cat channel renderer respects :offset for mid-file windows"
+  (it "v/cat channel renderer uses the absolute line number on each tuple"
     (let [channel-render-cat (private-fn "channel-render-cat")
-          r   (cat-result "f.txt" 100 ["hundred" "hundred-one"] 102 false :limit)
+          r   (cat-result "f.txt" [[100 "hundred"] [101 "hundred-one"]] 102 false)
           out (channel-render-cat r)
           body (last (first (filter #(and (vector? %) (= :code (first %)))
                               (tree-seq sequential? seq out))))]
@@ -557,13 +591,13 @@
       ;; (e.g. :presentation, :stdout when set) may also appear.
       (expect (= required (clojure.set/intersection required (set (keys out)))))
       (expect (true? (:success? out)))
-      ;; v/cat now returns a plain map as :result. :lines is the vec
-      ;; directly; no deref, no handle.
+      ;; v/cat returns a plain map as :result. :lines is a vec of
+      ;; `[line-number text]` tuples; no deref, no handle, no offset key.
       (let [r (:result out)]
         (expect (= :v/cat (:vis.op r)))
-        (expect (= ["alpha" "beta"] (:lines r)))
-        (expect (= 2 (:line-count r)))
-        (expect (= 1 (:offset r))))
+        (expect (= [[1 "alpha"] [2 "beta"]] (:lines r)))
+        (expect (nil? (:next-offset r)))
+        (expect (false? (:truncated? r))))
       (expect (not (contains? out :markdown)))
       (expect (nil? (:error out)))))
 

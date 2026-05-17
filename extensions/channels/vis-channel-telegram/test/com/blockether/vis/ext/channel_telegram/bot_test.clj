@@ -265,10 +265,7 @@
                           com.blockether.vis.ext.voice.asr/transcribe-file!
                           (fn [file]
                             (deliver transcribed file)
-                            "raw transcript")
-
-                          com.blockether.vis.ext.voice.rewrite/rewrite-transcript!
-                          nil))
+                            "raw transcript")))
                       com.blockether.vis.ext.channel-telegram.bot/ffmpeg-audio->wav!
                       (fn [_audio-file wav-file]
                         (reset! converted-file wav-file)

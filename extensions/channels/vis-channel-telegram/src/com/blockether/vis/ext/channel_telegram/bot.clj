@@ -317,14 +317,11 @@
       {:file wav :delete? true})))
 
 (defn- transcribe-audio-file! [audio-file]
-  (let [asr-fn     (or (requiring-resolve 'com.blockether.vis.ext.voice.asr/transcribe-file!)
-                     (throw (ex-info "Parakeet ASR model is not on the classpath" {})))
-        rewrite-fn (requiring-resolve 'com.blockether.vis.ext.voice.rewrite/rewrite-transcript!)
+  (let [asr-fn (or (requiring-resolve 'com.blockether.vis.ext.voice.asr/transcribe-file!)
+                 (throw (ex-info "Parakeet ASR model is not on the classpath" {})))
         {:keys [file delete?]} (asr-ready-audio-file! audio-file)]
     (try
-      (let [raw       (asr-fn file)
-            rewritten (when rewrite-fn (rewrite-fn raw))]
-        (if (str/blank? rewritten) raw rewritten))
+      (asr-fn file)
       (finally
         (when delete?
           (try (.delete ^java.io.File file) (catch Throwable _)))))))

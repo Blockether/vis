@@ -1,6 +1,7 @@
 (ns com.blockether.vis.internal.loop
   (:refer-clojure)
   (:require
+   [clj-reload.core :as clj-reload]
    [clojure.set :as set]
    [charred.api :as json]
    [clojure.spec.alpha :as s]
@@ -25,6 +26,7 @@
    [sci.core :as sci]
    [taoensso.telemere :as tel])
   (:import
+   [java.io File]
    [java.security MessageDigest]))
 
 ;; =============================================================================
@@ -3876,24 +3878,62 @@
     new-cfg))
 
 ;; ---------------------------------------------------------------------------
-;; Extension hot-reload (F1-lite). See plan §1 Q12-Q16 + caveats.
+;; Extension hot-reload. See plan §1 Q12-Q16 + caveats.
 ;;
 ;; Surgical for `:added` / `:removed` (full side-effect cleanup,
-;; symbol install). Treats every still-present extension as
-;; `:reloaded` (no change-detection in v1; v2 uses persisted source
-;; markers). Continue-on-error: per-ext failures land in :errors,
-;; orchestration continues. The CALLING env's reseat is deferred
-;; (would race with the SCI sandbox actively executing the call);
-;; OTHER envs use a per-env lock-acquisition timeout.
+;; symbol install). Still-present extension namespaces are delegated
+;; to clj-reload after the first baseline pass, so unchanged helper
+;; namespaces stop paying a full `(require :reload)` cost.
+;;
+;; SCI env refresh is scheduled, not performed in-place: the env that
+;; called `(v/reload-extensions!)` is still executing old bindings, so
+;; reset happens at the next `send!` boundary before user code runs.
 ;; ---------------------------------------------------------------------------
 
 (def ^:const RELOAD_DEFAULT_TIMEOUT_MS
-  "Default per-env lock-acquisition timeout for `reload-extensions!`.
-   Envs that don't free their lock within this window are recorded
-   as `:env-reseat-skipped` and rebind on next access."
-  30000)
+  "Deprecated compatibility knob for `reload-extensions!`. Env refresh no
+   longer waits on busy turns; every cached env is marked dirty and rebuilt
+   at its next safe `send!` boundary."
+  0)
 
 (defn- now-ms ^long [] (System/currentTimeMillis))
+
+(def ^:private EXTENSION_RELOAD_DIRS
+  ["extensions/channels/vis-channel-telegram/src"
+   "extensions/channels/vis-channel-tui/src"
+   "extensions/common/vis-exa/src"
+   "extensions/common/vis-foundation/src"
+   "extensions/common/vis-voice/src"
+   "extensions/persistance/vis-persistance-sqlite/src"
+   "extensions/providers/vis-provider-anthropic/src"
+   "extensions/providers/vis-provider-github-copilot/src"
+   "extensions/providers/vis-provider-openai-codex/src"
+   "extensions/providers/vis-provider-standard/src"
+   "extensions/providers/vis-provider-zai/src"])
+
+(defonce ^:private extension-reloader-state
+  (atom nil))
+
+(defn- existing-extension-reload-dirs
+  []
+  (vec
+    (filter (fn [path]
+              (let [f (File. ^String path)]
+                (and (.exists f) (.isDirectory f))))
+      EXTENSION_RELOAD_DIRS)))
+
+(defn- ensure-extension-reloader!
+  []
+  (let [dirs (existing-extension-reload-dirs)]
+    (when (seq dirs)
+      (if (= dirs (:dirs @extension-reloader-state))
+        :changed
+        (do
+          (clj-reload/init {:dirs dirs
+                            :output :quiet
+                            :no-reload '#{user}})
+          (reset! extension-reloader-state {:dirs dirs})
+          :all)))))
 
 (defn- extension-loader-nses
   "Namespaces that load/register `ext`. Most extensions use their
@@ -3953,65 +3993,95 @@
     nil
     (catch Throwable t t)))
 
-(defn- reseat-cached-env!
-  "Per-env reseat orchestration. Returns one of:
-     :reseated
-     :deferred (calling env, locked by current thread)
-     {:reason :busy :waited-ms N}
-   The current implementation focuses on lifecycle correctness -
-   v1 doesn't surgically swap individual extensions' bindings
-   in-place because `register-extensions!` (which `create-environment`
-   uses) needs an SCI register-fn that we don't have post-hoc.
-   Instead, the env stays alive but its sandbox bindings are
-   considered stale until next access - the next `send!` re-runs the
-   prompt assembler, which sees the freshly-registered extensions.
-   This is honest: we tell the caller `:reseated` to mean we
-   acquired the lock and confirmed nothing's mid-iteration; the
-   actual binding refresh happens lazily."
-  [^java.util.concurrent.locks.ReentrantLock lock timeout-ms]
-  (cond
-    (.isHeldByCurrentThread lock)
-    :deferred
+(defn- reload-extension-namespaces!
+  [reload-candidates errors]
+  (if-let [plan (ensure-extension-reloader!)]
+    (let [started (now-ms)
+          result  (clj-reload/reload {:throw false
+                                      :log-fn (fn [& _])
+                                      :only plan})
+          failed  (:failed result)]
+      (when failed
+        (record-error errors failed :clj-reload (:exception result)))
+      {:engine :clj-reload
+       :plan plan
+       :unloaded (vec (:unloaded result))
+       :loaded (vec (:loaded result))
+       :failed failed
+       :duration-ms (- (now-ms) started)})
+    (let [started (now-ms)]
+      (doseq [ns-sym reload-candidates]
+        (when-let [t (require-ns! ns-sym true)]
+          (record-error errors ns-sym :require t)))
+      {:engine :require-reload
+       :plan :all
+       :unloaded []
+       :loaded (vec reload-candidates)
+       :failed nil
+       :duration-ms (- (now-ms) started)})))
 
-    (.tryLock lock
-      (long timeout-ms)
-      java.util.concurrent.TimeUnit/MILLISECONDS)
-    (try :reseated
-      (finally (.unlock lock)))
+(defn- schedule-cached-env-refresh!
+  [id reason reload-id]
+  (swap! cache update id
+    (fn [entry]
+      (cond-> entry
+        entry
+        (assoc :env-refresh {:status :scheduled
+                             :reason reason
+                             :reload-id reload-id
+                             :scheduled-at-ms (now-ms)}))))
+  id)
 
-    :else
-    {:reason :busy :waited-ms (long timeout-ms)}))
+(defn- refresh-cached-env-if-needed!
+  "Called with the conversation lock held, immediately before a turn starts.
+   If `reload-extensions!` marked this env dirty, rebuild the SCI env now so
+   the just-finished IR/render path never races its own symbol table."
+  [id entry]
+  (let [entry*  (or (get @cache id) entry)
+        refresh (:env-refresh entry*)]
+    (if (= :scheduled (:status refresh))
+      (let [old-env (:environment entry*)
+            title   (some-> (:conversation-title-atom old-env) deref)
+            new-env (create-environment (get-router)
+                      (cond-> {:db (config/resolve-db-spec)
+                               :conversation id}
+                        (:channel old-env) (assoc :channel (:channel old-env))
+                        title              (assoc :title title)))
+            updated (assoc entry*
+                      :environment new-env
+                      :env-refresh (assoc refresh
+                                     :status :refreshed
+                                     :refreshed-at-ms (now-ms)))]
+        (try (dispose-environment! old-env)
+          (catch Throwable t
+            (tel/log! {:level :warn :id ::env-refresh-dispose-failed
+                       :data {:conversation-id id
+                              :error (ex-message t)}})))
+        (swap! cache assoc id updated)
+        updated)
+      entry*)))
 
 (defn reload-extensions!
-  "Re-discover extensions on the classpath, diff against the in-memory
-   registry, apply the diff (require/register for `:added`,
-   deregister + side-effect cleanup for `:removed`, `(require :reload)`
-   + re-register for everything else), and reseat every cached env.
+  "Re-discover extensions on the classpath, apply added/removed lifecycle
+   changes, then ask clj-reload to reload only changed already-loaded
+   extension namespaces (first call establishes the baseline with :all).
 
-   F1-lite: no change-detection in v1; every still-present extension
-   is reloaded. Plan Q14.
+   Cached SCI envs are not mutated while a turn is executing. They are
+   marked with `:env-refresh {:status :scheduled ...}` and rebuilt at the
+   next `send!` boundary before user code runs.
 
-   Continue-on-error: per-ext failures accumulate in `:errors` and
-   orchestration continues. Plan Q16.
-
-   Calling env defers reseat (mid-turn reload would race with the
-   SCI sandbox actively executing the call); other envs are reseated
-   under a `:reload/timeout-ms` (default 30s) per-env lock acquisition.
-   Plan caveat: reload deadlock prevention.
-
-   Returns:
-     {:added [...]              ;; loader ns-syms newly required
-      :removed [...]             ;; logical extension ns-syms deregistered
-      :reloaded [...]            ;; loader ns-syms re-required + re-registered
-      :errors [{:ns :phase :reason :stack-trace} ...]
-      :envs-reseated 3
-      :env-reseat-deferred [#uuid \"...\"]
-      :env-reseat-skipped  [{:env-id ... :reason :busy :waited-ms N}]
-      :duration-ms 847
-      :blocked-ms  127}"
+   Returns structured data for renderers:
+     {:added [...]
+      :removed [...]
+      :reloaded [...]
+      :unchanged [...]
+      :reload-candidates [...]
+      :namespace-reload {:engine :clj-reload :plan :changed ...}
+      :env-refresh {:status :scheduled :scheduled N :when :before-next-turn}
+      :errors [...]
+      :duration-ms 123}"
   ([] (reload-extensions! {}))
-  ([{:keys [reload/timeout-ms]
-     :or   {timeout-ms RELOAD_DEFAULT_TIMEOUT_MS}}]
+  ([_opts]
    (let [start         (now-ms)
          errors        (atom [])
          ;; Step 1: fresh scan.
@@ -4038,36 +4108,53 @@
          _             (doseq [ns-sym added]
                          (when-let [t (require-ns! ns-sym false)]
                            (record-error errors ns-sym :require t)))
-         ;; Step 3c: :reloaded - same as :added but with :reload.
-         _             (doseq [ns-sym reloaded]
-                         (when-let [t (require-ns! ns-sym true)]
-                           (record-error errors ns-sym :require t)))
-         ;; Step 4: reseat cached envs.
-         lock-wait-start (now-ms)
-         envs-snapshot   (vec @cache)
-         reseated        (atom [])
-         deferred        (atom [])
-         skipped         (atom [])]
-     (doseq [[id {:keys [^java.util.concurrent.locks.ReentrantLock lock]}] envs-snapshot]
+         ;; Step 3c: still-present namespaces - clj-reload reloads only
+         ;; changed loaded files after the first :all baseline.
+         namespace-reload (reload-extension-namespaces! reloaded errors)
+         loaded-nses      (set (:loaded namespace-reload))
+         unloaded-nses    (set (:unloaded namespace-reload))
+         failed-nses      (set (keep identity [(:failed namespace-reload)]))
+         candidate-nses   (set reloaded)
+         reloaded*        (if (= :require-reload (:engine namespace-reload))
+                            (vec reloaded)
+                            (vec (sort (set/intersection candidate-nses loaded-nses))))
+         failed*          (vec (sort (set/difference
+                                       (set/intersection candidate-nses
+                                         (set/union unloaded-nses failed-nses))
+                                       (set reloaded*))))
+         unchanged        (vec (sort (set/difference candidate-nses (set reloaded*) (set failed*))))
+         ;; Step 4: schedule SCI env refresh. No lock wait; next `send!`
+         ;; rebuilds each dirty env before user code executes.
+         reload-id        (str (util/uuid))
+         envs-snapshot    (vec @cache)
+         env-scheduled    (atom [])]
+     (doseq [[id _entry] envs-snapshot]
        (try
-         (let [outcome (reseat-cached-env! lock timeout-ms)]
-           (cond
-             (= :reseated outcome) (swap! reseated conj id)
-             (= :deferred outcome) (swap! deferred conj id)
-             (map? outcome)        (swap! skipped conj (assoc outcome :env-id id))))
+         (swap! env-scheduled conj (schedule-cached-env-refresh! id :extension-reload reload-id))
          (catch Throwable t
-           (record-error errors id :env-reseat t))))
-     (let [blocked-ms (- (now-ms) lock-wait-start)
-           duration   (- (now-ms) start)]
+           (record-error errors id :env-refresh-schedule t))))
+     (let [duration (- (now-ms) start)]
        {:added                added
         :removed              removed
-        :reloaded             reloaded
+        :reloaded             reloaded*
+        :failed               failed*
+        :unchanged            unchanged
+        :reload-candidates    reloaded
+        :namespace-reload     namespace-reload
+        :reload-engine        (:engine namespace-reload)
+        :reload-plan          (:plan namespace-reload)
         :errors               @errors
-        :envs-reseated        (count @reseated)
-        :env-reseat-deferred  @deferred
-        :env-reseat-skipped   @skipped
+        :env-refresh          {:status :scheduled
+                               :scheduled (count @env-scheduled)
+                               :env-ids @env-scheduled
+                               :when :before-next-turn
+                               :reload-id reload-id}
+        ;; Compatibility fields for old renderers/callers.
+        :envs-reseated        0
+        :env-reseat-deferred  @env-scheduled
+        :env-reseat-skipped   []
         :duration-ms          duration
-        :blocked-ms           blocked-ms}))))
+        :blocked-ms           0}))))
 
 (defn- open-env!
   [id {:keys [channel external-id title]}]
@@ -4166,15 +4253,16 @@
 (defn send!
   ([id messages] (send! id messages {}))
   ([id messages opts]
-   (let [{:keys [environment ^java.util.concurrent.locks.ReentrantLock lock]}
+   (let [{:keys [^java.util.concurrent.locks.ReentrantLock lock] :as entry}
          (ensure-env! id)
          message-vec (if (string? messages) [(svar/user messages)] messages)]
-     ;; ReentrantLock (not Object monitor) so `reload-extensions!`
-     ;; can use `.isHeldByCurrentThread` to detect mid-iteration
-     ;; reload calls and `.tryLock(timeout)` to bound waits on
-     ;; OTHER busy envs. Plan caveat: reload deadlock prevention.
+     ;; ReentrantLock keeps one turn per conversation. Extension reload marks
+     ;; envs dirty; actual SCI reset happens here, after prior IR/render is
+     ;; finished and before the next user code executes.
      (.lock lock)
-     (try (turn! environment message-vec opts)
+     (try
+       (let [{:keys [environment]} (refresh-cached-env-if-needed! id entry)]
+         (turn! environment message-vec opts))
        (finally (.unlock lock))))))
 
 (defn close!
