@@ -1015,14 +1015,12 @@
 
 (defn- prepare-iteration-columns
   "Prepare the hard-cut single-form conversation_turn_iteration payload.
-   Result and error stay Nippy BLOBs; side effects stay TEXT."
-  [{:keys [result error stdout stderr duration-ms] :as opts}]
+   Result and error stay Nippy BLOBs."
+  [{:keys [result error duration-ms] :as opts}]
   (let [code (require-iteration-code! opts)]
     (cond-> {:code (str code)}
       (contains? opts :result)     (assoc :result (->blob (freeze-safe result)))
       (some? error)                (assoc :error (->blob (freeze-safe error)))
-      (not (blank-text? stdout))   (assoc :stdout stdout)
-      (not (blank-text? stderr))   (assoc :stderr stderr)
       (some? duration-ms)          (assoc :duration_ms (long duration-ms)))))
 
 #_{:clojure-lsp/ignore [:clojure-lsp/unused-public-var]}
@@ -1086,7 +1084,7 @@
                           1)
               raw-response-s (some-> llm-raw-response str)]
           ;; 1. Iteration row - includes the single-form code payload inline.
-          ;;    Hard cut: callers pass flat :code/:result/:error/:stdout/:stderr.
+          ;;    Hard cut: callers pass flat :code/:result/:error.
           (let [iteration-cols (prepare-iteration-columns opts)]
             (execute! tx-info
               {:insert-into :conversation_turn_iteration
@@ -1299,8 +1297,6 @@
       (some? (:code row))                (assoc :code (:code row))
       (some? (:result row))              (assoc :result (<-blob (:result row)))
       (some? iter-error)                 (assoc :error iter-error)
-      (not (str/blank? (or (:stdout row) ""))) (assoc :stdout (:stdout row))
-      (not (str/blank? (or (:stderr row) ""))) (assoc :stderr (:stderr row))
       (some? (:duration_ms row))         (assoc :execution-time-ms (:duration_ms row))
       (some? (:llm_thinking row))         (assoc :thinking (:llm_thinking row))
       (some? (:llm_full_duration_ms row)) (assoc :duration-ms (:llm_full_duration_ms row))
