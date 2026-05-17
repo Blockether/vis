@@ -8,10 +8,11 @@
             [lazytest.core :refer [defdescribe it expect]]))
 
 (defdescribe voice-input-test
-  (it "registers a hidden direct-toggle TUI channel hook"
-    (let [hooks (vis/channel-hooks-for :tui)]
-      (expect (some #(= :voice/input (:hook-id %)) hooks))
-      (expect (some #(= :voice/input (:hook-id %)) (:ext/channel-hooks core/voice-extension)))
+  (it "registers a hidden direct-toggle TUI channel contribution"
+    (let [contributions (vis/channel-contributions-for :tui :tui.slot/commands)]
+      (expect (some #(= :voice/input (:id %)) contributions))
+      (expect (some #(= :voice/input (:id %))
+                (get-in core/voice-extension [:ext/channel-contributions :tui.slot/commands])))
       (let [commands (voice/tui-commands {})]
         (expect (= [:voice/toggle-recording]
                   (mapv :id commands)))

@@ -345,7 +345,7 @@
     (cond-> (vec git-spans)
       ;; ── LEFT ──────────────────────────────────────────────────────────────
       ;; Model display + (Ctrl+T) hint moved to builtin_hooks.clj
-      ;; (`:tui.builtin.model/footer-segment`).
+      ;; (`:tui.builtin.model/footer`).
       reasoning?
       (conj {:text (str "reasoning: " (name reasoning-level))
              :fg t/footer-fg-muted :bold? false
@@ -406,18 +406,15 @@
                    :region :left :priority 1}))
       (build-usage-segments db))))
 
-;;; ── Extension footer segments (channel-hooks) ─────────────────────────────
+;;; ── Extension footer segments (channel contributions) ─────────────────────
 ;;
 ;; Extensions contribute footer segments by adding entries to their
-;; `:ext/channel-hooks` vec:
+;; `:ext/channel-contributions` map:
 ;;
-;;   {:channel-id :tui
-;;    :hook-id    :*/footer-segment       ;; any keyword whose `name` is
-;;                                        ;; "footer-segment"; the namespace
-;;                                        ;; identifies the owner. Or use the
-;;                                        ;; literal `:tui/footer-segment`.
-;;    :render-fn  (fn [db now-ms]
-;;                  -> seg-map | [seg-map seg-map ...] | nil)}
+;;   {:tui.slot/footer-segment
+;;    [{:id :my.extension/footer
+;;      :fn (fn [db now-ms]
+;;            -> seg-map | [seg-map seg-map ...] | nil)}]}
 ;;
 ;; Each seg-map:
 ;;   {:ir         [:ir {?:fg-role} & blocks]    ;; required
@@ -428,11 +425,11 @@
 ;;    :fg-role    :default|:muted|:warn|...     ;; default :default
 ;;    :bold?      bool                          ;; default false}
 ;;
-;; Render-fn may return ONE seg-map or a VECTOR of seg-maps so a
+;; Fn may return ONE seg-map or a VECTOR of seg-maps so a
 ;; single hook can contribute multiple related segments
 ;; (e.g. "model-display" + "(Ctrl+T)" hint side-by-side).
 ;;
-;; The render-fn returns CANONICAL IR + layout hints; the TUI walks
+;; The fn returns CANONICAL IR + layout hints; the TUI walks
 ;; the IR to a plain styled string and packs it into the segment
 ;; vec built-ins also feed. Other channels translate the same IR
 ;; differently (Telegram: emit as inline markdown; web: HTML span).
@@ -474,13 +471,6 @@
                     lines)]
     (str/join " " (remove str/blank? line-strs))))
 
-(defn- footer-hook?
-  "True when `hook-id` is recognised as a footer-segment contributor."
-  [hook-id]
-  (let [n (some-> hook-id name)]
-    (or (= "footer-segment" n)
-      (= :tui/footer-segment hook-id))))
-
 (defn- seg->packed
   "Convert one extension seg-map into the internal segment shape.
    Returns nil for invalid / out-of-row entries."
@@ -502,27 +492,26 @@
   "Vector of segments contributed by extensions for footer row `row`
    (0 = top footer row, 1 = limits row).
 
-   Each hook's render-fn may return a single seg-map OR a vec of
-   seg-maps (so one hook can contribute multiple related segments).
-   Hook crashes never propagate — a misbehaving extension just loses
-   its segment that frame. Settings can disable hooks via
+   Each contribution fn may return a single seg-map OR a vec of
+   seg-maps (so one contribution can emit multiple related segments).
+   Contribution crashes never propagate — a misbehaving extension just loses
+   its segment that frame. Settings can disable contributions via
    `:contributors-disabled`."
   [db now-ms ^long row]
-  ;; `:tui.builtin.model/footer-segment` is core identity (provider /
+  ;; `:tui.builtin.model/footer` is core identity (provider /
   ;; model display) and CANNOT be disabled. Even if a settings round-
   ;; trip placed it into `:contributors-disabled`, the renderer ignores
-  ;; it for this hook so the user never accidentally hides the model
+  ;; it for this contribution so the user never accidentally hides the model
   ;; label (regression: conversation fe6340b0).
-  (let [undisableable #{:tui.builtin.model/footer-segment}
+  (let [undisableable #{:tui.builtin.model/footer}
         disabled (let [s (get-in db [:settings :contributors-disabled])]
                    (when (set? s) s))]
     (vec
-      (for [{:keys [hook-id render-fn]} (lp/channel-hooks-for :tui)
-            :when (and (ifn? render-fn)
-                    (or (contains? undisableable hook-id)
-                      (not (and disabled (contains? disabled hook-id))))
-                    (footer-hook? hook-id))
-            :let [out (try (render-fn db now-ms) (catch Throwable _ nil))
+      (for [{:keys [id] f :fn} (lp/channel-contributions-for :tui :tui.slot/footer-segment)
+            :when (and (ifn? f)
+                    (or (contains? undisableable id)
+                      (not (and disabled (contains? disabled id)))))
+            :let [out (try (f db now-ms) (catch Throwable _ nil))
                   segs (cond (sequential? out) out
                          (map? out)        [out]
                          :else             nil)]

@@ -2,12 +2,10 @@
   "Engine-owned `ctx` snapshot bound under sandbox name `ctx` before every
    model call.
 
-   Four keys, every nil/blank field stripped:
+   Three keys, every nil/blank field stripped:
 
      :conversation {:id :title :turn-id :user-request}
      :iteration    {:id :position}
-     :tree         vector of cwd-relative file paths (depth 8, gitignore-aware,
-                   directories excluded so paths read cleanly)
      :defs         {sym {:doc <string?> :shape <malli|fn-shape>}}
 
    `:iteration` lives at the top level so `(:iteration ctx)` works directly
@@ -23,86 +21,11 @@
    Shape inference uses `malli.provider/provide` cached by
    `System/identityHashCode` of the value."
   (:require
-   [clojure.java.io :as io]
    [clojure.string :as str]
-   [com.blockether.vis.internal.workspace :as workspace]
-   [malli.provider :as mp])
-  (:import
-   [java.io File]
-   [org.eclipse.jgit.ignore IgnoreNode IgnoreNode$MatchResult]))
+   [malli.provider :as mp]))
 
 (def ^:private hidden-syms
   '#{ctx done set-conversation-title!})
-
-(def ^:private tree-ignored-dir-names
-  #{".git" ".hg" ".svn" ".cache" ".idea" ".vscode" ".clj-kondo"
-    "target" "node_modules" ".vis" ".cpcache" ".m2" ".gradle" "dist" "build"
-    ".verification" ".nrepl-port" ".pi"})
-
-(def ^:private TREE_MAX_DEPTH 8)
-(def ^:private TREE_MAX_ENTRIES 2000)
-
-(defn- ignored-dir-name? [^File f]
-  (let [n (.getName f)]
-    (or (contains? tree-ignored-dir-names n)
-      (and (str/starts-with? n ".") (not= "." n)))))
-
-(defn- list-children [^File dir]
-  (try (vec (.listFiles dir)) (catch Throwable _ [])))
-
-(defn- load-ignore-node ^IgnoreNode [^File root]
-  (let [gi (io/file root ".gitignore")]
-    (when (.exists gi)
-      (try
-        (let [n (IgnoreNode.)]
-          (with-open [in (io/input-stream gi)]
-            (.parse n in))
-          n)
-        (catch Throwable _ nil)))))
-
-(defn- gitignored? [^IgnoreNode node ^File f ^File root]
-  (when node
-    (try
-      (let [rel    (str (.relativize (.toPath root) (.toPath f)))
-            dir?   (.isDirectory f)
-            result (.isIgnored node rel dir?)]
-        (= IgnoreNode$MatchResult/IGNORED result))
-      (catch Throwable _ false))))
-
-(defn- walk-tree
-  "Walk the workspace returning a vec of cwd-relative FILE paths.
-   Directories are traversed but not included in the result (model can
-   infer dir layout from file path prefixes)."
-  [^File root]
-  (let [out      (volatile! [])
-        root-abs (.getCanonicalPath root)
-        root-len (inc (count root-abs))
-        gi-node  (load-ignore-node root)
-        rel-of   (fn [^File f]
-                   (let [p (.getCanonicalPath f)]
-                     (if (> (count p) root-len) (subs p root-len) p)))]
-    (letfn [(step [^File dir ^long depth]
-              (when (and (< (count @out) TREE_MAX_ENTRIES)
-                      (<= depth TREE_MAX_DEPTH))
-                (doseq [^File child (sort-by #(.getName ^File %) (list-children dir))]
-                  (when (< (count @out) TREE_MAX_ENTRIES)
-                    (cond
-                      (.isDirectory child)
-                      (when-not (or (ignored-dir-name? child)
-                                  (gitignored? gi-node child root))
-                        (step child (inc depth)))
-
-                      (.isFile child)
-                      (when-not (or (str/starts-with? (.getName child) ".")
-                                  (gitignored? gi-node child root))
-                        (vswap! out conj (rel-of child))))))))]
-      (step root 0)
-      @out)))
-
-(defn- build-tree []
-  (try
-    (walk-tree (workspace/cwd))
-    (catch Throwable _ [])))
 
 (defonce ^:private shape-cache-atom
   ;; { env-id {sym {:identity int :shape <schema> :order long}} }
@@ -227,7 +150,6 @@
   (prune
     {:conversation (prune (or conversation {}))
      :iteration    (prune (or iteration {}))
-     :tree         (build-tree)
      :defs         (or (build-defs (:sci-ctx environment)
                          (:initial-ns-keys environment))
                      {})}))

@@ -53,6 +53,10 @@
   ([text timestamp]
    {:role      :user
     :ir        (vis/text->ir text)
+    ;; Keep the raw text so resume paths (input-history arrow cycling in
+    ;; state/:init-conversation, search, etc.) can recover the exact string
+    ;; the user typed without re-rendering IR back to markdown.
+    :text      (or text "")
     :timestamp timestamp}))
 
 (def empty-ir

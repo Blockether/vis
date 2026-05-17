@@ -415,8 +415,9 @@
                                      {:name "all" :kind :flag :type :boolean
                                       :doc "Download/check both voice models."}]
                           :cmd/run-fn #'voice-models-download-command}]}]}]
-     :ext/channel-hooks [{:channel-id :tui
-                          :hook-id :voice/input
-                          :commands-fn #'voice-input-tui-commands}]}))
+     :ext/channel-contributions
+     {:tui.slot/commands
+      [{:id :voice/input
+        :fn #'voice-input-tui-commands}]}}))
 
 (vis/register-extension! voice-extension)

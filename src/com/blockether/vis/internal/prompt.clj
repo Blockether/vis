@@ -87,7 +87,6 @@
      "Read `ctx` first. Engine context keys:"
      "  (:conversation ctx)  -> {:id :title :turn-id :user-request}"
      "  (:iteration ctx)     -> {:id :position}"
-     "  (:tree ctx)          -> vector of cwd-relative file paths"
      "  (:defs ctx)          -> array-map (newest first): {sym {:doc <str?> :shape <malli>}}"
      "Current user request: `(get-in ctx [:conversation :user-request])`."
      "`ctx` is a snapshot built BEFORE this iteration runs; new defs land in :defs starting NEXT iteration."
@@ -100,7 +99,7 @@
      "Finish only with `(done [:ir ...])` when answer is supported by observed data."
      "Allowed def heads: def, defn, defn-, defonce, defmulti, defmacro."
      "Banned heads: defrecord, deftype, defprotocol, gen-class, extend-type, extend-protocol, definterface, reify."
-     "IR is EDN hiccup `[:ir & blocks]`. Blocks: :p :h :code :ul :ol :li :quote :table :tr :th :td. Inline: :span :br :strong :em :c :a :img :kbd :mark :sup :sub."]))
+     "IR is EDN hiccup `[:ir & blocks]`. Blocks: :p :h {:level <1-10>} :code :ul :ol :li :quote :table :tr :th :td. Inline: :span :br :strong :em :c :a :img :kbd :mark :sup :sub."]))
 
 (defn build-system-prompt
   "Core system prompt: CORE_SYSTEM_PROMPT plus optional caller addendum."
