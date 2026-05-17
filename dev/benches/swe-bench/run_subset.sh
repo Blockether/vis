@@ -34,17 +34,21 @@ out_dir="$here/results/$ITER_TAG"
 preds_file="$out_dir/predictions.jsonl"
 export SWEBENCH_ARTIFACT_DIR="${SWEBENCH_ARTIFACT_DIR:-$out_dir/artifacts}"
 
-# Activate venv if present (recommended; see dev/benches/swe-bench/README.md)
-if [[ -f "$here/.venv/bin/activate" ]]; then
-  # shellcheck disable=SC1091
-  source "$here/.venv/bin/activate"
-fi
+# Prefer venv's python directly (don't rely on PATH propagation from activate;
+# scripts run via nohup or subshells often lose the activated PATH).
 if [[ -z "${PYTHON:-}" ]]; then
-  if command -v python >/dev/null 2>&1; then
+  if [[ -x "$here/.venv/bin/python" ]]; then
+    PYTHON="$here/.venv/bin/python"
+  elif command -v python >/dev/null 2>&1; then
     PYTHON=python
   else
     PYTHON=python3
   fi
+fi
+# Also activate venv for any downstream PATH-dependent tools (gh, etc.).
+if [[ -f "$here/.venv/bin/activate" ]]; then
+  # shellcheck disable=SC1091
+  source "$here/.venv/bin/activate"
 fi
 
 if [[ -n "$INSTANCES" && ! -f "$INSTANCES" ]]; then

@@ -129,9 +129,12 @@ def solve(instance: dict) -> dict:
 
         prompt = render_prompt(instance, wt)
         write_artifact(iid, "prompt.txt", prompt)
+        # Stream per-iteration JSON frames to disk so a timeout still leaves a
+        # readable trace artifact. The final summary frame mirrors --json
+        # output; we reconstruct it from the JSONL when present.
         cmd = [
             VIS_BIN, "run",
-            "--json",
+            "--full-trace-json-stream",
             "--db", ":memory",
             "--provider", PROVIDER,
             "--model", MODEL,
@@ -139,24 +142,58 @@ def solve(instance: dict) -> dict:
         ]
         write_artifact(iid, "command.json", {"cmd": cmd, "cwd": str(wt), "timeout_s": TIMEOUT})
         log(f"{iid}: launching vis ({MODEL})")
-        try:
-            proc = subprocess.run(
-                cmd, cwd=wt, capture_output=True, text=True, timeout=TIMEOUT
-            )
-        except subprocess.TimeoutExpired as e:
-            write_artifact(iid, "vis.stdout.txt", e.stdout)
-            write_artifact(iid, "vis.stderr.txt", e.stderr)
+
+        # Use Popen + on-disk redirect so partial trace survives timeout / kill.
+        adir = artifact_dir(iid)
+        if adir is None:
+            adir = Path(tempfile.mkdtemp(prefix="vis-agent-"))
+        adir.mkdir(parents=True, exist_ok=True)
+        stdout_path = adir / "vis.trace.jsonl"
+        stderr_path = adir / "vis.stderr.txt"
+        timed_out = False
+        with open(stdout_path, "wb") as out_f, open(stderr_path, "wb") as err_f:
+            proc_p = subprocess.Popen(cmd, cwd=wt, stdout=out_f, stderr=err_f)
+            try:
+                proc_p.wait(timeout=TIMEOUT)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                proc_p.kill()
+                try:
+                    proc_p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    pass
+        proc_returncode = proc_p.returncode
+        proc_stdout = stdout_path.read_text(errors="replace")
+        proc_stderr = stderr_path.read_text(errors="replace")
+
+        if timed_out:
+            elapsed_so_far = round(time.time() - started, 1)
             result = {
                 **result_base(iid),
                 "error": f"timeout after {TIMEOUT}s",
-                "elapsed_s": TIMEOUT,
+                "elapsed_s": elapsed_so_far,
+                "partial_trace_lines": proc_stdout.count("\n"),
             }
             write_artifact(iid, "prediction.json", result)
             return result
 
         elapsed = time.time() - started
-        write_artifact(iid, "vis.stdout.json", proc.stdout)
-        write_artifact(iid, "vis.stderr.txt", proc.stderr)
+        # Reconstruct best-effort final payload from the trace stream. The
+        # final frame from vis is the turn-complete summary, mirroring the
+        # old --json envelope shape.
+        final_payload = None
+        for line in reversed(proc_stdout.splitlines()):
+            line = line.strip()
+            if not line: continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and (obj.get("phase") == "turn-complete" or "trace" in obj):
+                    final_payload = obj
+                    break
+            except Exception:
+                continue
+        write_artifact(iid, "vis.stdout.json", json.dumps(final_payload) if final_payload else proc_stdout)
+        proc = type("Proc", (), {"returncode": proc_returncode, "stdout": json.dumps(final_payload) if final_payload else "", "stderr": proc_stderr})
         if proc.returncode != 0:
             result = {
                 **result_base(iid),
